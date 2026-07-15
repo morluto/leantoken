@@ -1,6 +1,8 @@
 use std::fs;
 
-use leantoken::repository::{discover_files, resolve_existing, slash_path, validate_relative};
+use leantoken::repository::{
+    discover_files, git_changed_paths, resolve_existing, slash_path, validate_relative,
+};
 
 #[test]
 fn validate_relative_rejects_parent_traversal() {
@@ -91,4 +93,53 @@ fn resolve_existing_accepts_contained_file() {
     let resolved = resolve_existing(&canonical_root, "file.rs").expect("resolve");
     assert!(resolved.starts_with(&canonical_root));
     assert!(resolved.exists());
+}
+
+fn git_available() -> bool {
+    std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .is_ok()
+}
+
+fn run_git(root: &std::path::Path, args: &[&str]) {
+    std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .expect("git command");
+}
+
+fn init_git_repo(root: &std::path::Path) {
+    run_git(root, &["init"]);
+    run_git(root, &["config", "user.email", "test@example.com"]);
+    run_git(root, &["config", "user.name", "Test"]);
+}
+
+#[test]
+fn git_changed_paths_is_empty_outside_git_repo() {
+    let root = tempfile::tempdir().expect("root");
+    let changed = git_changed_paths(root.path(), 64).expect("changed paths");
+    assert!(changed.is_empty());
+}
+
+#[test]
+fn git_changed_paths_detects_modified_and_untracked_files() {
+    if !git_available() {
+        return;
+    }
+
+    let root = tempfile::tempdir().expect("root");
+    init_git_repo(root.path());
+    fs::write(root.path().join("tracked.rs"), "fn tracked() {}").expect("write");
+    run_git(root.path(), &["add", "tracked.rs"]);
+    run_git(root.path(), &["commit", "-m", "initial"]);
+
+    fs::write(root.path().join("tracked.rs"), "fn tracked() { }").expect("modify");
+    fs::write(root.path().join("new.rs"), "fn new() {}").expect("untracked");
+
+    let changed = git_changed_paths(root.path(), 64).expect("changed paths");
+    assert!(changed.contains("tracked.rs"));
+    assert!(changed.contains("new.rs"));
+    assert_eq!(changed.len(), 2);
 }

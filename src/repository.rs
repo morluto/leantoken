@@ -1,5 +1,8 @@
 use std::{
+    collections::HashSet,
+    io::{BufRead, BufReader},
     path::{Component, Path, PathBuf},
+    process::{Command, Stdio},
     time::UNIX_EPOCH,
 };
 
@@ -114,6 +117,72 @@ pub fn validate_relative(requested: &str) -> Result<PathBuf> {
         }
     }
     Ok(path.to_path_buf())
+}
+
+/// Return paths reported by `git status` as working-tree changes.
+///
+/// The result is capped at `max` entries to keep the call bounded. If the
+/// root is not a Git repository, `git` is unavailable, or `git status` fails,
+/// an empty set is returned so callers can safely proceed without a diff
+/// signal.
+pub fn git_changed_paths(root: &Path, max: usize) -> Result<HashSet<String>> {
+    if max == 0 {
+        return Ok(HashSet::new());
+    }
+
+    let mut child = match Command::new("git")
+        .args([
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--no-renames",
+        ])
+        .current_dir(root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return Ok(HashSet::new()),
+    };
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| Error::Io(std::io::Error::other("git stdout unavailable")))?;
+    let mut reader = BufReader::new(stdout);
+    let mut changed = HashSet::new();
+    let mut line = String::new();
+
+    while changed.len() < max {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+
+        let trimmed = line.trim_end();
+        if trimmed.len() < 4 {
+            continue;
+        }
+
+        let status = &trimmed[..2];
+        let path = &trimmed[3..];
+
+        // Ignore ignored files; keep modified, added, deleted, and untracked.
+        if status == "!!" {
+            continue;
+        }
+
+        changed.insert(slash_path(Path::new(path)));
+    }
+
+    let _ = child.kill();
+    drop(reader);
+    let _ = child.wait();
+
+    Ok(changed)
 }
 
 pub fn slash_path(path: &Path) -> String {

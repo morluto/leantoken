@@ -4,6 +4,7 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use globset::Glob;
 use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
@@ -13,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use crate::indexer::Indexer;
 use crate::model::*;
 use crate::ranking::{self, Candidate};
-use crate::repository::{resolve_existing, validate_relative};
+use crate::repository::{git_changed_paths, resolve_existing, validate_relative};
 use crate::storage::{ChunkHit, FileRecord, ReferenceHit, Storage, SymbolHit};
 use crate::text::{byte_range_to_line_range, excerpt, excerpt_with_context, expand_terms, hash};
 use crate::{Config, Error, Result, tokens};
@@ -22,6 +23,8 @@ const MAX_QUERY_BYTES: usize = 64 * 1024;
 const MAX_PATTERN_BYTES: usize = 4 * 1024;
 const MAX_PATH_BYTES: usize = 4 * 1024;
 const MAX_INPUT_ITEMS: usize = 256;
+const GIT_CHANGED_PATHS_MAX: usize = 512;
+const RECENCY_HALF_LIFE_SECONDS: u64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone)]
 /// Shared application services used by both CLI and MCP adapters.
@@ -549,6 +552,42 @@ impl Services {
         })
     }
 
+    #[allow(clippy::cast_precision_loss)]
+    fn file_change_boost(
+        file: Option<&FileRecord>,
+        path: &str,
+        changed_paths: &HashSet<String>,
+        prior_generation: Option<u64>,
+        now_ns: u128,
+    ) -> f64 {
+        let mut boost = 0.0;
+
+        if let Some(prior) = prior_generation
+            && file.is_some_and(|f| f.generation > prior)
+        {
+            boost += 1.0;
+        }
+
+        if changed_paths.contains(path) {
+            boost += 1.0;
+        }
+
+        if let Some(file) = file
+            && let Some(modified_ns) = file.modified_ns
+        {
+            let age = now_ns.saturating_sub(modified_ns);
+            let half_life_ns = RECENCY_HALF_LIFE_SECONDS as u128 * 1_000_000_000;
+            let recency = if age == 0 {
+                1.0
+            } else {
+                (-(age as f64) * std::f64::consts::LN_2 / (half_life_ns as f64)).exp()
+            };
+            boost += 0.5 * recency.clamp(0.0, 1.0);
+        }
+
+        boost
+    }
+
     fn context_sync(
         &self,
         request: ContextRequest,
@@ -578,8 +617,18 @@ impl Services {
         for hash in &request.known_hashes {
             validate_input(hash, "known hash", 128)?;
         }
+        let changed_paths = git_changed_paths(&self.config.root, GIT_CHANGED_PATHS_MAX)?;
+        let now_ns = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
         self.consistent(|generation| {
             let terms = context_terms(&request.task, 12);
+            let files = self.all_files(cancellation)?;
+            let file_map: HashMap<String, FileRecord> = files
+                .into_iter()
+                .map(|file| (file.path.clone(), file))
+                .collect();
             let mut candidates = Vec::new();
 
             // Workflow words such as `test` are useful path priors but terrible
@@ -603,13 +652,13 @@ impl Services {
                         continue;
                     };
                     let exact = f64::from(hit.symbol.name.eq_ignore_ascii_case(term));
-                    let changed = if let Some(prior) = request.prior_repository_generation {
-                        self.storage
-                            .find_file(&hit.path)?
-                            .is_some_and(|file| file.generation > prior)
-                    } else {
-                        false
-                    };
+                    let change_boost = Self::file_change_boost(
+                        file_map.get(&hit.path),
+                        &hit.path,
+                        &changed_paths,
+                        request.prior_repository_generation,
+                        now_ns,
+                    );
                     candidates.push(
                         Candidate::new(
                             &hit.path,
@@ -623,7 +672,7 @@ impl Services {
                         .exact(exact)
                         .symbol(1.0)
                         .path_score(context_path_score(&hit.path, &terms, &request.task))
-                        .change_boost(f64::from(changed)),
+                        .change_boost(change_boost),
                     );
                 }
                 for hit in self.storage.search_references(term, false, 20)? {
@@ -641,6 +690,13 @@ impl Services {
                     else {
                         continue;
                     };
+                    let change_boost = Self::file_change_boost(
+                        file_map.get(&hit.path),
+                        &hit.path,
+                        &changed_paths,
+                        request.prior_repository_generation,
+                        now_ns,
+                    );
                     candidates.push(
                         Candidate::new(
                             &hit.path,
@@ -651,11 +707,8 @@ impl Services {
                         .match_kind("reference")
                         .symbol_name(hit.reference.name)
                         .reference(1.0)
-                        .path_score(context_path_score(
-                            &hit.path,
-                            &terms,
-                            &request.task,
-                        )),
+                        .path_score(context_path_score(&hit.path, &terms, &request.task))
+                        .change_boost(change_boost),
                     );
                 }
                 let lexical = if term.chars().count() >= 3 {
@@ -677,6 +730,13 @@ impl Services {
                         .to_lowercase()
                         .matches(&term.to_lowercase())
                         .count();
+                    let change_boost = Self::file_change_boost(
+                        file_map.get(&search_hit.path),
+                        &search_hit.path,
+                        &changed_paths,
+                        request.prior_repository_generation,
+                        now_ns,
+                    );
                     candidates.push(
                         Candidate::new(
                             &search_hit.path,
@@ -689,7 +749,8 @@ impl Services {
                         .path_score(context_path_score(&search_hit.path, &terms, &request.task))
                         .lexical_frequency_penalty(
                             (occurrences.saturating_sub(5) as f64 / 20.0).min(1.0),
-                        ),
+                        )
+                        .change_boost(change_boost),
                     );
                 }
                 if candidates.len() >= 500 {
@@ -704,7 +765,7 @@ impl Services {
             let mut neighbor_count = 0usize;
             for seed_path in seed_paths.iter().take(24) {
                 check_cancelled(cancellation)?;
-                let Some(seed_file) = self.storage.find_file(seed_path)? else {
+                let Some(seed_file) = file_map.get(seed_path) else {
                     continue;
                 };
                 for import in self.storage.get_imports_for_file(seed_file.id, 32)? {
@@ -715,7 +776,7 @@ impl Services {
                     if !path_allowed(&target_path, &[], &request.exclude_paths)? {
                         continue;
                     }
-                    let Some(target_file) = self.storage.find_file(&target_path)? else {
+                    let Some(target_file) = file_map.get(&target_path) else {
                         continue;
                     };
                     let Some(chunk) = self
@@ -732,12 +793,20 @@ impl Services {
                         1,
                         end_line.saturating_sub(chunk.start_line) + 1,
                     );
+                    let change_boost = Self::file_change_boost(
+                        Some(target_file),
+                        &target_path,
+                        &changed_paths,
+                        request.prior_repository_generation,
+                        now_ns,
+                    );
                     candidates.push(
                         Candidate::new(&target_path, chunk.start_line, end_line, content)
                             .match_kind("import")
                             .representation("import_neighbor")
                             .path_score(context_path_score(&target_path, &terms, &request.task))
-                            .import_boost(1.0),
+                            .import_boost(1.0)
+                            .change_boost(change_boost),
                     );
                     neighbor_count += 1;
                     if neighbor_count >= 24 {

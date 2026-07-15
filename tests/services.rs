@@ -357,3 +357,115 @@ async fn oversized_query_is_rejected_without_stopping_services() {
     let status = services.status().await.expect("service remains live");
     assert_eq!(status.file_count, 1);
 }
+
+fn git_available() -> bool {
+    std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .is_ok()
+}
+
+fn init_git_repo(root: &std::path::Path) {
+    let run = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("git command");
+    };
+    run(&["init"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "Test"]);
+    run(&["add", "-A"]);
+    run(&["commit", "-m", "init"]);
+}
+
+fn set_modified(path: impl AsRef<std::path::Path>, time: std::time::SystemTime) {
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path.as_ref())
+        .expect("open for set_modified");
+    file.set_modified(time).expect("set_modified");
+}
+
+#[tokio::test]
+async fn working_tree_diff_boosts_changed_files() {
+    if !git_available() {
+        return;
+    }
+
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("src")).unwrap();
+    std::fs::write(root.path().join("src/a.rs"), "fn shared() {}\n").unwrap();
+    std::fs::write(root.path().join("src/b.rs"), "fn shared() {}\n").unwrap();
+    init_git_repo(root.path());
+
+    let config = Config::discover(root.path(), Some(root.path().join("index.sqlite"))).unwrap();
+    let services = Services::open(config).unwrap();
+    services.index(false).await.unwrap();
+
+    // Modify b.rs after indexing; do not reindex so the diff signal is tested.
+    std::fs::write(root.path().join("src/b.rs"), "fn shared() { let x = 1; }\n").unwrap();
+
+    let response = services
+        .context(ContextRequest {
+            task: "update shared implementation".into(),
+            token_budget: 500,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(!response.fragments.is_empty());
+    assert_eq!(response.fragments[0].path, "src/b.rs");
+    assert!(
+        response
+            .fragments
+            .iter()
+            .any(|fragment| fragment.path == "src/b.rs" && fragment.reason.contains("changed"))
+    );
+}
+
+#[tokio::test]
+async fn recent_mtime_boosts_recent_files() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("src")).unwrap();
+    std::fs::write(root.path().join("src/a.rs"), "fn shared() {}\n").unwrap();
+    std::fs::write(root.path().join("src/b.rs"), "fn shared() {}\n").unwrap();
+
+    let old =
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(365 * 24 * 60 * 60);
+    let recent = std::time::SystemTime::now();
+    set_modified(root.path().join("src/a.rs"), old);
+    set_modified(root.path().join("src/b.rs"), recent);
+
+    let config = Config::discover(root.path(), Some(root.path().join("index.sqlite"))).unwrap();
+    let services = Services::open(config).unwrap();
+    services.index(false).await.unwrap();
+
+    let response = services
+        .context(ContextRequest {
+            task: "update shared implementation".into(),
+            token_budget: 500,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(!response.fragments.is_empty());
+    assert_eq!(response.fragments[0].path, "src/b.rs");
+    assert!(
+        response
+            .fragments
+            .iter()
+            .any(|fragment| fragment.path == "src/b.rs" && fragment.reason.contains("changed"))
+    );
+}
