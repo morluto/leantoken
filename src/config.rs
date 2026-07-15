@@ -41,7 +41,9 @@ impl Config {
     /// Resolve a repository root and apply bounded defaults.
     ///
     /// When `database_path` is absent, LeanToken chooses a per-repository cache
-    /// path outside the source tree when the platform provides one.
+    /// path outside the source tree when the platform provides one. An existing
+    /// explicit database parent is canonicalized so repository discovery can
+    /// reliably exclude SQLite artifacts reached through path aliases.
     pub fn discover(root: impl AsRef<Path>, database_path: Option<PathBuf>) -> Result<Self> {
         let root = root.as_ref().canonicalize().map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -56,7 +58,9 @@ impl Config {
                 root.display()
             )));
         }
-        let database_path = database_path.unwrap_or_else(|| default_database_path(&root));
+        let database_path = database_path
+            .map(canonicalize_database_parent)
+            .unwrap_or_else(|| default_database_path(&root));
         Ok(Self {
             root,
             database_path,
@@ -75,6 +79,15 @@ impl Config {
             tokenizer: Tokenizer::default(),
         })
     }
+}
+
+fn canonicalize_database_parent(path: PathBuf) -> PathBuf {
+    let Some(file_name) = path.file_name() else {
+        return path;
+    };
+    path.parent()
+        .and_then(|parent| parent.canonicalize().ok())
+        .map_or(path.clone(), |parent| parent.join(file_name))
 }
 
 fn default_database_path(root: &Path) -> PathBuf {

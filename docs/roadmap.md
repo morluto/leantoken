@@ -14,8 +14,10 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 - Task extraction now preserves qualified identifiers and header-like terms,
   reserves query slots for prose intent, round-robins identifier expansions,
   and fuses only independent explicit concepts. Symbol declaration reads now
-  cross index-chunk boundaries. Eager lexical-to-declaration expansion was
-  removed because it added indexed lookups without improving the measured
+  cross index-chunk boundaries and retain up to 64 lines. That range change
+  raised labeled-anchor coverage from 7/41 to 10/41 without increasing the
+  checked first-response token cost. Eager lexical-to-declaration expansion
+  was removed because it added indexed lookups without improving the measured
   selected ranges.
 - Add a language grammar only when a pinned task and parser fixture demonstrate
   recall value that outweighs its binary, indexing, and schema cost. The
