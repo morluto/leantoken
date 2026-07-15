@@ -16,6 +16,11 @@ use toml_edit::{Array, DocumentMut, Item, Table, value};
 
 use crate::{Error, Result};
 
+#[path = "setup/launcher.rs"]
+mod launcher;
+
+use launcher::McpLauncher;
+
 const SERVER_NAME: &str = "leantoken";
 
 /// Coding clients supported by the global setup wizard.
@@ -219,7 +224,7 @@ enum JsonEntryShape {
 #[derive(Debug)]
 struct SetupEnvironment {
     home: PathBuf,
-    executable: PathBuf,
+    launcher: McpLauncher,
     interactive: bool,
 }
 
@@ -293,10 +298,9 @@ pub fn run(operation: SetupOperation, request: SetupRequest) -> Result<SetupRepo
         .ok_or_else(|| Error::InvalidRequest("could not determine the home directory".into()))?
         .home_dir()
         .to_path_buf();
-    let executable = std::env::current_exe()?.canonicalize()?;
     let environment = SetupEnvironment {
         home,
-        executable,
+        launcher: McpLauncher::current()?,
         interactive: std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
     };
     run_with(operation, request, &environment, &DialoguerPrompt)
@@ -346,14 +350,7 @@ fn run_with(
 
     let results = clients
         .into_iter()
-        .map(|client| {
-            configure_client(
-                operation,
-                client,
-                &environment.home,
-                &environment.executable,
-            )
-        })
+        .map(|client| configure_client(operation, client, &environment.home, &environment.launcher))
         .collect();
     Ok(SetupReport {
         operation,
@@ -381,14 +378,14 @@ fn configure_client(
     operation: SetupOperation,
     client: SetupClient,
     home: &Path,
-    executable: &Path,
+    launcher: &McpLauncher,
 ) -> ClientSetupResult {
     let definition = client.definition(home);
     let outcome = match definition.format {
         ConfigFormat::Json { section, shape } => {
-            edit_json_config(operation, &definition.path, section, shape, executable)
+            edit_json_config(operation, &definition.path, section, shape, launcher)
         }
-        ConfigFormat::Toml => edit_toml_config(operation, &definition.path, executable),
+        ConfigFormat::Toml => edit_toml_config(operation, &definition.path, launcher),
     };
     match outcome {
         Ok(status) => ClientSetupResult {
@@ -433,7 +430,7 @@ fn edit_json_config(
     path: &Path,
     section_name: &str,
     shape: JsonEntryShape,
-    executable: &Path,
+    launcher: &McpLauncher,
 ) -> Result<EditStatus> {
     let original = read_optional(path)?.unwrap_or_else(|| "{}\n".into());
     let root = CstRootNode::parse(&original, &ParseOptions::default())
@@ -453,7 +450,7 @@ fn edit_json_config(
 
     let status = match operation {
         SetupOperation::Setup => {
-            let expected = json_entry(shape, executable)?;
+            let expected = json_entry(shape, launcher)?;
             match section.get(SERVER_NAME) {
                 Some(property) => {
                     let current = property
@@ -495,18 +492,16 @@ fn edit_json_config(
     Ok(status)
 }
 
-fn json_entry(shape: JsonEntryShape, executable: &Path) -> Result<Value> {
-    let command = executable
-        .to_str()
-        .ok_or_else(|| Error::InvalidRequest("LeanToken executable path is not UTF-8".into()))?;
+fn json_entry(shape: JsonEntryShape, launcher: &McpLauncher) -> Result<Value> {
+    let command = launcher.command()?;
     Ok(match shape {
         JsonEntryShape::CommandAndArgs => json!({
             "command": command,
-            "args": ["mcp"]
+            "args": launcher.args
         }),
         JsonEntryShape::OpenCode => json!({
             "type": "local",
-            "command": [command, "mcp"],
+            "command": std::iter::once(command).chain(launcher.args.iter().map(String::as_str)).collect::<Vec<_>>(),
             "enabled": true
         }),
     })
@@ -531,7 +526,7 @@ fn to_cst_input(value: &Value) -> CstInputValue {
 fn edit_toml_config(
     operation: SetupOperation,
     path: &Path,
-    executable: &Path,
+    launcher: &McpLauncher,
 ) -> Result<EditStatus> {
     let original = read_optional(path)?.unwrap_or_default();
     let mut document = if original.trim().is_empty() {
@@ -544,12 +539,10 @@ fn edit_toml_config(
 
     let status = match operation {
         SetupOperation::Setup => {
-            let command = executable.to_str().ok_or_else(|| {
-                Error::InvalidRequest("LeanToken executable path is not UTF-8".into())
-            })?;
+            let command = launcher.command()?;
             let servers = ensure_toml_table(&mut document, "mcp_servers", path)?;
             if let Some(existing) = servers.get(SERVER_NAME)
-                && toml_entry_matches(existing, command)
+                && toml_entry_matches(existing, command, &launcher.args)
             {
                 return Ok(EditStatus::AlreadyConfigured);
             }
@@ -557,7 +550,10 @@ fn edit_toml_config(
             let mut server = Table::new();
             server["command"] = value(command);
             let mut args = Array::new();
-            args.push("mcp");
+            launcher
+                .args
+                .iter()
+                .for_each(|argument| args.push(argument));
             server["args"] = value(args);
             server["startup_timeout_sec"] = value(30);
             servers.insert(SERVER_NAME, Item::Table(server));
@@ -602,7 +598,7 @@ fn ensure_toml_table<'a>(
         .ok_or_else(|| invalid_config(path, format!("{name} must be a table")))
 }
 
-fn toml_entry_matches(item: &Item, command: &str) -> bool {
+fn toml_entry_matches(item: &Item, command: &str, expected_args: &[String]) -> bool {
     let Some(table) = item.as_table() else {
         return false;
     };
@@ -613,7 +609,12 @@ fn toml_entry_matches(item: &Item, command: &str) -> bool {
     let args_match = table
         .get("args")
         .and_then(Item::as_array)
-        .is_some_and(|args| args.len() == 1 && args.get(0).and_then(|v| v.as_str()) == Some("mcp"));
+        .is_some_and(|args| {
+            args.iter()
+                .filter_map(|value| value.as_str())
+                .eq(expected_args.iter().map(String::as_str))
+                && args.len() == expected_args.len()
+        });
     let timeout_matches = table.get("startup_timeout_sec").and_then(Item::as_integer) == Some(30);
     command_matches && args_match && timeout_matches
 }
@@ -721,7 +722,7 @@ mod tests {
     fn environment(temp: &tempfile::TempDir) -> SetupEnvironment {
         SetupEnvironment {
             home: temp.path().join("home"),
-            executable: temp.path().join("bin/lean token"),
+            launcher: McpLauncher::from_executable(&temp.path().join("bin/lean token")),
             interactive: true,
         }
     }
@@ -735,14 +736,14 @@ mod tests {
             "{\n  // keep me\n  \"theme\": \"dark\",\n  \"mcpServers\": {\n    \"other\": { \"command\": \"other\" },\n  },\n}\n",
         )
         .unwrap();
-        let executable = temp.path().join("bin/léan token");
+        let launcher = McpLauncher::from_executable(&temp.path().join("bin/léan token"));
 
         let first = edit_json_config(
             SetupOperation::Setup,
             &path,
             "mcpServers",
             JsonEntryShape::CommandAndArgs,
-            &executable,
+            &launcher,
         )
         .unwrap();
         assert!(matches!(first, EditStatus::Configured));
@@ -756,7 +757,7 @@ mod tests {
             &path,
             "mcpServers",
             JsonEntryShape::CommandAndArgs,
-            &executable,
+            &launcher,
         )
         .unwrap();
         assert!(matches!(second, EditStatus::AlreadyConfigured));
@@ -766,7 +767,7 @@ mod tests {
     #[test]
     fn json_remove_preserves_sibling_server_and_prunes_empty_section() {
         let temp = tempfile::tempdir().unwrap();
-        let executable = temp.path().join("leantoken");
+        let launcher = McpLauncher::from_executable(&temp.path().join("leantoken"));
         let with_sibling = temp.path().join("with-sibling.json");
         fs::write(
             &with_sibling,
@@ -778,7 +779,7 @@ mod tests {
             &with_sibling,
             "mcpServers",
             JsonEntryShape::CommandAndArgs,
-            &executable,
+            &launcher,
         )
         .unwrap();
         let contents = fs::read_to_string(with_sibling).unwrap();
@@ -796,12 +797,41 @@ mod tests {
             &only,
             "mcpServers",
             JsonEntryShape::CommandAndArgs,
-            &executable,
+            &launcher,
         )
         .unwrap();
         let contents = fs::read_to_string(only).unwrap();
         assert!(!contents.contains("mcpServers"));
         assert!(contents.contains("\"x\": 1"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn json_remove_does_not_require_a_utf8_executable_path() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        fs::write(
+            &path,
+            "{\"mcpServers\":{\"leantoken\":{\"command\":\"old\",\"args\":[\"mcp\"]}}}\n",
+        )
+        .unwrap();
+        let executable = PathBuf::from(std::ffi::OsString::from_vec(vec![b'l', 0x80]));
+        let launcher = McpLauncher::from_executable(&executable);
+
+        assert!(matches!(
+            edit_json_config(
+                SetupOperation::Remove,
+                &path,
+                "mcpServers",
+                JsonEntryShape::CommandAndArgs,
+                &launcher,
+            )
+            .unwrap(),
+            EditStatus::Removed
+        ));
+        assert_eq!(fs::read_to_string(path).unwrap(), "{}\n");
     }
 
     #[test]
@@ -813,19 +843,19 @@ mod tests {
             "# keep me\nmodel = \"test\"\n\n[mcp_servers.other]\ncommand = \"other\"\n",
         )
         .unwrap();
-        let executable = temp.path().join("bin/leantoken");
-        edit_toml_config(SetupOperation::Setup, &path, &executable).unwrap();
+        let launcher = McpLauncher::from_executable(&temp.path().join("bin/leantoken"));
+        edit_toml_config(SetupOperation::Setup, &path, &launcher).unwrap();
         let configured = fs::read_to_string(&path).unwrap();
         assert!(configured.contains("# keep me"));
         assert!(configured.contains("[mcp_servers.other]"));
         assert!(configured.contains("[mcp_servers.leantoken]"));
         assert!(matches!(
-            edit_toml_config(SetupOperation::Setup, &path, &executable).unwrap(),
+            edit_toml_config(SetupOperation::Setup, &path, &launcher).unwrap(),
             EditStatus::AlreadyConfigured
         ));
         assert_eq!(fs::read_to_string(&path).unwrap(), configured);
 
-        edit_toml_config(SetupOperation::Remove, &path, &executable).unwrap();
+        edit_toml_config(SetupOperation::Remove, &path, &launcher).unwrap();
         let removed = fs::read_to_string(path).unwrap();
         assert!(removed.contains("# keep me"));
         assert!(removed.contains("[mcp_servers.other]"));
@@ -844,7 +874,7 @@ mod tests {
                 &path,
                 "mcpServers",
                 JsonEntryShape::CommandAndArgs,
-                &temp.path().join("leantoken"),
+                &McpLauncher::from_executable(&temp.path().join("leantoken")),
             )
             .is_err()
         );

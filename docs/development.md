@@ -25,6 +25,28 @@ cargo build --release
 cargo package
 ```
 
+## Release artifacts
+
+The generated release workflow builds native archives for Linux x64/arm64,
+macOS x64/arm64, and Windows x64. It also builds the `leantoken` npm installer,
+which selects and downloads the matching archive from the GitHub release.
+
+Verify release configuration changes before pushing them:
+
+```bash
+dist generate --check
+dist plan
+```
+
+Version tags such as `v0.1.0` trigger `.github/workflows/release.yml`. Keep the
+Cargo package version, tag, GitHub release, and npm package version identical.
+
+The first npm release is a manual bootstrap because npm trusted publishing can
+only be configured after the package exists. Once the GitHub release finishes,
+download and extract `leantoken-npm-package.tar.gz`, then publish its `package`
+directory with `npm publish package --access public`. Configure trusted
+publishing before automating later npm releases.
+
 ## Test responsibilities
 
 Tests are organized around observable behavior:

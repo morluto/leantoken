@@ -7,6 +7,7 @@ autotests = false
 description = "Token-budgeted repository context for coding agents"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/morluto/leantoken"
+homepage = "https://github.com/morluto/leantoken"
 readme = "README.md"
 
 [[test]]
@@ -56,6 +57,11 @@ rmcp = { version = "2.2.0", default-features = false, features = ["client", "tra
 [profile.release]
 lto = "thin"
 strip = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 
 [lints.rust]
 unsafe_code = "forbid"
