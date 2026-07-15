@@ -60,7 +60,7 @@ jobs:
           shared-key: audit
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        uses: taiki-e/install-action@cargo-audit
 
       - name: Audit dependencies
         run: cargo audit
@@ -82,7 +82,7 @@ jobs:
           shared-key: udeps
 
       - name: Install cargo-udeps
-        run: cargo install cargo-udeps --locked
+        uses: taiki-e/install-action@cargo-udeps
 
       - name: Check unused dependencies
         run: cargo +nightly udeps --all-targets --all-features

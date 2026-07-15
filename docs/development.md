@@ -29,6 +29,9 @@ cargo package
 
 Tests are organized around observable behavior:
 
+Integration test files are modules of one `integration` target so Cargo can
+run them in parallel rather than starting one executable per file.
+
 - `tests/storage.rs`: migrations, WAL/foreign keys, FTS5, atomic replacement,
   rollback, reopen, and generation behavior;
 - `tests/indexer.rs`: initial, unchanged, changed, deleted, rebuilt, bounded
@@ -73,7 +76,7 @@ diff first.
 The fixture benchmark is a fast regression check:
 
 ```bash
-cargo test --test benchmark_contract -- --nocapture
+cargo test --test integration benchmark_contract:: -- --nocapture
 ```
 
 The representative benchmark requires pinned external worktrees and `rg`. See

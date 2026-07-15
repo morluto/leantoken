@@ -3,10 +3,15 @@ name = "leantoken"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
+autotests = false
 description = "Token-budgeted repository context for coding agents"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/morluto/leantoken"
 readme = "README.md"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
 
 [dependencies]
 blake3 = "1.8.2"
