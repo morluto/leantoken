@@ -113,16 +113,6 @@ The primary metric is useful repository evidence delivered per model token.
 - [Development and testing](docs/development.md)
 - [Benchmark methodology](benchmarks/README.md)
 
-## Current benchmark signal
-
-The checked-in representative run found 13 of 15 labeled files while returning
-4,640 source tokens, compared with 143,034 tokens for full contents of the
-labeled files. The complete LeanToken responses used 12,902 tokens. It covered
-only 10 of 41 labeled line anchors, so this is evidence of a smaller payload—not
-proof that the excerpts are sufficient to implement the fixes. See the
-benchmark documentation for the retrospective corpus, methodology, and
-limitations.
-
 ## License
 
 MIT OR Apache-2.0
