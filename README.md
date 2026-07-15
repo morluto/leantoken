@@ -82,11 +82,12 @@ Example host configuration:
 
 ## Current benchmark signal
 
-The checked-in representative run found all seven labeled files while
-returning 1,574 source tokens, compared with 28,870 tokens for full contents of
-the labeled files. It covered only 3 of 18 labeled line anchors, so this is
-evidence of a smaller source payload, not proof that retrieval quality is
-solved. See the benchmark documentation for the corpus, methodology, and
+The checked-in representative run found 13 of 15 labeled files while returning
+4,801 source tokens, compared with 143,034 tokens for full contents of the
+labeled files. The complete LeanToken responses used 13,114 tokens. It covered
+only 7 of 41 labeled line anchors, so this is evidence of a smaller payload—not
+proof that the excerpts are sufficient to implement the fixes. See the
+benchmark documentation for the retrospective corpus, methodology, and
 limitations.
 
 ## License

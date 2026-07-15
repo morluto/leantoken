@@ -28,7 +28,8 @@ ignore-aware discovery -> chunking -> tree-sitter extraction
 - Retrieval services own validation, freshness checks, ranking inputs, token
   limits, and response models.
 - The MCP adapter owns SDK types, protocol error translation, cancellation, and
-  stdio lifecycle.
+  stdio lifecycle. It returns structured results while omitting optional output
+  schemas from the catalog to avoid charging every client for duplicate DTOs.
 
 LeanToken does not implement JSON-RPC framing or MCP dispatch. Those remain in
 the official Rust MCP SDK.
@@ -45,7 +46,9 @@ The connection is configured with:
 - foreign keys;
 - a bounded busy timeout;
 - bundled SQLite with an FTS5 trigram startup probe;
-- transactional schema migrations.
+- transactional schema migrations;
+- file/range lookup indexes added through a versioned migration so existing
+  databases receive the same query plan as new databases.
 
 One serialized writer applies a repository reconciliation. File preparation
 happens outside the transaction, then replacements and deletions commit as one
@@ -64,6 +67,15 @@ performs a catch-up reconciliation to close the startup event gap. Changes
 observed during the catch-up pass are already queued by the watcher. Later
 events are debounced and coalesced; ambiguous rename sequences, backend rescan
 requests, and queue overflow request a full reconciliation.
+
+For existing regular files, the watcher reconciles only the reported paths.
+New paths, directory changes, symlinks, ignore-file changes, configuration
+changes, and ambiguous deletions fall back to full discovery. Path-set
+expansions also reparse unchanged importers so a newly added target can resolve
+previously unresolved edges. Reported files are content-hashed even when size
+and modification time are unchanged. File replacement, deletion,
+reverse-import invalidation, and generation advancement commit in one SQLite
+transaction.
 
 Indexing is serialized, but queries continue against the last committed WAL
 generation. Responses report `reconciling` while any reconciliation is active.
@@ -90,13 +102,28 @@ remain text-searchable and are marked structurally incomplete.
   files for orientation.
 
 Ranking combines exactness, structural role, FTS relevance, path evidence,
-fragment size, lexical frequency, optional focus, import proximity, and change
-generation. Signals change ordering; absent structural evidence never removes
-a lexical match.
+fragment size, lexical frequency, optional focus, import proximity, change
+generation, and a bounded working-tree signal. Qualified identifiers and
+header-like terms are retained exactly, while part of the twelve-query budget
+is reserved for high-value prose terms. Identifier expansions are added
+round-robin so one long name cannot consume the budget. Reciprocal-rank fusion
+applies only when a path matches multiple independent explicit terms; variants
+of one identifier do not count as separate evidence. Signals change ordering;
+absent structural evidence never removes a lexical match.
+
+Symbol declaration excerpts may cross storage-chunk boundaries, but remain
+capped by the request budget and range limit. This keeps SQLite chunking an
+indexing detail rather than silently truncating a known syntactic range.
 
 Context selection hashes and deduplicates overlapping candidates, omits known
 hashes, applies a per-file diversity cap, and selects only complete fragments
 that fit the source-token budget.
+
+Each service instance owns its tokenizer configuration. Exact OpenAI BPE
+encodings use `tiktoken-rs` singleton vocabularies; the explicit estimate mode
+is marked inexact. Protocol-cost benchmarks serialize the actual tool catalog,
+JSON-RPC requests and responses, result wrappers, and repeated-context handoff
+instead of adding a guessed fixed overhead.
 
 ## Path and data safety
 
@@ -107,9 +134,10 @@ requires an indexed path, so ignore rules also govern which files can be read
 through the tool.
 
 LeanToken is read-only with respect to repository source. It does not execute
-commands or make network requests. SQL values are parameterized. Logs contain
-paths, counts, hashes, timings, and error summaries but not source bodies by
-default.
+project commands or make network requests. Context ranking may invoke a bounded
+`git status` process for an optional working-tree signal; timeout or failure
+removes that signal. SQL values are parameterized. Logs contain paths, counts,
+hashes, timings, and error summaries but not source bodies by default.
 
 The index contains local source text in SQLite. Users should place an explicit
 database path only where its filesystem permissions and retention policy are
