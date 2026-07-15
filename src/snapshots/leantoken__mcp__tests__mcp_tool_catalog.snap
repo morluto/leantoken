@@ -5,7 +5,7 @@ expression: tools
 [
   {
     "name": "leantoken_context",
-    "description": "Retrieve ranked task context within a token budget.",
+    "description": "First tool for a new non-trivial repository task. Composes ranked evidence within a token budget, replacing several broad searches and reads. Use narrower tools for follow-up questions.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -71,7 +71,7 @@ expression: tools
   },
   {
     "name": "leantoken_files",
-    "description": "List, find, or glob repository files.",
+    "description": "Path discovery replacing find and rg --files. Use tree for hierarchy, find for fuzzy paths, and glob for known patterns. Does not search contents; use leantoken_search.",
     "inputSchema": {
       "$defs": {
         "FileOperation": {
@@ -162,7 +162,7 @@ expression: tools
   },
   {
     "name": "leantoken_outline",
-    "description": "Return structural outline for one or more files.",
+    "description": "Structural map of definitions, signatures, imports, and ranges, replacing whole-file orientation reads. Use before leantoken_read when the relevant symbol or range is unknown. Omits source bodies.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -218,7 +218,7 @@ expression: tools
   },
   {
     "name": "leantoken_read",
-    "description": "Read a bounded file range by path or symbol.",
+    "description": "Bounded source retrieval replacing cat, head, and tail. Prefer a symbol or narrow range; run leantoken_outline first for unfamiliar files. Pass expected_hash to suppress unchanged content.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -281,7 +281,7 @@ expression: tools
   },
   {
     "name": "leantoken_search",
-    "description": "Search repository text, symbols, or references.",
+    "description": "Ranked source lookup replacing grep and rg. Use symbol for definitions, reference for usages, identifier for exact names, text for substrings, regex for patterns, or auto to combine evidence. Use leantoken_files for filenames.",
     "inputSchema": {
       "$defs": {
         "SearchMode": {

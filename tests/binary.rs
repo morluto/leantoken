@@ -61,6 +61,55 @@ fn mcp_exits_cleanly_on_stdio_eof() {
         .success();
 }
 
+#[test]
+fn setup_and_remove_do_not_require_a_repository() {
+    let temp = tempfile::tempdir().expect("temporary home");
+    let missing_root = temp.path().join("not-a-repository");
+
+    let setup = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", temp.path())
+        .env("USERPROFILE", temp.path())
+        .args([
+            "--root",
+            missing_root.to_str().expect("root UTF-8"),
+            "--json",
+            "setup",
+            "--claude",
+            "--yes",
+        ])
+        .output()
+        .expect("run setup");
+    assert!(
+        setup.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&setup.stdout).expect("setup JSON output");
+    assert_eq!(report["results"][0]["status"], "configured");
+    let config = std::fs::read_to_string(temp.path().join(".claude.json"))
+        .expect("Claude configuration");
+    assert!(config.contains("\"leantoken\""));
+    assert!(config.contains("\"mcp\""));
+
+    let remove = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", temp.path())
+        .env("USERPROFILE", temp.path())
+        .args(["--json", "remove", "--claude", "--yes"])
+        .output()
+        .expect("run remove");
+    assert!(
+        remove.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+    let config = std::fs::read_to_string(temp.path().join(".claude.json"))
+        .expect("Claude configuration after removal");
+    assert!(!config.contains("\"leantoken\""));
+}
+
 fn run(
     root: &std::path::Path,
     database: &std::path::Path,

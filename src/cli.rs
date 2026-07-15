@@ -1,6 +1,6 @@
 use std::{path::PathBuf, str::FromStr};
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::Config;
 use crate::Result;
@@ -8,6 +8,7 @@ use crate::model::{
     ContextRequest, FileOperation, FilesRequest, OutlineRequest, ReadRequest, SearchMode,
     SearchRequest,
 };
+use crate::setup::{SetupClient, SetupRequest};
 use crate::tokens::Tokenizer;
 
 /// LeanToken CLI and MCP server entry point.
@@ -61,6 +62,8 @@ impl Cli {
             Commands::Read(args) => AppRequest::Read(args.into()),
             Commands::Context(args) => AppRequest::Context(args.into()),
             Commands::Mcp => AppRequest::Mcp,
+            Commands::Setup(args) => AppRequest::Setup(args.into()),
+            Commands::Remove(args) => AppRequest::Remove(args.into()),
         }
     }
 }
@@ -76,6 +79,8 @@ pub enum AppRequest {
     Read(ReadRequest),
     Context(ContextRequest),
     Mcp,
+    Setup(SetupRequest),
+    Remove(SetupRequest),
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -107,6 +112,70 @@ pub enum Commands {
 
     /// Run the MCP server over stdio.
     Mcp,
+
+    /// Configure LeanToken as a global MCP server for coding clients.
+    Setup(IntegrationArgs),
+
+    /// Remove LeanToken's global MCP server entries.
+    Remove(IntegrationArgs),
+}
+
+/// Client selection shared by `setup` and `remove`.
+#[derive(Debug, Clone, Args)]
+pub struct IntegrationArgs {
+    /// Configure Claude Code.
+    #[arg(long)]
+    pub claude: bool,
+    /// Configure Cursor.
+    #[arg(long)]
+    pub cursor: bool,
+    /// Configure OpenCode.
+    #[arg(long)]
+    pub opencode: bool,
+    /// Configure Codex.
+    #[arg(long)]
+    pub codex: bool,
+    /// Configure Gemini CLI.
+    #[arg(long)]
+    pub gemini: bool,
+    /// Configure Antigravity.
+    #[arg(long)]
+    pub antigravity: bool,
+    /// Select every supported client.
+    #[arg(long)]
+    pub all: bool,
+    /// Skip prompts and use detected clients when none are selected explicitly.
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+}
+
+impl From<IntegrationArgs> for SetupRequest {
+    fn from(args: IntegrationArgs) -> Self {
+        let mut clients = Vec::new();
+        if args.claude {
+            clients.push(SetupClient::Claude);
+        }
+        if args.cursor {
+            clients.push(SetupClient::Cursor);
+        }
+        if args.opencode {
+            clients.push(SetupClient::OpenCode);
+        }
+        if args.codex {
+            clients.push(SetupClient::Codex);
+        }
+        if args.gemini {
+            clients.push(SetupClient::Gemini);
+        }
+        if args.antigravity {
+            clients.push(SetupClient::Antigravity);
+        }
+        Self {
+            clients,
+            all: args.all,
+            yes: args.yes,
+        }
+    }
 }
 
 /// Clap value for the `files` operation.

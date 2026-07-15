@@ -28,7 +28,7 @@ impl LeanTokenMcp {
 impl LeanTokenMcp {
     #[tool(
         name = "leantoken_files",
-        description = "List, find, or glob repository files."
+        description = "Path discovery replacing find and rg --files. Use tree for hierarchy, find for fuzzy paths, and glob for known patterns. Does not search contents; use leantoken_search."
     )]
     async fn leantoken_files(
         &self,
@@ -45,7 +45,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "leantoken_search",
-        description = "Search repository text, symbols, or references."
+        description = "Ranked source lookup replacing grep and rg. Use symbol for definitions, reference for usages, identifier for exact names, text for substrings, regex for patterns, or auto to combine evidence. Use leantoken_files for filenames."
     )]
     async fn leantoken_search(
         &self,
@@ -62,7 +62,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "leantoken_outline",
-        description = "Return structural outline for one or more files."
+        description = "Structural map of definitions, signatures, imports, and ranges, replacing whole-file orientation reads. Use before leantoken_read when the relevant symbol or range is unknown. Omits source bodies."
     )]
     async fn leantoken_outline(
         &self,
@@ -79,7 +79,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "leantoken_read",
-        description = "Read a bounded file range by path or symbol."
+        description = "Bounded source retrieval replacing cat, head, and tail. Prefer a symbol or narrow range; run leantoken_outline first for unfamiliar files. Pass expected_hash to suppress unchanged content."
     )]
     async fn leantoken_read(
         &self,
@@ -96,7 +96,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "leantoken_context",
-        description = "Retrieve ranked task context within a token budget."
+        description = "First tool for a new non-trivial repository task. Composes ranked evidence within a token budget, replacing several broad searches and reads. Use narrower tools for follow-up questions."
     )]
     async fn leantoken_context(
         &self,
@@ -113,7 +113,7 @@ impl LeanTokenMcp {
 }
 
 #[tool_handler(
-    instructions = "LeanToken MCP server exposes repository files, search, outline, read, and context tools."
+    instructions = "Use LeanToken for repository discovery: context for a new task, files for paths, search for code, outline before read, and read only needed ranges. Use native tools for edits, commands, and tests."
 )]
 impl ServerHandler for LeanTokenMcp {}
 
@@ -242,6 +242,25 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn tool_descriptions_route_native_discovery_workflows() {
+        let descriptions = LeanTokenMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|tool| {
+                (
+                    tool.name.into_owned(),
+                    tool.description.expect("tool description").into_owned(),
+                )
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        assert!(descriptions["leantoken_files"].contains("find and rg --files"));
+        assert!(descriptions["leantoken_search"].contains("grep and rg"));
+        assert!(descriptions["leantoken_outline"].contains("whole-file"));
+        assert!(descriptions["leantoken_read"].contains("cat, head, and tail"));
+        assert!(descriptions["leantoken_context"].contains("First tool"));
     }
 
     #[test]
