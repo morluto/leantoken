@@ -6,7 +6,7 @@
   "host_arch": "x86_64",
   "rustc_version": "rustc 1.96.1 (31fca3adb 2026-06-26)",
   "ripgrep_version": "ripgrep 15.1.0 (rev af60c2de9d)",
-  "generated_at_unix_seconds": 1784112370,
+  "generated_at_unix_seconds": 1784117745,
   "tokenizer": "cl100k_base",
   "token_count_exact": true,
   "methodology": {
@@ -25,23 +25,23 @@
     "returned_files": 51,
     "labeled_file_precision": 0.2549019607843137,
     "line_anchors": 41,
-    "line_anchors_found": 7,
-    "line_anchor_recall": 0.17073170731707318,
+    "line_anchors_found": 10,
+    "line_anchor_recall": 0.24390243902439024,
     "oracle_source_tokens": 143034,
-    "rg_discovery_tokens": 79088,
-    "scripted_baseline_total_json_tokens": 260195,
-    "leantoken_source_tokens": 4801,
-    "leantoken_total_json_tokens": 13114,
-    "source_savings_against_oracle_fraction": 0.9664345540221206,
-    "total_json_savings_against_scripted_fraction": 0.9495993389573205,
+    "rg_discovery_tokens": 79086,
+    "scripted_baseline_total_json_tokens": 260193,
+    "leantoken_source_tokens": 4640,
+    "leantoken_total_json_tokens": 12902,
+    "source_savings_against_oracle_fraction": 0.9675601605212747,
+    "total_json_savings_against_scripted_fraction": 0.950413731345578,
     "known_fragments_resent": 0,
     "dead_end_fragments": 46,
-    "dead_end_source_tokens": 3081,
-    "second_response_source_tokens": 3399,
+    "dead_end_source_tokens": 2175,
+    "second_response_source_tokens": 4670,
     "estimated_repeated_range_source_tokens": 98,
-    "repeat_request_json_tokens": 1836,
-    "repeat_total_json_tokens": 11698,
-    "two_turn_context_json_tokens": 26648
+    "repeat_request_json_tokens": 1837,
+    "repeat_total_json_tokens": 13157,
+    "two_turn_context_json_tokens": 27896
   },
   "corpora": [
     {
@@ -52,7 +52,7 @@
       "indexed_files": 212,
       "indexed_chunks": 1007,
       "index_warnings": [],
-      "cold_index_ms": 2940.195382,
+      "cold_index_ms": 3246.734423,
       "database_bytes": 29799632,
       "tasks": [
         {
@@ -174,14 +174,14 @@
           "leantoken_total_json_tokens": 1201,
           "source_savings_against_oracle_fraction": 0.9799380946921931,
           "total_json_savings_against_scripted_fraction": 0.9144891420434318,
-          "first_context_ms": 197.907903,
+          "first_context_ms": 263.891424,
           "warm_context_ms_samples": [
-            170.349685,
-            170.289445,
-            163.807817
+            253.784091,
+            227.10440300000002,
+            219.008641
           ],
-          "warm_context_median_ms": 170.289445,
-          "warm_context_p95_ms": 170.349685,
+          "warm_context_median_ms": 227.10440300000002,
+          "warm_context_p95_ms": 253.784091,
           "second_response_source_tokens": 273,
           "estimated_repeated_range_source_tokens": 0,
           "repeat_request_json_tokens": 221,
@@ -202,7 +202,7 @@
       "indexed_files": 231,
       "indexed_chunks": 594,
       "index_warnings": [],
-      "cold_index_ms": 1346.82555,
+      "cold_index_ms": 1326.594174,
       "database_bytes": 15438064,
       "tasks": [
         {
@@ -227,12 +227,12 @@
             {
               "path": "src/flask/ctx.py",
               "start_line": 154,
-              "end_line": 193,
+              "end_line": 206,
               "representation": "symbol",
               "reason": "symbol",
-              "score": 1.8456,
-              "token_count": 343,
-              "content_hash": "3677a5efdde7a873b94ad0d83d3afe66"
+              "score": 1.838,
+              "token_count": 442,
+              "content_hash": "829d07892e74b1fd0796faa32f11c760"
             },
             {
               "path": "tests/test_reqctx.py",
@@ -309,8 +309,8 @@
           "relevant_file_recall": 1.0,
           "labeled_file_precision": 0.25,
           "line_anchors": 4,
-          "line_anchors_found": 1,
-          "line_anchor_recall": 0.25,
+          "line_anchors_found": 2,
+          "line_anchor_recall": 0.5,
           "unlabeled_returned_files": [
             "docs/api.rst",
             "docs/extensiondev.rst",
@@ -324,23 +324,23 @@
           "rg_discovery_tokens": 3446,
           "rg_discovery_json_tokens": 3898,
           "scripted_baseline_total_json_tokens": 10481,
-          "leantoken_source_tokens": 614,
-          "leantoken_total_json_tokens": 1594,
-          "source_savings_against_oracle_fraction": 0.8910574875798438,
-          "total_json_savings_against_scripted_fraction": 0.8479152752599943,
-          "first_context_ms": 55.877297,
+          "leantoken_source_tokens": 713,
+          "leantoken_total_json_tokens": 1706,
+          "source_savings_against_oracle_fraction": 0.8734918381831086,
+          "total_json_savings_against_scripted_fraction": 0.837229272016029,
+          "first_context_ms": 59.437997,
           "warm_context_ms_samples": [
-            54.88197,
-            58.342628,
-            62.86934600000001
+            67.94214899999999,
+            61.511338,
+            53.323141
           ],
-          "warm_context_median_ms": 58.342628,
-          "warm_context_p95_ms": 62.86934600000001,
+          "warm_context_median_ms": 61.511338,
+          "warm_context_p95_ms": 67.94214899999999,
           "second_response_source_tokens": 404,
           "estimated_repeated_range_source_tokens": 49,
-          "repeat_request_json_tokens": 215,
+          "repeat_request_json_tokens": 214,
           "repeat_total_json_tokens": 1374,
-          "two_turn_context_json_tokens": 3183,
+          "two_turn_context_json_tokens": 3294,
           "known_fragments_resent": 0,
           "known_hash_omission_visible": true,
           "dead_end_fragments": 6,
@@ -356,7 +356,7 @@
       "indexed_files": 213,
       "indexed_chunks": 469,
       "index_warnings": [],
-      "cold_index_ms": 2505.068518,
+      "cold_index_ms": 1930.044822,
       "database_bytes": 8791320,
       "tasks": [
         {
@@ -378,12 +378,12 @@
             {
               "path": "lib/response.js",
               "start_line": 126,
-              "end_line": 165,
+              "end_line": 189,
               "representation": "symbol",
               "reason": "symbol; multi-query",
-              "score": 2.408,
-              "token_count": 238,
-              "content_hash": "8cc905606178b5e236ca5b1d981ef081"
+              "score": 2.3905,
+              "token_count": 406,
+              "content_hash": "e317c4162adadf24643dab1e9abbfc14"
             },
             {
               "path": "test/Router.js",
@@ -472,23 +472,23 @@
           "rg_discovery_tokens": 18303,
           "rg_discovery_json_tokens": 20857,
           "scripted_baseline_total_json_tokens": 33106,
-          "leantoken_source_tokens": 404,
-          "leantoken_total_json_tokens": 1418,
-          "source_savings_against_oracle_fraction": 0.960106645600869,
-          "total_json_savings_against_scripted_fraction": 0.9571678849755332,
-          "first_context_ms": 214.090927,
+          "leantoken_source_tokens": 572,
+          "leantoken_total_json_tokens": 1604,
+          "source_savings_against_oracle_fraction": 0.9435173299101413,
+          "total_json_savings_against_scripted_fraction": 0.9515495680541292,
+          "first_context_ms": 252.87831599999998,
           "warm_context_ms_samples": [
-            223.842568,
-            218.71724700000001,
-            235.025123
+            194.15939500000002,
+            201.441157,
+            195.88948
           ],
-          "warm_context_median_ms": 223.842568,
-          "warm_context_p95_ms": 235.025123,
+          "warm_context_median_ms": 195.88948,
+          "warm_context_p95_ms": 201.441157,
           "second_response_source_tokens": 269,
           "estimated_repeated_range_source_tokens": 0,
           "repeat_request_json_tokens": 219,
           "repeat_total_json_tokens": 1230,
-          "two_turn_context_json_tokens": 2867,
+          "two_turn_context_json_tokens": 3053,
           "known_fragments_resent": 0,
           "known_hash_omission_visible": true,
           "dead_end_fragments": 5,
@@ -504,7 +504,7 @@
       "indexed_files": 130,
       "indexed_chunks": 430,
       "index_warnings": [],
-      "cold_index_ms": 1105.938349,
+      "cold_index_ms": 1120.839197,
       "database_bytes": 12611760,
       "tasks": [
         {
@@ -622,21 +622,21 @@
           ],
           "oracle_source_tokens": 4384,
           "oracle_minimal_read_json_tokens": 5565,
-          "rg_discovery_tokens": 4681,
-          "rg_discovery_json_tokens": 5390,
-          "scripted_baseline_total_json_tokens": 10958,
+          "rg_discovery_tokens": 4679,
+          "rg_discovery_json_tokens": 5388,
+          "scripted_baseline_total_json_tokens": 10956,
           "leantoken_source_tokens": 741,
           "leantoken_total_json_tokens": 1828,
           "source_savings_against_oracle_fraction": 0.8309762773722628,
-          "total_json_savings_against_scripted_fraction": 0.8331812374520898,
-          "first_context_ms": 258.924683,
+          "total_json_savings_against_scripted_fraction": 0.8331507849580139,
+          "first_context_ms": 179.158531,
           "warm_context_ms_samples": [
-            266.375485,
-            184.387603,
-            191.305907
+            198.62653799999998,
+            191.71217199999998,
+            218.888897
           ],
-          "warm_context_median_ms": 191.305907,
-          "warm_context_p95_ms": 266.375485,
+          "warm_context_median_ms": 198.62653799999998,
+          "warm_context_p95_ms": 218.888897,
           "second_response_source_tokens": 1131,
           "estimated_repeated_range_source_tokens": 0,
           "repeat_request_json_tokens": 222,
@@ -657,7 +657,7 @@
       "indexed_files": 859,
       "indexed_chunks": 2792,
       "index_warnings": [],
-      "cold_index_ms": 9272.419345999999,
+      "cold_index_ms": 8763.722074000001,
       "database_bytes": 59336056,
       "tasks": [
         {
@@ -784,14 +784,14 @@
           "leantoken_total_json_tokens": 1524,
           "source_savings_against_oracle_fraction": 0.9561395126612517,
           "total_json_savings_against_scripted_fraction": 0.9593708344441483,
-          "first_context_ms": 380.013843,
+          "first_context_ms": 410.31253699999996,
           "warm_context_ms_samples": [
-            515.1986119999999,
-            423.976062,
-            405.636864
+            413.35101099999997,
+            441.697624,
+            398.878768
           ],
-          "warm_context_median_ms": 423.976062,
-          "warm_context_p95_ms": 515.1986119999999,
+          "warm_context_median_ms": 413.35101099999997,
+          "warm_context_p95_ms": 441.697624,
           "second_response_source_tokens": 568,
           "estimated_repeated_range_source_tokens": 0,
           "repeat_request_json_tokens": 234,
@@ -812,7 +812,7 @@
       "indexed_files": 701,
       "indexed_chunks": 2739,
       "index_warnings": [],
-      "cold_index_ms": 24688.235629000003,
+      "cold_index_ms": 19001.614056000002,
       "database_bytes": 60543808,
       "tasks": [
         {
@@ -934,14 +934,14 @@
           "leantoken_total_json_tokens": 1247,
           "source_savings_against_oracle_fraction": 0.990942427576091,
           "total_json_savings_against_scripted_fraction": 0.973427944341452,
-          "first_context_ms": 187.289669,
+          "first_context_ms": 161.902181,
           "warm_context_ms_samples": [
-            153.03656099999998,
-            148.045601,
-            142.787611
+            141.378658,
+            131.925295,
+            138.3736
           ],
-          "warm_context_median_ms": 148.045601,
-          "warm_context_p95_ms": 153.03656099999998,
+          "warm_context_median_ms": 138.3736,
+          "warm_context_p95_ms": 141.378658,
           "second_response_source_tokens": 252,
           "estimated_repeated_range_source_tokens": 0,
           "repeat_request_json_tokens": 235,
@@ -962,7 +962,7 @@
       "indexed_files": 65,
       "indexed_chunks": 282,
       "index_warnings": [],
-      "cold_index_ms": 565.286998,
+      "cold_index_ms": 620.906692,
       "database_bytes": 3992096,
       "tasks": [
         {
@@ -974,6 +974,7 @@
             "completions_test.go"
           ],
           "returned_files": [
+            "args.go",
             "args_test.go",
             "bash_completions_test.go",
             "command_test.go",
@@ -984,12 +985,12 @@
             {
               "path": "completions.go",
               "start_line": 316,
-              "end_line": 355,
+              "end_line": 379,
               "representation": "symbol",
               "reason": "symbol",
-              "score": 2.0853,
-              "token_count": 487,
-              "content_hash": "5b701806ac7727e8522df8aa19a59699"
+              "score": 2.0742,
+              "token_count": 778,
+              "content_hash": "3755746252b805887e98e00e14781110"
             },
             {
               "path": "completions_test.go",
@@ -1022,16 +1023,6 @@
               "content_hash": "2fb8ee0535464f96d5ef763d9fa50e76"
             },
             {
-              "path": "bash_completions_test.go",
-              "start_line": 83,
-              "end_line": 122,
-              "representation": "symbol",
-              "reason": "symbol",
-              "score": 1.3357,
-              "token_count": 480,
-              "content_hash": "c3d9f7676f21e4a45fb4ab02fedf1290"
-            },
-            {
               "path": "command_test.go",
               "start_line": 492,
               "end_line": 492,
@@ -1060,15 +1051,26 @@
               "score": 1.1933,
               "token_count": 7,
               "content_hash": "5aae1ab7f4f86d9eb795a7bb72570297"
+            },
+            {
+              "path": "args.go",
+              "start_line": 22,
+              "end_line": 22,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.1864,
+              "token_count": 15,
+              "content_hash": "150a7cd51b7c43e0c043c735db8adcf9"
             }
           ],
           "relevant_files_found": 2,
           "relevant_file_recall": 1.0,
-          "labeled_file_precision": 0.4,
+          "labeled_file_precision": 0.3333333333333333,
           "line_anchors": 5,
           "line_anchors_found": 2,
           "line_anchor_recall": 0.4,
           "unlabeled_returned_files": [
+            "args.go",
             "args_test.go",
             "bash_completions_test.go",
             "command_test.go"
@@ -1078,27 +1080,27 @@
           "rg_discovery_tokens": 12537,
           "rg_discovery_json_tokens": 14550,
           "scripted_baseline_total_json_tokens": 66410,
-          "leantoken_source_tokens": 1052,
-          "leantoken_total_json_tokens": 2150,
-          "source_savings_against_oracle_fraction": 0.9750758150113723,
-          "total_json_savings_against_scripted_fraction": 0.9676253576268634,
-          "first_context_ms": 135.36410700000002,
+          "leantoken_source_tokens": 878,
+          "leantoken_total_json_tokens": 1890,
+          "source_savings_against_oracle_fraction": 0.9791982562547384,
+          "total_json_savings_against_scripted_fraction": 0.9715404306580334,
+          "first_context_ms": 132.256138,
           "warm_context_ms_samples": [
-            140.716962,
-            129.299511,
-            133.039115
+            144.039741,
+            136.047481,
+            145.72269
           ],
-          "warm_context_median_ms": 133.039115,
-          "warm_context_p95_ms": 140.716962,
-          "second_response_source_tokens": 130,
+          "warm_context_median_ms": 144.039741,
+          "warm_context_p95_ms": 145.72269,
+          "second_response_source_tokens": 826,
           "estimated_repeated_range_source_tokens": 6,
-          "repeat_request_json_tokens": 253,
-          "repeat_total_json_tokens": 1062,
-          "two_turn_context_json_tokens": 3465,
+          "repeat_request_json_tokens": 250,
+          "repeat_total_json_tokens": 1915,
+          "two_turn_context_json_tokens": 4055,
           "known_fragments_resent": 0,
           "known_hash_omission_visible": true,
           "dead_end_fragments": 5,
-          "dead_end_source_tokens": 553
+          "dead_end_source_tokens": 88
         }
       ]
     },
@@ -1110,7 +1112,7 @@
       "indexed_files": 122,
       "indexed_chunks": 351,
       "index_warnings": [],
-      "cold_index_ms": 1279.273951,
+      "cold_index_ms": 1085.5370500000001,
       "database_bytes": 15668112,
       "tasks": [
         {
@@ -1122,7 +1124,6 @@
             "tests/test_requests.py"
           ],
           "returned_files": [
-            "src/requests/adapters.py",
             "src/requests/models.py",
             "src/requests/structures.py",
             "tests/test_requests.py",
@@ -1153,12 +1154,12 @@
             {
               "path": "src/requests/models.py",
               "start_line": 184,
-              "end_line": 223,
+              "end_line": 247,
               "representation": "symbol",
               "reason": "symbol; multi-query",
-              "score": 1.8956,
-              "token_count": 343,
-              "content_hash": "176026b95114bb3b07fa739c59d1c70a"
+              "score": 1.8831,
+              "token_count": 530,
+              "content_hash": "a1fd64979f98e2a9e272557679b84912"
             },
             {
               "path": "tests/test_requests.py",
@@ -1191,16 +1192,6 @@
               "content_hash": "d4027d77ec7e0ef572e330756bc9ff98"
             },
             {
-              "path": "src/requests/adapters.py",
-              "start_line": 403,
-              "end_line": 442,
-              "representation": "symbol",
-              "reason": "symbol",
-              "score": 0.8353,
-              "token_count": 488,
-              "content_hash": "4dd8eaca62781826805153b44bd275a5"
-            },
-            {
               "path": "tests/test_utils.py",
               "start_line": 150,
               "end_line": 154,
@@ -1209,16 +1200,25 @@
               "score": 0.7716,
               "token_count": 35,
               "content_hash": "f0eb026ac3201721d91f667112905573"
+            },
+            {
+              "path": "tests/test_utils.py",
+              "start_line": 65,
+              "end_line": 69,
+              "representation": "source",
+              "reason": "text",
+              "score": 0.7642,
+              "token_count": 47,
+              "content_hash": "9f7f114917bf62fcf6b8ec2f1be5f155"
             }
           ],
           "relevant_files_found": 2,
           "relevant_file_recall": 1.0,
-          "labeled_file_precision": 0.3333333333333333,
+          "labeled_file_precision": 0.4,
           "line_anchors": 6,
-          "line_anchors_found": 1,
-          "line_anchor_recall": 0.16666666666666666,
+          "line_anchors_found": 3,
+          "line_anchor_recall": 0.5,
           "unlabeled_returned_files": [
-            "src/requests/adapters.py",
             "src/requests/structures.py",
             "tests/test_structures.py",
             "tests/test_utils.py"
@@ -1228,27 +1228,27 @@
           "rg_discovery_tokens": 1048,
           "rg_discovery_json_tokens": 1211,
           "scripted_baseline_total_json_tokens": 40756,
-          "leantoken_source_tokens": 1109,
-          "leantoken_total_json_tokens": 2152,
-          "source_savings_against_oracle_fraction": 0.9675929984512434,
-          "total_json_savings_against_scripted_fraction": 0.9471979585827853,
-          "first_context_ms": 141.334565,
+          "leantoken_source_tokens": 855,
+          "leantoken_total_json_tokens": 1902,
+          "source_savings_against_oracle_fraction": 0.9750153414570001,
+          "total_json_savings_against_scripted_fraction": 0.9533320247325547,
+          "first_context_ms": 176.376231,
           "warm_context_ms_samples": [
-            165.37844800000002,
-            144.031893,
-            136.641126
+            138.193984,
+            138.67680800000002,
+            131.999312
           ],
-          "warm_context_median_ms": 144.031893,
-          "warm_context_p95_ms": 165.37844800000002,
-          "second_response_source_tokens": 372,
+          "warm_context_median_ms": 138.193984,
+          "warm_context_p95_ms": 138.67680800000002,
+          "second_response_source_tokens": 947,
           "estimated_repeated_range_source_tokens": 43,
-          "repeat_request_json_tokens": 237,
-          "repeat_total_json_tokens": 1377,
-          "two_turn_context_json_tokens": 3766,
+          "repeat_request_json_tokens": 242,
+          "repeat_total_json_tokens": 1983,
+          "two_turn_context_json_tokens": 4127,
           "known_fragments_resent": 0,
           "known_hash_omission_visible": true,
           "dead_end_fragments": 5,
-          "dead_end_source_tokens": 673
+          "dead_end_source_tokens": 232
         }
       ]
     }
