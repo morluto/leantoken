@@ -3,3 +3,19 @@
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+
+# Environment files (keep .env.example)
+.env
+.env.*
+!.env.example
+
+# IDE and editor configs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

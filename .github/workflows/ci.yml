@@ -14,6 +14,75 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quality:
+    name: Code quality checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check large files
+        run: bash scripts/check-large-files.sh
+
+      - name: Check duplicate code
+        run: bash scripts/check-duplicates.sh
+
+      - name: Scan technical debt markers
+        run: bash scripts/check-todos.sh
+
+      - name: Validate AGENTS.md
+        run: bash scripts/validate-agents-md.sh
+
+  security:
+    name: Security checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: audit
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit dependencies
+        run: cargo audit
+
+  unused-deps:
+    name: Unused dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: udeps
+
+      - name: Install cargo-udeps
+        run: cargo install cargo-udeps --locked
+
+      - name: Check unused dependencies
+        run: cargo +nightly udeps --all-targets --all-features
+
   ci:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -55,4 +124,107 @@ jobs:
         run: cargo doc --no-deps
 
       - name: cargo test
-        run: cargo test --all-targets --all-features
+        run: |
+          START=$(date +%s)
+          cargo test --all-targets --all-features 2>&1 | tee test-output.txt
+          END=$(date +%s)
+          DURATION=$((END - START))
+          echo "test_suite_duration_seconds=${DURATION}" >> "$GITHUB_ENV"
+          echo "Test suite completed in ${DURATION}s"
+
+      - name: Test timing summary
+        if: success() || failure()
+        run: |
+          echo "## Test Results (${{ matrix.os }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Total suite duration: ${test_suite_duration_seconds}s" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          passed=$(grep -c 'ok' test-output.txt | head -1 || echo 0)
+          failed=$(grep -c 'FAILED' test-output.txt || echo 0)
+          echo "- Passed: $passed | Failed: $failed" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output-${{ matrix.os }}
+          path: test-output.txt
+          retention-days: 7
+
+  coverage:
+    name: Test coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: llvm-tools
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: coverage
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Run coverage
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info --fail-under-lines 60
+
+      - name: Coverage report summary
+        if: success() || failure()
+        run: |
+          echo "## Coverage Summary" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f lcov.info ]; then
+            covered=$(grep -c '^DA:[0-9]*,1' lcov.info || echo 0)
+            total=$(grep -c '^DA:' lcov.info || echo 0)
+            echo "- Lines covered: $covered / $total" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          cargo llvm-cov --all-features --workspace --summary-only 2>&1 | head -10 >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: lcov.info
+          retention-days: 7
+
+  docs:
+    name: API documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: docs
+
+      - name: Generate rustdoc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --document-private-items
+
+      - name: Upload docs artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdoc
+          path: target/doc/
+          retention-days: 30
+
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/master'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: target/doc/
+          destination_dir: api

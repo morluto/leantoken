@@ -10,7 +10,6 @@ use leantoken::{
 };
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
-use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
@@ -122,10 +121,35 @@ fn print<T: Serialize>(value: &T, compact: bool) -> Result<()> {
 }
 
 fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .with_target(false)
+    use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::filter::FilterFn;
+    use tracing_subscriber::prelude::*;
+
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+
+    // Safety-net filter: reject any log event that carries a field name which
+    // could contain source content.  By design, LeanToken logs only paths,
+    // counts, hashes, timings, and error summaries.  This filter acts as a
+    // structural invariant that prevents source bodies from ever appearing in
+    // structured log output.
+    let scrub_fields = FilterFn::new(|meta: &tracing::Metadata<'_>| -> bool {
+        let forbidden = [
+            "source_body",
+            "source_text",
+            "file_content",
+            "body",
+            "token_text",
+        ];
+        !meta.fields().iter().any(|f| forbidden.contains(&f.name()))
+    });
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_target(false)
+                .with_filter(env_filter)
+                .with_filter(scrub_fields),
+        )
         .init();
 }
