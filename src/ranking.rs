@@ -13,7 +13,7 @@
 //! * [`crate::ranking::rank`] – score and sort candidates.
 //! * [`crate::ranking::deduplicate`] – remove content-identical and strongly overlapping
 //!   candidates, keeping the higher-scored copy.
-//! * [`crate::ranking::select`] / [`crate::ranking::select_with_weights`] – turn a candidate set and a
+//! * [`crate::ranking::select`] / [`crate::ranking::select_with_weights_and_tokenizer`] – turn a candidate set and a
 //!   [`ContextRequest`] into a [`ContextResponse`], including fragments,
 //!   evidence receipt, and omitted candidates.
 
@@ -193,10 +193,16 @@ impl Candidate {
         crate::text::hash(&self.content)
     }
 
-    /// Exact token count using the configured tokenizer.
+    /// Exact token count using LeanToken's default tokenizer.
     #[must_use]
     pub fn token_count(&self) -> usize {
         tokens::count(&self.content)
+    }
+
+    /// Count this candidate with an explicit tokenizer.
+    #[must_use]
+    pub fn token_count_with(&self, tokenizer: tokens::Tokenizer) -> usize {
+        tokenizer.count(&self.content)
     }
 
     /// Number of lines covered by the candidate range.
@@ -280,7 +286,16 @@ pub struct ScoredCandidate {
 impl ScoredCandidate {
     #[allow(clippy::cast_precision_loss)]
     pub fn new(candidate: Candidate, weights: &Weights) -> Self {
-        let token_count = candidate.token_count().max(1);
+        Self::new_with_tokenizer(candidate, weights, tokens::Tokenizer::default())
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn new_with_tokenizer(
+        candidate: Candidate,
+        weights: &Weights,
+        tokenizer: tokens::Tokenizer,
+    ) -> Self {
+        let token_count = candidate.token_count_with(tokenizer).max(1);
         let content_hash = candidate.content_hash();
         let score = candidate.score(weights, token_count);
         let marginal_score = score / token_count as f64;
@@ -298,9 +313,17 @@ impl ScoredCandidate {
 /// broken by path and then starting line for deterministic ordering.
 #[must_use]
 pub fn rank(candidates: Vec<Candidate>, weights: &Weights) -> Vec<ScoredCandidate> {
+    rank_with_tokenizer(candidates, weights, tokens::Tokenizer::default())
+}
+
+fn rank_with_tokenizer(
+    candidates: Vec<Candidate>,
+    weights: &Weights,
+    tokenizer: tokens::Tokenizer,
+) -> Vec<ScoredCandidate> {
     let mut scored: Vec<ScoredCandidate> = candidates
         .into_iter()
-        .map(|candidate| ScoredCandidate::new(candidate, weights))
+        .map(|candidate| ScoredCandidate::new_with_tokenizer(candidate, weights, tokenizer))
         .collect();
 
     scored.sort_by(|a, b| {
@@ -396,11 +419,28 @@ pub fn select(
     request: &ContextRequest,
     repository_generation: u64,
 ) -> ContextResponse {
-    select_with_weights(
+    select_with_tokenizer(
+        candidates,
+        request,
+        repository_generation,
+        tokens::Tokenizer::default(),
+    )
+}
+
+/// Select candidates using an explicit tokenizer for budgets and metadata.
+#[must_use]
+pub fn select_with_tokenizer(
+    candidates: Vec<Candidate>,
+    request: &ContextRequest,
+    repository_generation: u64,
+    tokenizer: tokens::Tokenizer,
+) -> ContextResponse {
+    select_with_options(
         candidates,
         request,
         repository_generation,
         &Weights::default(),
+        tokenizer,
     )
 }
 
@@ -411,6 +451,40 @@ pub fn select_with_weights(
     request: &ContextRequest,
     repository_generation: u64,
     weights: &Weights,
+) -> ContextResponse {
+    select_with_weights_and_tokenizer(
+        candidates,
+        request,
+        repository_generation,
+        weights,
+        tokens::Tokenizer::default(),
+    )
+}
+
+/// Select candidates with explicit ranking weights and tokenizer.
+#[must_use]
+pub fn select_with_weights_and_tokenizer(
+    candidates: Vec<Candidate>,
+    request: &ContextRequest,
+    repository_generation: u64,
+    weights: &Weights,
+    tokenizer: tokens::Tokenizer,
+) -> ContextResponse {
+    select_with_options(
+        candidates,
+        request,
+        repository_generation,
+        weights,
+        tokenizer,
+    )
+}
+
+fn select_with_options(
+    candidates: Vec<Candidate>,
+    request: &ContextRequest,
+    repository_generation: u64,
+    weights: &Weights,
+    tokenizer: tokens::Tokenizer,
 ) -> ContextResponse {
     let mut candidates = candidates;
     apply_request_signals(&mut candidates, request);
@@ -427,13 +501,15 @@ pub fn select_with_weights(
 
         let hash = candidate.content_hash();
         if known_hashes.contains(&hash) {
-            known_omitted.push(ScoredCandidate::new(candidate, weights));
+            known_omitted.push(ScoredCandidate::new_with_tokenizer(
+                candidate, weights, tokenizer,
+            ));
         } else {
             eligible.push(candidate);
         }
     }
 
-    let ranked = rank(eligible, weights);
+    let ranked = rank_with_tokenizer(eligible, weights, tokenizer);
     let deduped = deduplicate(ranked);
 
     let budget = request.token_budget;
@@ -508,7 +584,7 @@ pub fn select_with_weights(
         repository_generation,
         freshness: Freshness::Current,
         emitted_tokens,
-        token_count_exact: crate::tokens::is_exact(),
+        token_count_exact: tokenizer.is_exact(),
         next_cursor: None,
     };
 
@@ -926,6 +1002,22 @@ mod tests {
             resp.fragments.iter().map(|f| f.token_count).sum::<usize>()
         );
         assert!(resp.meta.token_count_exact);
+    }
+
+    #[test]
+    fn explicit_weights_and_tokenizer_control_budget_metadata() {
+        let candidate = Candidate::new("a.rs", 1, 1, "alpha beta gamma").exact(1.0);
+        let request = request_with_budget(20);
+        let response = select_with_weights_and_tokenizer(
+            vec![candidate],
+            &request,
+            7,
+            &Weights::default(),
+            tokens::Tokenizer::Estimate,
+        );
+
+        assert!(!response.meta.token_count_exact);
+        assert_eq!(response.meta.emitted_tokens, 4);
     }
 
     #[test]

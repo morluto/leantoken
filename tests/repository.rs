@@ -36,6 +36,7 @@ fn validate_relative_accepts_clean_relative_paths() {
 #[test]
 fn discover_files_honors_gitignore() {
     let root = tempfile::tempdir().expect("tempdir");
+    fs::create_dir(root.path().join(".git")).expect("git marker");
     fs::write(root.path().join(".gitignore"), "ignored.rs\n").expect("gitignore");
     fs::write(root.path().join("kept.rs"), "fn kept() {}\n").expect("kept");
     fs::write(root.path().join("ignored.rs"), "fn ignored() {}\n").expect("ignored");
@@ -137,9 +138,34 @@ fn git_changed_paths_detects_modified_and_untracked_files() {
 
     fs::write(root.path().join("tracked.rs"), "fn tracked() { }").expect("modify");
     fs::write(root.path().join("new.rs"), "fn new() {}").expect("untracked");
+    fs::write(root.path().join("space name.rs"), "fn spaced() {}").expect("untracked space");
 
     let changed = git_changed_paths(root.path(), 64).expect("changed paths");
     assert!(changed.contains("tracked.rs"));
     assert!(changed.contains("new.rs"));
-    assert_eq!(changed.len(), 2);
+    assert!(changed.contains("space name.rs"));
+    assert_eq!(changed.len(), 3);
+}
+
+#[test]
+fn git_changed_paths_are_relative_to_a_nested_index_root() {
+    if !git_available() {
+        return;
+    }
+
+    let root = tempfile::tempdir().expect("root");
+    let nested = root.path().join("packages/core");
+    fs::create_dir_all(&nested).expect("nested root");
+    init_git_repo(root.path());
+    fs::write(nested.join("tracked.rs"), "fn tracked() {}\n").expect("write");
+    run_git(root.path(), &["add", "."]);
+    run_git(root.path(), &["commit", "-m", "initial"]);
+    fs::write(nested.join("tracked.rs"), "fn tracked() { }\n").expect("modify");
+
+    let changed = git_changed_paths(&nested, 64).expect("changed paths");
+
+    assert_eq!(
+        changed,
+        std::collections::HashSet::from(["tracked.rs".into()])
+    );
 }

@@ -1,12 +1,14 @@
 use std::{
     collections::HashSet,
-    io::{BufRead, BufReader},
+    fs::File,
+    io::{BufRead, BufReader, Seek},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
-    time::UNIX_EPOCH,
+    time::{Duration, UNIX_EPOCH},
 };
 
 use ignore::WalkBuilder;
+use wait_timeout::ChildExt;
 
 use crate::{Error, Result};
 
@@ -126,63 +128,107 @@ pub fn validate_relative(requested: &str) -> Result<PathBuf> {
 /// an empty set is returned so callers can safely proceed without a diff
 /// signal.
 pub fn git_changed_paths(root: &Path, max: usize) -> Result<HashSet<String>> {
+    git_changed_paths_with(root, max, Path::new("git"), Duration::from_millis(500))
+}
+
+fn git_changed_paths_with(
+    root: &Path,
+    max: usize,
+    program: &Path,
+    timeout: Duration,
+) -> Result<HashSet<String>> {
     if max == 0 {
         return Ok(HashSet::new());
     }
+    let prefix = git_worktree_prefix(root);
+    let mut output = match tempfile::tempfile() {
+        Ok(output) => output,
+        Err(_) => return Ok(HashSet::new()),
+    };
+    let child_output = match output.try_clone() {
+        Ok(output) => output,
+        Err(_) => return Ok(HashSet::new()),
+    };
 
-    let mut child = match Command::new("git")
+    let mut child = match Command::new(program)
         .args([
             "status",
             "--porcelain=v1",
+            "-z",
             "--untracked-files=all",
             "--no-renames",
+            "--",
+            ".",
         ])
         .current_dir(root)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(Stdio::from(child_output))
+        .stderr(Stdio::null())
         .spawn()
     {
         Ok(child) => child,
         Err(_) => return Ok(HashSet::new()),
     };
 
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| Error::Io(std::io::Error::other("git stdout unavailable")))?;
-    let mut reader = BufReader::new(stdout);
-    let mut changed = HashSet::new();
-    let mut line = String::new();
+    let status = match child.wait_timeout(timeout) {
+        Ok(Some(status)) => status,
+        Ok(None) | Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(HashSet::new());
+        }
+    };
+    if !status.success() || output.rewind().is_err() {
+        return Ok(HashSet::new());
+    }
+    Ok(parse_git_status(output, max, &prefix))
+}
 
-    while changed.len() < max {
-        line.clear();
-        match reader.read_line(&mut line) {
+fn git_worktree_prefix(root: &Path) -> String {
+    root.ancestors()
+        .find(|ancestor| ancestor.join(".git").exists())
+        .and_then(|worktree| root.strip_prefix(worktree).ok())
+        .map(slash_path)
+        .filter(|prefix| !prefix.is_empty())
+        .map(|prefix| format!("{prefix}/"))
+        .unwrap_or_default()
+}
+
+fn parse_git_status(output: File, max: usize, prefix: &str) -> HashSet<String> {
+    let mut reader = BufReader::new(output);
+    let mut changed = HashSet::new();
+    let mut record = Vec::new();
+
+    loop {
+        record.clear();
+        match reader.read_until(0, &mut record) {
             Ok(0) => break,
             Ok(_) => {}
             Err(_) => break,
         }
 
-        let trimmed = line.trim_end();
-        if trimmed.len() < 4 {
+        if record.last() == Some(&0) {
+            record.pop();
+        }
+        if record.len() < 4 || record.get(2) != Some(&b' ') {
             continue;
         }
 
-        let status = &trimmed[..2];
-        let path = &trimmed[3..];
+        let status = &record[..2];
+        let path = String::from_utf8_lossy(&record[3..]);
 
         // Ignore ignored files; keep modified, added, deleted, and untracked.
-        if status == "!!" {
+        if status == b"!!" {
             continue;
         }
 
-        changed.insert(slash_path(Path::new(path)));
+        let Some(path) = path.strip_prefix(prefix) else {
+            continue;
+        };
+        if changed.len() < max {
+            changed.insert(slash_path(Path::new(path)));
+        }
     }
-
-    let _ = child.kill();
-    drop(reader);
-    let _ = child.wait();
-
-    Ok(changed)
+    changed
 }
 
 pub fn slash_path(path: &Path) -> String {
@@ -193,4 +239,30 @@ pub fn slash_path(path: &Path) -> String {
         })
         .collect::<Vec<_>>()
         .join("/")
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::Instant;
+
+    use super::*;
+
+    #[test]
+    fn git_changed_paths_kills_a_timed_out_process() {
+        let root = tempfile::tempdir().expect("root");
+        let program = root.path().join("slow-git");
+        fs::write(&program, "#!/bin/sh\nexec sleep 5\n").expect("script");
+        let mut permissions = fs::metadata(&program).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&program, permissions).expect("executable");
+        let started = Instant::now();
+
+        let changed = git_changed_paths_with(root.path(), 64, &program, Duration::from_millis(50))
+            .expect("changed paths");
+
+        assert!(changed.is_empty());
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
 }

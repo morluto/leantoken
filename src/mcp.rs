@@ -1,16 +1,14 @@
 use std::sync::Arc;
 
 use rmcp::{
-    ErrorData, Json, RoleServer, ServerHandler, ServiceExt, handler::server::wrapper::Parameters,
-    service::RequestContext, tool, tool_handler, tool_router, transport::stdio,
+    ErrorData, RoleServer, ServerHandler, ServiceExt, handler::server::wrapper::Parameters,
+    model::CallToolResult, service::RequestContext, tool, tool_handler, tool_router,
+    transport::stdio,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
-use crate::model::{
-    ContextRequest, ContextResponse, FilesRequest, FilesResponse, OutlineRequest, OutlineResponse,
-    ReadRequest, ReadResponse, SearchRequest, SearchResponse,
-};
+use crate::model::{ContextRequest, FilesRequest, OutlineRequest, ReadRequest, SearchRequest};
 use crate::services::Services;
 
 /// LeanToken MCP server.
@@ -36,13 +34,13 @@ impl LeanTokenMcp {
         &self,
         Parameters(req): Parameters<FilesRequest>,
         context: RequestContext<RoleServer>,
-    ) -> Result<Json<FilesResponse>, ErrorData> {
+    ) -> Result<CallToolResult, ErrorData> {
         let resp = self
             .services
             .files_cancellable(req, context.ct.clone())
             .await
             .map_err(into_mcp_error)?;
-        Ok(Json(resp))
+        structured(resp)
     }
 
     #[tool(
@@ -53,13 +51,13 @@ impl LeanTokenMcp {
         &self,
         Parameters(req): Parameters<SearchRequest>,
         context: RequestContext<RoleServer>,
-    ) -> Result<Json<SearchResponse>, ErrorData> {
+    ) -> Result<CallToolResult, ErrorData> {
         let resp = self
             .services
             .search_cancellable(req, context.ct.clone())
             .await
             .map_err(into_mcp_error)?;
-        Ok(Json(resp))
+        structured(resp)
     }
 
     #[tool(
@@ -70,13 +68,13 @@ impl LeanTokenMcp {
         &self,
         Parameters(req): Parameters<OutlineRequest>,
         context: RequestContext<RoleServer>,
-    ) -> Result<Json<OutlineResponse>, ErrorData> {
+    ) -> Result<CallToolResult, ErrorData> {
         let resp = self
             .services
             .outline_cancellable(req, context.ct.clone())
             .await
             .map_err(into_mcp_error)?;
-        Ok(Json(resp))
+        structured(resp)
     }
 
     #[tool(
@@ -87,13 +85,13 @@ impl LeanTokenMcp {
         &self,
         Parameters(req): Parameters<ReadRequest>,
         context: RequestContext<RoleServer>,
-    ) -> Result<Json<ReadResponse>, ErrorData> {
+    ) -> Result<CallToolResult, ErrorData> {
         let resp = self
             .services
             .read_cancellable(req, context.ct.clone())
             .await
             .map_err(into_mcp_error)?;
-        Ok(Json(resp))
+        structured(resp)
     }
 
     #[tool(
@@ -104,13 +102,13 @@ impl LeanTokenMcp {
         &self,
         Parameters(req): Parameters<ContextRequest>,
         context: RequestContext<RoleServer>,
-    ) -> Result<Json<ContextResponse>, ErrorData> {
+    ) -> Result<CallToolResult, ErrorData> {
         let resp = self
             .services
             .context_cancellable(req, context.ct.clone())
             .await
             .map_err(into_mcp_error)?;
-        Ok(Json(resp))
+        structured(resp)
     }
 }
 
@@ -118,6 +116,15 @@ impl LeanTokenMcp {
     instructions = "LeanToken MCP server exposes repository files, search, outline, read, and context tools."
 )]
 impl ServerHandler for LeanTokenMcp {}
+
+fn structured<T: Serialize>(value: T) -> Result<CallToolResult, ErrorData> {
+    serde_json::to_value(value)
+        .map(CallToolResult::structured)
+        .map_err(|error| {
+            tracing::error!(%error, "MCP response serialization failed");
+            ErrorData::internal_error("repository retrieval failed", None)
+        })
+}
 
 fn into_mcp_error(error: crate::Error) -> ErrorData {
     match &error {
@@ -135,43 +142,6 @@ fn into_mcp_error(error: crate::Error) -> ErrorData {
             tracing::error!(%error, "MCP tool failed");
             ErrorData::internal_error("repository retrieval failed", None)
         }
-    }
-}
-
-/// Token cost of a single MCP `tools/list`/`tools/call` handoff.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct McpCost {
-    pub schema_tokens: usize,
-    pub envelope_tokens: usize,
-    pub result_tokens: usize,
-    pub protocol_overhead_tokens: usize,
-    pub handoff_tokens: usize,
-    pub exact: bool,
-}
-
-/// Model the total token cost of an MCP handoff.
-///
-/// `schema_json` is the `tools/list` response (or just the tools catalog).
-/// `envelope_json` is the `tools/call` request JSON-RPC envelope.
-/// `result_json` is the `tools/call` response payload. The returned
-/// `handoff_tokens` adds a small fixed protocol overhead for the `tools/list`
-/// request, `initialize` handshake, and JSON-RPC framing.
-pub fn handoff_cost(schema_json: &str, envelope_json: &str, result_json: &str) -> McpCost {
-    let schema_tokens = crate::tokens::count(schema_json);
-    let envelope_tokens = crate::tokens::count(envelope_json);
-    let result_tokens = crate::tokens::count(result_json);
-    let protocol_overhead_tokens = 12;
-    let handoff_tokens = schema_tokens
-        .saturating_add(envelope_tokens)
-        .saturating_add(result_tokens)
-        .saturating_add(protocol_overhead_tokens);
-    McpCost {
-        schema_tokens,
-        envelope_tokens,
-        result_tokens,
-        protocol_overhead_tokens,
-        handoff_tokens,
-        exact: crate::tokens::is_exact(),
     }
 }
 
@@ -235,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn tools_have_input_and_output_schemas() {
+    fn tools_have_input_schemas_without_redundant_output_schemas() {
         let router = LeanTokenMcp::tool_router();
         let tools = router.list_all();
         for tool in tools {
@@ -244,10 +214,11 @@ mod tests {
                 "{} input_schema is empty",
                 tool.name
             );
-            let output = tool.output_schema.as_ref().unwrap_or_else(|| {
-                panic!("{} missing output_schema", tool.name);
-            });
-            assert!(!output.is_empty(), "{} output_schema is empty", tool.name);
+            assert!(
+                tool.output_schema.is_none(),
+                "{} output_schema adds catalog tokens despite structured results",
+                tool.name
+            );
         }
     }
 
@@ -279,7 +250,7 @@ mod tests {
         let json = serde_json::to_string(&tools).expect("tool catalog JSON");
         let token_count = crate::tokens::count(&json);
         assert!(
-            token_count <= 6_000,
+            token_count <= 1_600,
             "five-tool catalog grew to {token_count} cl100k tokens"
         );
     }

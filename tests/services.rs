@@ -264,6 +264,7 @@ async fn read_reports_live_content_that_differs_from_the_index() {
 #[tokio::test]
 async fn read_rejects_ignored_files() {
     let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir(root.path().join(".git")).expect("git marker");
     std::fs::write(root.path().join(".gitignore"), ".env\n").expect("ignore file");
     std::fs::write(root.path().join(".env"), "SECRET=do-not-return\n").expect("ignored file");
     std::fs::write(root.path().join("lib.rs"), "fn visible() {}\n").expect("indexed file");
@@ -380,14 +381,6 @@ fn init_git_repo(root: &std::path::Path) {
     run(&["commit", "-m", "init"]);
 }
 
-fn set_modified(path: impl AsRef<std::path::Path>, time: std::time::SystemTime) {
-    let file = std::fs::OpenOptions::new()
-        .write(true)
-        .open(path.as_ref())
-        .expect("open for set_modified");
-    file.set_modified(time).expect("set_modified");
-}
-
 #[tokio::test]
 async fn working_tree_diff_boosts_changed_files() {
     if !git_available() {
@@ -431,26 +424,68 @@ async fn working_tree_diff_boosts_changed_files() {
 }
 
 #[tokio::test]
-async fn recent_mtime_boosts_recent_files() {
+async fn tokenizer_configuration_is_scoped_to_each_service() {
     let root = tempfile::tempdir().expect("root");
-    std::fs::create_dir(root.path().join("src")).unwrap();
-    std::fs::write(root.path().join("src/a.rs"), "fn shared() {}\n").unwrap();
-    std::fs::write(root.path().join("src/b.rs"), "fn shared() {}\n").unwrap();
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "fn independent_token_budget() { println!(\"hello\"); }\n",
+    )
+    .expect("source");
+    let mut exact_config =
+        Config::discover(root.path(), Some(root.path().join("exact.sqlite"))).expect("config");
+    exact_config.tokenizer = leantoken::tokens::Tokenizer::O200kBase;
+    let mut estimate_config =
+        Config::discover(root.path(), Some(root.path().join("estimate.sqlite"))).expect("config");
+    estimate_config.tokenizer = leantoken::tokens::Tokenizer::Estimate;
+    let exact = Services::open(exact_config).expect("exact services");
+    let estimate = Services::open(estimate_config).expect("estimate services");
+    exact.index(false).await.expect("exact index");
+    estimate.index(false).await.expect("estimate index");
+    let request = ContextRequest {
+        task: "change independent_token_budget".into(),
+        token_budget: 100,
+        focus_paths: Vec::new(),
+        focus_symbols: Vec::new(),
+        exclude_paths: Vec::new(),
+        known_hashes: Vec::new(),
+        prior_repository_generation: None,
+    };
 
-    let old =
-        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(365 * 24 * 60 * 60);
-    let recent = std::time::SystemTime::now();
-    set_modified(root.path().join("src/a.rs"), old);
-    set_modified(root.path().join("src/b.rs"), recent);
+    let (exact_response, estimate_response) =
+        tokio::join!(exact.context(request.clone()), estimate.context(request),);
 
-    let config = Config::discover(root.path(), Some(root.path().join("index.sqlite"))).unwrap();
-    let services = Services::open(config).unwrap();
-    services.index(false).await.unwrap();
+    assert!(
+        exact_response
+            .expect("exact context")
+            .meta
+            .token_count_exact
+    );
+    assert!(
+        !estimate_response
+            .expect("estimate context")
+            .meta
+            .token_count_exact
+    );
+}
+
+#[tokio::test]
+async fn context_declaration_excerpt_crosses_index_chunk_boundaries() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "fn target_symbol() {\n    let one = 1;\n    let two = 2;\n    let three = 3;\n    let four = 4;\n    let five = 5;\n    consume(one + two + three + four + five);\n}\n",
+    )
+    .expect("source");
+    let mut config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    config.chunk_lines = 3;
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
 
     let response = services
         .context(ContextRequest {
-            task: "update shared implementation".into(),
-            token_budget: 500,
+            task: "fix target_symbol".into(),
+            token_budget: 200,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -458,14 +493,13 @@ async fn recent_mtime_boosts_recent_files() {
             prior_repository_generation: None,
         })
         .await
-        .unwrap();
+        .expect("context");
+    let declaration = response
+        .fragments
+        .iter()
+        .find(|fragment| fragment.path == "lib.rs" && fragment.start_line == 1)
+        .expect("declaration fragment");
 
-    assert!(!response.fragments.is_empty());
-    assert_eq!(response.fragments[0].path, "src/b.rs");
-    assert!(
-        response
-            .fragments
-            .iter()
-            .any(|fragment| fragment.path == "src/b.rs" && fragment.reason.contains("changed"))
-    );
+    assert_eq!(declaration.end_line, 8);
+    assert!(declaration.content.contains("consume(one + two"));
 }

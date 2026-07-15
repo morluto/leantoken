@@ -1,26 +1,25 @@
 use std::fmt;
-use std::sync::atomic::{AtomicU8, Ordering};
 
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
-use tiktoken_rs::bpe_for_tokenizer;
 
-/// Configured tokenizer used for all source and protocol token accounting.
+/// Tokenizer used for source and protocol token accounting.
 ///
 /// Exact variants are backed by `tiktoken-rs`, the maintained Rust port of
-/// OpenAI's BPE tokenizers. The `Estimate` variant is a fast, conservative
+/// OpenAI's BPE tokenizers. The `Estimate` variant is a fast, inexact
 /// approximation that does not load a BPE vocabulary; responses that use it
 /// set `token_count_exact` to `false`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 #[value(rename_all = "snake_case")]
-#[repr(u8)]
 pub enum Tokenizer {
     /// OpenAI `cl100k_base` (GPT-4, GPT-3.5-turbo, text-embedding-ada-002, ...).
     #[default]
     Cl100kBase,
     /// OpenAI `o200k_base` (GPT-4o, o1/o3/o4, codex-*, ...).
     O200kBase,
+    /// OpenAI `o200k_harmony`.
+    O200kHarmony,
     /// OpenAI `p50k_base` (code models, text-davinci-002/003).
     P50kBase,
     /// OpenAI `r50k_base` / GPT-2.
@@ -43,6 +42,7 @@ impl Tokenizer {
         match self {
             Self::Cl100kBase => "cl100k_base",
             Self::O200kBase => "o200k_base",
+            Self::O200kHarmony => "o200k_harmony",
             Self::P50kBase => "p50k_base",
             Self::R50kBase => "r50k_base",
             Self::Gpt2 => "gpt2",
@@ -66,6 +66,7 @@ impl Tokenizer {
         match self {
             Self::Cl100kBase => Some(T::Cl100kBase),
             Self::O200kBase => Some(T::O200kBase),
+            Self::O200kHarmony => Some(T::O200kHarmony),
             Self::P50kBase => Some(T::P50kBase),
             Self::R50kBase => Some(T::R50kBase),
             Self::Gpt2 => Some(T::Gpt2),
@@ -77,10 +78,14 @@ impl Tokenizer {
     /// Count tokens in `text` using this tokenizer.
     #[must_use]
     pub fn count(&self, text: &str) -> usize {
-        if let Some(tiktoken) = self.as_tiktoken() {
-            bpe_for_tokenizer(tiktoken).map_or(0, |bpe| bpe.count_ordinary(text))
-        } else {
-            estimate_count(text)
+        match self {
+            Self::Cl100kBase => tiktoken_rs::cl100k_base_singleton().count_ordinary(text),
+            Self::O200kBase => tiktoken_rs::o200k_base_singleton().count_ordinary(text),
+            Self::O200kHarmony => tiktoken_rs::o200k_harmony_singleton().count_ordinary(text),
+            Self::P50kBase => tiktoken_rs::p50k_base_singleton().count_ordinary(text),
+            Self::P50kEdit => tiktoken_rs::p50k_edit_singleton().count_ordinary(text),
+            Self::R50kBase | Self::Gpt2 => tiktoken_rs::r50k_base_singleton().count_ordinary(text),
+            Self::Estimate => estimate_count(text),
         }
     }
 
@@ -124,78 +129,40 @@ impl fmt::Display for Tokenizer {
     }
 }
 
-/// Fast, conservative token estimate.
+/// Fast, inexact token estimate.
 ///
-/// The heuristic combines the common rule-of-thumb (one token per four
-/// characters) with a small contribution from whitespace-delimited words so
-/// that code with many short tokens is not systematically undercounted.
+/// The heuristic takes the larger of the common one-token-per-four-characters
+/// rule and the whitespace-delimited word count. The latter keeps code made of
+/// many short identifiers from being systematically undercounted.
 #[must_use]
 fn estimate_count(text: &str) -> usize {
-    let chars = text.chars().count() / 4;
-    let words = text.split_whitespace().count();
-    chars + words.saturating_sub(chars) / 4
-}
-
-fn to_u8(tokenizer: Tokenizer) -> u8 {
-    tokenizer as u8
-}
-
-fn from_u8(value: u8) -> Option<Tokenizer> {
-    match value {
-        0 => Some(Tokenizer::Cl100kBase),
-        1 => Some(Tokenizer::O200kBase),
-        2 => Some(Tokenizer::P50kBase),
-        3 => Some(Tokenizer::R50kBase),
-        4 => Some(Tokenizer::Gpt2),
-        5 => Some(Tokenizer::P50kEdit),
-        6 => Some(Tokenizer::Estimate),
-        _ => None,
+    if text.is_empty() {
+        return 0;
     }
+    let chars = text.chars().count().div_ceil(4);
+    let words = text.split_whitespace().count();
+    chars.max(words).max(1)
 }
 
-static CURRENT: AtomicU8 = AtomicU8::new(Tokenizer::Cl100kBase as u8);
-
-/// Set the process-wide tokenizer used by [`count`] and [`truncate`].
-///
-/// `Config::discover` and the CLI call this on startup; tests that need an
-/// explicit tokenizer should use [`Tokenizer::count`] and
-/// [`Tokenizer::truncate`] directly.
-pub fn set_current(tokenizer: Tokenizer) {
-    CURRENT.store(to_u8(tokenizer), Ordering::Release);
-}
-
-/// Return the current process-wide tokenizer.
-#[must_use]
-pub fn current() -> Tokenizer {
-    from_u8(CURRENT.load(Ordering::Acquire)).unwrap_or_default()
-}
-
-/// Whether the current tokenizer produces exact counts.
-#[must_use]
-pub fn is_exact() -> bool {
-    current().is_exact()
-}
-
-/// Count tokens using the current process-wide tokenizer.
+/// Count tokens using the default `cl100k_base` tokenizer.
 #[must_use]
 pub fn count(text: &str) -> usize {
-    current().count(text)
+    Tokenizer::default().count(text)
 }
 
-/// Return a UTF-8 prefix of `text` bounded to `max_tokens` using the current
-/// tokenizer.
+/// Return a UTF-8 prefix bounded with the default `cl100k_base` tokenizer.
 #[must_use]
 pub fn truncate(text: &str, max_tokens: usize) -> (&str, usize) {
-    current().truncate(text, max_tokens)
+    Tokenizer::default().truncate(text, max_tokens)
 }
 
-/// Count tokens with an explicit tokenizer, ignoring the process-wide default.
+/// Count tokens with an explicit tokenizer.
 #[must_use]
 pub fn count_with(text: &str, tokenizer: Tokenizer) -> usize {
     tokenizer.count(text)
 }
 
-/// Truncate with an explicit tokenizer, ignoring the process-wide default.
+/// Truncate with an explicit tokenizer.
 #[must_use]
 pub fn truncate_with(text: &str, max_tokens: usize, tokenizer: Tokenizer) -> (&str, usize) {
     tokenizer.truncate(text, max_tokens)
@@ -209,6 +176,7 @@ mod tests {
     fn tokenizer_names_are_snake_case() {
         assert_eq!(Tokenizer::Cl100kBase.name(), "cl100k_base");
         assert_eq!(Tokenizer::O200kBase.name(), "o200k_base");
+        assert_eq!(Tokenizer::O200kHarmony.name(), "o200k_harmony");
         assert_eq!(Tokenizer::Estimate.name(), "estimate");
     }
 
@@ -217,6 +185,7 @@ mod tests {
         for tokenizer in [
             Tokenizer::Cl100kBase,
             Tokenizer::O200kBase,
+            Tokenizer::O200kHarmony,
             Tokenizer::P50kBase,
             Tokenizer::R50kBase,
             Tokenizer::Gpt2,
@@ -233,6 +202,7 @@ mod tests {
         for tokenizer in [
             Tokenizer::Cl100kBase,
             Tokenizer::O200kBase,
+            Tokenizer::O200kHarmony,
             Tokenizer::P50kBase,
             Tokenizer::R50kBase,
             Tokenizer::Gpt2,
@@ -252,6 +222,9 @@ mod tests {
         // Estimate should be within a factor of two of the exact count for this
         // short English/code source; it is intentionally not identical.
         assert!(approx <= exact.max(1) * 2);
+        assert_eq!(Tokenizer::Estimate.count("a b c d"), 4);
+        assert_eq!(Tokenizer::Estimate.count("x"), 1);
+        assert_eq!(Tokenizer::Estimate.count(""), 0);
     }
 
     #[test]
@@ -260,6 +233,7 @@ mod tests {
         for tokenizer in [
             Tokenizer::Cl100kBase,
             Tokenizer::O200kBase,
+            Tokenizer::O200kHarmony,
             Tokenizer::Estimate,
         ] {
             let (prefix, tokens) = tokenizer.truncate(&source, 12);

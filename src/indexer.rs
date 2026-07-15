@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::Arc;
+use std::time::UNIX_EPOCH;
 
 use rayon::prelude::*;
 
 use crate::model::IndexResponse;
 use crate::parser::{self, ParseOutput};
-use crate::repository::{DiscoveredFile, discover_files};
+use crate::repository::{DiscoveredFile, discover_files, slash_path, validate_relative};
 use crate::storage::{ChunkInput, ImportInput, IndexedFile, ReferenceInput, Storage, SymbolInput};
 use crate::text::{PreparedText, TextKind, hash_bytes};
 use crate::{Config, Error, Result};
@@ -25,11 +26,7 @@ impl Indexer {
 
     /// Reconcile filesystem state into one committed repository generation.
     pub fn reconcile(&self, rebuild: bool) -> Result<IndexResponse> {
-        if self.config.chunk_lines == 0 || self.config.chunk_bytes == 0 {
-            return Err(Error::InvalidRequest(
-                "chunk_lines and chunk_bytes must be positive".into(),
-            ));
-        }
+        self.validate_config()?;
 
         let mut discovered = discover_files(&self.config.root, self.config.max_file_bytes)?;
         discovered
@@ -65,19 +62,7 @@ impl Indexer {
             })
             .collect::<Vec<_>>();
 
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(self.config.max_index_workers.max(1))
-            .build()
-            .map_err(|error| Error::InvalidRequest(format!("index worker pool: {error}")))?;
-        let chunk_lines = self.config.chunk_lines;
-        let chunk_bytes = self.config.chunk_bytes;
-        let tokenizer = self.config.tokenizer;
-        let prepared = pool.install(|| {
-            candidates
-                .par_iter()
-                .map(|file| prepare_file(file, chunk_lines, chunk_bytes, tokenizer))
-                .collect::<Vec<_>>()
-        });
+        let prepared = self.prepare_candidates(&candidates)?;
 
         let mut replacements = Vec::new();
         let mut warnings = Vec::new();
@@ -125,6 +110,156 @@ impl Indexer {
             files_skipped: skipped,
             warnings,
         })
+    }
+
+    /// Reconcile watcher-reported paths without walking the full repository.
+    ///
+    /// Existing regular files and deletions are safe to apply directly. New
+    /// paths, directories, symlinks, and ignore-rule changes fall back to a
+    /// full reconciliation because they can affect files beyond the reported
+    /// path.
+    pub fn reconcile_paths(&self, paths: &[String]) -> Result<IndexResponse> {
+        self.validate_config()?;
+        let config_hash = self.config_hash();
+        if self.storage.meta()?.config_hash != config_hash {
+            return self.reconcile(true);
+        }
+
+        let existing = self.existing_files()?;
+        let mut repository_paths = existing.keys().cloned().collect::<HashSet<_>>();
+        let mut unique = paths.iter().cloned().collect::<HashSet<_>>();
+        let mut paths = unique.drain().collect::<Vec<_>>();
+        paths.sort_unstable();
+
+        let mut candidates = Vec::new();
+        let mut deletions = Vec::new();
+        let mut unchanged = 0usize;
+        for requested in &paths {
+            let relative = validate_relative(requested)?;
+            let relative_path = slash_path(&relative);
+            if is_ignore_control_path(&relative_path) {
+                return self.reconcile(true);
+            }
+            let absolute_path = self.config.root.join(&relative);
+            if is_database_artifact(&absolute_path, &self.config.database_path) {
+                continue;
+            }
+
+            let indexed = existing.get(&relative_path);
+            let metadata = match fs::symlink_metadata(&absolute_path) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    if indexed.is_some() {
+                        deletions.push(relative_path);
+                    } else if existing
+                        .keys()
+                        .any(|path| path.starts_with(&format!("{relative_path}/")))
+                    {
+                        return self.reconcile(false);
+                    }
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
+
+            if indexed.is_none() || !metadata.file_type().is_file() {
+                return self.reconcile(true);
+            }
+            if metadata.len() > self.config.max_file_bytes {
+                deletions.push(relative_path);
+                continue;
+            }
+
+            let modified_ns = metadata
+                .modified()
+                .ok()
+                .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_nanos());
+            candidates.push(DiscoveredFile {
+                absolute_path,
+                relative_path,
+                size_bytes: metadata.len(),
+                modified_ns,
+            });
+        }
+
+        let prepared = self.prepare_candidates(&candidates)?;
+        let mut replacements = Vec::new();
+        let mut warnings = Vec::new();
+        let mut skipped = 0usize;
+        for result in prepared {
+            match result {
+                PreparedFile::Indexed(file, warning) => {
+                    let same = existing.get(&file.path).is_some_and(|record| {
+                        record.content_hash == file.content_hash
+                            && record.size_bytes == file.size_bytes
+                            && record.modified_ns == file.modified_ns
+                    });
+                    if same {
+                        unchanged += 1;
+                        continue;
+                    }
+                    replacements.push(file);
+                    if let Some(warning) = warning {
+                        push_warning(&mut warnings, warning);
+                    }
+                }
+                PreparedFile::Binary(path) => {
+                    skipped += 1;
+                    deletions.push(path);
+                }
+                PreparedFile::Failed(path, error) => {
+                    skipped += 1;
+                    push_warning(&mut warnings, format!("{path}: {error}"));
+                }
+            }
+        }
+        deletions.sort_unstable();
+        deletions.dedup();
+        for deletion in &deletions {
+            repository_paths.remove(deletion);
+        }
+        resolve_imports(&mut replacements, &repository_paths);
+        let files_indexed = replacements.len();
+        let files_removed = deletions.len();
+        let generation = self
+            .storage
+            .reconcile_files(&config_hash, replacements, &deletions)?;
+
+        Ok(IndexResponse {
+            repository_generation: generation,
+            files_seen: paths.len(),
+            files_indexed,
+            files_unchanged: unchanged,
+            files_removed,
+            files_skipped: skipped,
+            warnings,
+        })
+    }
+
+    fn validate_config(&self) -> Result<()> {
+        if self.config.chunk_lines == 0 || self.config.chunk_bytes == 0 {
+            return Err(Error::InvalidRequest(
+                "chunk_lines and chunk_bytes must be positive".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn prepare_candidates(&self, candidates: &[DiscoveredFile]) -> Result<Vec<PreparedFile>> {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(self.config.max_index_workers.max(1))
+            .build()
+            .map_err(|error| Error::InvalidRequest(format!("index worker pool: {error}")))?;
+        let chunk_lines = self.config.chunk_lines;
+        let chunk_bytes = self.config.chunk_bytes;
+        let tokenizer = self.config.tokenizer;
+        Ok(pool.install(|| {
+            candidates
+                .par_iter()
+                .map(|file| prepare_file(file, chunk_lines, chunk_bytes, tokenizer))
+                .collect()
+        }))
     }
 
     fn existing_files(&self) -> Result<HashMap<String, crate::storage::FileRecord>> {
@@ -277,6 +412,13 @@ fn is_database_artifact(path: &std::path::Path, database: &std::path::Path) -> b
     let database = database.as_os_str().to_string_lossy();
     let path = path.as_os_str().to_string_lossy();
     path == format!("{database}-wal") || path == format!("{database}-shm")
+}
+
+fn is_ignore_control_path(path: &str) -> bool {
+    path == ".gitignore"
+        || path == ".ignore"
+        || path.ends_with("/.gitignore")
+        || path.ends_with("/.ignore")
 }
 
 fn resolve_imports(files: &mut [IndexedFile], repository_paths: &HashSet<String>) {

@@ -47,7 +47,6 @@ impl Cli {
     pub fn config(&self) -> Result<Config> {
         let mut config = Config::discover(&self.root, self.database.clone())?;
         config.tokenizer = self.tokenizer;
-        crate::tokens::set_current(self.tokenizer);
         Ok(config)
     }
 

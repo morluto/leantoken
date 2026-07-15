@@ -57,8 +57,6 @@ impl Config {
             )));
         }
         let database_path = database_path.unwrap_or_else(|| default_database_path(&root));
-        let tokenizer = Tokenizer::default();
-        crate::tokens::set_current(tokenizer);
         Ok(Self {
             root,
             database_path,
@@ -74,7 +72,7 @@ impl Config {
                 .map_or(1, std::num::NonZero::get)
                 .min(8),
             watcher_debounce: Duration::from_millis(500),
-            tokenizer,
+            tokenizer: Tokenizer::default(),
         })
     }
 }
