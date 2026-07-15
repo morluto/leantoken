@@ -246,5 +246,8 @@ fn cli_global_root_and_database_options() {
     ]);
     let config = cli.config().unwrap();
     assert_eq!(config.root, root.path().canonicalize().unwrap());
-    assert_eq!(config.database_path, db);
+    assert_eq!(
+        config.database_path,
+        root.path().canonicalize().unwrap().join("custom.sqlite")
+    );
 }
