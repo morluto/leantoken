@@ -152,6 +152,8 @@ fn git_changed_paths_with(
 
     let mut child = match Command::new(program)
         .args([
+            "-c",
+            "core.fsmonitor=false",
             "status",
             "--porcelain=v1",
             "-z",

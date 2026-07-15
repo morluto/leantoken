@@ -169,3 +169,42 @@ fn git_changed_paths_are_relative_to_a_nested_index_root() {
         std::collections::HashSet::from(["tracked.rs".into()])
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn git_changed_paths_does_not_run_repository_fsmonitor() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !git_available() {
+        return;
+    }
+
+    let root = tempfile::tempdir().expect("root");
+    init_git_repo(root.path());
+    fs::write(root.path().join("tracked.rs"), "fn tracked() {}\n").expect("write");
+    run_git(root.path(), &["add", "."]);
+    run_git(root.path(), &["commit", "-m", "initial"]);
+
+    let marker = root.path().join("fsmonitor-ran");
+    let hook = root.path().join("fsmonitor-hook");
+    fs::write(
+        &hook,
+        format!("#!/bin/sh\ntouch \"{}\"\n", marker.display()),
+    )
+    .expect("hook");
+    let mut permissions = fs::metadata(&hook).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&hook, permissions).expect("executable");
+    run_git(
+        root.path(),
+        &[
+            "config",
+            "core.fsmonitor",
+            hook.to_str().expect("hook path"),
+        ],
+    );
+
+    let _ = git_changed_paths(root.path(), 64).expect("changed paths");
+
+    assert!(!marker.exists(), "repository fsmonitor hook was executed");
+}
