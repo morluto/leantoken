@@ -110,6 +110,47 @@ fn setup_and_remove_do_not_require_a_repository() {
     assert!(!config.contains("\"leantoken\""));
 }
 
+#[test]
+fn npx_setup_registers_a_versioned_launcher_instead_of_its_cache_path() {
+    let temp = tempfile::tempdir().expect("temporary home");
+    let node = temp.path().join("node");
+    let npm = temp.path().join("npm-cli.js");
+    let setup = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", temp.path())
+        .env("USERPROFILE", temp.path())
+        .env("npm_lifecycle_event", "npx")
+        .env("npm_node_execpath", &node)
+        .env("npm_execpath", &npm)
+        .args(["--json", "setup", "--claude", "--yes"])
+        .output()
+        .expect("run npx setup");
+    assert!(
+        setup.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+
+    let config: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(temp.path().join(".claude.json"))
+            .expect("Claude configuration"),
+    )
+    .expect("Claude JSON");
+    assert_eq!(config["mcpServers"]["leantoken"]["command"], node.to_str().unwrap());
+    assert_eq!(
+        config["mcpServers"]["leantoken"]["args"],
+        serde_json::json!([
+            npm.to_str().unwrap(),
+            "exec",
+            "--yes",
+            format!("--package=leantoken@{}", env!("CARGO_PKG_VERSION")),
+            "--",
+            "leantoken",
+            "mcp"
+        ])
+    );
+}
+
 fn run(
     root: &std::path::Path,
     database: &std::path::Path,

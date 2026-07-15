@@ -7,39 +7,45 @@ budgets.
 
 ## Installation
 
-LeanToken requires Rust 1.95 or later and a native C/C++ toolchain for bundled
-SQLite and the tree-sitter grammars.
-
-```bash
-cargo install --git https://github.com/morluto/leantoken
-```
-
 Set up LeanToken for your coding agents with one command:
 
 ```bash
-leantoken setup
+npx leantoken setup
 ```
 
-The wizard detects installed clients, lets you choose which ones to configure,
-and registers the absolute LeanToken executable as a global MCP server. Each
-client launches it in the active workspace.
+The npm package downloads the precompiled LeanToken binary for glibc-based
+Linux (x64 or arm64), macOS (Intel or Apple Silicon), or Windows x64. The wizard
+detects installed clients, lets you choose which ones to configure, and
+registers LeanToken as a global MCP server. Each client launches it in the
+active workspace.
+
+When setup runs through `npx`, it registers the versioned npm command rather
+than an ephemeral cache path. A global installation is also available:
+
+```bash
+npm install --global leantoken
+leantoken setup
+```
 
 Supported clients are Claude Code, Cursor, OpenCode, Codex, Gemini CLI, and
 Antigravity. To skip the wizard, select clients explicitly or configure all of
 them:
 
 ```bash
-leantoken setup --claude --codex --yes
-leantoken setup --all --yes
+npx leantoken setup --claude --codex --yes
+npx leantoken setup --all --yes
 ```
 
 Setup installs only the `leantoken` MCP entry. It does not add skills, rules,
 or shell hooks. Remove the generated entries later with:
 
 ```bash
-leantoken remove
-leantoken remove --all --yes
+npx leantoken remove
+npx leantoken remove --all --yes
 ```
+
+To build from source instead, install Rust 1.95 or later and a native C/C++
+toolchain, then run `cargo install --git https://github.com/morluto/leantoken`.
 
 ## What changes
 
