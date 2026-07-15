@@ -28,7 +28,8 @@ pub enum Tokenizer {
     Gpt2,
     /// OpenAI `p50k_edit`.
     P50kEdit,
-    /// Fast estimate: one token per four characters plus whitespace-split words.
+    /// Fast estimate: the larger of one token per four characters and the
+    /// whitespace-split word count.
     ///
     /// This is not a BPE tokenizer; it is a stand-in for cases where no exact
     /// vocabulary is needed or available. Counts are always inexact.
