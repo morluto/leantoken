@@ -29,6 +29,9 @@ jobs:
       - name: Scan technical debt markers
         run: bash scripts/check-todos.sh
 
+      - name: Validate AGENTS.md
+        run: bash scripts/validate-agents-md.sh
+
   security:
     name: Security checks
     runs-on: ubuntu-latest
@@ -188,3 +191,40 @@ jobs:
           name: coverage-lcov
           path: lcov.info
           retention-days: 7
+
+  docs:
+    name: API documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: docs
+
+      - name: Generate rustdoc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --document-private-items
+
+      - name: Upload docs artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdoc
+          path: target/doc/
+          retention-days: 30
+
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/master'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: target/doc/
+          destination_dir: api
