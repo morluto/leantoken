@@ -81,6 +81,30 @@ fn storage_reopen_uses_existing_index() {
 }
 
 #[test]
+fn storage_applies_lookup_index_migration_to_existing_databases() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("index.sqlite");
+    drop(Storage::open(&db).expect("open first"));
+    let connection = rusqlite::Connection::open(&db).expect("raw connection");
+    connection
+        .execute_batch("DROP INDEX chunks_file_line_idx; PRAGMA user_version = 1;")
+        .expect("simulate version one database");
+    drop(connection);
+
+    drop(Storage::open(&db).expect("migrate"));
+    let connection = rusqlite::Connection::open(&db).expect("inspect");
+    let index_count: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM pragma_index_list('chunks') WHERE name = 'chunks_file_line_idx'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("index count");
+
+    assert_eq!(index_count, 1);
+}
+
+#[test]
 fn initial_reconcile_advances_generation_and_indexes() {
     let dir = tempfile::tempdir().expect("tempdir");
     let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");

@@ -8,6 +8,7 @@ use crate::model::{
     ContextRequest, FileOperation, FilesRequest, OutlineRequest, ReadRequest, SearchMode,
     SearchRequest,
 };
+use crate::tokens::Tokenizer;
 
 /// LeanToken CLI and MCP server entry point.
 #[derive(Debug, Clone, Parser)]
@@ -29,6 +30,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Tokenizer used for source and protocol token accounting.
+    #[arg(long, value_enum, value_name = "ENCODING", default_value_t = Tokenizer::default(), global = true)]
+    pub tokenizer: Tokenizer,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -40,7 +45,9 @@ impl Cli {
     ///
     /// Returns an error when the repository root cannot be canonicalized.
     pub fn config(&self) -> Result<Config> {
-        Config::discover(&self.root, self.database.clone())
+        let mut config = Config::discover(&self.root, self.database.clone())?;
+        config.tokenizer = self.tokenizer;
+        Ok(config)
     }
 
     /// Convert the parsed CLI into an application request.

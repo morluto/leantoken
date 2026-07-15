@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use leantoken::Config;
+use leantoken::tokens::Tokenizer;
 
 #[test]
 fn config_discovers_existing_root() {
@@ -49,4 +50,6 @@ fn config_defaults_bound_output_and_timing() {
     assert!(config.chunk_lines > 0);
     assert!(config.chunk_bytes > 0);
     assert!(config.watcher_debounce >= Duration::ZERO);
+    assert_eq!(config.tokenizer, Tokenizer::default());
+    assert!(config.tokenizer.is_exact());
 }

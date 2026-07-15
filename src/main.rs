@@ -79,15 +79,17 @@ async fn run_mcp(services: Arc<Services>) -> Result<()> {
                 _ = reconcile_cancellation.cancelled() => break,
                 message = changes.recv() => {
                     let Some(message) = message else { break };
-                    match message {
+                    let result = match message {
                         WatcherMessage::Changed { paths } => {
                             tracing::debug!(changed_paths = paths.len(), "repository change detected");
+                            reconcile_services.index_paths(paths).await
                         }
                         WatcherMessage::ReconcileRequired => {
                             tracing::warn!("watcher requested full reconciliation");
+                            reconcile_services.index(false).await
                         }
-                    }
-                    if let Err(error) = reconcile_services.index(false).await {
+                    };
+                    if let Err(error) = result {
                         tracing::error!(%error, "background reconciliation failed");
                     }
                 }

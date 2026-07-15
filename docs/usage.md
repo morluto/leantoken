@@ -9,6 +9,7 @@ responses are bounded.
 ```text
 --root <PATH>      Repository root (default: current directory)
 --database <PATH>  Override the per-repository SQLite cache path
+--tokenizer <ENCODING>  Source and protocol accounting tokenizer
 --json             Emit JSON from CLI commands
 ```
 
@@ -34,6 +35,11 @@ repository before serving, watches later filesystem changes, and reports
 whether responses come from a current or reconciling index generation.
 
 Logs go to stderr. Stdout is reserved for MCP protocol messages.
+
+Tool calls return both text and structured JSON through the SDK. The catalog
+publishes documented input schemas but omits optional output schemas; repeating
+the full response DTOs in every `tools/list` result costs model context without
+changing the structured result on the wire.
 
 ## `leantoken_files`
 
@@ -106,9 +112,17 @@ being resent; other relevant evidence may still be returned.
 default read limit is 8,000 tokens and the hard source-output ceiling is 32,000
 tokens.
 
-`emitted_tokens` uses `cl100k_base` and counts source text only. JSON keys,
-paths, scores, hashes, receipts, and other metadata add protocol tokens beyond
-that value.
+`emitted_tokens` counts source text with the configured tokenizer. The default
+is `cl100k_base`. Exact built-in modes are `cl100k_base`, `o200k_base`,
+`o200k_harmony`, `p50k_base`, `p50k_edit`, `r50k_base`, and `gpt2`.
+
+`estimate` is an inexact heuristic for providers whose tokenizer is not
+available locally. It does not guarantee that a provider will accept a payload
+at the reported budget; responses mark this with `token_count_exact: false`.
+
+Source limits do not include JSON keys, paths, scores, hashes, receipts, tool
+schemas, or JSON-RPC envelopes. The benchmark utilities report those costs
+separately rather than presenting source-token counts as complete MCP cost.
 
 Every source fragment carries a 128-bit BLAKE3 fingerprint for local identity
 and duplicate suppression. Receipts transfer grounded context without creating

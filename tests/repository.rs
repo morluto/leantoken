@@ -1,6 +1,8 @@
 use std::fs;
 
-use leantoken::repository::{discover_files, resolve_existing, slash_path, validate_relative};
+use leantoken::repository::{
+    discover_files, git_changed_paths, resolve_existing, slash_path, validate_relative,
+};
 
 #[test]
 fn validate_relative_rejects_parent_traversal() {
@@ -34,6 +36,7 @@ fn validate_relative_accepts_clean_relative_paths() {
 #[test]
 fn discover_files_honors_gitignore() {
     let root = tempfile::tempdir().expect("tempdir");
+    fs::create_dir(root.path().join(".git")).expect("git marker");
     fs::write(root.path().join(".gitignore"), "ignored.rs\n").expect("gitignore");
     fs::write(root.path().join("kept.rs"), "fn kept() {}\n").expect("kept");
     fs::write(root.path().join("ignored.rs"), "fn ignored() {}\n").expect("ignored");
@@ -91,4 +94,117 @@ fn resolve_existing_accepts_contained_file() {
     let resolved = resolve_existing(&canonical_root, "file.rs").expect("resolve");
     assert!(resolved.starts_with(&canonical_root));
     assert!(resolved.exists());
+}
+
+fn git_available() -> bool {
+    std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .is_ok()
+}
+
+fn run_git(root: &std::path::Path, args: &[&str]) {
+    std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .expect("git command");
+}
+
+fn init_git_repo(root: &std::path::Path) {
+    run_git(root, &["init"]);
+    run_git(root, &["config", "user.email", "test@example.com"]);
+    run_git(root, &["config", "user.name", "Test"]);
+}
+
+#[test]
+fn git_changed_paths_is_empty_outside_git_repo() {
+    let root = tempfile::tempdir().expect("root");
+    let changed = git_changed_paths(root.path(), 64).expect("changed paths");
+    assert!(changed.is_empty());
+}
+
+#[test]
+fn git_changed_paths_detects_modified_and_untracked_files() {
+    if !git_available() {
+        return;
+    }
+
+    let root = tempfile::tempdir().expect("root");
+    init_git_repo(root.path());
+    fs::write(root.path().join("tracked.rs"), "fn tracked() {}").expect("write");
+    run_git(root.path(), &["add", "tracked.rs"]);
+    run_git(root.path(), &["commit", "-m", "initial"]);
+
+    fs::write(root.path().join("tracked.rs"), "fn tracked() { }").expect("modify");
+    fs::write(root.path().join("new.rs"), "fn new() {}").expect("untracked");
+    fs::write(root.path().join("space name.rs"), "fn spaced() {}").expect("untracked space");
+
+    let changed = git_changed_paths(root.path(), 64).expect("changed paths");
+    assert!(changed.contains("tracked.rs"));
+    assert!(changed.contains("new.rs"));
+    assert!(changed.contains("space name.rs"));
+    assert_eq!(changed.len(), 3);
+}
+
+#[test]
+fn git_changed_paths_are_relative_to_a_nested_index_root() {
+    if !git_available() {
+        return;
+    }
+
+    let root = tempfile::tempdir().expect("root");
+    let nested = root.path().join("packages/core");
+    fs::create_dir_all(&nested).expect("nested root");
+    init_git_repo(root.path());
+    fs::write(nested.join("tracked.rs"), "fn tracked() {}\n").expect("write");
+    run_git(root.path(), &["add", "."]);
+    run_git(root.path(), &["commit", "-m", "initial"]);
+    fs::write(nested.join("tracked.rs"), "fn tracked() { }\n").expect("modify");
+
+    let changed = git_changed_paths(&nested, 64).expect("changed paths");
+
+    assert_eq!(
+        changed,
+        std::collections::HashSet::from(["tracked.rs".into()])
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn git_changed_paths_does_not_run_repository_fsmonitor() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !git_available() {
+        return;
+    }
+
+    let root = tempfile::tempdir().expect("root");
+    init_git_repo(root.path());
+    fs::write(root.path().join("tracked.rs"), "fn tracked() {}\n").expect("write");
+    run_git(root.path(), &["add", "."]);
+    run_git(root.path(), &["commit", "-m", "initial"]);
+
+    let marker = root.path().join("fsmonitor-ran");
+    let hook = root.path().join("fsmonitor-hook");
+    fs::write(
+        &hook,
+        format!("#!/bin/sh\ntouch \"{}\"\n", marker.display()),
+    )
+    .expect("hook");
+    let mut permissions = fs::metadata(&hook).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&hook, permissions).expect("executable");
+    run_git(
+        root.path(),
+        &[
+            "config",
+            "core.fsmonitor",
+            hook.to_str().expect("hook path"),
+        ],
+    );
+
+    let _ = git_changed_paths(root.path(), 64).expect("changed paths");
+
+    assert!(!marker.exists(), "repository fsmonitor hook was executed");
 }

@@ -499,7 +499,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rename_inside_root_is_coalesced() {
+    async fn rename_inside_root_is_reported_or_reconciled() {
         let root = tempfile::tempdir().unwrap();
         let (watcher, mut rx) = RepositoryWatcher::start(
             root.path(),
@@ -528,9 +528,39 @@ mod tests {
                 assert!(paths.contains(&"a.txt".to_string()));
                 assert!(paths.contains(&"b.txt".to_string()));
             }
-            other => panic!("expected Changed, got {:?}", other),
+            // FSEvents cannot associate the old and new sides of a rename.
+            // The watcher must conservatively request a full reconciliation
+            // when the backend cannot provide both paths.
+            WatcherMessage::ReconcileRequired => {}
         }
 
         watcher.shutdown().await.unwrap();
+    }
+
+    #[test]
+    fn paired_rename_event_coalesces_both_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let mut pending = BTreeSet::new();
+        let mut rename_from = HashMap::new();
+        let mut rename_to = HashMap::new();
+        let mut reconcile = false;
+        let event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+            .add_path(root.path().join("a.txt"))
+            .add_path(root.path().join("b.txt"));
+
+        process_raw_event(
+            Ok(event),
+            root.path(),
+            &mut pending,
+            &mut rename_from,
+            &mut rename_to,
+            &mut reconcile,
+        );
+
+        assert!(!reconcile);
+        assert_eq!(
+            pending,
+            BTreeSet::from(["a.txt".to_string(), "b.txt".to_string()])
+        );
     }
 }

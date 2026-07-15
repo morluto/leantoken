@@ -1,6 +1,7 @@
 use clap::Parser;
 use leantoken::cli::{AppRequest, Cli};
 use leantoken::model::{FileOperation, SearchMode};
+use leantoken::tokens::Tokenizer;
 
 fn parse(args: &[&str]) -> Cli {
     Cli::try_parse_from(std::iter::once("leantoken").chain(args.iter().copied())).unwrap()
@@ -145,6 +146,13 @@ fn cli_read_rejects_conflicting_or_invalid_ranges() {
 fn cli_global_json_works_before_or_after_subcommand() {
     assert!(parse(&["--json", "status"]).json);
     assert!(parse(&["status", "--json"]).json);
+}
+
+#[test]
+fn cli_tokenizer_global_option() {
+    let cli = parse(&["--tokenizer", "o200k_base", "status"]);
+    assert_eq!(cli.tokenizer, Tokenizer::O200kBase);
+    assert_eq!(parse(&["status"]).tokenizer, Tokenizer::default());
 }
 
 #[test]
