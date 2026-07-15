@@ -54,7 +54,9 @@ fn mcp_exits_cleanly_on_stdio_eof() {
             "mcp",
         ])
         .write_stdin("")
-        .timeout(std::time::Duration::from_secs(10))
+        // The deadline covers cold indexing and watcher startup as well as
+        // transport shutdown, which is materially slower on Windows runners.
+        .timeout(std::time::Duration::from_secs(30))
         .assert()
         .success();
 }
