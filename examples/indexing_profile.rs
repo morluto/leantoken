@@ -133,10 +133,11 @@ fn invalid_input(message: &str) -> Box<dyn Error> {
 
 fn run_profile(args: &Args) -> AnyResult<Report> {
     let root = tempfile::tempdir()?;
+    let database = tempfile::tempdir()?;
     let paths = create_corpus(root.path(), args.files, args.file_bytes)?;
     let config = Arc::new(Config::discover(
         root.path(),
-        Some(root.path().join("index.sqlite")),
+        Some(database.path().join("index.sqlite")),
     )?);
     let storage = Storage::open(&config.database_path)?;
     let indexer = Indexer::new(config, storage);
