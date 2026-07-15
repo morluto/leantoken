@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["canonicalize_database_parent","default_database_path"],"struct":["Config"]};

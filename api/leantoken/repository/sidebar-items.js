@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["discover_files","git_changed_paths","git_changed_paths_with","git_worktree_prefix","parse_git_status","resolve_existing","slash_path","validate_relative"],"struct":["DiscoveredFile"]};

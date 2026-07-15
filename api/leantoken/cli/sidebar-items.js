@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AppRequest","Commands","FileOperationArg","SearchModeArg"],"struct":["Cli","ContextArgs","FilesArgs","LineRange","LineRangeError","OutlineArgs","ReadArgs","SearchArgs"]};

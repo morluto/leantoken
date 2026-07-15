@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["WatcherMessage"],"fn":["flush","handle_rename","into_error","process_raw_event","relative_path"],"struct":["RepositoryWatcher"]};
