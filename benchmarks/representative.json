@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "description": "Retrospective context-retrieval tasks evaluated at the parent of four public bug-fix commits.",
+  "rg_max_lines_per_query": 200,
+  "corpora": [
+    {
+      "name": "ripgrep",
+      "url": "https://github.com/BurntSushi/ripgrep.git",
+      "directory": "ripgrep",
+      "base_revision": "2c23e39e0215397884834c0d3cd5a1620f468d30",
+      "fix_commit": "f55548ba9f24dda192880d4a3da2b52e90f6e194",
+      "tasks": [
+        {
+          "id": "globset-matches-all-false-positive",
+          "prompt": "Fix GlobSet::matches_all returning true when only one of multiple globs compiled into the same matching strategy matches. Cover the strategy-specific cases and avoid allocating per query.",
+          "rg_queries": [
+            "matches_all",
+            "GlobSetMatchStrategy",
+            "matches_into"
+          ],
+          "relevant_files": [
+            {
+              "path": "crates/globset/src/lib.rs",
+              "line_anchors": [390, 654, 697, 1055],
+              "role": "GlobSet dispatch, matching strategies, and colocated regression tests"
+            }
+          ],
+          "token_budget": 1200
+        }
+      ]
+    },
+    {
+      "name": "flask",
+      "url": "https://github.com/pallets/flask.git",
+      "directory": "flask",
+      "base_revision": "2ac89889f4cc330eabd50f295dcef02828522c69",
+      "fix_commit": "06ea505ce2b2042af26e96d35ebf159af7c0869d",
+      "tasks": [
+        {
+          "id": "request-context-copy-per-call",
+          "prompt": "copy_current_request_context reuses one copied request context, so calling the decorated function concurrently can corrupt context state. Make each invocation independent and add a concurrent regression test.",
+          "rg_queries": [
+            "copy_current_request_context",
+            "ctx.copy",
+            "RequestContext"
+          ],
+          "relevant_files": [
+            {
+              "path": "src/flask/ctx.py",
+              "line_anchors": [154, 202],
+              "role": "decorator implementation"
+            },
+            {
+              "path": "tests/test_reqctx.py",
+              "line_anchors": [149, 179],
+              "role": "request-context copying tests"
+            }
+          ],
+          "token_budget": 1200
+        }
+      ]
+    },
+    {
+      "name": "express",
+      "url": "https://github.com/expressjs/express.git",
+      "directory": "express",
+      "base_revision": "59e205a57a04fced6bb7b8ec0b5dec29461a9996",
+      "fix_commit": "18e5985b8a9d5e8423db0a9121f22bdaecd5b120",
+      "tasks": [
+        {
+          "id": "send-transfer-encoding-content-length-conflict",
+          "prompt": "Fix res.send adding Content-Length when the response already has Transfer-Encoding, which produces conflicting HTTP framing headers. Add coverage for the supported transfer-encoding values without changing unrelated response behavior.",
+          "rg_queries": [
+            "Transfer-Encoding",
+            "Content-Length",
+            "res.send"
+          ],
+          "relevant_files": [
+            {
+              "path": "lib/response.js",
+              "line_anchors": [126, 163, 165],
+              "role": "res.send response-header implementation"
+            },
+            {
+              "path": "test/res.send.js",
+              "line_anchors": [282, 590],
+              "role": "res.send header behavior tests and insertion neighborhood"
+            }
+          ],
+          "token_budget": 1200
+        }
+      ]
+    },
+    {
+      "name": "gin",
+      "url": "https://github.com/gin-gonic/gin.git",
+      "directory": "gin",
+      "base_revision": "293ad7edebb3ae30369288bd6416ca0d78474727",
+      "fix_commit": "4a3eb31fb15b2a2d78b4bdbe0c31a2c564b1977a",
+      "tasks": [
+        {
+          "id": "recovery-records-panic-error",
+          "prompt": "The default recovery middleware returns 500 after a panic but does not record the recovered value in Context.Errors. Record both error and non-error panic values as a private context error, and test both cases.",
+          "rg_queries": [
+            "defaultHandleRecovery",
+            "RecoveryWithWriter",
+            "c.Errors"
+          ],
+          "relevant_files": [
+            {
+              "path": "recovery.go",
+              "line_anchors": [49, 53, 109],
+              "role": "default panic recovery handler"
+            },
+            {
+              "path": "recovery_test.go",
+              "line_anchors": [132, 155],
+              "role": "recovery middleware regression tests and insertion neighborhood"
+            }
+          ],
+          "token_budget": 1200
+        }
+      ]
+    }
+  ]
+}
