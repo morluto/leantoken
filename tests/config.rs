@@ -15,11 +15,36 @@ fn config_discovers_existing_root() {
 }
 
 #[test]
-fn config_explicit_database_path_wins() {
+fn config_canonicalizes_explicit_database_parent() {
     let root = tempfile::tempdir().expect("tempdir");
     let db = root.path().join("custom.sqlite");
-    let config = Config::discover(root.path(), Some(db.clone())).expect("discover");
-    assert_eq!(config.database_path, db);
+    let config = Config::discover(root.path(), Some(db)).expect("discover");
+    assert_eq!(
+        config.database_path,
+        root.path()
+            .canonicalize()
+            .expect("canonical root")
+            .join("custom.sqlite")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn config_canonicalizes_database_parent_reached_through_symlink() {
+    let root = tempfile::tempdir().expect("root");
+    let aliases = tempfile::tempdir().expect("aliases");
+    let alias = aliases.path().join("repository");
+    std::os::unix::fs::symlink(root.path(), &alias).expect("symlink root");
+
+    let config = Config::discover(&alias, Some(alias.join("index.sqlite"))).expect("discover");
+
+    assert_eq!(
+        config.database_path,
+        root.path()
+            .canonicalize()
+            .expect("canonical root")
+            .join("index.sqlite")
+    );
 }
 
 #[test]
