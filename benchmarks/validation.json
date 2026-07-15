@@ -1,0 +1,96 @@
+{
+  "schema_version": 2,
+  "dataset_kind": "prospective_validation",
+  "frozen_at": "2026-07-15",
+  "description": "Frozen validation tasks derived from issue reports that were still open at collection time and from pinned source inspection. No future patch or proposed pull request was used to construct prompts or labels. The tasks were later used during retrieval tuning, so this is not a blind holdout.",
+  "rg_max_lines_per_query": 200,
+  "corpora": [
+    {
+      "name": "flask-validation",
+      "url": "https://github.com/pallets/flask",
+      "directory": "flask",
+      "base_revision": "36e4a824f340fdee7ed50937ba8e7f6bc7d17f81",
+      "issue_url": "https://github.com/pallets/flask/issues/6093",
+      "prompt_provenance": "Issue title, description, and reproductions as published before the dataset freeze; no patch or PR consulted.",
+      "label_provenance": "Exact partition calls named by the issue plus the existing tests owning session_transaction and run configuration behavior.",
+      "tasks": [
+        {
+          "id": "flask-ipv6-address-partition",
+          "prompt": "Fix IPv6 address handling in Flask. session_transaction loses the IPv6 host when saving cookies, and Flask.run parses SERVER_NAME=[::1]:8080 incorrectly. Add regression coverage for both behaviors without changing IPv4 host:port behavior.",
+          "rg_queries": ["partition(\":\")", "session_transaction", "test_run_from_config", "SERVER_NAME"],
+          "relevant_files": [
+            {"path": "src/flask/app.py", "line_anchors": [720, 724, 726]},
+            {"path": "src/flask/testing.py", "line_anchors": [176, 180, 182]},
+            {"path": "tests/test_basic.py", "line_anchors": [1905, 1915, 1924]},
+            {"path": "tests/test_testing.py", "line_anchors": [157, 163, 167]}
+          ],
+          "token_budget": 1200
+        }
+      ]
+    },
+    {
+      "name": "gin-validation",
+      "url": "https://github.com/gin-gonic/gin",
+      "directory": "gin",
+      "base_revision": "34dac209ffb6ef85cc78c5d217bbb7ad001d68fd",
+      "issue_url": "https://github.com/gin-gonic/gin/issues/4688",
+      "prompt_provenance": "Issue title, description, and reproduction as published before the dataset freeze; no patch or PR consulted.",
+      "label_provenance": "The AsciiJSON loop and existing AsciiJSON regression-test neighborhood identified directly from the pinned tree.",
+      "tasks": [
+        {
+          "id": "gin-ascii-json-non-bmp",
+          "prompt": "Fix render.AsciiJSON so non-BMP Unicode such as emoji round-trips through JSON. JSON unicode escapes must use a UTF-16 surrogate pair instead of a five-digit escape. Preserve current BMP and ASCII behavior and add a regression test.",
+          "rg_queries": ["AsciiJSON", "Appendf", "MaxASCII", "TestRenderAsciiJSON"],
+          "relevant_files": [
+            {"path": "render/json.go", "line_anchors": [160, 167, 174]},
+            {"path": "render/render_test.go", "line_anchors": [243, 250, 253]}
+          ],
+          "token_budget": 900
+        }
+      ]
+    },
+    {
+      "name": "express-validation",
+      "url": "https://github.com/expressjs/express",
+      "directory": "express",
+      "base_revision": "ae6dd37680e3a00618d6c8a3e522f0ee4eeba1a4",
+      "issue_url": "https://github.com/expressjs/express/issues/7350",
+      "prompt_provenance": "Issue title, description, and reproduction as published before the dataset freeze; no patch or PR consulted.",
+      "label_provenance": "View extension parsing, app.render error flow, and the existing missing-view test neighborhood identified from the pinned tree.",
+      "tasks": [
+        {
+          "id": "express-trailing-dot-view",
+          "prompt": "Fix app.render and res.render for a view name ending in a dot. app.render('index.', callback) must report the normal failed-to-lookup-view error through the callback instead of throwing because require receives an empty module name. Add regression coverage.",
+          "rg_queries": ["extname(name)", "this.ext.slice(1)", "Failed to lookup view", "app.render"],
+          "relevant_files": [
+            {"path": "lib/view.js", "line_anchors": [56, 66, 77, 81]},
+            {"path": "lib/application.js", "line_anchors": [522, 552, 562, 564]},
+            {"path": "test/app.render.js", "line_anchors": [82, 87, 89]}
+          ],
+          "token_budget": 1000
+        }
+      ]
+    },
+    {
+      "name": "tokio-validation",
+      "url": "https://github.com/tokio-rs/tokio",
+      "directory": "tokio",
+      "base_revision": "9cae638de6dc8dd9779c450201df8c102247a242",
+      "issue_url": "https://github.com/tokio-rs/tokio/issues/8182",
+      "prompt_provenance": "Issue title, description, reproduction, and root-cause analysis as published before the dataset freeze; no patch or PR consulted.",
+      "label_provenance": "The two affected write state-machine branches and existing fs::File write-test neighborhood identified from the pinned tree.",
+      "tasks": [
+        {
+          "id": "tokio-file-write-after-spawn-failure",
+          "prompt": "Fix tokio::fs::File so a second poll_write does not panic after spawn_mandatory_blocking failed on the previous write. The failed spawn currently leaves State::Idle without its buffer. Cover poll_write and poll_write_vectored and add a regression test for a shut-down blocking pool.",
+          "rg_queries": ["spawn_mandatory_blocking", "State::Idle", "poll_write_vectored", "basic_write"],
+          "relevant_files": [
+            {"path": "tokio/src/fs/file.rs", "line_anchors": [743, 755, 764, 814, 826, 835]},
+            {"path": "tokio/tests/fs_file.rs", "line_anchors": [28, 32, 34]}
+          ],
+          "token_budget": 1200
+        }
+      ]
+    }
+  ]
+}
