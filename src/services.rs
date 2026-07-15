@@ -23,6 +23,7 @@ const MAX_PATTERN_BYTES: usize = 4 * 1024;
 const MAX_PATH_BYTES: usize = 4 * 1024;
 const MAX_INPUT_ITEMS: usize = 256;
 const GIT_CHANGED_PATHS_MAX: usize = 512;
+const MAX_CONTEXT_DECLARATION_LINES: usize = 64;
 
 #[derive(Debug, Clone)]
 /// Shared application services used by both CLI and MCP adapters.
@@ -663,7 +664,7 @@ impl Services {
                         hit.symbol.start_line,
                         hit.symbol.end_line,
                         0,
-                        40,
+                        MAX_CONTEXT_DECLARATION_LINES,
                     )?
                     else {
                         continue;

@@ -469,11 +469,14 @@ async fn tokenizer_configuration_is_scoped_to_each_service() {
 }
 
 #[tokio::test]
-async fn context_declaration_excerpt_crosses_index_chunk_boundaries() {
+async fn context_declaration_excerpt_retains_long_body_across_chunks() {
     let root = tempfile::tempdir().expect("root");
+    let body = (1..=48)
+        .map(|line| format!("    let value_{line} = {line};\n"))
+        .collect::<String>();
     std::fs::write(
         root.path().join("lib.rs"),
-        "fn target_symbol() {\n    let one = 1;\n    let two = 2;\n    let three = 3;\n    let four = 4;\n    let five = 5;\n    consume(one + two + three + four + five);\n}\n",
+        format!("fn target_symbol() {{\n{body}    consume(value_48);\n}}\n"),
     )
     .expect("source");
     let mut config =
@@ -485,7 +488,7 @@ async fn context_declaration_excerpt_crosses_index_chunk_boundaries() {
     let response = services
         .context(ContextRequest {
             task: "fix target_symbol".into(),
-            token_budget: 200,
+            token_budget: 600,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -500,6 +503,6 @@ async fn context_declaration_excerpt_crosses_index_chunk_boundaries() {
         .find(|fragment| fragment.path == "lib.rs" && fragment.start_line == 1)
         .expect("declaration fragment");
 
-    assert_eq!(declaration.end_line, 8);
-    assert!(declaration.content.contains("consume(one + two"));
+    assert_eq!(declaration.end_line, 51);
+    assert!(declaration.content.contains("consume(value_48)"));
 }
