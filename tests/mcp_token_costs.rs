@@ -1,10 +1,13 @@
-use std::{fs, path::Path, path::PathBuf, time::Instant};
+use std::{fs, path::Path, path::PathBuf, sync::Arc, time::Instant};
 
 use leantoken::{
     Config, ContextRequest,
-    mcp::{handoff_cost, tool_catalog_json},
+    mcp::{LeanTokenMcp, tool_catalog_json},
     services::Services,
-    tokens,
+};
+use rmcp::{
+    ServerHandler,
+    model::{CallToolResult, ProtocolVersion},
 };
 use serde::Serialize;
 
@@ -14,9 +17,13 @@ struct Report {
     tokenizer: &'static str,
     token_count_exact: bool,
     schema_tokens: usize,
-    envelope_tokens: usize,
+    initialize_request_tokens: usize,
+    initialize_response_tokens: usize,
+    initialized_notification_tokens: usize,
+    tools_list_request_tokens: usize,
+    tools_list_response_tokens: usize,
+    call_request_tokens: usize,
     result_tokens: usize,
-    protocol_overhead_tokens: usize,
     handoff_tokens: usize,
     latency_ms: f64,
     limitations: Vec<&'static str>,
@@ -29,12 +36,40 @@ async fn mcp_handoff_token_costs() {
     let root = temp.path().join("repo");
     copy_tree(&source, &root);
     let config = Config::discover(&root, Some(temp.path().join("index.sqlite"))).expect("config");
-    let services = Services::open(config).expect("services");
+    let tokenizer = config.tokenizer;
+    let services = Arc::new(Services::open(config).expect("services"));
     services.index(true).await.expect("cold index");
 
     let started = Instant::now();
 
     let schema_json = tool_catalog_json();
+    let schema: serde_json::Value = serde_json::from_str(&schema_json).expect("tool catalog");
+    let protocol_version = ProtocolVersion::LATEST.as_str();
+
+    let initialize_request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": protocol_version,
+            "capabilities": {},
+            "clientInfo": { "name": "benchmark-client", "version": "1" }
+        }
+    });
+    let mut server_info = LeanTokenMcp::new(Arc::clone(&services)).get_info();
+    server_info.protocol_version = ProtocolVersion::LATEST;
+    let initialize_response = serde_json::json!({
+        "jsonrpc": "2.0", "id": 0, "result": server_info
+    });
+    let initialized_notification = serde_json::json!({
+        "jsonrpc": "2.0", "method": "notifications/initialized"
+    });
+    let tools_list_request = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}
+    });
+    let tools_list_response = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "result": { "tools": schema }
+    });
 
     let context_request = ContextRequest {
         task: "change the Rust Point distance calculation and its caller".into(),
@@ -46,11 +81,11 @@ async fn mcp_handoff_token_costs() {
         prior_repository_generation: None,
     };
     let context = services.context(context_request).await.expect("context");
-    let context_json = serde_json::to_string(&context).expect("context JSON");
+    let context_value = serde_json::to_value(&context).expect("context JSON");
 
     let call_request = serde_json::json!({
         "jsonrpc": "2.0",
-        "id": 1,
+        "id": 2,
         "method": "tools/call",
         "params": {
             "name": "leantoken_context",
@@ -65,38 +100,49 @@ async fn mcp_handoff_token_costs() {
             }
         }
     });
+    let tool_result = CallToolResult::structured(context_value);
+    assert!(tool_result.structured_content.is_some());
     let call_result = serde_json::json!({
         "jsonrpc": "2.0",
-        "id": 1,
-        "result": {
-            "content": [
-                { "type": "text", "text": context_json }
-            ],
-            "isError": false
-        }
+        "id": 2,
+        "result": tool_result
     });
 
-    let cost = handoff_cost(
-        &schema_json,
-        &call_request.to_string(),
-        &call_result.to_string(),
-    );
+    let schema_tokens = tokenizer.count(&schema_json);
+    let initialize_request_tokens = tokenizer.count(&initialize_request.to_string());
+    let initialize_response_tokens = tokenizer.count(&initialize_response.to_string());
+    let initialized_notification_tokens = tokenizer.count(&initialized_notification.to_string());
+    let tools_list_request_tokens = tokenizer.count(&tools_list_request.to_string());
+    let tools_list_response_tokens = tokenizer.count(&tools_list_response.to_string());
+    let call_request_tokens = tokenizer.count(&call_request.to_string());
+    let result_tokens = tokenizer.count(&call_result.to_string());
+    let handoff_tokens = initialize_request_tokens
+        + initialize_response_tokens
+        + initialized_notification_tokens
+        + tools_list_request_tokens
+        + tools_list_response_tokens
+        + call_request_tokens
+        + result_tokens;
 
     let latency_ms = started.elapsed().as_secs_f64() * 1_000.0;
 
     let report = Report {
         fixture: source.display().to_string(),
-        tokenizer: tokens::current().name(),
-        token_count_exact: cost.exact,
-        schema_tokens: cost.schema_tokens,
-        envelope_tokens: cost.envelope_tokens,
-        result_tokens: cost.result_tokens,
-        protocol_overhead_tokens: cost.protocol_overhead_tokens,
-        handoff_tokens: cost.handoff_tokens,
+        tokenizer: tokenizer.name(),
+        token_count_exact: tokenizer.is_exact(),
+        schema_tokens,
+        initialize_request_tokens,
+        initialize_response_tokens,
+        initialized_notification_tokens,
+        tools_list_request_tokens,
+        tools_list_response_tokens,
+        call_request_tokens,
+        result_tokens,
+        handoff_tokens,
         latency_ms,
         limitations: vec![
-            "The result payload wraps the real ContextResponse JSON as a text content item, matching the MCP wire format.",
-            "The protocol overhead is a fixed model; a real transport includes the full tools/list request and initialize handshake.",
+            "The result uses rmcp CallToolResult::structured, which serializes the response in both text content and structuredContent.",
+            "The modeled trace serializes initialize, notifications/initialized, tools/list, and tools/call messages but excludes transport framing outside JSON-RPC.",
             "No model consumes the handoff, so practical sufficiency is not measured here.",
         ],
     };
@@ -107,15 +153,12 @@ async fn mcp_handoff_token_costs() {
     println!("{pretty}");
 
     assert!(
-        cost.schema_tokens <= 6_000,
+        schema_tokens <= 1_600,
         "five-tool schema exceeds allowed budget: {}",
-        cost.schema_tokens
+        schema_tokens
     );
-    assert!(
-        cost.handoff_tokens > cost.schema_tokens + cost.envelope_tokens + cost.result_tokens,
-        "handoff total should include the modeled overhead"
-    );
-    assert!(cost.exact, "default tokenizer should be exact");
+    assert!(handoff_tokens > schema_tokens + result_tokens);
+    assert!(tokenizer.is_exact(), "default tokenizer should be exact");
 }
 
 fn copy_tree(source: &Path, destination: &Path) {

@@ -103,6 +103,13 @@ struct AggregateReport {
     source_savings_against_oracle_fraction: f64,
     total_json_savings_against_scripted_fraction: f64,
     known_fragments_resent: usize,
+    dead_end_fragments: usize,
+    dead_end_source_tokens: usize,
+    second_response_source_tokens: usize,
+    estimated_repeated_range_source_tokens: usize,
+    repeat_request_json_tokens: usize,
+    repeat_total_json_tokens: usize,
+    two_turn_context_json_tokens: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -147,10 +154,15 @@ struct TaskReport {
     warm_context_ms_samples: Vec<f64>,
     warm_context_median_ms: f64,
     warm_context_p95_ms: f64,
-    repeat_source_tokens: usize,
+    second_response_source_tokens: usize,
+    estimated_repeated_range_source_tokens: usize,
+    repeat_request_json_tokens: usize,
     repeat_total_json_tokens: usize,
+    two_turn_context_json_tokens: usize,
     known_fragments_resent: usize,
     known_hash_omission_visible: bool,
+    dead_end_fragments: usize,
+    dead_end_source_tokens: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -256,8 +268,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         rustc_version: command_version("rustc")?,
         ripgrep_version,
         generated_at_unix_seconds: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-        tokenizer: tokens::current().name(),
-        token_count_exact: tokens::is_exact(),
+        tokenizer: tokens::Tokenizer::default().name(),
+        token_count_exact: tokens::Tokenizer::default().is_exact(),
         methodology: Methodology {
             oracle_baseline: "Full contents of fix-labeled relevant files, as if an agent chose every file perfectly and paid no discovery cost.",
             rg_discovery_baseline: "Bounded, path-sorted ripgrep --json output for fixed-string queries derived from each public bug task.",
@@ -272,7 +284,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "The oracle baseline is intentionally difficult to beat because it assumes perfect file selection, but it reads whole files rather than exact future diff hunks.",
             "The scripted ripgrep baseline uses fixed queries chosen with knowledge of each task and is not an autonomous agent trajectory.",
             "No model executes an edit, so the benchmark does not measure pass rate, prewalk handoff quality, or end-to-end task cost.",
-            "Four repositories and one task per repository are representative smoke evidence, not a statistically powered product claim.",
+            "Eight repositories and one task per repository are representative smoke evidence, not a statistically powered product claim.",
             "Cold indexing and warm latency depend on host hardware and filesystem cache state.",
         ],
     };
@@ -377,6 +389,17 @@ async fn run_task(
         .filter(|path| !relevant_paths.contains(*path))
         .cloned()
         .collect::<Vec<_>>();
+    let dead_end_fragments = response
+        .fragments
+        .iter()
+        .filter(|fragment| !relevant_paths.contains(&fragment.path))
+        .count();
+    let dead_end_source_tokens = response
+        .fragments
+        .iter()
+        .filter(|fragment| !relevant_paths.contains(&fragment.path))
+        .map(|fragment| fragment.token_count)
+        .sum();
     let line_anchors = task
         .relevant_files
         .iter()
@@ -391,13 +414,13 @@ async fn run_task(
         .map(|fragment| fragment.content_hash.clone())
         .collect::<Vec<_>>();
     let known_set = known.iter().cloned().collect::<HashSet<_>>();
-    let repeat = services
-        .context(ContextRequest {
-            known_hashes: known,
-            prior_repository_generation: Some(response.meta.repository_generation),
-            ..request
-        })
-        .await?;
+    let repeat_request = ContextRequest {
+        known_hashes: known,
+        prior_repository_generation: Some(response.meta.repository_generation),
+        ..request
+    };
+    let repeat_request_json_tokens = tokens::count(&serde_json::to_string(&repeat_request)?);
+    let repeat = services.context(repeat_request).await?;
     let known_fragments_resent = repeat
         .fragments
         .iter()
@@ -411,6 +434,27 @@ async fn run_task(
         .into());
     }
     let repeat_total_json_tokens = tokens::count(&serde_json::to_string(&repeat)?);
+    let estimated_repeated_range_source_tokens = repeat
+        .fragments
+        .iter()
+        .map(|fragment| {
+            let prior_ranges = response
+                .fragments
+                .iter()
+                .filter(|prior| prior.path == fragment.path)
+                .map(|prior| (prior.start_line, prior.end_line))
+                .collect::<Vec<_>>();
+            repeated_range_token_estimate(
+                fragment.start_line,
+                fragment.end_line,
+                fragment.token_count,
+                &prior_ranges,
+            )
+        })
+        .sum();
+    let two_turn_context_json_tokens = leantoken_total_json_tokens
+        .saturating_add(repeat_request_json_tokens)
+        .saturating_add(repeat_total_json_tokens);
     let known_hash_omission_visible = repeat
         .omitted
         .iter()
@@ -456,10 +500,15 @@ async fn run_task(
         warm_context_median_ms: percentile(&warm_context_ms_samples, 0.50),
         warm_context_p95_ms: percentile(&warm_context_ms_samples, 0.95),
         warm_context_ms_samples,
-        repeat_source_tokens: repeat.meta.emitted_tokens,
+        second_response_source_tokens: repeat.meta.emitted_tokens,
+        estimated_repeated_range_source_tokens,
+        repeat_request_json_tokens,
         repeat_total_json_tokens,
+        two_turn_context_json_tokens,
         known_fragments_resent,
         known_hash_omission_visible,
+        dead_end_fragments,
+        dead_end_source_tokens,
     })
 }
 
@@ -767,6 +816,33 @@ fn savings(baseline: usize, actual: usize) -> f64 {
     }
 }
 
+fn repeated_range_token_estimate(
+    start_line: usize,
+    end_line: usize,
+    token_count: usize,
+    prior_ranges: &[(usize, usize)],
+) -> usize {
+    if end_line < start_line || token_count == 0 {
+        return 0;
+    }
+    let line_count = end_line - start_line + 1;
+    let mut repeated = vec![false; line_count];
+    for &(prior_start, prior_end) in prior_ranges {
+        let overlap_start = start_line.max(prior_start);
+        let overlap_end = end_line.min(prior_end);
+        if overlap_start > overlap_end {
+            continue;
+        }
+        for line in overlap_start..=overlap_end {
+            repeated[line - start_line] = true;
+        }
+    }
+    let repeated_lines = repeated.into_iter().filter(|value| *value).count();
+    token_count
+        .saturating_mul(repeated_lines)
+        .div_ceil(line_count)
+}
+
 fn accumulate(aggregate: &mut AggregateReport, task: &TaskReport) {
     aggregate.task_count += 1;
     aggregate.relevant_files += task.relevant_files.len();
@@ -780,4 +856,24 @@ fn accumulate(aggregate: &mut AggregateReport, task: &TaskReport) {
     aggregate.leantoken_source_tokens += task.leantoken_source_tokens;
     aggregate.leantoken_total_json_tokens += task.leantoken_total_json_tokens;
     aggregate.known_fragments_resent += task.known_fragments_resent;
+    aggregate.dead_end_fragments += task.dead_end_fragments;
+    aggregate.dead_end_source_tokens += task.dead_end_source_tokens;
+    aggregate.second_response_source_tokens += task.second_response_source_tokens;
+    aggregate.estimated_repeated_range_source_tokens += task.estimated_repeated_range_source_tokens;
+    aggregate.repeat_request_json_tokens += task.repeat_request_json_tokens;
+    aggregate.repeat_total_json_tokens += task.repeat_total_json_tokens;
+    aggregate.two_turn_context_json_tokens += task.two_turn_context_json_tokens;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::repeated_range_token_estimate;
+
+    #[test]
+    fn repeated_range_tokens_include_partial_overlap_with_a_different_hash() {
+        assert_eq!(
+            repeated_range_token_estimate(8, 12, 50, &[(1, 10), (20, 30)]),
+            30
+        );
+    }
 }

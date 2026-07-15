@@ -51,7 +51,8 @@ struct TaskReport {
     source_token_savings_fraction: f64,
     total_json_savings_against_minimal_baseline_fraction: f64,
     warm_latency_ms: f64,
-    repeated_source_tokens: usize,
+    second_response_source_tokens: usize,
+    estimated_repeated_range_source_tokens: usize,
     known_fragments_resent: usize,
 }
 
@@ -153,6 +154,24 @@ async fn benchmark_token_economy() {
             .iter()
             .filter(|fragment| known_set.contains(&fragment.content_hash))
             .count();
+        let estimated_repeated_range_source_tokens = repeated
+            .fragments
+            .iter()
+            .map(|fragment| {
+                let prior_ranges = response
+                    .fragments
+                    .iter()
+                    .filter(|prior| prior.path == fragment.path)
+                    .map(|prior| (prior.start_line, prior.end_line))
+                    .collect::<Vec<_>>();
+                repeated_range_token_estimate(
+                    fragment.start_line,
+                    fragment.end_line,
+                    fragment.token_count,
+                    &prior_ranges,
+                )
+            })
+            .sum();
         assert!(
             repeated
                 .omitted
@@ -185,7 +204,8 @@ async fn benchmark_token_economy() {
                 total_json,
             ),
             warm_latency_ms,
-            repeated_source_tokens: repeated.meta.emitted_tokens,
+            second_response_source_tokens: repeated.meta.emitted_tokens,
+            estimated_repeated_range_source_tokens,
             known_fragments_resent,
         });
     }
@@ -195,8 +215,8 @@ async fn benchmark_token_economy() {
     let aggregate_recall = ratio(found_total, relevant_total);
     let report = Report {
         fixture: source.display().to_string(),
-        tokenizer: tokens::current().name(),
-        token_count_exact: tokens::is_exact(),
+        tokenizer: tokens::Tokenizer::default().name(),
+        token_count_exact: tokens::Tokenizer::default().is_exact(),
         task_count: TASKS.len(),
         cold_index_ms,
         aggregate_baseline_source_tokens: baseline_total,
@@ -249,6 +269,28 @@ fn savings(baseline: usize, actual: usize) -> f64 {
     } else {
         1.0 - actual as f64 / baseline as f64
     }
+}
+
+fn repeated_range_token_estimate(
+    start_line: usize,
+    end_line: usize,
+    token_count: usize,
+    prior_ranges: &[(usize, usize)],
+) -> usize {
+    if end_line < start_line || token_count == 0 {
+        return 0;
+    }
+    let line_count = end_line - start_line + 1;
+    let repeated_lines = (start_line..=end_line)
+        .filter(|line| {
+            prior_ranges
+                .iter()
+                .any(|(prior_start, prior_end)| prior_start <= line && line <= prior_end)
+        })
+        .count();
+    token_count
+        .saturating_mul(repeated_lines)
+        .div_ceil(line_count)
 }
 
 fn copy_tree(source: &Path, destination: &Path) {

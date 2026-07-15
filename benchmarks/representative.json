@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Retrospective context-retrieval tasks evaluated at the parent of four public bug-fix commits.",
+  "description": "Retrospective context-retrieval tasks evaluated at the parent of eight public bug-fix commits.",
   "rg_max_lines_per_query": 200,
   "corpora": [
     {
@@ -116,6 +116,130 @@
               "path": "recovery_test.go",
               "line_anchors": [132, 155],
               "role": "recovery middleware regression tests and insertion neighborhood"
+            }
+          ],
+          "token_budget": 1200
+        }
+      ]
+    },
+    {
+      "name": "tokio",
+      "url": "https://github.com/tokio-rs/tokio.git",
+      "directory": "tokio",
+      "base_revision": "dc3a883b99f8255cad5409458be95a0bcec2320c",
+      "fix_commit": "f59aae423eaf7131d6923085c1c66b50a49bb4e2",
+      "tasks": [
+        {
+          "id": "streammap-size-hint-overflow",
+          "prompt": "Fix an overflow in StreamMap::size_hint where summing lower and upper bounds can wrap usize. Use saturating_add for the lower bound and checked_add for the upper bound, and add a regression test for size_hint with streams that report usize::MAX.",
+          "rg_queries": [
+            "StreamMap",
+            "size_hint",
+            "size_hint_without_upper"
+          ],
+          "relevant_files": [
+            {
+              "path": "tokio-stream/src/stream_map.rs",
+              "line_anchors": [687, 693, 696],
+              "role": "StreamMap size_hint implementation and overflow-prone additions"
+            },
+            {
+              "path": "tokio-stream/tests/stream_stream_map.rs",
+              "line_anchors": [217, 225, 229],
+              "role": "size_hint tests and insertion neighborhood"
+            }
+          ],
+          "token_budget": 1200
+        }
+      ]
+    },
+    {
+      "name": "vue",
+      "url": "https://github.com/vuejs/core.git",
+      "directory": "vue",
+      "base_revision": "31d0f23757afb410c638a9c29d44d76d0944e18f",
+      "fix_commit": "932ddd058d69be9bbd8cd796c89f0d1a4fc128d7",
+      "tasks": [
+        {
+          "id": "non-isomorphic-block-update",
+          "prompt": "Fix a renderer bug where a user-wrapped non-isomorphic block update reuses a dynamic-children optimization with stale block metadata. Force a full diff when the old vnode's dynamic-children array differs from the new one, and add a regression test for falling back from a non-isomorphic block.",
+          "rg_queries": [
+            "isHmrUpdating",
+            "dynamicChildren",
+            "rendererOptimizedMode"
+          ],
+          "relevant_files": [
+            {
+              "path": "packages/runtime-core/src/renderer.ts",
+              "line_anchors": [855, 858, 860],
+              "role": "baseCreateRenderer update path and HMR/non-isomorphic full-diff condition"
+            },
+            {
+              "path": "packages/runtime-core/__tests__/rendererOptimizedMode.spec.ts",
+              "line_anchors": [825, 828, 829],
+              "role": "renderer optimized-mode tests and regression-test insertion"
+            }
+          ],
+          "token_budget": 1200
+        }
+      ]
+    },
+    {
+      "name": "cobra",
+      "url": "https://github.com/spf13/cobra.git",
+      "directory": "cobra",
+      "base_revision": "f2878bab8c96afd6e36968af96343b35dbb82a82",
+      "fix_commit": "746ef07158728502482cea9f880a6f4b21ef29a9",
+      "tasks": [
+        {
+          "id": "completions-osargs-mutation",
+          "prompt": "Fix shell completion mutating os.Args in place. getCompletions derives trimmedArgs as a sub-slice of the original args and later appends \"--\", which writes into the shared backing array when it has spare capacity. Copy trimmedArgs to a new slice and add a regression test with TraverseChildren enabled.",
+          "rg_queries": [
+            "getCompletions",
+            "trimmedArgs",
+            "ShellCompNoDescRequestCmd"
+          ],
+          "relevant_files": [
+            {
+              "path": "completions.go",
+              "line_anchors": [316, 320],
+              "role": "getCompletions trimmed-args handling"
+            },
+            {
+              "path": "completions_test.go",
+              "line_anchors": [4019, 4072, 4074],
+              "role": "shell-completion tests and end-of-file insertion neighborhood"
+            }
+          ],
+          "token_budget": 1200
+        }
+      ]
+    },
+    {
+      "name": "requests",
+      "url": "https://github.com/psf/requests.git",
+      "directory": "requests",
+      "base_revision": "661970d171d9c3e12e4c789c4768db647d8c4da0",
+      "fix_commit": "6f205ff422bccd5e4c4fc0b64c5f3e7df5181db6",
+      "tasks": [
+        {
+          "id": "encode-files-read-attr",
+          "prompt": "Fix _encode_files so file-like objects that proxy attributes through __getattr__ (e.g., tempfile.NamedTemporaryFile) are not rejected by isinstance(fp, _SupportsRead). Combine the type check with hasattr(fp, \"read\") and add a regression test that posts a NamedTemporaryFile.",
+          "rg_queries": [
+            "_encode_files",
+            "_SupportsRead",
+            "test_different_encodings_dont_break_post"
+          ],
+          "relevant_files": [
+            {
+              "path": "src/requests/models.py",
+              "line_anchors": [184, 239, 241],
+              "role": "_encode_files file-read dispatch and SupportsRead fallback"
+            },
+            {
+              "path": "tests/test_requests.py",
+              "line_anchors": [1080, 1088, 1099],
+              "role": "file upload tests and insertion point"
             }
           ],
           "token_budget": 1200

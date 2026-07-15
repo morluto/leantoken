@@ -115,6 +115,7 @@ async fn compare_context_representations() {
     let root = temp.path().join("repo");
     copy_tree(&source, &root);
     let config = Config::discover(&root, Some(temp.path().join("index.sqlite"))).expect("config");
+    let tokenizer = config.tokenizer;
     let services = Services::open(config).expect("services");
     services.index(true).await.expect("cold index");
 
@@ -327,14 +328,14 @@ async fn compare_context_representations() {
 
     let report = Report {
         fixture: source.display().to_string(),
-        tokenizer: tokens::current().name(),
-        token_count_exact: tokens::is_exact(),
+        tokenizer: tokenizer.name(),
+        token_count_exact: tokenizer.is_exact(),
         task_count: TASKS.len(),
         aggregate,
         tasks: task_reports,
         limitations: vec![
             "Pinned synthetic fixture; the labeled files are small and real repositories are larger.",
-            "Full-file reads model an oracle that already knows the relevant paths; context, search, and outline are discovery-aware.",
+            "Full-file reads, search include-paths, and outline inputs use labeled paths; context receives only the task text.",
             "Source-token savings compare content tokens only; total JSON includes schemas, metadata, and JSON syntax.",
             "Repo-map JSON measures one compact tree listing; it is not a substitute for content.",
             "No model executes an edit, so sufficiency is not measured here.",
