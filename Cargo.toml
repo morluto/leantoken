@@ -53,3 +53,5 @@ unsafe_code = "forbid"
 
 [lints.clippy]
 all = "warn"
+cognitive_complexity = "warn"
+todo = "warn"
