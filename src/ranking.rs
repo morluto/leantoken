@@ -508,7 +508,7 @@ pub fn select_with_weights(
         repository_generation,
         freshness: Freshness::Current,
         emitted_tokens,
-        token_count_exact: true,
+        token_count_exact: crate::tokens::is_exact(),
         next_cursor: None,
     };
 

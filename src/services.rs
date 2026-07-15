@@ -967,7 +967,7 @@ impl Services {
             repository_generation: generation,
             freshness: self.freshness(),
             emitted_tokens,
-            token_count_exact: true,
+            token_count_exact: self.config.tokenizer.is_exact(),
             next_cursor,
         }
     }

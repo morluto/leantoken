@@ -59,6 +59,7 @@ struct TaskReport {
 struct Report {
     fixture: String,
     tokenizer: &'static str,
+    token_count_exact: bool,
     task_count: usize,
     cold_index_ms: f64,
     aggregate_baseline_source_tokens: usize,
@@ -194,7 +195,8 @@ async fn benchmark_token_economy() {
     let aggregate_recall = ratio(found_total, relevant_total);
     let report = Report {
         fixture: source.display().to_string(),
-        tokenizer: "tiktoken-rs cl100k_base",
+        tokenizer: tokens::current().name(),
+        token_count_exact: tokens::is_exact(),
         task_count: TASKS.len(),
         cold_index_ms,
         aggregate_baseline_source_tokens: baseline_total,

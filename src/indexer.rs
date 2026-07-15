@@ -9,7 +9,7 @@ use crate::parser::{self, ParseOutput};
 use crate::repository::{DiscoveredFile, discover_files};
 use crate::storage::{ChunkInput, ImportInput, IndexedFile, ReferenceInput, Storage, SymbolInput};
 use crate::text::{PreparedText, TextKind, hash_bytes};
-use crate::{Config, Error, Result, tokens};
+use crate::{Config, Error, Result};
 
 #[derive(Debug, Clone)]
 pub struct Indexer {
@@ -71,10 +71,11 @@ impl Indexer {
             .map_err(|error| Error::InvalidRequest(format!("index worker pool: {error}")))?;
         let chunk_lines = self.config.chunk_lines;
         let chunk_bytes = self.config.chunk_bytes;
+        let tokenizer = self.config.tokenizer;
         let prepared = pool.install(|| {
             candidates
                 .par_iter()
-                .map(|file| prepare_file(file, chunk_lines, chunk_bytes))
+                .map(|file| prepare_file(file, chunk_lines, chunk_bytes, tokenizer))
                 .collect::<Vec<_>>()
         });
 
@@ -144,11 +145,12 @@ impl Indexer {
 
     fn config_hash(&self) -> String {
         let input = format!(
-            "leantoken-index-v3\0{}\0{}\0{}\0{}",
+            "leantoken-index-v3\0{}\0{}\0{}\0{}\0{}",
             env!("CARGO_PKG_VERSION"),
             self.config.max_file_bytes,
             self.config.chunk_lines,
-            self.config.chunk_bytes
+            self.config.chunk_bytes,
+            self.config.tokenizer.name()
         );
         blake3::hash(input.as_bytes()).to_hex().to_string()
     }
@@ -160,7 +162,12 @@ enum PreparedFile {
     Failed(String, String),
 }
 
-fn prepare_file(file: &DiscoveredFile, chunk_lines: usize, chunk_bytes: usize) -> PreparedFile {
+fn prepare_file(
+    file: &DiscoveredFile,
+    chunk_lines: usize,
+    chunk_bytes: usize,
+    tokenizer: crate::tokens::Tokenizer,
+) -> PreparedFile {
     let bytes = match fs::read(&file.absolute_path) {
         Ok(bytes) => bytes,
         Err(error) => {
@@ -193,7 +200,7 @@ fn prepare_file(file: &DiscoveredFile, chunk_lines: usize, chunk_bytes: usize) -
         .chunks
         .into_iter()
         .map(|chunk| ChunkInput {
-            token_count: tokens::count(&chunk.content),
+            token_count: tokenizer.count(&chunk.content),
             content: chunk.content,
             start_line: chunk.start_line,
             end_line: chunk.end_line,

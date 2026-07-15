@@ -67,6 +67,7 @@ struct Report {
     ripgrep_version: String,
     generated_at_unix_seconds: u64,
     tokenizer: &'static str,
+    token_count_exact: bool,
     methodology: Methodology,
     aggregate: AggregateReport,
     corpora: Vec<CorpusReport>,
@@ -255,7 +256,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         rustc_version: command_version("rustc")?,
         ripgrep_version,
         generated_at_unix_seconds: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-        tokenizer: "tiktoken-rs cl100k_base",
+        tokenizer: tokens::current().name(),
+        token_count_exact: tokens::is_exact(),
         methodology: Methodology {
             oracle_baseline: "Full contents of fix-labeled relevant files, as if an agent chose every file perfectly and paid no discovery cost.",
             rg_discovery_baseline: "Bounded, path-sorted ripgrep --json output for fixed-string queries derived from each public bug task.",
@@ -667,23 +669,31 @@ fn count_line_anchors(response: &ContextResponse, relevant: &[RelevantFile]) -> 
 }
 
 fn verify_token_accounting(response: &ContextResponse) -> Result<(), Box<dyn Error>> {
-    if !response.meta.token_count_exact {
-        return Err("context response reported inexact token accounting".into());
-    }
     let declared = response
         .fragments
         .iter()
         .map(|fragment| fragment.token_count)
         .sum::<usize>();
+    if declared != response.meta.emitted_tokens {
+        return Err(format!(
+            "context token mismatch: fragment fields={declared}, meta={}",
+            response.meta.emitted_tokens
+        )
+        .into());
+    }
+    if !response.meta.token_count_exact {
+        // Estimate tokenizers do not promise byte-for-byte equality with a
+        // re-count, but the stored fragment counts must still be consistent.
+        return Ok(());
+    }
     let counted = response
         .fragments
         .iter()
         .map(|fragment| tokens::count(&fragment.content))
         .sum::<usize>();
-    if declared != counted || declared != response.meta.emitted_tokens {
+    if declared != counted {
         return Err(format!(
-            "context token mismatch: fragment fields={declared}, counted={counted}, meta={}",
-            response.meta.emitted_tokens
+            "context token mismatch: fragment fields={declared}, counted={counted}"
         )
         .into());
     }

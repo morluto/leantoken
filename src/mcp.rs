@@ -4,6 +4,7 @@ use rmcp::{
     ErrorData, Json, RoleServer, ServerHandler, ServiceExt, handler::server::wrapper::Parameters,
     service::RequestContext, tool, tool_handler, tool_router, transport::stdio,
 };
+use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::model::{
@@ -135,6 +136,49 @@ fn into_mcp_error(error: crate::Error) -> ErrorData {
             ErrorData::internal_error("repository retrieval failed", None)
         }
     }
+}
+
+/// Token cost of a single MCP `tools/list`/`tools/call` handoff.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpCost {
+    pub schema_tokens: usize,
+    pub envelope_tokens: usize,
+    pub result_tokens: usize,
+    pub protocol_overhead_tokens: usize,
+    pub handoff_tokens: usize,
+    pub exact: bool,
+}
+
+/// Model the total token cost of an MCP handoff.
+///
+/// `schema_json` is the `tools/list` response (or just the tools catalog).
+/// `envelope_json` is the `tools/call` request JSON-RPC envelope.
+/// `result_json` is the `tools/call` response payload. The returned
+/// `handoff_tokens` adds a small fixed protocol overhead for the `tools/list`
+/// request, `initialize` handshake, and JSON-RPC framing.
+pub fn handoff_cost(schema_json: &str, envelope_json: &str, result_json: &str) -> McpCost {
+    let schema_tokens = crate::tokens::count(schema_json);
+    let envelope_tokens = crate::tokens::count(envelope_json);
+    let result_tokens = crate::tokens::count(result_json);
+    let protocol_overhead_tokens = 12;
+    let handoff_tokens = schema_tokens
+        .saturating_add(envelope_tokens)
+        .saturating_add(result_tokens)
+        .saturating_add(protocol_overhead_tokens);
+    McpCost {
+        schema_tokens,
+        envelope_tokens,
+        result_tokens,
+        protocol_overhead_tokens,
+        handoff_tokens,
+        exact: crate::tokens::is_exact(),
+    }
+}
+
+/// Return the JSON-serialized tool catalog for token-cost measurements.
+pub fn tool_catalog_json() -> String {
+    serde_json::to_string(&LeanTokenMcp::tool_router().list_all())
+        .expect("tool catalog is serializable")
 }
 
 /// Run the MCP server over stdio until the transport closes or SIGINT is received.

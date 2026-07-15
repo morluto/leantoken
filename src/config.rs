@@ -3,6 +3,7 @@ use std::{
     time::Duration,
 };
 
+use crate::tokens::Tokenizer;
 use crate::{Error, Result};
 
 #[derive(Debug, Clone)]
@@ -32,6 +33,8 @@ pub struct Config {
     pub max_index_workers: usize,
     /// Filesystem-event debounce interval.
     pub watcher_debounce: Duration,
+    /// Tokenizer used for all source and protocol token accounting.
+    pub tokenizer: Tokenizer,
 }
 
 impl Config {
@@ -54,6 +57,8 @@ impl Config {
             )));
         }
         let database_path = database_path.unwrap_or_else(|| default_database_path(&root));
+        let tokenizer = Tokenizer::default();
+        crate::tokens::set_current(tokenizer);
         Ok(Self {
             root,
             database_path,
@@ -69,6 +74,7 @@ impl Config {
                 .map_or(1, std::num::NonZero::get)
                 .min(8),
             watcher_debounce: Duration::from_millis(500),
+            tokenizer,
         })
     }
 }
