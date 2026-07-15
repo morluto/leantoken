@@ -1,0 +1,628 @@
+{
+  "schema_version": 1,
+  "manifest_description": "Retrospective context-retrieval tasks evaluated at the parent of four public bug-fix commits.",
+  "leantoken_version": "0.1.0",
+  "host_os": "linux",
+  "host_arch": "x86_64",
+  "rustc_version": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+  "ripgrep_version": "ripgrep 15.1.0 (rev af60c2de9d)",
+  "generated_at_unix_seconds": 1784097451,
+  "tokenizer": "tiktoken-rs cl100k_base",
+  "methodology": {
+    "oracle_baseline": "Full contents of fix-labeled relevant files, as if an agent chose every file perfectly and paid no discovery cost.",
+    "rg_discovery_baseline": "Bounded, path-sorted ripgrep --json output for fixed-string queries derived from each public bug task.",
+    "scripted_baseline": "One JSON envelope containing the ripgrep discovery output and oracle full-file reads.",
+    "source_tokens": "Tokens in source content only; excludes paths, scores, reasons, receipts, and JSON syntax.",
+    "serialized_tokens": "Tokens in the complete serialized JSON payload, including metadata and syntax."
+  },
+  "aggregate": {
+    "corpus_count": 4,
+    "task_count": 4,
+    "relevant_files": 7,
+    "relevant_files_found": 7,
+    "relevant_file_recall": 1.0,
+    "returned_files": 24,
+    "labeled_file_precision": 0.2916666666666667,
+    "line_anchors": 18,
+    "line_anchors_found": 3,
+    "line_anchor_recall": 0.16666666666666666,
+    "oracle_source_tokens": 28870,
+    "rg_discovery_tokens": 29778,
+    "scripted_baseline_total_json_tokens": 68589,
+    "leantoken_source_tokens": 1574,
+    "leantoken_total_json_tokens": 5619,
+    "source_savings_against_oracle_fraction": 0.9454797367509525,
+    "total_json_savings_against_scripted_fraction": 0.9180772427065564,
+    "known_fragments_resent": 0
+  },
+  "corpora": [
+    {
+      "name": "ripgrep",
+      "url": "https://github.com/BurntSushi/ripgrep.git",
+      "base_revision": "2c23e39e0215397884834c0d3cd5a1620f468d30",
+      "fix_commit": "f55548ba9f24dda192880d4a3da2b52e90f6e194",
+      "indexed_files": 212,
+      "indexed_chunks": 1007,
+      "index_warnings": [],
+      "cold_index_ms": 3061.032872,
+      "database_bytes": 29166952,
+      "tasks": [
+        {
+          "id": "globset-matches-all-false-positive",
+          "prompt": "Fix GlobSet::matches_all returning true when only one of multiple globs compiled into the same matching strategy matches. Cover the strategy-specific cases and avoid allocating per query.",
+          "token_budget": 1200,
+          "relevant_files": [
+            "crates/globset/src/lib.rs"
+          ],
+          "returned_files": [
+            "crates/core/flags/defs.rs",
+            "crates/globset/src/glob.rs",
+            "crates/globset/src/lib.rs",
+            "crates/ignore/src/overrides.rs",
+            "crates/printer/src/stats.rs",
+            "crates/printer/src/util.rs"
+          ],
+          "returned_evidence": [
+            {
+              "path": "crates/globset/src/lib.rs",
+              "start_line": 139,
+              "end_line": 139,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 2.6971,
+              "token_count": 3,
+              "content_hash": "86f6a4194771f80240eff8a61f068b2b"
+            },
+            {
+              "path": "crates/globset/src/glob.rs",
+              "start_line": 308,
+              "end_line": 310,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 2.6839,
+              "token_count": 18,
+              "content_hash": "20064e2ca0a909ec5a11f24e5448bbb5"
+            },
+            {
+              "path": "crates/globset/src/glob.rs",
+              "start_line": 152,
+              "end_line": 154,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 2.6831,
+              "token_count": 19,
+              "content_hash": "d617c99b82277b69688d0bc1d8ca1993"
+            },
+            {
+              "path": "crates/globset/src/lib.rs",
+              "start_line": 309,
+              "end_line": 312,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 2.6808,
+              "token_count": 22,
+              "content_hash": "ca6e1b51d309c546d30ff1a2d371178b"
+            },
+            {
+              "path": "crates/core/flags/defs.rs",
+              "start_line": 2504,
+              "end_line": 2504,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.9471,
+              "token_count": 3,
+              "content_hash": "d0e6a6f2359c7f19ec15a5181afad944"
+            },
+            {
+              "path": "crates/ignore/src/overrides.rs",
+              "start_line": 28,
+              "end_line": 28,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.9389,
+              "token_count": 12,
+              "content_hash": "dbe6079e81e0744e6de019e45cafade8"
+            },
+            {
+              "path": "crates/printer/src/stats.rs",
+              "start_line": 67,
+              "end_line": 69,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.9347,
+              "token_count": 17,
+              "content_hash": "622e5d3ebdabb1620bf0851d804be699"
+            },
+            {
+              "path": "crates/printer/src/util.rs",
+              "start_line": 238,
+              "end_line": 240,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.9308,
+              "token_count": 22,
+              "content_hash": "120491f19310698d4e03efe986aac65b"
+            }
+          ],
+          "relevant_files_found": 1,
+          "relevant_file_recall": 1.0,
+          "labeled_file_precision": 0.16666666666666666,
+          "line_anchors": 4,
+          "line_anchors_found": 0,
+          "line_anchor_recall": 0.0,
+          "unlabeled_returned_files": [
+            "crates/core/flags/defs.rs",
+            "crates/globset/src/glob.rs",
+            "crates/ignore/src/overrides.rs",
+            "crates/printer/src/stats.rs",
+            "crates/printer/src/util.rs"
+          ],
+          "oracle_source_tokens": 8723,
+          "oracle_minimal_read_json_tokens": 10196,
+          "rg_discovery_tokens": 3349,
+          "rg_discovery_json_tokens": 3846,
+          "scripted_baseline_total_json_tokens": 14045,
+          "leantoken_source_tokens": 116,
+          "leantoken_total_json_tokens": 1120,
+          "source_savings_against_oracle_fraction": 0.9867018227673965,
+          "total_json_savings_against_scripted_fraction": 0.9202563189747242,
+          "first_context_ms": 813.6272319999999,
+          "warm_context_ms_samples": [
+            880.78758,
+            898.12308,
+            951.707654
+          ],
+          "warm_context_median_ms": 898.12308,
+          "warm_context_p95_ms": 951.707654,
+          "repeat_source_tokens": 546,
+          "repeat_total_json_tokens": 1627,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true
+        }
+      ]
+    },
+    {
+      "name": "flask",
+      "url": "https://github.com/pallets/flask.git",
+      "base_revision": "2ac89889f4cc330eabd50f295dcef02828522c69",
+      "fix_commit": "06ea505ce2b2042af26e96d35ebf159af7c0869d",
+      "indexed_files": 231,
+      "indexed_chunks": 594,
+      "index_warnings": [],
+      "cold_index_ms": 1635.590774,
+      "database_bytes": 15166888,
+      "tasks": [
+        {
+          "id": "request-context-copy-per-call",
+          "prompt": "copy_current_request_context reuses one copied request context, so calling the decorated function concurrently can corrupt context state. Make each invocation independent and add a concurrent regression test.",
+          "token_budget": 1200,
+          "relevant_files": [
+            "src/flask/ctx.py",
+            "tests/test_reqctx.py"
+          ],
+          "returned_files": [
+            "src/flask/ctx.py",
+            "src/flask/globals.py",
+            "src/flask/wrappers.py",
+            "tests/test_basic.py",
+            "tests/test_blueprints.py",
+            "tests/test_reqctx.py",
+            "tests/test_templating.py"
+          ],
+          "returned_evidence": [
+            {
+              "path": "src/flask/globals.py",
+              "start_line": 57,
+              "end_line": 59,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.923,
+              "token_count": 33,
+              "content_hash": "692bf1b4a5dd3d24d08a612ffe40a32b"
+            },
+            {
+              "path": "src/flask/ctx.py",
+              "start_line": 154,
+              "end_line": 160,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.9066,
+              "token_count": 61,
+              "content_hash": "cf894d59e4157a218e03925c78cdb219"
+            },
+            {
+              "path": "src/flask/ctx.py",
+              "start_line": 371,
+              "end_line": 379,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.9014,
+              "token_count": 72,
+              "content_hash": "bc14ad5de794396af8f3103cace28283"
+            },
+            {
+              "path": "src/flask/wrappers.py",
+              "start_line": 18,
+              "end_line": 57,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.8408,
+              "token_count": 402,
+              "content_hash": "84491600461e4b3c9b643de15869993b"
+            },
+            {
+              "path": "tests/test_blueprints.py",
+              "start_line": 50,
+              "end_line": 51,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.1906,
+              "token_count": 10,
+              "content_hash": "f97af6dc9a96f6faec65c015e3aae580"
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 711,
+              "end_line": 712,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.1889,
+              "token_count": 12,
+              "content_hash": "b7ee621b9eb32bfce3b6f60762929b4d"
+            },
+            {
+              "path": "tests/test_reqctx.py",
+              "start_line": 20,
+              "end_line": 21,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.1889,
+              "token_count": 12,
+              "content_hash": "9472b4626e743b32a698596ff2d56986"
+            },
+            {
+              "path": "tests/test_templating.py",
+              "start_line": 46,
+              "end_line": 47,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.1889,
+              "token_count": 12,
+              "content_hash": "38a2d80e3c2f212f5f00d57f19a6f013"
+            }
+          ],
+          "relevant_files_found": 2,
+          "relevant_file_recall": 1.0,
+          "labeled_file_precision": 0.2857142857142857,
+          "line_anchors": 4,
+          "line_anchors_found": 1,
+          "line_anchor_recall": 0.25,
+          "unlabeled_returned_files": [
+            "src/flask/globals.py",
+            "src/flask/wrappers.py",
+            "tests/test_basic.py",
+            "tests/test_blueprints.py",
+            "tests/test_templating.py"
+          ],
+          "oracle_source_tokens": 5636,
+          "oracle_minimal_read_json_tokens": 6580,
+          "rg_discovery_tokens": 3446,
+          "rg_discovery_json_tokens": 3898,
+          "scripted_baseline_total_json_tokens": 10481,
+          "leantoken_source_tokens": 614,
+          "leantoken_total_json_tokens": 1615,
+          "source_savings_against_oracle_fraction": 0.8910574875798438,
+          "total_json_savings_against_scripted_fraction": 0.8459116496517508,
+          "first_context_ms": 355.40576,
+          "warm_context_ms_samples": [
+            359.805716,
+            397.68025,
+            371.937318
+          ],
+          "warm_context_median_ms": 371.937318,
+          "warm_context_p95_ms": 397.68025,
+          "repeat_source_tokens": 257,
+          "repeat_total_json_tokens": 1249,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true
+        }
+      ]
+    },
+    {
+      "name": "express",
+      "url": "https://github.com/expressjs/express.git",
+      "base_revision": "59e205a57a04fced6bb7b8ec0b5dec29461a9996",
+      "fix_commit": "18e5985b8a9d5e8423db0a9121f22bdaecd5b120",
+      "indexed_files": 213,
+      "indexed_chunks": 469,
+      "index_warnings": [],
+      "cold_index_ms": 3125.76233,
+      "database_bytes": 8364040,
+      "tasks": [
+        {
+          "id": "send-transfer-encoding-content-length-conflict",
+          "prompt": "Fix res.send adding Content-Length when the response already has Transfer-Encoding, which produces conflicting HTTP framing headers. Add coverage for the supported transfer-encoding values without changing unrelated response behavior.",
+          "token_budget": 1200,
+          "relevant_files": [
+            "lib/response.js",
+            "test/res.send.js"
+          ],
+          "returned_files": [
+            "lib/response.js",
+            "test/Router.js",
+            "test/res.send.js",
+            "test/res.sendFile.js",
+            "test/res.sendStatus.js"
+          ],
+          "returned_evidence": [
+            {
+              "path": "lib/response.js",
+              "start_line": 126,
+              "end_line": 160,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 2.3666,
+              "token_count": 188,
+              "content_hash": "38445340672b03b8239353373f623781"
+            },
+            {
+              "path": "test/Router.js",
+              "start_line": 171,
+              "end_line": 174,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 2.1816,
+              "token_count": 21,
+              "content_hash": "d2dd7a7a2fd527b39b7dfa5c23d859dc"
+            },
+            {
+              "path": "test/res.sendFile.js",
+              "start_line": 135,
+              "end_line": 139,
+              "representation": "source",
+              "reason": "reference",
+              "score": 1.621,
+              "token_count": 36,
+              "content_hash": "52656793f75728d57ca6bd53b0e5e197"
+            },
+            {
+              "path": "test/res.send.js",
+              "start_line": 16,
+              "end_line": 20,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5364,
+              "token_count": 15,
+              "content_hash": "f7ac6105a067aebcca11cb2a0db768f7"
+            },
+            {
+              "path": "test/res.sendStatus.js",
+              "start_line": 10,
+              "end_line": 14,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5347,
+              "token_count": 17,
+              "content_hash": "314752956c33d1dcd86efed4d81ecc62"
+            },
+            {
+              "path": "test/res.send.js",
+              "start_line": 321,
+              "end_line": 323,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5299,
+              "token_count": 8,
+              "content_hash": "5a37a66ac3310fd5361a3ccaefb8d850"
+            },
+            {
+              "path": "test/res.sendFile.js",
+              "start_line": 890,
+              "end_line": 894,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5278,
+              "token_count": 26,
+              "content_hash": "e062fb64fb54ba78f6ed12954d099737"
+            },
+            {
+              "path": "test/res.sendStatus.js",
+              "start_line": 5,
+              "end_line": 9,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5166,
+              "token_count": 43,
+              "content_hash": "cb6f910030e59d16e75eca96cf9452e6"
+            }
+          ],
+          "relevant_files_found": 2,
+          "relevant_file_recall": 1.0,
+          "labeled_file_precision": 0.4,
+          "line_anchors": 5,
+          "line_anchors_found": 1,
+          "line_anchor_recall": 0.2,
+          "unlabeled_returned_files": [
+            "test/Router.js",
+            "test/res.sendFile.js",
+            "test/res.sendStatus.js"
+          ],
+          "oracle_source_tokens": 10127,
+          "oracle_minimal_read_json_tokens": 12246,
+          "rg_discovery_tokens": 18303,
+          "rg_discovery_json_tokens": 20857,
+          "scripted_baseline_total_json_tokens": 33106,
+          "leantoken_source_tokens": 354,
+          "leantoken_total_json_tokens": 1344,
+          "source_savings_against_oracle_fraction": 0.9650439419373951,
+          "total_json_savings_against_scripted_fraction": 0.9594031293421132,
+          "first_context_ms": 290.567837,
+          "warm_context_ms_samples": [
+            284.001748,
+            309.66533000000004,
+            280.216817
+          ],
+          "warm_context_median_ms": 284.001748,
+          "warm_context_p95_ms": 309.66533000000004,
+          "repeat_source_tokens": 267,
+          "repeat_total_json_tokens": 1204,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true
+        }
+      ]
+    },
+    {
+      "name": "gin",
+      "url": "https://github.com/gin-gonic/gin.git",
+      "base_revision": "293ad7edebb3ae30369288bd6416ca0d78474727",
+      "fix_commit": "4a3eb31fb15b2a2d78b4bdbe0c31a2c564b1977a",
+      "indexed_files": 130,
+      "indexed_chunks": 430,
+      "index_warnings": [],
+      "cold_index_ms": 1084.7387509999999,
+      "database_bytes": 12077672,
+      "tasks": [
+        {
+          "id": "recovery-records-panic-error",
+          "prompt": "The default recovery middleware returns 500 after a panic but does not record the recovered value in Context.Errors. Record both error and non-error panic values as a private context error, and test both cases.",
+          "token_budget": 1200,
+          "relevant_files": [
+            "recovery.go",
+            "recovery_test.go"
+          ],
+          "returned_files": [
+            "binding/binding.go",
+            "binding/binding_nomsgpack.go",
+            "gin.go",
+            "middleware_test.go",
+            "recovery.go",
+            "recovery_test.go"
+          ],
+          "returned_evidence": [
+            {
+              "path": "recovery.go",
+              "start_line": 35,
+              "end_line": 37,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 2.1864,
+              "token_count": 15,
+              "content_hash": "813cbfaf9a1ef02db720bf318ba3d8f9"
+            },
+            {
+              "path": "gin.go",
+              "start_line": 236,
+              "end_line": 240,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.925,
+              "token_count": 30,
+              "content_hash": "a204dc3136d11dbc55f61e7ff0016f91"
+            },
+            {
+              "path": "binding/binding_nomsgpack.go",
+              "start_line": 91,
+              "end_line": 114,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.8824,
+              "token_count": 123,
+              "content_hash": "43412f64228d53ba3eff80ba90e79d59"
+            },
+            {
+              "path": "binding/binding.go",
+              "start_line": 95,
+              "end_line": 120,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.8771,
+              "token_count": 142,
+              "content_hash": "81a47f8c640c862638e5bea530c08ce7"
+            },
+            {
+              "path": "middleware_test.go",
+              "start_line": 159,
+              "end_line": 160,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.4372,
+              "token_count": 14,
+              "content_hash": "2e2858dc232797f6e71c25a9540e2c63"
+            },
+            {
+              "path": "recovery_test.go",
+              "start_line": 78,
+              "end_line": 80,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.4286,
+              "token_count": 25,
+              "content_hash": "adb603d444cc59f8c38f547d1a446da4"
+            },
+            {
+              "path": "recovery_test.go",
+              "start_line": 155,
+              "end_line": 160,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.4119,
+              "token_count": 51,
+              "content_hash": "04bbfe7a32eef8615783f3835ff7813c"
+            },
+            {
+              "path": "middleware_test.go",
+              "start_line": 229,
+              "end_line": 240,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.3938,
+              "token_count": 90,
+              "content_hash": "1d5610c248133842dfcbf3fec7de5966"
+            }
+          ],
+          "relevant_files_found": 2,
+          "relevant_file_recall": 1.0,
+          "labeled_file_precision": 0.3333333333333333,
+          "line_anchors": 5,
+          "line_anchors_found": 1,
+          "line_anchor_recall": 0.2,
+          "unlabeled_returned_files": [
+            "binding/binding.go",
+            "binding/binding_nomsgpack.go",
+            "gin.go",
+            "middleware_test.go"
+          ],
+          "oracle_source_tokens": 4384,
+          "oracle_minimal_read_json_tokens": 5565,
+          "rg_discovery_tokens": 4680,
+          "rg_discovery_json_tokens": 5389,
+          "scripted_baseline_total_json_tokens": 10957,
+          "leantoken_source_tokens": 490,
+          "leantoken_total_json_tokens": 1540,
+          "source_savings_against_oracle_fraction": 0.8882299270072993,
+          "total_json_savings_against_scripted_fraction": 0.8594505795381948,
+          "first_context_ms": 400.030358,
+          "warm_context_ms_samples": [
+            361.19246799999996,
+            339.41380799999996,
+            431.790701
+          ],
+          "warm_context_median_ms": 361.19246799999996,
+          "warm_context_p95_ms": 431.790701,
+          "repeat_source_tokens": 1183,
+          "repeat_total_json_tokens": 2315,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Tasks and relevance labels were derived from public future fixes; this measures retrieval against disclosed labels, not generalization to unseen bugs.",
+    "The oracle baseline is intentionally difficult to beat because it assumes perfect file selection, but it reads whole files rather than exact future diff hunks.",
+    "The scripted ripgrep baseline uses fixed queries chosen with knowledge of each task and is not an autonomous agent trajectory.",
+    "No model executes an edit, so the benchmark does not measure pass rate, prewalk handoff quality, or end-to-end task cost.",
+    "Four repositories and one task per repository are representative smoke evidence, not a statistically powered product claim.",
+    "Cold indexing and warm latency depend on host hardware and filesystem cache state."
+  ]
+}

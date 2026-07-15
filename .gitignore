@@ -1,0 +1,5 @@
+/target/
+/.leantoken/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

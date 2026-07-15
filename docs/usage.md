@@ -1,0 +1,130 @@
+# Usage and tool reference
+
+LeanToken exposes the same retrieval services through its CLI and MCP server.
+All paths are relative to the configured repository root, and all source
+responses are bounded.
+
+## Global options
+
+```text
+--root <PATH>      Repository root (default: current directory)
+--database <PATH>  Override the per-repository SQLite cache path
+--json             Emit JSON from CLI commands
+```
+
+## CLI commands
+
+```text
+leantoken index [--rebuild]
+leantoken status
+leantoken files <tree|find|glob> [options]
+leantoken search <query> [options]
+leantoken outline <path>...
+leantoken read <path> [--lines START:END] [--symbol NAME]
+leantoken context --task <text> --budget <tokens>
+leantoken mcp
+```
+
+Use `leantoken <command> --help` for the complete argument list.
+
+## MCP server
+
+`leantoken mcp` serves the five retrieval tools over stdio. It reconciles the
+repository before serving, watches later filesystem changes, and reports
+whether responses come from a current or reconciling index generation.
+
+Logs go to stderr. Stdout is reserved for MCP protocol messages.
+
+## `leantoken_files`
+
+Discovers repository structure without returning source bodies.
+
+Operations:
+
+- `tree`: compact hierarchy with optional `path` and `depth` limits;
+- `find`: fuzzy path and basename matching using `query`;
+- `glob`: indexed path matching using `pattern`.
+
+Common inputs are `max_results` and `cursor`. Output contains bounded
+file/directory entries with language and size metadata when available.
+
+## `leantoken_search`
+
+Returns ranked source excerpts. Modes are `auto`, `text`, `regex`,
+`identifier`, `symbol`, and `reference`.
+
+Inputs include path filters, focus paths, result and token limits, context-line
+count, case sensitivity, and a generation-bound cursor. Each hit includes its
+path, one-based returned line range, excerpt, match kind, score reasons, and
+content hash. Structural fields appear only when syntax supports them.
+
+Lexical matches remain eligible when structural extraction is unavailable or
+incomplete.
+
+## `leantoken_outline`
+
+Returns definitions, imports, signatures, parent relationships, and one-based
+line ranges for one or more files. Name and kind filters narrow the output.
+Bodies are not returned by default.
+
+Supported languages report whether parsing was structurally complete.
+Unsupported text files remain searchable and are marked incomplete rather than
+being presented as precise.
+
+## `leantoken_read`
+
+Reads an exact source range.
+
+- `path` is required.
+- `start_line` and `end_line` select a one-based range.
+- `symbol` selects an indexed symbol range and cannot be combined with lines.
+- `max_tokens` bounds returned source.
+- `expected_hash` returns `not_modified` without source when it matches the
+  hash from the same prior read range.
+
+`content_hash` identifies the returned range. `indexed_hash` identifies the
+whole indexed file. `index_stale` is true when the live file differs from the
+indexed version.
+
+## `leantoken_context`
+
+Turns a task into a ranked set of source evidence under `token_budget`.
+
+Optional inputs focus or exclude paths and symbols, provide hashes already held
+by the caller, and identify a prior repository generation. The selector merges
+overlapping candidates, suppresses duplicate or known content, preserves file
+diversity, and returns short reasons for each chosen fragment.
+
+The evidence receipt contains the task fingerprint, repository generation, and
+selected fragment identities. It is returned to the caller but not persisted.
+Passing receipt hashes into a later request prevents those exact fragments from
+being resent; other relevant evidence may still be returned.
+
+## Token accounting
+
+`search`, `outline`, `read`, and `context` bound returned source text. The
+default read limit is 8,000 tokens and the hard source-output ceiling is 32,000
+tokens.
+
+`emitted_tokens` uses `cl100k_base` and counts source text only. JSON keys,
+paths, scores, hashes, receipts, and other metadata add protocol tokens beyond
+that value.
+
+Every source fragment carries a 128-bit BLAKE3 fingerprint for local identity
+and duplicate suppression. Receipts transfer grounded context without creating
+a LeanToken session, transcript, or model state.
+
+## Errors and limits
+
+Oversized inputs, invalid regular expressions or globs, stale cursors,
+unsupported structured reads, and unsafe paths return request errors without
+terminating the server. Internal storage and I/O failures are logged without
+including source bodies and are returned as generic MCP internal errors.
+
+Default limits include:
+
+- 2 MiB maximum indexed file size;
+- 20 default and 100 maximum results per request;
+- 80 lines or 32 KiB per search chunk;
+- up to eight indexing workers;
+- 64 KiB query input and 4 KiB path/pattern input.
