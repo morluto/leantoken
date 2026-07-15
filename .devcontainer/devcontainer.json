@@ -1,0 +1,24 @@
+{
+  "name": "LeanToken",
+  "image": "mcr.microsoft.com/devcontainers/rust:1-1-bookworm",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "serayuzgur.crates",
+        "vadimcn.vscode-lldb",
+        "github.vscode-github-actions"
+      ],
+      "settings": {
+        "rust-analyzer.check.command": "clippy",
+        "rust-analyzer.check.extraArgs": ["--all-targets", "--all-features", "--", "-D", "warnings"],
+        "editor.formatOnSave": true
+      }
+    }
+  },
+  "postCreateCommand": "rustup component add rustfmt clippy && cargo fetch",
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {}
+  }
+}
