@@ -6,6 +6,7 @@ use leantoken::{
     cli::{AppRequest, Cli},
     mcp,
     services::Services,
+    setup::{self, SetupOperation},
     watcher::{RepositoryWatcher, WatcherMessage},
 };
 use serde::Serialize;
@@ -23,6 +24,26 @@ async fn main() {
 async fn run() -> Result<()> {
     let cli = Cli::parse();
     let json = cli.json;
+
+    if matches!(
+        &cli.command,
+        leantoken::cli::Commands::Setup(_) | leantoken::cli::Commands::Remove(_)
+    ) {
+        let (operation, request) = match cli.app_request() {
+            AppRequest::Setup(request) => (SetupOperation::Setup, request),
+            AppRequest::Remove(request) => (SetupOperation::Remove, request),
+            _ => unreachable!("integration command checked above"),
+        };
+        let report = setup::run(operation, request)?;
+        setup::print_report(&report, json)?;
+        if report.has_failures() {
+            return Err(leantoken::Error::InvalidRequest(
+                "one or more MCP client configurations failed".into(),
+            ));
+        }
+        return Ok(());
+    }
+
     let config = cli.config()?;
     let request = cli.app_request();
     let services = Arc::new(Services::open(config)?);
@@ -36,6 +57,9 @@ async fn run() -> Result<()> {
         AppRequest::Read(request) => print(&services.read(request).await?, json),
         AppRequest::Context(request) => print(&services.context(request).await?, json),
         AppRequest::Mcp => run_mcp(services).await,
+        AppRequest::Setup(_) | AppRequest::Remove(_) => {
+            unreachable!("handled before service setup")
+        }
     }
 }
 

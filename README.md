@@ -40,7 +40,7 @@ SQLite and the tree-sitter grammars.
 ```bash
 git clone https://github.com/morluto/leantoken.git
 cd leantoken
-cargo build --release
+cargo install --path .
 ```
 
 ## Quick start
@@ -57,6 +57,26 @@ Run the MCP server over stdio:
 
 ```bash
 leantoken --root /path/to/repo mcp
+```
+
+Or register LeanToken globally with supported coding clients. The interactive
+wizard detects installed clients and stores the absolute LeanToken executable;
+each client launches it in the active workspace.
+
+```bash
+leantoken setup
+leantoken setup --claude --codex --yes
+leantoken setup --all --yes
+```
+
+Supported clients are Claude Code, Cursor, OpenCode, Codex, Gemini CLI, and
+Antigravity. Setup changes only each client's `leantoken` MCP entry—it does not
+install skills, rules, or shell hooks. Remove the entries with the same client
+selection flags:
+
+```bash
+leantoken remove --claude --codex --yes
+leantoken --json remove --all --yes
 ```
 
 Example host configuration:

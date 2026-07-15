@@ -23,6 +23,8 @@ pub mod ranking;
 pub mod repository;
 /// Token-bounded repository retrieval services.
 pub mod services;
+/// Global MCP client registration and removal.
+pub mod setup;
 /// SQLite schema, transactions, FTS5 queries, and indexed records.
 pub mod storage;
 /// UTF-8 preparation, chunking, hashing, and line-range helpers.

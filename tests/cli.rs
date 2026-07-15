@@ -2,6 +2,7 @@ use clap::Parser;
 use leantoken::cli::{AppRequest, Cli};
 use leantoken::model::{FileOperation, SearchMode};
 use leantoken::tokens::Tokenizer;
+use leantoken::setup::SetupClient;
 
 fn parse(args: &[&str]) -> Cli {
     Cli::try_parse_from(std::iter::once("leantoken").chain(args.iter().copied())).unwrap()
@@ -231,6 +232,28 @@ fn cli_index_and_status_and_mcp_commands() {
 
     let cli = parse(&["mcp"]);
     assert!(matches!(cli.app_request(), AppRequest::Mcp));
+}
+
+#[test]
+fn cli_setup_and_remove_select_clients() {
+    let cli = parse(&["setup", "--claude", "--codex", "--yes"]);
+    let AppRequest::Setup(request) = cli.app_request() else {
+        panic!("expected setup request");
+    };
+    assert_eq!(
+        request.clients,
+        vec![SetupClient::Claude, SetupClient::Codex]
+    );
+    assert!(!request.all);
+    assert!(request.yes);
+
+    let cli = parse(&["remove", "--all", "-y"]);
+    let AppRequest::Remove(request) = cli.app_request() else {
+        panic!("expected remove request");
+    };
+    assert!(request.clients.is_empty());
+    assert!(request.all);
+    assert!(request.yes);
 }
 
 #[test]

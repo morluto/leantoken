@@ -31,6 +31,17 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .expect("initialize MCP client");
     let mut server = server_start.await.expect("join server startup");
 
+    let instructions = client
+        .peer()
+        .peer_info()
+        .expect("server initialize result")
+        .instructions
+        .clone()
+        .expect("server instructions");
+    assert!(instructions.contains("context for a new task"));
+    assert!(instructions.contains("outline before read"));
+    assert!(instructions.contains("native tools for edits, commands, and tests"));
+
     let tools = client.peer().list_all_tools().await.expect("list tools");
     let names = tools
         .iter()
