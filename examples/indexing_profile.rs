@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs::{self, OpenOptions};
 use std::hint::black_box;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -10,6 +12,7 @@ use clap::Parser;
 use leantoken::Config;
 use leantoken::indexer::Indexer;
 use leantoken::model::IndexResponse;
+use leantoken::repository::{DiscoveredFile, discover_files};
 use leantoken::storage::Storage;
 use serde::Serialize;
 
@@ -18,6 +21,12 @@ type AnyResult<T> = Result<T, Box<dyn Error>>;
 #[derive(Debug, Parser)]
 #[command(about = "Profile full and changed-path indexing plus warm file reads")]
 struct Args {
+    /// Existing clean Git checkout to profile through a disposable snapshot.
+    #[arg(long, value_name = "PATH")]
+    repository: Option<PathBuf>,
+    /// Public corpus name or URL to include in the report.
+    #[arg(long, requires = "repository")]
+    repository_label: Option<String>,
     /// Number of synthetic Rust source files.
     #[arg(long, default_value_t = 2_000)]
     files: usize,
@@ -41,6 +50,9 @@ struct Args {
 #[derive(Debug, Serialize)]
 struct Report {
     schema_version: u32,
+    leantoken_version: &'static str,
+    leantoken_git_revision: Option<String>,
+    leantoken_worktree_dirty: Option<bool>,
     host_os: &'static str,
     host_arch: &'static str,
     release_build: bool,
@@ -52,13 +64,20 @@ struct Report {
     warm_hot_file_reads: ReadMeasurement,
     warm_spread_file_reads: ReadMeasurement,
     memory_hot_file_copies: ReadMeasurement,
-    limitations: Vec<&'static str>,
+    limitations: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
 struct CorpusReport {
+    source_kind: &'static str,
+    source_repository: Option<String>,
+    revision: Option<String>,
     files: usize,
-    approximate_file_bytes: usize,
+    total_bytes: u64,
+    mean_file_bytes: f64,
+    max_directory_depth: usize,
+    extensions: BTreeMap<String, usize>,
+    synthetic_file_bytes: Option<usize>,
     indexing_iterations: usize,
     read_samples: usize,
     hot_set_files: usize,
@@ -109,11 +128,18 @@ fn main() -> AnyResult<()> {
 }
 
 fn validate_args(args: &Args) -> AnyResult<()> {
-    if args.files < 2 {
+    if args.repository.is_none() && args.files < 2 {
         return Err(invalid_input("--files must be at least 2"));
     }
-    if args.file_bytes < 128 {
+    if args.repository.is_none() && args.file_bytes < 128 {
         return Err(invalid_input("--file-bytes must be at least 128"));
+    }
+    if args
+        .repository
+        .as_ref()
+        .is_some_and(|repository| !repository.is_dir())
+    {
+        return Err(invalid_input("--repository must name a Git checkout"));
     }
     if args.iterations == 0 {
         return Err(invalid_input("--iterations must be positive"));
@@ -132,13 +158,37 @@ fn invalid_input(message: &str) -> Box<dyn Error> {
 }
 
 fn run_profile(args: &Args) -> AnyResult<Report> {
-    let root = tempfile::tempdir()?;
+    let corpus = prepare_corpus(args)?;
     let database = tempfile::tempdir()?;
-    let paths = create_corpus(root.path(), args.files, args.file_bytes)?;
     let config = Arc::new(Config::discover(
-        root.path(),
+        &corpus.root,
         Some(database.path().join("index.sqlite")),
     )?);
+    let discovered = discover_files(&corpus.root, config.max_file_bytes)?;
+    if discovered.len() < 2 {
+        return Err(invalid_input(
+            "profile corpus must contain at least two ignore-visible files within max_file_bytes",
+        ));
+    }
+    let paths = discovered
+        .iter()
+        .map(|file| file.absolute_path.clone())
+        .collect::<Vec<_>>();
+    let mutation_files = discovered
+        .iter()
+        .filter(|file| {
+            Path::new(&file.relative_path)
+                .file_name()
+                .is_some_and(|name| name != ".gitignore" && name != ".ignore")
+                && fs::read_to_string(&file.absolute_path).is_ok()
+        })
+        .take(2)
+        .collect::<Vec<_>>();
+    if mutation_files.len() < 2 {
+        return Err(invalid_input(
+            "profile corpus must contain at least two UTF-8 files for mutation measurements",
+        ));
+    }
     let storage = Storage::open(&config.database_path)?;
     let indexer = Indexer::new(config, storage).expect("indexer");
 
@@ -154,20 +204,20 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
         let start = Instant::now();
         let response = indexer.reconcile(false)?;
         full_noop_durations.push(start.elapsed());
-        require_index_counts(&response, args.files, 0, "full no-op")?;
+        require_index_counts(&response, discovered.len(), 0, "full no-op")?;
     }
 
     let full_changed = measure_changed_indexing(
         args.iterations,
-        &paths[0],
+        &mutation_files[0].absolute_path,
         || indexer.reconcile(false),
-        args.files,
+        discovered.len(),
         "full changed",
     )?;
     let targeted_changed = measure_changed_indexing(
         args.iterations,
-        &paths[1],
-        || indexer.reconcile_paths(&["src/file_00001.rs".to_owned()]),
+        &mutation_files[1].absolute_path,
+        || indexer.reconcile_paths(&[mutation_files[1].relative_path.clone()]),
         1,
         "targeted changed",
     )?;
@@ -186,22 +236,20 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
     let warm_spread_file_reads = measure_file_reads(&paths, args.read_samples)?;
     let memory_hot_file_copies = measure_memory_copies(&hot_contents, args.read_samples);
 
+    let (leantoken_git_revision, leantoken_worktree_dirty) = leantoken_source_identity();
     Ok(Report {
-        schema_version: 1,
+        schema_version: 2,
+        leantoken_version: env!("CARGO_PKG_VERSION"),
+        leantoken_git_revision,
+        leantoken_worktree_dirty,
         host_os: std::env::consts::OS,
         host_arch: std::env::consts::ARCH,
         release_build: !cfg!(debug_assertions),
-        corpus: CorpusReport {
-            files: args.files,
-            approximate_file_bytes: args.file_bytes,
-            indexing_iterations: args.iterations,
-            read_samples: args.read_samples,
-            hot_set_files: hot_set,
-        },
+        corpus: corpus_report(args, &corpus, &discovered, hot_set),
         initial_index,
         full_noop: IndexMeasurement {
             timing: TimingStats::from_durations(full_noop_durations),
-            files_seen_per_sample: args.files,
+            files_seen_per_sample: discovered.len(),
             files_indexed_per_sample: 0,
         },
         full_changed,
@@ -210,12 +258,137 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
         warm_spread_file_reads,
         memory_hot_file_copies,
         limitations: vec![
-            "The generated Rust corpus controls file count and size but does not model a real repository's language mix or directory shape.",
-            "File-read measurements use the operating system's warm page cache; they do not represent cold, remote, encrypted, or heavily contended filesystems.",
-            "The in-memory comparison copies bytes but excludes cache lookup, eviction, synchronization, invalidation, and memory-pressure costs.",
-            "Timing is machine-specific. Compare runs only on the same host and build profile, and use release builds for decisions.",
+            corpus.limitation.to_string(),
+            "File-read measurements use the operating system's warm page cache; they do not represent cold, remote, encrypted, or heavily contended filesystems.".into(),
+            "The in-memory comparison copies bytes but excludes cache lookup, eviction, synchronization, invalidation, and memory-pressure costs.".into(),
+            "This profile measures no-op and existing-file modification paths; create, delete, rename, ignore-change, watcher-overflow, and interruption scenarios still require separate measurements.".into(),
+            "Timing is machine-specific. Compare runs only on the same host and build profile, and use release builds for decisions.".into(),
         ],
     })
+}
+
+struct PreparedCorpus {
+    _temporary_root: tempfile::TempDir,
+    root: PathBuf,
+    source_kind: &'static str,
+    source_repository: Option<String>,
+    revision: Option<String>,
+    limitation: &'static str,
+}
+
+fn prepare_corpus(args: &Args) -> AnyResult<PreparedCorpus> {
+    let temporary_root = tempfile::tempdir()?;
+    if let Some(repository) = &args.repository {
+        let repository = repository.canonicalize()?;
+        let revision = git_output(&repository, ["rev-parse", "HEAD"])?;
+        let status = git_output(
+            &repository,
+            ["status", "--porcelain", "--untracked-files=all"],
+        )?;
+        if !status.is_empty() {
+            return Err(invalid_input(
+                "--repository must be clean so the recorded revision identifies the corpus",
+            ));
+        }
+        let root = temporary_root.path().join("repository");
+        snapshot_repository(&repository, &root, temporary_root.path())?;
+        return Ok(PreparedCorpus {
+            _temporary_root: temporary_root,
+            root,
+            source_kind: "git_worktree_snapshot",
+            source_repository: args.repository_label.clone(),
+            revision: Some(revision),
+            limitation: "The repository profile uses an isolated ignore-aware snapshot of a clean checkout at the recorded commit.",
+        });
+    }
+
+    create_corpus(temporary_root.path(), args.files, args.file_bytes)?;
+    Ok(PreparedCorpus {
+        root: temporary_root.path().to_path_buf(),
+        _temporary_root: temporary_root,
+        source_kind: "synthetic_rust",
+        source_repository: None,
+        revision: None,
+        limitation: "The generated Rust corpus controls file count and size but does not model a real repository's language mix or directory shape.",
+    })
+}
+
+fn snapshot_repository(source: &Path, destination: &Path, temporary_root: &Path) -> AnyResult<()> {
+    let source_config = Config::discover(source, Some(temporary_root.join("source-probe.sqlite")))?;
+    let files = discover_files(source, source_config.max_file_bytes)?;
+    fs::create_dir_all(destination)?;
+    for file in files {
+        let target = destination.join(Path::new(&file.relative_path));
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(&file.absolute_path, target)?;
+    }
+    Ok(())
+}
+
+fn git_output<const N: usize>(repository: &Path, args: [&str; N]) -> AnyResult<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repository)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()?;
+    if !output.status.success() {
+        return Err(Box::new(io::Error::other(format!(
+            "git command failed with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))));
+    }
+    Ok(String::from_utf8(output.stdout)?.trim().to_string())
+}
+
+fn leantoken_source_identity() -> (Option<String>, Option<bool>) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let revision = git_output(root, ["rev-parse", "HEAD"]).ok();
+    let dirty = revision.as_ref().and_then(|_| {
+        git_output(root, ["status", "--porcelain", "--untracked-files=all"])
+            .ok()
+            .map(|status| !status.is_empty())
+    });
+    (revision, dirty)
+}
+
+fn corpus_report(
+    args: &Args,
+    corpus: &PreparedCorpus,
+    files: &[DiscoveredFile],
+    hot_set: usize,
+) -> CorpusReport {
+    let total_bytes = files.iter().map(|file| file.size_bytes).sum::<u64>();
+    let mut extensions = BTreeMap::new();
+    let mut max_directory_depth = 0usize;
+    for file in files {
+        let path = Path::new(&file.relative_path);
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .filter(|extension| !extension.is_empty())
+            .unwrap_or("<none>")
+            .to_ascii_lowercase();
+        *extensions.entry(extension).or_insert(0) += 1;
+        max_directory_depth = max_directory_depth.max(path.components().count().saturating_sub(1));
+    }
+    CorpusReport {
+        source_kind: corpus.source_kind,
+        source_repository: corpus.source_repository.clone(),
+        revision: corpus.revision.clone(),
+        files: files.len(),
+        total_bytes,
+        mean_file_bytes: total_bytes as f64 / files.len() as f64,
+        max_directory_depth,
+        extensions,
+        synthetic_file_bytes: args.repository.is_none().then_some(args.file_bytes),
+        indexing_iterations: args.iterations,
+        read_samples: args.read_samples,
+        hot_set_files: hot_set,
+    }
 }
 
 fn measure_changed_indexing<F>(
@@ -352,6 +525,16 @@ fn milliseconds(duration: Duration) -> f64 {
 mod tests {
     use super::*;
 
+    fn run_git(repository: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(repository)
+            .args(args)
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {args:?} failed with {status}");
+    }
+
     #[test]
     fn percentile_uses_nearest_rank() {
         let samples = [1.0, 2.0, 3.0, 4.0, 5.0];
@@ -363,6 +546,8 @@ mod tests {
     fn small_profile_exercises_each_measurement() {
         let output = tempfile::tempdir().expect("output");
         let args = Args {
+            repository: None,
+            repository_label: None,
             files: 6,
             file_bytes: 256,
             iterations: 2,
@@ -379,5 +564,64 @@ mod tests {
         assert_eq!(report.targeted_changed.files_seen_per_sample, 1);
         assert_eq!(report.warm_hot_file_reads.timing.samples, 12);
         assert_eq!(report.memory_hot_file_copies.timing.samples, 12);
+    }
+
+    #[test]
+    fn repository_profile_mutates_only_a_disposable_snapshot() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let repository = tempfile::tempdir().expect("repository");
+        run_git(repository.path(), &["init", "--quiet"]);
+        run_git(
+            repository.path(),
+            &["config", "user.email", "test@example.com"],
+        );
+        run_git(
+            repository.path(),
+            &["config", "user.name", "LeanToken Test"],
+        );
+        let first = repository.path().join("first.rs");
+        let second = repository.path().join("second.py");
+        fs::write(&first, "fn first() {}\n").expect("first source");
+        fs::write(&second, "def second():\n    return 2\n").expect("second source");
+        run_git(repository.path(), &["add", "-A"]);
+        run_git(repository.path(), &["commit", "--quiet", "-m", "fixture"]);
+        let revision = git_output(repository.path(), ["rev-parse", "HEAD"]).expect("revision");
+        let original = fs::read_to_string(&first).expect("original source");
+        let output = tempfile::tempdir().expect("output");
+        let args = Args {
+            repository: Some(repository.path().to_path_buf()),
+            repository_label: None,
+            files: 2,
+            file_bytes: 128,
+            iterations: 1,
+            read_samples: 2,
+            hot_set: 1,
+            output: output.path().join("report.json"),
+        };
+
+        let report = run_profile(&args).expect("profile repository");
+
+        assert_eq!(report.corpus.source_kind, "git_worktree_snapshot");
+        assert_eq!(report.corpus.revision.as_deref(), Some(revision.as_str()));
+        assert_eq!(report.corpus.files, 2);
+        assert_eq!(report.full_noop.files_seen_per_sample, 2);
+        assert_eq!(report.corpus.extensions.get("rs"), Some(&1));
+        assert_eq!(report.corpus.extensions.get("py"), Some(&1));
+        assert_eq!(
+            fs::read_to_string(first).expect("source after profile"),
+            original
+        );
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(repository.path())
+                .args(["status", "--porcelain"])
+                .output()
+                .expect("git status")
+                .stdout
+                .is_empty()
+        );
     }
 }
