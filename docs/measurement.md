@@ -134,8 +134,10 @@ The adapter result contract is provider-neutral:
   "rereads": 2,
   "reread_tokens": 300,
   "failed_searches": 1,
+  "dead_end_reads": 2,
   "provider_usage": {},
-  "evidence_receipt": null
+  "evidence_receipt": null,
+  "repository_generation": 42
 }
 ```
 
@@ -146,12 +148,35 @@ The adapter owns provider authentication, the actual model/tool harness, and
 raw trace retention. The harness runs the frozen success command itself after
 each arm; agent-reported success is retained only as a diagnostic. The adapter
 reports provider input and output tokens, cost, tool calls, rereads, reread
-tokens, and failed searches. For prewalk, it must transfer the complete
+tokens, failed searches, dead-end reads, raw receipts, and the observed
+repository generation. For prewalk, it must transfer the complete
 exploration trajectory, todo state, evidence receipt, and first edit—not only a
 prose plan.
 
 One run per arm is plumbing evidence, not a pass-rate comparison. Freeze exact
-model versions and report repeated runs and variance.
+model versions and report repeated runs and variance. Each arm aggregate reports
+the arithmetic mean and sample variance for input tokens, output tokens, and
+wall-clock duration, both overall and per task. The mean is `null` without a
+completed adapter result, and sample variance is `null` with fewer than two
+samples. Adapter failures, adapter timeouts, validation failures, and validation
+timeouts are recorded per run instead of aborting the remaining experiment.
+The manifest contract remains schema version 1; reports containing these
+run-status and aggregate fields use report schema version 2.
+
+To validate the manifest, worktree, adapter, and success-command plumbing before
+using provider credentials, build and pass the included dry-run adapter:
+
+```bash
+cargo build --release --example model_ab_dry_run_adapter
+cargo run --release --example model_ab -- \
+  --manifest target/model_ab.json \
+  --adapter target/release/examples/model_ab_dry_run_adapter \
+  --output target/model_ab-dry-run-report.json
+```
+
+The dry-run adapter does not call a model, edit the worktree, or report token
+usage. A passing success command therefore validates only the experiment
+plumbing; it is not task-success, quality, or cost evidence.
 
 ## Exact MCP wire capture
 
