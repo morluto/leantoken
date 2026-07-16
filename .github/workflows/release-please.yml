@@ -67,6 +67,8 @@ jobs:
         id: existing-pr
         if: steps.version.outputs.skip != 'true'
         run: |
+          echo "number=" >> "$GITHUB_OUTPUT"
+          echo "branch=" >> "$GITHUB_OUTPUT"
           EXISTING=$(gh pr list \
             --label autorelease \
             --state open \
