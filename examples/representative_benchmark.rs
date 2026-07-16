@@ -11,7 +11,7 @@ use leantoken::{Config, ContextRequest, ContextResponse, services::Services, tok
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Parser)]
-#[command(about = "Run the pinned, representative LeanToken context benchmark")]
+#[command(about = "Run a pinned LeanToken context-retrieval benchmark")]
 struct Args {
     #[arg(long, default_value = "benchmarks/representative.json")]
     manifest: PathBuf,
@@ -24,6 +24,10 @@ struct Args {
 #[derive(Debug, Deserialize)]
 struct Manifest {
     schema_version: u32,
+    #[serde(default = "default_dataset_kind")]
+    dataset_kind: String,
+    #[serde(default)]
+    frozen_at: Option<String>,
     description: String,
     #[serde(default = "default_rg_max_lines")]
     rg_max_lines_per_query: usize,
@@ -36,7 +40,14 @@ struct CorpusSpec {
     url: String,
     directory: String,
     base_revision: String,
-    fix_commit: String,
+    #[serde(default)]
+    fix_commit: Option<String>,
+    #[serde(default)]
+    issue_url: Option<String>,
+    #[serde(default)]
+    prompt_provenance: Option<String>,
+    #[serde(default)]
+    label_provenance: Option<String>,
     tasks: Vec<TaskSpec>,
 }
 
@@ -59,6 +70,9 @@ struct RelevantFile {
 #[derive(Debug, Serialize)]
 struct Report {
     schema_version: u32,
+    dataset_kind: String,
+    manifest_blake3: String,
+    frozen_at: Option<String>,
     manifest_description: String,
     leantoken_version: &'static str,
     host_os: &'static str,
@@ -117,7 +131,10 @@ struct CorpusReport {
     name: String,
     url: String,
     base_revision: String,
-    fix_commit: String,
+    fix_commit: Option<String>,
+    issue_url: Option<String>,
+    prompt_provenance: Option<String>,
+    label_provenance: Option<String>,
     indexed_files: usize,
     indexed_chunks: usize,
     index_warnings: Vec<String>,
@@ -199,14 +216,17 @@ struct ScriptedBaseline<'a> {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
-    let manifest: Manifest = serde_json::from_str(&fs::read_to_string(&args.manifest)?)?;
-    if manifest.schema_version != 1 {
+    let manifest_json = fs::read_to_string(&args.manifest)?;
+    let manifest_blake3 = blake3::hash(manifest_json.as_bytes()).to_hex().to_string();
+    let manifest: Manifest = serde_json::from_str(&manifest_json)?;
+    if !matches!(manifest.schema_version, 1 | 2) {
         return Err(format!(
             "unsupported benchmark manifest schema version {}",
             manifest.schema_version
         )
         .into());
     }
+    validate_manifest(&manifest)?;
     let ripgrep_version = command_version("rg")?;
     preflight(&manifest, &args.repos_root)?;
 
@@ -235,6 +255,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             url: corpus.url,
             base_revision: corpus.base_revision,
             fix_commit: corpus.fix_commit,
+            issue_url: corpus.issue_url,
+            prompt_provenance: corpus.prompt_provenance,
+            label_provenance: corpus.label_provenance,
             indexed_files: status.file_count,
             indexed_chunks: status.chunk_count,
             index_warnings: indexed.warnings,
@@ -261,6 +284,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let report = Report {
         schema_version: manifest.schema_version,
+        dataset_kind: manifest.dataset_kind.clone(),
+        manifest_blake3,
+        frozen_at: manifest.frozen_at,
         manifest_description: manifest.description,
         leantoken_version: env!("CARGO_PKG_VERSION"),
         host_os: std::env::consts::OS,
@@ -279,14 +305,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         },
         aggregate,
         corpora,
-        limitations: vec![
-            "Tasks and relevance labels were derived from public future fixes; this measures retrieval against disclosed labels, not generalization to unseen bugs.",
-            "The oracle baseline is intentionally difficult to beat because it assumes perfect file selection, but it reads whole files rather than exact future diff hunks.",
-            "The scripted ripgrep baseline uses fixed queries chosen with knowledge of each task and is not an autonomous agent trajectory.",
-            "No model executes an edit, so the benchmark does not measure pass rate, prewalk handoff quality, or end-to-end task cost.",
-            "Eight repositories and one task per repository are representative smoke evidence, not a statistically powered product claim.",
-            "Cold indexing and warm latency depend on host hardware and filesystem cache state.",
-        ],
+        limitations: benchmark_limitations(&manifest.dataset_kind),
     };
     let json = serde_json::to_string_pretty(&report)?;
     if let Some(parent) = args
@@ -299,6 +318,77 @@ async fn main() -> Result<(), Box<dyn Error>> {
     fs::write(&args.output, &json)?;
     println!("{json}");
     Ok(())
+}
+
+fn default_dataset_kind() -> String {
+    "development".to_owned()
+}
+
+fn validate_manifest(manifest: &Manifest) -> Result<(), Box<dyn Error>> {
+    if is_patch_free_dataset(&manifest.dataset_kind) {
+        if manifest.frozen_at.as_deref().is_none_or(str::is_empty) {
+            return Err(format!("{} set requires frozen_at", manifest.dataset_kind).into());
+        }
+        for corpus in &manifest.corpora {
+            if corpus.fix_commit.is_some() {
+                return Err(format!(
+                    "{} corpus {} must not name a future fix",
+                    manifest.dataset_kind, corpus.name
+                )
+                .into());
+            }
+            for (field, value) in [
+                ("issue_url", corpus.issue_url.as_deref()),
+                ("prompt_provenance", corpus.prompt_provenance.as_deref()),
+                ("label_provenance", corpus.label_provenance.as_deref()),
+            ] {
+                if value.is_none_or(str::is_empty) {
+                    return Err(format!(
+                        "{} corpus {} requires {field}",
+                        manifest.dataset_kind, corpus.name
+                    )
+                    .into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn benchmark_limitations(dataset_kind: &str) -> Vec<&'static str> {
+    let mut limitations = vec![
+        "The oracle baseline assumes perfect file selection and reads whole files rather than exact decisive ranges.",
+        "The scripted ripgrep baseline uses fixed queries supplied by the manifest and is not an autonomous agent trajectory.",
+        "No model executes an edit, so this runner does not measure pass rate, prewalk handoff quality, or end-to-end task cost.",
+        "Cold indexing and warm latency depend on host hardware and filesystem cache state.",
+    ];
+    if dataset_kind == "blind_holdout" {
+        limitations.push(
+            "Holdout prompts and labels were frozen before evaluation from issue reports and pinned source inspection; relevance labels remain human judgments, not proof that every labeled range is required.",
+        );
+        limitations.push(
+            "A holdout result is evaluation evidence, not permission to tune against the same dataset while continuing to call it blind.",
+        );
+    } else if dataset_kind == "prospective_validation" {
+        limitations.push(
+            "Validation prompts and labels were frozen from open issue reports and pinned source inspection, then used during retrieval tuning; this is not blind holdout evidence.",
+        );
+        limitations.push(
+            "Four validation tasks are retrieval development evidence, not a statistically powered product claim.",
+        );
+    } else {
+        limitations.push(
+            "Development prompts and labels were derived retrospectively from public future fixes and must not be reported as blind generalization evidence.",
+        );
+        limitations.push(
+            "Eight development tasks are retrieval smoke evidence, not a statistically powered product claim.",
+        );
+    }
+    limitations
+}
+
+fn is_patch_free_dataset(dataset_kind: &str) -> bool {
+    matches!(dataset_kind, "prospective_validation" | "blind_holdout")
 }
 
 async fn run_task(
@@ -599,12 +689,18 @@ fn preflight(manifest: &Manifest, repos_root: &Path) -> Result<(), Box<dyn Error
             return Err(format!("{} is not the Git top-level directory", root.display()).into());
         }
         verify_revision(&root, &corpus.base_revision)?;
-        let parent_arg = format!("{}^", corpus.fix_commit);
-        let fix_parent = git_output(&root, &["rev-parse", &parent_arg])?;
-        if fix_parent.trim() != corpus.base_revision {
+        if let Some(fix_commit) = &corpus.fix_commit {
+            let parent_arg = format!("{fix_commit}^");
+            let fix_parent = git_output(&root, &["rev-parse", &parent_arg])?;
+            if fix_parent.trim() != corpus.base_revision {
+                return Err(
+                    format!("{} is not the parent of {fix_commit}", corpus.base_revision).into(),
+                );
+            }
+        } else if !is_patch_free_dataset(&manifest.dataset_kind) {
             return Err(format!(
-                "{} is not the parent of {}",
-                corpus.base_revision, corpus.fix_commit
+                "{} has no fix_commit for dataset kind {}",
+                corpus.name, manifest.dataset_kind
             )
             .into());
         }
@@ -867,7 +963,7 @@ fn accumulate(aggregate: &mut AggregateReport, task: &TaskReport) {
 
 #[cfg(test)]
 mod tests {
-    use super::repeated_range_token_estimate;
+    use super::*;
 
     #[test]
     fn repeated_range_tokens_include_partial_overlap_with_a_different_hash() {
@@ -875,5 +971,19 @@ mod tests {
             repeated_range_token_estimate(8, 12, 50, &[(1, 10), (20, 30)]),
             30
         );
+    }
+
+    #[test]
+    fn prospective_validation_requires_provenance_and_excludes_future_fixes() {
+        let mut manifest: Manifest =
+            serde_json::from_str(include_str!("../benchmarks/validation.json"))
+                .expect("validation manifest");
+        validate_manifest(&manifest).expect("valid validation manifest");
+
+        manifest.dataset_kind = "blind_holdout".into();
+        validate_manifest(&manifest).expect("same provenance is valid for a future blind set");
+
+        manifest.corpora[0].fix_commit = Some("future".into());
+        assert!(validate_manifest(&manifest).is_err());
     }
 }
