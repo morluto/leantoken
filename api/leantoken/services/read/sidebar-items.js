@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_CONTEXT_RANGE_LINES","MIN_CONTEXT_RANGE_LINES"],"fn":["storage_symbol"],"struct":["StoredExcerpt"]};
