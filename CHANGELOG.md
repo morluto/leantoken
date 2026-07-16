@@ -29,6 +29,7 @@ All notable changes to this project will be documented in this file.
 ### Chores
 
 - **main:** Release leantoken 0.1.1
+- **main:** Release leantoken 0.1.1
 ### Continuous Integration
 
 - Allow recorded benchmark revision
@@ -40,6 +41,7 @@ All notable changes to this project will be documented in this file.
 - Document measurement limits and workflows
 ### Features
 
+- Add automatic LeanToken updates
 - Preserve early task terms in context queries
 - Improve retrieval efficiency and resilience
 ### Refactoring
