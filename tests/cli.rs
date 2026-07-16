@@ -231,7 +231,19 @@ fn cli_index_and_status_and_mcp_commands() {
     assert!(matches!(cli.app_request(), AppRequest::Status));
 
     let cli = parse(&["mcp"]);
-    assert!(matches!(cli.app_request(), AppRequest::Mcp));
+    assert!(matches!(
+        cli.app_request(),
+        AppRequest::Mcp {
+            result_mode: leantoken::mcp::McpResultMode::Dual
+        }
+    ));
+    let cli = parse(&["mcp", "--result-mode", "structured"]);
+    assert!(matches!(
+        cli.app_request(),
+        AppRequest::Mcp {
+            result_mode: leantoken::mcp::McpResultMode::Structured
+        }
+    ));
 }
 
 #[test]

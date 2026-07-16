@@ -13,6 +13,9 @@ pub struct Config {
     pub root: PathBuf,
     /// SQLite index path.
     pub database_path: PathBuf,
+    /// Whether LeanToken owns this cache file and may rebuild it after
+    /// confirmed SQLite corruption.
+    pub(crate) database_is_managed_cache: bool,
     /// Largest file admitted to the index.
     pub max_file_bytes: u64,
     /// Default number of returned results.
@@ -58,12 +61,14 @@ impl Config {
                 root.display()
             )));
         }
+        let database_is_managed_cache = database_path.is_none();
         let database_path = database_path
             .map(canonicalize_database_parent)
             .unwrap_or_else(|| default_database_path(&root));
         Ok(Self {
             root,
             database_path,
+            database_is_managed_cache,
             max_file_bytes: 2 * 1024 * 1024,
             default_results: 20,
             max_results: 100,
@@ -77,6 +82,25 @@ impl Config {
                 .min(8),
             watcher_debounce: Duration::from_millis(500),
             tokenizer: Tokenizer::default(),
+        })
+    }
+
+    /// Return whether a repository-relative path names the SQLite database or
+    /// one of its WAL/SHM sidecars.
+    #[must_use]
+    pub fn is_database_artifact(&self, relative_path: &str) -> bool {
+        self.is_database_artifact_path(&self.root.join(relative_path))
+    }
+
+    #[must_use]
+    pub(crate) fn is_database_artifact_path(&self, candidate: &Path) -> bool {
+        if candidate == self.database_path {
+            return true;
+        }
+        ["-wal", "-shm"].into_iter().any(|suffix| {
+            let mut sidecar = self.database_path.as_os_str().to_os_string();
+            sidecar.push(suffix);
+            candidate.as_os_str() == sidecar
         })
     }
 }

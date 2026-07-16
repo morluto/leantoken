@@ -4,6 +4,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::Config;
 use crate::Result;
+use crate::mcp::McpResultMode;
 use crate::model::{
     ContextRequest, FileOperation, FilesRequest, OutlineRequest, ReadRequest, SearchMode,
     SearchRequest,
@@ -61,7 +62,9 @@ impl Cli {
             Commands::Outline(args) => AppRequest::Outline(args.into()),
             Commands::Read(args) => AppRequest::Read(args.into()),
             Commands::Context(args) => AppRequest::Context(args.into()),
-            Commands::Mcp => AppRequest::Mcp,
+            Commands::Mcp(args) => AppRequest::Mcp {
+                result_mode: args.result_mode,
+            },
             Commands::Setup(args) => AppRequest::Setup(args.into()),
             Commands::Remove(args) => AppRequest::Remove(args.into()),
         }
@@ -78,7 +81,7 @@ pub enum AppRequest {
     Outline(OutlineRequest),
     Read(ReadRequest),
     Context(ContextRequest),
-    Mcp,
+    Mcp { result_mode: McpResultMode },
     Setup(SetupRequest),
     Remove(SetupRequest),
 }
@@ -111,13 +114,22 @@ pub enum Commands {
     Context(ContextArgs),
 
     /// Run the MCP server over stdio.
-    Mcp,
+    Mcp(McpArgs),
 
     /// Configure LeanToken as a global MCP server for coding clients.
     Setup(IntegrationArgs),
 
     /// Remove LeanToken's global MCP server entries.
     Remove(IntegrationArgs),
+}
+
+/// MCP stdio transport options.
+#[derive(Debug, Clone, Args)]
+pub struct McpArgs {
+    /// Successful-result representation. Keep `dual` unless the host is known
+    /// to consume structured-only results.
+    #[arg(long, value_enum, default_value_t = McpResultMode::Dual)]
+    pub result_mode: McpResultMode,
 }
 
 /// Client selection shared by `setup` and `remove`.

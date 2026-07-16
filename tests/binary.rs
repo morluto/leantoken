@@ -38,27 +38,29 @@ fn cli_indexes_statuses_and_searches_as_json() {
 }
 
 #[test]
-fn mcp_exits_cleanly_on_stdio_eof() {
+fn mcp_repeatedly_exits_cleanly_on_stdio_eof() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
         .expect("write fixture");
     let database = root.path().join("index.sqlite");
 
-    Command::cargo_bin("leantoken")
-        .expect("binary")
-        .args([
-            "--root",
-            root.path().to_str().expect("root UTF-8"),
-            "--database",
-            database.to_str().expect("database UTF-8"),
-            "mcp",
-        ])
-        .write_stdin("")
-        // The deadline covers cold indexing and watcher startup as well as
-        // transport shutdown, which is materially slower on Windows runners.
-        .timeout(std::time::Duration::from_secs(30))
-        .assert()
-        .success();
+    for _ in 0..3 {
+        Command::cargo_bin("leantoken")
+            .expect("binary")
+            .args([
+                "--root",
+                root.path().to_str().expect("root UTF-8"),
+                "--database",
+                database.to_str().expect("database UTF-8"),
+                "mcp",
+            ])
+            .write_stdin("")
+            // The deadline covers cold indexing and watcher startup as well as
+            // transport shutdown, which is materially slower on Windows runners.
+            .timeout(std::time::Duration::from_secs(30))
+            .assert()
+            .success();
+    }
 }
 
 #[test]

@@ -2,13 +2,10 @@ use std::{fs, path::Path, path::PathBuf, sync::Arc, time::Instant};
 
 use leantoken::{
     Config, ContextRequest,
-    mcp::{LeanTokenMcp, tool_catalog_json},
+    mcp::{LeanTokenMcp, McpResultMode, tool_catalog_json, tool_result},
     services::Services,
 };
-use rmcp::{
-    ServerHandler,
-    model::{CallToolResult, ProtocolVersion},
-};
+use rmcp::{ServerHandler, model::ProtocolVersion};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -23,7 +20,9 @@ struct Report {
     tools_list_request_tokens: usize,
     tools_list_response_tokens: usize,
     call_request_tokens: usize,
-    result_tokens: usize,
+    dual_result_tokens: usize,
+    text_result_tokens: usize,
+    structured_result_tokens: usize,
     handoff_tokens: usize,
     latency_ms: f64,
     limitations: Vec<&'static str>,
@@ -100,12 +99,23 @@ async fn mcp_handoff_token_costs() {
             }
         }
     });
-    let tool_result = CallToolResult::structured(context_value);
-    assert!(tool_result.structured_content.is_some());
+    let dual_result = tool_result(context_value.clone(), McpResultMode::Dual)
+        .expect("dual result");
+    let text_result = tool_result(context_value.clone(), McpResultMode::Text)
+        .expect("text result");
+    let structured_result = tool_result(context_value, McpResultMode::Structured)
+        .expect("structured result");
+    assert!(dual_result.structured_content.is_some());
     let call_result = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 2,
-        "result": tool_result
+        "result": dual_result
+    });
+    let text_call_result = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "result": text_result
+    });
+    let structured_call_result = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "result": structured_result
     });
 
     let schema_tokens = tokenizer.count(&schema_json);
@@ -115,14 +125,16 @@ async fn mcp_handoff_token_costs() {
     let tools_list_request_tokens = tokenizer.count(&tools_list_request.to_string());
     let tools_list_response_tokens = tokenizer.count(&tools_list_response.to_string());
     let call_request_tokens = tokenizer.count(&call_request.to_string());
-    let result_tokens = tokenizer.count(&call_result.to_string());
+    let dual_result_tokens = tokenizer.count(&call_result.to_string());
+    let text_result_tokens = tokenizer.count(&text_call_result.to_string());
+    let structured_result_tokens = tokenizer.count(&structured_call_result.to_string());
     let handoff_tokens = initialize_request_tokens
         + initialize_response_tokens
         + initialized_notification_tokens
         + tools_list_request_tokens
         + tools_list_response_tokens
         + call_request_tokens
-        + result_tokens;
+        + dual_result_tokens;
 
     let latency_ms = started.elapsed().as_secs_f64() * 1_000.0;
 
@@ -137,11 +149,13 @@ async fn mcp_handoff_token_costs() {
         tools_list_request_tokens,
         tools_list_response_tokens,
         call_request_tokens,
-        result_tokens,
+        dual_result_tokens,
+        text_result_tokens,
+        structured_result_tokens,
         handoff_tokens,
         latency_ms,
         limitations: vec![
-            "The result uses rmcp CallToolResult::structured, which serializes the response in both text content and structuredContent.",
+            "Dual mode is the compatibility default and serializes JSON in both text content and structuredContent; text-only and structured-only costs are reported separately.",
             "The modeled trace serializes initialize, notifications/initialized, tools/list, and tools/call messages but excludes transport framing outside JSON-RPC.",
             "No model consumes the handoff, so practical sufficiency is not measured here.",
         ],
@@ -157,7 +171,9 @@ async fn mcp_handoff_token_costs() {
         "five-tool schema exceeds allowed budget: {}",
         schema_tokens
     );
-    assert!(handoff_tokens > schema_tokens + result_tokens);
+    assert!(handoff_tokens > schema_tokens + dual_result_tokens);
+    assert!(structured_result_tokens < dual_result_tokens);
+    assert!(text_result_tokens < dual_result_tokens);
     assert!(tokenizer.is_exact(), "default tokenizer should be exact");
 }
 

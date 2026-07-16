@@ -29,8 +29,7 @@ impl Indexer {
         self.validate_config()?;
 
         let mut discovered = discover_files(&self.config.root, self.config.max_file_bytes)?;
-        discovered
-            .retain(|file| !is_database_artifact(&file.absolute_path, &self.config.database_path));
+        discovered.retain(|file| !self.config.is_database_artifact_path(&file.absolute_path));
         let existing = self.existing_files()?;
         let config_hash = self.config_hash();
         let meta = self.storage.meta()?;
@@ -141,7 +140,7 @@ impl Indexer {
                 return self.reconcile(true);
             }
             let absolute_path = self.config.root.join(&relative);
-            if is_database_artifact(&absolute_path, &self.config.database_path) {
+            if self.config.is_database_artifact_path(&absolute_path) {
                 continue;
             }
 
@@ -403,15 +402,6 @@ fn push_warning(warnings: &mut Vec<String>, warning: String) {
     if warnings.len() < MAX_WARNINGS {
         warnings.push(warning);
     }
-}
-
-fn is_database_artifact(path: &std::path::Path, database: &std::path::Path) -> bool {
-    if path == database {
-        return true;
-    }
-    let database = database.as_os_str().to_string_lossy();
-    let path = path.as_os_str().to_string_lossy();
-    path == format!("{database}-wal") || path == format!("{database}-shm")
 }
 
 fn is_ignore_control_path(path: &str) -> bool {

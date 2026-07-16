@@ -78,3 +78,16 @@ fn config_defaults_bound_output_and_timing() {
     assert_eq!(config.tokenizer, Tokenizer::default());
     assert!(config.tokenizer.is_exact());
 }
+
+#[test]
+fn config_identifies_database_and_wal_artifacts_inside_the_root() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join(".cache/index.sqlite");
+    std::fs::create_dir_all(database.parent().expect("database parent")).expect("parent");
+    let config = Config::discover(root.path(), Some(database)).expect("config");
+
+    assert!(config.is_database_artifact(".cache/index.sqlite"));
+    assert!(config.is_database_artifact(".cache/index.sqlite-wal"));
+    assert!(config.is_database_artifact(".cache/index.sqlite-shm"));
+    assert!(!config.is_database_artifact("src/index.sqlite"));
+}

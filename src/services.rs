@@ -15,7 +15,7 @@ use crate::model::*;
 use crate::ranking::{self, Candidate};
 use crate::repository::{git_changed_paths, resolve_existing, validate_relative};
 use crate::storage::{ChunkHit, FileRecord, ReferenceHit, Storage, SymbolHit};
-use crate::text::{byte_range_to_line_range, excerpt, expand_terms, hash};
+use crate::text::{byte_range_to_line_range, excerpt, expand_terms, hash, identifier_words};
 use crate::{Config, Error, Result};
 
 const MAX_QUERY_BYTES: usize = 64 * 1024;
@@ -23,7 +23,8 @@ const MAX_PATTERN_BYTES: usize = 4 * 1024;
 const MAX_PATH_BYTES: usize = 4 * 1024;
 const MAX_INPUT_ITEMS: usize = 256;
 const GIT_CHANGED_PATHS_MAX: usize = 512;
-const MAX_CONTEXT_DECLARATION_LINES: usize = 64;
+const MIN_CONTEXT_RANGE_LINES: usize = 12;
+const MAX_CONTEXT_RANGE_LINES: usize = 128;
 
 #[derive(Debug, Clone)]
 /// Shared application services used by both CLI and MCP adapters.
@@ -49,7 +50,15 @@ impl Services {
     /// Open the SQLite index and construct retrieval services.
     pub fn open(config: Config) -> Result<Self> {
         let config = Arc::new(config);
-        let storage = Storage::open(&config.database_path)?;
+        let storage = match Storage::open(&config.database_path) {
+            Ok(storage) => storage,
+            Err(error) if config.database_is_managed_cache && is_database_corruption(&error) => {
+                tracing::warn!(database = %config.database_path.display(), "rebuilding corrupt managed index");
+                remove_database_artifacts(&config.database_path)?;
+                Storage::open(&config.database_path)?
+            }
+            Err(error) => return Err(error),
+        };
         Ok(Self::from_parts(config, storage))
     }
 
@@ -648,6 +657,7 @@ impl Services {
             // scoring symbol candidate. Keep them out of candidate generation.
             for query in queries.iter().filter(|query| query.value != "test") {
                 let term = &query.value;
+                let concept = query.fusion_key.as_deref().unwrap_or(term);
                 check_cancelled(cancellation)?;
                 for (rank, hit) in self
                     .storage
@@ -659,17 +669,23 @@ impl Services {
                     if !path_allowed(&hit.path, &[], &request.exclude_paths)? {
                         continue;
                     }
-                    let Some(excerpt) = self.stored_excerpt(
+                    let Some(excerpt) = self.adaptive_context_excerpt(
                         hit.symbol.file_id,
                         hit.symbol.start_line,
                         hit.symbol.end_line,
-                        0,
-                        MAX_CONTEXT_DECLARATION_LINES,
+                        hit.symbol.start_line,
+                        request.token_budget,
                     )?
                     else {
                         continue;
                     };
                     let exact = f64::from(hit.symbol.name.eq_ignore_ascii_case(term));
+                    let qualified = qualified_symbol_match(
+                        concept,
+                        &hit.symbol.name,
+                        hit.symbol.parent.as_deref(),
+                        hit.symbol.signature.as_deref(),
+                    );
                     if let Some(fusion_key) = &query.fusion_key {
                         record_query_hit(
                             &mut query_fusion,
@@ -693,9 +709,13 @@ impl Services {
                             excerpt.content,
                         )
                         .match_kind("symbol")
+                        .concept(
+                            concept,
+                            query.weight + f64::from(query.fusion_key.is_some()),
+                        )
                         .representation("symbol")
                         .symbol_name(hit.symbol.name)
-                        .exact(exact)
+                        .exact(exact + qualified * 1.5)
                         .symbol(1.0)
                         .path_score(context_path_score(&hit.path, &terms, &request.task))
                         .change_boost(change_boost),
@@ -711,14 +731,32 @@ impl Services {
                     if !path_allowed(&hit.path, &[], &request.exclude_paths)? {
                         continue;
                     }
-                    let Some(excerpt) = self.stored_excerpt(
-                        hit.reference.file_id,
-                        hit.reference.start_line,
-                        hit.reference.end_line,
-                        2,
-                        12,
-                    )?
-                    else {
+                    let excerpt = if let Some(symbol) = self
+                        .storage
+                        .find_enclosing_symbol(hit.reference.file_id, hit.reference.start_line)?
+                    {
+                        self.adaptive_context_excerpt(
+                            hit.reference.file_id,
+                            symbol.start_line,
+                            symbol.end_line,
+                            hit.reference.start_line,
+                            request.token_budget,
+                        )?
+                    } else {
+                        None
+                    };
+                    let excerpt = if excerpt.is_some() {
+                        excerpt
+                    } else {
+                        self.stored_excerpt(
+                            hit.reference.file_id,
+                            hit.reference.start_line,
+                            hit.reference.end_line,
+                            2,
+                            12,
+                        )?
+                    };
+                    let Some(excerpt) = excerpt else {
                         continue;
                     };
                     if let Some(fusion_key) = &query.fusion_key {
@@ -744,6 +782,10 @@ impl Services {
                             excerpt.content,
                         )
                         .match_kind("reference")
+                        .concept(
+                            concept,
+                            query.weight + f64::from(query.fusion_key.is_some()),
+                        )
                         .symbol_name(hit.reference.name)
                         .reference(1.0)
                         .path_score(context_path_score(&hit.path, &terms, &request.task))
@@ -764,6 +806,27 @@ impl Services {
                     else {
                         continue;
                     };
+                    let matched_line =
+                        matching_line(&hit, term, false).unwrap_or(search_hit.start_line);
+                    let excerpt = if let Some(symbol) = self
+                        .storage
+                        .find_enclosing_symbol(hit.file_id, matched_line)?
+                    {
+                        self.adaptive_context_excerpt(
+                            hit.file_id,
+                            symbol.start_line,
+                            symbol.end_line,
+                            matched_line,
+                            request.token_budget,
+                        )?
+                    } else {
+                        None
+                    }
+                    .unwrap_or(StoredExcerpt {
+                        content: search_hit.excerpt.clone(),
+                        start_line: search_hit.start_line,
+                        end_line: search_hit.end_line,
+                    });
                     if let Some(fusion_key) = &query.fusion_key {
                         record_query_hit(
                             &mut query_fusion,
@@ -786,11 +849,16 @@ impl Services {
                     );
                     let candidate = Candidate::new(
                         &search_hit.path,
-                        search_hit.start_line,
-                        search_hit.end_line,
-                        search_hit.excerpt,
+                        excerpt.start_line,
+                        excerpt.end_line,
+                        excerpt.content,
                     )
                     .match_kind("text")
+                    .concept(
+                        concept,
+                        query.weight + f64::from(query.fusion_key.is_some()),
+                    )
+                    .exact(query.weight)
                     .bm25((-hit.score).max(0.0) * 1_000_000.0)
                     .path_score(context_path_score(&search_hit.path, &terms, &request.task))
                     .lexical_frequency_penalty(
@@ -798,9 +866,6 @@ impl Services {
                     )
                     .change_boost(change_boost);
                     candidates.push(candidate);
-                }
-                if candidates.len() >= 500 {
-                    break;
                 }
             }
 
@@ -850,6 +915,7 @@ impl Services {
                     candidates.push(
                         Candidate::new(&target_path, chunk.start_line, end_line, content)
                             .match_kind("import")
+                            .concept(seed_path, 0.2)
                             .representation("import_neighbor")
                             .path_score(context_path_score(&target_path, &terms, &request.task))
                             .import_boost(1.0)
@@ -985,6 +1051,48 @@ impl Services {
         }))
     }
 
+    fn adaptive_context_excerpt(
+        &self,
+        file_id: i64,
+        declaration_start: usize,
+        declaration_end: usize,
+        matched_line: usize,
+        token_budget: usize,
+    ) -> Result<Option<StoredExcerpt>> {
+        let Some(full) = self.stored_excerpt(file_id, declaration_start, declaration_end, 0, 0)?
+        else {
+            return Ok(None);
+        };
+        let full_tokens = self.config.tokenizer.count(&full.content).max(1);
+        if full_tokens <= token_budget {
+            return Ok(Some(full));
+        }
+
+        let declaration_lines = declaration_end
+            .saturating_sub(declaration_start)
+            .saturating_add(1);
+        let proportional_lines = declaration_lines
+            .saturating_mul(token_budget)
+            .saturating_div(full_tokens)
+            .clamp(MIN_CONTEXT_RANGE_LINES, MAX_CONTEXT_RANGE_LINES)
+            .min(declaration_lines);
+        let before = proportional_lines / 3;
+        let mut start = matched_line.saturating_sub(before).max(declaration_start);
+        let mut end = start
+            .saturating_add(proportional_lines.saturating_sub(1))
+            .min(declaration_end);
+        if end.saturating_sub(start).saturating_add(1) < proportional_lines {
+            start = end
+                .saturating_add(1)
+                .saturating_sub(proportional_lines)
+                .max(declaration_start);
+        }
+        end = start
+            .saturating_add(proportional_lines.saturating_sub(1))
+            .min(declaration_end);
+        self.stored_excerpt(file_id, start, end, 0, 0)
+    }
+
     fn regex_hits(
         &self,
         request: &SearchRequest,
@@ -1085,6 +1193,40 @@ impl Services {
             next_cursor,
         }
     }
+}
+
+fn is_database_corruption(error: &Error) -> bool {
+    fn sqlite_corruption(error: &rusqlite::Error) -> bool {
+        matches!(
+            error,
+            rusqlite::Error::SqliteFailure(inner, _)
+                if matches!(
+                    inner.code,
+                    rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+                )
+        )
+    }
+
+    match error {
+        Error::Sqlite(error) => sqlite_corruption(error),
+        Error::Migration(rusqlite_migration::Error::RusqliteError { err, .. }) => {
+            sqlite_corruption(err)
+        }
+        _ => false,
+    }
+}
+
+fn remove_database_artifacts(database: &std::path::Path) -> Result<()> {
+    for suffix in ["", "-wal", "-shm"] {
+        let mut path = database.as_os_str().to_os_string();
+        path.push(suffix);
+        match fs::remove_file(std::path::PathBuf::from(path)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }
 
 struct ActiveReconciliation(Arc<AtomicUsize>);
@@ -1276,6 +1418,19 @@ fn chunk_search_hit(
     }))
 }
 
+fn matching_line(hit: &ChunkHit, query: &str, case_sensitive: bool) -> Option<usize> {
+    hit.content
+        .lines()
+        .position(|line| {
+            if case_sensitive {
+                line.contains(query)
+            } else {
+                line.to_lowercase().contains(&query.to_lowercase())
+            }
+        })
+        .map(|offset| hit.start_line + offset)
+}
+
 fn path_allowed(path: &str, includes: &[String], excludes: &[String]) -> Result<bool> {
     let mut included = includes.is_empty();
     for pattern in includes {
@@ -1317,6 +1472,25 @@ fn context_path_score(path: &str, terms: &[String], task: &str) -> f64 {
         .iter()
         .filter(|term| path.contains(term.to_ascii_lowercase().as_str()))
         .count() as f64;
+    for code_token in code_tokens(task).into_iter().filter(|token| {
+        token.contains("::")
+            || token
+                .split('.')
+                .any(|part| part.chars().next().is_some_and(char::is_uppercase))
+    }) {
+        let matched_parts = expand_terms(&code_token)
+            .into_iter()
+            .map(|part| part.to_ascii_lowercase())
+            .filter(|part| part.chars().count() >= 2 && path.contains(part))
+            .collect::<HashSet<_>>()
+            .len();
+        if matched_parts >= 2 {
+            #[allow(clippy::cast_precision_loss)]
+            {
+                score += (matched_parts * matched_parts) as f64;
+            }
+        }
+    }
     for (language, component) in [
         ("javascript", "/js/"),
         ("typescript", "/ts/"),
@@ -1332,6 +1506,34 @@ fn context_path_score(path: &str, terms: &[String], task: &str) -> f64 {
         }
     }
     score
+}
+
+fn qualified_symbol_match(
+    concept: &str,
+    name: &str,
+    parent: Option<&str>,
+    signature: Option<&str>,
+) -> f64 {
+    if !concept.contains(['.', ':']) {
+        return 0.0;
+    }
+    let parts = concept
+        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .flat_map(identifier_words)
+        .map(|part| part.to_ascii_lowercase())
+        .filter(|part| part.chars().count() >= 2)
+        .collect::<HashSet<_>>();
+    if parts.len() < 2 {
+        return 0.0;
+    }
+    let haystack = format!(
+        "{} {} {}",
+        name,
+        parent.unwrap_or_default(),
+        signature.unwrap_or_default()
+    )
+    .to_ascii_lowercase();
+    f64::from(parts.iter().all(|part| haystack.contains(part)))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1722,6 +1924,52 @@ mod tests {
     }
 
     #[test]
+    fn qualified_symbol_match_requires_all_owner_and_name_parts() {
+        assert_eq!(
+            qualified_symbol_match(
+                "render.AsciiJSON",
+                "Render",
+                None,
+                Some("func (r AsciiJSON) Render() error"),
+            ),
+            1.0
+        );
+        assert_eq!(
+            qualified_symbol_match(
+                "render.AsciiJSON",
+                "AsciiJSON",
+                None,
+                Some("type AsciiJSON")
+            ),
+            0.0
+        );
+        assert_eq!(
+            qualified_symbol_match("Flask.run", "run", Some("Flask"), Some("def run()")),
+            1.0
+        );
+    }
+
+    #[test]
+    fn qualified_path_evidence_excludes_dynamic_lowercase_receivers() {
+        assert_eq!(
+            context_path_score(
+                "test/app.render.js",
+                &[],
+                "Fix app.render for a trailing dot",
+            ),
+            0.0
+        );
+        assert!(context_path_score("render/json.go", &[], "Fix render.AsciiJSON escaping",) > 0.0);
+        assert!(
+            context_path_score(
+                "tokio/src/fs/file.rs",
+                &[],
+                "Fix tokio::fs::File poll_write",
+            ) > 0.0
+        );
+    }
+
+    #[test]
     fn fusion_requires_two_independent_query_concepts() {
         let mut fusion = HashMap::new();
         record_query_hit(&mut fusion, "one.rs", "globset::matches_all", 1.0, 0);
@@ -1807,6 +2055,65 @@ mod tests {
         assert_eq!(second.status, ReadStatus::NotModified);
         assert!(second.content.is_none());
         assert_eq!(second.meta.emitted_tokens, 0);
+    }
+
+    #[tokio::test]
+    async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations() {
+        let root = tempfile::tempdir().expect("root");
+        let mut source = String::from("fn large() {\n");
+        for index in 0..180 {
+            source.push_str(&format!("    let value_{index} = {index};\n"));
+        }
+        source.push_str("}\n\nfn small() { answer(); }\n");
+        fs::write(root.path().join("lib.rs"), source).expect("source");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+        let services = Services::open(config).expect("services");
+        services.index(false).await.expect("index");
+        let file = services
+            .storage
+            .find_file("lib.rs")
+            .expect("find file")
+            .expect("indexed file");
+        let large = services
+            .storage
+            .find_symbol(file.id, "large")
+            .expect("find symbol")
+            .expect("large symbol");
+        let matched_line = 151;
+        let enclosing = services
+            .storage
+            .find_enclosing_symbol(file.id, matched_line)
+            .expect("find enclosing symbol")
+            .expect("enclosing symbol");
+        assert_eq!(enclosing.name, "large");
+
+        let bounded = services
+            .adaptive_context_excerpt(file.id, large.start_line, large.end_line, matched_line, 60)
+            .expect("bounded excerpt")
+            .expect("bounded declaration");
+        assert!(bounded.start_line <= matched_line);
+        assert!(bounded.end_line >= matched_line);
+        assert!(bounded.start_line > large.start_line);
+        assert!(bounded.end_line <= large.end_line);
+
+        let small = services
+            .storage
+            .find_symbol(file.id, "small")
+            .expect("find symbol")
+            .expect("small symbol");
+        let complete = services
+            .adaptive_context_excerpt(
+                file.id,
+                small.start_line,
+                small.end_line,
+                small.start_line,
+                1_000,
+            )
+            .expect("complete excerpt")
+            .expect("complete declaration");
+        assert_eq!(complete.start_line, small.start_line);
+        assert_eq!(complete.end_line, small.end_line);
     }
 
     #[tokio::test]
