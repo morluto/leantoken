@@ -31,6 +31,21 @@ Use a separate `target/validation-repos` directory because its pinned revisions
 differ from the retrospective development set. The repository URLs and exact
 revisions are part of `validation.json`.
 
+[`holdout.json`](holdout.json) is separately sealed for the candidate revision
+recorded in that manifest. Its nine open-issue tasks span six languages and five
+task shapes. The collection, one-run sealing procedure, runtime-tree check, and
+reclassification rule are documented in
+[`../docs/measurement.md`](../docs/measurement.md). Do not use validation or
+retrospective results to alter this manifest before its frozen candidate is
+evaluated.
+
+That holdout was evaluated once on 2026-07-16 and is consumed for its frozen
+candidate. The unchanged result is
+[`reports/holdout-linux-x86_64-2026-07-16.json`](reports/holdout-linux-x86_64-2026-07-16.json).
+Its 36% labeled-file recall and 9% line-anchor recall are negative evidence, not
+a savings claim; do not tune against it while continuing to describe it as
+unseen.
+
 ## Prepare pinned repositories
 
 Run from the LeanToken repository root. The commands fetch both the benchmarked base and the future fix used to audit the labels, then leave each worktree detached at the base revision.

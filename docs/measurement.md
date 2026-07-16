@@ -34,6 +34,73 @@ unlabeled fragment cost, repeated ranges, known-hash resends, and two-turn cost.
 Do not alter prompts, labels, budgets, or pinned revisions after inspecting a
 candidate. Freeze a new dataset version instead.
 
+## Sealed holdout lifecycle
+
+`benchmarks/holdout.json` is the unseen set for the runtime tree at its frozen
+`candidate_revision`. It contains nine tasks collected from issues that were
+open on 2026-07-16, spanning Rust, Python, JavaScript, TypeScript, Go, Ruby, and
+five task shapes. Collection used issue reports and source at exact HEAD
+revisions. It did not use pull requests, patches, fix commits, or proposed
+branches. Tasks with an ambiguous policy decision or an external source owner
+were rejected before sealing.
+
+The manifest freezes prompts, queries, labels, line anchors, budgets, source
+revisions, evaluation procedure, and reclassification rule. For a blind run,
+the benchmark refuses uncommitted runtime changes and verifies that `src/`,
+`Cargo.toml`, and `Cargo.lock` match the candidate revision. The report also
+records the harness revision, dirty state, manifest BLAKE3 identity, and whether
+the runtime-tree check passed.
+
+Prepare clean checkouts in a new directory using each manifest URL and revision,
+then run the report once:
+
+```bash
+mkdir -p target/holdout-repos
+jq -r '.corpora[] | [.directory, .url, .base_revision] | @tsv' \
+  benchmarks/holdout.json |
+while IFS=$'\t' read -r directory url revision; do
+  if test -e "target/holdout-repos/$directory"; then
+    printf 'refusing existing path: %s\n' "target/holdout-repos/$directory" >&2
+    exit 1
+  fi
+  git init "target/holdout-repos/$directory"
+  git -C "target/holdout-repos/$directory" remote add origin "$url"
+  git -C "target/holdout-repos/$directory" fetch --depth=1 origin "$revision"
+  git -C "target/holdout-repos/$directory" checkout --detach "$revision"
+done
+
+cargo run --release --example representative_benchmark -- \
+  --manifest benchmarks/holdout.json \
+  --repos-root target/holdout-repos \
+  --preflight-only
+
+cargo run --release --example representative_benchmark -- \
+  --manifest benchmarks/holdout.json \
+  --repos-root target/holdout-repos \
+  --output target/holdout-report.json
+```
+
+Archive the unedited report before inspecting it. Inspection consumes the set
+for that candidate: do not tune against the result and present another candidate
+as blind on the same tasks. If the tasks become tuning inputs, copy them to a
+prospective validation manifest and collect a new unseen holdout with a new hash.
+
+The holdout was evaluated once on 2026-07-16 and is now consumed for candidate
+`0b6f80bb4e9d356443ebd130be1d04c0254111cb`. The unchanged Linux x86-64 report
+is [`../benchmarks/reports/holdout-linux-x86_64-2026-07-16.json`](../benchmarks/reports/holdout-linux-x86_64-2026-07-16.json),
+with manifest hash
+`a61d9672ca483dbebbbe75d5b947cbfdcbc56a41218b2f756771667b8912e263`.
+The clean harness verified the candidate runtime tree before evaluation.
+
+This was a negative retrieval result: aggregate labeled-file recall was 36%,
+line-anchor recall was 9%, and 2,806 source tokens were returned in unlabeled
+fragments. Express reached 100% file recall, Gin 75%, Requests, Lodash, and Rack
+50%, while Serde, Flask, Vue, and TypeORM returned none of their labeled files.
+Known-hash resends remained zero and the estimated repeated-range cost was 62
+source tokens. The large apparent source savings are not a product win because
+the responses frequently omitted the labeled evidence. These results were not
+used to alter ranking, prompts, labels, queries, ranges, or budgets.
+
 ## Model-in-the-loop A/B
 
 `model_ab` executes the same frozen task across four arms:
