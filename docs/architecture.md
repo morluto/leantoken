@@ -117,10 +117,11 @@ committed WAL generation. The short-lived operation lock makes `reconciling`
 visible to followers as well as the leader. Watcher and reconciliation tasks
 receive caller-owned cancellation and are joined during shutdown.
 
-Each `Services`/`Indexer` instance owns one Rayon worker pool sized from that
-instance's `max_index_workers`. The pool is built when the indexer is opened and
-reused for every prepare, so concurrent service instances keep independent
-worker limits and reconciles do not rebuild a pool on every pass.
+Each `Services`/`Indexer` instance can own one Rayon worker pool sized from that
+instance's `max_index_workers`. The pool is built lazily on the first non-empty
+file preparation and reused afterward. Read-only followers therefore allocate
+no indexing threads, while a process that becomes leader retains its configured
+worker bound without rebuilding a pool on every reconciliation.
 
 ## Retrieval hot-path bounds
 
