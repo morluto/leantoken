@@ -393,8 +393,7 @@ impl Storage {
         let mut conn = Connection::open(&path)?;
         Self::configure(&mut conn, startup_timeout)?;
         MIGRATIONS.to_latest(&mut conn)?;
-        Self::validate_fts5(&mut conn)
-            .map_err(|_| Error::InvalidRequest("FTS5/trigram support is unavailable".into()))?;
+        Self::validate_fts5(&mut conn)?;
         conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
 
         Ok(Self {
@@ -415,7 +414,11 @@ impl Storage {
         conn.execute(
             &format!("CREATE VIRTUAL TABLE temp.{probe} USING fts5(text, tokenize='trigram')"),
             [],
-        )?;
+        )
+        .map_err(|source| Error::RuntimeCapabilityUnavailable {
+            capability: "SQLite FTS5 with the trigram tokenizer",
+            source: Some(source),
+        })?;
         conn.execute(
             &format!("INSERT INTO temp.{probe}(text) VALUES (?1)"),
             params!["abc"],
@@ -429,9 +432,10 @@ impl Storage {
         if matched {
             Ok(())
         } else {
-            Err(Error::InvalidRequest(
-                "FTS5 trigram probe did not match".into(),
-            ))
+            Err(Error::RuntimeCapabilityUnavailable {
+                capability: "SQLite FTS5 with a working trigram tokenizer",
+                source: None,
+            })
         }
     }
 

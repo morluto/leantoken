@@ -57,7 +57,7 @@ impl Config {
             }
         })?;
         if !root.is_dir() {
-            return Err(Error::InvalidRequest(format!(
+            return Err(Error::InvalidConfiguration(format!(
                 "repository root is not a directory: {}",
                 root.display()
             )));

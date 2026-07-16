@@ -49,7 +49,7 @@ impl RepositoryWatcher {
     ) -> Result<(Self, mpsc::Receiver<WatcherMessage>)> {
         let root = root.as_ref().canonicalize().map_err(Error::Io)?;
         if !root.is_dir() {
-            return Err(Error::InvalidRequest(format!(
+            return Err(Error::InvalidConfiguration(format!(
                 "root is not a directory: {}",
                 root.display()
             )));

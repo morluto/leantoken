@@ -307,6 +307,14 @@ fn into_mcp_error(error: crate::Error) -> ErrorData {
         | crate::Error::StaleCursor
         | crate::Error::Regex(_)
         | crate::Error::Glob(_) => ErrorData::invalid_params(error.to_string(), None),
+        crate::Error::InvalidConfiguration(_) => {
+            tracing::error!(%error, "repository configuration is invalid");
+            ErrorData::internal_error("repository configuration is invalid", None)
+        }
+        crate::Error::RuntimeCapabilityUnavailable { .. } => {
+            tracing::error!(%error, "repository runtime is unavailable");
+            ErrorData::internal_error("repository runtime is unavailable", None)
+        }
         crate::Error::IndexNotReady => {
             ErrorData::internal_error("repository index is not ready", None)
         }
@@ -468,6 +476,26 @@ mod tests {
                 .as_text()
                 .is_some_and(|text| text.text.contains("retry"))
         );
+    }
+
+    #[test]
+    fn mcp_error_mapping_separates_invalid_input_from_internal_failures() {
+        let invalid = into_mcp_error(crate::Error::InvalidRequest("bad filter".into()));
+        assert_eq!(invalid.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+
+        let internal = [
+            crate::Error::InvalidConfiguration("chunk size must be positive".into()),
+            crate::Error::RuntimeCapabilityUnavailable {
+                capability: "SQLite FTS5",
+                source: None,
+            },
+        ];
+        for error in internal {
+            assert_eq!(
+                into_mcp_error(error).code,
+                rmcp::model::ErrorCode::INTERNAL_ERROR
+            );
+        }
     }
 
     #[test]
