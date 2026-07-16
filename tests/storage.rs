@@ -173,54 +173,6 @@ fn fts5_trigram_search_finds_substrings() {
 }
 
 #[test]
-fn replace_file_updates_fts_index_and_generation() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");
-
-    storage
-        .full_reconcile("hash1", vec![sample_file("src/lib.rs", "fn old() {}\n")])
-        .expect("reconcile");
-
-    let before = storage.search_word("old", 10).expect("search");
-    assert_eq!(before.len(), 1);
-
-    let generation = storage
-        .replace_file(sample_file("src/lib.rs", "fn new() {}\n"))
-        .expect("replace");
-    assert_eq!(generation, 2);
-
-    let after_old = storage.search_word("old", 10).expect("search old");
-    assert_eq!(after_old.len(), 0);
-
-    let after_new = storage.search_word("new", 10).expect("search new");
-    assert_eq!(after_new.len(), 1);
-
-    let meta = storage.meta().expect("meta");
-    assert_eq!(meta.repository_generation, 2);
-}
-
-#[test]
-fn delete_file_cascades_to_fts_and_advances_generation() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");
-
-    storage
-        .full_reconcile("hash1", vec![sample_file("src/lib.rs", "fn old() {}\n")])
-        .expect("reconcile");
-
-    storage.delete_file("src/lib.rs").expect("delete");
-
-    let hits = storage.search_word("old", 10).expect("search");
-    assert_eq!(hits.len(), 0);
-
-    let found = storage.find_file("src/lib.rs").expect("find");
-    assert!(found.is_none());
-
-    let meta = storage.meta().expect("meta");
-    assert_eq!(meta.repository_generation, 2);
-}
-
-#[test]
 fn generation_consistency_across_reopen_and_modify() {
     let dir = tempfile::tempdir().expect("tempdir");
     let db = dir.path().join("index.sqlite");
@@ -232,8 +184,12 @@ fn generation_consistency_across_reopen_and_modify() {
     assert_eq!(generation1, 1);
 
     let generation2 = storage
-        .replace_file(sample_file("src/a.rs", "fn beta() {}\n"))
-        .expect("replace");
+        .reconcile_files(
+            "hash1",
+            vec![sample_file("src/a.rs", "fn beta() {}\n")],
+            &[],
+        )
+        .expect("reconcile replacement");
     assert_eq!(generation2, 2);
 
     let storage2 = Storage::open(&db).expect("reopen");
@@ -297,6 +253,8 @@ fn reconcile_files_commits_replacements_and_deletions_as_one_generation() {
     assert!(storage.find_file("remove.rs").expect("find").is_none());
     assert_eq!(storage.search_word("changed", 10).expect("search").len(), 1);
     assert!(storage.search_word("keep", 10).expect("search").is_empty());
+    assert!(storage.search_word("remove", 10).expect("search").is_empty());
+    assert_eq!(storage.meta().expect("meta").repository_generation, 2);
 }
 
 #[test]
