@@ -803,9 +803,18 @@ fn greedy_select(
     let mut concept_paths = HashMap::new();
     let mut covered_roles = HashSet::new();
 
-    if role_diversity_enabled {
+    let has_decisive_owner = pool.iter().any(|candidate| {
+        candidate.candidate.has_role(EvidenceRole::Implementation)
+            && !candidate.candidate.has_role(EvidenceRole::Uncertainty)
+            && candidate.candidate.concept_weight >= 1.8
+    });
+    if role_diversity_enabled || has_decisive_owner {
         let mut remaining_pool = Vec::with_capacity(pool.len());
-        let owner_limit = max_fragments.saturating_sub(2).max(1);
+        let owner_limit = if role_diversity_enabled {
+            max_fragments.saturating_sub(2).max(1)
+        } else {
+            max_fragments
+        };
         for candidate in pool {
             let preferred_owner = candidate.candidate.has_role(EvidenceRole::Implementation)
                 && !candidate.candidate.has_role(EvidenceRole::Uncertainty)
@@ -1599,16 +1608,38 @@ mod tests {
     #[test]
     fn exact_concept_does_not_broaden_to_another_path_without_role_intent() {
         let implementation = Candidate::new("src/owner.rs", 1, 1, "implementation")
-            .concept("IndexNotReady", 2.0)
+            .concept("RareOwnerCode", 2.0)
             .role(EvidenceRole::Implementation)
             .exact(5.0);
         let incidental_test = Candidate::new("tests/owner.rs", 1, 1, "incidental")
-            .concept("IndexNotReady", 2.0)
+            .concept("RareOwnerCode", 2.0)
             .role(EvidenceRole::Test)
             .exact(4.0);
 
         let response = select(
             vec![incidental_test, implementation],
+            &request_with_budget(100),
+            1,
+        );
+
+        assert_eq!(response.fragments.len(), 1);
+        assert_eq!(response.fragments[0].path, "src/owner.rs");
+    }
+
+    #[test]
+    fn exact_concept_prefers_a_decisive_owner_over_higher_scored_documentation() {
+        let implementation = Candidate::new("src/owner.rs", 1, 1, "implementation")
+            .concept("RareOwnerCode", 2.0)
+            .role(EvidenceRole::Implementation)
+            .exact(5.0);
+        let documentation = Candidate::new("docs/architecture.md", 1, 1, "documentation")
+            .concept("RareOwnerCode", 2.0)
+            .role(EvidenceRole::Implementation)
+            .role(EvidenceRole::Uncertainty)
+            .exact(10.0);
+
+        let response = select(
+            vec![documentation, implementation],
             &request_with_budget(100),
             1,
         );
