@@ -393,8 +393,7 @@ impl Storage {
         let mut conn = Connection::open(&path)?;
         Self::configure(&mut conn, startup_timeout)?;
         MIGRATIONS.to_latest(&mut conn)?;
-        Self::validate_fts5(&mut conn)
-            .map_err(|_| Error::InvalidRequest("FTS5/trigram support is unavailable".into()))?;
+        Self::validate_fts5(&mut conn)?;
         conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
 
         Ok(Self {
@@ -415,7 +414,11 @@ impl Storage {
         conn.execute(
             &format!("CREATE VIRTUAL TABLE temp.{probe} USING fts5(text, tokenize='trigram')"),
             [],
-        )?;
+        )
+        .map_err(|source| Error::RuntimeCapabilityUnavailable {
+            capability: "SQLite FTS5 with the trigram tokenizer",
+            source: Some(source),
+        })?;
         conn.execute(
             &format!("INSERT INTO temp.{probe}(text) VALUES (?1)"),
             params!["abc"],
@@ -429,9 +432,10 @@ impl Storage {
         if matched {
             Ok(())
         } else {
-            Err(Error::InvalidRequest(
-                "FTS5 trigram probe did not match".into(),
-            ))
+            Err(Error::RuntimeCapabilityUnavailable {
+                capability: "SQLite FTS5 with a working trigram tokenizer",
+                source: None,
+            })
         }
     }
 
@@ -478,33 +482,6 @@ impl Storage {
         tx.execute(
             "UPDATE meta SET config_hash = ?1, repository_generation = ?2, index_version = index_version + 1 WHERE id = 1",
             params![config_hash, next_generation],
-        )?;
-
-        tx.commit()?;
-        Ok(i64_to_u64(next_generation))
-    }
-
-    pub fn replace_file(&self, file: IndexedFile) -> Result<u64> {
-        let mut conn = self
-            .writer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-
-        tx.execute("DELETE FROM files WHERE path = ?1", params![&file.path])?;
-
-        let current_generation: i64 = tx.query_row(
-            "SELECT repository_generation FROM meta WHERE id = 1",
-            [],
-            |row| row.get(0),
-        )?;
-        let next_generation = current_generation.saturating_add(1);
-
-        Self::insert_file(&tx, &file, next_generation)?;
-
-        tx.execute(
-            "UPDATE meta SET repository_generation = ?1 WHERE id = 1",
-            params![next_generation],
         )?;
 
         tx.commit()?;
@@ -568,32 +545,6 @@ impl Storage {
         )?;
         tx.commit()?;
         Ok(i64_to_u64(next_generation))
-    }
-
-    pub fn delete_file(&self, path: &str) -> Result<()> {
-        let mut conn = self
-            .writer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-
-        let affected = tx.execute("DELETE FROM files WHERE path = ?1", params![path])?;
-
-        if affected > 0 {
-            let current_generation: i64 = tx.query_row(
-                "SELECT repository_generation FROM meta WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )?;
-            let next_generation = current_generation.saturating_add(1);
-            tx.execute(
-                "UPDATE meta SET repository_generation = ?1 WHERE id = 1",
-                params![next_generation],
-            )?;
-        }
-
-        tx.commit()?;
-        Ok(())
     }
 
     fn insert_file(tx: &Transaction, file: &IndexedFile, generation: i64) -> Result<()> {
