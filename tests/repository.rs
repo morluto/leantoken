@@ -37,7 +37,12 @@ fn validate_relative_accepts_clean_relative_paths() {
 fn discover_files_honors_gitignore() {
     let root = tempfile::tempdir().expect("tempdir");
     fs::create_dir(root.path().join(".git")).expect("git marker");
+    fs::write(root.path().join(".git/config"), "internal").expect("git config");
     fs::write(root.path().join(".gitignore"), "ignored.rs\n").expect("gitignore");
+    fs::write(root.path().join(".gitattributes"), "*.rs text\n").expect("gitattributes");
+    fs::create_dir_all(root.path().join(".github/workflows")).expect("github workflows");
+    fs::write(root.path().join(".github/workflows/ci.yml"), "name: ci\n")
+        .expect("workflow");
     fs::write(root.path().join("kept.rs"), "fn kept() {}\n").expect("kept");
     fs::write(root.path().join("ignored.rs"), "fn ignored() {}\n").expect("ignored");
 
@@ -47,7 +52,32 @@ fn discover_files_honors_gitignore() {
         .map(|file| file.relative_path.as_str())
         .collect::<Vec<_>>();
     assert!(paths.contains(&"kept.rs"));
+    assert!(paths.contains(&".gitignore"));
+    assert!(paths.contains(&".gitattributes"));
+    assert!(paths.contains(&".github/workflows/ci.yml"));
     assert!(!paths.contains(&"ignored.rs"));
+    assert!(!paths.contains(&".git/config"));
+}
+
+#[test]
+fn discover_files_excludes_git_pointer_file() {
+    let root = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        root.path().join(".git"),
+        "gitdir: /private/worktrees/example\n",
+    )
+    .expect("git pointer");
+    fs::write(root.path().join(".gitignore"), "").expect("gitignore");
+    fs::write(root.path().join("kept.rs"), "fn kept() {}\n").expect("kept");
+
+    let files = discover_files(root.path(), 1024).expect("walk");
+    let paths = files
+        .iter()
+        .map(|file| file.relative_path.as_str())
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&"kept.rs"));
+    assert!(paths.contains(&".gitignore"));
+    assert!(!paths.contains(&".git"));
 }
 
 #[test]
