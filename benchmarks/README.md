@@ -21,6 +21,16 @@ The task prompts, discovery queries, relevant-file labels, and line anchors were
 
 Line anchors are one-based locations in the pinned base revision. An anchor may identify the nearest existing test neighborhood when the regression test did not yet exist. File recall is the primary relevance measure; anchor coverage is a more demanding diagnostic, not proof that the returned excerpt is sufficient to implement a fix.
 
+[`validation.json`](validation.json) pins a separate set of issues that were open
+at the 2026-07-15 freeze. Its prompts and labels were collected from the issue
+reports and pinned source without consulting a future patch or proposed PR.
+These tasks were subsequently used to tune ranking and range selection, so they
+are a prospective validation/development set, not a blind holdout. The runner
+embeds the manifest BLAKE3 hash and rejects a checkout at the wrong revision.
+Use a separate `target/validation-repos` directory because its pinned revisions
+differ from the retrospective development set. The repository URLs and exact
+revisions are part of `validation.json`.
+
 ## Prepare pinned repositories
 
 Run from the LeanToken repository root. The commands fetch both the benchmarked base and the future fix used to audit the labels, then leave each worktree detached at the base revision.
@@ -84,6 +94,17 @@ cargo run --release --example representative_benchmark -- \
 
 The JSON report is the result of record. Keep the manifest, LeanToken revision, platform, and generated report together when comparing runs. Do not compare timing across unlike machines or warm-cache states.
 
+Compare two reports from the same frozen manifest with:
+
+```bash
+cargo run --release --example benchmark_ablation -- \
+  --baseline target/baseline.json \
+  --candidate target/candidate.json
+```
+
+The command rejects different manifest hashes so an apparent improvement cannot
+come from changing tasks or labels.
+
 The repository includes one [Linux x86-64 result](reports/linux-x86_64-2026-07-15.json) as a transparent development record. It is not a cross-platform result or a release claim; rerun the manifest on the target machine for current timings.
 
 ## Measurements
@@ -109,21 +130,24 @@ Source tokens and serialized protocol tokens are separate measurements. LeanToke
 The oracle baseline is intentionally favorable to ordinary file reads: it knows the correct files in advance and pays no cost for choosing them or following dead ends. Conversely, adding `rg` discovery output to that oracle can duplicate text and inflate the baseline, so the report keeps discovery, oracle-file, and combined counts visible rather than hiding them behind one headline. The baseline uses a minimal path/content JSON envelope, while LeanToken emits its real response schema; total-JSON comparisons are conservative diagnostics, not like-for-like protocol benchmarks.
 
 The small representation fixture is an intentional counterexample to using
-`leantoken_context` for every turn. In the current run, context used 561 source
-tokens and 3,872 complete JSON tokens, while direct reads of already-known
-labeled files used 527 source tokens and 1,673 JSON tokens. A compact tree used
-555 JSON tokens. Context was smaller than reading every file it discovered,
-but not smaller than an oracle that already knew the answer. Agents should use
-files, outline, search, and exact reads progressively; context is a discovery
-tool, not a mandatory wrapper around known ranges.
+`leantoken_context` for every turn. In the 2026-07-15 fixture run, context used
+329 source tokens and 1,710 complete JSON tokens, while direct reads of
+already-known labeled files used 527 source tokens and 1,673 JSON tokens. A
+compact tree used 555 JSON tokens. Context returned less source but still cost
+slightly more complete JSON than an oracle that already knew the ranges. Agents
+should use files, outline, search, and exact reads progressively; context is a
+discovery tool, not a mandatory wrapper around known ranges.
 
 The MCP fixture serializes initialization, `notifications/initialized`,
-`tools/list`, and one real context call. With optional output schemas omitted,
-the five-tool catalog is 1,364 tokens and the complete modeled handoff is 3,472
-tokens, including a 1,882-token result. The result uses the SDK's structured
-result, which sends the JSON both as text content and `structuredContent`.
-These are fixture values, not provider billing numbers, but they make the fixed
-protocol cost visible and regression-tested.
+`tools/list`, and one real context call. It reports dual, text-only, and
+structured-only result costs separately. These are fixture values, not provider
+billing numbers. Use the transparent wire proxy for an actual host trace; see
+[`../docs/measurement.md`](../docs/measurement.md).
+
+In the 2026-07-15 fixture run, the five-tool catalog was 1,539 tokens. The same
+tool result cost 875 tokens in dual mode, 464 as text only, and 433 as structured
+content only. That measures serialization opportunity, not host compatibility;
+dual remains the default until a real host trace proves a smaller mode works.
 
 ## Interpretation limits
 
@@ -138,6 +162,10 @@ protocol cost visible and regression-tested.
 - Timing and filesystem-cache effects are machine-dependent.
 
 Negative results belong in the report. In particular, small relevant files may be cheaper to return directly than to wrap in ranked context metadata, and a strict token budget may reduce recall. Do not tune labels, prompts, or budgets after seeing results without recording a new benchmark version.
+
+Model task success and prewalk handoffs use the isolated external-adapter
+harness documented in [`../docs/measurement.md`](../docs/measurement.md).
+Retrieval fixtures must not be presented as model pass-rate evidence.
 
 ## Indexing and file-read profile
 

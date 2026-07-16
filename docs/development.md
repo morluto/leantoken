@@ -105,6 +105,9 @@ The representative benchmark requires pinned external worktrees and `rg`. See
 [`../benchmarks/README.md`](../benchmarks/README.md) for preparation, command
 line, measurements, and interpretation limits.
 
+The frozen validation set, ablation runner, isolated model A/B adapter, and
+exact MCP wire proxy are documented in [`measurement.md`](measurement.md).
+
 The same guide documents the synthetic indexing and file-read profile used to
 gate targeted reconciliation and any future hot-file cache.
 

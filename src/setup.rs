@@ -294,16 +294,33 @@ fn prompt_error(error: dialoguer::Error) -> Error {
 
 /// Run global MCP setup or removal using the current user environment.
 pub fn run(operation: SetupOperation, request: SetupRequest) -> Result<SetupReport> {
-    let home = BaseDirs::new()
-        .ok_or_else(|| Error::InvalidRequest("could not determine the home directory".into()))?
-        .home_dir()
-        .to_path_buf();
+    let home = home_directory()
+        .ok_or_else(|| Error::InvalidRequest("could not determine the home directory".into()))?;
     let environment = SetupEnvironment {
         home,
         launcher: McpLauncher::current()?,
         interactive: std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
     };
     run_with(operation, request, &environment, &DialoguerPrompt)
+}
+
+fn home_directory() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or({
+            #[cfg(windows)]
+            {
+                std::env::var_os("USERPROFILE")
+                    .map(PathBuf::from)
+                    .filter(|path| path.is_absolute())
+            }
+            #[cfg(not(windows))]
+            {
+                None
+            }
+        })
+        .or_else(|| BaseDirs::new().map(|directories| directories.home_dir().to_path_buf()))
 }
 
 fn run_with(

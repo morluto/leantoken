@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
 use rmcp::{
-    ErrorData, RoleServer, ServerHandler, ServiceExt, handler::server::wrapper::Parameters,
-    model::CallToolResult, service::RequestContext, tool, tool_handler, tool_router,
+    ErrorData, RoleServer, ServerHandler, ServiceExt,
+    handler::server::wrapper::Parameters,
+    model::{CallToolResult, ContentBlock},
+    service::RequestContext,
+    tool, tool_handler, tool_router,
     transport::stdio,
 };
 use serde::Serialize;
@@ -15,12 +18,39 @@ use crate::services::Services;
 #[derive(Clone)]
 pub struct LeanTokenMcp {
     services: Arc<Services>,
+    result_mode: McpResultMode,
+}
+
+/// Wire representation used for successful MCP tool results.
+#[derive(Debug, Clone, Copy, Default, clap::ValueEnum, PartialEq, Eq)]
+pub enum McpResultMode {
+    /// Send JSON as both text and structured content for broad host compatibility.
+    #[default]
+    Dual,
+    /// Send JSON only as text content for hosts that ignore structured content.
+    Text,
+    /// Send only structured content for hosts verified to support it.
+    Structured,
 }
 
 impl LeanTokenMcp {
     #[must_use]
     pub fn new(services: Arc<Services>) -> Self {
-        Self { services }
+        Self {
+            services,
+            result_mode: McpResultMode::Dual,
+        }
+    }
+
+    /// Select the successful-result representation for this server instance.
+    #[must_use]
+    pub fn with_result_mode(mut self, result_mode: McpResultMode) -> Self {
+        self.result_mode = result_mode;
+        self
+    }
+
+    fn result<T: Serialize>(&self, value: T) -> Result<CallToolResult, ErrorData> {
+        tool_result(value, self.result_mode)
     }
 }
 
@@ -28,7 +58,7 @@ impl LeanTokenMcp {
 impl LeanTokenMcp {
     #[tool(
         name = "leantoken_files",
-        description = "Path discovery replacing find and rg --files. Use tree for hierarchy, find for fuzzy paths, and glob for known patterns. Does not search contents; use leantoken_search."
+        description = "Start here when repository paths are unknown. Returns only a compact tree or path matches: tree for hierarchy, find for fuzzy names, glob for patterns. Then use outline or search; no source bodies are returned."
     )]
     async fn leantoken_files(
         &self,
@@ -40,12 +70,12 @@ impl LeanTokenMcp {
             .files_cancellable(req, context.ct.clone())
             .await
             .map_err(into_mcp_error)?;
-        structured(resp)
+        self.result(resp)
     }
 
     #[tool(
         name = "leantoken_search",
-        description = "Ranked source lookup replacing grep and rg. Use symbol for definitions, reference for usages, identifier for exact names, text for substrings, regex for patterns, or auto to combine evidence. Use leantoken_files for filenames."
+        description = "Ranked, token-bounded source lookup. Use symbol for definitions, reference for usages, identifier for exact names, text for substrings, regex for patterns, or auto to combine evidence. Follow a hit with leantoken_read for the exact required range."
     )]
     async fn leantoken_search(
         &self,
@@ -57,7 +87,7 @@ impl LeanTokenMcp {
             .search_cancellable(req, context.ct.clone())
             .await
             .map_err(into_mcp_error)?;
-        structured(resp)
+        self.result(resp)
     }
 
     #[tool(
@@ -74,12 +104,12 @@ impl LeanTokenMcp {
             .outline_cancellable(req, context.ct.clone())
             .await
             .map_err(into_mcp_error)?;
-        structured(resp)
+        self.result(resp)
     }
 
     #[tool(
         name = "leantoken_read",
-        description = "Bounded source retrieval replacing cat, head, and tail. Prefer a symbol or narrow range; run leantoken_outline first for unfamiliar files. Pass expected_hash to suppress unchanged content."
+        description = "Read an exact symbol or narrow line range. Prefer this after files, outline, or search instead of reading a whole file. Reuse content_hash as expected_hash to receive not_modified without duplicate source."
     )]
     async fn leantoken_read(
         &self,
@@ -91,12 +121,12 @@ impl LeanTokenMcp {
             .read_cancellable(req, context.ct.clone())
             .await
             .map_err(into_mcp_error)?;
-        structured(resp)
+        self.result(resp)
     }
 
     #[tool(
         name = "leantoken_context",
-        description = "First tool for a new non-trivial repository task. Composes ranked evidence within a token budget, replacing several broad searches and reads. Use narrower tools for follow-up questions."
+        description = "Use when task scope is still uncertain after narrow discovery, or when one-shot orientation is worth its metadata cost. Finds and ranks evidence within a token budget. Pass receipt fragment_hashes as known_hashes on later calls to avoid resending exact evidence."
     )]
     async fn leantoken_context(
         &self,
@@ -108,18 +138,33 @@ impl LeanTokenMcp {
             .context_cancellable(req, context.ct.clone())
             .await
             .map_err(into_mcp_error)?;
-        structured(resp)
+        self.result(resp)
     }
 }
 
 #[tool_handler(
-    instructions = "Use LeanToken for repository discovery: context for a new task, files for paths, search for code, outline before read, and read only needed ranges. Use native tools for edits, commands, and tests."
+    instructions = "Retrieve progressively: files for paths, outline or search for candidates, then read exact symbols or ranges. Use context only when scope remains uncertain. Reuse hashes to suppress unchanged evidence. Use native tools for edits, commands, and tests."
 )]
 impl ServerHandler for LeanTokenMcp {}
 
-fn structured<T: Serialize>(value: T) -> Result<CallToolResult, ErrorData> {
+/// Serialize a successful tool value using an explicit wire representation.
+pub fn tool_result<T: Serialize>(
+    value: T,
+    mode: McpResultMode,
+) -> Result<CallToolResult, ErrorData> {
     serde_json::to_value(value)
-        .map(CallToolResult::structured)
+        .map(|value| match mode {
+            McpResultMode::Dual => CallToolResult::structured(value),
+            McpResultMode::Text => {
+                CallToolResult::success(vec![ContentBlock::text(value.to_string())])
+            }
+            McpResultMode::Structured => {
+                let mut result = CallToolResult::default();
+                result.structured_content = Some(value);
+                result.is_error = Some(false);
+                result
+            }
+        })
         .map_err(|error| {
             tracing::error!(%error, "MCP response serialization failed");
             ErrorData::internal_error("repository retrieval failed", None)
@@ -152,8 +197,8 @@ pub fn tool_catalog_json() -> String {
 }
 
 /// Run the MCP server over stdio until the transport closes or SIGINT is received.
-pub async fn serve_stdio(services: Arc<Services>) -> crate::Result<()> {
-    let server = LeanTokenMcp::new(services);
+pub async fn serve_stdio(services: Arc<Services>, result_mode: McpResultMode) -> crate::Result<()> {
+    let server = LeanTokenMcp::new(services).with_result_mode(result_mode);
     let token = CancellationToken::new();
 
     let signal_task = tokio::spawn({
@@ -223,6 +268,21 @@ mod tests {
     }
 
     #[test]
+    fn result_modes_emit_only_the_selected_representations() {
+        let value = serde_json::json!({"answer": 42});
+        let dual = tool_result(value.clone(), McpResultMode::Dual).expect("dual");
+        let text = tool_result(value.clone(), McpResultMode::Text).expect("text");
+        let structured = tool_result(value, McpResultMode::Structured).expect("structured");
+
+        assert!(!dual.content.is_empty());
+        assert!(dual.structured_content.is_some());
+        assert!(!text.content.is_empty());
+        assert!(text.structured_content.is_none());
+        assert!(structured.content.is_empty());
+        assert!(structured.structured_content.is_some());
+    }
+
+    #[test]
     fn tool_input_fields_are_documented() {
         for tool in LeanTokenMcp::tool_router().list_all() {
             let properties = tool
@@ -256,11 +316,11 @@ mod tests {
                 )
             })
             .collect::<std::collections::HashMap<_, _>>();
-        assert!(descriptions["leantoken_files"].contains("find and rg --files"));
-        assert!(descriptions["leantoken_search"].contains("grep and rg"));
+        assert!(descriptions["leantoken_files"].contains("Start here"));
+        assert!(descriptions["leantoken_search"].contains("Follow a hit"));
         assert!(descriptions["leantoken_outline"].contains("whole-file"));
-        assert!(descriptions["leantoken_read"].contains("cat, head, and tail"));
-        assert!(descriptions["leantoken_context"].contains("First tool"));
+        assert!(descriptions["leantoken_read"].contains("expected_hash"));
+        assert!(descriptions["leantoken_context"].contains("scope is still uncertain"));
     }
 
     #[test]

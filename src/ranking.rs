@@ -21,8 +21,8 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    ContextFragment, ContextRequest, ContextResponse, EvidenceIdentity, EvidenceReceipt, Freshness,
-    OmittedCandidate, ResponseMeta,
+    ContextFragment, ContextRequest, ContextResponse, EvidenceReceipt, Freshness, OmittedCandidate,
+    ResponseMeta,
 };
 use crate::tokens;
 
@@ -36,6 +36,7 @@ const OVERLAP_THRESHOLD: f64 = 0.5;
 const DIVERSITY_DIVISOR: usize = 600;
 const MAX_CONTEXT_FRAGMENTS: usize = 8;
 const MAX_OMITTED_DETAILS: usize = 1;
+const MIN_RELATIVE_CONTEXT_SCORE: f64 = 0.25;
 
 /// Linear scoring weights for ranking signals.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -78,6 +79,8 @@ pub struct Candidate {
     pub end_line: usize,
     pub content: String,
     pub match_kinds: Vec<String>,
+    pub concepts: Vec<String>,
+    pub concept_weight: f64,
     pub representation: String,
     pub symbol_name: Option<String>,
     pub exact: f64,
@@ -107,6 +110,8 @@ impl Candidate {
             end_line,
             content: content.into(),
             match_kinds: Vec::new(),
+            concepts: Vec::new(),
+            concept_weight: 0.0,
             representation: "source".into(),
             symbol_name: None,
             exact: 0.0,
@@ -124,6 +129,16 @@ impl Candidate {
 
     pub fn match_kind(mut self, kind: impl Into<String>) -> Self {
         self.match_kinds.push(kind.into());
+        self
+    }
+
+    /// Associate this evidence with an independently extracted task concept.
+    pub fn concept(mut self, concept: impl Into<String>, weight: f64) -> Self {
+        let concept = concept.into();
+        if !concept.is_empty() && !self.concepts.contains(&concept) {
+            self.concepts.push(concept);
+        }
+        self.concept_weight = self.concept_weight.max(weight.clamp(0.0, 2.0));
         self
     }
 
@@ -523,7 +538,7 @@ fn select_with_options(
 
     // Build DTOs.
     let mut fragments: Vec<ContextFragment> = Vec::with_capacity(selected.len());
-    let mut identities: Vec<EvidenceIdentity> = Vec::with_capacity(selected.len());
+    let mut fragment_hashes = Vec::with_capacity(selected.len());
     let mut emitted_tokens = 0usize;
 
     for scored in selected {
@@ -539,12 +554,7 @@ fn select_with_options(
             reason: scored.candidate.reason(),
             token_count: scored.token_count,
         });
-        identities.push(EvidenceIdentity {
-            path: scored.candidate.path.clone(),
-            start_line: scored.candidate.start_line,
-            end_line: scored.candidate.end_line,
-            content_hash: scored.content_hash,
-        });
+        fragment_hashes.push(scored.content_hash);
     }
 
     let mut omitted_dto: Vec<OmittedCandidate> = known_omitted
@@ -576,8 +586,7 @@ fn select_with_options(
 
     let receipt = EvidenceReceipt {
         task_fingerprint,
-        repository_generation,
-        fragments: identities,
+        fragment_hashes,
     };
 
     let meta = ResponseMeta {
@@ -644,31 +653,184 @@ fn greedy_select(
 ) -> (Vec<ScoredCandidate>, Vec<ScoredCandidate>) {
     let mut pool = candidates;
     pool.sort_by(compare_utility);
+    let confidence_floor = pool.first().map_or(0.0, |candidate| {
+        candidate.score * MIN_RELATIVE_CONTEXT_SCORE
+    });
 
     let mut selected = Vec::new();
+    let mut deferred = Vec::with_capacity(pool.len());
     let mut omitted: Vec<ScoredCandidate> = Vec::with_capacity(pool.len());
     let mut used_tokens = 0usize;
     let mut file_counts: HashMap<String, usize> = HashMap::new();
+    let mut covered_concepts = HashSet::new();
+    let mut concept_representations = HashSet::new();
+    let mut concept_paths = HashMap::new();
 
     for candidate in pool {
+        let adds_concept = candidate
+            .candidate
+            .concepts
+            .iter()
+            .any(|concept| !covered_concepts.contains(concept));
+        if !adds_concept || candidate.candidate.concept_weight < 1.0 {
+            deferred.push(candidate);
+            continue;
+        }
         let file_count = *file_counts.get(&candidate.candidate.path).unwrap_or(&0);
         let remaining = budget.saturating_sub(used_tokens);
 
-        if candidate.token_count <= remaining
-            && file_count < max_per_file
-            && selected.len() < max_fragments
+        if candidate_fits(
+            &candidate,
+            remaining,
+            file_count,
+            max_per_file,
+            selected.len(),
+            max_fragments,
+        ) {
+            covered_concepts.extend(candidate.candidate.concepts.iter().cloned());
+            concept_representations.extend(
+                candidate
+                    .candidate
+                    .concepts
+                    .iter()
+                    .map(|concept| (concept.clone(), candidate.candidate.representation.clone())),
+            );
+            for concept in &candidate.candidate.concepts {
+                concept_paths
+                    .entry(concept.clone())
+                    .or_insert_with(|| candidate.candidate.path.clone());
+            }
+            push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
+        } else {
+            deferred.push(candidate);
+        }
+    }
+
+    deferred.sort_by(|left, right| {
+        let left_same_path = left.candidate.concepts.iter().any(|concept| {
+            concept_paths
+                .get(concept)
+                .is_some_and(|path| path == &left.candidate.path)
+        });
+        let right_same_path = right.candidate.concepts.iter().any(|concept| {
+            concept_paths
+                .get(concept)
+                .is_some_and(|path| path == &right.candidate.path)
+        });
+        right_same_path
+            .cmp(&left_same_path)
+            .then_with(|| compare_utility(left, right))
+    });
+    let mut remaining = Vec::with_capacity(deferred.len());
+    for candidate in deferred {
+        let adds_decisive_view = candidate.candidate.concept_weight >= 1.8
+            && candidate.candidate.concepts.iter().any(|concept| {
+                covered_concepts.contains(concept)
+                    && !concept_representations
+                        .contains(&(concept.clone(), candidate.candidate.representation.clone()))
+            });
+        let file_count = *file_counts.get(&candidate.candidate.path).unwrap_or(&0);
+        let remaining_tokens = budget.saturating_sub(used_tokens);
+        if adds_decisive_view
+            && candidate_fits(
+                &candidate,
+                remaining_tokens,
+                file_count,
+                max_per_file,
+                selected.len(),
+                max_fragments,
+            )
         {
-            used_tokens += candidate.token_count;
-            *file_counts
-                .entry(candidate.candidate.path.clone())
-                .or_insert(0) += 1;
-            selected.push(candidate);
+            concept_representations.extend(
+                candidate
+                    .candidate
+                    .concepts
+                    .iter()
+                    .map(|concept| (concept.clone(), candidate.candidate.representation.clone())),
+            );
+            push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
+        } else {
+            remaining.push(candidate);
+        }
+    }
+
+    let mut fill = Vec::with_capacity(remaining.len());
+    for candidate in remaining {
+        let adds_concept = candidate
+            .candidate
+            .concepts
+            .iter()
+            .any(|concept| !covered_concepts.contains(concept));
+        let file_count = *file_counts.get(&candidate.candidate.path).unwrap_or(&0);
+        let remaining_tokens = budget.saturating_sub(used_tokens);
+        let confident =
+            candidate.candidate.concept_weight >= 1.0 || candidate.score >= confidence_floor;
+        if adds_concept
+            && confident
+            && candidate_fits(
+                &candidate,
+                remaining_tokens,
+                file_count,
+                max_per_file,
+                selected.len(),
+                max_fragments,
+            )
+        {
+            covered_concepts.extend(candidate.candidate.concepts.iter().cloned());
+            push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
+        } else {
+            fill.push(candidate);
+        }
+    }
+
+    for candidate in fill {
+        if candidate.candidate.concept_weight < 1.0 && candidate.score < confidence_floor {
+            omitted.push(candidate);
+            continue;
+        }
+        let file_count = *file_counts.get(&candidate.candidate.path).unwrap_or(&0);
+        let remaining = budget.saturating_sub(used_tokens);
+        if candidate_fits(
+            &candidate,
+            remaining,
+            file_count,
+            max_per_file,
+            selected.len(),
+            max_fragments,
+        ) {
+            push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
         } else {
             omitted.push(candidate);
         }
     }
 
     (selected, omitted)
+}
+
+fn candidate_fits(
+    candidate: &ScoredCandidate,
+    remaining_tokens: usize,
+    file_count: usize,
+    max_per_file: usize,
+    selected_count: usize,
+    max_fragments: usize,
+) -> bool {
+    candidate.token_count <= remaining_tokens
+        && file_count < max_per_file
+        && selected_count < max_fragments
+}
+
+fn push_selected(
+    candidate: ScoredCandidate,
+    selected: &mut Vec<ScoredCandidate>,
+    used_tokens: &mut usize,
+    file_counts: &mut HashMap<String, usize>,
+) {
+    *used_tokens += candidate.token_count;
+    *file_counts
+        .entry(candidate.candidate.path.clone())
+        .or_insert(0) += 1;
+    selected.push(candidate);
 }
 
 fn compare_utility(a: &ScoredCandidate, b: &ScoredCandidate) -> Ordering {
@@ -911,6 +1073,81 @@ mod tests {
     }
 
     #[test]
+    fn concept_allocation_keeps_independent_task_evidence() {
+        let alpha_best = Candidate::new("alpha.rs", 1, 1, "alpha evidence")
+            .concept("alpha", 1.0)
+            .exact(2.0);
+        let alpha_duplicate = Candidate::new("alpha_other.rs", 1, 1, "more alpha")
+            .concept("alpha", 1.0)
+            .exact(1.5);
+        let beta = Candidate::new("beta.rs", 1, 1, "beta evidence")
+            .concept("beta", 1.0)
+            .exact(0.1);
+
+        let response = select(
+            vec![alpha_duplicate, beta, alpha_best],
+            &request_with_budget(6),
+            1,
+        );
+
+        assert!(
+            response
+                .fragments
+                .iter()
+                .any(|fragment| fragment.path == "alpha.rs")
+        );
+        assert!(
+            response
+                .fragments
+                .iter()
+                .any(|fragment| fragment.path == "beta.rs")
+        );
+    }
+
+    #[test]
+    fn decisive_second_view_prefers_the_definition_path() {
+        let definition = Candidate::new("owner.rs", 1, 1, "definition")
+            .concept("handle", 2.0)
+            .representation("symbol")
+            .exact(10.0);
+        let owner_source = Candidate::new("owner.rs", 10, 10, "owner_source")
+            .concept("handle", 2.0)
+            .exact(0.5);
+        let unrelated_source = Candidate::new("other.rs", 1, 1, "other ".repeat(3_000))
+            .concept("handle", 2.0)
+            .exact(1.0);
+
+        let response = select(
+            vec![unrelated_source, owner_source, definition],
+            &request_with_budget(1_200),
+            1,
+        );
+
+        assert_eq!(response.fragments.len(), 2);
+        assert_eq!(response.fragments[0].path, "owner.rs");
+        assert_eq!(response.fragments[1].path, "owner.rs");
+    }
+
+    #[test]
+    fn weak_non_code_fill_is_omitted_by_relative_confidence() {
+        let strong = Candidate::new("strong.rs", 1, 1, "strong")
+            .concept("explicit", 1.0)
+            .exact(10.0);
+        let weak = Candidate::new("weak.rs", 1, 1, "weak").exact(0.0);
+
+        let response = select(vec![weak, strong], &request_with_budget(100), 1);
+
+        assert_eq!(response.fragments.len(), 1);
+        assert_eq!(response.fragments[0].path, "strong.rs");
+        assert!(
+            response
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("omitted"))
+        );
+    }
+
+    #[test]
     fn known_hash_omitted_and_reported() {
         let c = Candidate::new("known.rs", 1, 2, "alpha beta").exact(1.0);
         let hash = c.content_hash();
@@ -994,9 +1231,9 @@ mod tests {
         let req = request_with_budget(10);
         let resp = select(vec![c], &req, 42);
 
-        assert_eq!(resp.receipt.repository_generation, 42);
+        assert_eq!(resp.meta.repository_generation, 42);
         assert!(!resp.receipt.task_fingerprint.is_empty());
-        assert_eq!(resp.receipt.fragments.len(), resp.fragments.len());
+        assert_eq!(resp.receipt.fragment_hashes.len(), resp.fragments.len());
         assert_eq!(
             resp.meta.emitted_tokens,
             resp.fragments.iter().map(|f| f.token_count).sum::<usize>()
@@ -1027,7 +1264,7 @@ mod tests {
 
         assert!(resp.fragments.is_empty());
         assert!(resp.omitted.is_empty());
-        assert!(resp.receipt.fragments.is_empty());
+        assert!(resp.receipt.fragment_hashes.is_empty());
     }
 
     #[test]

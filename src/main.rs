@@ -56,14 +56,14 @@ async fn run() -> Result<()> {
         AppRequest::Outline(request) => print(&services.outline(request).await?, json),
         AppRequest::Read(request) => print(&services.read(request).await?, json),
         AppRequest::Context(request) => print(&services.context(request).await?, json),
-        AppRequest::Mcp => run_mcp(services).await,
+        AppRequest::Mcp { result_mode } => run_mcp(services, result_mode).await,
         AppRequest::Setup(_) | AppRequest::Remove(_) => {
             unreachable!("handled before service setup")
         }
     }
 }
 
-async fn run_mcp(services: Arc<Services>) -> Result<()> {
+async fn run_mcp(services: Arc<Services>, result_mode: mcp::McpResultMode) -> Result<()> {
     let indexed = services.index(false).await?;
     for warning in &indexed.warnings {
         tracing::warn!(%warning, "index warning");
@@ -105,6 +105,13 @@ async fn run_mcp(services: Arc<Services>) -> Result<()> {
                     let Some(message) = message else { break };
                     let result = match message {
                         WatcherMessage::Changed { paths } => {
+                            let paths = paths
+                                .into_iter()
+                                .filter(|path| !reconcile_services.config().is_database_artifact(path))
+                                .collect::<Vec<_>>();
+                            if paths.is_empty() {
+                                continue;
+                            }
                             tracing::debug!(changed_paths = paths.len(), "repository change detected");
                             reconcile_services.index_paths(paths).await
                         }
@@ -121,7 +128,7 @@ async fn run_mcp(services: Arc<Services>) -> Result<()> {
         }
     });
 
-    let serve_result = mcp::serve_stdio(services).await;
+    let serve_result = mcp::serve_stdio(services, result_mode).await;
     cancellation.cancel();
     let watcher_result = watcher.shutdown().await;
     let reconcile_result = reconcile_task.await;

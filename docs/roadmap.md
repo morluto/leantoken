@@ -5,20 +5,16 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 
 ## Retrieval quality
 
-- Keep the eight pinned public-fix tasks split into a visible development set
-  and add a holdout before making retrieval-quality claims.
-- Continue improving useful-line recall. The benchmark now reports labeled
-  line anchors, unlabeled-fragment cost, known-hash resends, an explicit
-  line-proportional repeated-range token estimate, and full second-turn request
-  and response cost.
-- Task extraction now preserves qualified identifiers and header-like terms,
-  reserves query slots for prose intent, round-robins identifier expansions,
-  and fuses only independent explicit concepts. Symbol declaration reads now
-  cross index-chunk boundaries and retain up to 64 lines. That range change
-  raised labeled-anchor coverage from 7/41 to 10/41 without increasing the
-  checked first-response token cost. Eager lexical-to-declaration expansion
-  was removed because it added indexed lookups without improving the measured
-  selected ranges.
+- Keep the eight future-fix tasks and the four prospective open-issue tasks as
+  visible development sets. Create a new unseen holdout before making
+  generalization claims; once used for tuning, a dataset is no longer blind.
+- Continue improving useful-line recall without trading away file recall.
+  Adaptive ranges preserve exact internal matches and prefer complete
+  declarations when they fit. Concept allocation and qualified-owner matching
+  must earn their place through frozen ablations.
+- Expand the evaluation across more languages and task shapes before making
+  broad retrieval claims. Record dead-end source, repeated ranges, known-hash
+  resends, and complete two-turn cost alongside recall.
 - Add a language grammar only when a pinned task and parser fixture demonstrate
   recall value that outweighs its binary, indexing, and schema cost. The
   expanded task set uses existing grammars, so no grammar was added.
@@ -27,17 +23,27 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 
 - Exact local modes now cover the bundled `tiktoken-rs` encodings; an explicit
   inexact estimate mode covers providers without a local vocabulary.
-- MCP accounting now includes initialization, the real five-tool catalog,
-  `notifications/initialized`, JSON-RPC envelopes, the SDK's duplicated
-  text-plus-structured result, and a repeated-context handoff. Optional output
-  schemas were removed from the catalog while structured results were kept;
-  the fixture catalog is 1,364 tokens and the modeled handoff is 3,472 tokens.
+- MCP accounting includes initialization, the five-tool catalog,
+  `notifications/initialized`, JSON-RPC envelopes, results, and handoffs. A
+  transparent stdio proxy can capture exact exchanges from real hosts.
+- Compare dual, text-only, and structured-only results per host/version. Keep
+  dual as the default until a captured compatibility matrix proves a smaller
+  mode reaches the model correctly.
 - Representation tests compare context fragments, search excerpts, outlines,
   full reads, and a compact repository tree under visible source and complete
   JSON token counts.
-- A future trace benchmark should add model input framing and provider-native
-  token counting without weakening the distinction between exact and estimated
-  counts.
+- Add model input framing and provider-native counts where hosts expose them.
+  Never silently substitute a local tokenizer for provider billing counts.
+
+## Model behavior
+
+- Run the isolated four-arm A/B harness on repeated tasks: filesystem,
+  progressive retrieval, one-shot context, and prewalk handoff.
+- Improve tool descriptions and examples only when traces show fewer broad,
+  repeated, or dead-end reads. Do not add a runtime “next action” field merely
+  because it sounds helpful.
+- Keep LeanToken responsible for transferring grounded evidence, receipts, and
+  repository generations—not for model sessions or agent execution.
 
 ## Optional context signals
 
@@ -60,6 +66,14 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 - The synthetic release profile showed a lower one-file update cost for the
   targeted path at 2,000 files. Continue profiling real monorepos before adding
   more incremental-index machinery.
+
+## Reliability
+
+- Keep exercising concurrent reads during reconciliation, queue overflow,
+  rename ambiguity, large bounded requests, cancellation, EOF, corrupt-cache
+  recovery, generation consistency, and Windows startup/shutdown in CI.
+- Add host-specific disconnect traces and native Windows stress runs when the
+  CI matrix reveals failures; do not simulate platform guarantees from Linux.
 
 ## Out of scope
 

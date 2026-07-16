@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "host": "replace-with-host-name",
+  "host_version": "replace-with-host-version",
+  "tokenizer": "cl100k_base",
+  "provider_total_input_tokens": null,
+  "events": [
+    {
+      "direction": "client_to_server",
+      "raw_json": "{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{}}",
+      "provider_input_tokens": null
+    },
+    {
+      "direction": "server_to_client",
+      "raw_json": "{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{}}",
+      "provider_input_tokens": null
+    }
+  ]
+}

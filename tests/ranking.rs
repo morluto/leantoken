@@ -120,14 +120,8 @@ fn select_omits_known_hashes_and_reports_them() {
     let known_omitted = response.omitted.iter().any(|o| o.path == "known.rs");
     assert!(known_omitted, "known hash should be reported in omitted");
     assert!(!response.receipt.task_fingerprint.is_empty());
-    assert_eq!(response.receipt.repository_generation, 2);
-    assert!(
-        response
-            .receipt
-            .fragments
-            .iter()
-            .all(|i| i.path != "known.rs")
-    );
+    assert_eq!(response.meta.repository_generation, 2);
+    assert_eq!(response.receipt.fragment_hashes.len(), response.fragments.len());
 }
 
 #[test]
@@ -164,17 +158,17 @@ fn select_produces_evidence_receipt_with_hashes_and_generation() {
     let request = request_with_budget(50);
     let response = select(candidates, &request, 7);
 
-    assert_eq!(response.receipt.repository_generation, 7);
-    assert_eq!(response.receipt.fragments.len(), response.fragments.len());
-    for (fragment, identity) in response
+    assert_eq!(response.meta.repository_generation, 7);
+    assert_eq!(
+        response.receipt.fragment_hashes.len(),
+        response.fragments.len()
+    );
+    for (fragment, content_hash) in response
         .fragments
         .iter()
-        .zip(response.receipt.fragments.iter())
+        .zip(response.receipt.fragment_hashes.iter())
     {
-        assert_eq!(fragment.path, identity.path);
-        assert_eq!(fragment.start_line, identity.start_line);
-        assert_eq!(fragment.end_line, identity.end_line);
-        assert_eq!(fragment.content_hash, identity.content_hash);
+        assert_eq!(&fragment.content_hash, content_hash);
     }
 }
 

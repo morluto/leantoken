@@ -51,8 +51,9 @@ toolchain, then run `cargo install --git https://github.com/morluto/leantoken`.
 
 Without LeanToken, repository exploration often means broad file searches,
 whole-file reads, and repeated source after a handoff. With LeanToken, the agent
-can start with ranked task context, inspect structure, and retrieve only the
-source ranges it needs.
+can discover paths, inspect structure or ranked matches, and retrieve only the
+source ranges it needs. Ranked task context remains available when the scope is
+still uncertain.
 
 The host agent still owns editing, commands, tests, conversation state, and
 model orchestration. LeanToken handles repository discovery and bounded source
@@ -62,11 +63,11 @@ retrieval.
 
 | Tool | Purpose |
 | --- | --- |
-| `leantoken_context` | Start a task with ranked excerpts selected within a token budget. |
 | `leantoken_files` | Browse a compact tree or find paths without source bodies. |
 | `leantoken_search` | Search text, regex, identifiers, symbols, or syntactic references. |
 | `leantoken_outline` | Return definitions, signatures, parents, imports, and ranges. |
 | `leantoken_read` | Read an exact line or symbol range under a token limit. |
+| `leantoken_context` | Rank task evidence when narrow discovery leaves the scope uncertain. |
 
 The catalog stays small because every tool description and schema consumes
 model context.
@@ -118,6 +119,7 @@ The primary metric is useful repository evidence delivered per model token.
 - [Roadmap](docs/roadmap.md)
 - [Development and testing](docs/development.md)
 - [Benchmark methodology](benchmarks/README.md)
+- [Experiment and wire-cost harnesses](docs/measurement.md)
 
 ## License
 

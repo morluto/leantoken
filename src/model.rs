@@ -310,27 +310,26 @@ pub struct ContextFragment {
     pub path: String,
     pub start_line: usize,
     pub end_line: usize,
+    #[serde(
+        default = "source_representation",
+        skip_serializing_if = "is_source_representation"
+    )]
     pub representation: String,
     pub content: String,
+    #[serde(default, skip_serializing)]
     pub content_hash: String,
+    #[serde(default, skip_serializing)]
     pub score: f64,
     pub reason: String,
+    #[serde(default, skip_serializing)]
     pub token_count: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct EvidenceIdentity {
-    pub path: String,
-    pub start_line: usize,
-    pub end_line: usize,
-    pub content_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceReceipt {
     pub task_fingerprint: String,
-    pub repository_generation: u64,
-    pub fragments: Vec<EvidenceIdentity>,
+    /// Content hashes aligned by index with `ContextResponse.fragments`.
+    pub fragment_hashes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -378,4 +377,61 @@ pub struct StatusResponse {
 pub struct LanguageCount {
     pub language: String,
     pub files: usize,
+}
+
+fn is_source_representation(value: &String) -> bool {
+    value == "source"
+}
+
+fn source_representation() -> String {
+    "source".to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_context_response_round_trips_with_defaults() {
+        let response = ContextResponse {
+            fragments: vec![ContextFragment {
+                path: "src/lib.rs".into(),
+                start_line: 1,
+                end_line: 2,
+                representation: "source".into(),
+                content: "fn answer() {}".into(),
+                content_hash: "receipt-hash".into(),
+                score: 2.0,
+                reason: "symbol".into(),
+                token_count: 4,
+            }],
+            receipt: EvidenceReceipt {
+                task_fingerprint: "task".into(),
+                fragment_hashes: vec!["receipt-hash".into()],
+            },
+            omitted: Vec::new(),
+            warnings: Vec::new(),
+            meta: ResponseMeta {
+                repository_generation: 7,
+                freshness: Freshness::Current,
+                emitted_tokens: 4,
+                token_count_exact: true,
+                next_cursor: None,
+            },
+        };
+
+        let value = serde_json::to_value(&response).expect("serialize response");
+        assert!(value["fragments"][0].get("representation").is_none());
+        assert!(value["fragments"][0].get("content_hash").is_none());
+        assert_eq!(value["meta"]["freshness"], "current");
+        assert_eq!(value["meta"]["token_count_exact"], true);
+        assert_eq!(value["warnings"], serde_json::json!([]));
+
+        let round_trip: ContextResponse =
+            serde_json::from_value(value).expect("deserialize compact response");
+        assert_eq!(round_trip.fragments[0].representation, "source");
+        assert_eq!(round_trip.fragments[0].content_hash, "");
+        assert_eq!(round_trip.meta.freshness, Freshness::Current);
+        assert!(round_trip.meta.token_count_exact);
+    }
 }
