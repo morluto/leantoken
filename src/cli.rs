@@ -67,6 +67,7 @@ impl Cli {
             },
             Commands::Setup(args) => AppRequest::Setup(args.into()),
             Commands::Remove(args) => AppRequest::Remove(args.into()),
+            Commands::Update | Commands::Upgrade => AppRequest::Upgrade,
         }
     }
 }
@@ -84,6 +85,7 @@ pub enum AppRequest {
     Mcp { result_mode: McpResultMode },
     Setup(SetupRequest),
     Remove(SetupRequest),
+    Upgrade,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -121,6 +123,12 @@ pub enum Commands {
 
     /// Remove LeanToken's global MCP server entries.
     Remove(IntegrationArgs),
+
+    /// Update LeanToken to the latest release.
+    Update,
+
+    /// Update LeanToken to the latest release.
+    Upgrade,
 }
 
 /// MCP stdio transport options.

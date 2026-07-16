@@ -7,6 +7,7 @@ use leantoken::{
     mcp,
     services::Services,
     setup::{self, SetupOperation},
+    upgrade,
     watcher::{RepositoryWatcher, WatcherMessage},
 };
 use serde::Serialize;
@@ -24,6 +25,14 @@ async fn main() {
 async fn run() -> Result<()> {
     let cli = Cli::parse();
     let json = cli.json;
+
+    if matches!(
+        &cli.command,
+        leantoken::cli::Commands::Update | leantoken::cli::Commands::Upgrade
+    ) {
+        upgrade::run(json)?;
+        return Ok(());
+    }
 
     if matches!(
         &cli.command,
@@ -65,6 +74,7 @@ async fn run() -> Result<()> {
         AppRequest::Setup(_) | AppRequest::Remove(_) => {
             unreachable!("handled before service setup")
         }
+        AppRequest::Upgrade => unreachable!("handled before repository setup"),
     }
 }
 
