@@ -7,6 +7,8 @@
 pub mod cli;
 /// Repository configuration and cache-path discovery.
 pub mod config;
+/// Cross-process ownership and reconciliation locks for one repository cache.
+pub mod coordination;
 /// Error and result types shared across the crate.
 pub mod error;
 /// Repository discovery, parsing, and transactional reconciliation.

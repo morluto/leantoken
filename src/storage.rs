@@ -5,7 +5,9 @@ use std::{
     time::Duration,
 };
 
-use rusqlite::{Connection, OpenFlags, OptionalExtension, Row, Transaction, params};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior, params,
+};
 use rusqlite_migration::{M, Migrations};
 
 use crate::model::ReferenceRole;
@@ -13,6 +15,8 @@ use crate::{Error, Result};
 
 pub const DEFAULT_MAX_RESULTS: usize = 100;
 pub const HARD_MAX_RESULTS: usize = 10_000;
+
+const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_millis(5_000);
 
 const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -363,15 +367,23 @@ impl FtsTable {
 
 impl Storage {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        Self::open_with_startup_timeout(path, DEFAULT_BUSY_TIMEOUT)
+    }
+
+    pub(crate) fn open_with_startup_timeout(
+        path: impl AsRef<Path>,
+        startup_timeout: Duration,
+    ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
         let mut conn = Connection::open(&path)?;
-        Self::configure(&mut conn)?;
+        Self::configure(&mut conn, startup_timeout)?;
         MIGRATIONS.to_latest(&mut conn)?;
         Self::validate_fts5(&mut conn)
             .map_err(|_| Error::InvalidRequest("FTS5/trigram support is unavailable".into()))?;
+        conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
 
         Ok(Self {
             writer: Arc::new(Mutex::new(conn)),
@@ -379,10 +391,10 @@ impl Storage {
         })
     }
 
-    fn configure(conn: &mut Connection) -> Result<()> {
+    fn configure(conn: &mut Connection, startup_timeout: Duration) -> Result<()> {
+        conn.busy_timeout(startup_timeout)?;
         conn.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        conn.busy_timeout(Duration::from_millis(5000))?;
         Ok(())
     }
 
@@ -441,19 +453,31 @@ impl Storage {
     }
 
     pub fn full_reconcile(&self, config_hash: &str, files: Vec<IndexedFile>) -> Result<u64> {
+        let baseline = self.meta()?;
+        self.full_reconcile_at(&baseline, config_hash, files)
+    }
+
+    /// Replace the complete index only if the generation used to build the
+    /// reconciliation plan is still current.
+    pub fn full_reconcile_at(
+        &self,
+        baseline: &MetaRecord,
+        config_hash: &str,
+        files: Vec<IndexedFile>,
+    ) -> Result<u64> {
         let mut conn = self
             .writer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (current_generation, current_config): (i64, String) = tx.query_row(
+            "SELECT repository_generation, config_hash FROM meta WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        verify_baseline(baseline, current_generation, &current_config)?;
 
         tx.execute("DELETE FROM files", [])?;
-
-        let current_generation: i64 = tx.query_row(
-            "SELECT repository_generation FROM meta WHERE id = 1",
-            [],
-            |row| row.get(0),
-        )?;
         let next_generation = current_generation.saturating_add(1);
 
         for file in files {
@@ -474,7 +498,7 @@ impl Storage {
             .writer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
         tx.execute("DELETE FROM files WHERE path = ?1", params![&file.path])?;
 
@@ -505,16 +529,30 @@ impl Storage {
         replacements: Vec<IndexedFile>,
         deletions: &[String],
     ) -> Result<u64> {
+        let baseline = self.meta()?;
+        self.reconcile_files_at(&baseline, config_hash, replacements, deletions)
+    }
+
+    /// Publish an incremental plan only if its source generation and config
+    /// still match the committed cache state.
+    pub fn reconcile_files_at(
+        &self,
+        baseline: &MetaRecord,
+        config_hash: &str,
+        replacements: Vec<IndexedFile>,
+        deletions: &[String],
+    ) -> Result<u64> {
         let mut conn = self
             .writer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let (current_generation, current_config): (i64, String) = tx.query_row(
             "SELECT repository_generation, config_hash FROM meta WHERE id = 1",
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
+        verify_baseline(baseline, current_generation, &current_config)?;
 
         if replacements.is_empty() && deletions.is_empty() && current_config == config_hash {
             tx.commit()?;
@@ -546,7 +584,7 @@ impl Storage {
             .writer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
         let affected = tx.execute("DELETE FROM files WHERE path = ?1", params![path])?;
 
@@ -949,8 +987,7 @@ impl Storage {
         F: FnOnce(&Connection) -> Result<T>,
     {
         let conn = Connection::open_with_flags(&self.path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        conn.busy_timeout(Duration::from_millis(5000))?;
-        conn.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
+        conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         f(&conn)
     }
@@ -1035,6 +1072,21 @@ impl Storage {
             score: row.get::<_, f64>(9)?,
         })
     }
+}
+
+fn verify_baseline(
+    baseline: &MetaRecord,
+    current_generation: i64,
+    current_config: &str,
+) -> Result<()> {
+    let actual = i64_to_u64(current_generation);
+    if actual != baseline.repository_generation || current_config != baseline.config_hash {
+        return Err(Error::StaleReconciliation {
+            expected: baseline.repository_generation,
+            actual,
+        });
+    }
+    Ok(())
 }
 
 fn bounded_limit(limit: usize) -> i64 {

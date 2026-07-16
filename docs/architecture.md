@@ -51,11 +51,14 @@ The connection is configured with:
 - file/range lookup indexes added through a versioned migration so existing
   databases receive the same query plan as new databases.
 
-One serialized writer applies a repository reconciliation. File preparation
-happens outside the transaction, then replacements and deletions commit as one
-generation. Readers open short read-only connections and retry a response when
-the repository generation changes while it is being assembled. A returned
-response therefore does not mix committed generations.
+One repository-scoped operation lock serializes reconciliation across processes.
+File preparation happens outside SQLite, then an immediate write transaction
+verifies that the generation and config used to build the plan are still
+current. A stale plan is discarded and recomputed. Replacements, deletions, and
+generation advancement then commit together. Readers open short read-only
+connections and retry a response when the repository generation changes while
+it is being assembled. A returned response therefore does not mix committed
+generations.
 
 ## Indexing and freshness
 
@@ -63,11 +66,31 @@ Discovery follows Git-compatible ignore rules, skips symlinks and oversized or
 binary files, and normalizes indexed paths to forward slashes. Text files are
 hashed, chunked on UTF-8 boundaries, and parsed in a bounded Rayon pool.
 
-MCP startup performs an initial reconciliation, starts the watcher, and then
-performs a catch-up reconciliation to close the startup event gap. Changes
-observed during the catch-up pass are already queued by the watcher. Later
-events are debounced and coalesced; ambiguous rename sequences, backend rescan
-requests, and queue overflow request a full reconciliation.
+MCP starts the stdio protocol before opening SQLite or indexing. It answers the
+mandatory initialize exchange first, then starts repository services after the
+client's initialized notification. A generation-zero tool call returns a
+retryable tool error rather than an empty successful result. An existing
+complete generation remains queryable while its replacement is prepared.
+
+Cache initialization, schema migration, and managed-cache corruption recovery
+run under a separate repository-scoped initialization lock. SQLite busy and
+locked results are retried with bounded backoff and caller-owned cancellation;
+terminal startup failures move MCP tools to an unavailable state. The stdio
+adapter supervises the indexing runtime for the lifetime of the connection, so
+an unexpected runtime exit cannot leave tools permanently reporting startup.
+
+MCP processes sharing one cache compete for a repository-scoped leadership
+lock. The leader alone owns automatic indexing and one filesystem watcher;
+followers read the same committed SQLite generations without scanning or
+watching. Followers retry leadership periodically, so an operating-system lock
+release after process exit provides failover without a PID lease or stale-lock
+cleanup.
+
+The leader registers its watcher before the initial reconciliation. Events that
+arrive during discovery or parsing remain queued and are applied after the
+commit, closing the startup event gap without an unconditional second full
+walk. Later events are debounced and coalesced; ambiguous rename sequences,
+backend rescan requests, and queue overflow request a full reconciliation.
 
 For existing regular files, the watcher reconciles only the reported paths.
 New paths, directory changes, symlinks, ignore-file changes, configuration
@@ -78,9 +101,30 @@ and modification time are unchanged. File replacement, deletion,
 reverse-import invalidation, and generation advancement commit in one SQLite
 transaction.
 
-Indexing is serialized, but queries continue against the last committed WAL
-generation. Responses report `reconciling` while any reconciliation is active.
-Watcher and reconciliation tasks are cancelled and joined during shutdown.
+Indexing is serialized across processes, but queries continue against the last
+committed WAL generation. The short-lived operation lock makes `reconciling`
+visible to followers as well as the leader. Watcher and reconciliation tasks
+receive caller-owned cancellation and are joined during shutdown.
+
+## Concurrency design constraints
+
+- WAL permits concurrent readers but remains a single-writer database; it is
+  not a work-deduplication mechanism.
+- SQLite busy timeouts and retries are defensive handling, not index ownership.
+- A process-local mutex cannot protect a cache shared by several MCP clients.
+- Only the leader creates a watcher and index worker pool; one of each per MCP
+  client would recreate the startup stampede outside SQLite.
+- Lock files are stable cache artifacts and are never deleted on unlock. The
+  open locked handle is the authority; PID files and heartbeat rows are not
+  used as mutexes.
+- Explicit and managed cache paths resolve through the deepest existing
+  ancestor before missing descendants are appended. Database, WAL, SHM, and
+  lock artifacts therefore share one identity even below symlink aliases and
+  cannot enter repository discovery or watcher reconciliation.
+- Retrieval never exposes a partially built generation, and generation zero is
+  never rendered as a successful empty repository.
+- Automatic work does not delay the MCP initialize response, and startup does
+  not invent unsolicited MCP progress tokens.
 
 ## Parsing
 
@@ -152,11 +196,18 @@ appropriate for that repository.
 ## Failure behavior
 
 - Request validation failures are typed and do not terminate MCP.
+- Repeated generation changes are retryable repository conflicts, not invalid
+  client parameters.
 - Cancellation propagates from MCP request context into blocking retrieval
-  loops and leaves the service usable for later calls.
+  loops and from MCP shutdown into initialization retries, lock waits,
+  discovery, file preparation, result aggregation, and import resolution.
+  Cancellation leaves the service usable for later calls.
 - File replacement and multi-file reconciliation roll back on storage errors.
+- Reconciliation publication rejects stale baseline generations before making
+  mutations.
 - Committed WAL state survives process failure. Confirmed corruption in a
   LeanToken-owned cache is deleted and rebuilt; an explicitly configured
   caller-owned database is preserved and the error is returned.
 - EOF and orderly cancellation stop stdio service, watcher, and reconciliation
-  tasks without detached worker threads.
+  tasks without detached worker threads. If the leader exits, a follower takes
+  ownership and reconciles before resuming automatic watching.

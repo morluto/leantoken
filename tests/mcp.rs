@@ -188,3 +188,82 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     client.close().await.expect("close client");
     server.close().await.expect("close server");
 }
+
+#[tokio::test]
+async fn pending_and_empty_indexes_return_retryable_tool_errors() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
+        .expect("write fixture");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+
+    let (server, state) = LeanTokenMcp::pending();
+    let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
+    let server_start = tokio::spawn(async move {
+        serve_server(server, server_stream)
+            .await
+            .expect("start MCP server")
+    });
+    let mut client = serve_client((), client_stream)
+        .await
+        .expect("initialize MCP client");
+    let mut server = server_start.await.expect("join server startup");
+
+    let request = || {
+        let arguments = serde_json::json!({ "operation": "tree" })
+            .as_object()
+            .expect("arguments")
+            .clone();
+        CallToolRequestParams::new("leantoken_files").with_arguments(arguments)
+    };
+
+    let starting = client
+        .peer()
+        .call_tool(request())
+        .await
+        .expect("starting result");
+    assert_eq!(starting.is_error, Some(true));
+    assert!(
+        starting.content[0]
+            .as_text()
+            .is_some_and(|text| text.text.contains("starting"))
+    );
+
+    let services = Arc::new(Services::open(config).expect("services"));
+    state.set_ready(Arc::clone(&services));
+    let building = client
+        .peer()
+        .call_tool(request())
+        .await
+        .expect("building result");
+    assert_eq!(building.is_error, Some(true));
+    assert!(
+        building.content[0]
+            .as_text()
+            .is_some_and(|text| text.text.contains("being built"))
+    );
+
+    services.index(false).await.expect("index");
+    let ready = client
+        .peer()
+        .call_tool(request())
+        .await
+        .expect("ready result");
+    assert_ne!(ready.is_error, Some(true));
+
+    state.set_failed();
+    let failed = client
+        .peer()
+        .call_tool(request())
+        .await
+        .expect("failed result");
+    assert_eq!(failed.is_error, Some(true));
+    assert!(
+        failed.content[0]
+            .as_text()
+            .is_some_and(|text| text.text.contains("unavailable"))
+    );
+
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}

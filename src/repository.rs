@@ -8,6 +8,7 @@ use std::{
 };
 
 use ignore::WalkBuilder;
+use tokio_util::sync::CancellationToken;
 use wait_timeout::ChildExt;
 
 use crate::{Error, Result};
@@ -21,6 +22,15 @@ pub struct DiscoveredFile {
 }
 
 pub fn discover_files(root: &Path, max_file_bytes: u64) -> Result<Vec<DiscoveredFile>> {
+    discover_files_cancellable(root, max_file_bytes, &CancellationToken::new())
+}
+
+/// Discover repository files while honoring caller-owned cancellation.
+pub fn discover_files_cancellable(
+    root: &Path,
+    max_file_bytes: u64,
+    cancellation: &CancellationToken,
+) -> Result<Vec<DiscoveredFile>> {
     let mut files = Vec::new();
     let walker = WalkBuilder::new(root)
         .hidden(false)
@@ -32,6 +42,9 @@ pub fn discover_files(root: &Path, max_file_bytes: u64) -> Result<Vec<Discovered
         .build();
 
     for entry in walker {
+        if cancellation.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {

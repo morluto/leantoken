@@ -1,15 +1,19 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::sync::{
-    Arc, Mutex,
+    Arc,
     atomic::{AtomicUsize, Ordering},
 };
+use std::thread;
+use std::time::{Duration, Instant};
 
 use globset::Glob;
 use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config as MatcherConfig, Matcher};
 use tokio_util::sync::CancellationToken;
 
+use crate::coordination::{IndexCoordination, IndexLeadership};
+use crate::error::RetryableOperation;
 use crate::indexer::Indexer;
 use crate::model::*;
 use crate::ranking::{self, Candidate};
@@ -25,19 +29,23 @@ const MAX_INPUT_ITEMS: usize = 256;
 const GIT_CHANGED_PATHS_MAX: usize = 512;
 const MIN_CONTEXT_RANGE_LINES: usize = 12;
 const MAX_CONTEXT_RANGE_LINES: usize = 128;
+const STARTUP_BUSY_TIMEOUT: Duration = Duration::from_millis(250);
+const STARTUP_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(25);
+const STARTUP_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
+const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 #[derive(Debug, Clone)]
 /// Shared application services used by both CLI and MCP adapters.
 ///
 /// Blocking filesystem and SQLite work runs on Tokio's blocking pool. Index
-/// reconciliations are serialized, while reads use committed SQLite WAL
-/// generations and retry if a generation changes mid-response.
+/// reconciliations are serialized across processes, while reads use committed
+/// SQLite WAL generations and retry if a generation changes mid-response.
 pub struct Services {
     config: Arc<Config>,
     storage: Storage,
     indexer: Indexer,
+    coordination: IndexCoordination,
     active_reconciliations: Arc<AtomicUsize>,
-    index_lock: Arc<Mutex<()>>,
 }
 
 struct StoredExcerpt {
@@ -49,28 +57,70 @@ struct StoredExcerpt {
 impl Services {
     /// Open the SQLite index and construct retrieval services.
     pub fn open(config: Config) -> Result<Self> {
-        let config = Arc::new(config);
-        let storage = match Storage::open(&config.database_path) {
+        let coordination = IndexCoordination::for_database(&config.database_path);
+        let cancellation = CancellationToken::new();
+        let _initialization = coordination.acquire_initialization(&cancellation)?;
+        Self::open_once(&config, None)
+    }
+
+    /// Open services under exclusive cache initialization ownership, retrying
+    /// transient SQLite contention until the caller cancels.
+    pub fn open_cancellable(config: Config, cancellation: &CancellationToken) -> Result<Self> {
+        let coordination = IndexCoordination::for_database(&config.database_path);
+        let _initialization = coordination.acquire_initialization(cancellation)?;
+        let mut delay = STARTUP_RETRY_INITIAL_DELAY;
+        let mut attempt = 0u32;
+
+        loop {
+            check_cancelled(cancellation)?;
+            match Self::open_once(&config, Some(STARTUP_BUSY_TIMEOUT)) {
+                Ok(services) => return Ok(services),
+                Err(error) if is_database_contention(&error) => {
+                    attempt = attempt.saturating_add(1);
+                    if attempt == 1 || attempt.is_multiple_of(20) {
+                        tracing::warn!(
+                            attempt,
+                            retry_delay_ms = delay.as_millis(),
+                            database = %config.database_path.display(),
+                            %error,
+                            "cache initialization is waiting for SQLite contention"
+                        );
+                    }
+                    wait_cancellable(cancellation, delay)?;
+                    delay = delay.saturating_mul(2).min(STARTUP_RETRY_MAX_DELAY);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn open_once(config: &Config, startup_timeout: Option<Duration>) -> Result<Self> {
+        let open_storage = || match startup_timeout {
+            Some(timeout) => Storage::open_with_startup_timeout(&config.database_path, timeout),
+            None => Storage::open(&config.database_path),
+        };
+        let storage = match open_storage() {
             Ok(storage) => storage,
             Err(error) if config.database_is_managed_cache && is_database_corruption(&error) => {
                 tracing::warn!(database = %config.database_path.display(), "rebuilding corrupt managed index");
                 remove_database_artifacts(&config.database_path)?;
-                Storage::open(&config.database_path)?
+                open_storage()?
             }
             Err(error) => return Err(error),
         };
-        Ok(Self::from_parts(config, storage))
+        Ok(Self::from_parts(Arc::new(config.clone()), storage))
     }
 
     #[must_use]
     fn from_parts(config: Arc<Config>, storage: Storage) -> Self {
         let indexer = Indexer::new(Arc::clone(&config), storage.clone());
+        let coordination = IndexCoordination::for_database(&config.database_path);
         Self {
             config,
             storage,
             indexer,
+            coordination,
             active_reconciliations: Arc::new(AtomicUsize::new(0)),
-            index_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -82,16 +132,23 @@ impl Services {
 
     /// Reconcile repository files into one committed index generation.
     pub async fn index(&self, rebuild: bool) -> Result<IndexResponse> {
+        self.index_cancellable(rebuild, CancellationToken::new())
+            .await
+    }
+
+    /// Reconcile repository files while honoring caller-owned cancellation.
+    pub async fn index_cancellable(
+        &self,
+        rebuild: bool,
+        cancellation: CancellationToken,
+    ) -> Result<IndexResponse> {
         let this = self.clone();
         let active_reconciliations = Arc::clone(&self.active_reconciliations);
         active_reconciliations.fetch_add(1, Ordering::AcqRel);
         tokio::task::spawn_blocking(move || {
             let _active = ActiveReconciliation(active_reconciliations);
-            let _guard = this
-                .index_lock
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            this.indexer.reconcile(rebuild)
+            let _operation = this.coordination.acquire_operation(&cancellation)?;
+            this.indexer.reconcile_cancellable(rebuild, &cancellation)
         })
         .await?
     }
@@ -99,18 +156,31 @@ impl Services {
     /// Reconcile watcher-reported paths, falling back internally when a
     /// repository-wide scan is required for correctness.
     pub async fn index_paths(&self, paths: Vec<String>) -> Result<IndexResponse> {
+        self.index_paths_cancellable(paths, CancellationToken::new())
+            .await
+    }
+
+    /// Reconcile watcher-reported paths while honoring caller-owned cancellation.
+    pub async fn index_paths_cancellable(
+        &self,
+        paths: Vec<String>,
+        cancellation: CancellationToken,
+    ) -> Result<IndexResponse> {
         let this = self.clone();
         let active_reconciliations = Arc::clone(&self.active_reconciliations);
         active_reconciliations.fetch_add(1, Ordering::AcqRel);
         tokio::task::spawn_blocking(move || {
             let _active = ActiveReconciliation(active_reconciliations);
-            let _guard = this
-                .index_lock
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            this.indexer.reconcile_paths(&paths)
+            let _operation = this.coordination.acquire_operation(&cancellation)?;
+            this.indexer
+                .reconcile_paths_cancellable(&paths, &cancellation)
         })
         .await?
+    }
+
+    /// Attempt to own automatic indexing and watching for this cache.
+    pub fn try_acquire_index_leadership(&self) -> Result<Option<IndexLeadership>> {
+        self.coordination.try_acquire_leadership()
     }
 
     /// Return index counts, generation, and freshness.
@@ -195,7 +265,7 @@ impl Services {
     }
 
     fn status_sync(&self) -> Result<StatusResponse> {
-        self.consistent(|generation| {
+        self.consistent_allow_empty(|generation| {
             let counts = self.storage.counts()?;
             Ok(StatusResponse {
                 repository_root: self.config.root.display().to_string(),
@@ -1145,16 +1215,29 @@ impl Services {
     }
 
     fn consistent<T>(&self, operation: impl Fn(u64) -> Result<T>) -> Result<T> {
+        self.consistent_inner(false, operation)
+    }
+
+    fn consistent_allow_empty<T>(&self, operation: impl Fn(u64) -> Result<T>) -> Result<T> {
+        self.consistent_inner(true, operation)
+    }
+
+    fn consistent_inner<T>(
+        &self,
+        allow_empty: bool,
+        operation: impl Fn(u64) -> Result<T>,
+    ) -> Result<T> {
         for _ in 0..3 {
             let before = self.storage.repository_generation()?;
+            if before == 0 && !allow_empty {
+                return Err(Error::IndexNotReady);
+            }
             let value = operation(before)?;
             if self.storage.repository_generation()? == before {
                 return Ok(value);
             }
         }
-        Err(Error::InvalidRequest(
-            "repository changed repeatedly while serving request; retry".into(),
-        ))
+        Err(Error::RetryableConflict(RetryableOperation::Retrieval))
     }
 
     fn result_limit(&self, requested: Option<usize>) -> usize {
@@ -1172,7 +1255,9 @@ impl Services {
     }
 
     fn freshness(&self) -> Freshness {
-        if self.active_reconciliations.load(Ordering::Acquire) > 0 {
+        let local = self.active_reconciliations.load(Ordering::Acquire) > 0;
+        let shared = self.coordination.is_reconciling().unwrap_or(true);
+        if local || shared {
             Freshness::Reconciling
         } else {
             Freshness::Current
@@ -1196,23 +1281,28 @@ impl Services {
 }
 
 fn is_database_corruption(error: &Error) -> bool {
-    fn sqlite_corruption(error: &rusqlite::Error) -> bool {
-        matches!(
-            error,
-            rusqlite::Error::SqliteFailure(inner, _)
-                if matches!(
-                    inner.code,
-                    rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
-                )
-        )
-    }
+    matches!(
+        sqlite_error_code(error),
+        Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
+    )
+}
 
+fn is_database_contention(error: &Error) -> bool {
+    matches!(
+        sqlite_error_code(error),
+        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+    )
+}
+
+fn sqlite_error_code(error: &Error) -> Option<rusqlite::ErrorCode> {
+    let error = match error {
+        Error::Sqlite(error) => error,
+        Error::Migration(rusqlite_migration::Error::RusqliteError { err, .. }) => err,
+        _ => return None,
+    };
     match error {
-        Error::Sqlite(error) => sqlite_corruption(error),
-        Error::Migration(rusqlite_migration::Error::RusqliteError { err, .. }) => {
-            sqlite_corruption(err)
-        }
-        _ => false,
+        rusqlite::Error::SqliteFailure(inner, _) => Some(inner.code),
+        _ => None,
     }
 }
 
@@ -1242,6 +1332,18 @@ fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
         Err(Error::Cancelled)
     } else {
         Ok(())
+    }
+}
+
+fn wait_cancellable(cancellation: &CancellationToken, duration: Duration) -> Result<()> {
+    let deadline = Instant::now() + duration;
+    loop {
+        check_cancelled(cancellation)?;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Ok(());
+        }
+        thread::sleep(remaining.min(CANCELLATION_POLL_INTERVAL));
     }
 }
 
@@ -2181,5 +2283,29 @@ mod tests {
             .await
             .expect_err("pre-cancelled request should stop");
         assert!(matches!(error, Error::Cancelled));
+    }
+
+    #[test]
+    fn repeated_generation_changes_are_a_retryable_conflict() {
+        let root = tempfile::tempdir().expect("root");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+        let services = Services::open(config).expect("services");
+        services
+            .storage
+            .full_reconcile("hash", Vec::new())
+            .expect("initial generation");
+
+        let error = services
+            .consistent(|_| {
+                services.storage.full_reconcile("hash", Vec::new())?;
+                Ok(())
+            })
+            .expect_err("generation must not stabilize");
+
+        assert!(matches!(
+            error,
+            Error::RetryableConflict(RetryableOperation::Retrieval)
+        ));
     }
 }

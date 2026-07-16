@@ -300,6 +300,36 @@ fn reconcile_files_commits_replacements_and_deletions_as_one_generation() {
 }
 
 #[test]
+fn stale_reconciliation_plan_cannot_overwrite_a_newer_generation() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");
+    let stale_baseline = storage.meta().expect("baseline");
+
+    storage
+        .full_reconcile("hash1", vec![sample_file("lib.rs", "fn current() {}\n")])
+        .expect("current generation");
+
+    let error = storage
+        .reconcile_files_at(
+            &stale_baseline,
+            "hash1",
+            vec![sample_file("lib.rs", "fn stale() {}\n")],
+            &[],
+        )
+        .expect_err("stale plan must be rejected");
+    assert!(matches!(
+        error,
+        leantoken::Error::StaleReconciliation {
+            expected: 0,
+            actual: 1
+        }
+    ));
+    assert_eq!(storage.repository_generation().expect("generation"), 1);
+    assert_eq!(storage.search_word("current", 10).expect("current").len(), 1);
+    assert!(storage.search_word("stale", 10).expect("stale").is_empty());
+}
+
+#[test]
 fn list_files_respects_hard_result_bound() {
     let dir = tempfile::tempdir().expect("tempdir");
     let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");
