@@ -55,14 +55,18 @@ Integration test files are modules of one `integration` target so Cargo can
 run them in parallel rather than starting one executable per file.
 
 - `tests/storage.rs`: migrations, WAL/foreign keys, FTS5, atomic replacement,
-  rollback, reopen, and generation behavior;
+  rollback, stale-plan rejection, reopen, and generation behavior;
 - `tests/indexer.rs`: initial, unchanged, changed, deleted, rebuilt, bounded
   chunking, targeted reconciliation, and dependency invalidation;
 - `tests/services.rs`: all five retrieval services, token bounds, ranges,
-  hashes, typed invalid inputs, and continued service after rejection;
-- `tests/mcp.rs`: SDK initialization, exact tool catalog, structured calls,
-  cancellation, and post-cancellation liveness;
-- `tests/binary.rs`: CLI JSON flow and MCP EOF shutdown through the executable;
+  hashes, cache-artifact exclusion, typed invalid inputs, retryable generation
+  conflicts, and continued service after rejection;
+- `tests/mcp.rs`: SDK initialization, readiness states, retryable startup tool
+  errors, exact tool catalog, structured calls, cancellation, and
+  post-cancellation liveness;
+- `tests/binary.rs`: CLI JSON flow, concurrent and contended cold-cache MCP
+  initialization, runtime-failure visibility, single-leader generation
+  publication, leader failover, and MCP EOF shutdown through the executable;
 - `tests/repository.rs`: ignore behavior, path validation, size limits, symlink
   containment, bounded Git probes, and nested-worktree path normalization;
 - `tests/watcher.rs`: event delivery and joined shutdown;

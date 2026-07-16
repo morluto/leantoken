@@ -1,10 +1,13 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc, RwLock,
+    atomic::{AtomicBool, Ordering},
+};
 
 use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
     handler::server::wrapper::Parameters,
     model::{CallToolResult, ContentBlock},
-    service::RequestContext,
+    service::{NotificationContext, RequestContext},
     tool, tool_handler, tool_router,
     transport::stdio,
 };
@@ -17,8 +20,23 @@ use crate::services::Services;
 /// LeanToken MCP server.
 #[derive(Clone)]
 pub struct LeanTokenMcp {
-    services: Arc<Services>,
+    services: McpServices,
     result_mode: McpResultMode,
+}
+
+#[derive(Debug, Clone)]
+enum McpServiceState {
+    Starting,
+    Ready(Arc<Services>),
+    Failed,
+}
+
+/// Shared readiness handle used by handshake-first MCP startup.
+#[derive(Debug, Clone)]
+pub struct McpServices {
+    state: Arc<RwLock<McpServiceState>>,
+    protocol_initialized: Arc<AtomicBool>,
+    initialized: Arc<tokio::sync::Notify>,
 }
 
 /// Wire representation used for successful MCP tool results.
@@ -37,9 +55,22 @@ impl LeanTokenMcp {
     #[must_use]
     pub fn new(services: Arc<Services>) -> Self {
         Self {
-            services,
+            services: McpServices::ready(services),
             result_mode: McpResultMode::Dual,
         }
+    }
+
+    /// Construct a protocol-ready server before storage and indexing start.
+    #[must_use]
+    pub fn pending() -> (Self, McpServices) {
+        let services = McpServices::starting();
+        (
+            Self {
+                services: services.clone(),
+                result_mode: McpResultMode::Dual,
+            },
+            services,
+        )
     }
 
     /// Select the successful-result representation for this server instance.
@@ -51,6 +82,91 @@ impl LeanTokenMcp {
 
     fn result<T: Serialize>(&self, value: T) -> Result<CallToolResult, ErrorData> {
         tool_result(value, self.result_mode)
+    }
+
+    fn services(&self) -> std::result::Result<Arc<Services>, CallToolResult> {
+        match self.services.get() {
+            McpServiceState::Ready(services) => Ok(services),
+            McpServiceState::Starting => Err(tool_unavailable(
+                "repository index is starting; retry shortly",
+            )),
+            McpServiceState::Failed => Err(tool_unavailable(
+                "repository index is unavailable; check server logs and retry",
+            )),
+        }
+    }
+
+    fn service_result<T: Serialize>(
+        &self,
+        result: crate::Result<T>,
+    ) -> Result<CallToolResult, ErrorData> {
+        match result {
+            Ok(value) => self.result(value),
+            Err(crate::Error::IndexNotReady) => Ok(tool_unavailable(
+                "repository index is being built; retry shortly",
+            )),
+            Err(crate::Error::RetryableConflict(_)) => Ok(tool_unavailable(
+                "repository index changed during retrieval; retry shortly",
+            )),
+            Err(error) => Err(into_mcp_error(error)),
+        }
+    }
+}
+
+impl McpServices {
+    fn starting() -> Self {
+        Self {
+            state: Arc::new(RwLock::new(McpServiceState::Starting)),
+            protocol_initialized: Arc::new(AtomicBool::new(false)),
+            initialized: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    fn ready(services: Arc<Services>) -> Self {
+        Self {
+            state: Arc::new(RwLock::new(McpServiceState::Ready(services))),
+            protocol_initialized: Arc::new(AtomicBool::new(false)),
+            initialized: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    fn get(&self) -> McpServiceState {
+        self.state
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    /// Make initialized retrieval services visible to MCP tool handlers.
+    pub fn set_ready(&self, services: Arc<Services>) {
+        *self
+            .state
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = McpServiceState::Ready(services);
+    }
+
+    /// Mark startup as failed without exposing internal diagnostics to clients.
+    pub fn set_failed(&self) {
+        *self
+            .state
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = McpServiceState::Failed;
+    }
+
+    fn mark_protocol_initialized(&self) {
+        self.protocol_initialized.store(true, Ordering::Release);
+        self.initialized.notify_waiters();
+    }
+
+    /// Wait until the client completes the MCP initialization phase.
+    pub async fn wait_initialized(&self) {
+        loop {
+            let notified = self.initialized.notified();
+            if self.protocol_initialized.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
     }
 }
 
@@ -65,12 +181,12 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<FilesRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let resp = self
-            .services
-            .files_cancellable(req, context.ct.clone())
-            .await
-            .map_err(into_mcp_error)?;
-        self.result(resp)
+        let services = match self.services() {
+            Ok(services) => services,
+            Err(result) => return Ok(result),
+        };
+        let resp = services.files_cancellable(req, context.ct.clone()).await;
+        self.service_result(resp)
     }
 
     #[tool(
@@ -82,12 +198,12 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<SearchRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let resp = self
-            .services
-            .search_cancellable(req, context.ct.clone())
-            .await
-            .map_err(into_mcp_error)?;
-        self.result(resp)
+        let services = match self.services() {
+            Ok(services) => services,
+            Err(result) => return Ok(result),
+        };
+        let resp = services.search_cancellable(req, context.ct.clone()).await;
+        self.service_result(resp)
     }
 
     #[tool(
@@ -99,12 +215,12 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<OutlineRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let resp = self
-            .services
-            .outline_cancellable(req, context.ct.clone())
-            .await
-            .map_err(into_mcp_error)?;
-        self.result(resp)
+        let services = match self.services() {
+            Ok(services) => services,
+            Err(result) => return Ok(result),
+        };
+        let resp = services.outline_cancellable(req, context.ct.clone()).await;
+        self.service_result(resp)
     }
 
     #[tool(
@@ -116,12 +232,12 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<ReadRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let resp = self
-            .services
-            .read_cancellable(req, context.ct.clone())
-            .await
-            .map_err(into_mcp_error)?;
-        self.result(resp)
+        let services = match self.services() {
+            Ok(services) => services,
+            Err(result) => return Ok(result),
+        };
+        let resp = services.read_cancellable(req, context.ct.clone()).await;
+        self.service_result(resp)
     }
 
     #[tool(
@@ -133,19 +249,27 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<ContextRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let resp = self
-            .services
-            .context_cancellable(req, context.ct.clone())
-            .await
-            .map_err(into_mcp_error)?;
-        self.result(resp)
+        let services = match self.services() {
+            Ok(services) => services,
+            Err(result) => return Ok(result),
+        };
+        let resp = services.context_cancellable(req, context.ct.clone()).await;
+        self.service_result(resp)
     }
 }
 
 #[tool_handler(
     instructions = "Retrieve progressively: files for paths, outline or search for candidates, then read exact symbols or ranges. Use context only when scope remains uncertain. Reuse hashes to suppress unchanged evidence. Use native tools for edits, commands, and tests."
 )]
-impl ServerHandler for LeanTokenMcp {}
+impl ServerHandler for LeanTokenMcp {
+    fn on_initialized(
+        &self,
+        _context: NotificationContext<RoleServer>,
+    ) -> impl Future<Output = ()> + Send + '_ {
+        self.services.mark_protocol_initialized();
+        std::future::ready(())
+    }
+}
 
 /// Serialize a successful tool value using an explicit wire representation.
 pub fn tool_result<T: Serialize>(
@@ -183,11 +307,21 @@ fn into_mcp_error(error: crate::Error) -> ErrorData {
         | crate::Error::StaleCursor
         | crate::Error::Regex(_)
         | crate::Error::Glob(_) => ErrorData::invalid_params(error.to_string(), None),
+        crate::Error::IndexNotReady => {
+            ErrorData::internal_error("repository index is not ready", None)
+        }
+        crate::Error::RetryableConflict(_) => {
+            ErrorData::internal_error("repository operation should be retried", None)
+        }
         _ => {
             tracing::error!(%error, "MCP tool failed");
             ErrorData::internal_error("repository retrieval failed", None)
         }
     }
+}
+
+fn tool_unavailable(message: &'static str) -> CallToolResult {
+    CallToolResult::error(vec![ContentBlock::text(message)])
 }
 
 /// Return the JSON-serialized tool catalog for token-cost measurements.
@@ -199,6 +333,11 @@ pub fn tool_catalog_json() -> String {
 /// Run the MCP server over stdio until the transport closes or SIGINT is received.
 pub async fn serve_stdio(services: Arc<Services>, result_mode: McpResultMode) -> crate::Result<()> {
     let server = LeanTokenMcp::new(services).with_result_mode(result_mode);
+    serve_stdio_server(server).await
+}
+
+/// Run a prepared MCP server over stdio.
+pub async fn serve_stdio_server(server: LeanTokenMcp) -> crate::Result<()> {
     let token = CancellationToken::new();
 
     let signal_task = tokio::spawn({
@@ -280,6 +419,23 @@ mod tests {
         assert!(text.structured_content.is_none());
         assert!(structured.content.is_empty());
         assert!(structured.structured_content.is_some());
+    }
+
+    #[test]
+    fn retryable_conflicts_are_tool_errors_instead_of_invalid_parameters() {
+        let (server, _state) = LeanTokenMcp::pending();
+        let result = server
+            .service_result::<()>(Err(crate::Error::RetryableConflict(
+                crate::error::RetryableOperation::Retrieval,
+            )))
+            .expect("tool result");
+
+        assert_eq!(result.is_error, Some(true));
+        assert!(
+            result.content[0]
+                .as_text()
+                .is_some_and(|text| text.text.contains("retry"))
+        );
     }
 
     #[test]

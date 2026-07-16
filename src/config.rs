@@ -45,8 +45,9 @@ impl Config {
     ///
     /// When `database_path` is absent, LeanToken chooses a per-repository cache
     /// path outside the source tree when the platform provides one. An existing
-    /// explicit database parent is canonicalized so repository discovery can
-    /// reliably exclude SQLite artifacts reached through path aliases.
+    /// explicit database, or otherwise its existing parent, is canonicalized so
+    /// coordination and repository discovery use one cache identity across path
+    /// aliases.
     pub fn discover(root: impl AsRef<Path>, database_path: Option<PathBuf>) -> Result<Self> {
         let root = root.as_ref().canonicalize().map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -62,9 +63,8 @@ impl Config {
             )));
         }
         let database_is_managed_cache = database_path.is_none();
-        let database_path = database_path
-            .map(canonicalize_database_parent)
-            .unwrap_or_else(|| default_database_path(&root));
+        let database_path = database_path.unwrap_or_else(|| default_database_path(&root));
+        let database_path = canonicalize_database_path(database_path);
         Ok(Self {
             root,
             database_path,
@@ -85,8 +85,8 @@ impl Config {
         })
     }
 
-    /// Return whether a repository-relative path names the SQLite database or
-    /// one of its WAL/SHM sidecars.
+    /// Return whether a repository-relative path names the SQLite database,
+    /// one of its sidecars, or a coordination lock.
     #[must_use]
     pub fn is_database_artifact(&self, relative_path: &str) -> bool {
         self.is_database_artifact_path(&self.root.join(relative_path))
@@ -97,21 +97,40 @@ impl Config {
         if candidate == self.database_path {
             return true;
         }
-        ["-wal", "-shm"].into_iter().any(|suffix| {
-            let mut sidecar = self.database_path.as_os_str().to_os_string();
-            sidecar.push(suffix);
-            candidate.as_os_str() == sidecar
-        })
+        ["-wal", "-shm", ".leader.lock", ".index.lock", ".init.lock"]
+            .into_iter()
+            .any(|suffix| {
+                let mut sidecar = self.database_path.as_os_str().to_os_string();
+                sidecar.push(suffix);
+                candidate.as_os_str() == sidecar
+            })
     }
 }
 
-fn canonicalize_database_parent(path: PathBuf) -> PathBuf {
-    let Some(file_name) = path.file_name() else {
-        return path;
-    };
-    path.parent()
-        .and_then(|parent| parent.canonicalize().ok())
-        .map_or(path.clone(), |parent| parent.join(file_name))
+fn canonicalize_database_path(path: PathBuf) -> PathBuf {
+    let path = std::path::absolute(&path).unwrap_or(path);
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical;
+    }
+
+    let mut ancestor = path.as_path();
+    let mut missing = Vec::new();
+    loop {
+        if let Ok(canonical) = ancestor.canonicalize() {
+            return missing
+                .iter()
+                .rev()
+                .fold(canonical, |resolved, component| resolved.join(component));
+        }
+        let Some(component) = ancestor.file_name() else {
+            return path;
+        };
+        missing.push(component.to_os_string());
+        let Some(parent) = ancestor.parent() else {
+            return path;
+        };
+        ancestor = parent;
+    }
 }
 
 fn default_database_path(root: &Path) -> PathBuf {

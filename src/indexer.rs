@@ -4,10 +4,14 @@ use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
 use rayon::prelude::*;
+use tokio_util::sync::CancellationToken;
 
+use crate::error::RetryableOperation;
 use crate::model::IndexResponse;
 use crate::parser::{self, ParseOutput};
-use crate::repository::{DiscoveredFile, discover_files, slash_path, validate_relative};
+use crate::repository::{
+    DiscoveredFile, discover_files_cancellable, slash_path, validate_relative,
+};
 use crate::storage::{ChunkInput, ImportInput, IndexedFile, ReferenceInput, Storage, SymbolInput};
 use crate::text::{PreparedText, TextKind, hash_bytes};
 use crate::{Config, Error, Result};
@@ -26,47 +30,78 @@ impl Indexer {
 
     /// Reconcile filesystem state into one committed repository generation.
     pub fn reconcile(&self, rebuild: bool) -> Result<IndexResponse> {
+        self.reconcile_cancellable(rebuild, &CancellationToken::new())
+    }
+
+    /// Reconcile the repository with cooperative cancellation and stale-plan retry.
+    pub fn reconcile_cancellable(
+        &self,
+        rebuild: bool,
+        cancellation: &CancellationToken,
+    ) -> Result<IndexResponse> {
+        for _ in 0..3 {
+            match self.reconcile_once(rebuild, cancellation) {
+                Err(Error::StaleReconciliation { .. }) => continue,
+                result => return result,
+            }
+        }
+        Err(Error::RetryableConflict(RetryableOperation::Reconciliation))
+    }
+
+    fn reconcile_once(
+        &self,
+        rebuild: bool,
+        cancellation: &CancellationToken,
+    ) -> Result<IndexResponse> {
         self.validate_config()?;
+        check_cancelled(cancellation)?;
+        let baseline = self.storage.meta()?;
 
-        let mut discovered = discover_files(&self.config.root, self.config.max_file_bytes)?;
+        let mut discovered = discover_files_cancellable(
+            &self.config.root,
+            self.config.max_file_bytes,
+            cancellation,
+        )?;
         discovered.retain(|file| !self.config.is_database_artifact_path(&file.absolute_path));
-        let existing = self.existing_files()?;
+        check_cancelled(cancellation)?;
+        let existing = self.existing_files(cancellation)?;
         let config_hash = self.config_hash();
-        let meta = self.storage.meta()?;
-        let force = rebuild || meta.config_hash != config_hash;
+        let force = rebuild || baseline.config_hash != config_hash;
 
-        let repository_paths = discovered
-            .iter()
-            .map(|file| file.relative_path.clone())
-            .collect::<HashSet<_>>();
-        let mut deletions = existing
-            .keys()
-            .filter(|path| !repository_paths.contains(*path))
-            .cloned()
-            .collect::<Vec<_>>();
+        let mut repository_paths = HashSet::with_capacity(discovered.len());
+        for file in &discovered {
+            check_cancelled(cancellation)?;
+            repository_paths.insert(file.relative_path.clone());
+        }
+        let mut deletions = Vec::new();
+        for path in existing.keys() {
+            check_cancelled(cancellation)?;
+            if !repository_paths.contains(path) {
+                deletions.push(path.clone());
+            }
+        }
 
         let mut unchanged = 0usize;
-        let candidates = discovered
-            .into_iter()
-            .filter(|file| {
-                let same = existing.get(&file.relative_path).is_some_and(|record| {
-                    record.size_bytes == file.size_bytes && record.modified_ns == file.modified_ns
-                });
-                if !force && same {
-                    unchanged += 1;
-                    false
-                } else {
-                    true
-                }
-            })
-            .collect::<Vec<_>>();
+        let mut candidates = Vec::new();
+        for file in discovered {
+            check_cancelled(cancellation)?;
+            let same = existing.get(&file.relative_path).is_some_and(|record| {
+                record.size_bytes == file.size_bytes && record.modified_ns == file.modified_ns
+            });
+            if !force && same {
+                unchanged += 1;
+            } else {
+                candidates.push(file);
+            }
+        }
 
-        let prepared = self.prepare_candidates(&candidates)?;
+        let prepared = self.prepare_candidates(&candidates, cancellation)?;
 
         let mut replacements = Vec::new();
         let mut warnings = Vec::new();
         let mut skipped = 0usize;
         for result in prepared {
+            check_cancelled(cancellation)?;
             match result {
                 PreparedFile::Indexed(file, warning) => {
                     replacements.push(file);
@@ -86,18 +121,21 @@ impl Indexer {
                 }
             }
         }
-        resolve_imports(&mut replacements, &repository_paths);
+        resolve_imports(&mut replacements, &repository_paths, cancellation)?;
 
+        check_cancelled(cancellation)?;
         deletions.sort_unstable();
         deletions.dedup();
+        check_cancelled(cancellation)?;
         let files_seen = unchanged + candidates.len();
         let files_indexed = replacements.len();
         let files_removed = deletions.len();
         let generation = if rebuild {
-            self.storage.full_reconcile(&config_hash, replacements)?
+            self.storage
+                .full_reconcile_at(&baseline, &config_hash, replacements)?
         } else {
             self.storage
-                .reconcile_files(&config_hash, replacements, &deletions)?
+                .reconcile_files_at(&baseline, &config_hash, replacements, &deletions)?
         };
 
         Ok(IndexResponse {
@@ -118,26 +156,62 @@ impl Indexer {
     /// full reconciliation because they can affect files beyond the reported
     /// path.
     pub fn reconcile_paths(&self, paths: &[String]) -> Result<IndexResponse> {
+        self.reconcile_paths_cancellable(paths, &CancellationToken::new())
+    }
+
+    /// Reconcile watcher paths with cooperative cancellation and stale-plan retry.
+    pub fn reconcile_paths_cancellable(
+        &self,
+        paths: &[String],
+        cancellation: &CancellationToken,
+    ) -> Result<IndexResponse> {
+        for _ in 0..3 {
+            match self.reconcile_paths_once(paths, cancellation) {
+                Err(Error::StaleReconciliation { .. }) => continue,
+                result => return result,
+            }
+        }
+        Err(Error::RetryableConflict(RetryableOperation::Reconciliation))
+    }
+
+    fn reconcile_paths_once(
+        &self,
+        paths: &[String],
+        cancellation: &CancellationToken,
+    ) -> Result<IndexResponse> {
         self.validate_config()?;
+        check_cancelled(cancellation)?;
+        let baseline = self.storage.meta()?;
         let config_hash = self.config_hash();
-        if self.storage.meta()?.config_hash != config_hash {
-            return self.reconcile(true);
+        if baseline.config_hash != config_hash {
+            return self.reconcile_cancellable(true, cancellation);
         }
 
-        let existing = self.existing_files()?;
-        let mut repository_paths = existing.keys().cloned().collect::<HashSet<_>>();
-        let mut unique = paths.iter().cloned().collect::<HashSet<_>>();
+        let existing = self.existing_files(cancellation)?;
+        let mut repository_paths = HashSet::with_capacity(existing.len());
+        for path in existing.keys() {
+            check_cancelled(cancellation)?;
+            repository_paths.insert(path.clone());
+        }
+        let mut unique = HashSet::with_capacity(paths.len());
+        for path in paths {
+            check_cancelled(cancellation)?;
+            unique.insert(path.clone());
+        }
         let mut paths = unique.drain().collect::<Vec<_>>();
+        check_cancelled(cancellation)?;
         paths.sort_unstable();
+        check_cancelled(cancellation)?;
 
         let mut candidates = Vec::new();
         let mut deletions = Vec::new();
         let mut unchanged = 0usize;
         for requested in &paths {
+            check_cancelled(cancellation)?;
             let relative = validate_relative(requested)?;
             let relative_path = slash_path(&relative);
             if is_ignore_control_path(&relative_path) {
-                return self.reconcile(true);
+                return self.reconcile_cancellable(true, cancellation);
             }
             let absolute_path = self.config.root.join(&relative);
             if self.config.is_database_artifact_path(&absolute_path) {
@@ -154,7 +228,7 @@ impl Indexer {
                         .keys()
                         .any(|path| path.starts_with(&format!("{relative_path}/")))
                     {
-                        return self.reconcile(false);
+                        return self.reconcile_cancellable(false, cancellation);
                     }
                     continue;
                 }
@@ -162,7 +236,7 @@ impl Indexer {
             };
 
             if indexed.is_none() || !metadata.file_type().is_file() {
-                return self.reconcile(true);
+                return self.reconcile_cancellable(true, cancellation);
             }
             if metadata.len() > self.config.max_file_bytes {
                 deletions.push(relative_path);
@@ -182,11 +256,12 @@ impl Indexer {
             });
         }
 
-        let prepared = self.prepare_candidates(&candidates)?;
+        let prepared = self.prepare_candidates(&candidates, cancellation)?;
         let mut replacements = Vec::new();
         let mut warnings = Vec::new();
         let mut skipped = 0usize;
         for result in prepared {
+            check_cancelled(cancellation)?;
             match result {
                 PreparedFile::Indexed(file, warning) => {
                     let same = existing.get(&file.path).is_some_and(|record| {
@@ -213,17 +288,20 @@ impl Indexer {
                 }
             }
         }
+        check_cancelled(cancellation)?;
         deletions.sort_unstable();
         deletions.dedup();
+        check_cancelled(cancellation)?;
         for deletion in &deletions {
+            check_cancelled(cancellation)?;
             repository_paths.remove(deletion);
         }
-        resolve_imports(&mut replacements, &repository_paths);
+        resolve_imports(&mut replacements, &repository_paths, cancellation)?;
         let files_indexed = replacements.len();
         let files_removed = deletions.len();
-        let generation = self
-            .storage
-            .reconcile_files(&config_hash, replacements, &deletions)?;
+        let generation =
+            self.storage
+                .reconcile_files_at(&baseline, &config_hash, replacements, &deletions)?;
 
         Ok(IndexResponse {
             repository_generation: generation,
@@ -245,7 +323,11 @@ impl Indexer {
         Ok(())
     }
 
-    fn prepare_candidates(&self, candidates: &[DiscoveredFile]) -> Result<Vec<PreparedFile>> {
+    fn prepare_candidates(
+        &self,
+        candidates: &[DiscoveredFile],
+        cancellation: &CancellationToken,
+    ) -> Result<Vec<PreparedFile>> {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.config.max_index_workers.max(1))
             .build()
@@ -253,24 +335,34 @@ impl Indexer {
         let chunk_lines = self.config.chunk_lines;
         let chunk_bytes = self.config.chunk_bytes;
         let tokenizer = self.config.tokenizer;
-        Ok(pool.install(|| {
+        pool.install(|| {
             candidates
                 .par_iter()
-                .map(|file| prepare_file(file, chunk_lines, chunk_bytes, tokenizer))
+                .map(|file| {
+                    check_cancelled(cancellation)?;
+                    let prepared = prepare_file(file, chunk_lines, chunk_bytes, tokenizer);
+                    check_cancelled(cancellation)?;
+                    Ok(prepared)
+                })
                 .collect()
-        }))
+        })
     }
 
-    fn existing_files(&self) -> Result<HashMap<String, crate::storage::FileRecord>> {
+    fn existing_files(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<HashMap<String, crate::storage::FileRecord>> {
         let mut result = HashMap::new();
         let mut cursor = None;
         loop {
+            check_cancelled(cancellation)?;
             let page = self.storage.list_files(1_000, cursor)?;
             if page.is_empty() {
                 break;
             }
             cursor = page.last().map(|file| file.id);
             for file in page {
+                check_cancelled(cancellation)?;
                 result.insert(file.path.clone(), file);
             }
         }
@@ -287,6 +379,14 @@ impl Indexer {
             self.config.tokenizer.name()
         );
         blake3::hash(input.as_bytes()).to_hex().to_string()
+    }
+}
+
+fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
+    if cancellation.is_cancelled() {
+        Err(Error::Cancelled)
+    } else {
+        Ok(())
     }
 }
 
@@ -411,12 +511,19 @@ fn is_ignore_control_path(path: &str) -> bool {
         || path.ends_with("/.ignore")
 }
 
-fn resolve_imports(files: &mut [IndexedFile], repository_paths: &HashSet<String>) {
+fn resolve_imports(
+    files: &mut [IndexedFile],
+    repository_paths: &HashSet<String>,
+    cancellation: &CancellationToken,
+) -> Result<()> {
     for file in files {
+        check_cancelled(cancellation)?;
         for import in &mut file.imports {
+            check_cancelled(cancellation)?;
             import.resolved_path = resolve_import(&file.path, &import.raw_target, repository_paths);
         }
     }
+    Ok(())
 }
 
 fn resolve_import(
@@ -529,5 +636,35 @@ mod tests {
             Some("src/pkg/index.ts")
         );
         assert!(resolve_import("src/app.ts", "external-package", &paths).is_none());
+    }
+
+    #[test]
+    fn import_resolution_honors_cancellation() {
+        let mut files = vec![IndexedFile {
+            path: "src/app.ts".into(),
+            language: Some("typescript".into()),
+            structurally_complete: true,
+            size_bytes: 1,
+            modified_ns: None,
+            content_hash: "hash".into(),
+            chunks: Vec::new(),
+            symbols: Vec::new(),
+            references: Vec::new(),
+            imports: vec![ImportInput {
+                raw_target: "./lib".into(),
+                resolved_path: None,
+                line: 1,
+            }],
+        }];
+        let paths = ["src/app.ts".to_string(), "src/lib.ts".to_string()]
+            .into_iter()
+            .collect();
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        assert!(matches!(
+            resolve_imports(&mut files, &paths, &cancellation),
+            Err(Error::Cancelled)
+        ));
     }
 }

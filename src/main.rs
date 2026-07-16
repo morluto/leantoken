@@ -2,7 +2,7 @@ use std::{io::Write, sync::Arc};
 
 use clap::Parser;
 use leantoken::{
-    Result,
+    Config, Result,
     cli::{AppRequest, Cli},
     mcp,
     services::Services,
@@ -46,6 +46,11 @@ async fn run() -> Result<()> {
 
     let config = cli.config()?;
     let request = cli.app_request();
+
+    if let AppRequest::Mcp { result_mode } = request {
+        return run_mcp(config, result_mode).await;
+    }
+
     let services = Arc::new(Services::open(config)?);
 
     match request {
@@ -56,20 +61,112 @@ async fn run() -> Result<()> {
         AppRequest::Outline(request) => print(&services.outline(request).await?, json),
         AppRequest::Read(request) => print(&services.read(request).await?, json),
         AppRequest::Context(request) => print(&services.context(request).await?, json),
-        AppRequest::Mcp { result_mode } => run_mcp(services, result_mode).await,
+        AppRequest::Mcp { .. } => unreachable!("handled before service setup"),
         AppRequest::Setup(_) | AppRequest::Remove(_) => {
             unreachable!("handled before service setup")
         }
     }
 }
 
-async fn run_mcp(services: Arc<Services>, result_mode: mcp::McpResultMode) -> Result<()> {
-    let indexed = services.index(false).await?;
-    for warning in &indexed.warnings {
-        tracing::warn!(%warning, "index warning");
+async fn run_mcp(config: Config, result_mode: mcp::McpResultMode) -> Result<()> {
+    let (server, service_state) = mcp::LeanTokenMcp::pending();
+    let server = server.with_result_mode(result_mode);
+    let mut server_task = tokio::spawn(mcp::serve_stdio_server(server));
+
+    tokio::select! {
+        result = &mut server_task => return result?,
+        () = service_state.wait_initialized() => {}
     }
 
     let cancellation = CancellationToken::new();
+    let runtime_cancellation = cancellation.clone();
+    let runtime_state = service_state.clone();
+    let mut runtime_task =
+        tokio::spawn(
+            async move { run_mcp_runtime(config, runtime_state, runtime_cancellation).await },
+        );
+    let failure_state = service_state;
+
+    tokio::select! {
+        server = &mut server_task => {
+            cancellation.cancel();
+            let server = server?;
+            let runtime = runtime_task.await?;
+            server?;
+            match runtime {
+                Ok(()) | Err(leantoken::Error::Cancelled) => Ok(()),
+                Err(error) => Err(error),
+            }
+        }
+        runtime = &mut runtime_task => {
+            let error = match runtime {
+                Ok(Ok(())) => leantoken::Error::McpRuntimeStopped,
+                Ok(Err(error)) => error,
+                Err(error) => error.into(),
+            };
+            failure_state.set_failed();
+            tracing::error!(%error, "MCP indexing runtime failed");
+
+            match server_task.await {
+                Ok(Ok(())) => {}
+                Ok(Err(server_error)) => {
+                    tracing::warn!(%server_error, "MCP transport failed after indexing runtime stopped");
+                }
+                Err(join_error) => {
+                    tracing::warn!(%join_error, "MCP transport task failed after indexing runtime stopped");
+                }
+            }
+            Err(error)
+        }
+    }
+}
+
+async fn run_mcp_runtime(
+    config: Config,
+    service_state: mcp::McpServices,
+    cancellation: CancellationToken,
+) -> Result<()> {
+    let startup_cancellation = cancellation.clone();
+    let services = Arc::new(
+        tokio::task::spawn_blocking(move || {
+            Services::open_cancellable(config, &startup_cancellation)
+        })
+        .await??,
+    );
+    if cancellation.is_cancelled() {
+        return Err(leantoken::Error::Cancelled);
+    }
+    service_state.set_ready(Arc::clone(&services));
+
+    loop {
+        if cancellation.is_cancelled() {
+            return Ok(());
+        }
+        let services_for_leadership = Arc::clone(&services);
+        let leader = tokio::task::spawn_blocking(move || {
+            services_for_leadership.try_acquire_index_leadership()
+        })
+        .await??;
+
+        if let Some(leader) = leader {
+            let result = run_index_leader(Arc::clone(&services), cancellation.clone()).await;
+            drop(leader);
+            if cancellation.is_cancelled() {
+                return Ok(());
+            }
+            if let Err(error) = result {
+                tracing::error!(%error, "automatic indexing leadership failed");
+            }
+        }
+
+        tokio::select! {
+            _ = cancellation.cancelled() => return Ok(()),
+            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {}
+        }
+    }
+}
+
+async fn run_index_leader(services: Arc<Services>, cancellation: CancellationToken) -> Result<()> {
     let (watcher, mut changes) = RepositoryWatcher::start(
         &services.config().root,
         256,
@@ -78,65 +175,69 @@ async fn run_mcp(services: Arc<Services>, result_mode: mcp::McpResultMode) -> Re
     )
     .await?;
 
-    // Close the gap between the initial reconciliation and watcher startup.
-    // Changes during this pass are already observed by the watcher and cause
-    // another reconciliation through the task below.
-    let caught_up = match services.index(false).await {
+    // The watcher is registered before the scan. Events queued during the scan
+    // are applied afterward, closing the startup gap without a second walk.
+    let indexed = match services
+        .index_cancellable(false, cancellation.clone())
+        .await
+    {
         Ok(indexed) => indexed,
+        Err(leantoken::Error::Cancelled) if cancellation.is_cancelled() => {
+            return watcher.shutdown().await;
+        }
         Err(error) => {
-            cancellation.cancel();
             if let Err(shutdown_error) = watcher.shutdown().await {
                 tracing::warn!(%shutdown_error, "watcher shutdown failed after index error");
             }
             return Err(error);
         }
     };
-    for warning in &caught_up.warnings {
+    for warning in &indexed.warnings {
         tracing::warn!(%warning, "index warning");
     }
 
-    let reconcile_services = Arc::clone(&services);
-    let reconcile_cancellation = cancellation.clone();
-    let reconcile_task = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                _ = reconcile_cancellation.cancelled() => break,
-                message = changes.recv() => {
-                    let Some(message) = message else { break };
-                    let result = match message {
-                        WatcherMessage::Changed { paths } => {
-                            let paths = paths
-                                .into_iter()
-                                .filter(|path| !reconcile_services.config().is_database_artifact(path))
-                                .collect::<Vec<_>>();
-                            if paths.is_empty() {
-                                continue;
-                            }
-                            tracing::debug!(changed_paths = paths.len(), "repository change detected");
-                            reconcile_services.index_paths(paths).await
+    loop {
+        tokio::select! {
+            _ = cancellation.cancelled() => break,
+            message = changes.recv() => {
+                let Some(message) = message else { break };
+                let result = match message {
+                    WatcherMessage::Changed { paths } => {
+                        let paths = paths
+                            .into_iter()
+                            .filter(|path| !services.config().is_database_artifact(path))
+                            .collect::<Vec<_>>();
+                        if paths.is_empty() {
+                            continue;
                         }
-                        WatcherMessage::ReconcileRequired => {
-                            tracing::warn!("watcher requested full reconciliation");
-                            reconcile_services.index(false).await
+                        tracing::debug!(changed_paths = paths.len(), "repository change detected");
+                        services
+                            .index_paths_cancellable(paths, cancellation.clone())
+                            .await
+                    }
+                    WatcherMessage::ReconcileRequired => {
+                        tracing::warn!("watcher requested full reconciliation");
+                        services
+                            .index_cancellable(false, cancellation.clone())
+                            .await
+                    }
+                };
+                match result {
+                    Ok(indexed) => {
+                        for warning in &indexed.warnings {
+                            tracing::warn!(%warning, "index warning");
                         }
-                    };
-                    if let Err(error) = result {
+                    }
+                    Err(leantoken::Error::Cancelled) if cancellation.is_cancelled() => break,
+                    Err(error) => {
                         tracing::error!(%error, "background reconciliation failed");
                     }
                 }
             }
         }
-    });
+    }
 
-    let serve_result = mcp::serve_stdio(services, result_mode).await;
-    cancellation.cancel();
-    let watcher_result = watcher.shutdown().await;
-    let reconcile_result = reconcile_task.await;
-
-    serve_result?;
-    watcher_result?;
-    reconcile_result?;
-    Ok(())
+    watcher.shutdown().await
 }
 
 fn print<T: Serialize>(value: &T, compact: bool) -> Result<()> {

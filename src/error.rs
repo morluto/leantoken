@@ -1,5 +1,23 @@
 use std::path::PathBuf;
 
+/// Repository operation that may be retried after concurrent state changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryableOperation {
+    /// Preparing and publishing an index generation.
+    Reconciliation,
+    /// Reading one consistent committed generation.
+    Retrieval,
+}
+
+impl std::fmt::Display for RetryableOperation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Reconciliation => formatter.write_str("reconciliation"),
+            Self::Retrieval => formatter.write_str("retrieval"),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("repository root does not exist: {0}")]
@@ -18,6 +36,16 @@ pub enum Error {
     StaleCursor,
     #[error("request cancelled")]
     Cancelled,
+    #[error("repository index is not ready")]
+    IndexNotReady,
+    #[error(
+        "reconciliation plan is stale: expected generation {expected}, found generation {actual}"
+    )]
+    StaleReconciliation { expected: u64, actual: u64 },
+    #[error("repository {0} could not stabilize because the index changed repeatedly; retry")]
+    RetryableConflict(RetryableOperation),
+    #[error("MCP indexing runtime stopped unexpectedly")]
+    McpRuntimeStopped,
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("SQLite error: {0}")]

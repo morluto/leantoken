@@ -47,6 +47,53 @@ fn config_canonicalizes_database_parent_reached_through_symlink() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn config_canonicalizes_missing_database_descendants_below_symlink() {
+    let root = tempfile::tempdir().expect("root");
+    let aliases = tempfile::tempdir().expect("aliases");
+    let alias = aliases.path().join("repository");
+    std::os::unix::fs::symlink(root.path(), &alias).expect("symlink root");
+
+    let config = Config::discover(
+        root.path(),
+        Some(alias.join("missing/cache/index.sqlite")),
+    )
+    .expect("discover");
+
+    assert_eq!(
+        config.database_path,
+        root.path()
+            .canonicalize()
+            .expect("canonical root")
+            .join("missing/cache/index.sqlite")
+    );
+    assert!(config.is_database_artifact("missing/cache/index.sqlite"));
+    assert!(config.is_database_artifact("missing/cache/index.sqlite-wal"));
+    assert!(config.is_database_artifact("missing/cache/index.sqlite-shm"));
+    assert!(config.is_database_artifact("missing/cache/index.sqlite.leader.lock"));
+    assert!(config.is_database_artifact("missing/cache/index.sqlite.index.lock"));
+    assert!(config.is_database_artifact("missing/cache/index.sqlite.init.lock"));
+}
+
+#[cfg(unix)]
+#[test]
+fn config_canonicalizes_existing_database_symlink_for_shared_lock_identity() {
+    let root = tempfile::tempdir().expect("root");
+    let cache = tempfile::tempdir().expect("cache");
+    let database = cache.path().join("index.sqlite");
+    std::fs::write(&database, "placeholder").expect("database placeholder");
+    let alias = root.path().join("alias.sqlite");
+    std::os::unix::fs::symlink(&database, &alias).expect("database symlink");
+
+    let config = Config::discover(root.path(), Some(alias)).expect("discover");
+
+    assert_eq!(
+        config.database_path,
+        database.canonicalize().expect("canonical database")
+    );
+}
+
 #[test]
 fn config_rejects_missing_root() {
     let root = tempfile::tempdir().expect("tempdir");
@@ -89,5 +136,8 @@ fn config_identifies_database_and_wal_artifacts_inside_the_root() {
     assert!(config.is_database_artifact(".cache/index.sqlite"));
     assert!(config.is_database_artifact(".cache/index.sqlite-wal"));
     assert!(config.is_database_artifact(".cache/index.sqlite-shm"));
+    assert!(config.is_database_artifact(".cache/index.sqlite.leader.lock"));
+    assert!(config.is_database_artifact(".cache/index.sqlite.index.lock"));
+    assert!(config.is_database_artifact(".cache/index.sqlite.init.lock"));
     assert!(!config.is_database_artifact("src/index.sqlite"));
 }

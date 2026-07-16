@@ -19,6 +19,46 @@ async fn fixture() -> (tempfile::TempDir, Services) {
     (root, services)
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn index_excludes_database_below_missing_symlinked_parent() {
+    let root = tempfile::tempdir().expect("root");
+    let aliases = tempfile::tempdir().expect("aliases");
+    let alias = aliases.path().join("repository");
+    std::os::unix::fs::symlink(root.path(), &alias).expect("symlink root");
+    std::fs::write(root.path().join("lib.rs"), "fn source() {}\n").expect("source");
+
+    let config = Config::discover(
+        root.path(),
+        Some(alias.join("missing/cache/index.sqlite")),
+    )
+    .expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    let files = services
+        .files(FilesRequest {
+            operation: FileOperation::Tree,
+            path: None,
+            query: None,
+            pattern: None,
+            max_results: Some(100),
+            cursor: None,
+            depth: Some(8),
+        })
+        .await
+        .expect("files");
+    assert!(files.entries.iter().any(|entry| entry.path == "lib.rs"));
+    assert!(
+        files
+            .entries
+            .iter()
+            .all(|entry| !entry.path.starts_with("missing/cache/index.sqlite")),
+        "database artifacts leaked into the index: {:?}",
+        files.entries
+    );
+}
+
 #[tokio::test]
 async fn five_services_return_bounded_grounded_responses() {
     let (_root, services) = fixture().await;
@@ -493,6 +533,32 @@ fn explicit_corrupt_database_is_not_deleted() {
 
     Services::open(config).expect_err("explicit corruption must be reported");
     assert_eq!(std::fs::read(database).expect("preserved database"), original);
+}
+
+#[tokio::test]
+async fn empty_index_reports_status_but_retrieval_is_not_ready() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("lib.rs"), "fn pending() {}\n").expect("source");
+    let config = Config::discover(root.path(), Some(root.path().join("index.sqlite"))).unwrap();
+    let services = Services::open(config).unwrap();
+
+    let status = services.status().await.expect("status");
+    assert_eq!(status.repository_generation, 0);
+    assert_eq!(status.file_count, 0);
+
+    let error = services
+        .files(FilesRequest {
+            operation: FileOperation::Tree,
+            path: None,
+            query: None,
+            pattern: None,
+            max_results: Some(10),
+            cursor: None,
+            depth: Some(2),
+        })
+        .await
+        .expect_err("retrieval must not report an empty success");
+    assert!(matches!(error, leantoken::Error::IndexNotReady));
 }
 
 fn git_available() -> bool {
