@@ -93,7 +93,7 @@ struct Report {
     leantoken_version: &'static str,
     harness_revision: String,
     harness_worktree_dirty: bool,
-    candidate_runtime_tree_verified: bool,
+    candidate_runtime_tree_verified: Option<bool>,
     host_os: &'static str,
     host_arch: &'static str,
     rustc_version: String,
@@ -886,9 +886,9 @@ fn git_output(root: &Path, args: &[&str]) -> Result<String, Box<dyn Error>> {
 fn verify_candidate_runtime_tree(
     manifest: &Manifest,
     source_root: &Path,
-) -> Result<bool, Box<dyn Error>> {
+) -> Result<Option<bool>, Box<dyn Error>> {
     if manifest.dataset_kind != "blind_holdout" {
-        return Ok(false);
+        return Ok(None);
     }
     let candidate = manifest
         .candidate_revision
@@ -924,7 +924,7 @@ fn verify_candidate_runtime_tree(
         .current_dir(source_root)
         .output()?;
     match output.status.code() {
-        Some(0) => Ok(true),
+        Some(0) => Ok(Some(true)),
         Some(1) => {
             Err(format!("LeanToken runtime tree differs from frozen candidate {candidate}").into())
         }
@@ -1173,5 +1173,18 @@ mod tests {
         validate_manifest(&manifest).expect("valid sealed holdout");
         assert_eq!(manifest.schema_version, 3);
         assert_eq!(manifest.dataset_kind, "blind_holdout");
+    }
+
+    #[test]
+    fn candidate_runtime_verification_is_not_applicable_to_validation_sets() {
+        let manifest: Manifest =
+            serde_json::from_str(include_str!("../benchmarks/validation.json"))
+                .expect("validation manifest");
+
+        assert_eq!(
+            verify_candidate_runtime_tree(&manifest, Path::new(env!("CARGO_MANIFEST_DIR")))
+                .expect("verification decision"),
+            None
+        );
     }
 }
