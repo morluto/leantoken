@@ -659,6 +659,27 @@ fn select_with_options(
 
     let ranked = rank_with_tokenizer(eligible, weights, tokenizer);
     let deduped = deduplicate(ranked);
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        let candidate_diagnostics = deduped
+            .iter()
+            .take(32)
+            .map(|candidate| {
+                format!(
+                    "{}:{}-{} score={:.4} exact={:.2} concept={:.2} tokens={} roles={:?} provenance={:?}",
+                    candidate.candidate.path,
+                    candidate.candidate.start_line,
+                    candidate.candidate.end_line,
+                    candidate.score,
+                    candidate.candidate.exact,
+                    candidate.candidate.concept_weight,
+                    candidate.token_count,
+                    candidate.candidate.role_names().collect::<Vec<_>>(),
+                    candidate.candidate.provenance().collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        tracing::debug!(?candidate_diagnostics, "ranked context candidates");
+    }
 
     let budget = request.token_budget;
     let max_per_file = (budget / DIVERSITY_DIVISOR).clamp(1, 3);
