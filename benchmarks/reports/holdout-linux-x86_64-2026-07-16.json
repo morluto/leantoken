@@ -1,0 +1,1484 @@
+{
+  "schema_version": 3,
+  "dataset_kind": "blind_holdout",
+  "manifest_blake3": "a61d9672ca483dbebbbe75d5b947cbfdcbc56a41218b2f756771667b8912e263",
+  "frozen_at": "2026-07-16",
+  "candidate_revision": "0b6f80bb4e9d356443ebd130be1d04c0254111cb",
+  "evaluation_protocol": "Run representative_benchmark exactly once against the candidate runtime tree, these token budgets, and clean checkouts at every pinned base revision. Archive the unedited JSON report before inspecting any aggregate or task result. Do not change ranking, ranges, budgets, prompts, queries, or labels after inspection and compare against this run as if the set were still unseen.",
+  "reclassification_rule": "After any result is inspected, this set is consumed for the frozen candidate. If it informs tuning, copy it to prospective validation data and do not use it for another blind claim; collect new unseen tasks and freeze a new manifest hash for the next blind evaluation.",
+  "manifest_description": "Sealed retrieval holdout collected from issues that were open on 2026-07-16 and from source at exact HEAD revisions. Prompts use issue reports; labels and queries use only those reports and pinned source. No pull request, patch, fix commit, or proposed branch was inspected. The set was frozen before evaluating the candidate runtime revision.",
+  "leantoken_version": "0.1.1",
+  "harness_revision": "10a4b98a7d61652be85ad050d3a79443f25863e7",
+  "harness_worktree_dirty": false,
+  "candidate_runtime_tree_verified": true,
+  "host_os": "linux",
+  "host_arch": "x86_64",
+  "rustc_version": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+  "ripgrep_version": "ripgrep 15.1.0 (rev af60c2de9d)",
+  "generated_at_unix_seconds": 1784195891,
+  "tokenizer": "cl100k_base",
+  "token_count_exact": true,
+  "methodology": {
+    "oracle_baseline": "Full contents of fix-labeled relevant files, as if an agent chose every file perfectly and paid no discovery cost.",
+    "rg_discovery_baseline": "Bounded, path-sorted ripgrep --json output for fixed-string queries derived from each public bug task.",
+    "scripted_baseline": "One JSON envelope containing the ripgrep discovery output and oracle full-file reads.",
+    "source_tokens": "Tokens in source content only; excludes paths, scores, reasons, receipts, and JSON syntax.",
+    "serialized_tokens": "Tokens in the complete serialized JSON payload, including metadata and syntax."
+  },
+  "aggregate": {
+    "corpus_count": 9,
+    "task_count": 9,
+    "relevant_files": 25,
+    "relevant_files_found": 9,
+    "relevant_file_recall": 0.36,
+    "returned_files": 55,
+    "labeled_file_precision": 0.16363636363636364,
+    "line_anchors": 111,
+    "line_anchors_found": 10,
+    "line_anchor_recall": 0.09009009009009009,
+    "oracle_source_tokens": 475069,
+    "rg_discovery_tokens": 106894,
+    "scripted_baseline_total_json_tokens": 674075,
+    "leantoken_source_tokens": 4943,
+    "leantoken_total_json_tokens": 9682,
+    "source_savings_against_oracle_fraction": 0.9895951956452642,
+    "total_json_savings_against_scripted_fraction": 0.9856366131365204,
+    "known_fragments_resent": 0,
+    "dead_end_fragments": 55,
+    "dead_end_source_tokens": 2806,
+    "second_response_source_tokens": 6181,
+    "estimated_repeated_range_source_tokens": 62,
+    "repeat_request_json_tokens": 2038,
+    "repeat_total_json_tokens": 10819,
+    "two_turn_context_json_tokens": 22539
+  },
+  "corpora": [
+    {
+      "name": "serde-holdout",
+      "url": "https://github.com/serde-rs/serde.git",
+      "base_revision": "cfe669241065984177ff63af8b45058e6e9b499d",
+      "fix_commit": null,
+      "issue_url": "https://github.com/serde-rs/serde/issues/3083",
+      "prompt_provenance": "Issue title and body while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "Untagged-enum code generation, content replay, option handling, and the existing error assertions identified from the pinned source tree.",
+      "indexed_files": 347,
+      "indexed_chunks": 825,
+      "index_warnings": [],
+      "cold_index_ms": 2033.747784,
+      "database_bytes": 14238528,
+      "tasks": [
+        {
+          "id": "serde-untagged-variant-errors",
+          "prompt": "Improve the error produced when an #[serde(untagged)] enum fails to match every variant. Report enough per-variant failure information for users to understand why each variant was rejected, while preserving successful untagged deserialization. Add regression coverage for the improved error output.",
+          "languages": [
+            "rust"
+          ],
+          "task_shapes": [
+            "definition_discovery"
+          ],
+          "token_budget": 1200,
+          "relevant_files": [
+            "serde_derive/src/de/enum_untagged.rs",
+            "serde/src/private/de.rs",
+            "serde_core/src/de/impls.rs",
+            "test_suite/tests/test_enum_untagged.rs"
+          ],
+          "returned_files": [
+            "LICENSE-APACHE",
+            "serde/src/lib.rs",
+            "serde_core/src/de/ignored_any.rs",
+            "serde_core/src/de/mod.rs",
+            "serde_derive/src/internals/attr.rs",
+            "test_suite/tests/test_gen.rs"
+          ],
+          "returned_evidence": [
+            {
+              "path": "test_suite/tests/test_gen.rs",
+              "start_line": 1,
+              "end_line": 4,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5697,
+              "token_count": 38,
+              "content_hash": "e38fdd165ace2376b789d831d01f4f20"
+            },
+            {
+              "path": "serde_derive/src/internals/attr.rs",
+              "start_line": 975,
+              "end_line": 979,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.3347,
+              "token_count": 17,
+              "content_hash": "d227314c0d785117bc9f60706c9e534f"
+            },
+            {
+              "path": "serde_core/src/de/mod.rs",
+              "start_line": 620,
+              "end_line": 624,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.321,
+              "token_count": 36,
+              "content_hash": "408bc18ada7cea8c705fc891d80c1dc5"
+            },
+            {
+              "path": "serde_derive/src/internals/attr.rs",
+              "start_line": 725,
+              "end_line": 729,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.3347,
+              "token_count": 17,
+              "content_hash": "acd239b766d7913893cbfd876efa2ccf"
+            },
+            {
+              "path": "serde_core/src/de/ignored_any.rs",
+              "start_line": 8,
+              "end_line": 12,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.316,
+              "token_count": 44,
+              "content_hash": "f258110a4a2707020f0321d9492b4571"
+            },
+            {
+              "path": "serde_core/src/de/mod.rs",
+              "start_line": 1818,
+              "end_line": 1822,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.3125,
+              "token_count": 50,
+              "content_hash": "fdc97b8064844dd957a9761d45ef2c5b"
+            },
+            {
+              "path": "LICENSE-APACHE",
+              "start_line": 114,
+              "end_line": 118,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.3051,
+              "token_count": 64,
+              "content_hash": "104814e847fab73f27867401f525b9ce"
+            },
+            {
+              "path": "serde/src/lib.rs",
+              "start_line": 20,
+              "end_line": 24,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.3004,
+              "token_count": 74,
+              "content_hash": "78b621364fea9b1f6ef7f481c7bcd8d3"
+            }
+          ],
+          "relevant_files_found": 0,
+          "relevant_file_recall": 0.0,
+          "labeled_file_precision": 0.0,
+          "line_anchors": 13,
+          "line_anchors_found": 0,
+          "line_anchor_recall": 0.0,
+          "unlabeled_returned_files": [
+            "LICENSE-APACHE",
+            "serde/src/lib.rs",
+            "serde_core/src/de/ignored_any.rs",
+            "serde_core/src/de/mod.rs",
+            "serde_derive/src/internals/attr.rs",
+            "test_suite/tests/test_gen.rs"
+          ],
+          "oracle_source_tokens": 53541,
+          "oracle_minimal_read_json_tokens": 62240,
+          "rg_discovery_tokens": 4344,
+          "rg_discovery_json_tokens": 4922,
+          "scripted_baseline_total_json_tokens": 67165,
+          "leantoken_source_tokens": 340,
+          "leantoken_total_json_tokens": 828,
+          "source_savings_against_oracle_fraction": 0.993649726377916,
+          "total_json_savings_against_scripted_fraction": 0.9876721506737139,
+          "first_context_ms": 78.328036,
+          "warm_context_ms_samples": [
+            60.071074,
+            64.651731,
+            62.700573999999996
+          ],
+          "warm_context_median_ms": 62.700573999999996,
+          "warm_context_p95_ms": 64.651731,
+          "second_response_source_tokens": 1192,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 232,
+          "repeat_total_json_tokens": 1582,
+          "two_turn_context_json_tokens": 2642,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 8,
+          "dead_end_source_tokens": 340
+        }
+      ]
+    },
+    {
+      "name": "requests-holdout",
+      "url": "https://github.com/psf/requests.git",
+      "base_revision": "f361ead047be5cb873174218582f7d8b9fcd9f49",
+      "fix_commit": null,
+      "issue_url": "https://github.com/psf/requests/issues/6102",
+      "prompt_provenance": "Issue title, body, and reproduction while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "Digest header construction, Basic-auth normalization contrast, and existing Digest tests identified from the pinned source tree.",
+      "indexed_files": 122,
+      "indexed_chunks": 351,
+      "index_warnings": [],
+      "cold_index_ms": 1400.923671,
+      "database_bytes": 14337120,
+      "tasks": [
+        {
+          "id": "requests-digest-non-ascii-credentials",
+          "prompt": "Fix HTTPDigestAuth so credentials containing non-ASCII characters produce a valid Digest authorization header instead of embedding a Python bytes representation in the username. Preserve existing ASCII and Basic authentication behavior, and add a regression test with non-ASCII credentials.",
+          "languages": [
+            "python"
+          ],
+          "task_shapes": [
+            "cross_file_behavior"
+          ],
+          "token_budget": 1200,
+          "relevant_files": [
+            "src/requests/auth.py",
+            "tests/test_lowlevel.py"
+          ],
+          "returned_files": [
+            "src/requests/adapters.py",
+            "src/requests/auth.py",
+            "tests/test_requests.py",
+            "tests/test_utils.py"
+          ],
+          "returned_evidence": [
+            {
+              "path": "tests/test_utils.py",
+              "start_line": 821,
+              "end_line": 822,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.7331,
+              "token_count": 19,
+              "content_hash": "4b12509d57395407215a51b6bf4ae6f2"
+            },
+            {
+              "path": "tests/test_utils.py",
+              "start_line": 377,
+              "end_line": 379,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.1801,
+              "token_count": 23,
+              "content_hash": "9962b4495e94cb315a8c7494ed53afd1"
+            },
+            {
+              "path": "src/requests/auth.py",
+              "start_line": 124,
+              "end_line": 251,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.8181,
+              "token_count": 1096,
+              "content_hash": "003f4d246d4fa2361c43f2cff3a99533"
+            },
+            {
+              "path": "tests/test_requests.py",
+              "start_line": 1854,
+              "end_line": 1859,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5598,
+              "token_count": 55,
+              "content_hash": "aa20802c44f57954365e64a96f8a0c6b"
+            },
+            {
+              "path": "src/requests/adapters.py",
+              "start_line": 82,
+              "end_line": 82,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.4192,
+              "token_count": 6,
+              "content_hash": "9b75ea48a4b870091ef3bccb12266b1d"
+            }
+          ],
+          "relevant_files_found": 1,
+          "relevant_file_recall": 0.5,
+          "labeled_file_precision": 0.25,
+          "line_anchors": 10,
+          "line_anchors_found": 3,
+          "line_anchor_recall": 0.3,
+          "unlabeled_returned_files": [
+            "src/requests/adapters.py",
+            "tests/test_requests.py",
+            "tests/test_utils.py"
+          ],
+          "oracle_source_tokens": 6578,
+          "oracle_minimal_read_json_tokens": 7615,
+          "rg_discovery_tokens": 5252,
+          "rg_discovery_json_tokens": 6011,
+          "scripted_baseline_total_json_tokens": 13629,
+          "leantoken_source_tokens": 1199,
+          "leantoken_total_json_tokens": 1689,
+          "source_savings_against_oracle_fraction": 0.8177257525083612,
+          "total_json_savings_against_scripted_fraction": 0.8760730794629099,
+          "first_context_ms": 189.643535,
+          "warm_context_ms_samples": [
+            146.906801,
+            181.695099,
+            146.250347
+          ],
+          "warm_context_median_ms": 146.906801,
+          "warm_context_p95_ms": 181.695099,
+          "second_response_source_tokens": 877,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 177,
+          "repeat_total_json_tokens": 1439,
+          "two_turn_context_json_tokens": 3305,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 4,
+          "dead_end_source_tokens": 103
+        }
+      ]
+    },
+    {
+      "name": "flask-holdout",
+      "url": "https://github.com/pallets/flask.git",
+      "base_revision": "36e4a824f340fdee7ed50937ba8e7f6bc7d17f81",
+      "fix_commit": null,
+      "issue_url": "https://github.com/pallets/flask/issues/6071",
+      "prompt_provenance": "Issue title, body, and reproduction while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "Every private pytest sentinel import and use plus its owning fixtures and tests identified from the pinned source tree.",
+      "indexed_files": 231,
+      "indexed_chunks": 594,
+      "index_warnings": [],
+      "cold_index_ms": 1600.290301,
+      "database_bytes": 15298392,
+      "tasks": [
+        {
+          "id": "flask-pytest-notset-removal",
+          "prompt": "Fix Flask's test suite for pytest 9.1+, where removal of the private _pytest.monkeypatch.notset sentinel causes collection and fixture failures. Replace the private sentinel dependency with a compatible approach without weakening the environment-reset assertions.",
+          "languages": [
+            "python"
+          ],
+          "task_shapes": [
+            "regression_test_discovery"
+          ],
+          "token_budget": 1200,
+          "relevant_files": [
+            "tests/conftest.py",
+            "tests/test_cli.py"
+          ],
+          "returned_files": [
+            "docs/_static/flask-icon.svg",
+            "docs/extensiondev.rst",
+            "docs/tutorial/tests.rst",
+            "examples/javascript/tests/conftest.py",
+            "examples/javascript/tests/test_js_example.py",
+            "pyproject.toml",
+            "tests/test_appctx.py",
+            "tests/test_reqctx.py"
+          ],
+          "returned_evidence": [
+            {
+              "path": "examples/javascript/tests/conftest.py",
+              "start_line": 1,
+              "end_line": 3,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.7415,
+              "token_count": 9,
+              "content_hash": "17e69297b28ca8714b8cfde022164192"
+            },
+            {
+              "path": "docs/_static/flask-icon.svg",
+              "start_line": 9,
+              "end_line": 13,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.4253,
+              "token_count": 739,
+              "content_hash": "b662d21eb0fd8e59372cf3b0b3cc7a03"
+            },
+            {
+              "path": "docs/tutorial/tests.rst",
+              "start_line": 31,
+              "end_line": 35,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.6743,
+              "token_count": 31,
+              "content_hash": "61e253b18ae180595268157de1cae55b"
+            },
+            {
+              "path": "tests/test_reqctx.py",
+              "start_line": 1,
+              "end_line": 5,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5801,
+              "token_count": 23,
+              "content_hash": "41b8899169f693a08eb5e7a849383b8f"
+            },
+            {
+              "path": "pyproject.toml",
+              "start_line": 34,
+              "end_line": 38,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.3331,
+              "token_count": 19,
+              "content_hash": "086d4626bcca361e888ecf68afcfc5c9"
+            },
+            {
+              "path": "docs/extensiondev.rst",
+              "start_line": 258,
+              "end_line": 262,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.3125,
+              "token_count": 50,
+              "content_hash": "3a839907408ee5891f186227c9e72526"
+            },
+            {
+              "path": "tests/test_appctx.py",
+              "start_line": 1,
+              "end_line": 5,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.7415,
+              "token_count": 9,
+              "content_hash": "0c5c48d628eee22d22c133f38b818290"
+            },
+            {
+              "path": "examples/javascript/tests/test_js_example.py",
+              "start_line": 1,
+              "end_line": 3,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.7406,
+              "token_count": 10,
+              "content_hash": "954b218bbce7091b3c02024b4da5a56e"
+            }
+          ],
+          "relevant_files_found": 0,
+          "relevant_file_recall": 0.0,
+          "labeled_file_precision": 0.0,
+          "line_anchors": 9,
+          "line_anchors_found": 0,
+          "line_anchor_recall": 0.0,
+          "unlabeled_returned_files": [
+            "docs/_static/flask-icon.svg",
+            "docs/extensiondev.rst",
+            "docs/tutorial/tests.rst",
+            "examples/javascript/tests/conftest.py",
+            "examples/javascript/tests/test_js_example.py",
+            "pyproject.toml",
+            "tests/test_appctx.py",
+            "tests/test_reqctx.py"
+          ],
+          "oracle_source_tokens": 5704,
+          "oracle_minimal_read_json_tokens": 6724,
+          "rg_discovery_tokens": 9158,
+          "rg_discovery_json_tokens": 10631,
+          "scripted_baseline_total_json_tokens": 17358,
+          "leantoken_source_tokens": 890,
+          "leantoken_total_json_tokens": 1364,
+          "source_savings_against_oracle_fraction": 0.843969144460028,
+          "total_json_savings_against_scripted_fraction": 0.9214195183776933,
+          "first_context_ms": 168.193862,
+          "warm_context_ms_samples": [
+            158.016769,
+            159.00108600000002,
+            132.835974
+          ],
+          "warm_context_median_ms": 158.016769,
+          "warm_context_p95_ms": 159.00108600000002,
+          "second_response_source_tokens": 918,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 226,
+          "repeat_total_json_tokens": 1410,
+          "two_turn_context_json_tokens": 3000,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 8,
+          "dead_end_source_tokens": 890
+        }
+      ]
+    },
+    {
+      "name": "express-holdout",
+      "url": "https://github.com/expressjs/express.git",
+      "base_revision": "ae6dd37680e3a00618d6c8a3e522f0ee4eeba1a4",
+      "fix_commit": null,
+      "issue_url": "https://github.com/expressjs/express/issues/7362",
+      "prompt_provenance": "Issue title, body, reproduction, and cause analysis while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "Response type dispatch and the adjacent Buffer and typed-array tests identified from the pinned source tree.",
+      "indexed_files": 213,
+      "indexed_chunks": 471,
+      "index_warnings": [],
+      "cold_index_ms": 2337.795572,
+      "database_bytes": 8766672,
+      "tasks": [
+        {
+          "id": "express-send-array-buffer",
+          "prompt": "Fix res.send so a raw ArrayBuffer is sent as binary application/octet-stream data rather than serialized as an empty JSON object. Preserve Buffer and typed-array behavior, and add a regression test for a raw ArrayBuffer.",
+          "languages": [
+            "javascript"
+          ],
+          "task_shapes": [
+            "framework_behavior"
+          ],
+          "token_budget": 1200,
+          "relevant_files": [
+            "lib/response.js",
+            "test/res.send.js"
+          ],
+          "returned_files": [
+            "lib/response.js",
+            "test/res.send.js",
+            "test/res.sendFile.js",
+            "test/res.sendStatus.js",
+            "test/res.type.js"
+          ],
+          "returned_evidence": [
+            {
+              "path": "lib/response.js",
+              "start_line": 126,
+              "end_line": 220,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 3.5802,
+              "token_count": 595,
+              "content_hash": "a097ee8748e35290f87322d5206f2b40"
+            },
+            {
+              "path": "lib/response.js",
+              "start_line": 529,
+              "end_line": 533,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.7668,
+              "token_count": 24,
+              "content_hash": "05fc9367b9287b510142a12e6d054f05"
+            },
+            {
+              "path": "test/res.type.js",
+              "start_line": 81,
+              "end_line": 84,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.8301,
+              "token_count": 23,
+              "content_hash": "153cbc973f9e77dbef0ea0f05ade3ff3"
+            },
+            {
+              "path": "test/res.send.js",
+              "start_line": 16,
+              "end_line": 20,
+              "representation": "source",
+              "reason": "text",
+              "score": 2.5364,
+              "token_count": 15,
+              "content_hash": "f7ac6105a067aebcca11cb2a0db768f7"
+            },
+            {
+              "path": "test/res.sendStatus.js",
+              "start_line": 10,
+              "end_line": 14,
+              "representation": "source",
+              "reason": "text",
+              "score": 2.5347,
+              "token_count": 17,
+              "content_hash": "314752956c33d1dcd86efed4d81ecc62"
+            },
+            {
+              "path": "test/res.send.js",
+              "start_line": 321,
+              "end_line": 323,
+              "representation": "source",
+              "reason": "text",
+              "score": 2.5299,
+              "token_count": 8,
+              "content_hash": "5a37a66ac3310fd5361a3ccaefb8d850"
+            },
+            {
+              "path": "test/res.sendFile.js",
+              "start_line": 890,
+              "end_line": 894,
+              "representation": "source",
+              "reason": "text",
+              "score": 2.5278,
+              "token_count": 26,
+              "content_hash": "e062fb64fb54ba78f6ed12954d099737"
+            },
+            {
+              "path": "test/res.sendFile.js",
+              "start_line": 401,
+              "end_line": 404,
+              "representation": "source",
+              "reason": "text",
+              "score": 2.5236,
+              "token_count": 32,
+              "content_hash": "47a98e6b3a51439306ec76450532e745"
+            }
+          ],
+          "relevant_files_found": 2,
+          "relevant_file_recall": 1.0,
+          "labeled_file_precision": 0.4,
+          "line_anchors": 9,
+          "line_anchors_found": 5,
+          "line_anchor_recall": 0.5555555555555556,
+          "unlabeled_returned_files": [
+            "test/res.sendFile.js",
+            "test/res.sendStatus.js",
+            "test/res.type.js"
+          ],
+          "oracle_source_tokens": 10308,
+          "oracle_minimal_read_json_tokens": 12472,
+          "rg_discovery_tokens": 14726,
+          "rg_discovery_json_tokens": 16804,
+          "scripted_baseline_total_json_tokens": 29279,
+          "leantoken_source_tokens": 740,
+          "leantoken_total_json_tokens": 1320,
+          "source_savings_against_oracle_fraction": 0.9282110981761739,
+          "total_json_savings_against_scripted_fraction": 0.954916493049626,
+          "first_context_ms": 131.993165,
+          "warm_context_ms_samples": [
+            114.76794,
+            129.377634,
+            133.785861
+          ],
+          "warm_context_median_ms": 129.377634,
+          "warm_context_p95_ms": 133.785861,
+          "second_response_source_tokens": 247,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 221,
+          "repeat_total_json_tokens": 734,
+          "two_turn_context_json_tokens": 2275,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 4,
+          "dead_end_source_tokens": 98
+        }
+      ]
+    },
+    {
+      "name": "lodash-holdout",
+      "url": "https://github.com/lodash/lodash.git",
+      "base_revision": "a666ba591064c8011988275790ad7d625279f09c",
+      "fix_commit": null,
+      "issue_url": "https://github.com/lodash/lodash/issues/6228",
+      "prompt_provenance": "Issue title, body, reproduction, and root-cause analysis while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "Map and Set branches in baseClone, cloneDeep entry point, and existing collection clone tests identified from the pinned source tree.",
+      "indexed_files": 103,
+      "indexed_chunks": 1862,
+      "index_warnings": [],
+      "cold_index_ms": 4595.066623,
+      "database_bytes": 45188104,
+      "tasks": [
+        {
+          "id": "lodash-clone-deep-map-keys",
+          "prompt": "Fix _.cloneDeep so a cloned Map does not retain mutable references to object keys from the original Map, consistently with cloned Set items. Preserve Map values and cyclic-reference handling, and add a regression test for key independence.",
+          "languages": [
+            "javascript"
+          ],
+          "task_shapes": [
+            "definition_discovery"
+          ],
+          "token_budget": 1200,
+          "relevant_files": [
+            "lodash.js",
+            "test/test.js"
+          ],
+          "returned_files": [
+            "dist/lodash.js",
+            "test/test-fp.js",
+            "test/test.js",
+            "vendor/backbone/backbone.js",
+            "vendor/backbone/test/events.js"
+          ],
+          "returned_evidence": [
+            {
+              "path": "test/test.js",
+              "start_line": 17532,
+              "end_line": 17534,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 2.1666,
+              "token_count": 43,
+              "content_hash": "47204b3eb03b3abe21c967c54db98c51"
+            },
+            {
+              "path": "test/test.js",
+              "start_line": 883,
+              "end_line": 887,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.7697,
+              "token_count": 38,
+              "content_hash": "ef389d118abaa533883658581e94b45b"
+            },
+            {
+              "path": "vendor/backbone/test/events.js",
+              "start_line": 248,
+              "end_line": 252,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5703,
+              "token_count": 37,
+              "content_hash": "efd2fa0539c449f3560c9fc39a6ff434"
+            },
+            {
+              "path": "test/test-fp.js",
+              "start_line": 276,
+              "end_line": 280,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.4286,
+              "token_count": 25,
+              "content_hash": "4309070b6e2236512a5f8b4ccc72956f"
+            },
+            {
+              "path": "vendor/backbone/backbone.js",
+              "start_line": 714,
+              "end_line": 716,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.9355,
+              "token_count": 16,
+              "content_hash": "f2784b3f32d9134a99099bbb3760171c"
+            },
+            {
+              "path": "dist/lodash.js",
+              "start_line": 11128,
+              "end_line": 11130,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.9324,
+              "token_count": 20,
+              "content_hash": "9f3ba3ca51704cf69e1be90dcf68a778"
+            },
+            {
+              "path": "dist/lodash.js",
+              "start_line": 11186,
+              "end_line": 11188,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.9271,
+              "token_count": 27,
+              "content_hash": "edf8364b4f876e27020e4fa258a83482"
+            },
+            {
+              "path": "vendor/backbone/backbone.js",
+              "start_line": 1097,
+              "end_line": 1102,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.9236,
+              "token_count": 32,
+              "content_hash": "dd58cb9094ab2880970454ae2e3a7158"
+            }
+          ],
+          "relevant_files_found": 1,
+          "relevant_file_recall": 0.5,
+          "labeled_file_precision": 0.2,
+          "line_anchors": 10,
+          "line_anchors_found": 0,
+          "line_anchor_recall": 0.0,
+          "unlabeled_returned_files": [
+            "dist/lodash.js",
+            "test/test-fp.js",
+            "vendor/backbone/backbone.js",
+            "vendor/backbone/test/events.js"
+          ],
+          "oracle_source_tokens": 345422,
+          "oracle_minimal_read_json_tokens": 400379,
+          "rg_discovery_tokens": 15603,
+          "rg_discovery_json_tokens": 18116,
+          "scripted_baseline_total_json_tokens": 418498,
+          "leantoken_source_tokens": 238,
+          "leantoken_total_json_tokens": 746,
+          "source_savings_against_oracle_fraction": 0.9993109877193693,
+          "total_json_savings_against_scripted_fraction": 0.9982174347308709,
+          "first_context_ms": 7308.187879,
+          "warm_context_ms_samples": [
+            7682.2198180000005,
+            7213.382631,
+            7377.3623099999995
+          ],
+          "warm_context_median_ms": 7377.3623099999995,
+          "warm_context_p95_ms": 7682.2198180000005,
+          "second_response_source_tokens": 440,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 224,
+          "repeat_total_json_tokens": 983,
+          "two_turn_context_json_tokens": 1953,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 6,
+          "dead_end_source_tokens": 157
+        }
+      ]
+    },
+    {
+      "name": "vue-holdout",
+      "url": "https://github.com/vuejs/core.git",
+      "base_revision": "fa2885d8c48768d26f1666a01bd540ffe3b20f9b",
+      "fix_commit": null,
+      "issue_url": "https://github.com/vuejs/core/issues/14287",
+      "prompt_provenance": "Issue title, body, reproduction, and proposed parser strategy while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "Event-handler classification and wrapping, function-expression helpers, and adjacent transform tests identified from the pinned source tree.",
+      "indexed_files": 702,
+      "indexed_chunks": 2756,
+      "index_warnings": [],
+      "cold_index_ms": 19920.457992,
+      "database_bytes": 61464000,
+      "tasks": [
+        {
+          "id": "vue-handler-function-semicolon",
+          "prompt": "Fix event-handler parsing so an anonymous function expression containing a semicolon in its body is not misclassified as a function declaration or statement. Preserve multi-statement inline handlers and add regression coverage for semicolons inside function expressions.",
+          "languages": [
+            "typescript"
+          ],
+          "task_shapes": [
+            "framework_behavior"
+          ],
+          "token_budget": 1200,
+          "relevant_files": [
+            "packages/compiler-core/src/transforms/vOn.ts",
+            "packages/compiler-core/src/utils.ts",
+            "packages/compiler-core/__tests__/transforms/vOn.spec.ts"
+          ],
+          "returned_files": [
+            "packages-private/dts-test/setupHelpers.test-d.ts",
+            "packages/compiler-core/__tests__/testUtils.ts",
+            "packages/compiler-core/__tests__/transforms/__snapshots__/vSlot.spec.ts.snap",
+            "packages/compiler-core/__tests__/transforms/transformExpressions.spec.ts",
+            "packages/compiler-sfc/__tests__/compileScript/__snapshots__/definePropsDestructure.spec.ts.snap",
+            "packages/compiler-sfc/src/style/cssVars.ts",
+            "scripts/setup-vitest.ts"
+          ],
+          "returned_evidence": [
+            {
+              "path": "packages/compiler-sfc/src/style/cssVars.ts",
+              "start_line": 140,
+              "end_line": 161,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.871,
+              "token_count": 167,
+              "content_hash": "3422d32f2729110ec93c195bab0fd619"
+            },
+            {
+              "path": "packages/compiler-core/__tests__/transforms/transformExpressions.spec.ts",
+              "start_line": 324,
+              "end_line": 328,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.7172,
+              "token_count": 42,
+              "content_hash": "cb234a8dcbbaecdda5444050abe1550e"
+            },
+            {
+              "path": "scripts/setup-vitest.ts",
+              "start_line": 5,
+              "end_line": 5,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5906,
+              "token_count": 10,
+              "content_hash": "477e16dff4152b8acf51dea0c5abba35"
+            },
+            {
+              "path": "packages/compiler-core/__tests__/testUtils.ts",
+              "start_line": 1,
+              "end_line": 30,
+              "representation": "import_neighbor",
+              "reason": "import",
+              "score": 0.567,
+              "token_count": 186,
+              "content_hash": "4a7640cbec8324f48796e507a6c7e06f"
+            },
+            {
+              "path": "packages/compiler-core/__tests__/transforms/transformExpressions.spec.ts",
+              "start_line": 161,
+              "end_line": 163,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.7132,
+              "token_count": 29,
+              "content_hash": "ab0b35f4f0f5bf7edffbef78f22aceaa"
+            },
+            {
+              "path": "packages-private/dts-test/setupHelpers.test-d.ts",
+              "start_line": 268,
+              "end_line": 272,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5786,
+              "token_count": 25,
+              "content_hash": "fbbd0448c62f56af2111c87aac800986"
+            },
+            {
+              "path": "packages/compiler-sfc/__tests__/compileScript/__snapshots__/definePropsDestructure.spec.ts.snap",
+              "start_line": 252,
+              "end_line": 256,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5771,
+              "token_count": 27,
+              "content_hash": "33273cf3493d8b2979170a878ec9b61b"
+            },
+            {
+              "path": "packages/compiler-core/__tests__/transforms/__snapshots__/vSlot.spec.ts.snap",
+              "start_line": 140,
+              "end_line": 144,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5736,
+              "token_count": 32,
+              "content_hash": "57d767d69e60c438bfd834526ffe1146"
+            }
+          ],
+          "relevant_files_found": 0,
+          "relevant_file_recall": 0.0,
+          "labeled_file_precision": 0.0,
+          "line_anchors": 13,
+          "line_anchors_found": 0,
+          "line_anchor_recall": 0.0,
+          "unlabeled_returned_files": [
+            "packages-private/dts-test/setupHelpers.test-d.ts",
+            "packages/compiler-core/__tests__/testUtils.ts",
+            "packages/compiler-core/__tests__/transforms/__snapshots__/vSlot.spec.ts.snap",
+            "packages/compiler-core/__tests__/transforms/transformExpressions.spec.ts",
+            "packages/compiler-sfc/__tests__/compileScript/__snapshots__/definePropsDestructure.spec.ts.snap",
+            "packages/compiler-sfc/src/style/cssVars.ts",
+            "scripts/setup-vitest.ts"
+          ],
+          "oracle_source_tokens": 11105,
+          "oracle_minimal_read_json_tokens": 13104,
+          "rg_discovery_tokens": 4262,
+          "rg_discovery_json_tokens": 4834,
+          "scripted_baseline_total_json_tokens": 17941,
+          "leantoken_source_tokens": 518,
+          "leantoken_total_json_tokens": 1109,
+          "source_savings_against_oracle_fraction": 0.9533543448896893,
+          "total_json_savings_against_scripted_fraction": 0.9381862772420713,
+          "first_context_ms": 330.991786,
+          "warm_context_ms_samples": [
+            329.414983,
+            300.75307499999997,
+            392.027967
+          ],
+          "warm_context_median_ms": 329.414983,
+          "warm_context_p95_ms": 392.027967,
+          "second_response_source_tokens": 296,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 222,
+          "repeat_total_json_tokens": 864,
+          "two_turn_context_json_tokens": 2195,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 8,
+          "dead_end_source_tokens": 518
+        }
+      ]
+    },
+    {
+      "name": "typeorm-holdout",
+      "url": "https://github.com/typeorm/typeorm.git",
+      "base_revision": "8748b1be17bf93fc9b62b3444e411e9055e9e017",
+      "fix_commit": null,
+      "issue_url": "https://github.com/typeorm/typeorm/issues/12671",
+      "prompt_provenance": "Issue title, body, reproduction, and SQL output while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "MySQL renameTable index and foreign-key branches plus the existing rename-table integration test identified from the pinned source tree.",
+      "indexed_files": 3762,
+      "indexed_chunks": 6873,
+      "index_warnings": [],
+      "cold_index_ms": 114112.564623,
+      "database_bytes": 118606088,
+      "tasks": [
+        {
+          "id": "typeorm-mysql-rename-supporting-index",
+          "prompt": "Fix MySQL table renames so foreign-key supporting indexes do not retain stale names that cause a subsequent migration to emit invalid DROP INDEX statements. Preserve explicit index and foreign-key renaming behavior, and add a regression test that checks supporting indexes after renameTable.",
+          "languages": [
+            "typescript"
+          ],
+          "task_shapes": [
+            "cross_file_behavior"
+          ],
+          "token_budget": 1200,
+          "relevant_files": [
+            "src/driver/mysql/MysqlQueryRunner.ts",
+            "test/functional/query-runner/rename-table.test.ts"
+          ],
+          "returned_files": [
+            "packages/codemod/test/transforms/transformer.test.ts",
+            "packages/codemod/test/transforms/v1/fixtures/connection-to-datasource/connection-to-datasource-barrel-only.input.ts",
+            "test/functional/query-builder/isolated-where/query-builder-isolated-where.test.ts",
+            "test/functional/transaction/isolation-level/spanner-isolation.test.ts",
+            "test/functional/tree-tables/closure-table/schema-handling/schema-handling.test.ts",
+            "test/github-issues/11260/issue-11260.test.ts",
+            "test/github-issues/1178/issue-1178.test.ts",
+            "test/github-issues/2651/issue-2651.test.ts"
+          ],
+          "returned_evidence": [
+            {
+              "path": "test/functional/query-builder/isolated-where/query-builder-isolated-where.test.ts",
+              "start_line": 15,
+              "end_line": 19,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5764,
+              "token_count": 28,
+              "content_hash": "ce486085387155027f6d799c2c5369b0"
+            },
+            {
+              "path": "packages/codemod/test/transforms/transformer.test.ts",
+              "start_line": 54,
+              "end_line": 58,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.571,
+              "token_count": 36,
+              "content_hash": "203c6a075c0b4ad11cd36ca56c3c4ce9"
+            },
+            {
+              "path": "test/functional/tree-tables/closure-table/schema-handling/schema-handling.test.ts",
+              "start_line": 14,
+              "end_line": 18,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.569,
+              "token_count": 39,
+              "content_hash": "e572e9bdb32bcf284bca9c5a11f680f0"
+            },
+            {
+              "path": "test/github-issues/11260/issue-11260.test.ts",
+              "start_line": 60,
+              "end_line": 64,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5716,
+              "token_count": 35,
+              "content_hash": "0022cde1dd9e2a214ea03efd49d6baed"
+            },
+            {
+              "path": "test/functional/transaction/isolation-level/spanner-isolation.test.ts",
+              "start_line": 132,
+              "end_line": 136,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5697,
+              "token_count": 38,
+              "content_hash": "35e47b11afa0a6b25300724252f99433"
+            },
+            {
+              "path": "test/github-issues/1178/issue-1178.test.ts",
+              "start_line": 9,
+              "end_line": 13,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5678,
+              "token_count": 41,
+              "content_hash": "c2c9b5f3d26d9d77bc726b9531947625"
+            },
+            {
+              "path": "packages/codemod/test/transforms/v1/fixtures/connection-to-datasource/connection-to-datasource-barrel-only.input.ts",
+              "start_line": 1,
+              "end_line": 3,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5636,
+              "token_count": 48,
+              "content_hash": "df418908b6884af5a81b1c3b082e0f59"
+            },
+            {
+              "path": "test/github-issues/2651/issue-2651.test.ts",
+              "start_line": 9,
+              "end_line": 13,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5636,
+              "token_count": 48,
+              "content_hash": "b1a3cb0dea1bf99bd7a4ef523bad05b5"
+            }
+          ],
+          "relevant_files_found": 0,
+          "relevant_file_recall": 0.0,
+          "labeled_file_precision": 0.0,
+          "line_anchors": 11,
+          "line_anchors_found": 0,
+          "line_anchor_recall": 0.0,
+          "unlabeled_returned_files": [
+            "packages/codemod/test/transforms/transformer.test.ts",
+            "packages/codemod/test/transforms/v1/fixtures/connection-to-datasource/connection-to-datasource-barrel-only.input.ts",
+            "test/functional/query-builder/isolated-where/query-builder-isolated-where.test.ts",
+            "test/functional/transaction/isolation-level/spanner-isolation.test.ts",
+            "test/functional/tree-tables/closure-table/schema-handling/schema-handling.test.ts",
+            "test/github-issues/11260/issue-11260.test.ts",
+            "test/github-issues/1178/issue-1178.test.ts",
+            "test/github-issues/2651/issue-2651.test.ts"
+          ],
+          "oracle_source_tokens": 26432,
+          "oracle_minimal_read_json_tokens": 31486,
+          "rg_discovery_tokens": 43843,
+          "rg_discovery_json_tokens": 49738,
+          "scripted_baseline_total_json_tokens": 81227,
+          "leantoken_source_tokens": 313,
+          "leantoken_total_json_tokens": 923,
+          "source_savings_against_oracle_fraction": 0.9881582929782082,
+          "total_json_savings_against_scripted_fraction": 0.9886367833355904,
+          "first_context_ms": 437.376663,
+          "warm_context_ms_samples": [
+            375.261165,
+            413.446057,
+            370.900146
+          ],
+          "warm_context_median_ms": 375.261165,
+          "warm_context_p95_ms": 413.446057,
+          "second_response_source_tokens": 829,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 242,
+          "repeat_total_json_tokens": 1460,
+          "two_turn_context_json_tokens": 2625,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 8,
+          "dead_end_source_tokens": 313
+        }
+      ]
+    },
+    {
+      "name": "gin-holdout",
+      "url": "https://github.com/gin-gonic/gin.git",
+      "base_revision": "34dac209ffb6ef85cc78c5d217bbb7ad001d68fd",
+      "fix_commit": null,
+      "issue_url": "https://github.com/gin-gonic/gin/issues/4733",
+      "prompt_provenance": "Issue title, body, use case, and proposed API options while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "Default validator construction and dispatch, the StructValidator boundary, package-level default, and existing validator tests identified from the pinned source tree.",
+      "indexed_files": 130,
+      "indexed_chunks": 433,
+      "index_warnings": [],
+      "cold_index_ms": 1258.651168,
+      "database_bytes": 12619976,
+      "tasks": [
+        {
+          "id": "gin-validator-constructor-options",
+          "prompt": "Provide a first-class way to configure Gin's default binding validator with go-playground/validator constructor options such as WithRequiredStructEnabled. Preserve Gin's pointer, slice, array, and struct dispatch so users do not need to replace StructValidator just to pass an option. Add regression coverage showing required validation on a value-typed struct field.",
+          "languages": [
+            "go"
+          ],
+          "task_shapes": [
+            "configuration"
+          ],
+          "token_budget": 1200,
+          "relevant_files": [
+            "binding/default_validator.go",
+            "binding/binding.go",
+            "binding/default_validator_test.go",
+            "binding/validate_test.go"
+          ],
+          "returned_files": [
+            "binding/binding.go",
+            "binding/binding_nomsgpack.go",
+            "binding/default_validator.go",
+            "binding/validate_test.go",
+            "docs/doc.md"
+          ],
+          "returned_evidence": [
+            {
+              "path": "binding/binding_nomsgpack.go",
+              "start_line": 53,
+              "end_line": 64,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.8798,
+              "token_count": 132,
+              "content_hash": "fae8920df5bba55a0578d455b389157a"
+            },
+            {
+              "path": "binding/validate_test.go",
+              "start_line": 10,
+              "end_line": 14,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5757,
+              "token_count": 29,
+              "content_hash": "7c2dc4866dc9619e27a59fb5f6613e27"
+            },
+            {
+              "path": "binding/binding.go",
+              "start_line": 55,
+              "end_line": 67,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.8735,
+              "token_count": 156,
+              "content_hash": "986320868216879d355a25693ac14a47"
+            },
+            {
+              "path": "binding/default_validator.go",
+              "start_line": 44,
+              "end_line": 44,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.3398,
+              "token_count": 11,
+              "content_hash": "dc8790fac8f663e6bd2880f09ad30799"
+            },
+            {
+              "path": "binding/default_validator.go",
+              "start_line": 11,
+              "end_line": 15,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.3364,
+              "token_count": 15,
+              "content_hash": "5626da9a19a0ae0a32b3b6789fed08a1"
+            },
+            {
+              "path": "docs/doc.md",
+              "start_line": 942,
+              "end_line": 946,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.323,
+              "token_count": 33,
+              "content_hash": "4239a7a1b16e0e3d23343b8fa36d3540"
+            },
+            {
+              "path": "binding/binding_nomsgpack.go",
+              "start_line": 47,
+              "end_line": 51,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.3154,
+              "token_count": 45,
+              "content_hash": "af5ef3c9a94e31225cf3b876c8bb03f2"
+            },
+            {
+              "path": "docs/doc.md",
+              "start_line": 994,
+              "end_line": 998,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.3071,
+              "token_count": 60,
+              "content_hash": "c1f2e08238d8df311fc7c55e67cf47c1"
+            }
+          ],
+          "relevant_files_found": 3,
+          "relevant_file_recall": 0.75,
+          "labeled_file_precision": 0.6,
+          "line_anchors": 18,
+          "line_anchors_found": 2,
+          "line_anchor_recall": 0.1111111111111111,
+          "unlabeled_returned_files": [
+            "binding/binding_nomsgpack.go",
+            "docs/doc.md"
+          ],
+          "oracle_source_tokens": 4244,
+          "oracle_minimal_read_json_tokens": 5119,
+          "rg_discovery_tokens": 5990,
+          "rg_discovery_json_tokens": 6902,
+          "scripted_baseline_total_json_tokens": 12024,
+          "leantoken_source_tokens": 481,
+          "leantoken_total_json_tokens": 990,
+          "source_savings_against_oracle_fraction": 0.8866635249764373,
+          "total_json_savings_against_scripted_fraction": 0.9176646706586826,
+          "first_context_ms": 54.092109,
+          "warm_context_ms_samples": [
+            53.297085,
+            58.866584,
+            51.026358
+          ],
+          "warm_context_median_ms": 53.297085,
+          "warm_context_p95_ms": 58.866584,
+          "second_response_source_tokens": 1025,
+          "estimated_repeated_range_source_tokens": 62,
+          "repeat_request_json_tokens": 260,
+          "repeat_total_json_tokens": 1507,
+          "two_turn_context_json_tokens": 2757,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 4,
+          "dead_end_source_tokens": 270
+        }
+      ]
+    },
+    {
+      "name": "rack-holdout",
+      "url": "https://github.com/rack/rack.git",
+      "base_revision": "0a07b6e74c102a138773b7add73bbd4aba185ef4",
+      "fix_commit": null,
+      "issue_url": "https://github.com/rack/rack/issues/2470",
+      "prompt_provenance": "Issue title, body, reproduction, specification citations, and proposed directions while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "Deflater wrapping and stream implementation, the existing callable-body proxy, Rack body specification, and adjacent Deflater tests identified from the pinned source tree.",
+      "indexed_files": 179,
+      "indexed_chunks": 449,
+      "index_warnings": [],
+      "cold_index_ms": 545.244445,
+      "database_bytes": 8548840,
+      "tasks": [
+        {
+          "id": "rack-deflater-callable-body",
+          "prompt": "Fix Rack::Deflater so a Rack 3 callable streaming body that implements #call(stream) but not #each does not raise NoMethodError or emit a truncated gzip response. Preserve enumerable-body compression and add a regression test with a callable body.",
+          "languages": [
+            "ruby"
+          ],
+          "task_shapes": [
+            "cross_file_behavior"
+          ],
+          "token_budget": 1200,
+          "relevant_files": [
+            "lib/rack/deflater.rb",
+            "lib/rack/events.rb",
+            "SPEC.rdoc",
+            "test/spec_deflater.rb"
+          ],
+          "returned_files": [
+            "lib/rack/auth/abstract/handler.rb",
+            "lib/rack/deflater.rb",
+            "lib/rack/lint.rb",
+            "lib/rack/multipart/parser.rb",
+            "test/spec_body_proxy.rb",
+            "test/spec_deflater.rb",
+            "test/spec_lint.rb"
+          ],
+          "returned_evidence": [
+            {
+              "path": "lib/rack/deflater.rb",
+              "start_line": 30,
+              "end_line": 34,
+              "representation": "source",
+              "reason": "text",
+              "score": 2.7608,
+              "token_count": 53,
+              "content_hash": "9cf291395e76d8fd4fbf296e0a68c31b"
+            },
+            {
+              "path": "lib/rack/deflater.rb",
+              "start_line": 11,
+              "end_line": 15,
+              "representation": "source",
+              "reason": "text",
+              "score": 2.5743,
+              "token_count": 31,
+              "content_hash": "6d4c3bb865aae3e36d7065df08e3705b"
+            },
+            {
+              "path": "lib/rack/multipart/parser.rb",
+              "start_line": 193,
+              "end_line": 197,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.588,
+              "token_count": 13,
+              "content_hash": "e99132c431653f9d55d3628a170520e4"
+            },
+            {
+              "path": "test/spec_body_proxy.rb",
+              "start_line": 89,
+              "end_line": 93,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5824,
+              "token_count": 20,
+              "content_hash": "8d3e65250b027b4cdf1de438eeb8e82d"
+            },
+            {
+              "path": "lib/rack/auth/abstract/handler.rb",
+              "start_line": 5,
+              "end_line": 9,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5723,
+              "token_count": 34,
+              "content_hash": "0f9f0241eee71b405bcccbc832b82c01"
+            },
+            {
+              "path": "test/spec_deflater.rb",
+              "start_line": 11,
+              "end_line": 15,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.7801,
+              "token_count": 23,
+              "content_hash": "c223a73fe09674e83dc6312f7f30f336"
+            },
+            {
+              "path": "lib/rack/lint.rb",
+              "start_line": 884,
+              "end_line": 888,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5864,
+              "token_count": 15,
+              "content_hash": "fd428fb1ef68f92425f04e479ab7409e"
+            },
+            {
+              "path": "test/spec_lint.rb",
+              "start_line": 644,
+              "end_line": 648,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.5716,
+              "token_count": 35,
+              "content_hash": "21a4323fac865410218cc2c990bc3396"
+            }
+          ],
+          "relevant_files_found": 2,
+          "relevant_file_recall": 0.5,
+          "labeled_file_precision": 0.2857142857142857,
+          "line_anchors": 18,
+          "line_anchors_found": 0,
+          "line_anchor_recall": 0.0,
+          "unlabeled_returned_files": [
+            "lib/rack/auth/abstract/handler.rb",
+            "lib/rack/lint.rb",
+            "lib/rack/multipart/parser.rb",
+            "test/spec_body_proxy.rb",
+            "test/spec_lint.rb"
+          ],
+          "oracle_source_tokens": 11735,
+          "oracle_minimal_read_json_tokens": 12734,
+          "rg_discovery_tokens": 3716,
+          "rg_discovery_json_tokens": 4217,
+          "scripted_baseline_total_json_tokens": 16954,
+          "leantoken_source_tokens": 224,
+          "leantoken_total_json_tokens": 713,
+          "source_savings_against_oracle_fraction": 0.9809118023008095,
+          "total_json_savings_against_scripted_fraction": 0.9579450277220715,
+          "first_context_ms": 63.729958,
+          "warm_context_ms_samples": [
+            49.503752999999996,
+            50.673976,
+            63.161653
+          ],
+          "warm_context_median_ms": 50.673976,
+          "warm_context_p95_ms": 63.161653,
+          "second_response_source_tokens": 357,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 234,
+          "repeat_total_json_tokens": 840,
+          "two_turn_context_json_tokens": 1787,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 5,
+          "dead_end_source_tokens": 117
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "The oracle baseline assumes perfect file selection and reads whole files rather than exact decisive ranges.",
+    "The scripted ripgrep baseline uses fixed queries supplied by the manifest and is not an autonomous agent trajectory.",
+    "No model executes an edit, so this runner does not measure pass rate, prewalk handoff quality, or end-to-end task cost.",
+    "Cold indexing and warm latency depend on host hardware and filesystem cache state.",
+    "Holdout prompts and labels were frozen before evaluation from issue reports and pinned source inspection; relevance labels remain human judgments, not proof that every labeled range is required.",
+    "A holdout result is evaluation evidence, not permission to tune against the same dataset while continuing to call it blind."
+  ]
+}

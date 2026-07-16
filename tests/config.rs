@@ -108,7 +108,10 @@ fn config_rejects_file_as_root() {
     let file = directory.path().join("not-a-repository");
     std::fs::write(&file, "content").expect("write file");
     let error = Config::discover(&file, None).expect_err("file root must fail");
-    assert!(matches!(error, leantoken::Error::InvalidRequest(_)));
+    assert!(matches!(
+        error,
+        leantoken::Error::InvalidConfiguration(_)
+    ));
 }
 
 #[test]

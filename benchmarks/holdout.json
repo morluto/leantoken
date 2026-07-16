@@ -1,0 +1,226 @@
+{
+  "schema_version": 3,
+  "dataset_kind": "blind_holdout",
+  "frozen_at": "2026-07-16",
+  "candidate_revision": "0b6f80bb4e9d356443ebd130be1d04c0254111cb",
+  "evaluation_protocol": "Run representative_benchmark exactly once against the candidate runtime tree, these token budgets, and clean checkouts at every pinned base revision. Archive the unedited JSON report before inspecting any aggregate or task result. Do not change ranking, ranges, budgets, prompts, queries, or labels after inspection and compare against this run as if the set were still unseen.",
+  "reclassification_rule": "After any result is inspected, this set is consumed for the frozen candidate. If it informs tuning, copy it to prospective validation data and do not use it for another blind claim; collect new unseen tasks and freeze a new manifest hash for the next blind evaluation.",
+  "description": "Sealed retrieval holdout collected from issues that were open on 2026-07-16 and from source at exact HEAD revisions. Prompts use issue reports; labels and queries use only those reports and pinned source. No pull request, patch, fix commit, or proposed branch was inspected. The set was frozen before evaluating the candidate runtime revision.",
+  "rg_max_lines_per_query": 200,
+  "corpora": [
+    {
+      "name": "serde-holdout",
+      "url": "https://github.com/serde-rs/serde.git",
+      "directory": "serde",
+      "base_revision": "cfe669241065984177ff63af8b45058e6e9b499d",
+      "issue_url": "https://github.com/serde-rs/serde/issues/3083",
+      "prompt_provenance": "Issue title and body while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "Untagged-enum code generation, content replay, option handling, and the existing error assertions identified from the pinned source tree.",
+      "tasks": [
+        {
+          "id": "serde-untagged-variant-errors",
+          "prompt": "Improve the error produced when an #[serde(untagged)] enum fails to match every variant. Report enough per-variant failure information for users to understand why each variant was rejected, while preserving successful untagged deserialization. Add regression coverage for the improved error output.",
+          "languages": ["rust"],
+          "task_shapes": ["definition_discovery"],
+          "rg_queries": ["data did not match any variant", "fallthrough_msg", "ContentRefDeserializer", "__private_visit_untagged_option"],
+          "relevant_files": [
+            {"path": "serde_derive/src/de/enum_untagged.rs", "line_anchors": [22, 32, 39, 51, 55]},
+            {"path": "serde/src/private/de.rs", "line_anchors": [290, 1992]},
+            {"path": "serde_core/src/de/impls.rs", "line_anchors": [908, 913]},
+            {"path": "test_suite/tests/test_enum_untagged.rs", "line_anchors": [15, 72, 74, 85]}
+          ],
+          "token_budget": 1200
+        }
+      ]
+    },
+    {
+      "name": "requests-holdout",
+      "url": "https://github.com/psf/requests.git",
+      "directory": "requests",
+      "base_revision": "f361ead047be5cb873174218582f7d8b9fcd9f49",
+      "issue_url": "https://github.com/psf/requests/issues/6102",
+      "prompt_provenance": "Issue title, body, and reproduction while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "Digest header construction, Basic-auth normalization contrast, and existing Digest tests identified from the pinned source tree.",
+      "tasks": [
+        {
+          "id": "requests-digest-non-ascii-credentials",
+          "prompt": "Fix HTTPDigestAuth so credentials containing non-ASCII characters produce a valid Digest authorization header instead of embedding a Python bytes representation in the username. Preserve existing ASCII and Basic authentication behavior, and add a regression test with non-ASCII credentials.",
+          "languages": ["python"],
+          "task_shapes": ["cross_file_behavior"],
+          "rg_queries": ["HTTPDigestAuth", "build_digest_header", "username=", "_basic_auth_str", "latin1"],
+          "relevant_files": [
+            {"path": "src/requests/auth.py", "line_anchors": [65, 69, 157, 176, 221, 253, 256]},
+            {"path": "tests/test_lowlevel.py", "line_anchors": [127, 192, 238]}
+          ],
+          "token_budget": 1200
+        }
+      ]
+    },
+    {
+      "name": "flask-holdout",
+      "url": "https://github.com/pallets/flask.git",
+      "directory": "flask",
+      "base_revision": "36e4a824f340fdee7ed50937ba8e7f6bc7d17f81",
+      "issue_url": "https://github.com/pallets/flask/issues/6071",
+      "prompt_provenance": "Issue title, body, and reproduction while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "Every private pytest sentinel import and use plus its owning fixtures and tests identified from the pinned source tree.",
+      "tasks": [
+        {
+          "id": "flask-pytest-notset-removal",
+          "prompt": "Fix Flask's test suite for pytest 9.1+, where removal of the private _pytest.monkeypatch.notset sentinel causes collection and fixture failures. Replace the private sentinel dependency with a compatible approach without weakening the environment-reset assertions.",
+          "languages": ["python"],
+          "task_shapes": ["regression_test_discovery"],
+          "rg_queries": ["notset", "monkeypatch", "_setitem", "_standard_os_environ"],
+          "relevant_files": [
+            {"path": "tests/conftest.py", "line_anchors": [5, 11, 19, 23, 27, 36]},
+            {"path": "tests/test_cli.py", "line_anchors": [14, 540, 563]}
+          ],
+          "token_budget": 1200
+        }
+      ]
+    },
+    {
+      "name": "express-holdout",
+      "url": "https://github.com/expressjs/express.git",
+      "directory": "express",
+      "base_revision": "ae6dd37680e3a00618d6c8a3e522f0ee4eeba1a4",
+      "issue_url": "https://github.com/expressjs/express/issues/7362",
+      "prompt_provenance": "Issue title, body, reproduction, and cause analysis while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "Response type dispatch and the adjacent Buffer and typed-array tests identified from the pinned source tree.",
+      "tasks": [
+        {
+          "id": "express-send-array-buffer",
+          "prompt": "Fix res.send so a raw ArrayBuffer is sent as binary application/octet-stream data rather than serialized as an empty JSON object. Preserve Buffer and typed-array behavior, and add a regression test for a raw ArrayBuffer.",
+          "languages": ["javascript"],
+          "task_shapes": ["framework_behavior"],
+          "rg_queries": ["ArrayBuffer.isView", "res.send", "this.json", "Buffer.isBuffer"],
+          "relevant_files": [
+            {"path": "lib/response.js", "line_anchors": [126, 151, 154, 155, 157]},
+            {"path": "test/res.send.js", "line_anchors": [165, 207, 218, 232]}
+          ],
+          "token_budget": 1200
+        }
+      ]
+    },
+    {
+      "name": "lodash-holdout",
+      "url": "https://github.com/lodash/lodash.git",
+      "directory": "lodash",
+      "base_revision": "a666ba591064c8011988275790ad7d625279f09c",
+      "issue_url": "https://github.com/lodash/lodash/issues/6228",
+      "prompt_provenance": "Issue title, body, reproduction, and root-cause analysis while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "Map and Set branches in baseClone, cloneDeep entry point, and existing collection clone tests identified from the pinned source tree.",
+      "tasks": [
+        {
+          "id": "lodash-clone-deep-map-keys",
+          "prompt": "Fix _.cloneDeep so a cloned Map does not retain mutable references to object keys from the original Map, consistently with cloned Set items. Preserve Map values and cyclic-reference handling, and add a regression test for key independence.",
+          "languages": ["javascript"],
+          "task_shapes": ["definition_discovery"],
+          "rg_queries": ["baseClone", "result.set", "result.add", "isMap", "cloneDeep"],
+          "relevant_files": [
+            {"path": "lodash.js", "line_anchors": [2667, 2717, 2720, 2721, 2723, 11186]},
+            {"path": "test/test.js", "line_anchors": [2696, 2705, 2797, 2814]}
+          ],
+          "token_budget": 1200
+        }
+      ]
+    },
+    {
+      "name": "vue-holdout",
+      "url": "https://github.com/vuejs/core.git",
+      "directory": "vue",
+      "base_revision": "fa2885d8c48768d26f1666a01bd540ffe3b20f9b",
+      "issue_url": "https://github.com/vuejs/core/issues/14287",
+      "prompt_provenance": "Issue title, body, reproduction, and proposed parser strategy while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "Event-handler classification and wrapping, function-expression helpers, and adjacent transform tests identified from the pinned source tree.",
+      "tasks": [
+        {
+          "id": "vue-handler-function-semicolon",
+          "prompt": "Fix event-handler parsing so an anonymous function expression containing a semicolon in its body is not misclassified as a function declaration or statement. Preserve multi-statement inline handlers and add regression coverage for semicolons inside function expressions.",
+          "languages": ["typescript"],
+          "task_shapes": ["framework_behavior"],
+          "rg_queries": ["includes(';')", "hasMultipleStatements", "isFnExpression", "processExpression"],
+          "relevant_files": [
+            {"path": "packages/compiler-core/src/transforms/vOn.ts", "line_anchors": [82, 85, 88, 95, 137, 148]},
+            {"path": "packages/compiler-core/src/utils.ts", "line_anchors": [192, 229, 232]},
+            {"path": "packages/compiler-core/__tests__/transforms/vOn.spec.ts", "line_anchors": [148, 197, 710, 736]}
+          ],
+          "token_budget": 1200
+        }
+      ]
+    },
+    {
+      "name": "typeorm-holdout",
+      "url": "https://github.com/typeorm/typeorm.git",
+      "directory": "typeorm",
+      "base_revision": "8748b1be17bf93fc9b62b3444e411e9055e9e017",
+      "issue_url": "https://github.com/typeorm/typeorm/issues/12671",
+      "prompt_provenance": "Issue title, body, reproduction, and SQL output while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "MySQL renameTable index and foreign-key branches plus the existing rename-table integration test identified from the pinned source tree.",
+      "tasks": [
+        {
+          "id": "typeorm-mysql-rename-supporting-index",
+          "prompt": "Fix MySQL table renames so foreign-key supporting indexes do not retain stale names that cause a subsequent migration to emit invalid DROP INDEX statements. Preserve explicit index and foreign-key renaming behavior, and add a regression test that checks supporting indexes after renameTable.",
+          "languages": ["typescript"],
+          "task_shapes": ["cross_file_behavior"],
+          "rg_queries": ["renameTable", "foreignKeys", "DROP INDEX", "ADD CONSTRAINT", "indexName"],
+          "relevant_files": [
+            {"path": "src/driver/mysql/MysqlQueryRunner.ts", "line_anchors": [673, 704, 712, 753, 755, 784, 790, 811]},
+            {"path": "test/functional/query-runner/rename-table.test.ts", "line_anchors": [155, 284, 296]}
+          ],
+          "token_budget": 1200
+        }
+      ]
+    },
+    {
+      "name": "gin-holdout",
+      "url": "https://github.com/gin-gonic/gin.git",
+      "directory": "gin",
+      "base_revision": "34dac209ffb6ef85cc78c5d217bbb7ad001d68fd",
+      "issue_url": "https://github.com/gin-gonic/gin/issues/4733",
+      "prompt_provenance": "Issue title, body, use case, and proposed API options while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "Default validator construction and dispatch, the StructValidator boundary, package-level default, and existing validator tests identified from the pinned source tree.",
+      "tasks": [
+        {
+          "id": "gin-validator-constructor-options",
+          "prompt": "Provide a first-class way to configure Gin's default binding validator with go-playground/validator constructor options such as WithRequiredStructEnabled. Preserve Gin's pointer, slice, array, and struct dispatch so users do not need to replace StructValidator just to pass an option. Add regression coverage showing required validation on a value-typed struct field.",
+          "languages": ["go"],
+          "task_shapes": ["configuration"],
+          "rg_queries": ["validator.New()", "lazyinit", "defaultValidator", "StructValidator", "WithRequiredStructEnabled", "Engine()"],
+          "relevant_files": [
+            {"path": "binding/default_validator.go", "line_anchors": [16, 19, 46, 76, 88, 93, 95, 98]},
+            {"path": "binding/binding.go", "line_anchors": [55, 67, 72, 122, 127]},
+            {"path": "binding/default_validator_test.go", "line_anchors": [51, 90]},
+            {"path": "binding/validate_test.go", "line_anchors": [208, 234, 249]}
+          ],
+          "token_budget": 1200
+        }
+      ]
+    },
+    {
+      "name": "rack-holdout",
+      "url": "https://github.com/rack/rack.git",
+      "directory": "rack",
+      "base_revision": "0a07b6e74c102a138773b7add73bbd4aba185ef4",
+      "issue_url": "https://github.com/rack/rack/issues/2470",
+      "prompt_provenance": "Issue title, body, reproduction, specification citations, and proposed directions while open at the dataset freeze; no pull request, patch, fix commit, or proposed branch consulted.",
+      "label_provenance": "Deflater wrapping and stream implementation, the existing callable-body proxy, Rack body specification, and adjacent Deflater tests identified from the pinned source tree.",
+      "tasks": [
+        {
+          "id": "rack-deflater-callable-body",
+          "prompt": "Fix Rack::Deflater so a Rack 3 callable streaming body that implements #call(stream) but not #each does not raise NoMethodError or emit a truncated gzip response. Preserve enumerable-body compression and add a regression test with a callable body.",
+          "languages": ["ruby"],
+          "task_shapes": ["cross_file_behavior"],
+          "rg_queries": ["GzipStream", "@body.each", "respond_to?(:each)", "respond_to?(:call)", "EventedBodyProxy", "should_deflate?"],
+          "relevant_files": [
+            {"path": "lib/rack/deflater.rb", "line_anchors": [75, 78, 98, 114, 125, 151]},
+            {"path": "lib/rack/events.rb", "line_anchors": [80, 90, 95, 100, 107]},
+            {"path": "SPEC.rdoc", "line_anchors": [237, 239, 255, 257]},
+            {"path": "test/spec_deflater.rb", "line_anchors": [99, 194, 196]}
+          ],
+          "token_budget": 1200
+        }
+      ]
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use leantoken::Config;
+use leantoken::Error;
 use leantoken::indexer::Indexer;
 use leantoken::storage::Storage;
 
@@ -25,6 +26,19 @@ fn indexer_initial_reconcile_indexes_files_and_advances_generation() {
     let hits = storage.search_word("first", 10).expect("search");
     assert_eq!(hits.len(), 1);
     assert!(hits[0].content.contains("first"));
+}
+
+#[test]
+fn indexer_rejects_invalid_chunk_configuration_at_construction() {
+    let root = tempfile::tempdir().expect("root");
+    let mut config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    config.chunk_lines = 0;
+    let storage = Storage::open(&config.database_path).expect("storage");
+
+    let error = Indexer::new(Arc::new(config), storage).expect_err("invalid chunk configuration");
+
+    assert!(matches!(error, Error::InvalidConfiguration(_)));
 }
 
 #[test]
