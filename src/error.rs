@@ -64,6 +64,8 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("background task failed: {0}")]
     Join(#[from] tokio::task::JoinError),
+    #[error("index worker pool failed: {0}")]
+    ThreadPoolBuild(#[from] rayon::ThreadPoolBuildError),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

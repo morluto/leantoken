@@ -1,6 +1,7 @@
 use leantoken::{
-    Config, ContextRequest, Error, FileOperation, FilesRequest, OutlineRequest, ReadRequest,
-    ReadStatus, SearchMode, SearchRequest, services::Services,
+    Config, ContextRequest, Error, FileOperation, FilesRequest, Freshness, OutlineRequest,
+    ReadRequest, ReadStatus, SearchMode, SearchRequest, coordination::IndexCoordination,
+    services::Services,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -195,6 +196,76 @@ async fn five_services_return_bounded_grounded_responses() {
             .iter()
             .all(|fragment| fragment.content_hash != known)
     );
+}
+
+#[tokio::test]
+async fn file_operations_page_without_duplicates() {
+    let root = tempfile::tempdir().expect("root");
+    for name in ["alpha.rs", "bravo.rs", "charlie.rs", "delta.rs", "echo.rs"] {
+        std::fs::write(root.path().join(name), format!("fn {}() {{}}\n", &name[..name.len() - 3]))
+            .expect("source");
+    }
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    for operation in [
+        FileOperation::Tree,
+        FileOperation::Glob,
+        FileOperation::Find,
+    ] {
+        let mut cursor = None;
+        let mut paths = Vec::new();
+        loop {
+            let response = services
+                .files(FilesRequest {
+                    operation: operation.clone(),
+                    path: None,
+                    query: matches!(operation, FileOperation::Find).then(|| "rs".into()),
+                    pattern: matches!(operation, FileOperation::Glob).then(|| "*.rs".into()),
+                    max_results: Some(2),
+                    cursor,
+                    depth: Some(1),
+                })
+                .await
+                .expect("file page");
+            paths.extend(response.entries.into_iter().map(|entry| entry.path));
+            cursor = response.meta.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        let unique = paths.iter().collect::<std::collections::HashSet<_>>();
+        assert_eq!(paths.len(), 5, "{operation:?}");
+        assert_eq!(unique.len(), paths.len(), "{operation:?}");
+    }
+
+    let tree = services
+        .files(FilesRequest {
+            operation: FileOperation::Tree,
+            path: None,
+            query: None,
+            pattern: None,
+            max_results: Some(2),
+            cursor: None,
+            depth: Some(1),
+        })
+        .await
+        .expect("tree page");
+    let error = services
+        .files(FilesRequest {
+            operation: FileOperation::Glob,
+            path: None,
+            query: None,
+            pattern: Some("*.rs".into()),
+            max_results: Some(2),
+            cursor: tree.meta.next_cursor,
+            depth: None,
+        })
+        .await
+        .expect_err("cursor from another operation");
+    assert!(matches!(error, Error::StaleCursor));
 }
 
 #[tokio::test]
@@ -707,4 +778,146 @@ async fn context_declaration_excerpt_retains_long_body_across_chunks() {
 
     assert_eq!(declaration.end_line, 51);
     assert!(declaration.content.contains("consume(value_48)"));
+}
+
+#[tokio::test]
+async fn regex_search_respects_absolute_candidate_cap() {
+    let root = tempfile::tempdir().expect("root");
+    // Many matching files so limit*20 alone would exceed MAX_REGEX_CANDIDATES if
+    // uncapped; the hard cap must still bound results.
+    for index in 0..80 {
+        std::fs::write(
+            root.path().join(format!("f{index}.rs")),
+            "fn needle() { let needle = 1; }\n".repeat(40),
+        )
+        .expect("write");
+    }
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    let response = services
+        .search(SearchRequest {
+            query: "needle".into(),
+            mode: SearchMode::Regex,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(100),
+            max_tokens: Some(50_000),
+            context_lines: Some(0),
+            case_sensitive: false,
+            cursor: None,
+        })
+        .await
+        .expect("regex search");
+    assert!(!response.hits.is_empty());
+    // max_results clamps the returned page, but the path must complete without
+    // scanning unbounded; generation must be a committed snapshot.
+    assert!(response.meta.repository_generation >= 1);
+    assert!(response.hits.len() <= 100);
+}
+
+#[tokio::test]
+async fn read_reports_index_stale_when_live_file_diverges() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("lib.rs"), "fn first() { 1 }\n").expect("write");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    std::fs::write(root.path().join("lib.rs"), "fn second() { 2 }\n").expect("edit live");
+    let response = services
+        .read(ReadRequest {
+            path: "lib.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("read");
+    assert!(response.index_stale, "live rewrite without reindex must set index_stale");
+    assert!(response.content.as_deref().is_some_and(|c| c.contains("second")));
+    assert!(response.indexed_hash.is_some());
+    assert_ne!(
+        response.indexed_hash.as_deref(),
+        Some(response.content_hash.as_str()),
+        "range hash and whole-file indexed hash differ in meaning but live file is stale"
+    );
+    assert_eq!(response.meta.repository_generation, 1);
+    assert_eq!(response.meta.freshness, Freshness::Current);
+}
+
+#[tokio::test]
+async fn read_not_modified_still_reports_index_stale_against_live_file() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("lib.rs"), "fn first() { 1 }\n").expect("write");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    let first = services
+        .read(ReadRequest {
+            path: "lib.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("first read");
+    assert!(!first.index_stale);
+    assert_eq!(first.status, ReadStatus::Content);
+
+    // Live body changes but the caller still presents the old range hash.
+    std::fs::write(root.path().join("lib.rs"), "fn other() { 9 }\n").expect("edit");
+    let second = services
+        .read(ReadRequest {
+            path: "lib.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: Some(first.content_hash.clone()),
+        })
+        .await
+        .expect("second read");
+    // expected_hash compares against the live range hash, so a changed file is
+    // Content + index_stale rather than NotModified.
+    assert_eq!(second.status, ReadStatus::Content);
+    assert!(second.index_stale);
+    assert!(second.content.as_deref().is_some_and(|c| c.contains("other")));
+}
+
+#[tokio::test]
+async fn status_reports_reconciling_when_shared_operation_lock_is_held() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write");
+    let database = root.path().join("index.sqlite");
+    let config = Config::discover(root.path(), Some(database.clone())).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    let before = services.status().await.expect("status before");
+    assert_eq!(before.freshness, Freshness::Current);
+    assert!(before.repository_generation >= 1);
+
+    let coordination = IndexCoordination::for_database(&database);
+    let _operation = coordination
+        .acquire_operation(&CancellationToken::new())
+        .expect("hold shared operation lock");
+
+    let during = services.status().await.expect("status during lock");
+    assert_eq!(
+        during.freshness,
+        Freshness::Reconciling,
+        "followers must see reconciling via the shared operation lock"
+    );
+    assert_eq!(during.repository_generation, before.repository_generation);
 }

@@ -26,7 +26,11 @@ ignore-aware discovery -> chunking -> tree-sitter extraction
   conservative import resolution.
 - The storage layer owns migrations, transactions, generations, and FTS5.
 - Retrieval services own validation, freshness checks, ranking inputs, token
-  limits, and response models.
+  limits, and response models. The public `Services` type lives in
+  `services.rs` (startup, indexing, status, snapshot consistency, meta).
+  Retrieval entrypoints and their implementations live together under
+  `services/`: `files`, `search`, `context`, and `read`, with shared request
+  validation in `validation`.
 - The MCP adapter owns SDK types, protocol error translation, cancellation, and
   stdio lifecycle. It omits optional output schemas from the catalog and offers
   explicit dual, text-only, and structured-only result modes. Dual remains the
@@ -55,10 +59,15 @@ One repository-scoped operation lock serializes reconciliation across processes.
 File preparation happens outside SQLite, then an immediate write transaction
 verifies that the generation and config used to build the plan are still
 current. A stale plan is discarded and recomputed. Replacements, deletions, and
-generation advancement then commit together. Readers open short read-only
-connections and retry a response when the repository generation changes while
-it is being assembled. A returned response therefore does not mix committed
-generations.
+generation advancement then commit together.
+
+Each multi-step retrieval (search, context, outline, files, read) opens one
+read-only connection and holds a DEFERRED transaction for the request
+(`ReadSession`). Under WAL that pins a single committed snapshot for every
+query in the assembly, so concurrent publishers cannot mix generations inside
+one response. SQLite busy/locked errors while opening and pinning a snapshot
+are retried a few times; generation zero returns a typed `IndexNotReady` error
+instead of an empty success.
 
 ## Indexing and freshness
 
@@ -96,8 +105,10 @@ For existing regular files, the watcher reconciles only the reported paths.
 New paths, directory changes, symlinks, ignore-file changes, configuration
 changes, and ambiguous deletions fall back to full discovery. Path-set
 expansions also reparse unchanged importers so a newly added target can resolve
-previously unresolved edges. Reported files are content-hashed even when size
-and modification time are unchanged. File replacement, deletion,
+previously unresolved edges. Both the watcher path and full discovery
+content-hash files before treating them as unchanged: matching size and mtime
+alone never skips reindexing when the body changed (bind mounts, copy tools that
+preserve mtime, some network filesystems). File replacement, deletion,
 reverse-import invalidation, and generation advancement commit in one SQLite
 transaction.
 
@@ -105,6 +116,56 @@ Indexing is serialized across processes, but queries continue against the last
 committed WAL generation. The short-lived operation lock makes `reconciling`
 visible to followers as well as the leader. Watcher and reconciliation tasks
 receive caller-owned cancellation and are joined during shutdown.
+
+Each `Services`/`Indexer` instance owns one Rayon worker pool sized from that
+instance's `max_index_workers`. The pool is built when the indexer is opened and
+reused for every prepare, so concurrent service instances keep independent
+worker limits and reconciles do not rebuild a pool on every pass.
+
+## Retrieval hot-path bounds
+
+These limits cap context fan-out, regex work, and file-list memory. A request
+returns `LimitExceeded` instead of silently returning incomplete regex results
+when a scan boundary is reached. Tree/find/glob still scan the indexed path
+table, but page database reads and retain only `max_results + 1` entries rather
+than materializing the repository. The numbers are safety limits, not monorepo
+performance claims.
+
+| Path | Bound |
+| --- | --- |
+| Context query terms | 12 (`MAX_CONTEXT_QUERIES`) |
+| Context hits per term/source | 20 symbols/refs, 30 FTS |
+| Regex match candidates | `min(max_results × 20, 2000)` |
+| Regex files scanned | 10_000 |
+| Regex chunks per file | 256 |
+| File scan page size | 1_000; tree/find/glob retain at most `max_results + 1` entries |
+
+Regex mode verifies patterns over snapshot file pages without materializing the
+repository path list. Prefer symbol/identifier/text modes when a full-repo scan
+is unnecessary. Compiled regex size and DFA cache are also limited so
+pathological patterns fail closed.
+
+Run the reproducible hot-path profile with, for example,
+`cargo run --example hot_path_bounds --release -- --files 10000 --iterations 20`.
+It reports warm p50/p95 wall time; run the command under `/usr/bin/time -v` when
+process CPU and peak RSS are required. Results are host-local and should only be
+compared on the same machine and release profile.
+
+## Live read vs index
+
+`leantoken_read` always reads the live filesystem for the returned body while
+symbol resolution and path admission use the index. Responses include:
+
+- `meta.repository_generation` — committed generation used for index lookups;
+- `meta.freshness` — `current` or `reconciling` (local activity or the shared
+  operation lock);
+- `content_hash` — hash of the returned live range;
+- `indexed_hash` — hash of the whole indexed file;
+- `index_stale` — true when the live file body differs from the indexed file.
+
+Agents should re-outline or re-search after edits when `index_stale` is true,
+and pass `expected_hash` on rereads to suppress unchanged ranges. Search and
+outline never invent empty successful results at generation zero.
 
 ## Concurrency design constraints
 

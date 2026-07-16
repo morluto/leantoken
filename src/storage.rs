@@ -350,6 +350,18 @@ impl fmt::Debug for Storage {
     }
 }
 
+/// One read-only connection held under a DEFERRED transaction so all queries
+/// on this session observe a single SQLite WAL snapshot.
+pub struct ReadSession {
+    conn: Connection,
+}
+
+impl Drop for ReadSession {
+    fn drop(&mut self) {
+        let _ = self.conn.execute_batch("ROLLBACK");
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum FtsTable {
     Word,
@@ -424,32 +436,11 @@ impl Storage {
     }
 
     pub fn meta(&self) -> Result<MetaRecord> {
-        self.with_read(|conn| {
-            conn.query_row(
-                "SELECT schema_version, index_version, config_hash, repository_generation FROM meta WHERE id = 1",
-                [],
-                |row| {
-                    Ok(MetaRecord {
-                        schema_version: row.get(0)?,
-                        index_version: row.get(1)?,
-                        config_hash: row.get(2)?,
-                        repository_generation: i64_to_u64(row.get(3)?),
-                    })
-                },
-            )
-            .map_err(Into::into)
-        })
+        self.begin_read()?.meta()
     }
 
     pub fn repository_generation(&self) -> Result<u64> {
-        self.with_read(|conn| {
-            let generation: i64 = conn.query_row(
-                "SELECT repository_generation FROM meta WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )?;
-            Ok(i64_to_u64(generation))
-        })
+        self.begin_read()?.repository_generation()
     }
 
     pub fn full_reconcile(&self, config_hash: &str, files: Vec<IndexedFile>) -> Result<u64> {
@@ -685,28 +676,11 @@ impl Storage {
     }
 
     pub fn list_files(&self, max_results: usize, cursor: Option<i64>) -> Result<Vec<FileRecord>> {
-        let limit = bounded_limit(max_results);
-        self.with_read(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, path, language, size_bytes, modified_ns, content_hash, generation, structurally_complete FROM files WHERE (?1 IS NULL OR id > ?1) ORDER BY id LIMIT ?2",
-            )?;
-            let rows = stmt.query_map(params![cursor, limit], Self::map_file)?;
-            let mut files = Vec::new();
-            for row in rows {
-                files.push(row?);
-            }
-            Ok(files)
-        })
+        self.begin_read()?.list_files(max_results, cursor)
     }
 
     pub fn find_file(&self, path: &str) -> Result<Option<FileRecord>> {
-        self.with_read(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, path, language, size_bytes, modified_ns, content_hash, generation, structurally_complete FROM files WHERE path = ?1",
-            )?;
-            let mut rows = stmt.query_map(params![path], Self::map_file)?;
-            Ok(rows.next().transpose()?)
-        })
+        self.begin_read()?.find_file(path)
     }
 
     pub fn get_chunks_for_file(
@@ -714,34 +688,7 @@ impl Storage {
         file_id: i64,
         max_results: usize,
     ) -> Result<Vec<ChunkRecord>> {
-        let limit = bounded_limit(max_results);
-        self.with_read(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, file_id, content, start_line, end_line, start_byte, end_byte, token_count FROM chunks WHERE file_id = ?1 ORDER BY start_byte LIMIT ?2",
-            )?;
-            let rows = stmt.query_map(params![file_id, limit], Self::map_chunk)?;
-            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-        })
-    }
-
-    pub(crate) fn get_chunks_overlapping(
-        &self,
-        file_id: i64,
-        start_line: usize,
-        end_line: usize,
-    ) -> Result<Vec<ChunkRecord>> {
-        let start_line = usize_to_i64(start_line)?;
-        let end_line = usize_to_i64(end_line)?;
-        self.with_read(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, file_id, content, start_line, end_line, start_byte, end_byte, token_count
-                 FROM chunks
-                 WHERE file_id = ?1 AND end_line >= ?2 AND start_line <= ?3
-                 ORDER BY start_line",
-            )?;
-            let rows = stmt.query_map(params![file_id, start_line, end_line], Self::map_chunk)?;
-            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-        })
+        self.begin_read()?.get_chunks_for_file(file_id, max_results)
     }
 
     pub fn get_symbols_for_file(
@@ -749,74 +696,8 @@ impl Storage {
         file_id: i64,
         max_results: usize,
     ) -> Result<Vec<SymbolRecord>> {
-        let limit = bounded_limit(max_results);
-        self.with_read(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte FROM symbols WHERE file_id = ?1 ORDER BY start_byte LIMIT ?2",
-            )?;
-            let rows = stmt.query_map(params![file_id, limit], Self::map_symbol)?;
-            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-        })
-    }
-
-    pub(crate) fn get_symbols_for_file_filtered(
-        &self,
-        file_id: i64,
-        name: Option<&str>,
-        kind: Option<&str>,
-        max_results: usize,
-    ) -> Result<Vec<SymbolRecord>> {
-        let limit = bounded_limit(max_results);
-        self.with_read(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
-                 FROM symbols
-                 WHERE file_id = ?1
-                   AND (?2 IS NULL OR instr(name, ?2) > 0)
-                   AND (?3 IS NULL OR kind = ?3)
-                 ORDER BY start_byte
-                 LIMIT ?4",
-            )?;
-            let rows = stmt.query_map(params![file_id, name, kind, limit], Self::map_symbol)?;
-            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-        })
-    }
-
-    pub(crate) fn find_symbol(&self, file_id: i64, name: &str) -> Result<Option<SymbolRecord>> {
-        self.with_read(|conn| {
-            Ok(conn
-                .query_row(
-                    "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
-                     FROM symbols
-                     WHERE file_id = ?1 AND name = ?2
-                     ORDER BY start_byte
-                     LIMIT 1",
-                    params![file_id, name],
-                    Self::map_symbol,
-                )
-                .optional()?)
-        })
-    }
-
-    pub(crate) fn find_enclosing_symbol(
-        &self,
-        file_id: i64,
-        line: usize,
-    ) -> Result<Option<SymbolRecord>> {
-        let line = usize_to_i64(line)?;
-        self.with_read(|conn| {
-            Ok(conn
-                .query_row(
-                    "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
-                     FROM symbols
-                     WHERE file_id = ?1 AND start_line <= ?2 AND end_line >= ?2
-                     ORDER BY (end_line - start_line), start_byte
-                     LIMIT 1",
-                    params![file_id, line],
-                    Self::map_symbol,
-                )
-                .optional()?)
-        })
+        self.begin_read()?
+            .get_symbols_for_file(file_id, max_results)
     }
 
     pub fn get_references_for_file(
@@ -824,14 +705,8 @@ impl Storage {
         file_id: i64,
         max_results: usize,
     ) -> Result<Vec<ReferenceRecord>> {
-        let limit = bounded_limit(max_results);
-        self.with_read(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, file_id, name, kind, role, enclosing_symbol, start_line, end_line, start_byte, end_byte FROM symbol_refs WHERE file_id = ?1 ORDER BY start_byte LIMIT ?2",
-            )?;
-            let rows = stmt.query_map(params![file_id, limit], Self::map_reference)?;
-            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-        })
+        self.begin_read()?
+            .get_references_for_file(file_id, max_results)
     }
 
     pub fn get_imports_for_file(
@@ -839,27 +714,16 @@ impl Storage {
         file_id: i64,
         max_results: usize,
     ) -> Result<Vec<ImportRecord>> {
-        let limit = bounded_limit(max_results);
-        self.with_read(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, file_id, raw_target, resolved_path, line FROM imports WHERE file_id = ?1 ORDER BY line LIMIT ?2",
-            )?;
-            let rows = stmt.query_map(params![file_id, limit], Self::map_import)?;
-            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-        })
+        self.begin_read()?
+            .get_imports_for_file(file_id, max_results)
     }
 
     pub fn search_word(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
-        self.search_fts(FtsTable::Word, query, max_results)
+        self.begin_read()?.search_word(query, max_results)
     }
 
     pub fn search_trigram(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
-        if query.chars().count() < 3 {
-            return Ok(Vec::new());
-        }
-        let escaped = query.replace('"', "\"\"");
-        let quoted = format!("\"{escaped}\"");
-        self.search_fts(FtsTable::Trigram, &quoted, max_results)
+        self.begin_read()?.search_trigram(query, max_results)
     }
 
     pub fn search_symbols(
@@ -868,36 +732,8 @@ impl Storage {
         case_sensitive: bool,
         max_results: usize,
     ) -> Result<Vec<SymbolHit>> {
-        let limit = bounded_limit(max_results);
-        self.with_read(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT f.path, f.content_hash, s.id, s.file_id, s.name, s.kind, s.parent, s.signature, s.start_line, s.end_line, s.start_byte, s.end_byte
-                 FROM symbols s JOIN files f ON f.id = s.file_id
-                 WHERE CASE WHEN ?2 THEN instr(s.name, ?1) > 0 ELSE instr(lower(s.name), lower(?1)) > 0 END
-                 ORDER BY CASE WHEN CASE WHEN ?2 THEN s.name = ?1 ELSE lower(s.name) = lower(?1) END THEN 0 ELSE 1 END,
-                          length(s.name), f.path, s.start_byte
-                 LIMIT ?3",
-            )?;
-            let rows = stmt.query_map(params![query, case_sensitive, limit], |row| {
-                Ok(SymbolHit {
-                    path: row.get(0)?,
-                    content_hash: row.get(1)?,
-                    symbol: SymbolRecord {
-                        id: row.get(2)?,
-                        file_id: row.get(3)?,
-                        name: row.get(4)?,
-                        kind: row.get(5)?,
-                        parent: row.get(6)?,
-                        signature: row.get(7)?,
-                        start_line: i64_to_usize(row.get(8)?),
-                        end_line: i64_to_usize(row.get(9)?),
-                        start_byte: i64_to_usize(row.get(10)?),
-                        end_byte: i64_to_usize(row.get(11)?),
-                    },
-                })
-            })?;
-            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-        })
+        self.begin_read()?
+            .search_symbols(query, case_sensitive, max_results)
     }
 
     pub fn search_references(
@@ -906,90 +742,24 @@ impl Storage {
         case_sensitive: bool,
         max_results: usize,
     ) -> Result<Vec<ReferenceHit>> {
-        let limit = bounded_limit(max_results);
-        self.with_read(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT f.path, f.content_hash, r.id, r.file_id, r.name, r.kind, r.role, r.enclosing_symbol, r.start_line, r.end_line, r.start_byte, r.end_byte
-                 FROM symbol_refs r JOIN files f ON f.id = r.file_id
-                 WHERE CASE WHEN ?2 THEN instr(r.name, ?1) > 0 ELSE instr(lower(r.name), lower(?1)) > 0 END
-                 ORDER BY CASE WHEN CASE WHEN ?2 THEN r.name = ?1 ELSE lower(r.name) = lower(?1) END THEN 0 ELSE 1 END,
-                          length(r.name), f.path, r.start_byte
-                 LIMIT ?3",
-            )?;
-            let rows = stmt.query_map(params![query, case_sensitive, limit], |row| {
-                Ok(ReferenceHit {
-                    path: row.get(0)?,
-                    content_hash: row.get(1)?,
-                    reference: ReferenceRecord {
-                        id: row.get(2)?,
-                        file_id: row.get(3)?,
-                        name: row.get(4)?,
-                        kind: row.get(5)?,
-                        role: role_from_str(&row.get::<_, String>(6)?),
-                        enclosing_symbol: row.get(7)?,
-                        start_line: i64_to_usize(row.get(8)?),
-                        end_line: i64_to_usize(row.get(9)?),
-                        start_byte: i64_to_usize(row.get(10)?),
-                        end_byte: i64_to_usize(row.get(11)?),
-                    },
-                })
-            })?;
-            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-        })
+        self.begin_read()?
+            .search_references(query, case_sensitive, max_results)
     }
 
     pub fn counts(&self) -> Result<StorageCounts> {
-        self.with_read(|conn| {
-            let files = i64_to_usize(conn.query_row("SELECT count(*) FROM files", [], |row| row.get(0))?);
-            let chunks = i64_to_usize(conn.query_row("SELECT count(*) FROM chunks", [], |row| row.get(0))?);
-            let symbols = i64_to_usize(conn.query_row("SELECT count(*) FROM symbols", [], |row| row.get(0))?);
-            let mut stmt = conn.prepare(
-                "SELECT language, count(*) FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY language",
-            )?;
-            let languages = stmt
-                .query_map([], |row| Ok((row.get(0)?, i64_to_usize(row.get(1)?))))?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            Ok(StorageCounts {
-                files,
-                chunks,
-                symbols,
-                languages,
-            })
-        })
+        self.begin_read()?.counts()
     }
 
-    fn search_fts(
-        &self,
-        table: FtsTable,
-        query: &str,
-        max_results: usize,
-    ) -> Result<Vec<ChunkHit>> {
-        let limit = bounded_limit(max_results);
-        let table_name = table.as_str();
-        let sql = format!(
-            "SELECT c.id, c.file_id, f.path, c.content, c.start_line, c.end_line, c.start_byte, c.end_byte, c.token_count, bm25({table_name}) as score \
-             FROM {table_name} \
-             JOIN chunks c ON {table_name}.rowid = c.rowid \
-             JOIN files f ON c.file_id = f.id \
-             WHERE {table_name} MATCH ?1 \
-             ORDER BY bm25({table_name}), f.path, c.start_byte \
-             LIMIT ?2"
-        );
-        self.with_read(|conn| {
-            let mut stmt = conn.prepare(&sql)?;
-            let rows = stmt.query_map(params![query, limit], Self::map_chunk_hit)?;
-            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-        })
-    }
-
-    fn with_read<F, T>(&self, f: F) -> Result<T>
-    where
-        F: FnOnce(&Connection) -> Result<T>,
-    {
+    /// Open a read-only connection and begin a DEFERRED transaction so callers
+    /// observe one WAL snapshot until the session is dropped.
+    pub fn begin_read(&self) -> Result<ReadSession> {
         let conn = Connection::open_with_flags(&self.path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        f(&conn)
+        // Under WAL, the first read in a DEFERRED transaction pins the snapshot
+        // for the rest of the connection's transaction lifetime.
+        conn.execute_batch("BEGIN DEFERRED")?;
+        Ok(ReadSession { conn })
     }
 
     fn map_file(row: &Row) -> std::result::Result<FileRecord, rusqlite::Error> {
@@ -1071,6 +841,317 @@ impl Storage {
             token_count: i64_to_usize(row.get(8)?),
             score: row.get::<_, f64>(9)?,
         })
+    }
+}
+
+impl ReadSession {
+    pub fn meta(&self) -> Result<MetaRecord> {
+        self.conn
+            .query_row(
+                "SELECT schema_version, index_version, config_hash, repository_generation FROM meta WHERE id = 1",
+                [],
+                |row| {
+                    Ok(MetaRecord {
+                        schema_version: row.get(0)?,
+                        index_version: row.get(1)?,
+                        config_hash: row.get(2)?,
+                        repository_generation: i64_to_u64(row.get(3)?),
+                    })
+                },
+            )
+            .map_err(Into::into)
+    }
+
+    pub fn repository_generation(&self) -> Result<u64> {
+        let generation: i64 = self.conn.query_row(
+            "SELECT repository_generation FROM meta WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(i64_to_u64(generation))
+    }
+
+    pub fn list_files(&self, max_results: usize, cursor: Option<i64>) -> Result<Vec<FileRecord>> {
+        let limit = bounded_limit(max_results);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, path, language, size_bytes, modified_ns, content_hash, generation, structurally_complete FROM files WHERE (?1 IS NULL OR id > ?1) ORDER BY id LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![cursor, limit], Storage::map_file)?;
+        let mut files = Vec::new();
+        for row in rows {
+            files.push(row?);
+        }
+        Ok(files)
+    }
+
+    pub fn find_file(&self, path: &str) -> Result<Option<FileRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, path, language, size_bytes, modified_ns, content_hash, generation, structurally_complete FROM files WHERE path = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![path], Storage::map_file)?;
+        Ok(rows.next().transpose()?)
+    }
+
+    pub fn get_chunks_for_file(
+        &self,
+        file_id: i64,
+        max_results: usize,
+    ) -> Result<Vec<ChunkRecord>> {
+        let limit = bounded_limit(max_results);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, file_id, content, start_line, end_line, start_byte, end_byte, token_count FROM chunks WHERE file_id = ?1 ORDER BY start_byte LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![file_id, limit], Storage::map_chunk)?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub(crate) fn get_chunks_overlapping(
+        &self,
+        file_id: i64,
+        start_line: usize,
+        end_line: usize,
+    ) -> Result<Vec<ChunkRecord>> {
+        let start_line = usize_to_i64(start_line)?;
+        let end_line = usize_to_i64(end_line)?;
+        let mut stmt = self.conn.prepare(
+            "SELECT id, file_id, content, start_line, end_line, start_byte, end_byte, token_count
+                 FROM chunks
+                 WHERE file_id = ?1 AND end_line >= ?2 AND start_line <= ?3
+                 ORDER BY start_line",
+        )?;
+        let rows = stmt.query_map(params![file_id, start_line, end_line], Storage::map_chunk)?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn get_symbols_for_file(
+        &self,
+        file_id: i64,
+        max_results: usize,
+    ) -> Result<Vec<SymbolRecord>> {
+        let limit = bounded_limit(max_results);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte FROM symbols WHERE file_id = ?1 ORDER BY start_byte LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![file_id, limit], Storage::map_symbol)?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub(crate) fn get_symbols_for_file_filtered(
+        &self,
+        file_id: i64,
+        name: Option<&str>,
+        kind: Option<&str>,
+        max_results: usize,
+    ) -> Result<Vec<SymbolRecord>> {
+        let limit = bounded_limit(max_results);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
+                 FROM symbols
+                 WHERE file_id = ?1
+                   AND (?2 IS NULL OR instr(name, ?2) > 0)
+                   AND (?3 IS NULL OR kind = ?3)
+                 ORDER BY start_byte
+                 LIMIT ?4",
+        )?;
+        let rows = stmt.query_map(params![file_id, name, kind, limit], Storage::map_symbol)?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub(crate) fn find_symbol(&self, file_id: i64, name: &str) -> Result<Option<SymbolRecord>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
+                     FROM symbols
+                     WHERE file_id = ?1 AND name = ?2
+                     ORDER BY start_byte
+                     LIMIT 1",
+                params![file_id, name],
+                Storage::map_symbol,
+            )
+            .optional()?)
+    }
+
+    pub(crate) fn find_enclosing_symbol(
+        &self,
+        file_id: i64,
+        line: usize,
+    ) -> Result<Option<SymbolRecord>> {
+        let line = usize_to_i64(line)?;
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
+                     FROM symbols
+                     WHERE file_id = ?1 AND start_line <= ?2 AND end_line >= ?2
+                     ORDER BY (end_line - start_line), start_byte
+                     LIMIT 1",
+                params![file_id, line],
+                Storage::map_symbol,
+            )
+            .optional()?)
+    }
+
+    pub fn get_references_for_file(
+        &self,
+        file_id: i64,
+        max_results: usize,
+    ) -> Result<Vec<ReferenceRecord>> {
+        let limit = bounded_limit(max_results);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, file_id, name, kind, role, enclosing_symbol, start_line, end_line, start_byte, end_byte FROM symbol_refs WHERE file_id = ?1 ORDER BY start_byte LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![file_id, limit], Storage::map_reference)?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn get_imports_for_file(
+        &self,
+        file_id: i64,
+        max_results: usize,
+    ) -> Result<Vec<ImportRecord>> {
+        let limit = bounded_limit(max_results);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, file_id, raw_target, resolved_path, line FROM imports WHERE file_id = ?1 ORDER BY line LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![file_id, limit], Storage::map_import)?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn search_word(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
+        self.search_fts(FtsTable::Word, query, max_results)
+    }
+
+    pub fn search_trigram(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
+        if query.chars().count() < 3 {
+            return Ok(Vec::new());
+        }
+        let escaped = query.replace('"', "\"\"");
+        let quoted = format!("\"{escaped}\"");
+        self.search_fts(FtsTable::Trigram, &quoted, max_results)
+    }
+
+    pub fn search_symbols(
+        &self,
+        query: &str,
+        case_sensitive: bool,
+        max_results: usize,
+    ) -> Result<Vec<SymbolHit>> {
+        let limit = bounded_limit(max_results);
+        let mut stmt = self.conn.prepare(
+            "SELECT f.path, f.content_hash, s.id, s.file_id, s.name, s.kind, s.parent, s.signature, s.start_line, s.end_line, s.start_byte, s.end_byte
+                 FROM symbols s JOIN files f ON f.id = s.file_id
+                 WHERE CASE WHEN ?2 THEN instr(s.name, ?1) > 0 ELSE instr(lower(s.name), lower(?1)) > 0 END
+                 ORDER BY CASE WHEN CASE WHEN ?2 THEN s.name = ?1 ELSE lower(s.name) = lower(?1) END THEN 0 ELSE 1 END,
+                          length(s.name), f.path, s.start_byte
+                 LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![query, case_sensitive, limit], |row| {
+            Ok(SymbolHit {
+                path: row.get(0)?,
+                content_hash: row.get(1)?,
+                symbol: SymbolRecord {
+                    id: row.get(2)?,
+                    file_id: row.get(3)?,
+                    name: row.get(4)?,
+                    kind: row.get(5)?,
+                    parent: row.get(6)?,
+                    signature: row.get(7)?,
+                    start_line: i64_to_usize(row.get(8)?),
+                    end_line: i64_to_usize(row.get(9)?),
+                    start_byte: i64_to_usize(row.get(10)?),
+                    end_byte: i64_to_usize(row.get(11)?),
+                },
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn search_references(
+        &self,
+        query: &str,
+        case_sensitive: bool,
+        max_results: usize,
+    ) -> Result<Vec<ReferenceHit>> {
+        let limit = bounded_limit(max_results);
+        let mut stmt = self.conn.prepare(
+            "SELECT f.path, f.content_hash, r.id, r.file_id, r.name, r.kind, r.role, r.enclosing_symbol, r.start_line, r.end_line, r.start_byte, r.end_byte
+                 FROM symbol_refs r JOIN files f ON f.id = r.file_id
+                 WHERE CASE WHEN ?2 THEN instr(r.name, ?1) > 0 ELSE instr(lower(r.name), lower(?1)) > 0 END
+                 ORDER BY CASE WHEN CASE WHEN ?2 THEN r.name = ?1 ELSE lower(r.name) = lower(?1) END THEN 0 ELSE 1 END,
+                          length(r.name), f.path, r.start_byte
+                 LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![query, case_sensitive, limit], |row| {
+            Ok(ReferenceHit {
+                path: row.get(0)?,
+                content_hash: row.get(1)?,
+                reference: ReferenceRecord {
+                    id: row.get(2)?,
+                    file_id: row.get(3)?,
+                    name: row.get(4)?,
+                    kind: row.get(5)?,
+                    role: role_from_str(&row.get::<_, String>(6)?),
+                    enclosing_symbol: row.get(7)?,
+                    start_line: i64_to_usize(row.get(8)?),
+                    end_line: i64_to_usize(row.get(9)?),
+                    start_byte: i64_to_usize(row.get(10)?),
+                    end_byte: i64_to_usize(row.get(11)?),
+                },
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn counts(&self) -> Result<StorageCounts> {
+        let files = i64_to_usize(
+            self.conn
+                .query_row("SELECT count(*) FROM files", [], |row| row.get(0))?,
+        );
+        let chunks = i64_to_usize(self.conn.query_row(
+            "SELECT count(*) FROM chunks",
+            [],
+            |row| row.get(0),
+        )?);
+        let symbols = i64_to_usize(self.conn.query_row(
+            "SELECT count(*) FROM symbols",
+            [],
+            |row| row.get(0),
+        )?);
+        let mut stmt = self.conn.prepare(
+            "SELECT language, count(*) FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY language",
+        )?;
+        let languages = stmt
+            .query_map([], |row| Ok((row.get(0)?, i64_to_usize(row.get(1)?))))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(StorageCounts {
+            files,
+            chunks,
+            symbols,
+            languages,
+        })
+    }
+
+    fn search_fts(
+        &self,
+        table: FtsTable,
+        query: &str,
+        max_results: usize,
+    ) -> Result<Vec<ChunkHit>> {
+        let limit = bounded_limit(max_results);
+        let table_name = table.as_str();
+        let sql = format!(
+            "SELECT c.id, c.file_id, f.path, c.content, c.start_line, c.end_line, c.start_byte, c.end_byte, c.token_count, bm25({table_name}) as score \
+             FROM {table_name} \
+             JOIN chunks c ON {table_name}.rowid = c.rowid \
+             JOIN files f ON c.file_id = f.id \
+             WHERE {table_name} MATCH ?1 \
+             ORDER BY bm25({table_name}), f.path, c.start_byte \
+             LIMIT ?2"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![query, limit], Storage::map_chunk_hit)?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 }
 

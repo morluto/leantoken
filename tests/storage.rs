@@ -375,3 +375,35 @@ fn wal_and_foreign_keys_enabled() {
         .expect("foreign_keys");
     assert_eq!(foreign_keys, 1);
 }
+
+#[test]
+fn read_session_pins_generation_across_queries() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("index.sqlite");
+    let storage = Storage::open(&path).expect("open");
+    let gen1 = storage
+        .full_reconcile("cfg-a", vec![sample_file("a.rs", "fn a() {}\n")])
+        .expect("gen1");
+    assert_eq!(gen1, 1);
+
+    let session = storage.begin_read().expect("session");
+    assert_eq!(session.repository_generation().expect("gen"), 1);
+    let files = session.list_files(100, None).expect("list");
+    assert_eq!(files.len(), 1);
+
+    // Concurrent publish must not change the open snapshot.
+    let gen2 = storage
+        .full_reconcile("cfg-b", vec![sample_file("b.rs", "fn b() {}\n")])
+        .expect("gen2");
+    assert_eq!(gen2, 2);
+    assert_eq!(session.repository_generation().expect("pinned gen"), 1);
+    let still = session.list_files(100, None).expect("list pinned");
+    assert_eq!(still.len(), 1);
+    assert_eq!(still[0].path, "a.rs");
+
+    // Fresh session sees the new generation.
+    let latest = storage.begin_read().expect("fresh");
+    assert_eq!(latest.repository_generation().expect("latest"), 2);
+    assert_eq!(latest.list_files(100, None).expect("list").len(), 1);
+    assert_eq!(latest.list_files(100, None).expect("list")[0].path, "b.rs");
+}

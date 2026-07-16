@@ -14,7 +14,7 @@ fn indexer_initial_reconcile_indexes_files_and_advances_generation() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     );
     let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone());
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
 
     let response = indexer.reconcile(false).expect("first reconcile");
     assert_eq!(response.files_indexed, 2);
@@ -36,7 +36,7 @@ fn indexer_reopen_leaves_unchanged_files_and_generation() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     );
     let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config.clone(), storage.clone());
+    let indexer = Indexer::new(config.clone(), storage.clone()).expect("indexer");
 
     let first = indexer.reconcile(false).expect("first reconcile");
     assert_eq!(first.repository_generation, 1);
@@ -59,7 +59,7 @@ fn indexer_change_updates_generation_and_search_index() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     );
     let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone());
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
 
     let first = indexer.reconcile(false).expect("first reconcile");
     assert_eq!(first.repository_generation, 1);
@@ -87,7 +87,7 @@ fn targeted_reconcile_updates_only_reported_existing_file() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     );
     let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone());
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
     indexer.reconcile(false).expect("initial reconcile");
     let stable_generation = storage
         .find_file("b.rs")
@@ -139,7 +139,7 @@ fn targeted_reconcile_hashes_reported_files_even_when_metadata_is_unchanged() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     );
     let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone());
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
     indexer.reconcile(false).expect("initial reconcile");
 
     std::fs::write(&path, "fn neo() {}\n").expect("same-size replacement");
@@ -166,7 +166,7 @@ fn targeted_reconcile_deletes_existing_file() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     );
     let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone());
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
     indexer.reconcile(false).expect("initial reconcile");
 
     std::fs::remove_file(root.path().join("gone.rs")).expect("remove");
@@ -192,7 +192,7 @@ fn targeted_reconcile_clears_imports_resolved_to_deleted_file() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     );
     let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone());
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
     indexer.reconcile(false).expect("initial reconcile");
     let consumer = storage
         .find_file("consumer.rs")
@@ -232,7 +232,7 @@ fn targeted_reconcile_falls_back_for_deleted_directory() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     );
     let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone());
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
     indexer.reconcile(false).expect("initial reconcile");
 
     std::fs::remove_dir_all(root.path().join("removed")).expect("remove directory");
@@ -257,7 +257,7 @@ fn targeted_reconcile_falls_back_for_new_files_and_ignore_changes() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     );
     let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone());
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
     indexer.reconcile(false).expect("initial reconcile");
 
     std::fs::write(root.path().join("new.rs"), "fn new_file() {}\n").expect("new file");
@@ -290,7 +290,7 @@ fn new_file_fallback_resolves_existing_importers() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     );
     let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone());
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
     indexer.reconcile(false).expect("initial reconcile");
     let consumer = storage
         .find_file("consumer.rs")
@@ -333,7 +333,7 @@ fn indexer_delete_removes_file_and_advances_generation() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     );
     let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone());
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
 
     let first = indexer.reconcile(false).expect("first reconcile");
     assert_eq!(first.repository_generation, 1);
@@ -362,7 +362,7 @@ fn indexer_rebuild_resets_index_and_advances_generation() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     );
     let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone());
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
 
     let first = indexer.reconcile(false).expect("first reconcile");
     assert_eq!(first.repository_generation, 1);
@@ -385,7 +385,7 @@ fn indexer_respects_chunk_lines_and_bytes() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     );
     let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone());
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
 
     let response = indexer.reconcile(false).expect("reconcile");
     assert_eq!(response.files_indexed, 1);
@@ -400,4 +400,56 @@ fn indexer_respects_chunk_lines_and_bytes() {
         assert!(chunk.end_line - chunk.start_line < 80);
         assert!(chunk.content.len() <= 32 * 1024);
     }
+}
+
+#[test]
+fn full_reconcile_reindexes_when_content_changes_but_size_and_mtime_match() {
+    use std::fs::{File, FileTimes};
+
+    let root = tempfile::tempdir().expect("root");
+    let path = root.path().join("twin.rs");
+    // Same-length payloads so size_bytes matches after overwrite.
+    let original = "fn alpha_v1() {}\n";
+    let updated = "fn beta__v2() {}\n";
+    assert_eq!(original.len(), updated.len(), "fixture sizes must match");
+    std::fs::write(&path, original).expect("write original");
+
+    let config = Arc::new(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    );
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+
+    let first = indexer.reconcile(false).expect("first reconcile");
+    assert_eq!(first.files_indexed, 1);
+    assert_eq!(first.repository_generation, 1);
+    assert!(!storage.search_word("alpha_v1", 10).expect("search").is_empty());
+
+    let original_meta = std::fs::metadata(&path).expect("metadata");
+    let original_mtime = original_meta.modified().expect("mtime before");
+    std::fs::write(&path, updated).expect("overwrite same-size content");
+    // Portable mtime restore for Windows/macOS/Linux CI (no external touch -r).
+    let file = File::options()
+        .write(true)
+        .open(&path)
+        .expect("open for set_times");
+    file.set_times(FileTimes::new().set_modified(original_mtime))
+        .expect("restore mtime");
+    drop(file);
+
+    let after_meta = std::fs::metadata(&path).expect("metadata after");
+    assert_eq!(after_meta.len(), original_meta.len());
+    assert_eq!(
+        after_meta.modified().expect("mtime after"),
+        original_mtime
+    );
+
+    let second = indexer.reconcile(false).expect("second reconcile");
+    assert_eq!(
+        second.files_indexed, 1,
+        "content-hash must detect same-size mtime-preserved rewrite"
+    );
+    assert_eq!(second.repository_generation, 2);
+    assert!(storage.search_word("alpha_v1", 10).expect("old").is_empty());
+    assert!(!storage.search_word("beta__v2", 10).expect("new").is_empty());
 }

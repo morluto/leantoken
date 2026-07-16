@@ -75,6 +75,11 @@ content hash. Structural fields appear only when syntax supports them.
 Lexical matches remain eligible when structural extraction is unavailable or
 incomplete.
 
+Regex search has explicit file, chunk, candidate, and compiled-program safety
+limits. If a limit would make the answer incomplete, the tool returns
+`LimitExceeded`; use text, identifier, symbol, or reference mode for exhaustive
+indexed lookup on larger repositories.
+
 ## `leantoken_outline`
 
 Returns definitions, imports, signatures, parent relationships, and one-based
@@ -98,7 +103,15 @@ Reads an exact source range.
 
 `content_hash` identifies the returned range. `indexed_hash` identifies the
 whole indexed file. `index_stale` is true when the live file differs from the
-indexed version.
+indexed version (for example after an edit that has not been reindexed yet).
+`meta.repository_generation` is the committed index generation used for path
+and symbol lookup; `meta.freshness` is `reconciling` while an index operation
+is active on this cache.
+
+When the index has never completed a generation, tools other than status return
+a retryable not-ready error rather than an empty success. After local edits,
+prefer outline/search again once freshness is `current`, or trust `index_stale`
+and re-read with `expected_hash` for unchanged ranges.
 
 ## `leantoken_context`
 
