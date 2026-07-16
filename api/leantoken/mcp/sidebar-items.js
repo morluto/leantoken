@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["McpResultMode"],"fn":["into_mcp_error","serve_stdio","tool_catalog_json","tool_result"],"struct":["LeanTokenMcp"]};
+window.SIDEBAR_ITEMS = {"enum":["McpResultMode","McpServiceState"],"fn":["into_mcp_error","serve_stdio","serve_stdio_server","tool_catalog_json","tool_result","tool_unavailable"],"struct":["LeanTokenMcp","McpServices"]};

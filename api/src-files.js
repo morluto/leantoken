@@ -1,2 +1,2 @@
-createSrcSidebar('[["leantoken",["",[["setup",[],["launcher.rs"]]],["cli.rs","config.rs","error.rs","indexer.rs","lib.rs","mcp.rs","model.rs","parser.rs","ranking.rs","repository.rs","services.rs","setup.rs","storage.rs","text.rs","tokens.rs","watcher.rs"]]]]');
-//{"start":19,"fragment_lengths":[239]}
+createSrcSidebar('[["leantoken",["",[["setup",[],["launcher.rs"]]],["cli.rs","config.rs","coordination.rs","error.rs","indexer.rs","lib.rs","mcp.rs","model.rs","parser.rs","ranking.rs","repository.rs","services.rs","setup.rs","storage.rs","text.rs","tokens.rs","watcher.rs"]]]]');
+//{"start":19,"fragment_lengths":[257]}
