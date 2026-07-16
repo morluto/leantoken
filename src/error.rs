@@ -32,6 +32,8 @@ pub enum Error {
     UnsupportedLanguage(String),
     #[error("invalid request: {0}")]
     InvalidRequest(String),
+    #[error("invalid repository configuration: {0}")]
+    InvalidConfiguration(String),
     #[error("stale cursor")]
     StaleCursor,
     #[error("request cancelled")]
@@ -46,6 +48,12 @@ pub enum Error {
     RetryableConflict(RetryableOperation),
     #[error("MCP indexing runtime stopped unexpectedly")]
     McpRuntimeStopped,
+    #[error("required runtime capability is unavailable: {capability}")]
+    RuntimeCapabilityUnavailable {
+        capability: &'static str,
+        #[source]
+        source: Option<rusqlite::Error>,
+    },
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("SQLite error: {0}")]
