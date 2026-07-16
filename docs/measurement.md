@@ -191,6 +191,113 @@ The dry-run adapter does not call a model, edit the worktree, or report token
 usage. A passing success command therefore validates only the experiment
 plumbing; it is not task-success, quality, or cost evidence.
 
+## Ranked-region interchange
+
+`ranked_region_benchmark` provides a versioned JSONL boundary between a
+retriever and an evaluator. Task records contain the repository URL, pinned
+40-character revision, path style, query, language and strata, exact budget,
+relevant files, and evaluator-only core and optional regions. Prediction
+records bind themselves to the exact manifest BLAKE3, revision, budget, and
+tokenizer, then provide contiguous ranked regions with optional channel, facet,
+score, token count, complete response cost, source cost, latency, and index
+generation.
+
+The evaluator rejects malformed or absolute paths, unpinned revisions,
+manifest/revision/budget mismatches, duplicate or noncontiguous ranks, mixed
+dataset/budget/tokenizer reports, and source-token overspend. Windows path
+normalization is explicit per task; a backslash in a POSIX task remains a
+different path. Interval unions prevent overlapping predictions from
+double-counting returned lines or budget.
+
+Run the repository-owned synthetic fixture:
+
+```bash
+cargo run --release --example ranked_region_benchmark -- \
+  convert-swe-explore \
+  --dataset benchmarks/fixtures/ranked_regions/swe_explore.synthetic.jsonl \
+  --issue-map benchmarks/fixtures/ranked_regions/swe_explore.issue_map.json \
+  --commit-map benchmarks/fixtures/ranked_regions/swe_explore.commit_map.json \
+  --output target/swe-explore.manifest.jsonl \
+  --line-budget 8
+
+cargo run --release --example ranked_region_benchmark -- \
+  evaluate \
+  --manifest target/swe-explore.manifest.jsonl \
+  --predictions benchmarks/fixtures/ranked_regions/swe_explore.predictions.jsonl \
+  --output target/swe-explore.report.json
+```
+
+The checked-in prediction is bound to the checked-in converted manifest. If the
+manifest is regenerated at another path with identical bytes, its BLAKE3
+remains
+`4c626913b7920a0d2a8a5efcf9db7189d1491e3d259bfe84399ed95c4f685c1d`.
+The deterministic report covers 3/5 core lines in 7 unique returned lines,
+with line F1 0.5, NDCG 0.5543214703324495, 35 source tokens, and 120 complete
+response tokens.
+
+Convert an existing LeanToken representative or validation report into the
+same boundary, then score it:
+
+```bash
+cargo run --release --example ranked_region_benchmark -- \
+  import-representative \
+  --manifest benchmarks/validation.json \
+  --report target/validation.json \
+  --manifest-output target/validation-ranked.manifest.jsonl \
+  --predictions-output target/validation-ranked.predictions.jsonl
+
+cargo run --release --example ranked_region_benchmark -- \
+  evaluate \
+  --manifest target/validation-ranked.manifest.jsonl \
+  --predictions target/validation-ranked.predictions.jsonl \
+  --output target/validation-ranked.report.json
+
+cargo run --release --example ranked_region_benchmark -- \
+  compare \
+  --baseline target/baseline-ranked.report.json \
+  --candidate target/candidate-ranked.report.json \
+  --output target/ranked-ablation.json
+```
+
+Reports include macro and micro file recall, core-line recall, precision and
+F1, context efficiency over core plus optional labels, core-region hit rate,
+predicted-region noise rate, first useful hit, line-budget NDCG, strata,
+complete response tokens, source tokens, latency, and both token costs per
+relevant returned line. Comparisons show baseline, candidate, absolute delta,
+and relative delta only when the baseline denominator is nonzero. They do not
+emit a synthetic winner score.
+
+The Phase 1 Linux x86-64 delivery record, including hashes, current validation
+pilot metrics, wire accounting, schema review, verification, and go/no-go
+decisions, is archived in
+[`../benchmarks/reports/evidence-economics-v2-linux-x86_64-2026-07-16.json`](../benchmarks/reports/evidence-economics-v2-linux-x86_64-2026-07-16.json).
+
+### SWE-Explore data boundary
+
+The adapter accepts a caller-provided local JSONL path and does not download or
+vendor the dataset. The public SWE-Explore JSONL contains line labels but does
+not embed issue text or base commits, so use JSON object companion maps
+`{instance_id: value}` with `--issue-map` and `--commit-map`. Inline
+`problem_statement` and `base_commit` remain accepted for augmented local
+records.
+
+Provenance checked on 2026-07-16:
+
+- paper: arXiv `2606.07297`;
+- official code: `Qiushao-E/SWE-Explore-Bench` revision
+  `3c12dc5a551937038afcbdb6eb6bbf19f3ddd8c1`, MIT;
+- Hugging Face dataset repository:
+  `SWE-Explore-Bench/SWE-Explore-Bench` revision
+  `bdb0ae45d7c337d9e1dc3ebfe2a0af6bc7c1fbd9`;
+- dataset card license: `CC-BY-NC-ND-4.0`.
+
+Check the current dataset card and the licenses of referenced repositories
+before each use. The code license does not replace the dataset terms. Keep the
+download outside this repository, record the exact dataset revision and file
+hash in the run artifact, and do not publish converted labels unless their
+terms permit it. The checked-in fixture is independently authored and contains
+no released SWE-Explore record.
+
 ## Exact MCP wire capture
 
 Before collecting sensitive host traces, generate the deterministic synthetic
@@ -207,9 +314,10 @@ cargo run --release --example mcp_wire_analyze -- \
 ```
 
 The fixture is built from `tool_catalog_json` and `tool_result`, not a copied
-schema. It is plumbing evidence only: its provider totals are null, it has no
-host conversation frame, and its `dual` classification does not prove that any
-real host delivers text or structured content to a model.
+schema. It is plumbing evidence only: provider totals are null, only the
+synthetic handoff is marked provider-visible, and its `dual` classification
+does not prove that any real host delivers text or structured content to a
+model.
 The checked-in [trace](../benchmarks/wire_trace.synthetic.json) and
 [analysis](../benchmarks/reports/wire-trace-synthetic-0.1.1.json) are the
 regenerable baseline for LeanToken 0.1.1.
@@ -221,12 +329,19 @@ cargo run --release --example mcp_wire_capture -- \
   --output target/codex-wire.json \
   --host codex \
   --host-version VERSION \
+  --provider PROVIDER \
+  --model MODEL \
+  --repository-revision REVISION \
+  --dirty-fingerprint clean \
   -- leantoken --root /path/to/repo mcp
 ```
 
 The proxy forwards bytes unchanged and records each newline-delimited JSON-RPC
-payload in both directions. It writes only protocol bytes to stdout. Analyze
-the trace:
+payload in both directions. It writes only protocol bytes to stdout. The proxy
+adds a trace ID, canonical content BLAKE3, tokenizer exactness, event sequence,
+timestamps, and optional repository identity. It cannot observe turns,
+provider framing, cache use, compaction, result visibility, or task outcome
+unless the host exports those fields into the trace.
 
 Wire traces can contain repository source, prompts, paths, and host metadata.
 Store them with the same access controls and retention policy as the repository;
@@ -238,12 +353,42 @@ cargo run --release --example mcp_wire_analyze -- \
   --output target/codex-wire-cost.json
 ```
 
-The analyzer separates initialization, tool schemas, calls, results, and
-handoffs. When the host exports a provider-native turn total, put it in the
-trace-level `provider_total_input_tokens`. Optional event values are deltas used
-only for category attribution, never repeated cumulative totals. Partial event
-totals remain null. A host-specific conversation frame or model handoff is
-outside stdio and must be appended as a `handoff` event if the host exposes it.
+Trace schema v2 records:
+
+- trace and repository identity;
+- model/provider and tokenizer exactness;
+- ordered turn/event sequence with optional timestamp and latency;
+- exact local JSON-RPC plus separately annotated provider-visible payloads;
+- category, tool/call/result IDs, and result visibility;
+- generation/path/line/content-hash range identity with source tokens;
+- stable-prefix/cache annotations, handoff, and compaction;
+- provider-native uncached input, cache creation, cache read, output, and
+  reasoning tokens;
+- optional outcome.
+
+Unknown provider values remain JSON `null`. Event usage values are deltas, not
+repeated cumulative totals. A trace-level provider total is authoritative when
+the host exposes one. If one event in a category lacks a provider delta, that
+category total remains null. Schema v1 remains readable, but turn, range,
+retention, cache, and compaction metrics stay unknown and the report includes a
+`legacy_schema` limitation.
+
+The analyzer reports complete serialized JSON-RPC, all explicitly annotated
+provider-visible payloads, the handoff subset, their observed-boundary sum,
+overlapping component diagnostics, exact
+text/structured duplication, range rereads, superseded hashes, stale
+generations, first/last visible turns, and serialized/source
+`tokens * visible_turn_count`. Component costs overlap their enclosing event
+and must not be added to complete-wire cost.
+
+The synthetic v2 trace measures 2,001 serialized JSON tokens and a 13-token
+provider-visible handoff, for a 2,014-token observed-boundary sum. The local
+and provider boundaries may overlap in real traces, so this sum is not a
+provider bill. Its 257-token result remains visible for three turns, producing 771
+serialized retained tokens; its 21 source tokens produce 63 retained source
+tokens. These are exact `cl100k_base` fixture values, not provider billing.
+The report marks provider framing as partial and all provider-native counts as
+missing.
 
 ## Result compatibility matrix
 

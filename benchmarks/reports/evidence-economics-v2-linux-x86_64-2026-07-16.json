@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "phase": "evidence_economics_v2",
+  "generated_at": "2026-07-16",
+  "conclusion": {
+    "phase_1": "pass",
+    "phase_2": "go",
+    "phase_3": "no_go_until_a_real_host_exports_provider_visible_framing"
+  },
+  "revisions": {
+    "baseline_runtime": "6a6aa44cc84904d9e5b913c4c90224e883ae9d73",
+    "candidate_runtime": "6a6aa44cc84904d9e5b913c4c90224e883ae9d73",
+    "measurement_implementation": "bbc20b4582ab2805b07b98d6bda11c2ce61ba767",
+    "wire_measurement_commit": "be741a0764095217483036e15fc65cfb749fd7a4"
+  },
+  "environment": {
+    "os": "Linux",
+    "kernel": "6.1.0-50-cloud-amd64",
+    "architecture": "x86_64",
+    "rustc": "1.97.0 (2d8144b78 2026-07-07)",
+    "cargo": "1.97.0 (c980f4866 2026-06-30)",
+    "build_profile": "release for generated benchmark artifacts; dev for full verification",
+    "tokenizer": "cl100k_base",
+    "token_count_exact": true
+  },
+  "datasets": {
+    "validation": {
+      "role": "consumed development validation",
+      "manifest_blake3": "5991d8a643a873ef61d5a4122f52abd7f589a5403d13ab609ebc6b9428e73d9a",
+      "manifest_sha256": "88663bc2770ed59d33d5f674afc3c3450a517df87a8ff661bd4a1ef80190c8c1",
+      "baseline_report_sha256": "c42424eba31f284a57c769936f5cfc72628cc4ae7fd7bb7c092a6442628ce325",
+      "ranked_manifest_blake3": "b12915ba2de8db2a19f7c41631c204c8dcc3b4151a9aeeedfb62747032d48a13",
+      "ranked_manifest_sha256": "1c330ae7a982227e0d5e0129da953706a2726418271ff18049b8a93dbdb4f4fd",
+      "ranked_predictions_blake3": "807cca96a239eee20b5d145fd94c42a9750bfaeae64ff5a74f462754cb56ad11",
+      "ranked_predictions_sha256": "4085aa123e30cb9d3f436e212462f081e2e9296f779806e55cb421f5dcba2422",
+      "ranked_report_sha256": "5c462956a0f8d60ca5c9ee7b8354c3c6888ee2f9d1bf94ea051bd059557e6e33"
+    },
+    "representative": {
+      "role": "retrospective development set",
+      "manifest_sha256": "a5bd367a10d970e96064bf9410fd010683c1c1e9b75c288e10bf22cdaadf1775",
+      "baseline_report_sha256": "8a5b52171fcdaf16016a9e67b50e1cb8daee39d8c3fb6c82cf0c320eb795969a"
+    },
+    "swe_explore": {
+      "paper": "arXiv:2606.07297",
+      "official_code_revision": "3c12dc5a551937038afcbdb6eb6bbf19f3ddd8c1",
+      "official_code_license": "MIT",
+      "dataset_revision": "bdb0ae45d7c337d9e1dc3ebfe2a0af6bc7c1fbd9",
+      "dataset_license": "CC-BY-NC-ND-4.0",
+      "dataset_records": 848,
+      "dataset_bytes": 13683678,
+      "dataset_file_sha256": "dc4f114ececd0bfb987361c26ae5e2440456e2cccb36adfccb09ea5385aec202",
+      "vendored": false
+    },
+    "synthetic_ranked_fixture": {
+      "manifest_blake3": "4c626913b7920a0d2a8a5efcf9db7189d1491e3d259bfe84399ed95c4f685c1d",
+      "manifest_sha256": "3ade727b70c1e4a087da771ce3ac3f4b5f839718267490dc4b43196ed456c367",
+      "predictions_sha256": "db8d598f3bb7b73742fe5c9f267666abdbb48a0b9e5bd8306255ca1ffdd4c5cc",
+      "report_sha256": "00e0e7850286f45b4ed0e25330a544f39deba2bfd31c15909ccf85596941c600"
+    }
+  },
+  "retrieval": {
+    "runtime_behavior_changed": false,
+    "validation_baseline": {
+      "tasks": 4,
+      "relevant_files": 11,
+      "relevant_files_hit": 8,
+      "file_recall_micro": 0.7272727272727273,
+      "core_lines": 38,
+      "core_lines_hit": 17,
+      "line_recall_micro": 0.4473684210526316,
+      "source_tokens": 3266,
+      "complete_first_response_tokens": 5797,
+      "complete_two_turn_tokens": 12410,
+      "dead_end_source_tokens": 1081
+    },
+    "validation_external_format_pilot": {
+      "tasks": 4,
+      "relevant_files": 11,
+      "relevant_files_hit": 8,
+      "file_recall_macro": 0.7291666666666666,
+      "file_recall_micro": 0.7272727272727273,
+      "core_lines": 38,
+      "core_lines_hit": 17,
+      "line_recall_macro": 0.4450757575757576,
+      "line_recall_micro": 0.4473684210526316,
+      "line_precision_macro": 0.040196305912576266,
+      "line_f1_macro": 0.07342700833162161,
+      "ndcg_at_budget_macro": 0.18773152896325515,
+      "context_efficiency_macro": 0.040196305912576266,
+      "noise_region_rate_macro": 0.8125,
+      "source_tokens": 3266,
+      "complete_response_tokens": 5797,
+      "source_tokens_per_relevant_line": 192.11764705882354,
+      "complete_tokens_per_relevant_line": 341.0
+    },
+    "representative_baseline": {
+      "tasks": 8,
+      "relevant_files": 15,
+      "relevant_files_hit": 13,
+      "file_recall_micro": 0.8666666666666667,
+      "core_lines": 41,
+      "core_lines_hit": 8,
+      "line_recall_micro": 0.1951219512195122,
+      "source_tokens": 5446,
+      "complete_first_response_tokens": 10202,
+      "complete_two_turn_tokens": 22235,
+      "dead_end_source_tokens": 2271
+    },
+    "synthetic_ranked_fixture": {
+      "file_recall": 0.5,
+      "line_recall": 0.6,
+      "line_precision": 0.42857142857142855,
+      "line_f1": 0.5,
+      "ndcg_at_budget": 0.5543214703324495,
+      "returned_unique_lines": 7,
+      "relevant_returned_lines": 4,
+      "source_tokens": 35,
+      "complete_response_tokens": 120
+    }
+  },
+  "wire": {
+    "baseline_v1": {
+      "trace_sha256": "1ba68b2eeea69b0b6e3e71772c9b411cb0dfc7596fbc5f9064e02f349fca433d",
+      "report_sha256": "6de9d9484f0d720f9f7b6c38bd89bf8172d005390f4976d19b707ccda0834ee1",
+      "events": 7,
+      "serialized_json_tokens": 2001,
+      "provider_input_tokens": null
+    },
+    "candidate_v2": {
+      "trace_sha256": "7ac3a50296e6636a183db1f1d44b4903c74d372b3524eb0a16fe9d56cb8c980b",
+      "report_sha256": "623624e39cd21b7450bfaa342a30b5c7276ec4482fe89078508923216734fd7a",
+      "trace_content_blake3": "95b427b322bc6684912464fd25c2fb1c63d33bd8191436d579bf5e51a1b8c362",
+      "events": 8,
+      "serialized_json_tokens": 2001,
+      "provider_visible_payload_tokens": 13,
+      "handoff_tokens": 13,
+      "observed_boundary_tokens": 2014,
+      "catalog_component_tokens": 1535,
+      "call_argument_component_tokens": 40,
+      "result_text_component_tokens": 129,
+      "structured_content_component_tokens": 106,
+      "receipt_component_tokens": 18,
+      "exact_text_structured_duplicate_tokens": 106,
+      "result_serialized_tokens": 257,
+      "result_source_tokens": 21,
+      "visible_turn_count": 3,
+      "serialized_retention_amplification": 771,
+      "source_retention_amplification": 63,
+      "provider_usage": {
+        "uncached_input_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "output_tokens": null,
+        "reasoning_tokens": null
+      }
+    },
+    "serialized_json_token_delta": 0,
+    "provider_saving_claim_supported": false
+  },
+  "runtime_mcp_schema": {
+    "changed": false,
+    "tool_count": 5,
+    "catalog_token_delta": 0,
+    "snapshot_sha256": "46c6066fc84a2afb6dd48dfdad25e79d0845245dbb32cd986507348c876fa2f5"
+  },
+  "verification": {
+    "cargo_fmt": "pass",
+    "cargo_check_all_targets_all_features": "pass",
+    "cargo_clippy_all_targets_all_features_deny_warnings": "pass",
+    "cargo_test_all_targets_all_features": {
+      "status": "pass",
+      "library_tests": 112,
+      "integration_tests": 124,
+      "example_tests": 33
+    },
+    "cargo_doc_no_deps": "pass",
+    "preparation_tracked_files": 0
+  },
+  "failure_classes": [
+    "The converted validation pilot exposes low line precision and a high predicted-region noise rate; Phase 1 measures this baseline but does not improve retrieval.",
+    "The public SWE-Explore dataset lacks inline issue text and base commits, so conversion requires explicit companion maps.",
+    "No real host exported a complete provider-visible conversation frame or cache accounting in this phase."
+  ],
+  "limitations": [
+    "The validation and representative sets are consumed development data and cannot support blind generalization claims.",
+    "The synthetic wire fixture is local plumbing evidence, not provider billing or host compatibility evidence.",
+    "The 13-token handoff is independently annotated and must not be interpreted as proof that the catalog or result reached a model.",
+    "Component token categories overlap complete serialized envelopes and cannot be summed as a second cost total.",
+    "The external-format pilot imports current LeanToken output; it is not a model task-success experiment.",
+    "The SWE-Explore dataset was inspected only for contract and provenance validation and was not committed."
+  ],
+  "artifacts": {
+    "wire_trace": "benchmarks/wire_trace.synthetic.json",
+    "wire_report": "benchmarks/reports/wire-trace-synthetic-0.1.1.json",
+    "ranked_fixture_manifest": "benchmarks/fixtures/ranked_regions/swe_explore.manifest.jsonl",
+    "ranked_fixture_predictions": "benchmarks/fixtures/ranked_regions/swe_explore.predictions.jsonl",
+    "ranked_fixture_report": "benchmarks/fixtures/ranked_regions/swe_explore.report.json",
+    "phase_report": "benchmarks/reports/evidence-economics-v2-linux-x86_64-2026-07-16.json"
+  }
+}
