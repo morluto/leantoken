@@ -442,6 +442,30 @@ fn npx_setup_registers_an_unpinned_launcher_instead_of_its_cache_path() {
     );
 }
 
+#[test]
+fn npx_setup_explains_that_it_does_not_install_a_global_cli() {
+    let temp = tempfile::tempdir().expect("temporary home");
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", temp.path())
+        .env("USERPROFILE", temp.path())
+        .env("npm_lifecycle_event", "npx")
+        .env("npm_node_execpath", temp.path().join("node"))
+        .env("npm_execpath", temp.path().join("npm-cli.js"))
+        .args(["setup", "--codex", "--yes"])
+        .output()
+        .expect("run npx setup");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("no global `leantoken` command was installed"));
+    assert!(stdout.contains("npm install --global leantoken"));
+}
+
 fn run(
     root: &std::path::Path,
     database: &std::path::Path,

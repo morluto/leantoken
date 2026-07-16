@@ -67,7 +67,10 @@ impl Cli {
             },
             Commands::Setup(args) => AppRequest::Setup(args.into()),
             Commands::Remove(args) => AppRequest::Remove(args.into()),
-            Commands::Update | Commands::Upgrade => AppRequest::Upgrade,
+            Commands::Update(args) | Commands::Upgrade(args) => AppRequest::Upgrade {
+                check: args.check,
+                yes: args.yes,
+            },
         }
     }
 }
@@ -85,7 +88,7 @@ pub enum AppRequest {
     Mcp { result_mode: McpResultMode },
     Setup(SetupRequest),
     Remove(SetupRequest),
-    Upgrade,
+    Upgrade { check: bool, yes: bool },
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -125,10 +128,22 @@ pub enum Commands {
     Remove(IntegrationArgs),
 
     /// Update LeanToken to the latest release.
-    Update,
+    Update(UpgradeArgs),
 
     /// Update LeanToken to the latest release.
-    Upgrade,
+    Upgrade(UpgradeArgs),
+}
+
+/// Options shared by `update` and `upgrade`.
+#[derive(Debug, Clone, Args)]
+pub struct UpgradeArgs {
+    /// Check for a newer release without installing it.
+    #[arg(long)]
+    pub check: bool,
+
+    /// Run the package-manager command without prompting.
+    #[arg(short = 'y', long)]
+    pub yes: bool,
 }
 
 /// MCP stdio transport options.
