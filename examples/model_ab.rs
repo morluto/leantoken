@@ -8,6 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
 use serde::{Deserialize, Serialize};
+use statrs::statistics::Statistics;
 use wait_timeout::ChildExt;
 
 #[derive(Debug, Parser)]
@@ -116,9 +117,13 @@ struct AdapterResult {
     reread_tokens: u64,
     failed_searches: usize,
     #[serde(default)]
+    dead_end_reads: usize,
+    #[serde(default)]
     provider_usage: serde_json::Value,
     #[serde(default)]
     evidence_receipt: Option<serde_json::Value>,
+    #[serde(default)]
+    repository_generation: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -129,15 +134,29 @@ struct RunReport {
     primary_model: String,
     executor_model: Option<String>,
     duration_ms: u128,
-    validation_duration_ms: u128,
+    status: RunStatus,
+    validation_duration_ms: Option<u128>,
     validation_exit_code: Option<i32>,
-    agent_reported_success: bool,
-    result: AdapterResult,
+    agent_reported_success: Option<bool>,
+    error: Option<String>,
+    result: Option<AdapterResult>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum RunStatus {
+    Completed,
+    AdapterFailed,
+    AdapterTimedOut,
+    ValidationFailed,
+    ValidationTimedOut,
 }
 
 #[derive(Debug, Default, Serialize)]
 struct ArmAggregate {
     runs: usize,
+    adapter_completed: usize,
+    run_errors: usize,
     successes: usize,
     success_rate: f64,
     total_input_tokens: u64,
@@ -148,6 +167,17 @@ struct ArmAggregate {
     rereads: usize,
     reread_tokens: u64,
     failed_searches: usize,
+    dead_end_reads: usize,
+    input_tokens: SampleStatistics,
+    output_tokens: SampleStatistics,
+    duration_ms: SampleStatistics,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct SampleStatistics {
+    samples: usize,
+    mean: Option<f64>,
+    sample_variance: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -161,6 +191,7 @@ struct Report {
     tool_call_limit: usize,
     repetitions: usize,
     arms: BTreeMap<Arm, ArmAggregate>,
+    task_arms: BTreeMap<String, BTreeMap<Arm, ArmAggregate>>,
     runs: Vec<RunReport>,
     limitations: Vec<&'static str>,
 }
@@ -198,25 +229,77 @@ fn main() -> Result<(), Box<dyn Error>> {
                     retrieval_contract: arm.retrieval_contract(),
                 };
                 let started = Instant::now();
-                let mut result = invoke_adapter(
+                let invocation = invoke_adapter(
                     &args.adapter,
                     &args.adapter_args,
                     &request,
                     Duration::from_secs(manifest.timeout_seconds),
-                )?;
+                );
+                let mut result = match invocation {
+                    Ok(result) => result,
+                    Err(failure) => {
+                        runs.push(RunReport {
+                            task_id: task.id.clone(),
+                            repetition,
+                            arm,
+                            primary_model: manifest.primary_model.clone(),
+                            executor_model: (arm == Arm::Prewalk)
+                                .then(|| manifest.executor_model.clone()),
+                            duration_ms: started.elapsed().as_millis(),
+                            status: if failure.timed_out {
+                                RunStatus::AdapterTimedOut
+                            } else {
+                                RunStatus::AdapterFailed
+                            },
+                            validation_duration_ms: None,
+                            validation_exit_code: None,
+                            agent_reported_success: None,
+                            error: Some(failure.message),
+                            result: None,
+                        });
+                        continue;
+                    }
+                };
                 if result.tool_calls > manifest.tool_call_limit {
-                    return Err(
-                        format!("{} {:?} exceeded the tool-call limit", task.id, arm).into(),
-                    );
+                    runs.push(RunReport {
+                        task_id: task.id.clone(),
+                        repetition,
+                        arm,
+                        primary_model: manifest.primary_model.clone(),
+                        executor_model: (arm == Arm::Prewalk)
+                            .then(|| manifest.executor_model.clone()),
+                        duration_ms: started.elapsed().as_millis(),
+                        status: RunStatus::AdapterFailed,
+                        validation_duration_ms: None,
+                        validation_exit_code: None,
+                        agent_reported_success: Some(result.task_success),
+                        error: Some(format!(
+                            "adapter reported {} tool calls, exceeding the limit of {}",
+                            result.tool_calls, manifest.tool_call_limit
+                        )),
+                        result: Some(result),
+                    });
+                    continue;
                 }
                 let agent_reported_success = result.task_success;
                 let validation_started = Instant::now();
-                let validation_exit_code = run_validation(
+                let validation = run_validation(
                     workspace.path(),
                     &task.success_command,
                     Duration::from_secs(manifest.timeout_seconds),
-                )?;
-                result.task_success = validation_exit_code == Some(0);
+                );
+                let validation_duration_ms = validation_started.elapsed().as_millis();
+                let (status, validation_exit_code, error) = match validation {
+                    Ok(Some(exit_code)) => (RunStatus::Completed, Some(exit_code), None),
+                    Ok(None) => (
+                        RunStatus::ValidationTimedOut,
+                        None,
+                        Some("success command timed out".to_owned()),
+                    ),
+                    Err(error) => (RunStatus::ValidationFailed, None, Some(error.to_string())),
+                };
+                result.task_success =
+                    matches!(status, RunStatus::Completed) && validation_exit_code == Some(0);
                 runs.push(RunReport {
                     task_id: task.id.clone(),
                     repetition,
@@ -224,17 +307,19 @@ fn main() -> Result<(), Box<dyn Error>> {
                     primary_model: manifest.primary_model.clone(),
                     executor_model: (arm == Arm::Prewalk).then(|| manifest.executor_model.clone()),
                     duration_ms: started.elapsed().as_millis(),
-                    validation_duration_ms: validation_started.elapsed().as_millis(),
+                    status,
+                    validation_duration_ms: Some(validation_duration_ms),
                     validation_exit_code,
-                    agent_reported_success,
-                    result,
+                    agent_reported_success: Some(agent_reported_success),
+                    error,
+                    result: Some(result),
                 });
             }
         }
     }
 
     let report = Report {
-        schema_version: manifest.schema_version,
+        schema_version: 2,
         experiment_id: manifest.experiment_id,
         manifest_blake3,
         generated_at_unix_seconds: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
@@ -243,6 +328,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         tool_call_limit: manifest.tool_call_limit,
         repetitions: args.repetitions,
         arms: aggregate(&runs),
+        task_arms: aggregate_by_task(&runs),
         runs,
         limitations: vec![
             "Each run receives a fresh detached Git worktree at the frozen revision. The harness runs the frozen success command after the adapter; agent-reported success is retained only as a diagnostic.",
@@ -354,39 +440,74 @@ fn invoke_adapter(
     adapter_args: &[String],
     request: &AdapterRequest<'_>,
     timeout: Duration,
-) -> Result<AdapterResult, Box<dyn Error>> {
+) -> Result<AdapterResult, AdapterFailure> {
     let mut child = Command::new(adapter)
         .args(adapter_args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
-        .spawn()?;
-    let input = serde_json::to_vec(request)?;
+        .spawn()
+        .map_err(AdapterFailure::from_error)?;
+    let input = serde_json::to_vec(request).map_err(AdapterFailure::from_error)?;
     child
         .stdin
         .take()
-        .ok_or("adapter stdin unavailable")?
-        .write_all(&input)?;
-    let mut stdout = child.stdout.take().ok_or("adapter stdout unavailable")?;
+        .ok_or_else(|| AdapterFailure::new("adapter stdin unavailable"))?
+        .write_all(&input)
+        .map_err(AdapterFailure::from_error)?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| AdapterFailure::new("adapter stdout unavailable"))?;
     let output_reader = std::thread::spawn(move || {
         let mut output = Vec::new();
         stdout.read_to_end(&mut output)?;
         Ok::<_, std::io::Error>(output)
     });
-    let status = child.wait_timeout(timeout)?;
+    let status = child
+        .wait_timeout(timeout)
+        .map_err(AdapterFailure::from_error)?;
     let Some(status) = status else {
-        child.kill()?;
+        child.kill().map_err(AdapterFailure::from_error)?;
         let _ = child.wait();
         let _ = output_reader.join();
-        return Err("model adapter timed out".into());
+        return Err(AdapterFailure::timeout());
     };
     let output = output_reader
         .join()
-        .map_err(|_| "adapter output reader panicked")??;
+        .map_err(|_| AdapterFailure::new("adapter output reader panicked"))?
+        .map_err(AdapterFailure::from_error)?;
     if !status.success() {
-        return Err(format!("model adapter exited with {status}").into());
+        return Err(AdapterFailure::new(format!(
+            "model adapter exited with {status}"
+        )));
     }
-    Ok(serde_json::from_slice(&output)?)
+    serde_json::from_slice(&output).map_err(AdapterFailure::from_error)
+}
+
+struct AdapterFailure {
+    timed_out: bool,
+    message: String,
+}
+
+impl AdapterFailure {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            timed_out: false,
+            message: message.into(),
+        }
+    }
+
+    fn from_error(error: impl Error) -> Self {
+        Self::new(error.to_string())
+    }
+
+    fn timeout() -> Self {
+        Self {
+            timed_out: true,
+            message: "model adapter timed out".to_owned(),
+        }
+    }
 }
 
 fn run_validation(
@@ -425,27 +546,25 @@ fn verify_revision(repository: &Path, revision: &str) -> Result<(), Box<dyn Erro
     Ok(())
 }
 
-fn aggregate(runs: &[RunReport]) -> BTreeMap<Arm, ArmAggregate> {
+fn aggregate<'a>(runs: impl IntoIterator<Item = &'a RunReport>) -> BTreeMap<Arm, ArmAggregate> {
+    let runs = runs.into_iter().collect::<Vec<_>>();
     let mut aggregates = BTreeMap::<Arm, ArmAggregate>::new();
-    for run in runs {
+    for run in &runs {
         let item = aggregates.entry(run.arm).or_default();
         item.runs += 1;
-        item.successes += usize::from(run.result.task_success);
-        item.total_input_tokens += run.result.total_input_tokens;
-        item.total_output_tokens += run.result.total_output_tokens;
         item.total_duration_ms += run.duration_ms;
-        item.tool_calls += run.result.tool_calls;
-        item.rereads += run.result.rereads;
-        item.reread_tokens += run.result.reread_tokens;
-        item.failed_searches += run.result.failed_searches;
-        item.provider_reported_cost_usd = match (
-            item.provider_reported_cost_usd,
-            run.result.provider_reported_cost_usd,
-        ) {
-            (Some(total), Some(cost)) => Some(total + cost),
-            (None, Some(cost)) if item.runs == 1 => Some(cost),
-            _ => None,
-        };
+        if let Some(result) = &run.result {
+            item.adapter_completed += 1;
+            item.successes += usize::from(result.task_success);
+            item.total_input_tokens += result.total_input_tokens;
+            item.total_output_tokens += result.total_output_tokens;
+            item.tool_calls += result.tool_calls;
+            item.rereads += result.rereads;
+            item.reread_tokens += result.reread_tokens;
+            item.failed_searches += result.failed_searches;
+            item.dead_end_reads += result.dead_end_reads;
+        }
+        item.run_errors += usize::from(!matches!(run.status, RunStatus::Completed));
     }
     for item in aggregates.values_mut() {
         item.success_rate = if item.runs == 0 {
@@ -454,12 +573,106 @@ fn aggregate(runs: &[RunReport]) -> BTreeMap<Arm, ArmAggregate> {
             item.successes as f64 / item.runs as f64
         };
     }
+    for (arm, item) in &mut aggregates {
+        let results = runs
+            .iter()
+            .filter(|run| run.arm == *arm)
+            .filter_map(|run| run.result.as_ref())
+            .collect::<Vec<_>>();
+        item.provider_reported_cost_usd = (!results.is_empty())
+            .then(|| {
+                results
+                    .iter()
+                    .map(|result| result.provider_reported_cost_usd)
+                    .collect::<Option<Vec<_>>>()
+                    .map(|costs| costs.into_iter().sum())
+            })
+            .flatten();
+        item.input_tokens = sample_statistics(
+            results
+                .iter()
+                .map(|result| result.total_input_tokens as f64)
+                .collect(),
+        );
+        item.output_tokens = sample_statistics(
+            results
+                .iter()
+                .map(|result| result.total_output_tokens as f64)
+                .collect(),
+        );
+        item.duration_ms = sample_statistics(
+            runs.iter()
+                .filter(|run| run.arm == *arm)
+                .map(|run| run.duration_ms as f64)
+                .collect(),
+        );
+    }
     aggregates
+}
+
+fn sample_statistics(samples: Vec<f64>) -> SampleStatistics {
+    SampleStatistics {
+        samples: samples.len(),
+        mean: (!samples.is_empty()).then(|| samples.as_slice().mean()),
+        sample_variance: (samples.len() > 1).then(|| samples.as_slice().variance()),
+    }
+}
+
+fn aggregate_by_task(runs: &[RunReport]) -> BTreeMap<String, BTreeMap<Arm, ArmAggregate>> {
+    let mut task_arms = BTreeMap::new();
+    for task_id in runs.iter().map(|run| &run.task_id) {
+        task_arms
+            .entry(task_id.clone())
+            .or_insert_with(|| aggregate(runs.iter().filter(|run| run.task_id == *task_id)));
+    }
+    task_arms
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sample_statistics_reports_mean_and_sample_variance() {
+        let statistics = sample_statistics(vec![10.0, 20.0, 30.0]);
+
+        assert_eq!(statistics.samples, 3);
+        assert_eq!(statistics.mean, Some(20.0));
+        assert_eq!(statistics.sample_variance, Some(100.0));
+        assert_eq!(
+            sample_statistics(vec![10.0]).sample_variance,
+            None,
+            "one run cannot establish sample variance"
+        );
+    }
+
+    #[test]
+    fn failed_attempts_remain_in_aggregates_without_inventing_usage() {
+        let run = RunReport {
+            task_id: "task".to_owned(),
+            repetition: 1,
+            arm: Arm::Filesystem,
+            primary_model: "provider/model".to_owned(),
+            executor_model: None,
+            duration_ms: 50,
+            status: RunStatus::AdapterFailed,
+            validation_duration_ms: None,
+            validation_exit_code: None,
+            agent_reported_success: None,
+            error: Some("adapter failed".to_owned()),
+            result: None,
+        };
+
+        let aggregates = aggregate([&run]);
+        let filesystem = aggregates.get(&Arm::Filesystem).expect("filesystem arm");
+        assert_eq!(filesystem.runs, 1);
+        assert_eq!(filesystem.adapter_completed, 0);
+        assert_eq!(filesystem.run_errors, 1);
+        assert_eq!(filesystem.success_rate, 0.0);
+        assert_eq!(filesystem.provider_reported_cost_usd, None);
+        assert_eq!(filesystem.input_tokens.mean, None);
+        assert_eq!(filesystem.duration_ms.mean, Some(50.0));
+    }
 
     #[test]
     fn isolated_workspace_starts_at_revision_without_mutating_source() {
