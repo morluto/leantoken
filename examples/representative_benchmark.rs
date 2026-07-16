@@ -19,6 +19,9 @@ struct Args {
     repos_root: PathBuf,
     #[arg(long, default_value = "target/representative_benchmark_report.json")]
     output: PathBuf,
+    /// Validate the manifest, candidate runtime tree, and pinned checkouts without evaluating.
+    #[arg(long)]
+    preflight_only: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,6 +91,9 @@ struct Report {
     reclassification_rule: Option<String>,
     manifest_description: String,
     leantoken_version: &'static str,
+    harness_revision: String,
+    harness_worktree_dirty: bool,
+    candidate_runtime_tree_verified: bool,
     host_os: &'static str,
     host_arch: &'static str,
     rustc_version: String,
@@ -242,8 +248,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .into());
     }
     validate_manifest(&manifest)?;
+    let source_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let harness_revision = git_output(source_root, &["rev-parse", "HEAD"])?
+        .trim()
+        .to_owned();
+    let harness_worktree_dirty = !git_output(
+        source_root,
+        &["status", "--porcelain=v1", "--untracked-files=all"],
+    )?
+    .trim()
+    .is_empty();
+    let candidate_runtime_tree_verified = verify_candidate_runtime_tree(&manifest, source_root)?;
     let ripgrep_version = command_version("rg")?;
     preflight(&manifest, &args.repos_root)?;
+    if args.preflight_only {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "manifest_blake3": manifest_blake3,
+                "dataset_kind": manifest.dataset_kind,
+                "candidate_revision": manifest.candidate_revision,
+                "harness_revision": harness_revision,
+                "harness_worktree_dirty": harness_worktree_dirty,
+                "candidate_runtime_tree_verified": candidate_runtime_tree_verified,
+                "corpus_count": manifest.corpora.len(),
+                "task_count": manifest.corpora.iter().map(|corpus| corpus.tasks.len()).sum::<usize>(),
+                "status": "ready"
+            }))?
+        );
+        return Ok(());
+    }
 
     let scratch = tempfile::tempdir()?;
     let mut corpora = Vec::new();
@@ -307,6 +341,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         reclassification_rule: manifest.reclassification_rule,
         manifest_description: manifest.description,
         leantoken_version: env!("CARGO_PKG_VERSION"),
+        harness_revision,
+        harness_worktree_dirty,
+        candidate_runtime_tree_verified,
         host_os: std::env::consts::OS,
         host_arch: std::env::consts::ARCH,
         rustc_version: command_version("rustc")?,
@@ -846,6 +883,59 @@ fn git_output(root: &Path, args: &[&str]) -> Result<String, Box<dyn Error>> {
     Ok(String::from_utf8(output.stdout)?)
 }
 
+fn verify_candidate_runtime_tree(
+    manifest: &Manifest,
+    source_root: &Path,
+) -> Result<bool, Box<dyn Error>> {
+    if manifest.dataset_kind != "blind_holdout" {
+        return Ok(false);
+    }
+    let candidate = manifest
+        .candidate_revision
+        .as_deref()
+        .ok_or("blind holdout has no candidate revision")?;
+    if !git_output(
+        source_root,
+        &[
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--",
+            "src",
+            "Cargo.toml",
+            "Cargo.lock",
+        ],
+    )?
+    .trim()
+    .is_empty()
+    {
+        return Err("LeanToken runtime tree has uncommitted changes".into());
+    }
+    let output = Command::new("git")
+        .args([
+            "diff",
+            "--quiet",
+            candidate,
+            "--",
+            "src",
+            "Cargo.toml",
+            "Cargo.lock",
+        ])
+        .current_dir(source_root)
+        .output()?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => {
+            Err(format!("LeanToken runtime tree differs from frozen candidate {candidate}").into())
+        }
+        _ => Err(format!(
+            "could not compare LeanToken runtime tree with {candidate}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into()),
+    }
+}
+
 fn verify_revision(root: &Path, expected: &str) -> Result<(), Box<dyn Error>> {
     let output = Command::new("git")
         .args(["rev-parse", "HEAD"])
@@ -1073,5 +1163,15 @@ mod tests {
         manifest.schema_version = 2;
         manifest.corpora[0].fix_commit = Some("future".into());
         assert!(validate_manifest(&manifest).is_err());
+    }
+
+    #[test]
+    fn sealed_holdout_manifest_meets_schema_and_coverage_contract() {
+        let manifest: Manifest = serde_json::from_str(include_str!("../benchmarks/holdout.json"))
+            .expect("holdout manifest");
+
+        validate_manifest(&manifest).expect("valid sealed holdout");
+        assert_eq!(manifest.schema_version, 3);
+        assert_eq!(manifest.dataset_kind, "blind_holdout");
     }
 }

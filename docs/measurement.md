@@ -34,6 +34,57 @@ unlabeled fragment cost, repeated ranges, known-hash resends, and two-turn cost.
 Do not alter prompts, labels, budgets, or pinned revisions after inspecting a
 candidate. Freeze a new dataset version instead.
 
+## Sealed holdout lifecycle
+
+`benchmarks/holdout.json` is the unseen set for the runtime tree at its frozen
+`candidate_revision`. It contains nine tasks collected from issues that were
+open on 2026-07-16, spanning Rust, Python, JavaScript, TypeScript, Go, Ruby, and
+five task shapes. Collection used issue reports and source at exact HEAD
+revisions. It did not use pull requests, patches, fix commits, or proposed
+branches. Tasks with an ambiguous policy decision or an external source owner
+were rejected before sealing.
+
+The manifest freezes prompts, queries, labels, line anchors, budgets, source
+revisions, evaluation procedure, and reclassification rule. For a blind run,
+the benchmark refuses uncommitted runtime changes and verifies that `src/`,
+`Cargo.toml`, and `Cargo.lock` match the candidate revision. The report also
+records the harness revision, dirty state, manifest BLAKE3 identity, and whether
+the runtime-tree check passed.
+
+Prepare clean checkouts in a new directory using each manifest URL and revision,
+then run the report once:
+
+```bash
+mkdir -p target/holdout-repos
+jq -r '.corpora[] | [.directory, .url, .base_revision] | @tsv' \
+  benchmarks/holdout.json |
+while IFS=$'\t' read -r directory url revision; do
+  if test -e "target/holdout-repos/$directory"; then
+    printf 'refusing existing path: %s\n' "target/holdout-repos/$directory" >&2
+    exit 1
+  fi
+  git init "target/holdout-repos/$directory"
+  git -C "target/holdout-repos/$directory" remote add origin "$url"
+  git -C "target/holdout-repos/$directory" fetch --depth=1 origin "$revision"
+  git -C "target/holdout-repos/$directory" checkout --detach "$revision"
+done
+
+cargo run --release --example representative_benchmark -- \
+  --manifest benchmarks/holdout.json \
+  --repos-root target/holdout-repos \
+  --preflight-only
+
+cargo run --release --example representative_benchmark -- \
+  --manifest benchmarks/holdout.json \
+  --repos-root target/holdout-repos \
+  --output target/holdout-report.json
+```
+
+Archive the unedited report before inspecting it. Inspection consumes the set
+for that candidate: do not tune against the result and present another candidate
+as blind on the same tasks. If the tasks become tuning inputs, copy them to a
+prospective validation manifest and collect a new unseen holdout with a new hash.
+
 ## Model-in-the-loop A/B
 
 `model_ab` executes the same frozen task across four arms:
