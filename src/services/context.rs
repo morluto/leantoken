@@ -1,22 +1,24 @@
 //! Task-shaped context candidate assembly and ranking handoff.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use tokio_util::sync::CancellationToken;
 
+mod facets;
+
 use super::Services;
-use super::read::StoredExcerpt;
 use super::search::{chunk_search_hit, fts_quote, matching_line};
 use super::validation::{
     MAX_INPUT_ITEMS, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, check_cancelled, path_allowed,
     validate_input, validate_patterns,
 };
 use crate::model::*;
-use crate::ranking::{self, Candidate};
+use crate::ranking::{self, Candidate, EvidenceRole};
 use crate::repository::git_changed_paths;
 use crate::storage::{FileRecord, ReadSession};
 use crate::text::{expand_terms, identifier_words};
 use crate::{Error, Result};
+use facets::{ContextQuery, FacetKind};
 
 const GIT_CHANGED_PATHS_MAX: usize = 512;
 /// Maximum context query terms (symbols/refs/FTS fan-out budget).
@@ -45,13 +47,13 @@ fn context_path_score(path: &str, terms: &[String], task: &str) -> f64 {
         .iter()
         .filter(|term| path.contains(term.to_ascii_lowercase().as_str()))
         .count() as f64;
-    for code_token in code_tokens(task).into_iter().filter(|token| {
+    for code_token in terms.iter().filter(|token| {
         token.contains("::")
             || token
                 .split('.')
                 .any(|part| part.chars().next().is_some_and(char::is_uppercase))
     }) {
-        let matched_parts = expand_terms(&code_token)
+        let matched_parts = expand_terms(code_token)
             .into_iter()
             .map(|part| part.to_ascii_lowercase())
             .filter(|part| part.chars().count() >= 2 && path.contains(part))
@@ -109,140 +111,30 @@ fn qualified_symbol_match(
     f64::from(parts.iter().all(|part| haystack.contains(part)))
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct ContextQuery {
-    value: String,
-    weight: f64,
-    fusion_key: Option<String>,
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CandidateRange {
+    path: String,
+    start_line: usize,
+    end_line: usize,
 }
 
-fn context_queries(task: &str, limit: usize) -> Vec<ContextQuery> {
-    if limit == 0 {
-        return Vec::new();
-    }
-    let wants_tests = task_terms(task).iter().any(|term| is_test_term(term));
-    let available = limit.saturating_sub(usize::from(wants_tests));
-    let code_terms = code_tokens(task);
-    let code_parts = code_terms
-        .iter()
-        .flat_map(|term| std::iter::once(term.clone()).chain(expand_terms(term)))
-        .map(|term| term.to_ascii_lowercase())
-        .collect::<HashSet<_>>();
-    let prose = task_terms(task)
-        .into_iter()
-        .filter(|value| {
-            !is_test_term(value)
-                && !is_context_stop_word(value)
-                && !code_parts.contains(&value.to_ascii_lowercase())
-        })
-        .collect::<Vec<_>>();
-
-    let prose_reserve = prose.len().min(4).min(available);
-    let exact_limit = available.saturating_sub(prose_reserve);
-    let mut seen = HashSet::new();
-    let mut terms = Vec::new();
-    for code_term in code_terms.iter().take(exact_limit) {
-        push_context_query(
-            &mut terms,
-            &mut seen,
-            code_term.clone(),
-            true,
-            Some(code_term.to_ascii_lowercase()),
-        );
-    }
-    for value in prose.iter().take(prose_reserve) {
-        push_context_query(&mut terms, &mut seen, value.clone(), false, None);
-    }
-
-    let mut expansion_round = 0usize;
-    while terms.len() < available {
-        let before = terms.len();
-        for code_term in &code_terms {
-            let expansions = expand_terms(code_term);
-            if let Some(value) = expansions.get(expansion_round) {
-                push_context_query(
-                    &mut terms,
-                    &mut seen,
-                    value.clone(),
-                    true,
-                    Some(code_term.to_ascii_lowercase()),
-                );
-                if terms.len() == available {
-                    break;
-                }
-            }
+impl CandidateRange {
+    fn new(path: &str, start_line: usize, end_line: usize) -> Self {
+        Self {
+            path: path.to_owned(),
+            start_line,
+            end_line,
         }
-        if terms.len() == before {
-            break;
-        }
-        expansion_round += 1;
     }
-    if wants_tests {
-        terms.push(ContextQuery {
-            value: "test".into(),
-            weight: 0.2,
-            fusion_key: None,
-        });
-    }
-    terms
-}
 
-fn push_context_query(
-    terms: &mut Vec<ContextQuery>,
-    seen: &mut HashSet<String>,
-    value: String,
-    explicit_code_token: bool,
-    fusion_key: Option<String>,
-) {
-    if value.chars().count() < 2
-        || is_context_stop_word(&value)
-        || !seen.insert(value.to_ascii_lowercase())
-    {
-        return;
-    }
-    terms.push(ContextQuery {
-        weight: context_query_weight(&value, explicit_code_token),
-        value,
-        fusion_key,
-    });
-}
-
-fn task_terms(task: &str) -> Vec<String> {
-    task.split(|character: char| !character.is_alphanumeric() && character != '_')
-        .filter(|value| value.chars().count() >= 2)
-        .map(str::to_owned)
-        .collect()
-}
-
-fn is_test_term(term: &str) -> bool {
-    matches!(
-        term.to_ascii_lowercase().as_str(),
-        "test" | "tests" | "testing" | "coverage" | "regression"
-    )
-}
-
-fn context_query_weight(term: &str, explicit_code_token: bool) -> f64 {
-    if explicit_code_token {
-        return if term.contains(['_', ':', '.', '-']) {
-            1.0
-        } else {
-            0.95
-        };
-    }
-    if term.contains(['_', ':', '.', '-']) {
-        return 0.9;
-    }
-    match term.chars().count() {
-        10.. => 0.8,
-        7..=9 => 0.65,
-        4..=6 => 0.45,
-        _ => 0.25,
+    fn from_candidate(candidate: &Candidate) -> Self {
+        Self::new(&candidate.path, candidate.start_line, candidate.end_line)
     }
 }
 
 fn record_query_hit(
-    fusion: &mut HashMap<String, HashMap<String, f64>>,
-    path: &str,
+    fusion: &mut HashMap<CandidateRange, HashMap<String, f64>>,
+    range: CandidateRange,
     fusion_key: &str,
     weight: f64,
     rank: usize,
@@ -254,7 +146,7 @@ fn record_query_hit(
     #[allow(clippy::cast_precision_loss)]
     let score = weight * RRF_K / (RRF_K + rank as f64 + 1.0);
     fusion
-        .entry(path.to_owned())
+        .entry(range)
         .or_default()
         .entry(fusion_key.to_owned())
         .and_modify(|current| *current = current.max(score))
@@ -263,10 +155,10 @@ fn record_query_hit(
 
 fn apply_query_fusion(
     candidates: &mut [Candidate],
-    fusion: &HashMap<String, HashMap<String, f64>>,
+    fusion: &HashMap<CandidateRange, HashMap<String, f64>>,
 ) {
     for candidate in candidates {
-        let Some(matches) = fusion.get(&candidate.path) else {
+        let Some(matches) = fusion.get(&CandidateRange::from_candidate(candidate)) else {
             continue;
         };
         if matches.len() > 1 {
@@ -284,19 +176,107 @@ fn apply_query_fusion(
     }
 }
 
-fn code_tokens(task: &str) -> Vec<String> {
-    task.split_whitespace()
-        .map(|token| {
-            token.trim_matches(|character: char| !character.is_alphanumeric() && character != '_')
-        })
-        .filter(|token| {
-            token.contains('_')
-                || token.contains("::")
-                || token.contains('.')
-                || (token.contains('-') && token.chars().any(char::is_uppercase))
-        })
-        .map(str::to_owned)
-        .collect()
+fn annotate_candidate(
+    mut candidate: Candidate,
+    query: &ContextQuery,
+    channel: &str,
+    rank: usize,
+    allow_role_diversity: bool,
+) -> Candidate {
+    for facet in query.facet_names() {
+        candidate = candidate.facet(facet, &query.fusion_key);
+    }
+    candidate = candidate.channel(channel, rank);
+    for role in evidence_roles(&candidate.path, channel, query) {
+        candidate = candidate.role(role);
+    }
+    if allow_role_diversity {
+        candidate = candidate.enable_role_diversity();
+    }
+    if is_uncertain_path(&candidate.path) {
+        candidate = candidate.role(EvidenceRole::Uncertainty);
+    }
+    if is_generated_snapshot(&candidate.path) {
+        candidate.lexical_frequency_penalty = candidate.lexical_frequency_penalty.max(1.0);
+        candidate = candidate.role(EvidenceRole::Uncertainty);
+    }
+    candidate
+}
+
+fn evidence_roles(path: &str, channel: &str, query: &ContextQuery) -> Vec<EvidenceRole> {
+    if is_test_path(path) {
+        return vec![EvidenceRole::Test];
+    }
+    let mut roles = Vec::new();
+    if query.has_facet(FacetKind::Configuration) || is_contract_path(path) {
+        roles.push(EvidenceRole::Contract);
+    }
+    let channel_role = match channel {
+        "symbol" | "path" => EvidenceRole::Implementation,
+        "reference" => EvidenceRole::Caller,
+        "import" => EvidenceRole::Contract,
+        _ => EvidenceRole::Implementation,
+    };
+    if !roles.contains(&channel_role) {
+        roles.push(channel_role);
+    }
+    roles
+}
+
+fn is_test_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    let framed = format!("/{lower}");
+    framed.contains("/test/")
+        || framed.contains("/tests/")
+        || framed.contains("/spec/")
+        || framed.contains("/specs/")
+        || lower.ends_with("_test.go")
+        || lower.contains(".test.")
+        || lower.contains(".spec.")
+        || lower.starts_with("test_")
+        || lower.contains("/test_")
+}
+
+fn is_contract_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.contains("config")
+        || lower.ends_with("cargo.toml")
+        || lower.ends_with("package.json")
+        || lower.ends_with("pyproject.toml")
+        || lower.ends_with("go.mod")
+}
+
+fn is_generated_snapshot(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.contains("/snapshots/")
+        || lower.contains("__snapshots__")
+        || lower.ends_with(".snap")
+        || lower.contains("/generated/")
+        || lower.ends_with(".generated.rs")
+}
+
+fn is_uncertain_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    let framed = format!("/{lower}");
+    framed.contains("/docs/")
+        || framed.contains("/doc/")
+        || framed.contains("/examples/")
+        || framed.contains("/example/")
+        || framed.contains("/fixtures/")
+        || lower == "readme.md"
+        || lower.ends_with("/readme.md")
+        || lower == "history.md"
+        || lower.ends_with("/history.md")
+        || lower.starts_with("changelog")
+        || lower.contains("/changelog")
+}
+
+fn candidate_token_budget(total: usize, allow_role_diversity: bool) -> usize {
+    if allow_role_diversity {
+        (total / 3).clamp(128, 600).min(total)
+    } else {
+        total
+    }
 }
 
 fn task_mentions_language(task: &str, language: &str) -> bool {
@@ -309,57 +289,6 @@ fn task_mentions_language(task: &str, language: &str) -> bool {
                 word.eq_ignore_ascii_case(language)
             }
         })
-}
-
-fn is_context_stop_word(term: &str) -> bool {
-    matches!(
-        term.to_ascii_lowercase().as_str(),
-        "a" | "an"
-            | "and"
-            | "add"
-            | "adding"
-            | "are"
-            | "as"
-            | "be"
-            | "before"
-            | "both"
-            | "but"
-            | "by"
-            | "calling"
-            | "can"
-            | "change"
-            | "does"
-            | "each"
-            | "fix"
-            | "for"
-            | "from"
-            | "if"
-            | "in"
-            | "into"
-            | "is"
-            | "it"
-            | "its"
-            | "make"
-            | "not"
-            | "of"
-            | "on"
-            | "one"
-            | "only"
-            | "or"
-            | "same"
-            | "so"
-            | "than"
-            | "then"
-            | "the"
-            | "this"
-            | "to"
-            | "update"
-            | "when"
-            | "while"
-            | "within"
-            | "without"
-            | "with"
-    )
 }
 
 impl Services {
@@ -434,21 +363,89 @@ impl Services {
                 HashSet::new()
             });
         self.consistent(|session, generation| {
-            let queries = context_queries(&request.task, MAX_CONTEXT_QUERIES);
+            let mut facet_plan = facets::plan(&request.task, MAX_CONTEXT_QUERIES);
+            let queries = facet_plan.queries.clone();
             let terms = queries
                 .iter()
                 .map(|query| query.value.clone())
                 .collect::<Vec<_>>();
             let mut file_cache = HashMap::<String, Option<FileRecord>>::new();
             let mut candidates = Vec::new();
-            let mut query_fusion = HashMap::<String, HashMap<String, f64>>::new();
+            let candidate_budget =
+                candidate_token_budget(request.token_budget, facet_plan.allow_role_diversity);
+            let mut query_fusion = HashMap::<CandidateRange, HashMap<String, f64>>::new();
+            let mut resolved_facets = HashSet::new();
+            let mut candidate_counts = BTreeMap::<String, usize>::new();
+
+            for path_facet in facet_plan
+                .facets
+                .iter()
+                .filter(|facet| facet.kind == FacetKind::Path)
+            {
+                let Some(query) = queries
+                    .iter()
+                    .find(|query| query.fusion_key == path_facet.fusion_key)
+                else {
+                    continue;
+                };
+                let path = path_facet.original.trim_start_matches("./");
+                if !path_allowed(path, &[], &request.exclude_paths)? {
+                    continue;
+                }
+                let Some(file) = cached_file(session, &mut file_cache, path)? else {
+                    continue;
+                };
+                let Some(chunk) = session.get_chunks_for_file(file.id, 1)?.into_iter().next()
+                else {
+                    continue;
+                };
+                let Some(excerpt) = self.adaptive_context_excerpt(
+                    session,
+                    file.id,
+                    chunk.start_line,
+                    chunk.end_line,
+                    chunk.start_line,
+                    candidate_budget,
+                )?
+                else {
+                    continue;
+                };
+                let change_boost = Self::file_change_boost(
+                    Some(&file),
+                    path,
+                    &changed_paths,
+                    request.prior_repository_generation,
+                );
+                let candidate =
+                    Candidate::new(path, excerpt.start_line, excerpt.end_line, excerpt.content)
+                        .match_kind("path")
+                        .concept(&query.fusion_key, query.concept_weight)
+                        .exact(1.0)
+                        .path_score(context_path_score(path, &terms, &request.task) + 1.0)
+                        .change_boost(change_boost);
+                candidates.push(annotate_candidate(
+                    candidate,
+                    query,
+                    "path",
+                    0,
+                    facet_plan.allow_role_diversity,
+                ));
+                resolved_facets.insert(query.fusion_key.clone());
+                *candidate_counts
+                    .entry(format!("{}:path", query.fusion_key))
+                    .or_default() += 1;
+            }
 
             // Workflow words such as `test` are useful path priors but terrible
             // retrieval queries: nearly every test function becomes a high-
             // scoring symbol candidate. Keep them out of candidate generation.
-            for query in queries.iter().filter(|query| query.value != "test") {
+            for query in queries
+                .iter()
+                .filter(|query| !query.has_facet(FacetKind::TestIntent))
+            {
                 let term = &query.value;
-                let concept = query.fusion_key.as_deref().unwrap_or(term);
+                let concept = query.fusion_key.as_str();
+                let mut query_hit = false;
                 check_cancelled(cancellation)?;
                 for (rank, hit) in session
                     .search_symbols(term, false, MAX_CONTEXT_HITS_PER_SOURCE)?
@@ -465,7 +462,7 @@ impl Services {
                         hit.symbol.start_line,
                         hit.symbol.end_line,
                         hit.symbol.start_line,
-                        request.token_budget,
+                        candidate_budget,
                     )?
                     else {
                         continue;
@@ -477,15 +474,13 @@ impl Services {
                         hit.symbol.parent.as_deref(),
                         hit.symbol.signature.as_deref(),
                     );
-                    if let Some(fusion_key) = &query.fusion_key {
-                        record_query_hit(
-                            &mut query_fusion,
-                            &hit.path,
-                            fusion_key,
-                            query.weight,
-                            rank,
-                        );
-                    }
+                    record_query_hit(
+                        &mut query_fusion,
+                        CandidateRange::new(&hit.path, excerpt.start_line, excerpt.end_line),
+                        &query.fusion_key,
+                        query.weight,
+                        rank,
+                    );
                     let file = cached_file(session, &mut file_cache, &hit.path)?;
                     let change_boost = Self::file_change_boost(
                         file.as_ref(),
@@ -493,25 +488,31 @@ impl Services {
                         &changed_paths,
                         request.prior_repository_generation,
                     );
-                    candidates.push(
-                        Candidate::new(
-                            &hit.path,
-                            excerpt.start_line,
-                            excerpt.end_line,
-                            excerpt.content,
-                        )
-                        .match_kind("symbol")
-                        .concept(
-                            concept,
-                            query.weight + f64::from(query.fusion_key.is_some()),
-                        )
-                        .representation("symbol")
-                        .symbol_name(hit.symbol.name)
-                        .exact(exact + qualified * 1.5)
-                        .symbol(1.0)
-                        .path_score(context_path_score(&hit.path, &terms, &request.task))
-                        .change_boost(change_boost),
-                    );
+                    let candidate = Candidate::new(
+                        &hit.path,
+                        excerpt.start_line,
+                        excerpt.end_line,
+                        excerpt.content,
+                    )
+                    .match_kind("symbol")
+                    .concept(concept, query.concept_weight)
+                    .representation("symbol")
+                    .symbol_name(hit.symbol.name)
+                    .exact(exact + qualified * 1.5)
+                    .symbol(1.0)
+                    .path_score(context_path_score(&hit.path, &terms, &request.task))
+                    .change_boost(change_boost);
+                    candidates.push(annotate_candidate(
+                        candidate,
+                        query,
+                        "symbol",
+                        rank,
+                        facet_plan.allow_role_diversity,
+                    ));
+                    query_hit = true;
+                    *candidate_counts
+                        .entry(format!("{}:symbol", query.fusion_key))
+                        .or_default() += 1;
                 }
                 for (rank, hit) in session
                     .search_references(term, false, MAX_CONTEXT_HITS_PER_SOURCE)?
@@ -531,7 +532,7 @@ impl Services {
                             symbol.start_line,
                             symbol.end_line,
                             hit.reference.start_line,
-                            request.token_budget,
+                            candidate_budget,
                         )?
                     } else {
                         None
@@ -539,27 +540,25 @@ impl Services {
                     let excerpt = if excerpt.is_some() {
                         excerpt
                     } else {
-                        self.stored_excerpt(
+                        self.adaptive_context_excerpt(
                             session,
                             hit.reference.file_id,
+                            hit.reference.start_line.saturating_sub(2).max(1),
+                            hit.reference.end_line.saturating_add(2),
                             hit.reference.start_line,
-                            hit.reference.end_line,
-                            2,
-                            12,
+                            candidate_budget,
                         )?
                     };
                     let Some(excerpt) = excerpt else {
                         continue;
                     };
-                    if let Some(fusion_key) = &query.fusion_key {
-                        record_query_hit(
-                            &mut query_fusion,
-                            &hit.path,
-                            fusion_key,
-                            query.weight,
-                            rank,
-                        );
-                    }
+                    record_query_hit(
+                        &mut query_fusion,
+                        CandidateRange::new(&hit.path, excerpt.start_line, excerpt.end_line),
+                        &query.fusion_key,
+                        query.weight,
+                        rank,
+                    );
                     let file = cached_file(session, &mut file_cache, &hit.path)?;
                     let change_boost = Self::file_change_boost(
                         file.as_ref(),
@@ -567,23 +566,29 @@ impl Services {
                         &changed_paths,
                         request.prior_repository_generation,
                     );
-                    candidates.push(
-                        Candidate::new(
-                            &hit.path,
-                            excerpt.start_line,
-                            excerpt.end_line,
-                            excerpt.content,
-                        )
-                        .match_kind("reference")
-                        .concept(
-                            concept,
-                            query.weight + f64::from(query.fusion_key.is_some()),
-                        )
-                        .symbol_name(hit.reference.name)
-                        .reference(1.0)
-                        .path_score(context_path_score(&hit.path, &terms, &request.task))
-                        .change_boost(change_boost),
-                    );
+                    let candidate = Candidate::new(
+                        &hit.path,
+                        excerpt.start_line,
+                        excerpt.end_line,
+                        excerpt.content,
+                    )
+                    .match_kind("reference")
+                    .concept(concept, query.concept_weight)
+                    .symbol_name(hit.reference.name)
+                    .reference(1.0)
+                    .path_score(context_path_score(&hit.path, &terms, &request.task))
+                    .change_boost(change_boost);
+                    candidates.push(annotate_candidate(
+                        candidate,
+                        query,
+                        "reference",
+                        rank,
+                        facet_plan.allow_role_diversity,
+                    ));
+                    query_hit = true;
+                    *candidate_counts
+                        .entry(format!("{}:reference", query.fusion_key))
+                        .or_default() += 1;
                 }
                 let lexical = if term.chars().count() >= 3 {
                     session.search_trigram(term, MAX_CONTEXT_LEXICAL_HITS)?
@@ -610,25 +615,28 @@ impl Services {
                             symbol.start_line,
                             symbol.end_line,
                             matched_line,
-                            request.token_budget,
+                            candidate_budget,
                         )?
                     } else {
-                        None
-                    }
-                    .unwrap_or(StoredExcerpt {
-                        content: search_hit.excerpt.clone(),
-                        start_line: search_hit.start_line,
-                        end_line: search_hit.end_line,
-                    });
-                    if let Some(fusion_key) = &query.fusion_key {
-                        record_query_hit(
-                            &mut query_fusion,
-                            &search_hit.path,
-                            fusion_key,
-                            query.weight,
-                            rank,
-                        );
-                    }
+                        self.adaptive_context_excerpt(
+                            session,
+                            hit.file_id,
+                            search_hit.start_line,
+                            search_hit.end_line,
+                            matched_line,
+                            candidate_budget,
+                        )?
+                    };
+                    let Some(excerpt) = excerpt else {
+                        continue;
+                    };
+                    record_query_hit(
+                        &mut query_fusion,
+                        CandidateRange::new(&search_hit.path, excerpt.start_line, excerpt.end_line),
+                        &query.fusion_key,
+                        query.weight,
+                        rank,
+                    );
                     let occurrences = hit
                         .content
                         .to_lowercase()
@@ -648,10 +656,7 @@ impl Services {
                         excerpt.content,
                     )
                     .match_kind("text")
-                    .concept(
-                        concept,
-                        query.weight + f64::from(query.fusion_key.is_some()),
-                    )
+                    .concept(concept, query.concept_weight)
                     .exact(query.weight)
                     .bm25((-hit.score).max(0.0) * 1_000_000.0)
                     .path_score(context_path_score(&search_hit.path, &terms, &request.task))
@@ -659,7 +664,20 @@ impl Services {
                         (occurrences.saturating_sub(5) as f64 / 20.0).min(1.0),
                     )
                     .change_boost(change_boost);
-                    candidates.push(candidate);
+                    candidates.push(annotate_candidate(
+                        candidate,
+                        query,
+                        "text",
+                        rank,
+                        facet_plan.allow_role_diversity,
+                    ));
+                    query_hit = true;
+                    *candidate_counts
+                        .entry(format!("{}:text", query.fusion_key))
+                        .or_default() += 1;
+                }
+                if query_hit {
+                    resolved_facets.insert(query.fusion_key.clone());
                 }
             }
 
@@ -694,27 +712,56 @@ impl Services {
                     else {
                         continue;
                     };
-                    let end_line = chunk.end_line.min(chunk.start_line + 29);
-                    let content = crate::text::excerpt(
-                        &chunk.content,
-                        1,
-                        end_line.saturating_sub(chunk.start_line) + 1,
-                    );
+                    let target_path_score = context_path_score(&target_path, &terms, &request.task);
+                    let import_haystack =
+                        format!("{}\n{}\n{}", import.raw_target, target_path, chunk.content)
+                            .to_ascii_lowercase();
+                    let Some(query) = queries.iter().find(|query| {
+                        !query.has_facet(FacetKind::TestIntent)
+                            && query.value.chars().count() >= 3
+                            && import_haystack.contains(&query.value.to_ascii_lowercase())
+                    }) else {
+                        continue;
+                    };
+                    let Some(excerpt) = self.adaptive_context_excerpt(
+                        session,
+                        target_file.id,
+                        chunk.start_line,
+                        chunk.end_line,
+                        chunk.start_line,
+                        candidate_budget,
+                    )?
+                    else {
+                        continue;
+                    };
                     let change_boost = Self::file_change_boost(
                         Some(&target_file),
                         &target_path,
                         &changed_paths,
                         request.prior_repository_generation,
                     );
-                    candidates.push(
-                        Candidate::new(&target_path, chunk.start_line, end_line, content)
-                            .match_kind("import")
-                            .concept(seed_path, 0.2)
-                            .representation("import_neighbor")
-                            .path_score(context_path_score(&target_path, &terms, &request.task))
-                            .import_boost(1.0)
-                            .change_boost(change_boost),
-                    );
+                    let candidate = Candidate::new(
+                        &target_path,
+                        excerpt.start_line,
+                        excerpt.end_line,
+                        excerpt.content,
+                    )
+                    .match_kind("import")
+                    .concept(&query.fusion_key, query.concept_weight.min(1.0))
+                    .representation("import_neighbor")
+                    .path_score(target_path_score)
+                    .import_boost(1.0)
+                    .change_boost(change_boost);
+                    candidates.push(annotate_candidate(
+                        candidate,
+                        query,
+                        "import",
+                        neighbor_count,
+                        facet_plan.allow_role_diversity,
+                    ));
+                    *candidate_counts
+                        .entry(format!("{}:import", query.fusion_key))
+                        .or_default() += 1;
                     neighbor_count += 1;
                     if neighbor_count >= 24 {
                         break;
@@ -725,11 +772,61 @@ impl Services {
                 }
             }
 
+            for fusion_key in resolved_facets {
+                facet_plan.mark_resolved(&fusion_key);
+            }
+            let extracted_facets = facet_plan
+                .facets
+                .iter()
+                .map(|facet| format!("{}:{}", facet.kind.as_str(), facet.original))
+                .collect::<Vec<_>>();
+            let unresolved_facets = facet_plan
+                .unresolved()
+                .map(|facet| format!("{}:{}", facet.kind.as_str(), facet.original))
+                .collect::<Vec<_>>();
+            let candidate_provenance_count = candidates
+                .iter()
+                .map(|candidate| candidate.provenance().count())
+                .sum::<usize>();
+            let mut roles_by_range = HashMap::<CandidateRange, BTreeSet<String>>::new();
+            for candidate in &candidates {
+                roles_by_range
+                    .entry(CandidateRange::from_candidate(candidate))
+                    .or_default()
+                    .extend(candidate.role_names().map(str::to_owned));
+            }
             let mut response = ranking::select_with_tokenizer(
                 candidates,
                 &request,
                 generation,
                 self.config.tokenizer,
+            );
+            let selected_roles = response
+                .fragments
+                .iter()
+                .flat_map(|fragment| {
+                    roles_by_range
+                        .get(&CandidateRange::new(
+                            &fragment.path,
+                            fragment.start_line,
+                            fragment.end_line,
+                        ))
+                        .into_iter()
+                        .flatten()
+                })
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            tracing::debug!(
+                ?extracted_facets,
+                ?unresolved_facets,
+                wants_tests = facet_plan.wants_tests,
+                role_diversity = facet_plan.allow_role_diversity,
+                ?candidate_counts,
+                candidate_provenance_count,
+                ?selected_roles,
+                selected_fragments = response.fragments.len(),
+                omitted_candidates = response.omitted.len(),
+                "assembled task evidence portfolio"
             );
             response.meta.freshness = self.freshness();
             if response.fragments.is_empty() {
@@ -759,10 +856,11 @@ mod tests {
 
     #[test]
     fn context_queries_keep_identifiers_and_late_test_signals() {
-        let terms = context_queries(
+        let terms = facets::plan(
             "copy_current_request_context reuses one copied request context so calling the decorated function concurrently can corrupt state; add a regression test",
             12,
-        );
+        )
+        .queries;
 
         assert!(
             terms
@@ -775,10 +873,11 @@ mod tests {
 
     #[test]
     fn context_queries_preserve_dotted_and_header_tokens() {
-        let terms = context_queries(
+        let terms = facets::plan(
             "Fix res.send adding Content-Length when Transfer-Encoding is present and add coverage",
             12,
-        );
+        )
+        .queries;
 
         assert!(terms.iter().any(|term| term.value == "res.send"));
         assert!(terms.iter().any(|term| term.value == "Content-Length"));
@@ -788,10 +887,11 @@ mod tests {
 
     #[test]
     fn context_queries_keep_early_domain_nouns_over_later_long_words() {
-        let terms = context_queries(
+        let terms = facets::plan(
             "Fix app.render and res.render for a view name ending in a dot. The callback must report the normal lookup error.",
             12,
-        );
+        )
+        .queries;
 
         assert!(terms.iter().any(|term| term.value == "view"));
         assert!(terms.iter().any(|term| term.value == "name"));
@@ -802,10 +902,11 @@ mod tests {
 
     #[test]
     fn context_queries_reserve_space_for_task_intent() {
-        let terms = context_queries(
+        let terms = facets::plan(
             "Fix Alpha::first_long_identifier Beta::second_long_identifier while preserving idempotency",
             12,
-        );
+        )
+        .queries;
 
         assert!(
             terms
@@ -822,10 +923,11 @@ mod tests {
 
     #[test]
     fn context_query_expansions_share_one_fusion_concept() {
-        let terms = context_queries(
+        let terms = facets::plan(
             "Fix GlobSet::matches_all when one compiled strategy matches",
             12,
-        );
+        )
+        .queries;
         let qualified = terms
             .iter()
             .find(|term| term.value == "GlobSet::matches_all")
@@ -836,7 +938,6 @@ mod tests {
             .expect("expanded query");
 
         assert_eq!(qualified.fusion_key, expansion.fusion_key);
-        assert!(qualified.fusion_key.is_some());
     }
 
     #[test]
@@ -875,11 +976,17 @@ mod tests {
             ),
             0.0
         );
-        assert!(context_path_score("render/json.go", &[], "Fix render.AsciiJSON escaping",) > 0.0);
+        assert!(
+            context_path_score(
+                "render/json.go",
+                &["render.AsciiJSON".into()],
+                "Fix render.AsciiJSON escaping",
+            ) > 0.0
+        );
         assert!(
             context_path_score(
                 "tokio/src/fs/file.rs",
-                &[],
+                &["tokio::fs::File".into()],
                 "Fix tokio::fs::File poll_write",
             ) > 0.0
         );
@@ -888,10 +995,34 @@ mod tests {
     #[test]
     fn fusion_requires_two_independent_query_concepts() {
         let mut fusion = HashMap::new();
-        record_query_hit(&mut fusion, "one.rs", "globset::matches_all", 1.0, 0);
-        record_query_hit(&mut fusion, "one.rs", "globset::matches_all", 0.95, 1);
-        record_query_hit(&mut fusion, "two.rs", "content-length", 1.0, 0);
-        record_query_hit(&mut fusion, "two.rs", "transfer-encoding", 1.0, 1);
+        record_query_hit(
+            &mut fusion,
+            CandidateRange::new("one.rs", 1, 1),
+            "globset::matches_all",
+            1.0,
+            0,
+        );
+        record_query_hit(
+            &mut fusion,
+            CandidateRange::new("one.rs", 1, 1),
+            "globset::matches_all",
+            0.95,
+            1,
+        );
+        record_query_hit(
+            &mut fusion,
+            CandidateRange::new("two.rs", 1, 1),
+            "content-length",
+            1.0,
+            0,
+        );
+        record_query_hit(
+            &mut fusion,
+            CandidateRange::new("two.rs", 1, 1),
+            "transfer-encoding",
+            1.0,
+            1,
+        );
         let mut candidates = vec![
             Candidate::new("one.rs", 1, 1, "one"),
             Candidate::new("two.rs", 1, 1, "two"),
@@ -913,5 +1044,40 @@ mod tests {
                 .iter()
                 .any(|kind| kind == "multi-query")
         );
+    }
+
+    #[test]
+    fn fusion_is_scoped_to_the_matching_range_not_the_whole_path() {
+        let mut fusion = HashMap::new();
+        record_query_hit(
+            &mut fusion,
+            CandidateRange::new("shared.rs", 1, 3),
+            "alpha",
+            1.0,
+            0,
+        );
+        record_query_hit(
+            &mut fusion,
+            CandidateRange::new("shared.rs", 1, 3),
+            "beta",
+            1.0,
+            0,
+        );
+        record_query_hit(
+            &mut fusion,
+            CandidateRange::new("shared.rs", 20, 22),
+            "alpha",
+            1.0,
+            0,
+        );
+        let mut candidates = vec![
+            Candidate::new("shared.rs", 1, 3, "first"),
+            Candidate::new("shared.rs", 20, 22, "second"),
+        ];
+
+        apply_query_fusion(&mut candidates, &fusion);
+
+        assert!(candidates[0].path_score > 0.0);
+        assert_eq!(candidates[1].path_score, 0.0);
     }
 }

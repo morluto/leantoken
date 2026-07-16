@@ -815,6 +815,165 @@ async fn context_declaration_excerpt_retains_long_body_across_chunks() {
 }
 
 #[tokio::test]
+async fn context_portfolio_prefers_implementation_and_regression_over_snapshot_noise() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir_all(root.path().join("src")).expect("src");
+    std::fs::create_dir_all(root.path().join("tests/snapshots")).expect("tests");
+    std::fs::write(
+        root.path().join("src/render.rs"),
+        "pub fn RenderAsciiJSON(value: &str) -> String {\n    value.replace('<', \"\\\\u003c\")\n}\n",
+    )
+    .expect("implementation");
+    std::fs::write(
+        root.path().join("tests/render_test.rs"),
+        "#[test]\nfn render_ascii_json_escapes_html() {\n    assert_eq!(RenderAsciiJSON(\"<\"), \"\\\\u003c\");\n}\n",
+    )
+    .expect("test");
+    std::fs::write(
+        root.path().join("tests/snapshots/render.snap"),
+        "RenderAsciiJSON\nsnapshot output\n",
+    )
+    .expect("snapshot");
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index");
+
+    let response = services
+        .context(ContextRequest {
+            task: "Fix RenderAsciiJSON HTML escaping and add regression coverage".into(),
+            token_budget: 120,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+        })
+        .await
+        .expect("context");
+
+    assert!(
+        response
+            .fragments
+            .iter()
+            .any(|fragment| fragment.path == "src/render.rs")
+    );
+    assert!(
+        response
+            .fragments
+            .iter()
+            .any(|fragment| fragment.path == "tests/render_test.rs")
+    );
+    let implementation_position = response
+        .fragments
+        .iter()
+        .position(|fragment| fragment.path == "src/render.rs")
+        .expect("implementation position");
+    let test_position = response
+        .fragments
+        .iter()
+        .position(|fragment| fragment.path == "tests/render_test.rs")
+        .expect("test position");
+    if let Some(snapshot_position) = response
+        .fragments
+        .iter()
+        .position(|fragment| fragment.path.ends_with(".snap"))
+    {
+        assert!(snapshot_position > implementation_position);
+        assert!(snapshot_position > test_position);
+    }
+}
+
+#[tokio::test]
+async fn exact_context_does_not_broaden_to_test_files_without_task_intent() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir_all(root.path().join("src")).expect("src");
+    std::fs::create_dir_all(root.path().join("tests")).expect("tests");
+    std::fs::write(
+        root.path().join("src/error.rs"),
+        "pub struct IndexNotReady;\n",
+    )
+    .expect("implementation");
+    std::fs::write(
+        root.path().join("tests/error.rs"),
+        "#[test]\nfn reports_index_not_ready() { let _ = IndexNotReady; }\n",
+    )
+    .expect("test");
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index");
+
+    let response = services
+        .context(ContextRequest {
+            task: "Find IndexNotReady".into(),
+            token_budget: 120,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+        })
+        .await
+        .expect("context");
+
+    assert!(
+        response
+            .fragments
+            .iter()
+            .any(|fragment| fragment.path == "src/error.rs")
+    );
+    assert!(
+        response
+            .fragments
+            .iter()
+            .all(|fragment| !fragment.path.starts_with("tests/"))
+    );
+}
+
+#[tokio::test]
+async fn context_can_select_two_small_non_overlapping_ranges_from_one_file() {
+    let root = tempfile::tempdir().expect("root");
+    let mut source = String::from("pub fn first_anchor() { first(); }\n");
+    for index in 0..160 {
+        source.push_str(&format!("const FILLER_{index}: usize = {index};\n"));
+    }
+    source.push_str("pub fn second_anchor() { second(); }\n");
+    std::fs::write(root.path().join("lib.rs"), source).expect("source");
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index");
+
+    let response = services
+        .context(ContextRequest {
+            task: "Update first_anchor and second_anchor while preserving behavior".into(),
+            token_budget: 1_200,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+        })
+        .await
+        .expect("context");
+    let mut ranges = response
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.path == "lib.rs")
+        .map(|fragment| (fragment.start_line, fragment.end_line))
+        .collect::<Vec<_>>();
+    ranges.sort_unstable();
+
+    assert!(ranges.len() >= 2, "{ranges:?}");
+    assert!(ranges.windows(2).any(|pair| pair[0].1 < pair[1].0));
+    assert!(response.meta.emitted_tokens <= 1_200);
+}
+
+#[tokio::test]
 async fn regex_search_respects_absolute_candidate_cap() {
     let root = tempfile::tempdir().expect("root");
     // Many matching files so limit*20 alone would exceed MAX_REGEX_CANDIDATES if

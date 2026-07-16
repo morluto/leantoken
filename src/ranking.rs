@@ -26,6 +26,11 @@ use crate::model::{
 };
 use crate::tokens;
 
+const FACET_PREFIX: &str = "facet:";
+const CHANNEL_PREFIX: &str = "channel:";
+const ROLE_PREFIX: &str = "role:";
+const ROLE_DIVERSITY_MARKER: &str = "portfolio:role-diversity";
+
 /// Overlap ratio above which two candidates in the same file are considered
 /// duplicates.  Measured against the smaller candidate's line count.
 const OVERLAP_THRESHOLD: f64 = 0.5;
@@ -37,6 +42,27 @@ const DIVERSITY_DIVISOR: usize = 600;
 const MAX_CONTEXT_FRAGMENTS: usize = 8;
 const MAX_OMITTED_DETAILS: usize = 1;
 const MIN_RELATIVE_CONTEXT_SCORE: f64 = 0.25;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum EvidenceRole {
+    Implementation,
+    Test,
+    Caller,
+    Contract,
+    Uncertainty,
+}
+
+impl EvidenceRole {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Implementation => "implementation",
+            Self::Test => "test",
+            Self::Caller => "caller",
+            Self::Contract => "contract",
+            Self::Uncertainty => "uncertainty",
+        }
+    }
+}
 
 /// Linear scoring weights for ranking signals.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -130,6 +156,57 @@ impl Candidate {
     pub fn match_kind(mut self, kind: impl Into<String>) -> Self {
         self.match_kinds.push(kind.into());
         self
+    }
+
+    pub(crate) fn facet(mut self, kind: &str, fusion_key: &str) -> Self {
+        self.push_metadata(format!("{FACET_PREFIX}{kind}:{fusion_key}"));
+        self
+    }
+
+    pub(crate) fn channel(mut self, channel: &str, rank: usize) -> Self {
+        self.push_metadata(format!("{CHANNEL_PREFIX}{channel}:{rank}"));
+        self
+    }
+
+    pub(crate) fn role(mut self, role: EvidenceRole) -> Self {
+        self.push_metadata(format!("{ROLE_PREFIX}{}", role.as_str()));
+        self
+    }
+
+    pub(crate) fn enable_role_diversity(mut self) -> Self {
+        self.push_metadata(ROLE_DIVERSITY_MARKER.to_owned());
+        self
+    }
+
+    fn push_metadata(&mut self, value: String) {
+        if !self.match_kinds.contains(&value) {
+            self.match_kinds.push(value);
+        }
+    }
+
+    fn has_role(&self, role: EvidenceRole) -> bool {
+        let value = format!("{ROLE_PREFIX}{}", role.as_str());
+        self.match_kinds.iter().any(|kind| kind == &value)
+    }
+
+    fn role_diversity_enabled(&self) -> bool {
+        self.match_kinds
+            .iter()
+            .any(|kind| kind == ROLE_DIVERSITY_MARKER)
+    }
+
+    pub(crate) fn role_names(&self) -> impl Iterator<Item = &str> {
+        self.match_kinds
+            .iter()
+            .filter_map(|kind| kind.strip_prefix(ROLE_PREFIX))
+    }
+
+    pub(crate) fn provenance(&self) -> impl Iterator<Item = &str> {
+        self.match_kinds.iter().filter_map(|kind| {
+            kind.strip_prefix(FACET_PREFIX)
+                .or_else(|| kind.strip_prefix(CHANNEL_PREFIX))
+                .or_else(|| kind.strip_prefix(ROLE_PREFIX))
+        })
     }
 
     /// Associate this evidence with an independently extracted task concept.
@@ -268,7 +345,12 @@ impl Candidate {
     /// Short human-readable reason for why the candidate was selected.
     #[must_use]
     pub fn reason(&self) -> String {
-        let mut parts: Vec<&str> = self.match_kinds.iter().map(String::as_str).collect();
+        let mut parts: Vec<&str> = self
+            .match_kinds
+            .iter()
+            .map(String::as_str)
+            .filter(|kind| !is_internal_metadata(kind))
+            .collect();
         if self.focus_boost > 0.0 && !parts.contains(&"focus") {
             parts.push("focus");
         }
@@ -284,6 +366,13 @@ impl Candidate {
             parts.join("; ")
         }
     }
+}
+
+fn is_internal_metadata(kind: &str) -> bool {
+    kind.starts_with(FACET_PREFIX)
+        || kind.starts_with(CHANNEL_PREFIX)
+        || kind.starts_with(ROLE_PREFIX)
+        || kind == ROLE_DIVERSITY_MARKER
 }
 
 /// A candidate with a fully resolved score, token count, content hash, and
@@ -364,6 +453,10 @@ fn rank_with_tokenizer(
 pub fn deduplicate(candidates: Vec<ScoredCandidate>) -> Vec<ScoredCandidate> {
     let mut sorted = candidates;
     sorted.sort_by(|a, b| {
+        let ord = b.candidate.exact.total_cmp(&a.candidate.exact);
+        if ord != Ordering::Equal {
+            return ord;
+        }
         let ord = b.score.total_cmp(&a.score);
         if ord != Ordering::Equal {
             return ord;
@@ -376,26 +469,29 @@ pub fn deduplicate(candidates: Vec<ScoredCandidate>) -> Vec<ScoredCandidate> {
     });
 
     let mut kept: Vec<ScoredCandidate> = Vec::with_capacity(sorted.len());
-    let mut seen_hashes: HashSet<String> = HashSet::new();
+    let mut seen_hashes: HashMap<(String, String), usize> = HashMap::new();
 
     for candidate in sorted {
-        if seen_hashes.contains(&candidate.content_hash) {
+        let hash_key = (
+            candidate.candidate.path.clone(),
+            candidate.content_hash.clone(),
+        );
+        if let Some(existing) = seen_hashes.get(&hash_key).copied() {
+            merge_provenance(&mut kept[existing], &candidate);
             continue;
         }
 
-        let mut is_duplicate = false;
         let candidate_lines = candidate.candidate.line_count();
-
-        for existing in &kept {
+        let duplicate = kept.iter().position(|existing| {
             if existing.candidate.path != candidate.candidate.path {
-                continue;
+                return false;
             }
 
             // Non-overlapping ranges cannot be duplicates.
             if candidate.candidate.end_line < existing.candidate.start_line
                 || candidate.candidate.start_line > existing.candidate.end_line
             {
-                continue;
+                return false;
             }
 
             let overlap_start = candidate
@@ -409,21 +505,58 @@ pub fn deduplicate(candidates: Vec<ScoredCandidate>) -> Vec<ScoredCandidate> {
             let overlap_lines = overlap_end - overlap_start + 1;
             let min_lines = candidate_lines.min(existing.candidate.line_count());
 
-            if overlap_lines as f64 >= OVERLAP_THRESHOLD * min_lines as f64 {
-                is_duplicate = true;
-                break;
-            }
-        }
-
-        if is_duplicate {
+            overlap_lines as f64 >= OVERLAP_THRESHOLD * min_lines as f64
+        });
+        if let Some(existing) = duplicate {
+            merge_provenance(&mut kept[existing], &candidate);
             continue;
         }
 
-        seen_hashes.insert(candidate.content_hash.clone());
+        seen_hashes.insert(hash_key, kept.len());
         kept.push(candidate);
     }
 
     kept
+}
+
+fn merge_provenance(existing: &mut ScoredCandidate, duplicate: &ScoredCandidate) {
+    for kind in &duplicate.candidate.match_kinds {
+        if !existing.candidate.match_kinds.contains(kind) {
+            existing.candidate.match_kinds.push(kind.clone());
+        }
+    }
+    for concept in &duplicate.candidate.concepts {
+        if !existing.candidate.concepts.contains(concept) {
+            existing.candidate.concepts.push(concept.clone());
+        }
+    }
+    existing.candidate.concept_weight = existing
+        .candidate
+        .concept_weight
+        .max(duplicate.candidate.concept_weight);
+    existing.candidate.exact = existing.candidate.exact.max(duplicate.candidate.exact);
+    existing.candidate.symbol = existing.candidate.symbol.max(duplicate.candidate.symbol);
+    existing.candidate.reference = existing
+        .candidate
+        .reference
+        .max(duplicate.candidate.reference);
+    existing.candidate.bm25 = existing.candidate.bm25.max(duplicate.candidate.bm25);
+    existing.candidate.path_score = existing
+        .candidate
+        .path_score
+        .max(duplicate.candidate.path_score);
+    existing.candidate.focus_boost = existing
+        .candidate
+        .focus_boost
+        .max(duplicate.candidate.focus_boost);
+    existing.candidate.import_boost = existing
+        .candidate
+        .import_boost
+        .max(duplicate.candidate.import_boost);
+    existing.candidate.change_boost = existing
+        .candidate
+        .change_boost
+        .max(duplicate.candidate.change_boost);
 }
 
 /// Select the highest-relevance candidates that fit within the token budget
@@ -653,6 +786,9 @@ fn greedy_select(
 ) -> (Vec<ScoredCandidate>, Vec<ScoredCandidate>) {
     let mut pool = candidates;
     pool.sort_by(compare_utility);
+    let role_diversity_enabled = pool
+        .iter()
+        .any(|candidate| candidate.candidate.role_diversity_enabled());
     let confidence_floor = pool.first().map_or(0.0, |candidate| {
         candidate.score * MIN_RELATIVE_CONTEXT_SCORE
     });
@@ -665,6 +801,88 @@ fn greedy_select(
     let mut covered_concepts = HashSet::new();
     let mut concept_representations = HashSet::new();
     let mut concept_paths = HashMap::new();
+    let mut covered_roles = HashSet::new();
+
+    if role_diversity_enabled {
+        let mut remaining_pool = Vec::with_capacity(pool.len());
+        let owner_limit = max_fragments.saturating_sub(2).max(1);
+        for candidate in pool {
+            let preferred_owner = candidate.candidate.has_role(EvidenceRole::Implementation)
+                && !candidate.candidate.has_role(EvidenceRole::Uncertainty)
+                && candidate.candidate.concept_weight >= 1.0
+                && candidate
+                    .candidate
+                    .concepts
+                    .iter()
+                    .any(|concept| !covered_concepts.contains(concept));
+            let file_count = *file_counts.get(&candidate.candidate.path).unwrap_or(&0);
+            if preferred_owner
+                && selected.len() < owner_limit
+                && candidate_fits(
+                    &candidate,
+                    budget.saturating_sub(used_tokens),
+                    file_count,
+                    max_per_file,
+                    selected.len(),
+                    max_fragments,
+                )
+            {
+                record_coverage(
+                    &candidate,
+                    &mut covered_concepts,
+                    &mut concept_representations,
+                    &mut concept_paths,
+                    &mut covered_roles,
+                );
+                push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
+            } else {
+                remaining_pool.push(candidate);
+            }
+        }
+        pool = remaining_pool;
+    }
+
+    if role_diversity_enabled {
+        for role in [
+            EvidenceRole::Implementation,
+            EvidenceRole::Test,
+            EvidenceRole::Caller,
+            EvidenceRole::Contract,
+        ] {
+            if covered_roles.contains(&role) {
+                continue;
+            }
+            let Some(position) = pool.iter().position(|candidate| {
+                candidate.candidate.has_role(role)
+                    && !candidate.candidate.has_role(EvidenceRole::Uncertainty)
+                    && candidate.candidate.concept_weight >= 1.0
+                    && candidate
+                        .candidate
+                        .concepts
+                        .iter()
+                        .any(|concept| covered_concepts.contains(concept))
+                    && candidate_fits(
+                        candidate,
+                        budget.saturating_sub(used_tokens),
+                        *file_counts.get(&candidate.candidate.path).unwrap_or(&0),
+                        max_per_file,
+                        selected.len(),
+                        max_fragments,
+                    )
+            }) else {
+                continue;
+            };
+            let candidate = pool.remove(position);
+            record_coverage(
+                &candidate,
+                &mut covered_concepts,
+                &mut concept_representations,
+                &mut concept_paths,
+                &mut covered_roles,
+            );
+            push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
+        }
+    }
 
     for candidate in pool {
         let adds_concept = candidate
@@ -687,19 +905,13 @@ fn greedy_select(
             selected.len(),
             max_fragments,
         ) {
-            covered_concepts.extend(candidate.candidate.concepts.iter().cloned());
-            concept_representations.extend(
-                candidate
-                    .candidate
-                    .concepts
-                    .iter()
-                    .map(|concept| (concept.clone(), candidate.candidate.representation.clone())),
+            record_coverage(
+                &candidate,
+                &mut covered_concepts,
+                &mut concept_representations,
+                &mut concept_paths,
+                &mut covered_roles,
             );
-            for concept in &candidate.candidate.concepts {
-                concept_paths
-                    .entry(concept.clone())
-                    .or_insert_with(|| candidate.candidate.path.clone());
-            }
             push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
         } else {
             deferred.push(candidate);
@@ -723,7 +935,13 @@ fn greedy_select(
     });
     let mut remaining = Vec::with_capacity(deferred.len());
     for candidate in deferred {
+        let same_path_view = candidate.candidate.concepts.iter().any(|concept| {
+            concept_paths
+                .get(concept)
+                .is_some_and(|path| path == &candidate.candidate.path)
+        });
         let adds_decisive_view = candidate.candidate.concept_weight >= 1.8
+            && same_path_view
             && candidate.candidate.concepts.iter().any(|concept| {
                 covered_concepts.contains(concept)
                     && !concept_representations
@@ -741,12 +959,12 @@ fn greedy_select(
                 max_fragments,
             )
         {
-            concept_representations.extend(
-                candidate
-                    .candidate
-                    .concepts
-                    .iter()
-                    .map(|concept| (concept.clone(), candidate.candidate.representation.clone())),
+            record_coverage(
+                &candidate,
+                &mut covered_concepts,
+                &mut concept_representations,
+                &mut concept_paths,
+                &mut covered_roles,
             );
             push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
         } else {
@@ -776,7 +994,13 @@ fn greedy_select(
                 max_fragments,
             )
         {
-            covered_concepts.extend(candidate.candidate.concepts.iter().cloned());
+            record_coverage(
+                &candidate,
+                &mut covered_concepts,
+                &mut concept_representations,
+                &mut concept_paths,
+                &mut covered_roles,
+            );
             push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
         } else {
             fill.push(candidate);
@@ -785,6 +1009,22 @@ fn greedy_select(
 
     for candidate in fill {
         if candidate.candidate.concept_weight < 1.0 && candidate.score < confidence_floor {
+            omitted.push(candidate);
+            continue;
+        }
+        let repeats_covered_concept_elsewhere = !role_diversity_enabled
+            && !candidate.candidate.concepts.is_empty()
+            && candidate
+                .candidate
+                .concepts
+                .iter()
+                .all(|concept| covered_concepts.contains(concept))
+            && candidate.candidate.concepts.iter().all(|concept| {
+                concept_paths
+                    .get(concept)
+                    .is_some_and(|path| path != &candidate.candidate.path)
+            });
+        if repeats_covered_concept_elsewhere {
             omitted.push(candidate);
             continue;
         }
@@ -805,6 +1045,45 @@ fn greedy_select(
     }
 
     (selected, omitted)
+}
+
+fn record_coverage(
+    candidate: &ScoredCandidate,
+    covered_concepts: &mut HashSet<String>,
+    concept_representations: &mut HashSet<(String, String)>,
+    concept_paths: &mut HashMap<String, String>,
+    covered_roles: &mut HashSet<EvidenceRole>,
+) {
+    if let Some(concept) = candidate
+        .candidate
+        .concepts
+        .iter()
+        .find(|concept| !covered_concepts.contains(*concept))
+    {
+        covered_concepts.insert(concept.clone());
+        concept_paths
+            .entry(concept.clone())
+            .or_insert_with(|| candidate.candidate.path.clone());
+    }
+    concept_representations.extend(
+        candidate
+            .candidate
+            .concepts
+            .iter()
+            .filter(|concept| covered_concepts.contains(*concept))
+            .map(|concept| (concept.clone(), candidate.candidate.representation.clone())),
+    );
+    for role in [
+        EvidenceRole::Implementation,
+        EvidenceRole::Test,
+        EvidenceRole::Caller,
+        EvidenceRole::Contract,
+        EvidenceRole::Uncertainty,
+    ] {
+        if candidate.candidate.has_role(role) {
+            covered_roles.insert(role);
+        }
+    }
 }
 
 fn candidate_fits(
@@ -985,6 +1264,48 @@ mod tests {
     }
 
     #[test]
+    fn dedup_keeps_content_identical_candidates_at_distinct_paths() {
+        let implementation = Candidate::new("src/lib.rs", 1, 1, "same body").exact(1.0);
+        let contract = Candidate::new("examples/lib.rs", 1, 1, "same body").exact(0.5);
+
+        let deduped = deduplicate(rank(vec![implementation, contract], &Weights::default()));
+
+        assert_eq!(deduped.len(), 2);
+    }
+
+    #[test]
+    fn dedup_merges_multi_channel_provenance_for_the_same_range() {
+        let symbol = Candidate::new("src/lib.rs", 1, 2, "fn target() {}")
+            .concept("target", 2.0)
+            .match_kind("symbol")
+            .facet("exact_atom", "target")
+            .channel("symbol", 0)
+            .role(EvidenceRole::Implementation)
+            .exact(1.0);
+        let reference = Candidate::new("src/lib.rs", 1, 2, "fn target() {}")
+            .concept("behavior", 0.8)
+            .match_kind("text")
+            .facet("behavior", "behavior")
+            .channel("text", 2)
+            .reference(1.0);
+
+        let deduped = deduplicate(rank(vec![reference, symbol], &Weights::default()));
+
+        assert_eq!(deduped.len(), 1);
+        let candidate = &deduped[0].candidate;
+        assert!(candidate.concepts.iter().any(|concept| concept == "target"));
+        assert!(
+            candidate
+                .concepts
+                .iter()
+                .any(|concept| concept == "behavior")
+        );
+        assert!(candidate.match_kinds.iter().any(|kind| kind == "symbol"));
+        assert!(candidate.match_kinds.iter().any(|kind| kind == "text"));
+        assert!(candidate.provenance().count() >= 5);
+    }
+
+    #[test]
     fn dedup_keeps_overlapping_highest_score() {
         let a = Candidate::new("a.rs", 1, 10, "first").exact(1.0);
         let b = Candidate::new("a.rs", 5, 15, "second").exact(0.5);
@@ -994,6 +1315,19 @@ mod tests {
 
         // 6 of 10 lines overlap, exceeding the 0.5 threshold.
         assert_eq!(deduped.len(), 1);
+    }
+
+    #[test]
+    fn dedup_keeps_the_exact_matching_range_over_an_overlapping_score_boost() {
+        let broad = Candidate::new("a.rs", 1, 10, "broad")
+            .bm25(1_000_000.0)
+            .path_score(2.0);
+        let exact = Candidate::new("a.rs", 5, 15, "exact").exact(1.0);
+
+        let deduped = deduplicate(rank(vec![broad, exact], &Weights::default()));
+
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].candidate.start_line, 5);
     }
 
     #[test]
@@ -1126,6 +1460,161 @@ mod tests {
         assert_eq!(response.fragments.len(), 2);
         assert_eq!(response.fragments[0].path, "owner.rs");
         assert_eq!(response.fragments[1].path, "owner.rs");
+    }
+
+    #[test]
+    fn role_portfolio_selects_implementation_and_test_before_snapshot_noise() {
+        let implementation = Candidate::new("src/owner.rs", 1, 1, "implementation")
+            .concept("handle", 2.0)
+            .role(EvidenceRole::Implementation)
+            .enable_role_diversity()
+            .exact(5.0);
+        let regression = Candidate::new("tests/owner.rs", 1, 1, "regression")
+            .concept("handle", 2.0)
+            .role(EvidenceRole::Test)
+            .enable_role_diversity()
+            .exact(1.0);
+        let snapshot = Candidate::new("tests/snapshots/owner.snap", 1, 1, "snapshot")
+            .concept("handle", 2.0)
+            .role(EvidenceRole::Test)
+            .role(EvidenceRole::Uncertainty)
+            .enable_role_diversity()
+            .exact(4.0);
+        let budget = implementation.token_count() + regression.token_count();
+
+        let response = select(
+            vec![snapshot, regression, implementation],
+            &request_with_budget(budget),
+            1,
+        );
+
+        assert_eq!(response.fragments.len(), 2);
+        assert!(
+            response
+                .fragments
+                .iter()
+                .any(|fragment| fragment.path == "src/owner.rs")
+        );
+        assert!(
+            response
+                .fragments
+                .iter()
+                .any(|fragment| fragment.path == "tests/owner.rs")
+        );
+        assert!(
+            response
+                .fragments
+                .iter()
+                .all(|fragment| !fragment.path.ends_with(".snap"))
+        );
+    }
+
+    #[test]
+    fn one_multi_facet_fragment_does_not_mask_a_second_owner() {
+        let response_owner = Candidate::new("lib/response.js", 1, 1, "response owner")
+            .concept("res.render", 2.0)
+            .concept("app.render", 2.0)
+            .role(EvidenceRole::Implementation)
+            .enable_role_diversity()
+            .exact(5.0);
+        let application_owner = Candidate::new("lib/application.js", 1, 1, "application owner")
+            .concept("app.render", 2.0)
+            .role(EvidenceRole::Implementation)
+            .enable_role_diversity()
+            .exact(4.0);
+        let budget = response_owner.token_count() + application_owner.token_count();
+
+        let response = select(
+            vec![application_owner, response_owner],
+            &request_with_budget(budget),
+            1,
+        );
+
+        assert_eq!(response.fragments.len(), 2);
+        assert!(
+            response
+                .fragments
+                .iter()
+                .any(|fragment| fragment.path == "lib/application.js")
+        );
+    }
+
+    #[test]
+    fn role_reservation_releases_when_no_credible_matching_test_exists() {
+        let implementation = Candidate::new("src/owner.rs", 1, 1, "implementation")
+            .concept("handle", 2.0)
+            .role(EvidenceRole::Implementation)
+            .enable_role_diversity()
+            .exact(5.0);
+        let unrelated_test = Candidate::new("tests/other.rs", 1, 1, "unrelated")
+            .concept("other", 0.2)
+            .role(EvidenceRole::Test)
+            .enable_role_diversity();
+
+        let response = select(
+            vec![unrelated_test, implementation],
+            &request_with_budget(100),
+            1,
+        );
+
+        assert_eq!(response.fragments.len(), 1);
+        assert_eq!(response.fragments[0].path, "src/owner.rs");
+    }
+
+    #[test]
+    fn role_reservation_runs_before_owner_candidates_consume_the_fragment_cap() {
+        let mut candidates = (0..8)
+            .map(|index| {
+                Candidate::new(
+                    format!("src/owner_{index}.rs"),
+                    1,
+                    1,
+                    format!("owner_{index}"),
+                )
+                .concept(format!("concept_{index}"), 2.0)
+                .role(EvidenceRole::Implementation)
+                .enable_role_diversity()
+                .exact(8.0 - index as f64 / 10.0)
+            })
+            .collect::<Vec<_>>();
+        candidates.push(
+            Candidate::new("tests/owner_0.rs", 1, 1, "regression")
+                .concept("concept_0", 2.0)
+                .role(EvidenceRole::Test)
+                .enable_role_diversity()
+                .exact(1.0),
+        );
+
+        let response = select(candidates, &request_with_budget(1_200), 1);
+
+        assert_eq!(response.fragments.len(), MAX_CONTEXT_FRAGMENTS);
+        assert!(
+            response
+                .fragments
+                .iter()
+                .any(|fragment| fragment.path == "tests/owner_0.rs")
+        );
+    }
+
+    #[test]
+    fn exact_concept_does_not_broaden_to_another_path_without_role_intent() {
+        let implementation = Candidate::new("src/owner.rs", 1, 1, "implementation")
+            .concept("IndexNotReady", 2.0)
+            .role(EvidenceRole::Implementation)
+            .exact(5.0);
+        let incidental_test = Candidate::new("tests/owner.rs", 1, 1, "incidental")
+            .concept("IndexNotReady", 2.0)
+            .role(EvidenceRole::Test)
+            .exact(4.0);
+
+        let response = select(
+            vec![incidental_test, implementation],
+            &request_with_budget(100),
+            1,
+        );
+
+        assert_eq!(response.fragments.len(), 1);
+        assert_eq!(response.fragments[0].path, "src/owner.rs");
     }
 
     #[test]

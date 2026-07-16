@@ -452,6 +452,28 @@ mod tests {
         assert!(bounded.end_line >= matched_line);
         assert!(bounded.start_line > large.start_line);
         assert!(bounded.end_line <= large.end_line);
+        assert!(services.config.tokenizer.count(&bounded.content) <= 60);
+
+        let source = fs::read_to_string(root.path().join("lib.rs")).expect("source");
+        let matched_line = 20;
+        let prefix_budget = services.config.tokenizer.count(&crate::text::excerpt(
+            &source,
+            large.start_line,
+            matched_line,
+        ));
+        let prefix_bounded = services
+            .adaptive_context_excerpt(
+                &session,
+                file.id,
+                large.start_line,
+                large.end_line,
+                matched_line,
+                prefix_budget,
+            )
+            .expect("prefix excerpt")
+            .expect("prefix declaration");
+        assert_eq!(prefix_bounded.start_line, large.start_line);
+        assert!(prefix_bounded.end_line >= matched_line);
 
         let small = session
             .find_symbol(file.id, "small")
@@ -470,6 +492,49 @@ mod tests {
             .expect("complete declaration");
         assert_eq!(complete.start_line, small.start_line);
         assert_eq!(complete.end_line, small.end_line);
+    }
+
+    #[tokio::test]
+    async fn adaptive_context_range_rejects_a_match_line_larger_than_the_budget() {
+        let root = tempfile::tempdir().expect("root");
+        fs::write(
+            root.path().join("lib.rs"),
+            format!(
+                "fn huge() {{ let value = \"{}\"; }}\n",
+                "token ".repeat(200)
+            ),
+        )
+        .expect("source");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+        let services = Services::open(config).expect("services");
+        services.index(false).await.expect("index");
+        let file = services
+            .storage
+            .find_file("lib.rs")
+            .expect("find file")
+            .expect("indexed file");
+        let symbol = services
+            .storage
+            .begin_read()
+            .expect("session")
+            .find_symbol(file.id, "huge")
+            .expect("find symbol")
+            .expect("huge symbol");
+        let session = services.storage.begin_read().expect("session");
+
+        let excerpt = services
+            .adaptive_context_excerpt(
+                &session,
+                file.id,
+                symbol.start_line,
+                symbol.end_line,
+                symbol.start_line,
+                8,
+            )
+            .expect("bounded excerpt");
+
+        assert!(excerpt.is_none());
     }
 
     #[tokio::test]

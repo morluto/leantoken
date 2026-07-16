@@ -316,8 +316,16 @@ impl Services {
             return Ok(Some(full));
         }
 
-        let declaration_lines = declaration_end
-            .saturating_sub(declaration_start)
+        let matched_line = matched_line.clamp(full.start_line, full.end_line);
+        let matched_local = matched_line.saturating_sub(full.start_line) + 1;
+        let matched_content = crate::text::excerpt(&full.content, matched_local, matched_local);
+        if self.config.tokenizer.count(&matched_content) > token_budget {
+            return Ok(None);
+        }
+
+        let declaration_lines = full
+            .end_line
+            .saturating_sub(full.start_line)
             .saturating_add(1);
         let proportional_lines = declaration_lines
             .saturating_mul(token_budget)
@@ -325,19 +333,52 @@ impl Services {
             .clamp(MIN_CONTEXT_RANGE_LINES, MAX_CONTEXT_RANGE_LINES)
             .min(declaration_lines);
         let before = proportional_lines / 3;
-        let mut start = matched_line.saturating_sub(before).max(declaration_start);
-        let mut end = start
-            .saturating_add(proportional_lines.saturating_sub(1))
-            .min(declaration_end);
+        let prefix_end = matched_line.saturating_sub(full.start_line) + 1;
+        let prefix = crate::text::excerpt(&full.content, 1, prefix_end);
+        let preserve_declaration_start = self.config.tokenizer.count(&prefix) <= token_budget;
+        let mut start = if preserve_declaration_start {
+            full.start_line
+        } else {
+            matched_line.saturating_sub(before).max(full.start_line)
+        };
+        let mut end = if preserve_declaration_start {
+            matched_line
+                .max(start.saturating_add(proportional_lines.saturating_sub(1)))
+                .min(full.end_line)
+        } else {
+            start
+                .saturating_add(proportional_lines.saturating_sub(1))
+                .min(full.end_line)
+        };
         if end.saturating_sub(start).saturating_add(1) < proportional_lines {
             start = end
                 .saturating_add(1)
                 .saturating_sub(proportional_lines)
-                .max(declaration_start);
+                .max(full.start_line);
         }
-        end = start
-            .saturating_add(proportional_lines.saturating_sub(1))
-            .min(declaration_end);
-        self.stored_excerpt(session, file_id, start, end, 0, 0)
+        loop {
+            let local_start = start.saturating_sub(full.start_line) + 1;
+            let local_end = end.saturating_sub(full.start_line) + 1;
+            let content = crate::text::excerpt(&full.content, local_start, local_end);
+            if self.config.tokenizer.count(&content) <= token_budget {
+                return Ok(Some(StoredExcerpt {
+                    content,
+                    start_line: start,
+                    end_line: end,
+                }));
+            }
+            if start == matched_line && end == matched_line {
+                return Ok(None);
+            }
+            let before_match = matched_line.saturating_sub(start);
+            let after_match = end.saturating_sub(matched_line);
+            if after_match >= before_match && end > matched_line {
+                end -= 1;
+            } else if start < matched_line {
+                start += 1;
+            } else {
+                end -= 1;
+            }
+        }
     }
 }
