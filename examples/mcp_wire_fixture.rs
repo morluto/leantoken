@@ -1,3 +1,6 @@
+#[path = "support/wire_trace.rs"]
+mod wire_trace;
+
 use std::{error::Error, fs, path::PathBuf};
 
 use clap::Parser;
@@ -5,7 +8,7 @@ use leantoken::mcp::{McpResultMode, tool_catalog_json, tool_result};
 use leantoken::model::{
     ContextFragment, ContextRequest, ContextResponse, EvidenceReceipt, Freshness, ResponseMeta,
 };
-use serde::Serialize;
+use wire_trace::{Direction, Event, RangeIdentity, RepositoryIdentity, TRACE_SCHEMA_V2, Trace};
 
 #[derive(Debug, Parser)]
 #[command(about = "Generate a deterministic synthetic MCP wire-cost fixture")]
@@ -13,23 +16,6 @@ struct Args {
     /// Synthetic trace destination.
     #[arg(long, default_value = "benchmarks/wire_trace.synthetic.json")]
     output: PathBuf,
-}
-
-#[derive(Debug, Serialize)]
-struct Trace {
-    schema_version: u32,
-    host: &'static str,
-    host_version: &'static str,
-    tokenizer: &'static str,
-    provider_total_input_tokens: Option<u64>,
-    events: Vec<Event>,
-}
-
-#[derive(Debug, Serialize)]
-struct Event {
-    direction: &'static str,
-    raw_json: String,
-    provider_input_tokens: Option<u64>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -90,7 +76,8 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
     let tools: serde_json::Value = serde_json::from_str(&tool_catalog_json())?;
     let messages = [
         (
-            "client_to_server",
+            Direction::ClientToServer,
+            0,
             serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": 0,
@@ -103,7 +90,8 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
             }),
         ),
         (
-            "server_to_client",
+            Direction::ServerToClient,
+            0,
             serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": 0,
@@ -115,22 +103,26 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
             }),
         ),
         (
-            "client_to_server",
+            Direction::ClientToServer,
+            0,
             serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "notifications/initialized"
             }),
         ),
         (
-            "client_to_server",
+            Direction::ClientToServer,
+            0,
             serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
         ),
         (
-            "server_to_client",
+            Direction::ServerToClient,
+            0,
             serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {"tools": tools}}),
         ),
         (
-            "client_to_server",
+            Direction::ClientToServer,
+            1,
             serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -139,28 +131,97 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
             }),
         ),
         (
-            "server_to_client",
+            Direction::ServerToClient,
+            1,
             serde_json::json!({"jsonrpc": "2.0", "id": 2, "result": result}),
         ),
     ];
 
-    Ok(Trace {
-        schema_version: 1,
-        host: "synthetic-fixture",
-        host_version: env!("CARGO_PKG_VERSION"),
-        tokenizer: "cl100k_base",
+    let mut events = messages
+        .into_iter()
+        .enumerate()
+        .map(|(sequence, (direction, turn, message))| Event {
+            sequence: Some(sequence as u64),
+            direction,
+            turn: Some(turn),
+            timestamp_unix_millis: Some(1_000 + sequence as u64),
+            latency_ms: None,
+            category: None,
+            raw_json: Some(serde_json::to_string(&message).expect("serialize fixture message")),
+            message: None,
+            provider_visible_payload: None,
+            tool_name: None,
+            call_id: None,
+            result_id: None,
+            ranges: Vec::new(),
+            visible_through_turn: None,
+            stable_prefix: Some(turn == 0),
+            cache_eligible: Some(true),
+            compaction: None,
+            provider_usage: None,
+            provider_input_tokens: None,
+        })
+        .collect::<Vec<_>>();
+    let result_event = events.last_mut().expect("result event");
+    result_event.tool_name = Some("leantoken_context".into());
+    result_event.call_id = Some("2".into());
+    result_event.result_id = Some("context-result-1".into());
+    result_event.visible_through_turn = Some(3);
+    result_event.ranges.push(RangeIdentity {
+        repository_generation: 7,
+        path: "src/mcp.rs".into(),
+        start_line: 298,
+        end_line: 322,
+        content_hash: "fixture-fragment-hash".into(),
+        source_tokens: Some(21),
+    });
+    events.push(Event {
+        sequence: Some(events.len() as u64),
+        direction: Direction::Handoff,
+        turn: Some(2),
+        timestamp_unix_millis: Some(1_100),
+        latency_ms: None,
+        category: Some("handoff".into()),
+        message: None,
+        raw_json: None,
+        provider_visible_payload: Some(
+            "{\"role\":\"tool\",\"result_id\":\"context-result-1\"}".into(),
+        ),
+        tool_name: Some("leantoken_context".into()),
+        call_id: Some("2".into()),
+        result_id: Some("context-result-1".into()),
+        ranges: Vec::new(),
+        visible_through_turn: None,
+        stable_prefix: Some(false),
+        cache_eligible: Some(true),
+        compaction: None,
+        provider_usage: None,
+        provider_input_tokens: None,
+    });
+
+    let mut trace = Trace {
+        schema_version: TRACE_SCHEMA_V2,
+        trace_id: Some("synthetic-mcp-wire-v2".into()),
+        trace_content_blake3: None,
+        host: "synthetic-fixture".into(),
+        host_version: env!("CARGO_PKG_VERSION").into(),
+        model: Some("synthetic-model".into()),
+        provider: Some("synthetic-provider".into()),
+        tokenizer: "cl100k_base".into(),
+        token_count_exact: Some(true),
+        generated_at_unix_seconds: Some(0),
+        repository: Some(RepositoryIdentity {
+            revision: "0000000000000000000000000000000000000000".into(),
+            dirty_fingerprint: "clean".into(),
+        }),
+        final_turn: Some(3),
+        provider_usage: None,
         provider_total_input_tokens: None,
-        events: messages
-            .into_iter()
-            .map(|(direction, message)| {
-                Ok(Event {
-                    direction,
-                    raw_json: serde_json::to_string(&message)?,
-                    provider_input_tokens: None,
-                })
-            })
-            .collect::<Result<Vec<_>, serde_json::Error>>()?,
-    })
+        outcome: None,
+        events,
+    };
+    trace.seal_content_hash()?;
+    Ok(trace)
 }
 
 #[cfg(test)]
@@ -168,11 +229,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fixture_uses_the_current_catalog_and_dual_result() {
+    fn fixture_uses_current_catalog_dual_result_and_range_identity() {
         let trace = synthetic_trace().expect("trace");
-        assert_eq!(trace.events.len(), 7);
+        assert_eq!(trace.schema_version, TRACE_SCHEMA_V2);
+        trace.validate_version().expect("valid sealed trace");
+        let content_hash = trace.content_blake3().expect("content hash");
+        assert_eq!(
+            trace.trace_content_blake3.as_deref(),
+            Some(content_hash.as_str())
+        );
+        assert_eq!(trace.events.len(), 8);
         let catalog: serde_json::Value =
-            serde_json::from_str(&trace.events[4].raw_json).expect("catalog message");
+            serde_json::from_str(trace.events[4].raw_json.as_deref().expect("catalog raw"))
+                .expect("catalog message");
         assert_eq!(
             catalog["result"]["tools"]
                 .as_array()
@@ -181,12 +250,16 @@ mod tests {
             5
         );
         let result: serde_json::Value =
-            serde_json::from_str(&trace.events[6].raw_json).expect("tool result");
+            serde_json::from_str(trace.events[6].raw_json.as_deref().expect("result raw"))
+                .expect("tool result");
         assert!(
             result["result"]["content"]
                 .as_array()
                 .is_some_and(|content| !content.is_empty())
         );
         assert!(result["result"].get("structuredContent").is_some());
+        assert_eq!(trace.events[6].ranges.len(), 1);
+        assert_eq!(trace.events[6].visible_through_turn, Some(3));
+        assert_eq!(trace.events[7].direction, Direction::Handoff);
     }
 }

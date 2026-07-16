@@ -1,53 +1,206 @@
 {
-  "schema_version": 1,
-  "trace_blake3": "881b9f71578273987fe029e9accda5629a5a6f6db391b0bdac7918b73a545125",
+  "schema_version": 2,
+  "input_schema_version": 2,
+  "trace_id": "synthetic-mcp-wire-v2",
+  "trace_file_blake3": "f78bd95d4019eb0e965ca209ffb9d7d4f35f565c9c13cacea028b9a365fbbe44",
+  "trace_content_blake3": "95b427b322bc6684912464fd25c2fb1c63d33bd8191436d579bf5e51a1b8c362",
+  "declared_trace_content_blake3": "95b427b322bc6684912464fd25c2fb1c63d33bd8191436d579bf5e51a1b8c362",
   "host": "synthetic-fixture",
   "host_version": "0.1.1",
+  "model": "synthetic-model",
+  "provider": "synthetic-provider",
+  "repository": {
+    "revision": "0000000000000000000000000000000000000000",
+    "dirty_fingerprint": "clean"
+  },
   "tokenizer": "cl100k_base",
   "token_count_exact": true,
-  "event_count": 7,
-  "total_local_tokens": 2001,
-  "total_provider_input_tokens": null,
-  "categories": {
+  "event_count": 8,
+  "total_serialized_json_tokens": 2001,
+  "total_provider_visible_payload_tokens": 13,
+  "total_handoff_tokens": 13,
+  "total_observed_boundary_tokens": 2014,
+  "provider_usage": {
+    "uncached_input_tokens": null,
+    "cache_creation_input_tokens": null,
+    "cache_read_input_tokens": null,
+    "output_tokens": null,
+    "reasoning_tokens": null
+  },
+  "event_categories": {
+    "handoff": {
+      "events": 1,
+      "serialized_json_tokens": 0,
+      "provider_visible_payload_tokens": 13,
+      "provider_usage": {
+        "uncached_input_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "output_tokens": null,
+        "reasoning_tokens": null
+      }
+    },
     "initialize_request": {
       "events": 1,
-      "local_tokens": 46,
-      "provider_input_tokens": null
+      "serialized_json_tokens": 46,
+      "provider_visible_payload_tokens": 0,
+      "provider_usage": {
+        "uncached_input_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "output_tokens": null,
+        "reasoning_tokens": null
+      }
     },
     "initialize_response": {
       "events": 1,
-      "local_tokens": 49,
-      "provider_input_tokens": null
+      "serialized_json_tokens": 49,
+      "provider_visible_payload_tokens": 0,
+      "provider_usage": {
+        "uncached_input_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "output_tokens": null,
+        "reasoning_tokens": null
+      }
     },
     "initialized_notification": {
       "events": 1,
-      "local_tokens": 14,
-      "provider_input_tokens": null
+      "serialized_json_tokens": 14,
+      "provider_visible_payload_tokens": 0,
+      "provider_usage": {
+        "uncached_input_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "output_tokens": null,
+        "reasoning_tokens": null
+      }
     },
     "tool_call_request": {
       "events": 1,
-      "local_tokens": 68,
-      "provider_input_tokens": null
+      "serialized_json_tokens": 68,
+      "provider_visible_payload_tokens": 0,
+      "provider_usage": {
+        "uncached_input_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "output_tokens": null,
+        "reasoning_tokens": null
+      }
     },
     "tool_call_response": {
       "events": 1,
-      "local_tokens": 257,
-      "provider_input_tokens": null
+      "serialized_json_tokens": 257,
+      "provider_visible_payload_tokens": 0,
+      "provider_usage": {
+        "uncached_input_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "output_tokens": null,
+        "reasoning_tokens": null
+      }
     },
     "tools_list_request": {
       "events": 1,
-      "local_tokens": 17,
-      "provider_input_tokens": null
+      "serialized_json_tokens": 17,
+      "provider_visible_payload_tokens": 0,
+      "provider_usage": {
+        "uncached_input_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "output_tokens": null,
+        "reasoning_tokens": null
+      }
     },
     "tools_list_response": {
       "events": 1,
-      "local_tokens": 1550,
-      "provider_input_tokens": null
+      "serialized_json_tokens": 1550,
+      "provider_visible_payload_tokens": 0,
+      "provider_usage": {
+        "uncached_input_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "output_tokens": null,
+        "reasoning_tokens": null
+      }
     }
   },
+  "components": {
+    "call_arguments": {
+      "occurrences": 1,
+      "local_tokens": 40
+    },
+    "catalog": {
+      "occurrences": 1,
+      "local_tokens": 1535
+    },
+    "handoff": {
+      "occurrences": 1,
+      "local_tokens": 13
+    },
+    "receipt": {
+      "occurrences": 1,
+      "local_tokens": 18
+    },
+    "result_text": {
+      "occurrences": 1,
+      "local_tokens": 129
+    },
+    "structured_content": {
+      "occurrences": 1,
+      "local_tokens": 106
+    }
+  },
+  "component_costs_overlap": true,
   "tool_result_modes": {
     "dual": 1
   },
+  "exact_text_structured_duplicates": 1,
+  "duplicated_result_tokens": 106,
+  "cache_annotations": {
+    "stable_prefix_events": 5,
+    "unstable_prefix_events": 3,
+    "cache_eligible_events": 8,
+    "cache_ineligible_events": 0,
+    "unknown_stable_prefix_events": 0,
+    "unknown_cache_eligibility_events": 0
+  },
+  "latency": {
+    "samples": 0,
+    "total_ms": 0.0,
+    "first_timestamp_unix_millis": 1000,
+    "last_timestamp_unix_millis": 1100
+  },
+  "result_lifetimes": [
+    {
+      "result_id": "context-result-1",
+      "tool_name": "leantoken_context",
+      "ranges": [
+        {
+          "repository_generation": 7,
+          "path": "src/mcp.rs",
+          "start_line": 298,
+          "end_line": 322,
+          "content_hash": "fixture-fragment-hash",
+          "source_tokens": 21
+        }
+      ],
+      "first_emitted_turn": 1,
+      "last_visible_turn": 3,
+      "visible_turn_count": 3,
+      "serialized_result_tokens": 257,
+      "provider_visible_result_tokens": null,
+      "source_tokens": 21,
+      "serialized_token_amplification": 771,
+      "provider_visible_token_amplification": null,
+      "source_token_amplification": 63
+    }
+  ],
+  "range_identity_count": 1,
+  "reread_ranges": 0,
+  "reread_source_tokens": 0,
+  "superseded_hash_ranges": 0,
+  "stale_generation_ranges": 0,
   "required_exchange_parts": {
     "initialize_request": true,
     "initialize_response": true,
@@ -57,8 +210,21 @@
     "tools_list": true
   },
   "limitations": [
-    "Local counts cover exact serialized JSON messages but not provider-specific conversation framing unless the host exports it as a handoff event.",
-    "Provider input totals remain null unless the trace supplies one authoritative provider total or every event supplies a provider-native delta; partial event totals are not reported.",
-    "Transport bytes outside JSON-RPC, such as process startup and stdio buffering, are outside token cost."
+    {
+      "code": "transport_boundary",
+      "detail": "Transport bytes outside captured JSON-RPC or explicit handoff payloads are not counted."
+    },
+    {
+      "code": "component_overlap",
+      "detail": "Component token categories overlap the complete event envelope and must not be summed as a second total."
+    },
+    {
+      "code": "provider_framing_partial",
+      "detail": "Only explicitly annotated provider-visible payloads cross the measured provider boundary; unannotated JSON-RPC remains local-wire evidence."
+    },
+    {
+      "code": "provider_usage_missing",
+      "detail": "Provider-native uncached, cache creation, cache read, output, and reasoning token totals were not supplied."
+    }
   ]
 }
