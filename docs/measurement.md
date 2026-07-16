@@ -105,6 +105,9 @@ The fixture is built from `tool_catalog_json` and `tool_result`, not a copied
 schema. It is plumbing evidence only: its provider totals are null, it has no
 host conversation frame, and its `dual` classification does not prove that any
 real host delivers text or structured content to a model.
+The checked-in [trace](../benchmarks/wire_trace.synthetic.json) and
+[analysis](../benchmarks/reports/wire-trace-synthetic-0.1.1.json) are the
+regenerable baseline for LeanToken 0.1.1.
 
 Place the stdio proxy where the host would normally launch LeanToken:
 
