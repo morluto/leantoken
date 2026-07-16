@@ -55,7 +55,7 @@
 <a href=#55 id=55 data-nosnippet>55</a>                npm.into(),
 <a href=#56 id=56 data-nosnippet>56</a>                <span class="string">"exec"</span>.into(),
 <a href=#57 id=57 data-nosnippet>57</a>                <span class="string">"--yes"</span>.into(),
-<a href=#58 id=58 data-nosnippet>58</a>                <span class="macro">format!</span>(<span class="string">"--package=leantoken@{}"</span>, <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>)),
+<a href=#58 id=58 data-nosnippet>58</a>                <span class="string">"--package=leantoken"</span>.into(),
 <a href=#59 id=59 data-nosnippet>59</a>                <span class="string">"--"</span>.into(),
 <a href=#60 id=60 data-nosnippet>60</a>                <span class="string">"leantoken"</span>.into(),
 <a href=#61 id=61 data-nosnippet>61</a>                <span class="string">"mcp"</span>.into(),
@@ -69,7 +69,7 @@
 <a href=#69 id=69 data-nosnippet>69</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
 <a href=#70 id=70 data-nosnippet>70</a>
 <a href=#71 id=71 data-nosnippet>71</a>    <span class="attr">#[test]
-<a href=#72 id=72 data-nosnippet>72</a>    </span><span class="kw">fn </span>npx_launcher_is_versioned_and_cache_independent() {
+<a href=#72 id=72 data-nosnippet>72</a>    </span><span class="kw">fn </span>npx_launcher_is_unpinned_and_cache_independent() {
 <a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">let </span>root = <span class="kw">if </span><span class="macro">cfg!</span>(windows) { <span class="string">r"C:\npm" </span>} <span class="kw">else </span>{ <span class="string">"/npm" </span>};
 <a href=#74 id=74 data-nosnippet>74</a>        <span class="macro">assert_eq!</span>(
 <a href=#75 id=75 data-nosnippet>75</a>            McpLauncher::from_npx_paths(
@@ -86,7 +86,7 @@
 <a href=#86 id=86 data-nosnippet>86</a>                        .into_owned(),
 <a href=#87 id=87 data-nosnippet>87</a>                    <span class="string">"exec"</span>.into(),
 <a href=#88 id=88 data-nosnippet>88</a>                    <span class="string">"--yes"</span>.into(),
-<a href=#89 id=89 data-nosnippet>89</a>                    <span class="macro">format!</span>(<span class="string">"--package=leantoken@{}"</span>, <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>)),
+<a href=#89 id=89 data-nosnippet>89</a>                    <span class="string">"--package=leantoken"</span>.into(),
 <a href=#90 id=90 data-nosnippet>90</a>                    <span class="string">"--"</span>.into(),
 <a href=#91 id=91 data-nosnippet>91</a>                    <span class="string">"leantoken"</span>.into(),
 <a href=#92 id=92 data-nosnippet>92</a>                    <span class="string">"mcp"</span>.into(),

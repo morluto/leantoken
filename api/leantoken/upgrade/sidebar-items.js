@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["GIT_REPOSITORY","NPM_PACKAGE"],"enum":["InstallMethod"],"fn":["detect_install_method","path_contains","require_success","run","unknown_install_error"],"struct":["UpgradeReport"]};
