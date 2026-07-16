@@ -28,8 +28,11 @@ cargo package
 ## Release artifacts
 
 The generated release workflow builds native archives for Linux x64/arm64,
-macOS x64/arm64, and Windows x64. It also builds the `leantoken` npm installer,
-which selects and downloads the matching archive from the GitHub release.
+macOS x64/arm64, and Windows x64. A custom global-artifact job converts those
+archives into five platform-specific npm packages and a small `leantoken`
+launcher package. The launcher selects an optional dependency for the current
+OS and CPU; npm installation does not run lifecycle scripts or download a
+binary from a postinstall hook.
 
 Verify release configuration changes before pushing them:
 
@@ -38,14 +41,32 @@ dist generate --check
 dist plan
 ```
 
+Test the package generator and a Linux x64 installation with lifecycle scripts
+disabled:
+
+```bash
+node --test npm/npm-packaging.test.mjs
+```
+
 Version tags such as `v0.1.0` trigger `.github/workflows/release.yml`. Keep the
 Cargo package version, tag, GitHub release, and npm package version identical.
 
-The first npm release is a manual bootstrap because npm trusted publishing can
-only be configured after the package exists. Once the GitHub release finishes,
-download and extract `leantoken-npm-package.tar.gz`, then publish its `package`
-directory with `npm publish package --access public`. Configure trusted
-publishing before automating later npm releases.
+The first release of each npm package is a manual bootstrap because npm trusted
+publishing can only be configured after the package exists. Once the GitHub
+release finishes, publish the five platform tarballs before the root package:
+
+```bash
+npm publish leantoken-darwin-arm64-VERSION.tgz --access public
+npm publish leantoken-darwin-x64-VERSION.tgz --access public
+npm publish leantoken-linux-arm64-VERSION.tgz --access public
+npm publish leantoken-linux-x64-VERSION.tgz --access public
+npm publish leantoken-win32-x64-VERSION.tgz --access public
+npm publish leantoken-VERSION.tgz --access public
+```
+
+Publishing the root package last prevents users from resolving it before its
+native optional dependencies are available. Configure trusted publishing for
+all six packages before automating later npm releases.
 
 ## Test responsibilities
 

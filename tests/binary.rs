@@ -402,7 +402,7 @@ fn setup_and_remove_do_not_require_a_repository() {
 }
 
 #[test]
-fn npx_setup_registers_an_unpinned_launcher_instead_of_its_cache_path() {
+fn npx_setup_registers_latest_release_instead_of_its_cache_path() {
     let temp = tempfile::tempdir().expect("temporary home");
     let node = temp.path().join("node");
     let npm = temp.path().join("npm-cli.js");
@@ -434,7 +434,7 @@ fn npx_setup_registers_an_unpinned_launcher_instead_of_its_cache_path() {
             npm.to_str().unwrap(),
             "exec",
             "--yes",
-            "--package=leantoken",
+            "--package=leantoken@latest",
             "--",
             "leantoken",
             "mcp"
@@ -463,7 +463,8 @@ fn npx_setup_explains_that_it_does_not_install_a_global_cli() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("no global `leantoken` command was installed"));
-    assert!(stdout.contains("npm install --global leantoken"));
+    assert!(stdout.contains("npx leantoken@latest <command>"));
+    assert!(stdout.contains("npm install --global leantoken@latest"));
 }
 
 fn run(
