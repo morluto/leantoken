@@ -81,6 +81,12 @@ fn context_path_score(path: &str, terms: &[String], task: &str) -> f64 {
     score
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CandidateDiagnostics {
+    Omit,
+    Collect,
+}
+
 fn qualified_symbol_match(
     concept: &str,
     name: &str,
@@ -396,14 +402,32 @@ impl Services {
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.context_sync(request, &cancellation)).await?
+        tokio::task::spawn_blocking(move || {
+            this.context_sync(request, &cancellation, CandidateDiagnostics::Omit)
+                .map(|evaluation| evaluation.response)
+        })
+        .await?
+    }
+
+    /// Retrieve context and expose pre-selection candidate paths for evaluation.
+    ///
+    /// Production adapters should use [`Self::context`]. This method exists for
+    /// frozen retrieval benchmarks and does not alter the MCP response schema.
+    pub async fn context_evaluation(&self, request: ContextRequest) -> Result<ContextEvaluation> {
+        let this = self.clone();
+        let cancellation = CancellationToken::new();
+        tokio::task::spawn_blocking(move || {
+            this.context_sync(request, &cancellation, CandidateDiagnostics::Collect)
+        })
+        .await?
     }
 
     fn context_sync(
         &self,
         request: ContextRequest,
         cancellation: &CancellationToken,
-    ) -> Result<ContextResponse> {
+        diagnostics: CandidateDiagnostics,
+    ) -> Result<ContextEvaluation> {
         check_cancelled(cancellation)?;
         if request.task.trim().is_empty() || request.token_budget == 0 {
             return Err(Error::InvalidRequest(
@@ -725,6 +749,37 @@ impl Services {
                 }
             }
 
+            let generated_candidate_paths = if diagnostics == CandidateDiagnostics::Collect {
+                candidates
+                    .iter()
+                    .map(|candidate| candidate.path.clone())
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let generated_candidates = if diagnostics == CandidateDiagnostics::Collect {
+                candidates
+                    .iter()
+                    .map(|candidate| {
+                        let token_count = candidate.token_count_with(self.config.tokenizer).max(1);
+                        ContextCandidateEvaluation {
+                            path: candidate.path.clone(),
+                            start_line: candidate.start_line,
+                            end_line: candidate.end_line,
+                            representation: candidate.representation.clone(),
+                            match_kinds: candidate.match_kinds.clone(),
+                            concepts: candidate.concepts.clone(),
+                            concept_weight: candidate.concept_weight,
+                            score: candidate.score(&ranking::Weights::default(), token_count),
+                            token_count,
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
             let mut response = ranking::select_with_tokenizer(
                 candidates,
                 &request,
@@ -737,7 +792,11 @@ impl Services {
                     .warnings
                     .push("no relevant indexed evidence found".into());
             }
-            Ok(response)
+            Ok(ContextEvaluation {
+                response,
+                generated_candidate_paths,
+                generated_candidates,
+            })
         })
     }
 }

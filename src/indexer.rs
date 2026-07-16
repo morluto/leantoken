@@ -266,66 +266,149 @@ impl Indexer {
         let mut unique = HashSet::with_capacity(paths.len());
         for path in paths {
             check_cancelled(cancellation)?;
-            unique.insert(path.clone());
+            unique.insert(slash_path(&validate_relative(path)?));
         }
         let mut paths = unique.drain().collect::<Vec<_>>();
         check_cancelled(cancellation)?;
         paths.sort_unstable();
         check_cancelled(cancellation)?;
 
-        let mut candidates = Vec::new();
-        let mut deletions = Vec::new();
-        let mut unchanged = 0usize;
-        for requested in &paths {
-            check_cancelled(cancellation)?;
-            let relative = validate_relative(requested)?;
-            let relative_path = slash_path(&relative);
+        let visibility_delta = paths.iter().any(|requested| {
+            let relative = Path::new(requested);
+            let relative_path = slash_path(relative);
             if is_ignore_control_path(&relative_path) {
-                return self.reconcile_cancellable(true, cancellation);
+                return true;
             }
-            let absolute_path = self.config.root.join(&relative);
-            if self.config.is_database_artifact_path(&absolute_path) {
-                continue;
+            let absolute = self.config.root.join(relative);
+            match fs::symlink_metadata(&absolute) {
+                Ok(metadata) => {
+                    !existing.contains_key(&relative_path) || !metadata.file_type().is_file()
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => existing
+                    .keys()
+                    .any(|path| path.starts_with(&format!("{relative_path}/"))),
+                Err(_) => false,
             }
+        });
+        let discovered = visibility_delta
+            .then(|| {
+                discover_files_cancellable(
+                    &self.config.root,
+                    self.config.max_file_bytes,
+                    cancellation,
+                )
+                .map(|mut files| {
+                    files
+                        .retain(|file| !self.config.is_database_artifact_path(&file.absolute_path));
+                    files
+                })
+            })
+            .transpose()?;
+        let discovered_by_path = discovered.as_ref().map(|files| {
+            files
+                .iter()
+                .cloned()
+                .map(|file| (file.relative_path.clone(), file))
+                .collect::<HashMap<_, _>>()
+        });
 
-            let indexed = existing.get(&relative_path);
-            let metadata = match fs::symlink_metadata(&absolute_path) {
-                Ok(metadata) => metadata,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    if indexed.is_some() {
-                        deletions.push(relative_path);
-                    } else if existing
-                        .keys()
-                        .any(|path| path.starts_with(&format!("{relative_path}/")))
-                    {
-                        return self.reconcile_cancellable(false, cancellation);
-                    }
+        let mut candidates = HashMap::new();
+        let mut deletions = HashSet::new();
+        let mut unchanged = 0usize;
+        if let Some(discovered) = &discovered_by_path {
+            for (path, file) in discovered {
+                check_cancelled(cancellation)?;
+                if !existing.contains_key(path) || paths.binary_search(path).is_ok() {
+                    candidates.insert(path.clone(), file.clone());
+                }
+            }
+            for path in existing.keys() {
+                check_cancelled(cancellation)?;
+                if !discovered.contains_key(path) {
+                    deletions.insert(path.clone());
+                }
+            }
+        } else {
+            for requested in &paths {
+                check_cancelled(cancellation)?;
+                let relative = validate_relative(requested)?;
+                let relative_path = slash_path(&relative);
+                let absolute_path = self.config.root.join(&relative);
+                if self.config.is_database_artifact_path(&absolute_path) {
                     continue;
                 }
-                Err(error) => return Err(error.into()),
-            };
-
-            if indexed.is_none() || !metadata.file_type().is_file() {
-                return self.reconcile_cancellable(true, cancellation);
+                let metadata = match fs::symlink_metadata(&absolute_path) {
+                    Ok(metadata) => metadata,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        if existing.contains_key(&relative_path) {
+                            deletions.insert(relative_path);
+                        }
+                        continue;
+                    }
+                    Err(error) => return Err(error.into()),
+                };
+                if metadata.len() > self.config.max_file_bytes {
+                    deletions.insert(relative_path);
+                    continue;
+                }
+                let modified_ns = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+                    .map(|duration| duration.as_nanos());
+                candidates.insert(
+                    relative_path.clone(),
+                    DiscoveredFile {
+                        absolute_path,
+                        relative_path,
+                        size_bytes: metadata.len(),
+                        modified_ns,
+                    },
+                );
             }
-            if metadata.len() > self.config.max_file_bytes {
-                deletions.push(relative_path);
+        }
+
+        for deletion in &deletions {
+            repository_paths.remove(deletion);
+        }
+        repository_paths.extend(candidates.keys().cloned());
+        let mut forced_importers = HashSet::new();
+        for import in self.storage.import_resolutions()? {
+            check_cancelled(cancellation)?;
+            if deletions.contains(&import.file_path) {
                 continue;
             }
-
+            let resolved = resolve_import(&import.file_path, &import.raw_target, &repository_paths);
+            if resolved == import.resolved_path {
+                continue;
+            }
+            forced_importers.insert(import.file_path.clone());
+            if candidates.contains_key(&import.file_path) {
+                continue;
+            }
+            let absolute_path = self.config.root.join(&import.file_path);
+            let metadata = fs::symlink_metadata(&absolute_path)?;
+            if !metadata.file_type().is_file() || metadata.len() > self.config.max_file_bytes {
+                continue;
+            }
             let modified_ns = metadata
                 .modified()
                 .ok()
                 .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
                 .map(|duration| duration.as_nanos());
-            candidates.push(DiscoveredFile {
-                absolute_path,
-                relative_path,
-                size_bytes: metadata.len(),
-                modified_ns,
-            });
+            candidates.insert(
+                import.file_path.clone(),
+                DiscoveredFile {
+                    absolute_path,
+                    relative_path: import.file_path,
+                    size_bytes: metadata.len(),
+                    modified_ns,
+                },
+            );
         }
 
+        let files_seen = candidates.len() + deletions.len();
+        let candidates = candidates.into_values().collect::<Vec<_>>();
         let prepared = self.prepare_candidates(&candidates, cancellation)?;
         let mut replacements = Vec::new();
         let mut warnings = Vec::new();
@@ -339,7 +422,7 @@ impl Indexer {
                             && record.size_bytes == file.size_bytes
                             && record.modified_ns == file.modified_ns
                     });
-                    if same {
+                    if same && !forced_importers.contains(&file.path) {
                         unchanged += 1;
                         continue;
                     }
@@ -350,7 +433,9 @@ impl Indexer {
                 }
                 PreparedFile::Binary(path) => {
                     skipped += 1;
-                    deletions.push(path);
+                    if existing.contains_key(&path) {
+                        deletions.insert(path);
+                    }
                 }
                 PreparedFile::Failed(path, error) => {
                     skipped += 1;
@@ -359,13 +444,8 @@ impl Indexer {
             }
         }
         check_cancelled(cancellation)?;
+        let mut deletions = deletions.into_iter().collect::<Vec<_>>();
         deletions.sort_unstable();
-        deletions.dedup();
-        check_cancelled(cancellation)?;
-        for deletion in &deletions {
-            check_cancelled(cancellation)?;
-            repository_paths.remove(deletion);
-        }
         resolve_imports(&mut replacements, &repository_paths, cancellation)?;
         let files_indexed = replacements.len();
         let files_removed = deletions.len();
@@ -375,7 +455,7 @@ impl Indexer {
 
         Ok(IndexResponse {
             repository_generation: generation,
-            files_seen: paths.len(),
+            files_seen,
             files_indexed,
             files_unchanged: unchanged,
             files_removed,

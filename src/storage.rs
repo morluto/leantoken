@@ -279,6 +279,13 @@ pub struct ImportRecord {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct ImportResolutionRecord {
+    pub file_path: String,
+    pub raw_target: String,
+    pub resolved_path: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct IndexedFile {
     pub path: String,
     pub language: Option<String>,
@@ -669,6 +676,10 @@ impl Storage {
             .get_imports_for_file(file_id, max_results)
     }
 
+    pub(crate) fn import_resolutions(&self) -> Result<Vec<ImportResolutionRecord>> {
+        self.begin_read()?.import_resolutions()
+    }
+
     pub fn search_word(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
         self.begin_read()?.search_word(query, max_results)
     }
@@ -841,6 +852,22 @@ impl ReadSession {
         )?;
         let mut rows = stmt.query_map(params![path], Storage::map_file)?;
         Ok(rows.next().transpose()?)
+    }
+
+    fn import_resolutions(&self) -> Result<Vec<ImportResolutionRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT files.path, imports.raw_target, imports.resolved_path
+             FROM imports JOIN files ON files.id = imports.file_id
+             ORDER BY files.path, imports.id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(ImportResolutionRecord {
+                file_path: row.get(0)?,
+                raw_target: row.get(1)?,
+                resolved_path: row.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     pub fn get_chunks_for_file(

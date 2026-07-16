@@ -212,9 +212,12 @@ cargo run --release --example indexing_profile -- \
 ```
 
 The runner creates and removes its own deterministic temporary corpus. It
-reports full no-op reconciliation, full reconciliation after one file changes,
-changed-path reconciliation after one file changes, repeated reads from a
-small hot set, reads spread across the corpus, and in-memory byte copies.
+reports full no-op reconciliation, full and targeted modification, create,
+delete, rename, and ignore-control reconciliation, repeated reads from a small
+hot set, reads spread across the corpus, and in-memory byte copies. Lifecycle
+operations call the same path-reconciliation entry point used by watcher
+events. Create, rename, and ignore changes measure visibility-delta handling;
+importers are reparsed only when their stored resolution changes.
 
 For a real repository, pin a clean checkout and pass it with `--repository`.
 The profiler resolves its commit and uses LeanToken's ignore-aware discovery to
@@ -235,7 +238,7 @@ cargo run --release --example indexing_profile -- \
   --output target/indexing_profile_tokio_linux.json
 ```
 
-The schema-version 2 report records the caller-supplied corpus label, exact
+The schema-version 3 report records the caller-supplied corpus label, exact
 revision, ignore-visible file count, total and mean bytes, maximum directory
 depth, and extension mix. The label is explicit so the profiler never copies a
 possibly credential-bearing Git remote into a report. Run the same pinned
@@ -248,9 +251,19 @@ The repository includes one transparent [Tokio Linux x86-64 profile](reports/ind
 It is a single-host measurement, not a cross-platform conclusion. On that run,
 full no-op reconciliation was 28.4 ms p50 / 30.1 ms p95, targeted modification
 was 9.8 ms p50 / 15.4 ms p95, and warm file reads were 8.7–12.3 µs p50. Those
-absolute read costs do not justify a process-local hot-file cache; the remaining
-indexing scenarios and other operating systems still need measurement before an
-incremental-index redesign.
+absolute read costs do not justify a process-local hot-file cache. That archived
+schema-version 2 report predates lifecycle measurements; other operating
+systems still need measurement before an incremental-index redesign.
+
+A five-sample schema-version 3 development run on the same pinned Tokio tree
+initially measured median create, rename, and ignore-change rebuilds at 21.1 s,
+13.5 s, and 29.9 s because each reparsed all 865 indexed files. After replacing
+that fallback with visibility deltas and affected-importer resolution, the same
+scenarios measured 226 ms, 89 ms, and 49 ms. The create sample indexed one file;
+rename indexed one and removed one; a comment-only ignore change indexed only
+`.gitignore`. These are small, machine-specific runs, not stable latency or
+cross-platform claims. The affected-importer path preserves the case where a
+newly visible file resolves imports in an otherwise unchanged file.
 
 Do not infer cold-disk or network-filesystem behavior from this profile. A hot
 file cache is justified only when live reads are a material share of measured

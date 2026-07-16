@@ -22,6 +22,14 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 - Expand the evaluation across more languages and task shapes before making
   broad retrieval claims. Record dead-end source, repeated ranges, known-hash
   resends, and complete two-turn cost alongside recall.
+- Candidate-stage diagnostics now distinguish generation from selection without
+  expanding runtime responses. On the prospective validation set, candidate
+  file recall was 11/11 while returned recall was 8/11. A Tree-sitter signature
+  boundary correction improved returned recall to 9/11 and labeled-line recall
+  from 17/38 to 21/38 while reducing dead-end source by 140 tokens. A path-score
+  candidate reached 10/11 on validation but regressed the consumed holdout and
+  was removed. Collect a new unseen holdout before treating the retained result
+  as general.
 - Add a language grammar only when a pinned task and parser fixture demonstrate
   recall value that outweighs its binary, indexing, and schema cost. The
   expanded task set uses existing grammars, so no grammar was added.
@@ -36,6 +44,9 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 - Compare dual, text-only, and structured-only results per host/version. Keep
   dual as the default until a captured compatibility matrix proves a smaller
   mode reaches the model correctly.
+- Codex CLI 0.144.5 has one captured dual-mode exchange covering initialization,
+  catalog listing, and two tool calls. It confirms dual delivery for that exact
+  host/version but does not justify changing the default for other hosts.
 - Representation tests compare context fragments, search excerpts, outlines,
   full reads, and a compact repository tree under visible source and complete
   JSON token counts.
@@ -65,6 +76,11 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 - Do not add a hot-file cache yet. The release profile measured warm live reads
   in tens of microseconds on this host; cache ownership, invalidation, and
   memory cost need end-to-end evidence first.
+- `notify-debouncer-full` was evaluated as a replacement for the watcher state
+  machine. Its file-ID rename pairing is useful, but its unbounded internal
+  queue and blocking shutdown do not preserve LeanToken's bounded-overflow and
+  cancellation-flush contracts. Keep the current conservative watcher unless
+  native macOS traces show rename rescans are a material cost.
 
 ## Indexing efficiency
 
@@ -73,6 +89,19 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 - The synthetic release profile showed a lower one-file update cost for the
   targeted path at 2,000 files. Continue profiling real monorepos before adding
   more incremental-index machinery.
+- The profiler now measures create, delete, rename, and ignore-control changes
+  through the same path-reconciliation entry point used by watcher events.
+  They now measure visibility deltas rather than unconditional rebuilds.
+  Watcher delivery latency, overflow, and interrupted reconciliation remain
+  separate stress measurements.
+- A five-sample pinned-Tokio run first measured median create, rename, and
+  ignore-change rebuilds at 21.1 s, 13.5 s, and 29.9 s. The implementation now
+  uses existing indexed imports to reparse only changed paths and importers
+  whose resolution changes. On the same 865-file tree, medians fell to 226 ms,
+  89 ms, and 49 ms; create indexed one file, rename indexed one and removed one,
+  and a comment-only ignore change indexed only `.gitignore`. This addresses
+  [#48](https://github.com/morluto/leantoken/issues/48) without a journal,
+  shard layer, or cache.
 
 ## Reliability
 

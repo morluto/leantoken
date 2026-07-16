@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "trace_blake3": "87e1ce91a027cbf32913d5d82eab2b3d5bd4a3b6970cd863aaaf7fcbba0d93fd",
+  "host": "codex-cli",
+  "host_version": "0.144.5",
+  "tokenizer": "cl100k_base",
+  "token_count_exact": true,
+  "event_count": 9,
+  "total_local_tokens": 2896,
+  "total_provider_input_tokens": null,
+  "categories": {
+    "initialize_request": { "events": 1, "local_tokens": 67, "provider_input_tokens": null },
+    "initialize_response": { "events": 1, "local_tokens": 97, "provider_input_tokens": null },
+    "initialized_notification": { "events": 1, "local_tokens": 14, "provider_input_tokens": null },
+    "tool_call_request": { "events": 2, "local_tokens": 530, "provider_input_tokens": null },
+    "tool_call_response": { "events": 2, "local_tokens": 607, "provider_input_tokens": null },
+    "tools_list_request": { "events": 1, "local_tokens": 27, "provider_input_tokens": null },
+    "tools_list_response": { "events": 1, "local_tokens": 1554, "provider_input_tokens": null }
+  },
+  "tool_result_modes": { "dual": 2 },
+  "required_exchange_parts": {
+    "initialize_request": true,
+    "initialize_response": true,
+    "initialized_notification": true,
+    "tool_result": true,
+    "tools_call": true,
+    "tools_list": true
+  },
+  "limitations": [
+    "Local counts cover exact serialized JSON messages but not provider-specific conversation framing unless the host exports it as a handoff event.",
+    "Provider input totals remain null because Codex CLI did not expose an authoritative provider total in the MCP exchange.",
+    "Transport bytes outside JSON-RPC, such as process startup and stdio buffering, are outside token cost."
+  ]
+}

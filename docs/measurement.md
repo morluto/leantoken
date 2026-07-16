@@ -31,6 +31,10 @@ cargo run --release --example benchmark_ablation -- \
 
 The runner reports file and line-anchor recall, returned source, complete JSON,
 unlabeled fragment cost, repeated ranges, known-hash resends, and two-turn cost.
+It also reports sorted pre-selection candidate paths and signal summaries for
+labeled files. Candidate recall separates query/index generation failures from
+deduplication, ranking, and allocation failures without adding diagnostics to
+the MCP response schema.
 Do not alter prompts, labels, budgets, or pinned revisions after inspecting a
 candidate. Freeze a new dataset version instead.
 
@@ -46,6 +50,30 @@ The four validation prompts lead with their task locus. They do not establish
 how original-order prose selection behaves when a long symptom narrative comes
 before decisive terms in a later sentence; retain that phrasing class in future
 validation rather than treating this ablation as a general language result.
+
+The next frozen validation ablation used those candidate diagnostics. All 11
+labeled files appeared before selection, while only 8 were returned, locating
+the remaining misses after candidate generation. Inspection found JavaScript
+assignment symbols whose signatures included function bodies because the
+captured assignment node had no direct `body` field. That allowed an
+`app.render` call inside `res.render` to look like owner evidence. Truncating a
+signature at the first descendant body recovered `lib/application.js`. By
+itself, that correction increased returned-file recall from 8/11 to 9/11 and
+line-anchor recall from 17/38 to 21/38. Dead-end source fell from 1,081 to 941
+tokens; complete first-response JSON increased from 5,797 to 6,040 tokens and
+complete two-turn JSON from 12,410 to 12,486 tokens.
+
+A separate path ablation rewarded adjacent trailing words from qualified
+tokens. It raised validation file recall to 10/11, but an explicitly diagnostic
+rerun of the consumed holdout fell from 9/25 to 7/25 returned files and from
+10/111 to 8/111 line anchors. Candidate recall remained 19/25, locating the
+regression in selection. The path rule was removed rather than tuned against
+individual consumed tasks. A generic second-path allocation candidate was also
+rejected: it reduced validation line recall and added 358 dead-end source
+tokens despite finding one more labeled file. Direct qualified symbol lookup
+was rejected for context assembly because a large Flask declaration displaced
+more useful labeled ranges. None of these consumed-holdout diagnostics are
+generalization evidence.
 
 ## Sealed holdout lifecycle
 
@@ -97,6 +125,12 @@ Archive the unedited report before inspecting it. Inspection consumes the set
 for that candidate: do not tune against the result and present another candidate
 as blind on the same tasks. If the tasks become tuning inputs, copy them to a
 prospective validation manifest and collect a new unseen holdout with a new hash.
+
+After a holdout is consumed, `--consumed-diagnostic` permits an explicitly
+non-blind rerun against a changed runtime tree. The report preserves the
+manifest hash, sets `diagnostic_only` to true, leaves candidate-tree verification
+unset, and states that the result is not generalization evidence. Use this only
+for regression diagnosis; it does not refresh or replace the holdout.
 
 The holdout was evaluated once on 2026-07-16 and is now consumed for candidate
 `0b6f80bb4e9d356443ebd130be1d04c0254111cb`. The unchanged Linux x86-64 report
@@ -213,6 +247,23 @@ real host delivers text or structured content to a model.
 The checked-in [trace](../benchmarks/wire_trace.synthetic.json) and
 [analysis](../benchmarks/reports/wire-trace-synthetic-0.1.1.json) are the
 regenerable baseline for LeanToken 0.1.1.
+The compact-response fixture records 1,984 complete wire tokens: 1,550 for the
+five-tool catalog and 240 for the dual context result. Omitting empty optional
+collections reduced that result from 257 tokens without changing the dual mode,
+non-empty evidence, receipt hashes, freshness, or range metadata. These local
+tokenizer counts remain synthetic serialization evidence, not host or provider
+compatibility evidence.
+
+A real Codex CLI 0.144.5 capture initialized LeanToken, listed the five-tool
+catalog, and completed `leantoken_files` and `leantoken_read` calls. Its nine
+JSON-RPC messages contained 2,896 local tokens: 1,554 for the catalog and 607
+for two dual tool results. The archived
+[analysis](../benchmarks/reports/wire-trace-codex-cli-0.144.5.json) verifies all
+required exchange categories and records two dual results. Codex did not expose
+provider-native input totals through the MCP exchange, so those remain null.
+The first real-host attempt also showed that hosts may terminate a proxy rather
+than close stdio cooperatively; the capture proxy now atomically persists after
+every message so such sessions retain evidence.
 
 Place the stdio proxy where the host would normally launch LeanToken:
 

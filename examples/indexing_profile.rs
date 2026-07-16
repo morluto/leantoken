@@ -61,6 +61,10 @@ struct Report {
     full_noop: IndexMeasurement,
     full_changed: IndexMeasurement,
     targeted_changed: IndexMeasurement,
+    create_delta: IndexMeasurement,
+    delete_targeted: IndexMeasurement,
+    rename_delta: IndexMeasurement,
+    ignore_change_delta: IndexMeasurement,
     warm_hot_file_reads: ReadMeasurement,
     warm_spread_file_reads: ReadMeasurement,
     memory_hot_file_copies: ReadMeasurement,
@@ -94,6 +98,14 @@ struct IndexMeasurement {
     timing: TimingStats,
     files_seen_per_sample: usize,
     files_indexed_per_sample: usize,
+    files_removed_per_sample: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ExpectedIndexCounts {
+    seen: usize,
+    indexed: usize,
+    removed: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -159,6 +171,14 @@ fn invalid_input(message: &str) -> Box<dyn Error> {
 
 fn run_profile(args: &Args) -> AnyResult<Report> {
     let corpus = prepare_corpus(args)?;
+    let ignore_path = corpus.root.join(".gitignore");
+    if ignore_path.exists() {
+        if !fs::symlink_metadata(&ignore_path)?.file_type().is_file() {
+            return Err(invalid_input("profile .gitignore must be a regular file"));
+        }
+    } else {
+        fs::write(&ignore_path, "# LeanToken indexing profile\n")?;
+    }
     let database = tempfile::tempdir()?;
     let config = Arc::new(Config::discover(
         &corpus.root,
@@ -221,6 +241,96 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
         1,
         "targeted changed",
     )?;
+    let create_path = corpus.root.join("leantoken_profile_created.rs");
+    let create_relative = "leantoken_profile_created.rs".to_string();
+    if create_path.exists() {
+        return Err(invalid_input(
+            "profile corpus already contains leantoken_profile_created.rs",
+        ));
+    }
+    let create_delta = measure_lifecycle_indexing(
+        args.iterations,
+        |iteration| fs::write(&create_path, synthetic_source(iteration, 256)),
+        || indexer.reconcile_paths(std::slice::from_ref(&create_relative)),
+        || {
+            fs::remove_file(&create_path)?;
+            indexer.reconcile_paths(std::slice::from_ref(&create_relative))?;
+            Ok(())
+        },
+        ExpectedIndexCounts {
+            seen: 1,
+            indexed: 1,
+            removed: 0,
+        },
+        "create delta",
+    )?;
+
+    let delete_path = mutation_files[0].absolute_path.clone();
+    let delete_relative = mutation_files[0].relative_path.clone();
+    let delete_content = fs::read(&delete_path)?;
+    let delete_targeted = measure_lifecycle_indexing(
+        args.iterations,
+        |_| fs::remove_file(&delete_path),
+        || indexer.reconcile_paths(std::slice::from_ref(&delete_relative)),
+        || {
+            fs::write(&delete_path, &delete_content)?;
+            indexer.reconcile(false)?;
+            Ok(())
+        },
+        ExpectedIndexCounts {
+            seen: 1,
+            indexed: 0,
+            removed: 1,
+        },
+        "targeted delete",
+    )?;
+
+    let rename_path = mutation_files[1].absolute_path.clone();
+    let rename_relative = mutation_files[1].relative_path.clone();
+    let rename_destination = rename_path.with_file_name("leantoken_profile_renamed.rs");
+    if rename_destination.exists() {
+        return Err(invalid_input(
+            "profile corpus already contains leantoken_profile_renamed.rs",
+        ));
+    }
+    let rename_destination_relative = Path::new(&rename_relative)
+        .with_file_name("leantoken_profile_renamed.rs")
+        .to_string_lossy()
+        .replace('\\', "/");
+    let rename_paths = vec![rename_relative.clone(), rename_destination_relative.clone()];
+    let rename_delta = measure_lifecycle_indexing(
+        args.iterations,
+        |_| fs::rename(&rename_path, &rename_destination),
+        || indexer.reconcile_paths(&rename_paths),
+        || {
+            fs::rename(&rename_destination, &rename_path)?;
+            indexer.reconcile(false)?;
+            Ok(())
+        },
+        ExpectedIndexCounts {
+            seen: 2,
+            indexed: 1,
+            removed: 1,
+        },
+        "rename delta",
+    )?;
+
+    let ignore_relative = ".gitignore".to_string();
+    let ignore_change_delta = measure_lifecycle_indexing(
+        args.iterations,
+        |iteration| {
+            let mut file = OpenOptions::new().append(true).open(&ignore_path)?;
+            writeln!(file, "# profile ignore mutation {iteration}")
+        },
+        || indexer.reconcile_paths(std::slice::from_ref(&ignore_relative)),
+        || Ok(()),
+        ExpectedIndexCounts {
+            seen: 1,
+            indexed: 1,
+            removed: 0,
+        },
+        "ignore-change delta",
+    )?;
 
     let hot_set = args.hot_set.min(paths.len());
     let hot_paths = &paths[..hot_set];
@@ -238,7 +348,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
 
     let (leantoken_git_revision, leantoken_worktree_dirty) = leantoken_source_identity();
     Ok(Report {
-        schema_version: 2,
+        schema_version: 3,
         leantoken_version: env!("CARGO_PKG_VERSION"),
         leantoken_git_revision,
         leantoken_worktree_dirty,
@@ -251,9 +361,14 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
             timing: TimingStats::from_durations(full_noop_durations),
             files_seen_per_sample: discovered.len(),
             files_indexed_per_sample: 0,
+            files_removed_per_sample: 0,
         },
         full_changed,
         targeted_changed,
+        create_delta,
+        delete_targeted,
+        rename_delta,
+        ignore_change_delta,
         warm_hot_file_reads,
         warm_spread_file_reads,
         memory_hot_file_copies,
@@ -261,7 +376,8 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
             corpus.limitation.to_string(),
             "File-read measurements use the operating system's warm page cache; they do not represent cold, remote, encrypted, or heavily contended filesystems.".into(),
             "The in-memory comparison copies bytes but excludes cache lookup, eviction, synchronization, invalidation, and memory-pressure costs.".into(),
-            "This profile measures no-op and existing-file modification paths; create, delete, rename, ignore-change, watcher-overflow, and interruption scenarios still require separate measurements.".into(),
+            "Lifecycle measurements invoke the paths emitted by the watcher directly; they do not include notify backend or debounce latency.".into(),
+            "Watcher-overflow and interrupted reconciliation still require separate stress measurements.".into(),
             "Timing is machine-specific. Compare runs only on the same host and build profile, and use release builds for decisions.".into(),
         ],
     })
@@ -416,6 +532,43 @@ where
         timing: TimingStats::from_durations(durations),
         files_seen_per_sample: files_seen,
         files_indexed_per_sample: 1,
+        files_removed_per_sample: 0,
+    })
+}
+
+fn measure_lifecycle_indexing<S, C, R>(
+    iterations: usize,
+    mut setup: S,
+    mut reconcile: C,
+    mut restore: R,
+    expected: ExpectedIndexCounts,
+    measurement: &str,
+) -> AnyResult<IndexMeasurement>
+where
+    S: FnMut(usize) -> io::Result<()>,
+    C: FnMut() -> leantoken::Result<IndexResponse>,
+    R: FnMut() -> AnyResult<()>,
+{
+    let mut durations = Vec::with_capacity(iterations);
+    for iteration in 0..iterations {
+        setup(iteration)?;
+        let start = Instant::now();
+        let response = reconcile()?;
+        durations.push(start.elapsed());
+        require_index_counts(&response, expected.seen, expected.indexed, measurement)?;
+        if response.files_removed != expected.removed {
+            return Err(Box::new(io::Error::other(format!(
+                "{measurement} expected files_removed={}; got files_removed={}",
+                expected.removed, response.files_removed
+            ))));
+        }
+        restore()?;
+    }
+    Ok(IndexMeasurement {
+        timing: TimingStats::from_durations(durations),
+        files_seen_per_sample: expected.seen,
+        files_indexed_per_sample: expected.indexed,
+        files_removed_per_sample: expected.removed,
     })
 }
 
@@ -558,10 +711,14 @@ mod tests {
 
         let report = run_profile(&args).expect("profile");
 
-        assert_eq!(report.initial_index.response.files_indexed, 6);
+        assert_eq!(report.initial_index.response.files_indexed, 7);
         assert_eq!(report.full_noop.timing.samples, 2);
         assert_eq!(report.full_changed.files_indexed_per_sample, 1);
         assert_eq!(report.targeted_changed.files_seen_per_sample, 1);
+        assert_eq!(report.create_delta.files_seen_per_sample, 1);
+        assert_eq!(report.delete_targeted.files_removed_per_sample, 1);
+        assert_eq!(report.rename_delta.files_removed_per_sample, 1);
+        assert_eq!(report.ignore_change_delta.files_seen_per_sample, 1);
         assert_eq!(report.warm_hot_file_reads.timing.samples, 12);
         assert_eq!(report.memory_hot_file_copies.timing.samples, 12);
     }
@@ -605,8 +762,8 @@ mod tests {
 
         assert_eq!(report.corpus.source_kind, "git_worktree_snapshot");
         assert_eq!(report.corpus.revision.as_deref(), Some(revision.as_str()));
-        assert_eq!(report.corpus.files, 2);
-        assert_eq!(report.full_noop.files_seen_per_sample, 2);
+        assert_eq!(report.corpus.files, 3);
+        assert_eq!(report.full_noop.files_seen_per_sample, 3);
         assert_eq!(report.corpus.extensions.get("rs"), Some(&1));
         assert_eq!(report.corpus.extensions.get("py"), Some(&1));
         assert_eq!(

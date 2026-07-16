@@ -185,7 +185,9 @@ pub struct OutlineFile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
     pub structurally_complete: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub symbols: Vec<Symbol>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub imports: Vec<Import>,
 }
 
@@ -344,9 +346,49 @@ pub struct OmittedCandidate {
 pub struct ContextResponse {
     pub fragments: Vec<ContextFragment>,
     pub receipt: EvidenceReceipt,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub omitted: Vec<OmittedCandidate>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
     pub meta: ResponseMeta,
+}
+
+#[derive(Debug, Clone)]
+/// Evaluation-only context result with the paths seen before ranking and selection.
+///
+/// This is not part of the MCP surface. It lets retrieval benchmarks distinguish
+/// candidate-generation misses from ranking or token-allocation misses without
+/// inflating normal responses with diagnostic metadata.
+pub struct ContextEvaluation {
+    /// Normal token-bounded context response.
+    pub response: ContextResponse,
+    /// Sorted unique paths represented by candidates before ranking and selection.
+    pub generated_candidate_paths: Vec<String>,
+    /// Candidate signal summaries before deduplication and selection.
+    pub generated_candidates: Vec<ContextCandidateEvaluation>,
+}
+
+#[derive(Debug, Clone)]
+/// Evaluation-only summary of a generated context candidate.
+pub struct ContextCandidateEvaluation {
+    /// Repository-relative candidate path.
+    pub path: String,
+    /// Inclusive first line of the candidate range.
+    pub start_line: usize,
+    /// Inclusive last line of the candidate range.
+    pub end_line: usize,
+    /// Candidate representation selected during generation.
+    pub representation: String,
+    /// Retrieval signals that produced the candidate.
+    pub match_kinds: Vec<String>,
+    /// Query concepts matched by the candidate.
+    pub concepts: Vec<String>,
+    /// Aggregate weight of matched concepts.
+    pub concept_weight: f64,
+    /// Candidate score before final selection.
+    pub score: f64,
+    /// Candidate token count used by selection.
+    pub token_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -425,7 +467,8 @@ mod tests {
         assert!(value["fragments"][0].get("content_hash").is_none());
         assert_eq!(value["meta"]["freshness"], "current");
         assert_eq!(value["meta"]["token_count_exact"], true);
-        assert_eq!(value["warnings"], serde_json::json!([]));
+        assert!(value.get("omitted").is_none());
+        assert!(value.get("warnings").is_none());
 
         let round_trip: ContextResponse =
             serde_json::from_value(value).expect("deserialize compact response");
@@ -433,5 +476,25 @@ mod tests {
         assert_eq!(round_trip.fragments[0].content_hash, "");
         assert_eq!(round_trip.meta.freshness, Freshness::Current);
         assert!(round_trip.meta.token_count_exact);
+    }
+
+    #[test]
+    fn compact_empty_outline_round_trips_with_defaults() {
+        let file = OutlineFile {
+            path: "README.md".into(),
+            language: None,
+            structurally_complete: true,
+            symbols: Vec::new(),
+            imports: Vec::new(),
+        };
+
+        let value = serde_json::to_value(&file).expect("serialize outline");
+        assert!(value.get("symbols").is_none());
+        assert!(value.get("imports").is_none());
+
+        let round_trip: OutlineFile =
+            serde_json::from_value(value).expect("deserialize compact outline");
+        assert!(round_trip.symbols.is_empty());
+        assert!(round_trip.imports.is_empty());
     }
 }

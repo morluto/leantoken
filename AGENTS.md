@@ -40,6 +40,20 @@ cargo doc --no-deps                    # Doc generation
 
 Snapshot tests use `insta`. Review intentional changes with `cargo insta review`.
 
+## Expensive diagnostics
+
+- Run benchmarks and repository-scale profilers with `--release`; debug-mode
+  timings are not decision evidence.
+- If a diagnostic is unexpectedly expensive, inspect CPU activity, build mode,
+  and the active corpus promptly. Do not wait through a long run merely because
+  it is still making progress.
+- Stop and correct avoidable harness or build-mode cost once identified, then
+  rerun the smallest representative measurement.
+- When the cost is product behavior, capture a focused reproduction and address
+  the owner boundary immediately when the fix is in scope. Otherwise open a
+  focused issue with measured evidence, correctness constraints, and success
+  criteria before continuing broad evaluation.
+
 ## Coding Style & Naming Conventions
 
 - Rust edition 2024. Minimum supported Rust version is 1.95.
