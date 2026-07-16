@@ -2,6 +2,7 @@ use leantoken::{
     Config, ContextRequest, Error, FileOperation, FilesRequest, OutlineRequest, ReadRequest,
     ReadStatus, SearchMode, SearchRequest, services::Services,
 };
+use tokio_util::sync::CancellationToken;
 
 async fn fixture() -> (tempfile::TempDir, Services) {
     let root = tempfile::tempdir().expect("temporary repository");
@@ -114,8 +115,8 @@ async fn five_services_return_bounded_grounded_responses() {
     assert!(!context.fragments.is_empty());
     assert!(context.meta.emitted_tokens <= 200);
     assert_eq!(
-        context.receipt.repository_generation,
-        context.meta.repository_generation
+        context.receipt.fragment_hashes.len(),
+        context.fragments.len()
     );
     let repeated_context = services
         .context(ContextRequest {
@@ -264,6 +265,7 @@ async fn read_reports_live_content_that_differs_from_the_index() {
 #[tokio::test]
 async fn read_rejects_ignored_files() {
     let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir(root.path().join(".git")).expect("git marker");
     std::fs::write(root.path().join(".gitignore"), ".env\n").expect("ignore file");
     std::fs::write(root.path().join(".env"), "SECRET=do-not-return\n").expect("ignored file");
     std::fs::write(root.path().join("lib.rs"), "fn visible() {}\n").expect("indexed file");
@@ -356,4 +358,287 @@ async fn oversized_query_is_rejected_without_stopping_services() {
 
     let status = services.status().await.expect("service remains live");
     assert_eq!(status.file_count, 1);
+}
+
+#[tokio::test]
+async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_services() {
+    let (_root, services) = fixture().await;
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+
+    let search = services
+        .search_cancellable(
+            SearchRequest {
+                query: "greet".into(),
+                mode: SearchMode::Regex,
+                include_paths: Vec::new(),
+                exclude_paths: Vec::new(),
+                focus_paths: Vec::new(),
+                max_results: Some(10),
+                max_tokens: Some(100),
+                context_lines: Some(2),
+                case_sensitive: false,
+                cursor: None,
+            },
+            cancellation.child_token(),
+        )
+        .await
+        .expect_err("cancelled search");
+    assert!(matches!(search, Error::Cancelled));
+
+    let context = services
+        .context_cancellable(
+            ContextRequest {
+                task: "change greet".into(),
+                token_budget: 100,
+                focus_paths: Vec::new(),
+                focus_symbols: Vec::new(),
+                exclude_paths: Vec::new(),
+                known_hashes: Vec::new(),
+                prior_repository_generation: None,
+            },
+            cancellation,
+        )
+        .await
+        .expect_err("cancelled context");
+    assert!(matches!(context, Error::Cancelled));
+    assert_eq!(services.status().await.expect("status").file_count, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_queries_observe_one_committed_generation_during_reconciliation() {
+    let (root, services) = fixture().await;
+    let services = std::sync::Arc::new(services);
+    let before = services.status().await.expect("before status").repository_generation;
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn replacement() -> u8 { 42 }\n",
+    )
+    .expect("replace source");
+
+    let indexing_services = std::sync::Arc::clone(&services);
+    let indexing = tokio::spawn(async move {
+        indexing_services
+            .index_paths(vec!["src/lib.rs".into()])
+            .await
+            .expect("reconcile")
+    });
+    let mut queries = tokio::task::JoinSet::new();
+    for index in 0..24 {
+        let services = std::sync::Arc::clone(&services);
+        queries.spawn(async move {
+            let query = if index % 2 == 0 { "greet" } else { "replacement" };
+            let response = services
+                .search(SearchRequest {
+                    query: query.into(),
+                    mode: SearchMode::Identifier,
+                    include_paths: Vec::new(),
+                    exclude_paths: Vec::new(),
+                    focus_paths: Vec::new(),
+                    max_results: Some(10),
+                    max_tokens: Some(100),
+                    context_lines: Some(1),
+                    case_sensitive: false,
+                    cursor: None,
+                })
+                .await
+                .expect("concurrent search");
+            (query, response)
+        });
+    }
+
+    let after = indexing.await.expect("index task").repository_generation;
+    assert!(after > before);
+    while let Some(result) = queries.join_next().await {
+        let (query, response) = result.expect("query task");
+        assert!(matches!(response.meta.repository_generation, value if value == before || value == after));
+        if response.meta.repository_generation == before {
+            assert_eq!(response.hits.is_empty(), query == "replacement");
+        } else {
+            assert_eq!(response.hits.is_empty(), query == "greet");
+        }
+    }
+}
+
+#[tokio::test]
+async fn managed_corrupt_index_is_deleted_and_rebuilt() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("lib.rs"), "fn recovered() {}\n").expect("source");
+    let config = Config::discover(root.path(), None).expect("config");
+    let database = config.database_path.clone();
+    let database_parent = database.parent().expect("database parent").to_owned();
+    std::fs::create_dir_all(&database_parent).expect("parent");
+    std::fs::write(&database, b"not a sqlite database").expect("corrupt database");
+
+    let services = Services::open(config).expect("recover managed cache");
+    services.index(false).await.expect("rebuild index");
+    assert_eq!(services.status().await.expect("status").file_count, 1);
+    assert!(
+        std::fs::metadata(&database)
+            .expect("rebuilt database")
+            .len()
+            > 32
+    );
+    drop(services);
+    std::fs::remove_dir_all(database_parent).expect("remove managed cache fixture");
+}
+
+#[test]
+fn explicit_corrupt_database_is_not_deleted() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("explicit.sqlite");
+    let original = b"caller-owned data";
+    std::fs::write(&database, original).expect("database fixture");
+    let config = Config::discover(root.path(), Some(database.clone())).expect("config");
+
+    Services::open(config).expect_err("explicit corruption must be reported");
+    assert_eq!(std::fs::read(database).expect("preserved database"), original);
+}
+
+fn git_available() -> bool {
+    std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .is_ok()
+}
+
+fn init_git_repo(root: &std::path::Path) {
+    let run = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("git command");
+    };
+    run(&["init"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "Test"]);
+    run(&["add", "-A"]);
+    run(&["commit", "-m", "init"]);
+}
+
+#[tokio::test]
+async fn working_tree_diff_boosts_changed_files() {
+    if !git_available() {
+        return;
+    }
+
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("src")).unwrap();
+    std::fs::write(root.path().join("src/a.rs"), "fn shared() {}\n").unwrap();
+    std::fs::write(root.path().join("src/b.rs"), "fn shared() {}\n").unwrap();
+    init_git_repo(root.path());
+
+    let config = Config::discover(root.path(), Some(root.path().join("index.sqlite"))).unwrap();
+    let services = Services::open(config).unwrap();
+    services.index(false).await.unwrap();
+
+    // Modify b.rs after indexing; do not reindex so the diff signal is tested.
+    std::fs::write(root.path().join("src/b.rs"), "fn shared() { let x = 1; }\n").unwrap();
+
+    let response = services
+        .context(ContextRequest {
+            task: "update shared implementation".into(),
+            token_budget: 500,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(!response.fragments.is_empty());
+    assert_eq!(response.fragments[0].path, "src/b.rs");
+    assert!(
+        response
+            .fragments
+            .iter()
+            .any(|fragment| fragment.path == "src/b.rs" && fragment.reason.contains("changed"))
+    );
+}
+
+#[tokio::test]
+async fn tokenizer_configuration_is_scoped_to_each_service() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "fn independent_token_budget() { println!(\"hello\"); }\n",
+    )
+    .expect("source");
+    let mut exact_config =
+        Config::discover(root.path(), Some(root.path().join("exact.sqlite"))).expect("config");
+    exact_config.tokenizer = leantoken::tokens::Tokenizer::O200kBase;
+    let mut estimate_config =
+        Config::discover(root.path(), Some(root.path().join("estimate.sqlite"))).expect("config");
+    estimate_config.tokenizer = leantoken::tokens::Tokenizer::Estimate;
+    let exact = Services::open(exact_config).expect("exact services");
+    let estimate = Services::open(estimate_config).expect("estimate services");
+    exact.index(false).await.expect("exact index");
+    estimate.index(false).await.expect("estimate index");
+    let request = ContextRequest {
+        task: "change independent_token_budget".into(),
+        token_budget: 100,
+        focus_paths: Vec::new(),
+        focus_symbols: Vec::new(),
+        exclude_paths: Vec::new(),
+        known_hashes: Vec::new(),
+        prior_repository_generation: None,
+    };
+
+    let (exact_response, estimate_response) =
+        tokio::join!(exact.context(request.clone()), estimate.context(request),);
+
+    assert!(
+        exact_response
+            .expect("exact context")
+            .meta
+            .token_count_exact
+    );
+    assert!(
+        !estimate_response
+            .expect("estimate context")
+            .meta
+            .token_count_exact
+    );
+}
+
+#[tokio::test]
+async fn context_declaration_excerpt_retains_long_body_across_chunks() {
+    let root = tempfile::tempdir().expect("root");
+    let body = (1..=48)
+        .map(|line| format!("    let value_{line} = {line};\n"))
+        .collect::<String>();
+    std::fs::write(
+        root.path().join("lib.rs"),
+        format!("fn target_symbol() {{\n{body}    consume(value_48);\n}}\n"),
+    )
+    .expect("source");
+    let mut config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    config.chunk_lines = 3;
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    let response = services
+        .context(ContextRequest {
+            task: "fix target_symbol".into(),
+            token_budget: 600,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+        })
+        .await
+        .expect("context");
+    let declaration = response
+        .fragments
+        .iter()
+        .find(|fragment| fragment.path == "lib.rs" && fragment.start_line == 1)
+        .expect("declaration fragment");
+
+    assert_eq!(declaration.end_line, 51);
+    assert!(declaration.content.contains("consume(value_48)"));
 }

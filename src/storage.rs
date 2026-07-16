@@ -144,7 +144,24 @@ BEGIN
 END;
 "#;
 
-const MIGRATIONS_SLICE: &[M<'_>] = &[M::up(SCHEMA_SQL).foreign_key_check()];
+const LOOKUP_INDEXES_SQL: &str = r#"
+CREATE INDEX IF NOT EXISTS chunks_file_line_idx
+ON chunks(file_id, start_line, end_line);
+
+CREATE INDEX IF NOT EXISTS symbols_file_start_idx
+ON symbols(file_id, start_byte);
+
+CREATE INDEX IF NOT EXISTS symbol_refs_file_start_idx
+ON symbol_refs(file_id, start_byte);
+
+CREATE INDEX IF NOT EXISTS imports_file_line_idx
+ON imports(file_id, line);
+"#;
+
+const MIGRATIONS_SLICE: &[M<'_>] = &[
+    M::up(SCHEMA_SQL).foreign_key_check(),
+    M::up(LOOKUP_INDEXES_SQL),
+];
 const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
 
 #[derive(Debug, Clone)]
@@ -507,6 +524,10 @@ impl Storage {
         let next_generation = current_generation.saturating_add(1);
         for path in deletions {
             tx.execute("DELETE FROM files WHERE path = ?1", params![path])?;
+            tx.execute(
+                "UPDATE imports SET resolved_path = NULL WHERE resolved_path = ?1",
+                params![path],
+            )?;
         }
         for file in replacements {
             tx.execute("DELETE FROM files WHERE path = ?1", params![&file.path])?;
@@ -665,6 +686,26 @@ impl Storage {
         })
     }
 
+    pub(crate) fn get_chunks_overlapping(
+        &self,
+        file_id: i64,
+        start_line: usize,
+        end_line: usize,
+    ) -> Result<Vec<ChunkRecord>> {
+        let start_line = usize_to_i64(start_line)?;
+        let end_line = usize_to_i64(end_line)?;
+        self.with_read(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, file_id, content, start_line, end_line, start_byte, end_byte, token_count
+                 FROM chunks
+                 WHERE file_id = ?1 AND end_line >= ?2 AND start_line <= ?3
+                 ORDER BY start_line",
+            )?;
+            let rows = stmt.query_map(params![file_id, start_line, end_line], Self::map_chunk)?;
+            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+        })
+    }
+
     pub fn get_symbols_for_file(
         &self,
         file_id: i64,
@@ -713,6 +754,27 @@ impl Storage {
                      ORDER BY start_byte
                      LIMIT 1",
                     params![file_id, name],
+                    Self::map_symbol,
+                )
+                .optional()?)
+        })
+    }
+
+    pub(crate) fn find_enclosing_symbol(
+        &self,
+        file_id: i64,
+        line: usize,
+    ) -> Result<Option<SymbolRecord>> {
+        let line = usize_to_i64(line)?;
+        self.with_read(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
+                     FROM symbols
+                     WHERE file_id = ?1 AND start_line <= ?2 AND end_line >= ?2
+                     ORDER BY (end_line - start_line), start_byte
+                     LIMIT 1",
+                    params![file_id, line],
                     Self::map_symbol,
                 )
                 .optional()?)

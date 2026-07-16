@@ -1,13 +1,14 @@
 {
   "schema_version": 1,
-  "manifest_description": "Retrospective context-retrieval tasks evaluated at the parent of four public bug-fix commits.",
+  "manifest_description": "Retrospective context-retrieval tasks evaluated at the parent of eight public bug-fix commits.",
   "leantoken_version": "0.1.0",
   "host_os": "linux",
   "host_arch": "x86_64",
   "rustc_version": "rustc 1.96.1 (31fca3adb 2026-06-26)",
   "ripgrep_version": "ripgrep 15.1.0 (rev af60c2de9d)",
-  "generated_at_unix_seconds": 1784097451,
-  "tokenizer": "tiktoken-rs cl100k_base",
+  "generated_at_unix_seconds": 1784117745,
+  "tokenizer": "cl100k_base",
+  "token_count_exact": true,
   "methodology": {
     "oracle_baseline": "Full contents of fix-labeled relevant files, as if an agent chose every file perfectly and paid no discovery cost.",
     "rg_discovery_baseline": "Bounded, path-sorted ripgrep --json output for fixed-string queries derived from each public bug task.",
@@ -16,24 +17,31 @@
     "serialized_tokens": "Tokens in the complete serialized JSON payload, including metadata and syntax."
   },
   "aggregate": {
-    "corpus_count": 4,
-    "task_count": 4,
-    "relevant_files": 7,
-    "relevant_files_found": 7,
-    "relevant_file_recall": 1.0,
-    "returned_files": 24,
-    "labeled_file_precision": 0.2916666666666667,
-    "line_anchors": 18,
-    "line_anchors_found": 3,
-    "line_anchor_recall": 0.16666666666666666,
-    "oracle_source_tokens": 28870,
-    "rg_discovery_tokens": 29778,
-    "scripted_baseline_total_json_tokens": 68589,
-    "leantoken_source_tokens": 1574,
-    "leantoken_total_json_tokens": 5619,
-    "source_savings_against_oracle_fraction": 0.9454797367509525,
-    "total_json_savings_against_scripted_fraction": 0.9180772427065564,
-    "known_fragments_resent": 0
+    "corpus_count": 8,
+    "task_count": 8,
+    "relevant_files": 15,
+    "relevant_files_found": 13,
+    "relevant_file_recall": 0.8666666666666667,
+    "returned_files": 51,
+    "labeled_file_precision": 0.2549019607843137,
+    "line_anchors": 41,
+    "line_anchors_found": 10,
+    "line_anchor_recall": 0.24390243902439024,
+    "oracle_source_tokens": 143034,
+    "rg_discovery_tokens": 79086,
+    "scripted_baseline_total_json_tokens": 260193,
+    "leantoken_source_tokens": 4640,
+    "leantoken_total_json_tokens": 12902,
+    "source_savings_against_oracle_fraction": 0.9675601605212747,
+    "total_json_savings_against_scripted_fraction": 0.950413731345578,
+    "known_fragments_resent": 0,
+    "dead_end_fragments": 46,
+    "dead_end_source_tokens": 2175,
+    "second_response_source_tokens": 4670,
+    "estimated_repeated_range_source_tokens": 98,
+    "repeat_request_json_tokens": 1837,
+    "repeat_total_json_tokens": 13157,
+    "two_turn_context_json_tokens": 27896
   },
   "corpora": [
     {
@@ -44,8 +52,8 @@
       "indexed_files": 212,
       "indexed_chunks": 1007,
       "index_warnings": [],
-      "cold_index_ms": 3061.032872,
-      "database_bytes": 29166952,
+      "cold_index_ms": 3246.734423,
+      "database_bytes": 29799632,
       "tasks": [
         {
           "id": "globset-matches-all-false-positive",
@@ -58,9 +66,9 @@
             "crates/core/flags/defs.rs",
             "crates/globset/src/glob.rs",
             "crates/globset/src/lib.rs",
-            "crates/ignore/src/overrides.rs",
-            "crates/printer/src/stats.rs",
-            "crates/printer/src/util.rs"
+            "crates/globset/src/serde_impl.rs",
+            "crates/ignore/src/gitignore.rs",
+            "crates/ignore/src/overrides.rs"
           ],
           "returned_evidence": [
             {
@@ -69,7 +77,7 @@
               "end_line": 139,
               "representation": "symbol",
               "reason": "symbol",
-              "score": 2.6971,
+              "score": 2.4471,
               "token_count": 3,
               "content_hash": "86f6a4194771f80240eff8a61f068b2b"
             },
@@ -79,7 +87,7 @@
               "end_line": 310,
               "representation": "symbol",
               "reason": "symbol",
-              "score": 2.6839,
+              "score": 2.4339,
               "token_count": 18,
               "content_hash": "20064e2ca0a909ec5a11f24e5448bbb5"
             },
@@ -89,7 +97,7 @@
               "end_line": 154,
               "representation": "symbol",
               "reason": "symbol",
-              "score": 2.6831,
+              "score": 2.4331,
               "token_count": 19,
               "content_hash": "d617c99b82277b69688d0bc1d8ca1993"
             },
@@ -99,7 +107,7 @@
               "end_line": 312,
               "representation": "symbol",
               "reason": "symbol",
-              "score": 2.6808,
+              "score": 2.4308,
               "token_count": 22,
               "content_hash": "ca6e1b51d309c546d30ff1a2d371178b"
             },
@@ -124,24 +132,24 @@
               "content_hash": "dbe6079e81e0744e6de019e45cafade8"
             },
             {
-              "path": "crates/printer/src/stats.rs",
-              "start_line": 67,
-              "end_line": 69,
+              "path": "crates/ignore/src/gitignore.rs",
+              "start_line": 32,
+              "end_line": 43,
               "representation": "symbol",
               "reason": "symbol",
-              "score": 1.9347,
-              "token_count": 17,
-              "content_hash": "622e5d3ebdabb1620bf0851d804be699"
+              "score": 1.8926,
+              "token_count": 93,
+              "content_hash": "372a73ae9db039a9140ae4062f27c462"
             },
             {
-              "path": "crates/printer/src/util.rs",
-              "start_line": 238,
-              "end_line": 240,
+              "path": "crates/globset/src/serde_impl.rs",
+              "start_line": 45,
+              "end_line": 45,
               "representation": "symbol",
               "reason": "symbol",
-              "score": 1.9308,
-              "token_count": 22,
-              "content_hash": "120491f19310698d4e03efe986aac65b"
+              "score": 1.4452,
+              "token_count": 5,
+              "content_hash": "deaf12ab2bc34df54411f6c179a965bc"
             }
           ],
           "relevant_files_found": 1,
@@ -153,31 +161,36 @@
           "unlabeled_returned_files": [
             "crates/core/flags/defs.rs",
             "crates/globset/src/glob.rs",
-            "crates/ignore/src/overrides.rs",
-            "crates/printer/src/stats.rs",
-            "crates/printer/src/util.rs"
+            "crates/globset/src/serde_impl.rs",
+            "crates/ignore/src/gitignore.rs",
+            "crates/ignore/src/overrides.rs"
           ],
           "oracle_source_tokens": 8723,
           "oracle_minimal_read_json_tokens": 10196,
           "rg_discovery_tokens": 3349,
           "rg_discovery_json_tokens": 3846,
           "scripted_baseline_total_json_tokens": 14045,
-          "leantoken_source_tokens": 116,
-          "leantoken_total_json_tokens": 1120,
-          "source_savings_against_oracle_fraction": 0.9867018227673965,
-          "total_json_savings_against_scripted_fraction": 0.9202563189747242,
-          "first_context_ms": 813.6272319999999,
+          "leantoken_source_tokens": 175,
+          "leantoken_total_json_tokens": 1201,
+          "source_savings_against_oracle_fraction": 0.9799380946921931,
+          "total_json_savings_against_scripted_fraction": 0.9144891420434318,
+          "first_context_ms": 263.891424,
           "warm_context_ms_samples": [
-            880.78758,
-            898.12308,
-            951.707654
+            253.784091,
+            227.10440300000002,
+            219.008641
           ],
-          "warm_context_median_ms": 898.12308,
-          "warm_context_p95_ms": 951.707654,
-          "repeat_source_tokens": 546,
-          "repeat_total_json_tokens": 1627,
+          "warm_context_median_ms": 227.10440300000002,
+          "warm_context_p95_ms": 253.784091,
+          "second_response_source_tokens": 273,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 221,
+          "repeat_total_json_tokens": 1323,
+          "two_turn_context_json_tokens": 2745,
           "known_fragments_resent": 0,
-          "known_hash_omission_visible": true
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 6,
+          "dead_end_source_tokens": 150
         }
       ]
     },
@@ -189,8 +202,8 @@
       "indexed_files": 231,
       "indexed_chunks": 594,
       "index_warnings": [],
-      "cold_index_ms": 1635.590774,
-      "database_bytes": 15166888,
+      "cold_index_ms": 1326.594174,
+      "database_bytes": 15438064,
       "tasks": [
         {
           "id": "request-context-copy-per-call",
@@ -201,130 +214,137 @@
             "tests/test_reqctx.py"
           ],
           "returned_files": [
+            "docs/api.rst",
+            "docs/extensiondev.rst",
+            "docs/installation.rst",
+            "docs/tutorial/factory.rst",
+            "pyproject.toml",
             "src/flask/ctx.py",
-            "src/flask/globals.py",
-            "src/flask/wrappers.py",
-            "tests/test_basic.py",
-            "tests/test_blueprints.py",
-            "tests/test_reqctx.py",
-            "tests/test_templating.py"
+            "src/flask/testing.py",
+            "tests/test_reqctx.py"
           ],
           "returned_evidence": [
             {
-              "path": "src/flask/globals.py",
-              "start_line": 57,
-              "end_line": 59,
-              "representation": "symbol",
-              "reason": "symbol",
-              "score": 1.923,
-              "token_count": 33,
-              "content_hash": "692bf1b4a5dd3d24d08a612ffe40a32b"
-            },
-            {
               "path": "src/flask/ctx.py",
               "start_line": 154,
-              "end_line": 160,
+              "end_line": 206,
               "representation": "symbol",
               "reason": "symbol",
-              "score": 1.9066,
-              "token_count": 61,
-              "content_hash": "cf894d59e4157a218e03925c78cdb219"
-            },
-            {
-              "path": "src/flask/ctx.py",
-              "start_line": 371,
-              "end_line": 379,
-              "representation": "symbol",
-              "reason": "symbol",
-              "score": 1.9014,
-              "token_count": 72,
-              "content_hash": "bc14ad5de794396af8f3103cace28283"
-            },
-            {
-              "path": "src/flask/wrappers.py",
-              "start_line": 18,
-              "end_line": 57,
-              "representation": "symbol",
-              "reason": "symbol",
-              "score": 1.8408,
-              "token_count": 402,
-              "content_hash": "84491600461e4b3c9b643de15869993b"
-            },
-            {
-              "path": "tests/test_blueprints.py",
-              "start_line": 50,
-              "end_line": 51,
-              "representation": "symbol",
-              "reason": "symbol",
-              "score": 1.1906,
-              "token_count": 10,
-              "content_hash": "f97af6dc9a96f6faec65c015e3aae580"
-            },
-            {
-              "path": "tests/test_basic.py",
-              "start_line": 711,
-              "end_line": 712,
-              "representation": "symbol",
-              "reason": "symbol",
-              "score": 1.1889,
-              "token_count": 12,
-              "content_hash": "b7ee621b9eb32bfce3b6f60762929b4d"
+              "score": 1.838,
+              "token_count": 442,
+              "content_hash": "829d07892e74b1fd0796faa32f11c760"
             },
             {
               "path": "tests/test_reqctx.py",
-              "start_line": 20,
-              "end_line": 21,
-              "representation": "symbol",
-              "reason": "symbol",
-              "score": 1.1889,
-              "token_count": 12,
-              "content_hash": "9472b4626e743b32a698596ff2d56986"
+              "start_line": 184,
+              "end_line": 188,
+              "representation": "source",
+              "reason": "text",
+              "score": 0.7757,
+              "token_count": 29,
+              "content_hash": "e6ba167bddc48b11aa427ad501bc3367"
             },
             {
-              "path": "tests/test_templating.py",
-              "start_line": 46,
-              "end_line": 47,
-              "representation": "symbol",
-              "reason": "symbol",
-              "score": 1.1889,
-              "token_count": 12,
-              "content_hash": "38a2d80e3c2f212f5f00d57f19a6f013"
+              "path": "src/flask/testing.py",
+              "start_line": 249,
+              "end_line": 253,
+              "representation": "source",
+              "reason": "text",
+              "score": 0.7684,
+              "token_count": 40,
+              "content_hash": "8fb3f7b286e14161fb63169824a6358c"
+            },
+            {
+              "path": "docs/api.rst",
+              "start_line": 191,
+              "end_line": 195,
+              "representation": "source",
+              "reason": "text",
+              "score": 0.5286,
+              "token_count": 25,
+              "content_hash": "04282b27519a2e7f03b205656034c7b8"
+            },
+            {
+              "path": "docs/installation.rst",
+              "start_line": 71,
+              "end_line": 75,
+              "representation": "source",
+              "reason": "text",
+              "score": 0.5178,
+              "token_count": 41,
+              "content_hash": "f54f1b75f22b11d35dfc68b31abbff88"
+            },
+            {
+              "path": "pyproject.toml",
+              "start_line": 12,
+              "end_line": 16,
+              "representation": "source",
+              "reason": "text",
+              "score": 0.5172,
+              "token_count": 42,
+              "content_hash": "ae326e59e278501537ddf7f7ce4740f1"
+            },
+            {
+              "path": "docs/tutorial/factory.rst",
+              "start_line": 105,
+              "end_line": 109,
+              "representation": "source",
+              "reason": "text",
+              "score": 0.5142,
+              "token_count": 47,
+              "content_hash": "f36eef6b08f18d24cb83995120fc109b"
+            },
+            {
+              "path": "docs/extensiondev.rst",
+              "start_line": 84,
+              "end_line": 88,
+              "representation": "source",
+              "reason": "text",
+              "score": 0.5142,
+              "token_count": 47,
+              "content_hash": "47535928e57ace30ea1e6465be3ccdc3"
             }
           ],
           "relevant_files_found": 2,
           "relevant_file_recall": 1.0,
-          "labeled_file_precision": 0.2857142857142857,
+          "labeled_file_precision": 0.25,
           "line_anchors": 4,
-          "line_anchors_found": 1,
-          "line_anchor_recall": 0.25,
+          "line_anchors_found": 2,
+          "line_anchor_recall": 0.5,
           "unlabeled_returned_files": [
-            "src/flask/globals.py",
-            "src/flask/wrappers.py",
-            "tests/test_basic.py",
-            "tests/test_blueprints.py",
-            "tests/test_templating.py"
+            "docs/api.rst",
+            "docs/extensiondev.rst",
+            "docs/installation.rst",
+            "docs/tutorial/factory.rst",
+            "pyproject.toml",
+            "src/flask/testing.py"
           ],
           "oracle_source_tokens": 5636,
           "oracle_minimal_read_json_tokens": 6580,
           "rg_discovery_tokens": 3446,
           "rg_discovery_json_tokens": 3898,
           "scripted_baseline_total_json_tokens": 10481,
-          "leantoken_source_tokens": 614,
-          "leantoken_total_json_tokens": 1615,
-          "source_savings_against_oracle_fraction": 0.8910574875798438,
-          "total_json_savings_against_scripted_fraction": 0.8459116496517508,
-          "first_context_ms": 355.40576,
+          "leantoken_source_tokens": 713,
+          "leantoken_total_json_tokens": 1706,
+          "source_savings_against_oracle_fraction": 0.8734918381831086,
+          "total_json_savings_against_scripted_fraction": 0.837229272016029,
+          "first_context_ms": 59.437997,
           "warm_context_ms_samples": [
-            359.805716,
-            397.68025,
-            371.937318
+            67.94214899999999,
+            61.511338,
+            53.323141
           ],
-          "warm_context_median_ms": 371.937318,
-          "warm_context_p95_ms": 397.68025,
-          "repeat_source_tokens": 257,
-          "repeat_total_json_tokens": 1249,
+          "warm_context_median_ms": 61.511338,
+          "warm_context_p95_ms": 67.94214899999999,
+          "second_response_source_tokens": 404,
+          "estimated_repeated_range_source_tokens": 49,
+          "repeat_request_json_tokens": 214,
+          "repeat_total_json_tokens": 1374,
+          "two_turn_context_json_tokens": 3294,
           "known_fragments_resent": 0,
-          "known_hash_omission_visible": true
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 6,
+          "dead_end_source_tokens": 242
         }
       ]
     },
@@ -336,8 +356,8 @@
       "indexed_files": 213,
       "indexed_chunks": 469,
       "index_warnings": [],
-      "cold_index_ms": 3125.76233,
-      "database_bytes": 8364040,
+      "cold_index_ms": 1930.044822,
+      "database_bytes": 8791320,
       "tasks": [
         {
           "id": "send-transfer-encoding-content-length-conflict",
@@ -358,12 +378,12 @@
             {
               "path": "lib/response.js",
               "start_line": 126,
-              "end_line": 160,
+              "end_line": 189,
               "representation": "symbol",
-              "reason": "symbol",
-              "score": 2.3666,
-              "token_count": 188,
-              "content_hash": "38445340672b03b8239353373f623781"
+              "reason": "symbol; multi-query",
+              "score": 2.3905,
+              "token_count": 406,
+              "content_hash": "e317c4162adadf24643dab1e9abbfc14"
             },
             {
               "path": "test/Router.js",
@@ -380,8 +400,8 @@
               "start_line": 135,
               "end_line": 139,
               "representation": "source",
-              "reason": "reference",
-              "score": 1.621,
+              "reason": "reference; multi-query",
+              "score": 1.671,
               "token_count": 36,
               "content_hash": "52656793f75728d57ca6bd53b0e5e197"
             },
@@ -390,10 +410,30 @@
               "start_line": 16,
               "end_line": 20,
               "representation": "source",
-              "reason": "text",
-              "score": 1.5364,
+              "reason": "text; multi-query",
+              "score": 1.5864,
               "token_count": 15,
               "content_hash": "f7ac6105a067aebcca11cb2a0db768f7"
+            },
+            {
+              "path": "test/res.send.js",
+              "start_line": 321,
+              "end_line": 323,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.5799,
+              "token_count": 8,
+              "content_hash": "5a37a66ac3310fd5361a3ccaefb8d850"
+            },
+            {
+              "path": "test/res.sendFile.js",
+              "start_line": 890,
+              "end_line": 894,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.5778,
+              "token_count": 26,
+              "content_hash": "e062fb64fb54ba78f6ed12954d099737"
             },
             {
               "path": "test/res.sendStatus.js",
@@ -404,26 +444,6 @@
               "score": 1.5347,
               "token_count": 17,
               "content_hash": "314752956c33d1dcd86efed4d81ecc62"
-            },
-            {
-              "path": "test/res.send.js",
-              "start_line": 321,
-              "end_line": 323,
-              "representation": "source",
-              "reason": "text",
-              "score": 1.5299,
-              "token_count": 8,
-              "content_hash": "5a37a66ac3310fd5361a3ccaefb8d850"
-            },
-            {
-              "path": "test/res.sendFile.js",
-              "start_line": 890,
-              "end_line": 894,
-              "representation": "source",
-              "reason": "text",
-              "score": 1.5278,
-              "token_count": 26,
-              "content_hash": "e062fb64fb54ba78f6ed12954d099737"
             },
             {
               "path": "test/res.sendStatus.js",
@@ -440,8 +460,8 @@
           "relevant_file_recall": 1.0,
           "labeled_file_precision": 0.4,
           "line_anchors": 5,
-          "line_anchors_found": 1,
-          "line_anchor_recall": 0.2,
+          "line_anchors_found": 3,
+          "line_anchor_recall": 0.6,
           "unlabeled_returned_files": [
             "test/Router.js",
             "test/res.sendFile.js",
@@ -452,22 +472,27 @@
           "rg_discovery_tokens": 18303,
           "rg_discovery_json_tokens": 20857,
           "scripted_baseline_total_json_tokens": 33106,
-          "leantoken_source_tokens": 354,
-          "leantoken_total_json_tokens": 1344,
-          "source_savings_against_oracle_fraction": 0.9650439419373951,
-          "total_json_savings_against_scripted_fraction": 0.9594031293421132,
-          "first_context_ms": 290.567837,
+          "leantoken_source_tokens": 572,
+          "leantoken_total_json_tokens": 1604,
+          "source_savings_against_oracle_fraction": 0.9435173299101413,
+          "total_json_savings_against_scripted_fraction": 0.9515495680541292,
+          "first_context_ms": 252.87831599999998,
           "warm_context_ms_samples": [
-            284.001748,
-            309.66533000000004,
-            280.216817
+            194.15939500000002,
+            201.441157,
+            195.88948
           ],
-          "warm_context_median_ms": 284.001748,
-          "warm_context_p95_ms": 309.66533000000004,
-          "repeat_source_tokens": 267,
-          "repeat_total_json_tokens": 1204,
+          "warm_context_median_ms": 195.88948,
+          "warm_context_p95_ms": 201.441157,
+          "second_response_source_tokens": 269,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 219,
+          "repeat_total_json_tokens": 1230,
+          "two_turn_context_json_tokens": 3053,
           "known_fragments_resent": 0,
-          "known_hash_omission_visible": true
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 5,
+          "dead_end_source_tokens": 143
         }
       ]
     },
@@ -479,8 +504,8 @@
       "indexed_files": 130,
       "indexed_chunks": 430,
       "index_warnings": [],
-      "cold_index_ms": 1084.7387509999999,
-      "database_bytes": 12077672,
+      "cold_index_ms": 1120.839197,
+      "database_bytes": 12611760,
       "tasks": [
         {
           "id": "recovery-records-panic-error",
@@ -493,10 +518,11 @@
           "returned_files": [
             "binding/binding.go",
             "binding/binding_nomsgpack.go",
+            "context.go",
+            "context_test.go",
             "gin.go",
             "middleware_test.go",
-            "recovery.go",
-            "recovery_test.go"
+            "recovery.go"
           ],
           "returned_evidence": [
             {
@@ -510,14 +536,24 @@
               "content_hash": "813cbfaf9a1ef02db720bf318ba3d8f9"
             },
             {
-              "path": "gin.go",
-              "start_line": 236,
-              "end_line": 240,
+              "path": "context.go",
+              "start_line": 61,
+              "end_line": 97,
               "representation": "symbol",
               "reason": "symbol",
-              "score": 1.925,
-              "token_count": 30,
-              "content_hash": "a204dc3136d11dbc55f61e7ff0016f91"
+              "score": 2.1081,
+              "token_count": 237,
+              "content_hash": "3776bf0a537f631395013622d81b7603"
+            },
+            {
+              "path": "gin.go",
+              "start_line": 236,
+              "end_line": 241,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.9243,
+              "token_count": 31,
+              "content_hash": "6cb96e2d0f30815d103f043c82439433"
             },
             {
               "path": "binding/binding_nomsgpack.go",
@@ -540,79 +576,679 @@
               "content_hash": "81a47f8c640c862638e5bea530c08ce7"
             },
             {
+              "path": "context_test.go",
+              "start_line": 3320,
+              "end_line": 3320,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.4452,
+              "token_count": 5,
+              "content_hash": "bc8b3c9c85fa191586beadebc4895c30"
+            },
+            {
+              "path": "context_test.go",
+              "start_line": 422,
+              "end_line": 426,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.416,
+              "token_count": 44,
+              "content_hash": "33e693a4a9b20ab62c4db37bb3cb66b2"
+            },
+            {
               "path": "middleware_test.go",
               "start_line": 159,
+              "end_line": 183,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.3765,
+              "token_count": 144,
+              "content_hash": "cefe8cf8068ba9b90546593283fcda3b"
+            }
+          ],
+          "relevant_files_found": 1,
+          "relevant_file_recall": 0.5,
+          "labeled_file_precision": 0.14285714285714285,
+          "line_anchors": 5,
+          "line_anchors_found": 0,
+          "line_anchor_recall": 0.0,
+          "unlabeled_returned_files": [
+            "binding/binding.go",
+            "binding/binding_nomsgpack.go",
+            "context.go",
+            "context_test.go",
+            "gin.go",
+            "middleware_test.go"
+          ],
+          "oracle_source_tokens": 4384,
+          "oracle_minimal_read_json_tokens": 5565,
+          "rg_discovery_tokens": 4679,
+          "rg_discovery_json_tokens": 5388,
+          "scripted_baseline_total_json_tokens": 10956,
+          "leantoken_source_tokens": 741,
+          "leantoken_total_json_tokens": 1828,
+          "source_savings_against_oracle_fraction": 0.8309762773722628,
+          "total_json_savings_against_scripted_fraction": 0.8331507849580139,
+          "first_context_ms": 179.158531,
+          "warm_context_ms_samples": [
+            198.62653799999998,
+            191.71217199999998,
+            218.888897
+          ],
+          "warm_context_median_ms": 198.62653799999998,
+          "warm_context_p95_ms": 218.888897,
+          "second_response_source_tokens": 1131,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 222,
+          "repeat_total_json_tokens": 2393,
+          "two_turn_context_json_tokens": 4443,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 7,
+          "dead_end_source_tokens": 726
+        }
+      ]
+    },
+    {
+      "name": "tokio",
+      "url": "https://github.com/tokio-rs/tokio.git",
+      "base_revision": "dc3a883b99f8255cad5409458be95a0bcec2320c",
+      "fix_commit": "f59aae423eaf7131d6923085c1c66b50a49bb4e2",
+      "indexed_files": 859,
+      "indexed_chunks": 2792,
+      "index_warnings": [],
+      "cold_index_ms": 8763.722074000001,
+      "database_bytes": 59336056,
+      "tasks": [
+        {
+          "id": "streammap-size-hint-overflow",
+          "prompt": "Fix an overflow in StreamMap::size_hint where summing lower and upper bounds can wrap usize. Use saturating_add for the lower bound and checked_add for the upper bound, and add a regression test for size_hint with streams that report usize::MAX.",
+          "token_budget": 1200,
+          "relevant_files": [
+            "tokio-stream/src/stream_map.rs",
+            "tokio-stream/tests/stream_stream_map.rs"
+          ],
+          "returned_files": [
+            "tokio-stream/src/iter.rs",
+            "tokio-stream/src/pending.rs",
+            "tokio-stream/src/stream_close.rs",
+            "tokio-stream/src/stream_ext/chunks_timeout.rs",
+            "tokio-stream/src/stream_map.rs",
+            "tokio/src/runtime/scheduler/multi_thread/mod.rs",
+            "tokio/src/runtime/scheduler/multi_thread/overflow.rs",
+            "tokio/src/runtime/tests/queue.rs"
+          ],
+          "returned_evidence": [
+            {
+              "path": "tokio/src/runtime/scheduler/multi_thread/overflow.rs",
+              "start_line": 6,
+              "end_line": 12,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 2.1603,
+              "token_count": 54,
+              "content_hash": "8dbdcce7bcca141e442193ab1fb22bb9"
+            },
+            {
+              "path": "tokio/src/runtime/tests/queue.rs",
+              "start_line": 90,
+              "end_line": 113,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 2.1271,
+              "token_count": 142,
+              "content_hash": "fc37e85cc6036128bd7870333aa3d4b9"
+            },
+            {
+              "path": "tokio-stream/src/stream_map.rs",
+              "start_line": 205,
+              "end_line": 208,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 1.9764,
+              "token_count": 28,
+              "content_hash": "0b46526be99a179916a8b1fda8d43edf"
+            },
+            {
+              "path": "tokio/src/runtime/scheduler/multi_thread/mod.rs",
+              "start_line": 9,
+              "end_line": 9,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.9471,
+              "token_count": 3,
+              "content_hash": "1966205c60cd056adcad3b2d0006a014"
+            },
+            {
+              "path": "tokio-stream/src/stream_ext/chunks_timeout.rs",
+              "start_line": 85,
+              "end_line": 91,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 1.9441,
+              "token_count": 89,
+              "content_hash": "c37b1903ac1637d88a982d7f4c089784"
+            },
+            {
+              "path": "tokio-stream/src/stream_close.rs",
+              "start_line": 84,
+              "end_line": 92,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 1.9411,
+              "token_count": 97,
+              "content_hash": "fe61d42d77e8e1c5ab690926d0efeddc"
+            },
+            {
+              "path": "tokio-stream/src/iter.rs",
+              "start_line": 64,
+              "end_line": 66,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.9301,
+              "token_count": 23,
+              "content_hash": "ba75821013ba457ec1ffc9ebece09fd3"
+            },
+            {
+              "path": "tokio-stream/src/pending.rs",
+              "start_line": 51,
+              "end_line": 53,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.9301,
+              "token_count": 23,
+              "content_hash": "e489aa7ca031e01a90a581acb95aefd1"
+            }
+          ],
+          "relevant_files_found": 1,
+          "relevant_file_recall": 0.5,
+          "labeled_file_precision": 0.125,
+          "line_anchors": 6,
+          "line_anchors_found": 0,
+          "line_anchor_recall": 0.0,
+          "unlabeled_returned_files": [
+            "tokio-stream/src/iter.rs",
+            "tokio-stream/src/pending.rs",
+            "tokio-stream/src/stream_close.rs",
+            "tokio-stream/src/stream_ext/chunks_timeout.rs",
+            "tokio/src/runtime/scheduler/multi_thread/mod.rs",
+            "tokio/src/runtime/scheduler/multi_thread/overflow.rs",
+            "tokio/src/runtime/tests/queue.rs"
+          ],
+          "oracle_source_tokens": 10465,
+          "oracle_minimal_read_json_tokens": 12292,
+          "rg_discovery_tokens": 22347,
+          "rg_discovery_json_tokens": 25215,
+          "scripted_baseline_total_json_tokens": 37510,
+          "leantoken_source_tokens": 459,
+          "leantoken_total_json_tokens": 1524,
+          "source_savings_against_oracle_fraction": 0.9561395126612517,
+          "total_json_savings_against_scripted_fraction": 0.9593708344441483,
+          "first_context_ms": 410.31253699999996,
+          "warm_context_ms_samples": [
+            413.35101099999997,
+            441.697624,
+            398.878768
+          ],
+          "warm_context_median_ms": 413.35101099999997,
+          "warm_context_p95_ms": 441.697624,
+          "second_response_source_tokens": 568,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 234,
+          "repeat_total_json_tokens": 1649,
+          "two_turn_context_json_tokens": 3407,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 7,
+          "dead_end_source_tokens": 431
+        }
+      ]
+    },
+    {
+      "name": "vue",
+      "url": "https://github.com/vuejs/core.git",
+      "base_revision": "31d0f23757afb410c638a9c29d44d76d0944e18f",
+      "fix_commit": "932ddd058d69be9bbd8cd796c89f0d1a4fc128d7",
+      "indexed_files": 701,
+      "indexed_chunks": 2739,
+      "index_warnings": [],
+      "cold_index_ms": 19001.614056000002,
+      "database_bytes": 60543808,
+      "tasks": [
+        {
+          "id": "non-isomorphic-block-update",
+          "prompt": "Fix a renderer bug where a user-wrapped non-isomorphic block update reuses a dynamic-children optimization with stale block metadata. Force a full diff when the old vnode's dynamic-children array differs from the new one, and add a regression test for falling back from a non-isomorphic block.",
+          "token_budget": 1200,
+          "relevant_files": [
+            "packages/runtime-core/src/renderer.ts",
+            "packages/runtime-core/__tests__/rendererOptimizedMode.spec.ts"
+          ],
+          "returned_files": [
+            "packages-private/sfc-playground/src/vue-server-renderer-dev-proxy.ts",
+            "packages/runtime-core/__tests__/components/Suspense.spec.ts",
+            "packages/runtime-core/__tests__/rendererOptimizedMode.spec.ts",
+            "packages/runtime-core/src/renderer.ts",
+            "packages/runtime-dom/src/index.ts",
+            "packages/runtime-test/src/index.ts"
+          ],
+          "returned_evidence": [
+            {
+              "path": "packages/runtime-core/src/renderer.ts",
+              "start_line": 96,
+              "end_line": 99,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 2.173,
+              "token_count": 33,
+              "content_hash": "ebdcbb6b58ef5e745adbde89e421fd76"
+            },
+            {
+              "path": "packages/runtime-core/src/renderer.ts",
+              "start_line": 160,
               "end_line": 160,
               "representation": "symbol",
               "reason": "symbol",
-              "score": 1.4372,
-              "token_count": 14,
-              "content_hash": "2e2858dc232797f6e71c25a9540e2c63"
+              "score": 1.1924,
+              "token_count": 8,
+              "content_hash": "df13838fe943f0b06cfbd0ae679643b5"
             },
             {
-              "path": "recovery_test.go",
+              "path": "packages/runtime-core/__tests__/rendererOptimizedMode.spec.ts",
+              "start_line": 620,
+              "end_line": 624,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.0166,
+              "token_count": 43,
+              "content_hash": "5bd01d9ab59600eefac592726460f409"
+            },
+            {
+              "path": "packages/runtime-dom/src/index.ts",
+              "start_line": 80,
+              "end_line": 85,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 0.925,
+              "token_count": 30,
+              "content_hash": "d76586b06c3bfae9cdd46403b7982651"
+            },
+            {
+              "path": "packages/runtime-dom/src/index.ts",
+              "start_line": 87,
+              "end_line": 93,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 0.9166,
+              "token_count": 43,
+              "content_hash": "8ac56da1c88d9e74de4df27ae3962243"
+            },
+            {
+              "path": "packages/runtime-test/src/index.ts",
+              "start_line": 10,
+              "end_line": 14,
+              "representation": "source",
+              "reason": "reference",
+              "score": 0.8703,
+              "token_count": 37,
+              "content_hash": "a362a8e68595cb05675d3e6345e32abd"
+            },
+            {
+              "path": "packages-private/sfc-playground/src/vue-server-renderer-dev-proxy.ts",
+              "start_line": 1,
+              "end_line": 2,
+              "representation": "source",
+              "reason": "text",
+              "score": 0.7808,
+              "token_count": 22,
+              "content_hash": "878aacd487308794bbb424e67d3da93c"
+            },
+            {
+              "path": "packages/runtime-core/__tests__/components/Suspense.spec.ts",
+              "start_line": 786,
+              "end_line": 790,
+              "representation": "source",
+              "reason": "text",
+              "score": 0.7743,
+              "token_count": 31,
+              "content_hash": "70fc4329bf30ddcdf379626d6d9adbfc"
+            }
+          ],
+          "relevant_files_found": 2,
+          "relevant_file_recall": 1.0,
+          "labeled_file_precision": 0.3333333333333333,
+          "line_anchors": 6,
+          "line_anchors_found": 0,
+          "line_anchor_recall": 0.0,
+          "unlabeled_returned_files": [
+            "packages-private/sfc-playground/src/vue-server-renderer-dev-proxy.ts",
+            "packages/runtime-core/__tests__/components/Suspense.spec.ts",
+            "packages/runtime-dom/src/index.ts",
+            "packages/runtime-test/src/index.ts"
+          ],
+          "oracle_source_tokens": 27270,
+          "oracle_minimal_read_json_tokens": 31729,
+          "rg_discovery_tokens": 13377,
+          "rg_discovery_json_tokens": 15197,
+          "scripted_baseline_total_json_tokens": 46929,
+          "leantoken_source_tokens": 247,
+          "leantoken_total_json_tokens": 1247,
+          "source_savings_against_oracle_fraction": 0.990942427576091,
+          "total_json_savings_against_scripted_fraction": 0.973427944341452,
+          "first_context_ms": 161.902181,
+          "warm_context_ms_samples": [
+            141.378658,
+            131.925295,
+            138.3736
+          ],
+          "warm_context_median_ms": 138.3736,
+          "warm_context_p95_ms": 141.378658,
+          "second_response_source_tokens": 252,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 235,
+          "repeat_total_json_tokens": 1290,
+          "two_turn_context_json_tokens": 2772,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 5,
+          "dead_end_source_tokens": 163
+        }
+      ]
+    },
+    {
+      "name": "cobra",
+      "url": "https://github.com/spf13/cobra.git",
+      "base_revision": "f2878bab8c96afd6e36968af96343b35dbb82a82",
+      "fix_commit": "746ef07158728502482cea9f880a6f4b21ef29a9",
+      "indexed_files": 65,
+      "indexed_chunks": 282,
+      "index_warnings": [],
+      "cold_index_ms": 620.906692,
+      "database_bytes": 3992096,
+      "tasks": [
+        {
+          "id": "completions-osargs-mutation",
+          "prompt": "Fix shell completion mutating os.Args in place. getCompletions derives trimmedArgs as a sub-slice of the original args and later appends \"--\", which writes into the shared backing array when it has spare capacity. Copy trimmedArgs to a new slice and add a regression test with TraverseChildren enabled.",
+          "token_budget": 1200,
+          "relevant_files": [
+            "completions.go",
+            "completions_test.go"
+          ],
+          "returned_files": [
+            "args.go",
+            "args_test.go",
+            "bash_completions_test.go",
+            "command_test.go",
+            "completions.go",
+            "completions_test.go"
+          ],
+          "returned_evidence": [
+            {
+              "path": "completions.go",
+              "start_line": 316,
+              "end_line": 379,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 2.0742,
+              "token_count": 778,
+              "content_hash": "3755746252b805887e98e00e14781110"
+            },
+            {
+              "path": "completions_test.go",
+              "start_line": 32,
+              "end_line": 32,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.4442,
+              "token_count": 6,
+              "content_hash": "ba6b79073e4d60f3affedd5213d848f0"
+            },
+            {
+              "path": "bash_completions_test.go",
               "start_line": 78,
-              "end_line": 80,
+              "end_line": 81,
               "representation": "symbol",
               "reason": "symbol",
-              "score": 1.4286,
-              "token_count": 25,
-              "content_hash": "adb603d444cc59f8c38f547d1a446da4"
+              "score": 1.4301,
+              "token_count": 23,
+              "content_hash": "bb629188f9acd4c07bf54f4c99a89479"
             },
             {
-              "path": "recovery_test.go",
-              "start_line": 155,
-              "end_line": 160,
+              "path": "args_test.go",
+              "start_line": 112,
+              "end_line": 116,
               "representation": "symbol",
               "reason": "symbol",
-              "score": 1.4119,
-              "token_count": 51,
-              "content_hash": "04bbfe7a32eef8615783f3835ff7813c"
+              "score": 1.4203,
+              "token_count": 37,
+              "content_hash": "2fb8ee0535464f96d5ef763d9fa50e76"
             },
             {
-              "path": "middleware_test.go",
-              "start_line": 229,
-              "end_line": 240,
+              "path": "command_test.go",
+              "start_line": 492,
+              "end_line": 492,
               "representation": "symbol",
               "reason": "symbol",
-              "score": 1.3938,
-              "token_count": 90,
-              "content_hash": "1d5610c248133842dfcbf3fec7de5966"
+              "score": 1.1942,
+              "token_count": 6,
+              "content_hash": "dffcc2fb913a0392a72b3c5fc7ed217a"
+            },
+            {
+              "path": "completions.go",
+              "start_line": 426,
+              "end_line": 426,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.1942,
+              "token_count": 6,
+              "content_hash": "a2b4ea62800a2b542e82592dbb2517d7"
+            },
+            {
+              "path": "command_test.go",
+              "start_line": 89,
+              "end_line": 89,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.1933,
+              "token_count": 7,
+              "content_hash": "5aae1ab7f4f86d9eb795a7bb72570297"
+            },
+            {
+              "path": "args.go",
+              "start_line": 22,
+              "end_line": 22,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.1864,
+              "token_count": 15,
+              "content_hash": "150a7cd51b7c43e0c043c735db8adcf9"
             }
           ],
           "relevant_files_found": 2,
           "relevant_file_recall": 1.0,
           "labeled_file_precision": 0.3333333333333333,
           "line_anchors": 5,
-          "line_anchors_found": 1,
-          "line_anchor_recall": 0.2,
+          "line_anchors_found": 2,
+          "line_anchor_recall": 0.4,
           "unlabeled_returned_files": [
-            "binding/binding.go",
-            "binding/binding_nomsgpack.go",
-            "gin.go",
-            "middleware_test.go"
+            "args.go",
+            "args_test.go",
+            "bash_completions_test.go",
+            "command_test.go"
           ],
-          "oracle_source_tokens": 4384,
-          "oracle_minimal_read_json_tokens": 5565,
-          "rg_discovery_tokens": 4680,
-          "rg_discovery_json_tokens": 5389,
-          "scripted_baseline_total_json_tokens": 10957,
-          "leantoken_source_tokens": 490,
-          "leantoken_total_json_tokens": 1540,
-          "source_savings_against_oracle_fraction": 0.8882299270072993,
-          "total_json_savings_against_scripted_fraction": 0.8594505795381948,
-          "first_context_ms": 400.030358,
+          "oracle_source_tokens": 42208,
+          "oracle_minimal_read_json_tokens": 51857,
+          "rg_discovery_tokens": 12537,
+          "rg_discovery_json_tokens": 14550,
+          "scripted_baseline_total_json_tokens": 66410,
+          "leantoken_source_tokens": 878,
+          "leantoken_total_json_tokens": 1890,
+          "source_savings_against_oracle_fraction": 0.9791982562547384,
+          "total_json_savings_against_scripted_fraction": 0.9715404306580334,
+          "first_context_ms": 132.256138,
           "warm_context_ms_samples": [
-            361.19246799999996,
-            339.41380799999996,
-            431.790701
+            144.039741,
+            136.047481,
+            145.72269
           ],
-          "warm_context_median_ms": 361.19246799999996,
-          "warm_context_p95_ms": 431.790701,
-          "repeat_source_tokens": 1183,
-          "repeat_total_json_tokens": 2315,
+          "warm_context_median_ms": 144.039741,
+          "warm_context_p95_ms": 145.72269,
+          "second_response_source_tokens": 826,
+          "estimated_repeated_range_source_tokens": 6,
+          "repeat_request_json_tokens": 250,
+          "repeat_total_json_tokens": 1915,
+          "two_turn_context_json_tokens": 4055,
           "known_fragments_resent": 0,
-          "known_hash_omission_visible": true
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 5,
+          "dead_end_source_tokens": 88
+        }
+      ]
+    },
+    {
+      "name": "requests",
+      "url": "https://github.com/psf/requests.git",
+      "base_revision": "661970d171d9c3e12e4c789c4768db647d8c4da0",
+      "fix_commit": "6f205ff422bccd5e4c4fc0b64c5f3e7df5181db6",
+      "indexed_files": 122,
+      "indexed_chunks": 351,
+      "index_warnings": [],
+      "cold_index_ms": 1085.5370500000001,
+      "database_bytes": 15668112,
+      "tasks": [
+        {
+          "id": "encode-files-read-attr",
+          "prompt": "Fix _encode_files so file-like objects that proxy attributes through __getattr__ (e.g., tempfile.NamedTemporaryFile) are not rejected by isinstance(fp, _SupportsRead). Combine the type check with hasattr(fp, \"read\") and add a regression test that posts a NamedTemporaryFile.",
+          "token_budget": 1200,
+          "relevant_files": [
+            "src/requests/models.py",
+            "tests/test_requests.py"
+          ],
+          "returned_files": [
+            "src/requests/models.py",
+            "src/requests/structures.py",
+            "tests/test_requests.py",
+            "tests/test_structures.py",
+            "tests/test_utils.py"
+          ],
+          "returned_evidence": [
+            {
+              "path": "tests/test_requests.py",
+              "start_line": 2083,
+              "end_line": 2084,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 2.2339,
+              "token_count": 18,
+              "content_hash": "fb8dc7ecb288022edadfb69bf73f2203"
+            },
+            {
+              "path": "src/requests/structures.py",
+              "start_line": 108,
+              "end_line": 116,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.8962,
+              "token_count": 84,
+              "content_hash": "4a5f5a3dd53e68f593378b6228d01335"
+            },
+            {
+              "path": "src/requests/models.py",
+              "start_line": 184,
+              "end_line": 247,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 1.8831,
+              "token_count": 530,
+              "content_hash": "a1fd64979f98e2a9e272557679b84912"
+            },
+            {
+              "path": "tests/test_requests.py",
+              "start_line": 1861,
+              "end_line": 1866,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 1.2,
+              "token_count": 75,
+              "content_hash": "a9ac6775cf4d306f8adcadff79bd2dd2"
+            },
+            {
+              "path": "tests/test_structures.py",
+              "start_line": 90,
+              "end_line": 91,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.1778,
+              "token_count": 26,
+              "content_hash": "43c9db36d549800a1d616fb7275f7764"
+            },
+            {
+              "path": "tests/test_structures.py",
+              "start_line": 84,
+              "end_line": 87,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.1684,
+              "token_count": 40,
+              "content_hash": "d4027d77ec7e0ef572e330756bc9ff98"
+            },
+            {
+              "path": "tests/test_utils.py",
+              "start_line": 150,
+              "end_line": 154,
+              "representation": "source",
+              "reason": "text",
+              "score": 0.7716,
+              "token_count": 35,
+              "content_hash": "f0eb026ac3201721d91f667112905573"
+            },
+            {
+              "path": "tests/test_utils.py",
+              "start_line": 65,
+              "end_line": 69,
+              "representation": "source",
+              "reason": "text",
+              "score": 0.7642,
+              "token_count": 47,
+              "content_hash": "9f7f114917bf62fcf6b8ec2f1be5f155"
+            }
+          ],
+          "relevant_files_found": 2,
+          "relevant_file_recall": 1.0,
+          "labeled_file_precision": 0.4,
+          "line_anchors": 6,
+          "line_anchors_found": 3,
+          "line_anchor_recall": 0.5,
+          "unlabeled_returned_files": [
+            "src/requests/structures.py",
+            "tests/test_structures.py",
+            "tests/test_utils.py"
+          ],
+          "oracle_source_tokens": 34221,
+          "oracle_minimal_read_json_tokens": 39542,
+          "rg_discovery_tokens": 1048,
+          "rg_discovery_json_tokens": 1211,
+          "scripted_baseline_total_json_tokens": 40756,
+          "leantoken_source_tokens": 855,
+          "leantoken_total_json_tokens": 1902,
+          "source_savings_against_oracle_fraction": 0.9750153414570001,
+          "total_json_savings_against_scripted_fraction": 0.9533320247325547,
+          "first_context_ms": 176.376231,
+          "warm_context_ms_samples": [
+            138.193984,
+            138.67680800000002,
+            131.999312
+          ],
+          "warm_context_median_ms": 138.193984,
+          "warm_context_p95_ms": 138.67680800000002,
+          "second_response_source_tokens": 947,
+          "estimated_repeated_range_source_tokens": 43,
+          "repeat_request_json_tokens": 242,
+          "repeat_total_json_tokens": 1983,
+          "two_turn_context_json_tokens": 4127,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 5,
+          "dead_end_source_tokens": 232
         }
       ]
     }
@@ -622,7 +1258,7 @@
     "The oracle baseline is intentionally difficult to beat because it assumes perfect file selection, but it reads whole files rather than exact future diff hunks.",
     "The scripted ripgrep baseline uses fixed queries chosen with knowledge of each task and is not an autonomous agent trajectory.",
     "No model executes an edit, so the benchmark does not measure pass rate, prewalk handoff quality, or end-to-end task cost.",
-    "Four repositories and one task per repository are representative smoke evidence, not a statistically powered product claim.",
+    "Eight repositories and one task per repository are representative smoke evidence, not a statistically powered product claim.",
     "Cold indexing and warm latency depend on host hardware and filesystem cache state."
   ]
 }

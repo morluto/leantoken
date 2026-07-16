@@ -38,25 +38,119 @@ fn cli_indexes_statuses_and_searches_as_json() {
 }
 
 #[test]
-fn mcp_exits_cleanly_on_stdio_eof() {
+fn mcp_repeatedly_exits_cleanly_on_stdio_eof() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
         .expect("write fixture");
     let database = root.path().join("index.sqlite");
 
-    Command::cargo_bin("leantoken")
+    for _ in 0..3 {
+        Command::cargo_bin("leantoken")
+            .expect("binary")
+            .args([
+                "--root",
+                root.path().to_str().expect("root UTF-8"),
+                "--database",
+                database.to_str().expect("database UTF-8"),
+                "mcp",
+            ])
+            .write_stdin("")
+            // The deadline covers cold indexing and watcher startup as well as
+            // transport shutdown, which is materially slower on Windows runners.
+            .timeout(std::time::Duration::from_secs(30))
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+fn setup_and_remove_do_not_require_a_repository() {
+    let temp = tempfile::tempdir().expect("temporary home");
+    let missing_root = temp.path().join("not-a-repository");
+
+    let setup = Command::cargo_bin("leantoken")
         .expect("binary")
+        .env("HOME", temp.path())
+        .env("USERPROFILE", temp.path())
         .args([
             "--root",
-            root.path().to_str().expect("root UTF-8"),
-            "--database",
-            database.to_str().expect("database UTF-8"),
-            "mcp",
+            missing_root.to_str().expect("root UTF-8"),
+            "--json",
+            "setup",
+            "--claude",
+            "--yes",
         ])
-        .write_stdin("")
-        .timeout(std::time::Duration::from_secs(10))
-        .assert()
-        .success();
+        .output()
+        .expect("run setup");
+    assert!(
+        setup.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&setup.stdout).expect("setup JSON output");
+    assert_eq!(report["results"][0]["status"], "configured");
+    let config = std::fs::read_to_string(temp.path().join(".claude.json"))
+        .expect("Claude configuration");
+    assert!(config.contains("\"leantoken\""));
+    assert!(config.contains("\"mcp\""));
+
+    let remove = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", temp.path())
+        .env("USERPROFILE", temp.path())
+        .args(["--json", "remove", "--claude", "--yes"])
+        .output()
+        .expect("run remove");
+    assert!(
+        remove.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+    let config = std::fs::read_to_string(temp.path().join(".claude.json"))
+        .expect("Claude configuration after removal");
+    assert!(!config.contains("\"leantoken\""));
+}
+
+#[test]
+fn npx_setup_registers_a_versioned_launcher_instead_of_its_cache_path() {
+    let temp = tempfile::tempdir().expect("temporary home");
+    let node = temp.path().join("node");
+    let npm = temp.path().join("npm-cli.js");
+    let setup = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", temp.path())
+        .env("USERPROFILE", temp.path())
+        .env("npm_lifecycle_event", "npx")
+        .env("npm_node_execpath", &node)
+        .env("npm_execpath", &npm)
+        .args(["--json", "setup", "--claude", "--yes"])
+        .output()
+        .expect("run npx setup");
+    assert!(
+        setup.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+
+    let config: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(temp.path().join(".claude.json"))
+            .expect("Claude configuration"),
+    )
+    .expect("Claude JSON");
+    assert_eq!(config["mcpServers"]["leantoken"]["command"], node.to_str().unwrap());
+    assert_eq!(
+        config["mcpServers"]["leantoken"]["args"],
+        serde_json::json!([
+            npm.to_str().unwrap(),
+            "exec",
+            "--yes",
+            format!("--package=leantoken@{}", env!("CARGO_PKG_VERSION")),
+            "--",
+            "leantoken",
+            "mcp"
+        ])
+    );
 }
 
 fn run(

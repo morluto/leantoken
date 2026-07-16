@@ -1,6 +1,8 @@
 use clap::Parser;
 use leantoken::cli::{AppRequest, Cli};
 use leantoken::model::{FileOperation, SearchMode};
+use leantoken::tokens::Tokenizer;
+use leantoken::setup::SetupClient;
 
 fn parse(args: &[&str]) -> Cli {
     Cli::try_parse_from(std::iter::once("leantoken").chain(args.iter().copied())).unwrap()
@@ -148,6 +150,13 @@ fn cli_global_json_works_before_or_after_subcommand() {
 }
 
 #[test]
+fn cli_tokenizer_global_option() {
+    let cli = parse(&["--tokenizer", "o200k_base", "status"]);
+    assert_eq!(cli.tokenizer, Tokenizer::O200kBase);
+    assert_eq!(parse(&["status"]).tokenizer, Tokenizer::default());
+}
+
+#[test]
 fn cli_read_line_range_allows_open_ends() {
     let cli = parse(&["read", "src/lib.rs", "--lines", "10:"]);
     let AppRequest::Read(request) = cli.app_request() else {
@@ -222,7 +231,41 @@ fn cli_index_and_status_and_mcp_commands() {
     assert!(matches!(cli.app_request(), AppRequest::Status));
 
     let cli = parse(&["mcp"]);
-    assert!(matches!(cli.app_request(), AppRequest::Mcp));
+    assert!(matches!(
+        cli.app_request(),
+        AppRequest::Mcp {
+            result_mode: leantoken::mcp::McpResultMode::Dual
+        }
+    ));
+    let cli = parse(&["mcp", "--result-mode", "structured"]);
+    assert!(matches!(
+        cli.app_request(),
+        AppRequest::Mcp {
+            result_mode: leantoken::mcp::McpResultMode::Structured
+        }
+    ));
+}
+
+#[test]
+fn cli_setup_and_remove_select_clients() {
+    let cli = parse(&["setup", "--claude", "--codex", "--yes"]);
+    let AppRequest::Setup(request) = cli.app_request() else {
+        panic!("expected setup request");
+    };
+    assert_eq!(
+        request.clients,
+        vec![SetupClient::Claude, SetupClient::Codex]
+    );
+    assert!(!request.all);
+    assert!(request.yes);
+
+    let cli = parse(&["remove", "--all", "-y"]);
+    let AppRequest::Remove(request) = cli.app_request() else {
+        panic!("expected remove request");
+    };
+    assert!(request.clients.is_empty());
+    assert!(request.all);
+    assert!(request.yes);
 }
 
 #[test]
@@ -238,5 +281,8 @@ fn cli_global_root_and_database_options() {
     ]);
     let config = cli.config().unwrap();
     assert_eq!(config.root, root.path().canonicalize().unwrap());
-    assert_eq!(config.database_path, db);
+    assert_eq!(
+        config.database_path,
+        root.path().canonicalize().unwrap().join("custom.sqlite")
+    );
 }

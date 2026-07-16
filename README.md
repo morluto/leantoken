@@ -1,25 +1,65 @@
-# LeanToken
+# LeanToken — token-bounded repository context for coding agents
 
-LeanToken gives coding agents a small, relevant slice of a repository instead
-of making them repeatedly read whole files. It is a local, read-only CLI and
-MCP server built around explicit token budgets.
+LeanToken gives coding agents the relevant parts of a repository without
+repeatedly reading whole files. It runs locally as a read-only CLI and MCP
+server, indexes source in SQLite, and keeps retrieval within explicit token
+budgets.
 
-It indexes source into SQLite once, then serves compact paths, ranked matches,
-structural outlines, exact source ranges, and task-specific context. The host
-agent still owns editing, commands, tests, conversation state, and model
-orchestration.
+## Installation
 
-## Why
+Set up LeanToken for your coding agents with one command:
 
-Repository exploration is often the largest part of an agent's context. A
-plan can summarize what was learned, but it cannot replace the source evidence
-needed to make an edit. LeanToken cuts repeated reading through progressive
-disclosure, bounded output, relevance ranking, and content hashes that suppress
-unchanged evidence across turns or model handoffs.
+```bash
+npx leantoken setup
+```
 
-The primary metric is useful repository evidence delivered per model token.
+The npm package downloads the precompiled LeanToken binary for glibc-based
+Linux (x64 or arm64), macOS (Intel or Apple Silicon), or Windows x64. The wizard
+detects installed clients, lets you choose which ones to configure, and
+registers LeanToken as a global MCP server. Each client launches it in the
+active workspace.
 
-## Tools
+When setup runs through `npx`, it registers the versioned npm command rather
+than an ephemeral cache path. A global installation is also available:
+
+```bash
+npm install --global leantoken
+leantoken setup
+```
+
+Supported clients are Claude Code, Cursor, OpenCode, Codex, Gemini CLI, and
+Antigravity. To skip the wizard, select clients explicitly or configure all of
+them:
+
+```bash
+npx leantoken setup --claude --codex --yes
+npx leantoken setup --all --yes
+```
+
+Setup installs only the `leantoken` MCP entry. It does not add skills, rules,
+or shell hooks. Remove the generated entries later with:
+
+```bash
+npx leantoken remove
+npx leantoken remove --all --yes
+```
+
+To build from source instead, install Rust 1.95 or later and a native C/C++
+toolchain, then run `cargo install --git https://github.com/morluto/leantoken`.
+
+## What changes
+
+Without LeanToken, repository exploration often means broad file searches,
+whole-file reads, and repeated source after a handoff. With LeanToken, the agent
+can discover paths, inspect structure or ranked matches, and retrieve only the
+source ranges it needs. Ranked task context remains available when the scope is
+still uncertain.
+
+The host agent still owns editing, commands, tests, conversation state, and
+model orchestration. LeanToken handles repository discovery and bounded source
+retrieval.
+
+## Available tools
 
 | Tool | Purpose |
 | --- | --- |
@@ -27,23 +67,14 @@ The primary metric is useful repository evidence delivered per model token.
 | `leantoken_search` | Search text, regex, identifiers, symbols, or syntactic references. |
 | `leantoken_outline` | Return definitions, signatures, parents, imports, and ranges. |
 | `leantoken_read` | Read an exact line or symbol range under a token limit. |
-| `leantoken_context` | Select and explain task-relevant excerpts within a token budget. |
+| `leantoken_context` | Rank task evidence when narrow discovery leaves the scope uncertain. |
 
 The catalog stays small because every tool description and schema consumes
 model context.
 
-## Install
+## CLI usage
 
-LeanToken requires Rust 1.95 or later and a native C/C++ toolchain for bundled
-SQLite and the tree-sitter grammars.
-
-```bash
-git clone https://github.com/morluto/leantoken.git
-cd leantoken
-cargo build --release
-```
-
-## Quick start
+LeanToken can also be used directly:
 
 ```bash
 leantoken --root /path/to/repo index
@@ -53,13 +84,13 @@ leantoken --root /path/to/repo context \
   --budget 2000
 ```
 
-Run the MCP server over stdio:
+Run the MCP server manually over stdio:
 
 ```bash
 leantoken --root /path/to/repo mcp
 ```
 
-Example host configuration:
+Example manual client configuration:
 
 ```json
 {
@@ -72,6 +103,15 @@ Example host configuration:
 }
 ```
 
+## How it works
+
+LeanToken indexes source once, then serves compact paths, ranked matches,
+structural outlines, exact source ranges, and task-specific context. Progressive
+disclosure and content hashes reduce broad reads and suppress unchanged evidence
+across turns or model handoffs.
+
+The primary metric is useful repository evidence delivered per model token.
+
 ## Documentation
 
 - [Usage and tool reference](docs/usage.md)
@@ -79,15 +119,7 @@ Example host configuration:
 - [Roadmap](docs/roadmap.md)
 - [Development and testing](docs/development.md)
 - [Benchmark methodology](benchmarks/README.md)
-
-## Current benchmark signal
-
-The checked-in representative run found all seven labeled files while
-returning 1,574 source tokens, compared with 28,870 tokens for full contents of
-the labeled files. It covered only 3 of 18 labeled line anchors, so this is
-evidence of a smaller source payload, not proof that retrieval quality is
-solved. See the benchmark documentation for the corpus, methodology, and
-limitations.
+- [Experiment and wire-cost harnesses](docs/measurement.md)
 
 ## License
 

@@ -9,6 +9,7 @@ responses are bounded.
 ```text
 --root <PATH>      Repository root (default: current directory)
 --database <PATH>  Override the per-repository SQLite cache path
+--tokenizer <ENCODING>  Source and protocol accounting tokenizer
 --json             Emit JSON from CLI commands
 ```
 
@@ -22,7 +23,7 @@ leantoken search <query> [options]
 leantoken outline <path>...
 leantoken read <path> [--lines START:END] [--symbol NAME]
 leantoken context --task <text> --budget <tokens>
-leantoken mcp
+leantoken mcp [--result-mode dual|text|structured]
 ```
 
 Use `leantoken <command> --help` for the complete argument list.
@@ -34,6 +35,19 @@ repository before serving, watches later filesystem changes, and reports
 whether responses come from a current or reconciling index generation.
 
 Logs go to stderr. Stdout is reserved for MCP protocol messages.
+
+The default `dual` mode returns JSON as text and `structuredContent` for broad
+host compatibility. `text` and `structured` remove that duplication, but use
+them only after capturing the target host and confirming it consumes that
+representation. The catalog publishes documented input schemas but omits
+optional output schemas; repeating full response DTOs in every `tools/list`
+result costs model context without changing tool behavior.
+
+Prefer progressive retrieval:
+
+```text
+files -> outline/search -> exact read -> context only if scope remains uncertain
+```
 
 ## `leantoken_files`
 
@@ -95,10 +109,24 @@ by the caller, and identify a prior repository generation. The selector merges
 overlapping candidates, suppresses duplicate or known content, preserves file
 diversity, and returns short reasons for each chosen fragment.
 
-The evidence receipt contains the task fingerprint, repository generation, and
-selected fragment identities. It is returned to the caller but not persisted.
-Passing receipt hashes into a later request prevents those exact fragments from
-being resent; other relevant evidence may still be returned.
+The evidence receipt contains a task fingerprint and a compact hash list aligned
+by index with the returned fragments. Repository generation appears once in
+response metadata. The receipt is returned but not persisted. Passing its
+`fragment_hashes` as `known_hashes` prevents those exact fragments from being
+resent; other relevant evidence may still be returned.
+
+For a frontier-to-executor handoff, transfer the grounded fragments, receipt,
+repository generation, current todo list, and first validated edit. This is a
+compact trajectory manifest, not a LeanToken session. The executor can pass the
+receipt hashes back without rereading the same evidence.
+
+CLI equivalents make the reuse contract explicit:
+
+```bash
+leantoken --json read src/lib.rs --lines 40:90 --expected-hash HASH
+leantoken --json context --task "finish the validated fix" --budget 1200 \
+  --known-hash HASH_FROM_RECEIPT --prior-generation 7
+```
 
 ## Token accounting
 
@@ -106,13 +134,23 @@ being resent; other relevant evidence may still be returned.
 default read limit is 8,000 tokens and the hard source-output ceiling is 32,000
 tokens.
 
-`emitted_tokens` uses `cl100k_base` and counts source text only. JSON keys,
-paths, scores, hashes, receipts, and other metadata add protocol tokens beyond
-that value.
+`emitted_tokens` counts source text with the configured tokenizer. The default
+is `cl100k_base`. Exact built-in modes are `cl100k_base`, `o200k_base`,
+`o200k_harmony`, `p50k_base`, `p50k_edit`, `r50k_base`, and `gpt2`.
 
-Every source fragment carries a 128-bit BLAKE3 fingerprint for local identity
-and duplicate suppression. Receipts transfer grounded context without creating
-a LeanToken session, transcript, or model state.
+`estimate` is an inexact heuristic for providers whose tokenizer is not
+available locally. It does not guarantee that a provider will accept a payload
+at the reported budget; responses mark this with `token_count_exact: false`.
+
+Source limits do not include JSON keys, paths, scores, hashes, receipts, tool
+schemas, or JSON-RPC envelopes. The benchmark utilities report those costs
+separately rather than presenting source-token counts as complete MCP cost.
+
+Every source range has a 128-bit BLAKE3 fingerprint for local identity and
+duplicate suppression. Direct search/read responses carry it with the range;
+context places hashes once in the aligned receipt table. Receipts transfer
+grounded context without creating a LeanToken session, transcript, or model
+state.
 
 ## Errors and limits
 

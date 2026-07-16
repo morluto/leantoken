@@ -13,15 +13,18 @@ use tokio_util::sync::CancellationToken;
 use crate::indexer::Indexer;
 use crate::model::*;
 use crate::ranking::{self, Candidate};
-use crate::repository::{resolve_existing, validate_relative};
+use crate::repository::{git_changed_paths, resolve_existing, validate_relative};
 use crate::storage::{ChunkHit, FileRecord, ReferenceHit, Storage, SymbolHit};
-use crate::text::{byte_range_to_line_range, excerpt, excerpt_with_context, expand_terms, hash};
-use crate::{Config, Error, Result, tokens};
+use crate::text::{byte_range_to_line_range, excerpt, expand_terms, hash, identifier_words};
+use crate::{Config, Error, Result};
 
 const MAX_QUERY_BYTES: usize = 64 * 1024;
 const MAX_PATTERN_BYTES: usize = 4 * 1024;
 const MAX_PATH_BYTES: usize = 4 * 1024;
 const MAX_INPUT_ITEMS: usize = 256;
+const GIT_CHANGED_PATHS_MAX: usize = 512;
+const MIN_CONTEXT_RANGE_LINES: usize = 12;
+const MAX_CONTEXT_RANGE_LINES: usize = 128;
 
 #[derive(Debug, Clone)]
 /// Shared application services used by both CLI and MCP adapters.
@@ -47,7 +50,15 @@ impl Services {
     /// Open the SQLite index and construct retrieval services.
     pub fn open(config: Config) -> Result<Self> {
         let config = Arc::new(config);
-        let storage = Storage::open(&config.database_path)?;
+        let storage = match Storage::open(&config.database_path) {
+            Ok(storage) => storage,
+            Err(error) if config.database_is_managed_cache && is_database_corruption(&error) => {
+                tracing::warn!(database = %config.database_path.display(), "rebuilding corrupt managed index");
+                remove_database_artifacts(&config.database_path)?;
+                Storage::open(&config.database_path)?
+            }
+            Err(error) => return Err(error),
+        };
         Ok(Self::from_parts(config, storage))
     }
 
@@ -81,6 +92,23 @@ impl Services {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             this.indexer.reconcile(rebuild)
+        })
+        .await?
+    }
+
+    /// Reconcile watcher-reported paths, falling back internally when a
+    /// repository-wide scan is required for correctness.
+    pub async fn index_paths(&self, paths: Vec<String>) -> Result<IndexResponse> {
+        let this = self.clone();
+        let active_reconciliations = Arc::clone(&self.active_reconciliations);
+        active_reconciliations.fetch_add(1, Ordering::AcqRel);
+        tokio::task::spawn_blocking(move || {
+            let _active = ActiveReconciliation(active_reconciliations);
+            let _guard = this
+                .index_lock
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            this.indexer.reconcile_paths(&paths)
         })
         .await?
     }
@@ -340,7 +368,7 @@ impl Services {
                     break;
                 }
                 consumed += 1;
-                let count = tokens::count(&hit.excerpt);
+                let count = self.config.tokenizer.count(&hit.excerpt);
                 if emitted_tokens.saturating_add(count) > token_limit {
                     continue;
                 }
@@ -411,7 +439,10 @@ impl Services {
                     .map(storage_symbol)
                     .collect::<Vec<_>>();
                 symbols.retain(|symbol| {
-                    let cost = symbol.signature.as_deref().map_or(1, tokens::count);
+                    let cost = symbol
+                        .signature
+                        .as_deref()
+                        .map_or(1, |value| self.config.tokenizer.count(value));
                     if remaining == 0 || emitted_tokens.saturating_add(cost) > token_limit {
                         false
                     } else {
@@ -431,8 +462,11 @@ impl Services {
                     })
                     .collect::<Vec<_>>();
                 imports.retain(|import| {
-                    let cost = tokens::count(&import.raw_target)
-                        + import.resolved_path.as_deref().map_or(0, tokens::count);
+                    let cost = self.config.tokenizer.count(&import.raw_target)
+                        + import
+                            .resolved_path
+                            .as_deref()
+                            .map_or(0, |value| self.config.tokenizer.count(value));
                     if remaining == 0 || emitted_tokens.saturating_add(cost) > token_limit {
                         false
                     } else {
@@ -512,7 +546,7 @@ impl Services {
         let requested_end = requested_end.min(line_count);
         let content = crate::text::excerpt(source, start_line, requested_end);
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens);
-        let (content, emitted_tokens) = tokens::truncate(&content, max_tokens);
+        let (content, emitted_tokens) = self.config.tokenizer.truncate(&content, max_tokens);
         let returned_lines = content
             .lines()
             .count()
@@ -549,6 +583,27 @@ impl Services {
         })
     }
 
+    fn file_change_boost(
+        file: Option<&FileRecord>,
+        path: &str,
+        changed_paths: &HashSet<String>,
+        prior_generation: Option<u64>,
+    ) -> f64 {
+        let mut boost = 0.0;
+
+        if let Some(prior) = prior_generation
+            && file.is_some_and(|f| f.generation > prior)
+        {
+            boost += 1.0;
+        }
+
+        if changed_paths.contains(path) {
+            boost += 1.0;
+        }
+
+        boost
+    }
+
     fn context_sync(
         &self,
         request: ContextRequest,
@@ -578,38 +633,74 @@ impl Services {
         for hash in &request.known_hashes {
             validate_input(hash, "known hash", 128)?;
         }
+        let changed_paths = git_changed_paths(&self.config.root, GIT_CHANGED_PATHS_MAX)
+            .unwrap_or_else(|error| {
+                tracing::debug!(%error, "working-tree signal unavailable");
+                HashSet::new()
+            });
         self.consistent(|generation| {
-            let terms = context_terms(&request.task, 12);
+            let queries = context_queries(&request.task, 12);
+            let terms = queries
+                .iter()
+                .map(|query| query.value.clone())
+                .collect::<Vec<_>>();
+            let files = self.all_files(cancellation)?;
+            let file_map: HashMap<String, FileRecord> = files
+                .into_iter()
+                .map(|file| (file.path.clone(), file))
+                .collect();
             let mut candidates = Vec::new();
+            let mut query_fusion = HashMap::<String, HashMap<String, f64>>::new();
 
             // Workflow words such as `test` are useful path priors but terrible
             // retrieval queries: nearly every test function becomes a high-
             // scoring symbol candidate. Keep them out of candidate generation.
-            for term in terms.iter().filter(|term| term.as_str() != "test") {
+            for query in queries.iter().filter(|query| query.value != "test") {
+                let term = &query.value;
+                let concept = query.fusion_key.as_deref().unwrap_or(term);
                 check_cancelled(cancellation)?;
-                for hit in self.storage.search_symbols(term, false, 20)? {
+                for (rank, hit) in self
+                    .storage
+                    .search_symbols(term, false, 20)?
+                    .into_iter()
+                    .enumerate()
+                {
                     check_cancelled(cancellation)?;
                     if !path_allowed(&hit.path, &[], &request.exclude_paths)? {
                         continue;
                     }
-                    let Some(excerpt) = self.stored_excerpt(
+                    let Some(excerpt) = self.adaptive_context_excerpt(
                         hit.symbol.file_id,
                         hit.symbol.start_line,
                         hit.symbol.end_line,
-                        0,
-                        40,
+                        hit.symbol.start_line,
+                        request.token_budget,
                     )?
                     else {
                         continue;
                     };
                     let exact = f64::from(hit.symbol.name.eq_ignore_ascii_case(term));
-                    let changed = if let Some(prior) = request.prior_repository_generation {
-                        self.storage
-                            .find_file(&hit.path)?
-                            .is_some_and(|file| file.generation > prior)
-                    } else {
-                        false
-                    };
+                    let qualified = qualified_symbol_match(
+                        concept,
+                        &hit.symbol.name,
+                        hit.symbol.parent.as_deref(),
+                        hit.symbol.signature.as_deref(),
+                    );
+                    if let Some(fusion_key) = &query.fusion_key {
+                        record_query_hit(
+                            &mut query_fusion,
+                            &hit.path,
+                            fusion_key,
+                            query.weight,
+                            rank,
+                        );
+                    }
+                    let change_boost = Self::file_change_boost(
+                        file_map.get(&hit.path),
+                        &hit.path,
+                        &changed_paths,
+                        request.prior_repository_generation,
+                    );
                     candidates.push(
                         Candidate::new(
                             &hit.path,
@@ -618,29 +709,71 @@ impl Services {
                             excerpt.content,
                         )
                         .match_kind("symbol")
+                        .concept(
+                            concept,
+                            query.weight + f64::from(query.fusion_key.is_some()),
+                        )
                         .representation("symbol")
                         .symbol_name(hit.symbol.name)
-                        .exact(exact)
+                        .exact(exact + qualified * 1.5)
                         .symbol(1.0)
                         .path_score(context_path_score(&hit.path, &terms, &request.task))
-                        .change_boost(f64::from(changed)),
+                        .change_boost(change_boost),
                     );
                 }
-                for hit in self.storage.search_references(term, false, 20)? {
+                for (rank, hit) in self
+                    .storage
+                    .search_references(term, false, 20)?
+                    .into_iter()
+                    .enumerate()
+                {
                     check_cancelled(cancellation)?;
                     if !path_allowed(&hit.path, &[], &request.exclude_paths)? {
                         continue;
                     }
-                    let Some(excerpt) = self.stored_excerpt(
-                        hit.reference.file_id,
-                        hit.reference.start_line,
-                        hit.reference.end_line,
-                        2,
-                        12,
-                    )?
-                    else {
+                    let excerpt = if let Some(symbol) = self
+                        .storage
+                        .find_enclosing_symbol(hit.reference.file_id, hit.reference.start_line)?
+                    {
+                        self.adaptive_context_excerpt(
+                            hit.reference.file_id,
+                            symbol.start_line,
+                            symbol.end_line,
+                            hit.reference.start_line,
+                            request.token_budget,
+                        )?
+                    } else {
+                        None
+                    };
+                    let excerpt = if excerpt.is_some() {
+                        excerpt
+                    } else {
+                        self.stored_excerpt(
+                            hit.reference.file_id,
+                            hit.reference.start_line,
+                            hit.reference.end_line,
+                            2,
+                            12,
+                        )?
+                    };
+                    let Some(excerpt) = excerpt else {
                         continue;
                     };
+                    if let Some(fusion_key) = &query.fusion_key {
+                        record_query_hit(
+                            &mut query_fusion,
+                            &hit.path,
+                            fusion_key,
+                            query.weight,
+                            rank,
+                        );
+                    }
+                    let change_boost = Self::file_change_boost(
+                        file_map.get(&hit.path),
+                        &hit.path,
+                        &changed_paths,
+                        request.prior_repository_generation,
+                    );
                     candidates.push(
                         Candidate::new(
                             &hit.path,
@@ -649,13 +782,14 @@ impl Services {
                             excerpt.content,
                         )
                         .match_kind("reference")
+                        .concept(
+                            concept,
+                            query.weight + f64::from(query.fusion_key.is_some()),
+                        )
                         .symbol_name(hit.reference.name)
                         .reference(1.0)
-                        .path_score(context_path_score(
-                            &hit.path,
-                            &terms,
-                            &request.task,
-                        )),
+                        .path_score(context_path_score(&hit.path, &terms, &request.task))
+                        .change_boost(change_boost),
                     );
                 }
                 let lexical = if term.chars().count() >= 3 {
@@ -663,7 +797,7 @@ impl Services {
                 } else {
                     self.storage.search_word(&fts_quote(term), 30)?
                 };
-                for hit in lexical {
+                for (rank, hit) in lexical.into_iter().enumerate() {
                     check_cancelled(cancellation)?;
                     if !path_allowed(&hit.path, &[], &request.exclude_paths)? {
                         continue;
@@ -672,30 +806,70 @@ impl Services {
                     else {
                         continue;
                     };
+                    let matched_line =
+                        matching_line(&hit, term, false).unwrap_or(search_hit.start_line);
+                    let excerpt = if let Some(symbol) = self
+                        .storage
+                        .find_enclosing_symbol(hit.file_id, matched_line)?
+                    {
+                        self.adaptive_context_excerpt(
+                            hit.file_id,
+                            symbol.start_line,
+                            symbol.end_line,
+                            matched_line,
+                            request.token_budget,
+                        )?
+                    } else {
+                        None
+                    }
+                    .unwrap_or(StoredExcerpt {
+                        content: search_hit.excerpt.clone(),
+                        start_line: search_hit.start_line,
+                        end_line: search_hit.end_line,
+                    });
+                    if let Some(fusion_key) = &query.fusion_key {
+                        record_query_hit(
+                            &mut query_fusion,
+                            &search_hit.path,
+                            fusion_key,
+                            query.weight,
+                            rank,
+                        );
+                    }
                     let occurrences = hit
                         .content
                         .to_lowercase()
                         .matches(&term.to_lowercase())
                         .count();
-                    candidates.push(
-                        Candidate::new(
-                            &search_hit.path,
-                            search_hit.start_line,
-                            search_hit.end_line,
-                            search_hit.excerpt,
-                        )
-                        .match_kind("text")
-                        .bm25((-hit.score).max(0.0) * 1_000_000.0)
-                        .path_score(context_path_score(&search_hit.path, &terms, &request.task))
-                        .lexical_frequency_penalty(
-                            (occurrences.saturating_sub(5) as f64 / 20.0).min(1.0),
-                        ),
+                    let change_boost = Self::file_change_boost(
+                        file_map.get(&search_hit.path),
+                        &search_hit.path,
+                        &changed_paths,
+                        request.prior_repository_generation,
                     );
-                }
-                if candidates.len() >= 500 {
-                    break;
+                    let candidate = Candidate::new(
+                        &search_hit.path,
+                        excerpt.start_line,
+                        excerpt.end_line,
+                        excerpt.content,
+                    )
+                    .match_kind("text")
+                    .concept(
+                        concept,
+                        query.weight + f64::from(query.fusion_key.is_some()),
+                    )
+                    .exact(query.weight)
+                    .bm25((-hit.score).max(0.0) * 1_000_000.0)
+                    .path_score(context_path_score(&search_hit.path, &terms, &request.task))
+                    .lexical_frequency_penalty(
+                        (occurrences.saturating_sub(5) as f64 / 20.0).min(1.0),
+                    )
+                    .change_boost(change_boost);
+                    candidates.push(candidate);
                 }
             }
+
+            apply_query_fusion(&mut candidates, &query_fusion);
 
             let seed_paths = candidates
                 .iter()
@@ -704,7 +878,7 @@ impl Services {
             let mut neighbor_count = 0usize;
             for seed_path in seed_paths.iter().take(24) {
                 check_cancelled(cancellation)?;
-                let Some(seed_file) = self.storage.find_file(seed_path)? else {
+                let Some(seed_file) = file_map.get(seed_path) else {
                     continue;
                 };
                 for import in self.storage.get_imports_for_file(seed_file.id, 32)? {
@@ -715,7 +889,7 @@ impl Services {
                     if !path_allowed(&target_path, &[], &request.exclude_paths)? {
                         continue;
                     }
-                    let Some(target_file) = self.storage.find_file(&target_path)? else {
+                    let Some(target_file) = file_map.get(&target_path) else {
                         continue;
                     };
                     let Some(chunk) = self
@@ -732,12 +906,20 @@ impl Services {
                         1,
                         end_line.saturating_sub(chunk.start_line) + 1,
                     );
+                    let change_boost = Self::file_change_boost(
+                        Some(target_file),
+                        &target_path,
+                        &changed_paths,
+                        request.prior_repository_generation,
+                    );
                     candidates.push(
                         Candidate::new(&target_path, chunk.start_line, end_line, content)
                             .match_kind("import")
+                            .concept(seed_path, 0.2)
                             .representation("import_neighbor")
                             .path_score(context_path_score(&target_path, &terms, &request.task))
-                            .import_boost(1.0),
+                            .import_boost(1.0)
+                            .change_boost(change_boost),
                     );
                     neighbor_count += 1;
                     if neighbor_count >= 24 {
@@ -749,7 +931,12 @@ impl Services {
                 }
             }
 
-            let mut response = ranking::select(candidates, &request, generation);
+            let mut response = ranking::select_with_tokenizer(
+                candidates,
+                &request,
+                generation,
+                self.config.tokenizer,
+            );
             response.meta.freshness = self.freshness();
             if response.fragments.is_empty() {
                 response
@@ -840,35 +1027,70 @@ impl Services {
         context: usize,
         max_lines: usize,
     ) -> Result<Option<StoredExcerpt>> {
-        let chunks = self.storage.get_chunks_for_file(file_id, 10_000)?;
-        let Some(chunk) = chunks
-            .iter()
-            .find(|chunk| chunk.start_line <= start_line && chunk.end_line >= start_line)
-        else {
-            return Ok(None);
-        };
-        let local_start = start_line.saturating_sub(chunk.start_line) + 1;
-        let local_end = end_line
-            .min(chunk.end_line)
-            .saturating_sub(chunk.start_line)
-            + 1;
-        let first = local_start.saturating_sub(context).max(1);
-        let available_lines = chunk.content.lines().count().max(1);
-        let mut last = local_end.saturating_add(context).min(available_lines);
+        let first = start_line.saturating_sub(context).max(1);
+        let mut last = end_line.saturating_add(context);
         if max_lines > 0 && last.saturating_sub(first).saturating_add(1) > max_lines {
             last = first + max_lines - 1;
         }
+        let selected = self.storage.get_chunks_overlapping(file_id, first, last)?;
+        let (Some(first_chunk), Some(last_chunk)) = (selected.first(), selected.last()) else {
+            return Ok(None);
+        };
+        last = last.min(last_chunk.end_line);
+        let base_line = first_chunk.start_line;
+        let mut combined = String::new();
+        for chunk in &selected {
+            combined.push_str(&chunk.content);
+        }
+        let local_start = first.saturating_sub(base_line) + 1;
+        let local_end = last.saturating_sub(base_line) + 1;
         Ok(Some(StoredExcerpt {
-            content: excerpt_with_context(
-                &chunk.content,
-                local_start,
-                local_end,
-                context,
-                max_lines,
-            ),
-            start_line: chunk.start_line + first - 1,
-            end_line: chunk.start_line + last - 1,
+            content: crate::text::excerpt(&combined, local_start, local_end),
+            start_line: first,
+            end_line: last,
         }))
+    }
+
+    fn adaptive_context_excerpt(
+        &self,
+        file_id: i64,
+        declaration_start: usize,
+        declaration_end: usize,
+        matched_line: usize,
+        token_budget: usize,
+    ) -> Result<Option<StoredExcerpt>> {
+        let Some(full) = self.stored_excerpt(file_id, declaration_start, declaration_end, 0, 0)?
+        else {
+            return Ok(None);
+        };
+        let full_tokens = self.config.tokenizer.count(&full.content).max(1);
+        if full_tokens <= token_budget {
+            return Ok(Some(full));
+        }
+
+        let declaration_lines = declaration_end
+            .saturating_sub(declaration_start)
+            .saturating_add(1);
+        let proportional_lines = declaration_lines
+            .saturating_mul(token_budget)
+            .saturating_div(full_tokens)
+            .clamp(MIN_CONTEXT_RANGE_LINES, MAX_CONTEXT_RANGE_LINES)
+            .min(declaration_lines);
+        let before = proportional_lines / 3;
+        let mut start = matched_line.saturating_sub(before).max(declaration_start);
+        let mut end = start
+            .saturating_add(proportional_lines.saturating_sub(1))
+            .min(declaration_end);
+        if end.saturating_sub(start).saturating_add(1) < proportional_lines {
+            start = end
+                .saturating_add(1)
+                .saturating_sub(proportional_lines)
+                .max(declaration_start);
+        }
+        end = start
+            .saturating_add(proportional_lines.saturating_sub(1))
+            .min(declaration_end);
+        self.stored_excerpt(file_id, start, end, 0, 0)
     }
 
     fn regex_hits(
@@ -967,10 +1189,44 @@ impl Services {
             repository_generation: generation,
             freshness: self.freshness(),
             emitted_tokens,
-            token_count_exact: true,
+            token_count_exact: self.config.tokenizer.is_exact(),
             next_cursor,
         }
     }
+}
+
+fn is_database_corruption(error: &Error) -> bool {
+    fn sqlite_corruption(error: &rusqlite::Error) -> bool {
+        matches!(
+            error,
+            rusqlite::Error::SqliteFailure(inner, _)
+                if matches!(
+                    inner.code,
+                    rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+                )
+        )
+    }
+
+    match error {
+        Error::Sqlite(error) => sqlite_corruption(error),
+        Error::Migration(rusqlite_migration::Error::RusqliteError { err, .. }) => {
+            sqlite_corruption(err)
+        }
+        _ => false,
+    }
+}
+
+fn remove_database_artifacts(database: &std::path::Path) -> Result<()> {
+    for suffix in ["", "-wal", "-shm"] {
+        let mut path = database.as_os_str().to_os_string();
+        path.push(suffix);
+        match fs::remove_file(std::path::PathBuf::from(path)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }
 
 struct ActiveReconciliation(Arc<AtomicUsize>);
@@ -1162,6 +1418,19 @@ fn chunk_search_hit(
     }))
 }
 
+fn matching_line(hit: &ChunkHit, query: &str, case_sensitive: bool) -> Option<usize> {
+    hit.content
+        .lines()
+        .position(|line| {
+            if case_sensitive {
+                line.contains(query)
+            } else {
+                line.to_lowercase().contains(&query.to_lowercase())
+            }
+        })
+        .map(|offset| hit.start_line + offset)
+}
+
 fn path_allowed(path: &str, includes: &[String], excludes: &[String]) -> Result<bool> {
     let mut included = includes.is_empty();
     for pattern in includes {
@@ -1201,8 +1470,27 @@ fn context_path_score(path: &str, terms: &[String], task: &str) -> f64 {
     let path = path.to_lowercase();
     let mut score = terms
         .iter()
-        .filter(|term| path.contains(term.as_str()))
+        .filter(|term| path.contains(term.to_ascii_lowercase().as_str()))
         .count() as f64;
+    for code_token in code_tokens(task).into_iter().filter(|token| {
+        token.contains("::")
+            || token
+                .split('.')
+                .any(|part| part.chars().next().is_some_and(char::is_uppercase))
+    }) {
+        let matched_parts = expand_terms(&code_token)
+            .into_iter()
+            .map(|part| part.to_ascii_lowercase())
+            .filter(|part| part.chars().count() >= 2 && path.contains(part))
+            .collect::<HashSet<_>>()
+            .len();
+        if matched_parts >= 2 {
+            #[allow(clippy::cast_precision_loss)]
+            {
+                score += (matched_parts * matched_parts) as f64;
+            }
+        }
+    }
     for (language, component) in [
         ("javascript", "/js/"),
         ("typescript", "/ts/"),
@@ -1220,31 +1508,213 @@ fn context_path_score(path: &str, terms: &[String], task: &str) -> f64 {
     score
 }
 
-fn context_terms(task: &str, limit: usize) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut terms = code_tokens(task)
+fn qualified_symbol_match(
+    concept: &str,
+    name: &str,
+    parent: Option<&str>,
+    signature: Option<&str>,
+) -> f64 {
+    if !concept.contains(['.', ':']) {
+        return 0.0;
+    }
+    let parts = concept
+        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .flat_map(identifier_words)
+        .map(|part| part.to_ascii_lowercase())
+        .filter(|part| part.chars().count() >= 2)
+        .collect::<HashSet<_>>();
+    if parts.len() < 2 {
+        return 0.0;
+    }
+    let haystack = format!(
+        "{} {} {}",
+        name,
+        parent.unwrap_or_default(),
+        signature.unwrap_or_default()
+    )
+    .to_ascii_lowercase();
+    f64::from(parts.iter().all(|part| haystack.contains(part)))
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ContextQuery {
+    value: String,
+    weight: f64,
+    fusion_key: Option<String>,
+}
+
+fn context_queries(task: &str, limit: usize) -> Vec<ContextQuery> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let wants_tests = task_terms(task).iter().any(|term| is_test_term(term));
+    let available = limit.saturating_sub(usize::from(wants_tests));
+    let code_terms = code_tokens(task);
+    let code_parts = code_terms
+        .iter()
+        .flat_map(|term| std::iter::once(term.clone()).chain(expand_terms(term)))
+        .map(|term| term.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    let mut prose = task_terms(task)
         .into_iter()
-        .chain(expand_terms(task))
-        .filter(|term| term.chars().count() >= 2 && !is_context_stop_word(term))
-        .filter(|term| seen.insert(term.to_lowercase()))
+        .filter(|value| {
+            !is_test_term(value)
+                && !is_context_stop_word(value)
+                && !code_parts.contains(&value.to_ascii_lowercase())
+        })
+        .enumerate()
         .collect::<Vec<_>>();
-    let wants_tests = terms.iter().any(|term| {
-        matches!(
-            term.to_ascii_lowercase().as_str(),
-            "test" | "tests" | "testing" | "coverage" | "regression"
-        )
+    prose.sort_by(|(left_index, left), (right_index, right)| {
+        context_query_weight(right, false)
+            .total_cmp(&context_query_weight(left, false))
+            .then_with(|| left_index.cmp(right_index))
     });
-    terms.retain(|term| {
-        !matches!(
-            term.to_ascii_lowercase().as_str(),
-            "test" | "tests" | "testing" | "coverage" | "regression"
-        )
-    });
-    terms.truncate(limit.saturating_sub(usize::from(wants_tests)));
+
+    let prose_reserve = prose.len().min(4).min(available);
+    let exact_limit = available.saturating_sub(prose_reserve);
+    let mut seen = HashSet::new();
+    let mut terms = Vec::new();
+    for code_term in code_terms.iter().take(exact_limit) {
+        push_context_query(
+            &mut terms,
+            &mut seen,
+            code_term.clone(),
+            true,
+            Some(code_term.to_ascii_lowercase()),
+        );
+    }
+    for (_, value) in prose.iter().take(prose_reserve) {
+        push_context_query(&mut terms, &mut seen, value.clone(), false, None);
+    }
+
+    let mut expansion_round = 0usize;
+    while terms.len() < available {
+        let before = terms.len();
+        for code_term in &code_terms {
+            let expansions = expand_terms(code_term);
+            if let Some(value) = expansions.get(expansion_round) {
+                push_context_query(
+                    &mut terms,
+                    &mut seen,
+                    value.clone(),
+                    true,
+                    Some(code_term.to_ascii_lowercase()),
+                );
+                if terms.len() == available {
+                    break;
+                }
+            }
+        }
+        if terms.len() == before {
+            break;
+        }
+        expansion_round += 1;
+    }
     if wants_tests {
-        terms.push("test".into());
+        terms.push(ContextQuery {
+            value: "test".into(),
+            weight: 0.2,
+            fusion_key: None,
+        });
     }
     terms
+}
+
+fn push_context_query(
+    terms: &mut Vec<ContextQuery>,
+    seen: &mut HashSet<String>,
+    value: String,
+    explicit_code_token: bool,
+    fusion_key: Option<String>,
+) {
+    if value.chars().count() < 2
+        || is_context_stop_word(&value)
+        || !seen.insert(value.to_ascii_lowercase())
+    {
+        return;
+    }
+    terms.push(ContextQuery {
+        weight: context_query_weight(&value, explicit_code_token),
+        value,
+        fusion_key,
+    });
+}
+
+fn task_terms(task: &str) -> Vec<String> {
+    task.split(|character: char| !character.is_alphanumeric() && character != '_')
+        .filter(|value| value.chars().count() >= 2)
+        .map(str::to_owned)
+        .collect()
+}
+
+fn is_test_term(term: &str) -> bool {
+    matches!(
+        term.to_ascii_lowercase().as_str(),
+        "test" | "tests" | "testing" | "coverage" | "regression"
+    )
+}
+
+fn context_query_weight(term: &str, explicit_code_token: bool) -> f64 {
+    if explicit_code_token {
+        return if term.contains(['_', ':', '.', '-']) {
+            1.0
+        } else {
+            0.95
+        };
+    }
+    if term.contains(['_', ':', '.', '-']) {
+        return 0.9;
+    }
+    match term.chars().count() {
+        10.. => 0.8,
+        7..=9 => 0.65,
+        4..=6 => 0.45,
+        _ => 0.25,
+    }
+}
+
+fn record_query_hit(
+    fusion: &mut HashMap<String, HashMap<String, f64>>,
+    path: &str,
+    fusion_key: &str,
+    weight: f64,
+    rank: usize,
+) {
+    if weight < 0.65 {
+        return;
+    }
+    const RRF_K: f64 = 60.0;
+    #[allow(clippy::cast_precision_loss)]
+    let score = weight * RRF_K / (RRF_K + rank as f64 + 1.0);
+    fusion
+        .entry(path.to_owned())
+        .or_default()
+        .entry(fusion_key.to_owned())
+        .and_modify(|current| *current = current.max(score))
+        .or_insert(score);
+}
+
+fn apply_query_fusion(
+    candidates: &mut [Candidate],
+    fusion: &HashMap<String, HashMap<String, f64>>,
+) {
+    for candidate in candidates {
+        let Some(matches) = fusion.get(&candidate.path) else {
+            continue;
+        };
+        if matches.len() > 1 {
+            let total = matches.values().sum::<f64>();
+            let strongest = matches.values().copied().fold(0.0, f64::max);
+            candidate.path_score += (total - strongest).min(0.2);
+            if !candidate
+                .match_kinds
+                .iter()
+                .any(|kind| kind == "multi-query")
+            {
+                candidate.match_kinds.push("multi-query".into());
+            }
+        }
+    }
 }
 
 fn code_tokens(task: &str) -> Vec<String> {
@@ -1256,7 +1726,7 @@ fn code_tokens(task: &str) -> Vec<String> {
             token.contains('_')
                 || token.contains("::")
                 || token.contains('.')
-                || token.contains('-')
+                || (token.contains('-') && token.chars().any(char::is_uppercase))
         })
         .map(str::to_owned)
         .collect()
@@ -1386,8 +1856,8 @@ mod tests {
     }
 
     #[test]
-    fn context_terms_keep_identifiers_and_late_test_signals() {
-        let terms = context_terms(
+    fn context_queries_keep_identifiers_and_late_test_signals() {
+        let terms = context_queries(
             "copy_current_request_context reuses one copied request context so calling the decorated function concurrently can corrupt state; add a regression test",
             12,
         );
@@ -1395,23 +1865,138 @@ mod tests {
         assert!(
             terms
                 .iter()
-                .any(|term| term == "copy_current_request_context")
+                .any(|term| term.value == "copy_current_request_context")
         );
-        assert!(terms.iter().any(|term| term == "test"));
-        assert!(!terms.iter().any(|term| term == "one"));
+        assert!(terms.iter().any(|term| term.value == "test"));
+        assert!(!terms.iter().any(|term| term.value == "one"));
     }
 
     #[test]
-    fn context_terms_preserve_dotted_and_header_tokens() {
-        let terms = context_terms(
+    fn context_queries_preserve_dotted_and_header_tokens() {
+        let terms = context_queries(
             "Fix res.send adding Content-Length when Transfer-Encoding is present and add coverage",
             12,
         );
 
-        assert!(terms.iter().any(|term| term == "res.send"));
-        assert!(terms.iter().any(|term| term == "Content-Length"));
-        assert!(terms.iter().any(|term| term == "Transfer-Encoding"));
-        assert_eq!(terms.last().map(String::as_str), Some("test"));
+        assert!(terms.iter().any(|term| term.value == "res.send"));
+        assert!(terms.iter().any(|term| term.value == "Content-Length"));
+        assert!(terms.iter().any(|term| term.value == "Transfer-Encoding"));
+        assert_eq!(terms.last().map(|term| term.value.as_str()), Some("test"));
+    }
+
+    #[test]
+    fn context_queries_reserve_space_for_task_intent() {
+        let terms = context_queries(
+            "Fix Alpha::first_long_identifier Beta::second_long_identifier while preserving idempotency",
+            12,
+        );
+
+        assert!(
+            terms
+                .iter()
+                .any(|term| term.value == "Alpha::first_long_identifier")
+        );
+        assert!(
+            terms
+                .iter()
+                .any(|term| term.value == "Beta::second_long_identifier")
+        );
+        assert!(terms.iter().any(|term| term.value == "idempotency"));
+    }
+
+    #[test]
+    fn context_query_expansions_share_one_fusion_concept() {
+        let terms = context_queries(
+            "Fix GlobSet::matches_all when one compiled strategy matches",
+            12,
+        );
+        let qualified = terms
+            .iter()
+            .find(|term| term.value == "GlobSet::matches_all")
+            .expect("qualified query");
+        let expansion = terms
+            .iter()
+            .find(|term| term.value != qualified.value && term.fusion_key == qualified.fusion_key)
+            .expect("expanded query");
+
+        assert_eq!(qualified.fusion_key, expansion.fusion_key);
+        assert!(qualified.fusion_key.is_some());
+    }
+
+    #[test]
+    fn qualified_symbol_match_requires_all_owner_and_name_parts() {
+        assert_eq!(
+            qualified_symbol_match(
+                "render.AsciiJSON",
+                "Render",
+                None,
+                Some("func (r AsciiJSON) Render() error"),
+            ),
+            1.0
+        );
+        assert_eq!(
+            qualified_symbol_match(
+                "render.AsciiJSON",
+                "AsciiJSON",
+                None,
+                Some("type AsciiJSON")
+            ),
+            0.0
+        );
+        assert_eq!(
+            qualified_symbol_match("Flask.run", "run", Some("Flask"), Some("def run()")),
+            1.0
+        );
+    }
+
+    #[test]
+    fn qualified_path_evidence_excludes_dynamic_lowercase_receivers() {
+        assert_eq!(
+            context_path_score(
+                "test/app.render.js",
+                &[],
+                "Fix app.render for a trailing dot",
+            ),
+            0.0
+        );
+        assert!(context_path_score("render/json.go", &[], "Fix render.AsciiJSON escaping",) > 0.0);
+        assert!(
+            context_path_score(
+                "tokio/src/fs/file.rs",
+                &[],
+                "Fix tokio::fs::File poll_write",
+            ) > 0.0
+        );
+    }
+
+    #[test]
+    fn fusion_requires_two_independent_query_concepts() {
+        let mut fusion = HashMap::new();
+        record_query_hit(&mut fusion, "one.rs", "globset::matches_all", 1.0, 0);
+        record_query_hit(&mut fusion, "one.rs", "globset::matches_all", 0.95, 1);
+        record_query_hit(&mut fusion, "two.rs", "content-length", 1.0, 0);
+        record_query_hit(&mut fusion, "two.rs", "transfer-encoding", 1.0, 1);
+        let mut candidates = vec![
+            Candidate::new("one.rs", 1, 1, "one"),
+            Candidate::new("two.rs", 1, 1, "two"),
+        ];
+
+        apply_query_fusion(&mut candidates, &fusion);
+
+        assert_eq!(candidates[0].path_score, 0.0);
+        assert!(
+            !candidates[0]
+                .match_kinds
+                .iter()
+                .any(|kind| kind == "multi-query")
+        );
+        assert!(candidates[1].path_score > 0.0);
+        assert!(
+            candidates[1]
+                .match_kinds
+                .iter()
+                .any(|kind| kind == "multi-query")
+        );
     }
 
     #[tokio::test]
@@ -1470,6 +2055,65 @@ mod tests {
         assert_eq!(second.status, ReadStatus::NotModified);
         assert!(second.content.is_none());
         assert_eq!(second.meta.emitted_tokens, 0);
+    }
+
+    #[tokio::test]
+    async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations() {
+        let root = tempfile::tempdir().expect("root");
+        let mut source = String::from("fn large() {\n");
+        for index in 0..180 {
+            source.push_str(&format!("    let value_{index} = {index};\n"));
+        }
+        source.push_str("}\n\nfn small() { answer(); }\n");
+        fs::write(root.path().join("lib.rs"), source).expect("source");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+        let services = Services::open(config).expect("services");
+        services.index(false).await.expect("index");
+        let file = services
+            .storage
+            .find_file("lib.rs")
+            .expect("find file")
+            .expect("indexed file");
+        let large = services
+            .storage
+            .find_symbol(file.id, "large")
+            .expect("find symbol")
+            .expect("large symbol");
+        let matched_line = 151;
+        let enclosing = services
+            .storage
+            .find_enclosing_symbol(file.id, matched_line)
+            .expect("find enclosing symbol")
+            .expect("enclosing symbol");
+        assert_eq!(enclosing.name, "large");
+
+        let bounded = services
+            .adaptive_context_excerpt(file.id, large.start_line, large.end_line, matched_line, 60)
+            .expect("bounded excerpt")
+            .expect("bounded declaration");
+        assert!(bounded.start_line <= matched_line);
+        assert!(bounded.end_line >= matched_line);
+        assert!(bounded.start_line > large.start_line);
+        assert!(bounded.end_line <= large.end_line);
+
+        let small = services
+            .storage
+            .find_symbol(file.id, "small")
+            .expect("find symbol")
+            .expect("small symbol");
+        let complete = services
+            .adaptive_context_excerpt(
+                file.id,
+                small.start_line,
+                small.end_line,
+                small.start_line,
+                1_000,
+            )
+            .expect("complete excerpt")
+            .expect("complete declaration");
+        assert_eq!(complete.start_line, small.start_line);
+        assert_eq!(complete.end_line, small.end_line);
     }
 
     #[tokio::test]

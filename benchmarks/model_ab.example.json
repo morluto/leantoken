@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "experiment_id": "replace-with-a-frozen-experiment-id",
+  "primary_model": "provider/frontier-model-version",
+  "executor_model": "provider/cheaper-model-version",
+  "tool_call_limit": 40,
+  "timeout_seconds": 1800,
+  "tasks": [
+    {
+      "id": "example-task",
+      "repository": "target/validation-repos/flask",
+      "revision": "36e4a824f340fdee7ed50937ba8e7f6bc7d17f81",
+      "prompt": "Replace this example with a frozen task prompt.",
+      "success_command": ["python", "-m", "pytest", "tests/test_testing.py"]
+    }
+  ]
+}

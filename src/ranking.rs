@@ -13,7 +13,7 @@
 //! * [`crate::ranking::rank`] – score and sort candidates.
 //! * [`crate::ranking::deduplicate`] – remove content-identical and strongly overlapping
 //!   candidates, keeping the higher-scored copy.
-//! * [`crate::ranking::select`] / [`crate::ranking::select_with_weights`] – turn a candidate set and a
+//! * [`crate::ranking::select`] / [`crate::ranking::select_with_weights_and_tokenizer`] – turn a candidate set and a
 //!   [`ContextRequest`] into a [`ContextResponse`], including fragments,
 //!   evidence receipt, and omitted candidates.
 
@@ -21,8 +21,8 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    ContextFragment, ContextRequest, ContextResponse, EvidenceIdentity, EvidenceReceipt, Freshness,
-    OmittedCandidate, ResponseMeta,
+    ContextFragment, ContextRequest, ContextResponse, EvidenceReceipt, Freshness, OmittedCandidate,
+    ResponseMeta,
 };
 use crate::tokens;
 
@@ -36,6 +36,7 @@ const OVERLAP_THRESHOLD: f64 = 0.5;
 const DIVERSITY_DIVISOR: usize = 600;
 const MAX_CONTEXT_FRAGMENTS: usize = 8;
 const MAX_OMITTED_DETAILS: usize = 1;
+const MIN_RELATIVE_CONTEXT_SCORE: f64 = 0.25;
 
 /// Linear scoring weights for ranking signals.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -78,6 +79,8 @@ pub struct Candidate {
     pub end_line: usize,
     pub content: String,
     pub match_kinds: Vec<String>,
+    pub concepts: Vec<String>,
+    pub concept_weight: f64,
     pub representation: String,
     pub symbol_name: Option<String>,
     pub exact: f64,
@@ -107,6 +110,8 @@ impl Candidate {
             end_line,
             content: content.into(),
             match_kinds: Vec::new(),
+            concepts: Vec::new(),
+            concept_weight: 0.0,
             representation: "source".into(),
             symbol_name: None,
             exact: 0.0,
@@ -124,6 +129,16 @@ impl Candidate {
 
     pub fn match_kind(mut self, kind: impl Into<String>) -> Self {
         self.match_kinds.push(kind.into());
+        self
+    }
+
+    /// Associate this evidence with an independently extracted task concept.
+    pub fn concept(mut self, concept: impl Into<String>, weight: f64) -> Self {
+        let concept = concept.into();
+        if !concept.is_empty() && !self.concepts.contains(&concept) {
+            self.concepts.push(concept);
+        }
+        self.concept_weight = self.concept_weight.max(weight.clamp(0.0, 2.0));
         self
     }
 
@@ -193,10 +208,16 @@ impl Candidate {
         crate::text::hash(&self.content)
     }
 
-    /// Exact token count using the configured tokenizer.
+    /// Exact token count using LeanToken's default tokenizer.
     #[must_use]
     pub fn token_count(&self) -> usize {
         tokens::count(&self.content)
+    }
+
+    /// Count this candidate with an explicit tokenizer.
+    #[must_use]
+    pub fn token_count_with(&self, tokenizer: tokens::Tokenizer) -> usize {
+        tokenizer.count(&self.content)
     }
 
     /// Number of lines covered by the candidate range.
@@ -280,7 +301,16 @@ pub struct ScoredCandidate {
 impl ScoredCandidate {
     #[allow(clippy::cast_precision_loss)]
     pub fn new(candidate: Candidate, weights: &Weights) -> Self {
-        let token_count = candidate.token_count().max(1);
+        Self::new_with_tokenizer(candidate, weights, tokens::Tokenizer::default())
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn new_with_tokenizer(
+        candidate: Candidate,
+        weights: &Weights,
+        tokenizer: tokens::Tokenizer,
+    ) -> Self {
+        let token_count = candidate.token_count_with(tokenizer).max(1);
         let content_hash = candidate.content_hash();
         let score = candidate.score(weights, token_count);
         let marginal_score = score / token_count as f64;
@@ -298,9 +328,17 @@ impl ScoredCandidate {
 /// broken by path and then starting line for deterministic ordering.
 #[must_use]
 pub fn rank(candidates: Vec<Candidate>, weights: &Weights) -> Vec<ScoredCandidate> {
+    rank_with_tokenizer(candidates, weights, tokens::Tokenizer::default())
+}
+
+fn rank_with_tokenizer(
+    candidates: Vec<Candidate>,
+    weights: &Weights,
+    tokenizer: tokens::Tokenizer,
+) -> Vec<ScoredCandidate> {
     let mut scored: Vec<ScoredCandidate> = candidates
         .into_iter()
-        .map(|candidate| ScoredCandidate::new(candidate, weights))
+        .map(|candidate| ScoredCandidate::new_with_tokenizer(candidate, weights, tokenizer))
         .collect();
 
     scored.sort_by(|a, b| {
@@ -396,11 +434,28 @@ pub fn select(
     request: &ContextRequest,
     repository_generation: u64,
 ) -> ContextResponse {
-    select_with_weights(
+    select_with_tokenizer(
+        candidates,
+        request,
+        repository_generation,
+        tokens::Tokenizer::default(),
+    )
+}
+
+/// Select candidates using an explicit tokenizer for budgets and metadata.
+#[must_use]
+pub fn select_with_tokenizer(
+    candidates: Vec<Candidate>,
+    request: &ContextRequest,
+    repository_generation: u64,
+    tokenizer: tokens::Tokenizer,
+) -> ContextResponse {
+    select_with_options(
         candidates,
         request,
         repository_generation,
         &Weights::default(),
+        tokenizer,
     )
 }
 
@@ -411,6 +466,40 @@ pub fn select_with_weights(
     request: &ContextRequest,
     repository_generation: u64,
     weights: &Weights,
+) -> ContextResponse {
+    select_with_weights_and_tokenizer(
+        candidates,
+        request,
+        repository_generation,
+        weights,
+        tokens::Tokenizer::default(),
+    )
+}
+
+/// Select candidates with explicit ranking weights and tokenizer.
+#[must_use]
+pub fn select_with_weights_and_tokenizer(
+    candidates: Vec<Candidate>,
+    request: &ContextRequest,
+    repository_generation: u64,
+    weights: &Weights,
+    tokenizer: tokens::Tokenizer,
+) -> ContextResponse {
+    select_with_options(
+        candidates,
+        request,
+        repository_generation,
+        weights,
+        tokenizer,
+    )
+}
+
+fn select_with_options(
+    candidates: Vec<Candidate>,
+    request: &ContextRequest,
+    repository_generation: u64,
+    weights: &Weights,
+    tokenizer: tokens::Tokenizer,
 ) -> ContextResponse {
     let mut candidates = candidates;
     apply_request_signals(&mut candidates, request);
@@ -427,13 +516,15 @@ pub fn select_with_weights(
 
         let hash = candidate.content_hash();
         if known_hashes.contains(&hash) {
-            known_omitted.push(ScoredCandidate::new(candidate, weights));
+            known_omitted.push(ScoredCandidate::new_with_tokenizer(
+                candidate, weights, tokenizer,
+            ));
         } else {
             eligible.push(candidate);
         }
     }
 
-    let ranked = rank(eligible, weights);
+    let ranked = rank_with_tokenizer(eligible, weights, tokenizer);
     let deduped = deduplicate(ranked);
 
     let budget = request.token_budget;
@@ -447,7 +538,7 @@ pub fn select_with_weights(
 
     // Build DTOs.
     let mut fragments: Vec<ContextFragment> = Vec::with_capacity(selected.len());
-    let mut identities: Vec<EvidenceIdentity> = Vec::with_capacity(selected.len());
+    let mut fragment_hashes = Vec::with_capacity(selected.len());
     let mut emitted_tokens = 0usize;
 
     for scored in selected {
@@ -463,12 +554,7 @@ pub fn select_with_weights(
             reason: scored.candidate.reason(),
             token_count: scored.token_count,
         });
-        identities.push(EvidenceIdentity {
-            path: scored.candidate.path.clone(),
-            start_line: scored.candidate.start_line,
-            end_line: scored.candidate.end_line,
-            content_hash: scored.content_hash,
-        });
+        fragment_hashes.push(scored.content_hash);
     }
 
     let mut omitted_dto: Vec<OmittedCandidate> = known_omitted
@@ -500,15 +586,14 @@ pub fn select_with_weights(
 
     let receipt = EvidenceReceipt {
         task_fingerprint,
-        repository_generation,
-        fragments: identities,
+        fragment_hashes,
     };
 
     let meta = ResponseMeta {
         repository_generation,
         freshness: Freshness::Current,
         emitted_tokens,
-        token_count_exact: true,
+        token_count_exact: tokenizer.is_exact(),
         next_cursor: None,
     };
 
@@ -568,31 +653,184 @@ fn greedy_select(
 ) -> (Vec<ScoredCandidate>, Vec<ScoredCandidate>) {
     let mut pool = candidates;
     pool.sort_by(compare_utility);
+    let confidence_floor = pool.first().map_or(0.0, |candidate| {
+        candidate.score * MIN_RELATIVE_CONTEXT_SCORE
+    });
 
     let mut selected = Vec::new();
+    let mut deferred = Vec::with_capacity(pool.len());
     let mut omitted: Vec<ScoredCandidate> = Vec::with_capacity(pool.len());
     let mut used_tokens = 0usize;
     let mut file_counts: HashMap<String, usize> = HashMap::new();
+    let mut covered_concepts = HashSet::new();
+    let mut concept_representations = HashSet::new();
+    let mut concept_paths = HashMap::new();
 
     for candidate in pool {
+        let adds_concept = candidate
+            .candidate
+            .concepts
+            .iter()
+            .any(|concept| !covered_concepts.contains(concept));
+        if !adds_concept || candidate.candidate.concept_weight < 1.0 {
+            deferred.push(candidate);
+            continue;
+        }
         let file_count = *file_counts.get(&candidate.candidate.path).unwrap_or(&0);
         let remaining = budget.saturating_sub(used_tokens);
 
-        if candidate.token_count <= remaining
-            && file_count < max_per_file
-            && selected.len() < max_fragments
+        if candidate_fits(
+            &candidate,
+            remaining,
+            file_count,
+            max_per_file,
+            selected.len(),
+            max_fragments,
+        ) {
+            covered_concepts.extend(candidate.candidate.concepts.iter().cloned());
+            concept_representations.extend(
+                candidate
+                    .candidate
+                    .concepts
+                    .iter()
+                    .map(|concept| (concept.clone(), candidate.candidate.representation.clone())),
+            );
+            for concept in &candidate.candidate.concepts {
+                concept_paths
+                    .entry(concept.clone())
+                    .or_insert_with(|| candidate.candidate.path.clone());
+            }
+            push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
+        } else {
+            deferred.push(candidate);
+        }
+    }
+
+    deferred.sort_by(|left, right| {
+        let left_same_path = left.candidate.concepts.iter().any(|concept| {
+            concept_paths
+                .get(concept)
+                .is_some_and(|path| path == &left.candidate.path)
+        });
+        let right_same_path = right.candidate.concepts.iter().any(|concept| {
+            concept_paths
+                .get(concept)
+                .is_some_and(|path| path == &right.candidate.path)
+        });
+        right_same_path
+            .cmp(&left_same_path)
+            .then_with(|| compare_utility(left, right))
+    });
+    let mut remaining = Vec::with_capacity(deferred.len());
+    for candidate in deferred {
+        let adds_decisive_view = candidate.candidate.concept_weight >= 1.8
+            && candidate.candidate.concepts.iter().any(|concept| {
+                covered_concepts.contains(concept)
+                    && !concept_representations
+                        .contains(&(concept.clone(), candidate.candidate.representation.clone()))
+            });
+        let file_count = *file_counts.get(&candidate.candidate.path).unwrap_or(&0);
+        let remaining_tokens = budget.saturating_sub(used_tokens);
+        if adds_decisive_view
+            && candidate_fits(
+                &candidate,
+                remaining_tokens,
+                file_count,
+                max_per_file,
+                selected.len(),
+                max_fragments,
+            )
         {
-            used_tokens += candidate.token_count;
-            *file_counts
-                .entry(candidate.candidate.path.clone())
-                .or_insert(0) += 1;
-            selected.push(candidate);
+            concept_representations.extend(
+                candidate
+                    .candidate
+                    .concepts
+                    .iter()
+                    .map(|concept| (concept.clone(), candidate.candidate.representation.clone())),
+            );
+            push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
+        } else {
+            remaining.push(candidate);
+        }
+    }
+
+    let mut fill = Vec::with_capacity(remaining.len());
+    for candidate in remaining {
+        let adds_concept = candidate
+            .candidate
+            .concepts
+            .iter()
+            .any(|concept| !covered_concepts.contains(concept));
+        let file_count = *file_counts.get(&candidate.candidate.path).unwrap_or(&0);
+        let remaining_tokens = budget.saturating_sub(used_tokens);
+        let confident =
+            candidate.candidate.concept_weight >= 1.0 || candidate.score >= confidence_floor;
+        if adds_concept
+            && confident
+            && candidate_fits(
+                &candidate,
+                remaining_tokens,
+                file_count,
+                max_per_file,
+                selected.len(),
+                max_fragments,
+            )
+        {
+            covered_concepts.extend(candidate.candidate.concepts.iter().cloned());
+            push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
+        } else {
+            fill.push(candidate);
+        }
+    }
+
+    for candidate in fill {
+        if candidate.candidate.concept_weight < 1.0 && candidate.score < confidence_floor {
+            omitted.push(candidate);
+            continue;
+        }
+        let file_count = *file_counts.get(&candidate.candidate.path).unwrap_or(&0);
+        let remaining = budget.saturating_sub(used_tokens);
+        if candidate_fits(
+            &candidate,
+            remaining,
+            file_count,
+            max_per_file,
+            selected.len(),
+            max_fragments,
+        ) {
+            push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
         } else {
             omitted.push(candidate);
         }
     }
 
     (selected, omitted)
+}
+
+fn candidate_fits(
+    candidate: &ScoredCandidate,
+    remaining_tokens: usize,
+    file_count: usize,
+    max_per_file: usize,
+    selected_count: usize,
+    max_fragments: usize,
+) -> bool {
+    candidate.token_count <= remaining_tokens
+        && file_count < max_per_file
+        && selected_count < max_fragments
+}
+
+fn push_selected(
+    candidate: ScoredCandidate,
+    selected: &mut Vec<ScoredCandidate>,
+    used_tokens: &mut usize,
+    file_counts: &mut HashMap<String, usize>,
+) {
+    *used_tokens += candidate.token_count;
+    *file_counts
+        .entry(candidate.candidate.path.clone())
+        .or_insert(0) += 1;
+    selected.push(candidate);
 }
 
 fn compare_utility(a: &ScoredCandidate, b: &ScoredCandidate) -> Ordering {
@@ -835,6 +1073,81 @@ mod tests {
     }
 
     #[test]
+    fn concept_allocation_keeps_independent_task_evidence() {
+        let alpha_best = Candidate::new("alpha.rs", 1, 1, "alpha evidence")
+            .concept("alpha", 1.0)
+            .exact(2.0);
+        let alpha_duplicate = Candidate::new("alpha_other.rs", 1, 1, "more alpha")
+            .concept("alpha", 1.0)
+            .exact(1.5);
+        let beta = Candidate::new("beta.rs", 1, 1, "beta evidence")
+            .concept("beta", 1.0)
+            .exact(0.1);
+
+        let response = select(
+            vec![alpha_duplicate, beta, alpha_best],
+            &request_with_budget(6),
+            1,
+        );
+
+        assert!(
+            response
+                .fragments
+                .iter()
+                .any(|fragment| fragment.path == "alpha.rs")
+        );
+        assert!(
+            response
+                .fragments
+                .iter()
+                .any(|fragment| fragment.path == "beta.rs")
+        );
+    }
+
+    #[test]
+    fn decisive_second_view_prefers_the_definition_path() {
+        let definition = Candidate::new("owner.rs", 1, 1, "definition")
+            .concept("handle", 2.0)
+            .representation("symbol")
+            .exact(10.0);
+        let owner_source = Candidate::new("owner.rs", 10, 10, "owner_source")
+            .concept("handle", 2.0)
+            .exact(0.5);
+        let unrelated_source = Candidate::new("other.rs", 1, 1, "other ".repeat(3_000))
+            .concept("handle", 2.0)
+            .exact(1.0);
+
+        let response = select(
+            vec![unrelated_source, owner_source, definition],
+            &request_with_budget(1_200),
+            1,
+        );
+
+        assert_eq!(response.fragments.len(), 2);
+        assert_eq!(response.fragments[0].path, "owner.rs");
+        assert_eq!(response.fragments[1].path, "owner.rs");
+    }
+
+    #[test]
+    fn weak_non_code_fill_is_omitted_by_relative_confidence() {
+        let strong = Candidate::new("strong.rs", 1, 1, "strong")
+            .concept("explicit", 1.0)
+            .exact(10.0);
+        let weak = Candidate::new("weak.rs", 1, 1, "weak").exact(0.0);
+
+        let response = select(vec![weak, strong], &request_with_budget(100), 1);
+
+        assert_eq!(response.fragments.len(), 1);
+        assert_eq!(response.fragments[0].path, "strong.rs");
+        assert!(
+            response
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("omitted"))
+        );
+    }
+
+    #[test]
     fn known_hash_omitted_and_reported() {
         let c = Candidate::new("known.rs", 1, 2, "alpha beta").exact(1.0);
         let hash = c.content_hash();
@@ -918,14 +1231,30 @@ mod tests {
         let req = request_with_budget(10);
         let resp = select(vec![c], &req, 42);
 
-        assert_eq!(resp.receipt.repository_generation, 42);
+        assert_eq!(resp.meta.repository_generation, 42);
         assert!(!resp.receipt.task_fingerprint.is_empty());
-        assert_eq!(resp.receipt.fragments.len(), resp.fragments.len());
+        assert_eq!(resp.receipt.fragment_hashes.len(), resp.fragments.len());
         assert_eq!(
             resp.meta.emitted_tokens,
             resp.fragments.iter().map(|f| f.token_count).sum::<usize>()
         );
         assert!(resp.meta.token_count_exact);
+    }
+
+    #[test]
+    fn explicit_weights_and_tokenizer_control_budget_metadata() {
+        let candidate = Candidate::new("a.rs", 1, 1, "alpha beta gamma").exact(1.0);
+        let request = request_with_budget(20);
+        let response = select_with_weights_and_tokenizer(
+            vec![candidate],
+            &request,
+            7,
+            &Weights::default(),
+            tokens::Tokenizer::Estimate,
+        );
+
+        assert!(!response.meta.token_count_exact);
+        assert_eq!(response.meta.emitted_tokens, 4);
     }
 
     #[test]
@@ -935,7 +1264,7 @@ mod tests {
 
         assert!(resp.fragments.is_empty());
         assert!(resp.omitted.is_empty());
-        assert!(resp.receipt.fragments.is_empty());
+        assert!(resp.receipt.fragment_hashes.is_empty());
     }
 
     #[test]

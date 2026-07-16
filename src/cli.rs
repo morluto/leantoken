@@ -1,13 +1,16 @@
 use std::{path::PathBuf, str::FromStr};
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::Config;
 use crate::Result;
+use crate::mcp::McpResultMode;
 use crate::model::{
     ContextRequest, FileOperation, FilesRequest, OutlineRequest, ReadRequest, SearchMode,
     SearchRequest,
 };
+use crate::setup::{SetupClient, SetupRequest};
+use crate::tokens::Tokenizer;
 
 /// LeanToken CLI and MCP server entry point.
 #[derive(Debug, Clone, Parser)]
@@ -29,6 +32,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Tokenizer used for source and protocol token accounting.
+    #[arg(long, value_enum, value_name = "ENCODING", default_value_t = Tokenizer::default(), global = true)]
+    pub tokenizer: Tokenizer,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -40,7 +47,9 @@ impl Cli {
     ///
     /// Returns an error when the repository root cannot be canonicalized.
     pub fn config(&self) -> Result<Config> {
-        Config::discover(&self.root, self.database.clone())
+        let mut config = Config::discover(&self.root, self.database.clone())?;
+        config.tokenizer = self.tokenizer;
+        Ok(config)
     }
 
     /// Convert the parsed CLI into an application request.
@@ -53,7 +62,11 @@ impl Cli {
             Commands::Outline(args) => AppRequest::Outline(args.into()),
             Commands::Read(args) => AppRequest::Read(args.into()),
             Commands::Context(args) => AppRequest::Context(args.into()),
-            Commands::Mcp => AppRequest::Mcp,
+            Commands::Mcp(args) => AppRequest::Mcp {
+                result_mode: args.result_mode,
+            },
+            Commands::Setup(args) => AppRequest::Setup(args.into()),
+            Commands::Remove(args) => AppRequest::Remove(args.into()),
         }
     }
 }
@@ -68,7 +81,9 @@ pub enum AppRequest {
     Outline(OutlineRequest),
     Read(ReadRequest),
     Context(ContextRequest),
-    Mcp,
+    Mcp { result_mode: McpResultMode },
+    Setup(SetupRequest),
+    Remove(SetupRequest),
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -99,7 +114,80 @@ pub enum Commands {
     Context(ContextArgs),
 
     /// Run the MCP server over stdio.
-    Mcp,
+    Mcp(McpArgs),
+
+    /// Configure LeanToken as a global MCP server for coding clients.
+    Setup(IntegrationArgs),
+
+    /// Remove LeanToken's global MCP server entries.
+    Remove(IntegrationArgs),
+}
+
+/// MCP stdio transport options.
+#[derive(Debug, Clone, Args)]
+pub struct McpArgs {
+    /// Successful-result representation. Keep `dual` unless the host is known
+    /// to consume structured-only results.
+    #[arg(long, value_enum, default_value_t = McpResultMode::Dual)]
+    pub result_mode: McpResultMode,
+}
+
+/// Client selection shared by `setup` and `remove`.
+#[derive(Debug, Clone, Args)]
+pub struct IntegrationArgs {
+    /// Configure Claude Code.
+    #[arg(long)]
+    pub claude: bool,
+    /// Configure Cursor.
+    #[arg(long)]
+    pub cursor: bool,
+    /// Configure OpenCode.
+    #[arg(long)]
+    pub opencode: bool,
+    /// Configure Codex.
+    #[arg(long)]
+    pub codex: bool,
+    /// Configure Gemini CLI.
+    #[arg(long)]
+    pub gemini: bool,
+    /// Configure Antigravity.
+    #[arg(long)]
+    pub antigravity: bool,
+    /// Select every supported client.
+    #[arg(long)]
+    pub all: bool,
+    /// Skip prompts and use detected clients when none are selected explicitly.
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+}
+
+impl From<IntegrationArgs> for SetupRequest {
+    fn from(args: IntegrationArgs) -> Self {
+        let mut clients = Vec::new();
+        if args.claude {
+            clients.push(SetupClient::Claude);
+        }
+        if args.cursor {
+            clients.push(SetupClient::Cursor);
+        }
+        if args.opencode {
+            clients.push(SetupClient::OpenCode);
+        }
+        if args.codex {
+            clients.push(SetupClient::Codex);
+        }
+        if args.gemini {
+            clients.push(SetupClient::Gemini);
+        }
+        if args.antigravity {
+            clients.push(SetupClient::Antigravity);
+        }
+        Self {
+            clients,
+            all: args.all,
+            yes: args.yes,
+        }
+    }
 }
 
 /// Clap value for the `files` operation.

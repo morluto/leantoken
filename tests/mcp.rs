@@ -14,6 +14,13 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
         .expect("write fixture");
+    std::fs::write(
+        root.path().join("many.rs"),
+        (0..2_000)
+            .map(|index| format!("fn answer_{index}() {{ answer(); }}\n"))
+            .collect::<String>(),
+    )
+    .expect("write large fixture");
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Arc::new(Services::open(config).expect("services"));
@@ -30,6 +37,17 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .await
         .expect("initialize MCP client");
     let mut server = server_start.await.expect("join server startup");
+
+    let instructions = client
+        .peer()
+        .peer_info()
+        .expect("server initialize result")
+        .instructions
+        .clone()
+        .expect("server instructions");
+    assert!(instructions.contains("Retrieve progressively"));
+    assert!(instructions.contains("Use context only when scope remains uncertain"));
+    assert!(instructions.contains("native tools for edits, commands, and tests"));
 
     let tools = client.peer().list_all_tools().await.expect("list tools");
     let names = tools
@@ -85,6 +103,52 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         error,
         ServiceError::McpError(data) if data.code == ErrorCode::INVALID_PARAMS
     ));
+
+    let oversized_arguments = serde_json::json!({
+        "query": "x".repeat(65 * 1024),
+        "mode": "text",
+        "max_results": 1,
+        "max_tokens": 10
+    })
+    .as_object()
+    .expect("oversized search arguments")
+    .clone();
+    let error = client
+        .peer()
+        .call_tool(
+            CallToolRequestParams::new("leantoken_search").with_arguments(oversized_arguments),
+        )
+        .await
+        .expect_err("oversized request should be rejected");
+    assert!(matches!(
+        error,
+        ServiceError::McpError(data) if data.code == ErrorCode::INVALID_PARAMS
+    ));
+
+    let bounded_arguments = serde_json::json!({
+        "query": "answer",
+        "mode": "text",
+        "max_results": 100,
+        "max_tokens": 50
+    })
+    .as_object()
+    .expect("bounded search arguments")
+    .clone();
+    let bounded = client
+        .peer()
+        .call_tool(
+            CallToolRequestParams::new("leantoken_search").with_arguments(bounded_arguments),
+        )
+        .await
+        .expect("large bounded search");
+    assert!(
+        bounded
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.pointer("/meta/emitted_tokens"))
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|tokens| tokens <= 50)
+    );
 
     let context = ContextRequest {
         task: "find answer and its caller".into(),

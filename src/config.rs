@@ -3,6 +3,7 @@ use std::{
     time::Duration,
 };
 
+use crate::tokens::Tokenizer;
 use crate::{Error, Result};
 
 #[derive(Debug, Clone)]
@@ -12,6 +13,9 @@ pub struct Config {
     pub root: PathBuf,
     /// SQLite index path.
     pub database_path: PathBuf,
+    /// Whether LeanToken owns this cache file and may rebuild it after
+    /// confirmed SQLite corruption.
+    pub(crate) database_is_managed_cache: bool,
     /// Largest file admitted to the index.
     pub max_file_bytes: u64,
     /// Default number of returned results.
@@ -32,13 +36,17 @@ pub struct Config {
     pub max_index_workers: usize,
     /// Filesystem-event debounce interval.
     pub watcher_debounce: Duration,
+    /// Tokenizer used for all source and protocol token accounting.
+    pub tokenizer: Tokenizer,
 }
 
 impl Config {
     /// Resolve a repository root and apply bounded defaults.
     ///
     /// When `database_path` is absent, LeanToken chooses a per-repository cache
-    /// path outside the source tree when the platform provides one.
+    /// path outside the source tree when the platform provides one. An existing
+    /// explicit database parent is canonicalized so repository discovery can
+    /// reliably exclude SQLite artifacts reached through path aliases.
     pub fn discover(root: impl AsRef<Path>, database_path: Option<PathBuf>) -> Result<Self> {
         let root = root.as_ref().canonicalize().map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -53,10 +61,14 @@ impl Config {
                 root.display()
             )));
         }
-        let database_path = database_path.unwrap_or_else(|| default_database_path(&root));
+        let database_is_managed_cache = database_path.is_none();
+        let database_path = database_path
+            .map(canonicalize_database_parent)
+            .unwrap_or_else(|| default_database_path(&root));
         Ok(Self {
             root,
             database_path,
+            database_is_managed_cache,
             max_file_bytes: 2 * 1024 * 1024,
             default_results: 20,
             max_results: 100,
@@ -69,8 +81,37 @@ impl Config {
                 .map_or(1, std::num::NonZero::get)
                 .min(8),
             watcher_debounce: Duration::from_millis(500),
+            tokenizer: Tokenizer::default(),
         })
     }
+
+    /// Return whether a repository-relative path names the SQLite database or
+    /// one of its WAL/SHM sidecars.
+    #[must_use]
+    pub fn is_database_artifact(&self, relative_path: &str) -> bool {
+        self.is_database_artifact_path(&self.root.join(relative_path))
+    }
+
+    #[must_use]
+    pub(crate) fn is_database_artifact_path(&self, candidate: &Path) -> bool {
+        if candidate == self.database_path {
+            return true;
+        }
+        ["-wal", "-shm"].into_iter().any(|suffix| {
+            let mut sidecar = self.database_path.as_os_str().to_os_string();
+            sidecar.push(suffix);
+            candidate.as_os_str() == sidecar
+        })
+    }
+}
+
+fn canonicalize_database_parent(path: PathBuf) -> PathBuf {
+    let Some(file_name) = path.file_name() else {
+        return path;
+    };
+    path.parent()
+        .and_then(|parent| parent.canonicalize().ok())
+        .map_or(path.clone(), |parent| parent.join(file_name))
 }
 
 fn default_database_path(root: &Path) -> PathBuf {

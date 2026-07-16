@@ -8,8 +8,9 @@ files=$(find . -name '*.rs' \
   -not -path './.git/*' \
   -type f)
 
-# Check for exact duplicate content via md5
-duplicate_hashes=$(echo "$files" | xargs md5 -r 2>/dev/null | sort | awk '
+# Check for exact duplicate content via SHA-256. This job runs on Ubuntu,
+# where `sha256sum` is provided by coreutils.
+duplicate_hashes=$(echo "$files" | xargs sha256sum 2>/dev/null | sort | awk '
 {
   hash = $1
   file = $2
