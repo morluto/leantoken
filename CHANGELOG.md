@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - Freeze prospective validation tasks
 ### Bug Fixes
 
+- Configure release tag identity
 - Classify configuration and capability errors
 - Make indexing cancellation interrupt parsing
 - Synchronize package version in lockfile
@@ -28,6 +29,7 @@ All notable changes to this project will be documented in this file.
 - Honor configured home during MCP setup
 ### Chores
 
+- **main:** Release leantoken 0.1.1
 - **main:** Release leantoken 0.1.1
 - **main:** Release leantoken 0.1.1
 ### Continuous Integration
