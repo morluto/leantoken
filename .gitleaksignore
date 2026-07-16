@@ -1,0 +1,2 @@
+# Generated benchmark report records an exact Git revision, not a secret.
+75b7e7e249db268ffdf73ccd14d571b25c2f7b60:benchmarks/reports/indexing-tokio-linux-x86_64-2026-07-16.json:generic-api-key:4

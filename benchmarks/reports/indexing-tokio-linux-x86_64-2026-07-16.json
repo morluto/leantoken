@@ -1,0 +1,129 @@
+{
+  "schema_version": 2,
+  "leantoken_version": "0.1.1",
+  "leantoken_git_revision": "214a087e167ad0dc517d44ab9756af255b60cb8d",
+  "leantoken_worktree_dirty": false,
+  "host_os": "linux",
+  "host_arch": "x86_64",
+  "release_build": true,
+  "corpus": {
+    "source_kind": "git_worktree_snapshot",
+    "source_repository": "https://github.com/tokio-rs/tokio",
+    "revision": "9cae638de6dc8dd9779c450201df8c102247a242",
+    "files": 865,
+    "total_bytes": 5989997,
+    "mean_file_bytes": 6924.852023121387,
+    "max_directory_depth": 6,
+    "extensions": {
+      "<none>": 9,
+      "dic": 1,
+      "json": 1,
+      "md": 29,
+      "rs": 790,
+      "stderr": 6,
+      "toml": 18,
+      "yml": 11
+    },
+    "synthetic_file_bytes": null,
+    "indexing_iterations": 20,
+    "read_samples": 5000,
+    "hot_set_files": 8
+  },
+  "initial_index": {
+    "elapsed_ms": 9507.083654,
+    "response": {
+      "repository_generation": 1,
+      "files_seen": 865,
+      "files_indexed": 865,
+      "files_unchanged": 0,
+      "files_removed": 0,
+      "files_skipped": 0,
+      "warnings": []
+    }
+  },
+  "full_noop": {
+    "timing": {
+      "samples": 20,
+      "total_ms": 570.7244639999999,
+      "mean_us": 28536.223199999997,
+      "min_us": 26975.161,
+      "p50_us": 28449.11,
+      "p95_us": 30148.977,
+      "max_us": 30618.159
+    },
+    "files_seen_per_sample": 865,
+    "files_indexed_per_sample": 0
+  },
+  "full_changed": {
+    "timing": {
+      "samples": 20,
+      "total_ms": 757.270529,
+      "mean_us": 37863.52645,
+      "min_us": 32446.023999999998,
+      "p50_us": 38623.579999999994,
+      "p95_us": 41782.323000000004,
+      "max_us": 42738.756
+    },
+    "files_seen_per_sample": 865,
+    "files_indexed_per_sample": 1
+  },
+  "targeted_changed": {
+    "timing": {
+      "samples": 20,
+      "total_ms": 212.81125000000003,
+      "mean_us": 10640.562500000002,
+      "min_us": 7930.960000000001,
+      "p50_us": 9818.172,
+      "p95_us": 15430.209,
+      "max_us": 18206.087
+    },
+    "files_seen_per_sample": 1,
+    "files_indexed_per_sample": 1
+  },
+  "warm_hot_file_reads": {
+    "timing": {
+      "samples": 5000,
+      "total_ms": 47.12760399999993,
+      "mean_us": 9.425520799999985,
+      "min_us": 7.6450000000000005,
+      "p50_us": 8.668000000000001,
+      "p95_us": 10.821,
+      "max_us": 121.081
+    },
+    "total_bytes": 2849375,
+    "mean_bytes": 569.875
+  },
+  "warm_spread_file_reads": {
+    "timing": {
+      "samples": 5000,
+      "total_ms": 69.30736500000016,
+      "mean_us": 13.861473000000034,
+      "min_us": 8.586,
+      "p50_us": 12.314,
+      "p95_us": 22.232999999999997,
+      "max_us": 130.611
+    },
+    "total_bytes": 34938013,
+    "mean_bytes": 6987.6026
+  },
+  "memory_hot_file_copies": {
+    "timing": {
+      "samples": 5000,
+      "total_ms": 2.581619999999936,
+      "mean_us": 0.5163239999999872,
+      "min_us": 0.363,
+      "p50_us": 0.48100000000000004,
+      "p95_us": 0.621,
+      "max_us": 33.394
+    },
+    "total_bytes": 2849375,
+    "mean_bytes": 569.875
+  },
+  "limitations": [
+    "The repository profile uses an isolated ignore-aware snapshot of a clean checkout at the recorded commit.",
+    "File-read measurements use the operating system's warm page cache; they do not represent cold, remote, encrypted, or heavily contended filesystems.",
+    "The in-memory comparison copies bytes but excludes cache lookup, eviction, synchronization, invalidation, and memory-pressure costs.",
+    "This profile measures no-op and existing-file modification paths; create, delete, rename, ignore-change, watcher-overflow, and interruption scenarios still require separate measurements.",
+    "Timing is machine-specific. Compare runs only on the same host and build profile, and use release builds for decisions."
+  ]
+}

@@ -184,7 +184,7 @@ Retrieval fixtures must not be presented as model pass-rate evidence.
 
 ## Indexing and file-read profile
 
-The synthetic indexing profile answers two narrower implementation questions:
+The indexing profile answers two narrower implementation questions:
 
 - how much work a full metadata scan adds when the index is already current,
   compared with reconciling one known changed path;
@@ -207,6 +207,42 @@ The runner creates and removes its own deterministic temporary corpus. It
 reports full no-op reconciliation, full reconciliation after one file changes,
 changed-path reconciliation after one file changes, repeated reads from a
 small hot set, reads spread across the corpus, and in-memory byte copies.
+
+For a real repository, pin a clean checkout and pass it with `--repository`.
+The profiler resolves its commit and uses LeanToken's ignore-aware discovery to
+create a disposable snapshot before making any measurement mutations; it never
+writes to the supplied checkout. A dirty checkout is rejected because its HEAD
+would not identify the measured corpus.
+
+```bash
+git clone https://github.com/tokio-rs/tokio target/profile-repos/tokio
+git -C target/profile-repos/tokio checkout --detach \
+  9cae638de6dc8dd9779c450201df8c102247a242
+
+cargo run --release --example indexing_profile -- \
+  --repository target/profile-repos/tokio \
+  --repository-label https://github.com/tokio-rs/tokio \
+  --iterations 20 \
+  --read-samples 5000 \
+  --output target/indexing_profile_tokio_linux.json
+```
+
+The schema-version 2 report records the caller-supplied corpus label, exact
+revision, ignore-visible file count, total and mean bytes, maximum directory
+depth, and extension mix. The label is explicit so the profiler never copies a
+possibly credential-bearing Git remote into a report. Run the same pinned
+checkout and command on Linux, macOS, and Windows before making a cross-platform
+indexing decision. Keep negative results: if full discovery is not a material
+p50 or p95 cost, do not add an incremental journal or directory invalidation
+layer.
+
+The repository includes one transparent [Tokio Linux x86-64 profile](reports/indexing-tokio-linux-x86_64-2026-07-16.json).
+It is a single-host measurement, not a cross-platform conclusion. On that run,
+full no-op reconciliation was 28.4 ms p50 / 30.1 ms p95, targeted modification
+was 9.8 ms p50 / 15.4 ms p95, and warm file reads were 8.7–12.3 µs p50. Those
+absolute read costs do not justify a process-local hot-file cache; the remaining
+indexing scenarios and other operating systems still need measurement before an
+incremental-index redesign.
 
 Do not infer cold-disk or network-filesystem behavior from this profile. A hot
 file cache is justified only when live reads are a material share of measured
