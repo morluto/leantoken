@@ -1,0 +1,292 @@
+{
+  "schema_version": 1,
+  "phase": "adaptive_evidence_portfolio",
+  "generated_at": "2026-07-16",
+  "conclusion": {
+    "phase_2": "no_go_keep_experimental",
+    "phase_3": "not_started_phase_2_gate_failed",
+    "phase_4": "not_started_phase_2_gate_failed",
+    "phase_5": "not_started_phase_2_gate_failed"
+  },
+  "revisions": {
+    "baseline_runtime": "565451c6d436c87c548a8ac305c3fe88b78fa22e",
+    "candidate_runtime": "6e08191fbcf131a900fb64ed0eafc3a3522fe0be",
+    "implementation_commit": "1f3d57610e5d223496490d5210874a335034f543",
+    "exact_owner_fix_commit": "f97eb4f519e1cf0a38918f31cc09eef2aceee2dc",
+    "diagnostics_commit": "6e08191fbcf131a900fb64ed0eafc3a3522fe0be"
+  },
+  "environment": {
+    "os": "Linux",
+    "kernel": "6.1.0-50-cloud-amd64",
+    "architecture": "x86_64",
+    "rustc": "1.97.0 (2d8144b78 2026-07-07)",
+    "cargo": "1.97.0 (c980f4866 2026-06-30)",
+    "ripgrep": "15.1.0",
+    "build_profile": "release for benchmark artifacts; dev for full verification",
+    "tokenizer": "cl100k_base",
+    "token_count_exact": true
+  },
+  "datasets": {
+    "validation": {
+      "role": "consumed development validation",
+      "tasks": 4,
+      "languages_recorded": 0,
+      "manifest_blake3": "5991d8a643a873ef61d5a4122f52abd7f589a5403d13ab609ebc6b9428e73d9a",
+      "manifest_sha256": "88663bc2770ed59d33d5f674afc3c3450a517df87a8ff661bd4a1ef80190c8c1",
+      "baseline_report_sha256": "b140737f5fb33283c29f598364a75623b9d20744fbaa703905c95cab73e91c87",
+      "candidate_report_sha256": "de1dcafbc3ad7c5c949179cad3394e952138db573f8dd45351a4ac853108ac4a",
+      "ablation_report_sha256": "99a91bcf919783f0c768e0304d2858e2681b636cc1cfb70d0a483394bfac1ce4",
+      "ranked_manifest_blake3": "b12915ba2de8db2a19f7c41631c204c8dcc3b4151a9aeeedfb62747032d48a13",
+      "ranked_manifest_sha256": "1c330ae7a982227e0d5e0129da953706a2726418271ff18049b8a93dbdb4f4fd",
+      "ranked_predictions_sha256": "a101521160cb6dff5e481c48ffe5bb3f8c0c545c691db1f59f0709967f465795",
+      "ranked_report_sha256": "d91f65b0ea72948084da64092f64f703065cd04fb78aa97b54ec67505870b8cf"
+    },
+    "consumed_multilanguage_regression": {
+      "role": "previously revealed holdout copied to prospective-validation semantics",
+      "blind": false,
+      "tasks": 9,
+      "languages": [
+        "go",
+        "javascript",
+        "python",
+        "ruby",
+        "rust",
+        "typescript"
+      ],
+      "source_manifest": "benchmarks/holdout.json",
+      "derived_manifest_blake3": "339663bda302dfde35414a8473fc8f725fc581d44dc44d7acc47fb532c1df41e",
+      "derived_manifest_sha256": "81451d82b46854fa908b1fdbc6abd3c03cb5169fe9e6b1a2bbb8d91c4ccf92f2",
+      "baseline_report_sha256": "d400fca85292b0cb8e0b6d6f4069fdc54e9f09d9f5930df6a8ca8a53a2f707f7",
+      "candidate_report_sha256": "3405e5dc8b184aaf8041aefd08b4dd39d474580302b407ae9cea0a3018df2443",
+      "ablation_report_sha256": "a130b17b9013d06a1dcec9d156fa478de7796d31f846d6bb2cac7170add2d8db",
+      "ranked_manifest_blake3": "bdf827ab79e75067780c2b50b7fb4a81c164aa298ea525b7b232b95ed917c967",
+      "ranked_manifest_sha256": "305b61475bcc2a3e432e41a70ca92792d10da281e73fe35082b8324e8d9ef79b",
+      "ranked_baseline_report_sha256": "ca214221ac0c6f83f1c5af3c2b641f7453171f419c7ec3acc459ea489e70b44d",
+      "ranked_candidate_report_sha256": "f1ae293d0f767c7112d7876eb2ca8a5cbdb17e466c0a616e03de1a41a6210713",
+      "ranked_comparison_sha256": "3d9ff749a29d8ac45f92a911ab0f80908f06d7b2387030a575d1f879c366cd55"
+    },
+    "swe_explore_local_copy": {
+      "records": 848,
+      "bytes": 13683678,
+      "used_for_runtime_pilot": false,
+      "reason": "The local public records contain evaluator labels but no issue text or pinned base commits. The required companion maps were not available, and the dataset cannot satisfy a six-language pilot."
+    }
+  },
+  "implementation": {
+    "private_facets": [
+      "exact_atom",
+      "symbol",
+      "path",
+      "behavior",
+      "test_intent",
+      "configuration"
+    ],
+    "candidate_provenance": [
+      "facet",
+      "fusion_key",
+      "channel",
+      "channel_rank",
+      "exact_match",
+      "role_hypotheses"
+    ],
+    "evidence_roles": [
+      "implementation",
+      "test",
+      "caller",
+      "contract",
+      "uncertainty"
+    ],
+    "range_behavior": [
+      "range-scoped fusion",
+      "overlap provenance merge",
+      "same-file non-overlapping ranges",
+      "strict line-aligned token bounds",
+      "small declaration preservation"
+    ],
+    "debug_response_changed": false,
+    "standard_response_changed": false,
+    "runtime_mcp_schema_changed": false
+  },
+  "validation_gate": {
+    "baseline": {
+      "relevant_files_hit": 8,
+      "relevant_files": 11,
+      "core_lines_hit": 17,
+      "core_lines": 38,
+      "source_tokens": 3266,
+      "complete_first_response_tokens": 5797,
+      "complete_two_turn_tokens": 12410,
+      "dead_end_fragments": 21,
+      "dead_end_source_tokens": 1081
+    },
+    "candidate": {
+      "relevant_files_hit": 8,
+      "relevant_files": 11,
+      "core_lines_hit": 17,
+      "core_lines": 38,
+      "source_tokens": 3101,
+      "complete_first_response_tokens": 5514,
+      "complete_two_turn_tokens": 11358,
+      "dead_end_fragments": 22,
+      "dead_end_source_tokens": 1028
+    },
+    "delta": {
+      "relevant_files_hit": 0,
+      "core_lines_hit": 0,
+      "source_tokens": -165,
+      "complete_first_response_tokens": -283,
+      "complete_two_turn_tokens": -1052,
+      "dead_end_fragments": 1,
+      "dead_end_source_tokens": -53
+    },
+    "ranked_delta": {
+      "file_recall_macro": -0.0625,
+      "line_recall_macro": -0.0018939393939395033,
+      "line_precision_macro": 0.009371806329375676,
+      "line_f1_macro": 0.014004920343119967,
+      "ndcg_at_budget_macro": -0.005123454801247401,
+      "complete_tokens_per_relevant_line": -16.64705882352939,
+      "source_tokens_per_relevant_line": -9.70588235294116
+    },
+    "requirements": {
+      "file_recall_at_least_8_of_11": "pass",
+      "line_recall_above_17_of_38": "fail_equal_not_above",
+      "dead_end_source_no_unexplained_increase": "pass",
+      "first_and_two_turn_complete_cost_reported": "pass",
+      "exact_query_noise_regression": "pass_after_exact_owner_fix"
+    }
+  },
+  "exact_identifier_fixture": {
+    "query": "Find IndexNotReady",
+    "source_budget": 700,
+    "baseline": {
+      "revision": "565451c6d436c87c548a8ac305c3fe88b78fa22e",
+      "fragment_count": 7,
+      "emitted_source_tokens": 690,
+      "included_test_or_snapshot_noise": true
+    },
+    "candidate": {
+      "revision": "6e08191fbcf131a900fb64ed0eafc3a3522fe0be",
+      "fragment_count": 1,
+      "path": "src/mcp.rs",
+      "start_line": 99,
+      "end_line": 113,
+      "emitted_source_tokens": 122,
+      "included_test_or_documentation_noise": false,
+      "response_sha256": "5a9038dca41c45248d497c9ef32e841d735bbbb0a770d40941c129c9ced8ab7a"
+    }
+  },
+  "external_gate": {
+    "sample": {
+      "tasks": 9,
+      "languages": 6,
+      "minimum_requested_tasks": 60,
+      "sample_size_requirement": "fail",
+      "blind": false
+    },
+    "baseline": {
+      "relevant_files_hit": 7,
+      "relevant_files": 25,
+      "core_lines_hit": 8,
+      "core_lines": 111,
+      "source_tokens": 6925,
+      "complete_response_tokens": 12188,
+      "complete_two_turn_tokens": 25612,
+      "dead_end_source_tokens": 4912,
+      "estimated_repeated_range_source_tokens": 61,
+      "file_recall_macro": 0.3055555555555556,
+      "line_recall_macro": 0.09506172839506172,
+      "line_precision_macro": 0.006654456654456655,
+      "line_f1_macro": 0.01243804956035172,
+      "ndcg_at_budget_macro": 0.05978166295556236,
+      "complete_tokens_per_relevant_line": 1523.5,
+      "source_tokens_per_relevant_line": 865.625
+    },
+    "candidate": {
+      "relevant_files_hit": 14,
+      "relevant_files": 25,
+      "core_lines_hit": 5,
+      "core_lines": 111,
+      "source_tokens": 6871,
+      "complete_response_tokens": 11902,
+      "complete_two_turn_tokens": 25454,
+      "dead_end_source_tokens": 4887,
+      "estimated_repeated_range_source_tokens": 369,
+      "file_recall_macro": 0.5833333333333334,
+      "line_recall_macro": 0.05252525252525252,
+      "line_precision_macro": 0.0038227675528289032,
+      "line_f1_macro": 0.007123598694479921,
+      "ndcg_at_budget_macro": 0.04042442375828828,
+      "complete_tokens_per_relevant_line": 2380.4,
+      "source_tokens_per_relevant_line": 1374.2
+    },
+    "relative_deltas": {
+      "file_recall_macro": 0.9090909090909091,
+      "line_recall_macro": -0.44746162927981115,
+      "line_precision_macro": -0.4255327292170878,
+      "line_f1_macro": -0.4272736525196414,
+      "ndcg_at_budget_macro": -0.323798941686566,
+      "complete_tokens_per_relevant_line": 0.5624548736462095,
+      "source_tokens_per_relevant_line": 0.5875234657039712
+    },
+    "requirements": {
+      "two_meaningful_strata_improve_line_recall_or_ndcg": "fail",
+      "exact_identifier_relative_regression_at_most_5_percent": "fail",
+      "complete_cost_per_relevant_line_improves_or_is_justified": "fail",
+      "deterministic_output": "pass",
+      "cross_platform_runtime_matrix": "not_run_locally"
+    }
+  },
+  "failure_classes": [
+    "Facet extraction improves labeled-file discovery but often selects the wrong region within those files.",
+    "Qualified and behavior expansions increase file coverage while displacing exact line neighborhoods in the all-exact consumed regression stratum.",
+    "Role diversity is too coarse to distinguish a decisive definition or mutation site from another implementation-looking range in the same file.",
+    "The planner still has no structural call/data-flow signal, so file-level ownership gains do not reliably become line-level ranking gains.",
+    "The nine-task regression is too small for a release claim and the available SWE-Explore copy cannot provide the required executable multilingual pilot."
+  ],
+  "verification": {
+    "cargo_fmt": "pass",
+    "cargo_check_all_targets_all_features": "pass",
+    "cargo_clippy_all_targets_all_features_deny_warnings": "pass",
+    "cargo_test_all_targets_all_features": {
+      "status": "pass",
+      "library_tests": 130,
+      "integration_tests": 127,
+      "example_tests": 33
+    },
+    "cargo_doc_no_deps": "pass",
+    "transient_test_observation": {
+      "test": "services::status_reports_reconciling_when_shared_operation_lock_is_held",
+      "initial_full_run": "failed_once_on_timing_state",
+      "isolated_rerun": "pass",
+      "subsequent_full_rerun": "pass"
+    },
+    "mcp_tool_count": 5,
+    "mcp_catalog_token_delta": 0,
+    "mcp_snapshot_sha256": "46c6066fc84a2afb6dd48dfdad25e79d0845245dbb32cd986507348c876fa2f5",
+    "preparation_tracked_files": 0
+  },
+  "decision": {
+    "default_enable": false,
+    "merge_to_main": false,
+    "pull_request_mode": "draft_experimental",
+    "continue_to_phase_3": false,
+    "reason": "The internal line-recall gate did not improve, the consumed multi-language regression lost line recall and NDCG far beyond the exact-identifier tolerance, and complete cost per relevant line worsened."
+  },
+  "artifacts": {
+    "validation_candidate_report": "benchmarks/reports/validation-adaptive-evidence-portfolio-linux-x86_64-2026-07-16.json",
+    "validation_ablation_report": "benchmarks/reports/validation-adaptive-evidence-portfolio-ablation-linux-x86_64-2026-07-16.json",
+    "phase_report": "benchmarks/reports/adaptive-evidence-portfolio-phase2-linux-x86_64-2026-07-16.json",
+    "local_consumed_regression_candidate": "target/phase2-consumed-holdout-candidate.json",
+    "local_consumed_regression_comparison": "target/phase2-holdout-ranked-comparison.json",
+    "local_exact_fixture": "target/phase2-exact-context.json"
+  },
+  "limitations": [
+    "The four-task validation set was used during implementation and cannot support a generalization claim.",
+    "The nine-task multi-language set was already revealed for an older candidate and is reported only as consumed regression evidence.",
+    "The external sample has nine tasks rather than the requested sixty.",
+    "No model edited code, ran task-specific tests, or produced a validated patch.",
+    "No real host/provider-visible trace was added in this phase.",
+    "Latency totals include cold repository indexing and are not compared as a stable performance result."
+  ]
+}

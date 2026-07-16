@@ -1,0 +1,38 @@
+{
+  "dataset_kind": "prospective_validation",
+  "manifest_blake3": "5991d8a643a873ef61d5a4122f52abd7f589a5403d13ab609ebc6b9428e73d9a",
+  "task_count": 4,
+  "baseline": {
+    "file_recall": 0.7272727272727273,
+    "line_recall": 0.4473684210526316,
+    "source_tokens": 3266,
+    "response_json_tokens": 5797,
+    "dead_end_fragments": 21,
+    "dead_end_source_tokens": 1081,
+    "exact_hash_resends": 0,
+    "estimated_repeated_range_source_tokens": 0,
+    "two_turn_json_tokens": 12410
+  },
+  "candidate": {
+    "file_recall": 0.7272727272727273,
+    "line_recall": 0.4473684210526316,
+    "source_tokens": 3101,
+    "response_json_tokens": 5514,
+    "dead_end_fragments": 22,
+    "dead_end_source_tokens": 1028,
+    "exact_hash_resends": 0,
+    "estimated_repeated_range_source_tokens": 0,
+    "two_turn_json_tokens": 11358
+  },
+  "delta": {
+    "file_recall": 0.0,
+    "line_recall": 0.0,
+    "source_tokens": -165,
+    "response_json_tokens": -283,
+    "dead_end_fragments": 1,
+    "dead_end_source_tokens": -53,
+    "exact_hash_resends": 0,
+    "estimated_repeated_range_source_tokens": 0,
+    "two_turn_json_tokens": -1052
+  }
+}

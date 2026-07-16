@@ -47,6 +47,45 @@ how original-order prose selection behaves when a long symptom narrative comes
 before decisive terms in a later sentence; retain that phrasing class in future
 validation rather than treating this ablation as a general language result.
 
+### Adaptive evidence portfolio experiment
+
+Phase 2 candidate `6e08191` adds bounded technical-atom facets, range-scoped
+provenance fusion, conservative evidence roles, portfolio selection, and
+strictly token-bounded declaration excerpts. The runtime MCP catalog and
+response schema are unchanged.
+
+On the consumed four-task validation set, the candidate tied the current
+baseline at 8/11 relevant files and 17/38 line anchors. It reduced source
+tokens from 3,266 to 3,101, complete first-response JSON from 5,797 to 5,514,
+and complete two-turn JSON from 12,410 to 11,358. Ranked-region precision and
+F1 improved, but macro file recall and NDCG declined. Because the required
+line-anchor result was strictly greater than 17/38, the internal gate failed.
+
+An additional regression run copied the already revealed holdout into
+prospective-validation semantics. It is not a second blind run. The nine tasks
+span six languages. Against fork `main`, labeled-file recall rose from 7/25 to
+14/25, but line-anchor recall fell from 8/111 to 5/111. Macro line recall fell
+44.7%, NDCG fell 32.4%, and complete tokens per relevant returned line rose
+56.2%. This fails the exact-identifier and evidence-economy gates by a wide
+margin. The available 848-record SWE-Explore file was not used as a runtime
+pilot because it lacks issue-text and base-commit companion maps and cannot
+provide a six-language sample.
+
+The experiment therefore remains a draft, is not enabled on `main`, and does
+not advance to compact wire or model A/B work. The exact `IndexNotReady`
+regression fixture does avoid expansion noise: at a 700-token source budget it
+returns one 122-token implementation range and no test or documentation
+fragment. That narrow success does not offset the multi-language line-ranking
+regression.
+
+The complete decision record, artifact hashes, failure classification, and
+verification counts are archived in
+[`../benchmarks/reports/adaptive-evidence-portfolio-phase2-linux-x86_64-2026-07-16.json`](../benchmarks/reports/adaptive-evidence-portfolio-phase2-linux-x86_64-2026-07-16.json).
+The development-set candidate and ablation reports are
+[`../benchmarks/reports/validation-adaptive-evidence-portfolio-linux-x86_64-2026-07-16.json`](../benchmarks/reports/validation-adaptive-evidence-portfolio-linux-x86_64-2026-07-16.json)
+and
+[`../benchmarks/reports/validation-adaptive-evidence-portfolio-ablation-linux-x86_64-2026-07-16.json`](../benchmarks/reports/validation-adaptive-evidence-portfolio-ablation-linux-x86_64-2026-07-16.json).
+
 ## Sealed holdout lifecycle
 
 `benchmarks/holdout.json` is the unseen set for the runtime tree at its frozen
