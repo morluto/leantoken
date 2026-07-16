@@ -19,8 +19,11 @@ detects installed clients, lets you choose which ones to configure, and
 registers LeanToken as a global MCP server. Each client launches it in the
 active workspace.
 
-When setup runs through `npx`, it registers the versioned npm command rather
-than an ephemeral cache path. A global installation is also available:
+When setup runs through `npx`, it registers `leantoken` without a version pin
+rather than recording an ephemeral npm cache path. MCP clients therefore
+resolve current releases without requiring setup to be rerun. A global
+installation is also available when you want to use the `leantoken` command
+directly:
 
 ```bash
 npm install --global leantoken
@@ -46,6 +49,34 @@ npx leantoken remove --all --yes
 
 To build from source instead, install Rust 1.95 or later and a native C/C++
 toolchain, then run `cargo install --git https://github.com/morluto/leantoken`.
+
+## Updating
+
+MCP entries created by `npx leantoken setup` use the unversioned npm package,
+so they follow the npm `latest` release automatically. Older entries that
+contain a version such as `leantoken@0.1.0` can be migrated once by rerunning
+setup with the latest package:
+
+```bash
+npx leantoken@latest setup --codex --yes
+```
+
+For a globally installed CLI, `update` and `upgrade` are equivalent:
+
+```bash
+leantoken update
+# or
+leantoken upgrade
+```
+
+LeanToken detects whether the executable was installed through npm or Cargo
+and delegates the update to that package manager. If the installation method
+cannot be detected, run the matching command directly:
+
+```bash
+npm install --global leantoken@latest
+cargo install --git https://github.com/morluto/leantoken --force
+```
 
 ## What changes
 

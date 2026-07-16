@@ -402,7 +402,7 @@ fn setup_and_remove_do_not_require_a_repository() {
 }
 
 #[test]
-fn npx_setup_registers_a_versioned_launcher_instead_of_its_cache_path() {
+fn npx_setup_registers_an_unpinned_launcher_instead_of_its_cache_path() {
     let temp = tempfile::tempdir().expect("temporary home");
     let node = temp.path().join("node");
     let npm = temp.path().join("npm-cli.js");
@@ -434,7 +434,7 @@ fn npx_setup_registers_a_versioned_launcher_instead_of_its_cache_path() {
             npm.to_str().unwrap(),
             "exec",
             "--yes",
-            format!("--package=leantoken@{}", env!("CARGO_PKG_VERSION")),
+            "--package=leantoken",
             "--",
             "leantoken",
             "mcp"

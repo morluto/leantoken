@@ -33,6 +33,8 @@ pub mod storage;
 pub mod text;
 /// Source-token counting and truncation with configurable exact or estimated tokenizers.
 pub mod tokens;
+/// Package-manager-aware CLI updates.
+pub mod upgrade;
 /// Debounced repository watching and reconciliation signals.
 pub mod watcher;
 

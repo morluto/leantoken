@@ -269,6 +269,12 @@ fn cli_setup_and_remove_select_clients() {
 }
 
 #[test]
+fn cli_update_and_upgrade_are_aliases() {
+    assert!(matches!(parse(&["update"]).app_request(), AppRequest::Upgrade));
+    assert!(matches!(parse(&["upgrade"]).app_request(), AppRequest::Upgrade));
+}
+
+#[test]
 fn cli_global_root_and_database_options() {
     let root = tempfile::tempdir().unwrap();
     let db = root.path().join("custom.sqlite");
