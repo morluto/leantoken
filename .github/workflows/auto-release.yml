@@ -1,0 +1,122 @@
+name: Auto Release
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  version-and-tag:
+    name: Version bump, changelog, and tag
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[no-release]')"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+
+      - name: Determine next version
+        id: version
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          LATEST_VERSION=$(echo "$LATEST_TAG" | sed 's/^v//')
+          echo "Latest tag: $LATEST_TAG (version: $LATEST_VERSION)"
+
+          COMMITS_SINCE=$(git rev-list --count ${LATEST_TAG}..HEAD)
+          echo "Commits since last tag: $COMMITS_SINCE"
+
+          if [ "$COMMITS_SINCE" -eq 0 ]; then
+            echo "No new commits since last tag. Skipping release."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
+          PATCH=$((PATCH + 1))
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          NEW_TAG="v${NEW_VERSION}"
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "new_tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          git cliff --config cliff.toml \
+            --tag "${{ steps.version.outputs.new_tag }}" \
+            --output CHANGELOG.md \
+            ${{ steps.version.outputs.latest_tag }}..HEAD
+
+      - name: Commit changelog
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "chore: update changelog for ${{ steps.version.outputs.new_tag }}"
+          git push origin master
+
+      - name: Create and push tag
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          git tag -a "${{ steps.version.outputs.new_tag }}" -m "${{ steps.version.outputs.new_tag }}"
+          git push origin "${{ steps.version.outputs.new_tag }}"
+
+  update-release-notes:
+    name: Update release notes
+    needs: version-and-tag
+    runs-on: ubuntu-latest
+    if: needs.version-and-tag.result == 'success'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+
+      - name: Wait for cargo-dist release
+        run: |
+          TAG=$(git describe --tags --abbrev=0)
+          echo "Waiting for Release workflow to create release for $TAG..."
+          for i in $(seq 1 30); do
+            if gh release view "$TAG" &>/dev/null; then
+              echo "Release found."
+              exit 0
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 20
+          done
+          echo "Timed out waiting for release."
+          exit 1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate and upload release notes
+        run: |
+          TAG=$(git describe --tags --abbrev=0)
+          PREV_TAG=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="${PREV_TAG}..${TAG}"
+          else
+            RANGE="$TAG"
+          fi
+          git cliff --config cliff.toml --tag "$TAG" $RANGE > /tmp/release-notes.md
+          gh release edit "$TAG" --notes-file /tmp/release-notes.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
