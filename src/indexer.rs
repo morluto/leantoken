@@ -417,7 +417,8 @@ impl Indexer {
                 .par_iter()
                 .map(|file| {
                     check_cancelled(cancellation)?;
-                    let prepared = prepare_file(file, chunk_lines, chunk_bytes, tokenizer);
+                    let prepared =
+                        prepare_file(file, chunk_lines, chunk_bytes, tokenizer, cancellation)?;
                     check_cancelled(cancellation)?;
                     Ok(prepared)
                 })
@@ -478,34 +479,41 @@ fn prepare_file(
     chunk_lines: usize,
     chunk_bytes: usize,
     tokenizer: crate::tokens::Tokenizer,
-) -> PreparedFile {
+    cancellation: &CancellationToken,
+) -> Result<PreparedFile> {
     let bytes = match fs::read(&file.absolute_path) {
         Ok(bytes) => bytes,
         Err(error) => {
-            return PreparedFile::Failed(file.relative_path.clone(), error.to_string());
+            return Ok(PreparedFile::Failed(
+                file.relative_path.clone(),
+                error.to_string(),
+            ));
         }
     };
     let prepared = PreparedText::from_bytes(&bytes, chunk_lines, chunk_bytes);
     if prepared.kind == TextKind::Binary {
-        return PreparedFile::Binary(file.relative_path.clone());
+        return Ok(PreparedFile::Binary(file.relative_path.clone()));
     }
 
-    let (parsed, warning) = match parser::parse(&file.relative_path, &prepared.content) {
-        Ok(parsed) => (parsed, None),
-        Err(error) => (
-            ParseOutput {
-                language: parser::language_by_path(&file.relative_path),
-                structurally_complete: false,
-                symbols: Vec::new(),
-                references: Vec::new(),
-                imports: Vec::new(),
-            },
-            Some(format!(
-                "{}: structural parse failed; text remains searchable: {error}",
-                file.relative_path
-            )),
-        ),
-    };
+    let (parsed, warning) =
+        match parser::parse_with_cancellation(&file.relative_path, &prepared.content, cancellation)
+        {
+            Ok(parsed) => (parsed, None),
+            Err(Error::Cancelled) => return Err(Error::Cancelled),
+            Err(error) => (
+                ParseOutput {
+                    language: parser::language_by_path(&file.relative_path),
+                    structurally_complete: false,
+                    symbols: Vec::new(),
+                    references: Vec::new(),
+                    imports: Vec::new(),
+                },
+                Some(format!(
+                    "{}: structural parse failed; text remains searchable: {error}",
+                    file.relative_path
+                )),
+            ),
+        };
 
     let chunks = prepared
         .chunks
@@ -557,7 +565,7 @@ fn prepare_file(
         })
         .collect();
 
-    PreparedFile::Indexed(
+    Ok(PreparedFile::Indexed(
         IndexedFile {
             path: file.relative_path.clone(),
             language: parsed.language,
@@ -571,7 +579,7 @@ fn prepare_file(
             imports,
         },
         warning,
-    )
+    ))
 }
 
 fn push_warning(warnings: &mut Vec<String>, warning: String) {
@@ -752,6 +760,33 @@ mod tests {
 
         assert!(matches!(
             resolve_imports(&mut files, &paths, &cancellation),
+            Err(Error::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn parser_cancellation_is_not_downgraded_to_a_file_warning() {
+        let root = tempfile::tempdir().expect("root");
+        let absolute_path = root.path().join("cancelled.rs");
+        let source = "fn cancelled() {}\n";
+        std::fs::write(&absolute_path, source).expect("source");
+        let file = DiscoveredFile {
+            absolute_path,
+            relative_path: "cancelled.rs".into(),
+            size_bytes: source.len() as u64,
+            modified_ns: None,
+        };
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        assert!(matches!(
+            prepare_file(
+                &file,
+                80,
+                32 * 1024,
+                crate::tokens::Tokenizer::default(),
+                &cancellation,
+            ),
             Err(Error::Cancelled)
         ));
     }

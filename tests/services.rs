@@ -61,6 +61,40 @@ async fn index_excludes_database_below_missing_symlinked_parent() {
 }
 
 #[tokio::test]
+async fn database_artifact_notifications_do_not_publish_a_generation() {
+    let (_root, services) = fixture().await;
+    let before = services
+        .status()
+        .await
+        .expect("status before artifacts")
+        .repository_generation;
+
+    let response = services
+        .index_paths(vec![
+            "index.sqlite".into(),
+            "index.sqlite-wal".into(),
+            "index.sqlite-shm".into(),
+        ])
+        .await
+        .expect("ignore database artifacts");
+
+    assert_eq!(response.repository_generation, before);
+    assert_eq!(response.files_indexed, 0);
+    assert_eq!(response.files_removed, 0);
+    assert_eq!(response.files_unchanged, 0);
+    assert_eq!(response.files_skipped, 0);
+    assert!(response.warnings.is_empty());
+    assert_eq!(
+        services
+            .status()
+            .await
+            .expect("status after artifacts")
+            .repository_generation,
+        before
+    );
+}
+
+#[tokio::test]
 async fn five_services_return_bounded_grounded_responses() {
     let (_root, services) = fixture().await;
 

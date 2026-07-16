@@ -72,6 +72,40 @@ fn mcp_repeatedly_exits_cleanly_on_stdio_eof() {
 }
 
 #[test]
+fn mcp_survives_malformed_and_invalid_messages() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
+        .expect("write fixture");
+    let database = root.path().join("index.sqlite");
+    let mut process = McpProcess::spawn(root.path(), &database);
+    process.initialize();
+    process.send_initialized();
+    process.wait_until_ready(Duration::from_secs(10));
+
+    // rmcp intentionally ignores unparsable input, but a well-formed value
+    // with the wrong JSON-RPC shape receives Invalid Request. Neither may
+    // close the stdio transport or poison the next tool call.
+    process.send_raw_line("{not json");
+    process.send_raw_line(r#"{"foo":"bar"}"#);
+    let invalid = process.message(Duration::from_secs(2));
+    assert_eq!(invalid["error"]["code"], -32600);
+
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 100,
+        "method": "tools/call",
+        "params": {
+            "name": "leantoken_files",
+            "arguments": { "operation": "tree", "max_results": 1 }
+        }
+    }));
+    let response = process.response(Duration::from_secs(2));
+    assert_eq!(response["id"], 100);
+    assert!(response.get("result").is_some(), "{response}");
+    assert!(process.child.try_wait().expect("poll process").is_none());
+}
+
+#[test]
 fn mcp_initialize_precedes_storage_open() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn answer() {}\n").expect("write fixture");
@@ -525,15 +559,26 @@ impl McpProcess {
         stdin.flush().expect("flush MCP message");
     }
 
+    fn send_raw_line(&mut self, line: &str) {
+        let stdin = self.stdin.as_mut().expect("live MCP stdin");
+        stdin.write_all(line.as_bytes()).expect("write raw MCP line");
+        stdin.write_all(b"\n").expect("terminate raw MCP line");
+        stdin.flush().expect("flush raw MCP line");
+    }
+
+    fn message(&self, timeout: Duration) -> serde_json::Value {
+        let line = self
+            .lines
+            .recv_timeout(timeout)
+            .expect("MCP message before deadline");
+        serde_json::from_str(&line).expect("MCP JSON message")
+    }
+
     fn response(&self, timeout: Duration) -> serde_json::Value {
         let deadline = Instant::now() + timeout;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            let line = self
-                .lines
-                .recv_timeout(remaining)
-                .expect("MCP response before deadline");
-            let value: serde_json::Value = serde_json::from_str(&line).expect("MCP JSON response");
+            let value = self.message(remaining);
             if value.get("id").is_some() {
                 return value;
             }
