@@ -221,6 +221,14 @@ indexing decision. Keep negative results: if full discovery is not a material
 p50 or p95 cost, do not add an incremental journal or directory invalidation
 layer.
 
+The repository includes one transparent [Tokio Linux x86-64 profile](reports/indexing-tokio-linux-x86_64-2026-07-16.json).
+It is a single-host measurement, not a cross-platform conclusion. On that run,
+full no-op reconciliation was 28.4 ms p50 / 30.1 ms p95, targeted modification
+was 9.8 ms p50 / 15.4 ms p95, and warm file reads were 8.7–12.3 µs p50. Those
+absolute read costs do not justify a process-local hot-file cache; the remaining
+indexing scenarios and other operating systems still need measurement before an
+incremental-index redesign.
+
 Do not infer cold-disk or network-filesystem behavior from this profile. A hot
 file cache is justified only when live reads are a material share of measured
 end-to-end latency on target repositories and filesystems. The in-memory number
