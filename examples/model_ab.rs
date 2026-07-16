@@ -246,10 +246,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                             executor_model: (arm == Arm::Prewalk)
                                 .then(|| manifest.executor_model.clone()),
                             duration_ms: started.elapsed().as_millis(),
-                            status: if failure.timed_out {
-                                RunStatus::AdapterTimedOut
-                            } else {
-                                RunStatus::AdapterFailed
+                            status: match failure.kind {
+                                AdapterFailureKind::Failed => RunStatus::AdapterFailed,
+                                AdapterFailureKind::TimedOut => RunStatus::AdapterTimedOut,
                             },
                             validation_duration_ms: None,
                             validation_exit_code: None,
@@ -486,14 +485,19 @@ fn invoke_adapter(
 }
 
 struct AdapterFailure {
-    timed_out: bool,
+    kind: AdapterFailureKind,
     message: String,
+}
+
+enum AdapterFailureKind {
+    Failed,
+    TimedOut,
 }
 
 impl AdapterFailure {
     fn new(message: impl Into<String>) -> Self {
         Self {
-            timed_out: false,
+            kind: AdapterFailureKind::Failed,
             message: message.into(),
         }
     }
@@ -504,7 +508,7 @@ impl AdapterFailure {
 
     fn timeout() -> Self {
         Self {
-            timed_out: true,
+            kind: AdapterFailureKind::TimedOut,
             message: "model adapter timed out".to_owned(),
         }
     }
