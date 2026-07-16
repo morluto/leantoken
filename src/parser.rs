@@ -1,6 +1,11 @@
+use std::ops::ControlFlow;
 use std::path::Path;
 
-use tree_sitter::{Language, Node, Parser, Query, QueryCursor, QueryMatch, StreamingIterator};
+use tokio_util::sync::CancellationToken;
+use tree_sitter::{
+    Language, Node, ParseOptions, Parser, Query, QueryCursor, QueryCursorOptions, QueryMatch,
+    StreamingIterator, Tree,
+};
 
 use crate::model::{Import, Reference, ReferenceRole, Symbol};
 use crate::{Error, Result};
@@ -86,20 +91,33 @@ pub fn language_by_path(path: impl AsRef<Path>) -> Option<String> {
 /// Files whose language is not supported still return `Ok`, but with an empty
 /// parse and `language: None` so callers can fall back to plain text indexing.
 pub fn parse(path: impl AsRef<Path>, source: &str) -> Result<ParseOutput> {
+    parse_with_cancellation(path, source, &CancellationToken::new())
+}
+
+pub(crate) fn parse_with_cancellation(
+    path: impl AsRef<Path>,
+    source: &str,
+    cancellation: &CancellationToken,
+) -> Result<ParseOutput> {
     match language_by_path(path) {
-        Some(lang) => parse_language(&lang, source),
-        None => Ok(ParseOutput {
-            language: None,
-            structurally_complete: false,
-            symbols: Vec::new(),
-            references: Vec::new(),
-            imports: Vec::new(),
-        }),
+        Some(lang) => {
+            parse_language_with_cancellation(&lang, source, || cancellation.is_cancelled())
+        }
+        None if cancellation.is_cancelled() => Err(Error::Cancelled),
+        None => Ok(empty_parse()),
     }
 }
 
 /// Parse source text for a known language name.
 pub fn parse_language(language: &str, source: &str) -> Result<ParseOutput> {
+    parse_language_with_cancellation(language, source, || false)
+}
+
+fn parse_language_with_cancellation(
+    language: &str,
+    source: &str,
+    mut is_cancelled: impl FnMut() -> bool,
+) -> Result<ParseOutput> {
     let lang = language_object(language)
         .ok_or_else(|| Error::UnsupportedLanguage(language.to_string()))?;
 
@@ -107,9 +125,7 @@ pub fn parse_language(language: &str, source: &str) -> Result<ParseOutput> {
     parser
         .set_language(&lang)
         .map_err(Error::TreeSitterLanguage)?;
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| Error::InvalidRequest("parser returned None".to_string()))?;
+    let tree = parse_tree(&mut parser, source, &mut is_cancelled)?;
     let root = tree.root_node();
     let structurally_complete = !root.has_error();
 
@@ -120,12 +136,16 @@ pub fn parse_language(language: &str, source: &str) -> Result<ParseOutput> {
     let mut references = Vec::new();
     let mut imports = Vec::new();
 
-    run_query(source, &tags_query, root, |qm| {
+    run_query(source, &tags_query, root, &mut is_cancelled, |qm| {
         process_tags_match(source, &tags_query, qm, &mut symbols, &mut references);
-    });
-    run_query(source, &import_query, root, |qm| {
+    })?;
+    run_query(source, &import_query, root, &mut is_cancelled, |qm| {
         process_imports_match(source, &import_query, qm, &mut imports);
-    });
+    })?;
+
+    if is_cancelled() {
+        return Err(Error::Cancelled);
+    }
 
     compute_symbol_parents(&mut symbols);
     compute_reference_enclosing(&symbols, &mut references);
@@ -137,6 +157,46 @@ pub fn parse_language(language: &str, source: &str) -> Result<ParseOutput> {
         references,
         imports,
     })
+}
+
+fn empty_parse() -> ParseOutput {
+    ParseOutput {
+        language: None,
+        structurally_complete: false,
+        symbols: Vec::new(),
+        references: Vec::new(),
+        imports: Vec::new(),
+    }
+}
+
+fn parse_tree(
+    parser: &mut Parser,
+    source: &str,
+    is_cancelled: &mut impl FnMut() -> bool,
+) -> Result<Tree> {
+    if is_cancelled() {
+        return Err(Error::Cancelled);
+    }
+
+    let bytes = source.as_bytes();
+    let mut input = |offset: usize, _| bytes.get(offset..).unwrap_or_default();
+    let tree = {
+        let mut progress = |_: &tree_sitter::ParseState| {
+            if is_cancelled() {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        };
+        let options = ParseOptions::new().progress_callback(&mut progress);
+        parser.parse_with_options(&mut input, None, Some(options))
+    };
+
+    match tree {
+        Some(tree) => Ok(tree),
+        None if is_cancelled() => Err(Error::Cancelled),
+        None => Err(Error::InvalidRequest("parser returned None".into())),
+    }
 }
 
 fn language_object(name: &str) -> Option<Language> {
@@ -187,14 +247,40 @@ fn build_import_query(language: &str, lang: &Language) -> Result<Query> {
     Query::new(lang, src).map_err(Error::TreeSitterQuery)
 }
 
-fn run_query<F>(source: &str, query: &Query, root: Node, mut f: F)
+fn run_query<F>(
+    source: &str,
+    query: &Query,
+    root: Node,
+    is_cancelled: &mut impl FnMut() -> bool,
+    mut f: F,
+) -> Result<()>
 where
     F: FnMut(&QueryMatch),
 {
+    if is_cancelled() {
+        return Err(Error::Cancelled);
+    }
+
     let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(query, root, source.as_bytes());
-    while let Some(qm) = matches.next() {
-        f(qm);
+    {
+        let mut progress = |_: &tree_sitter::QueryCursorState| {
+            if is_cancelled() {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        };
+        let options = QueryCursorOptions::new().progress_callback(&mut progress);
+        let mut matches = cursor.matches_with_options(query, root, source.as_bytes(), options);
+        while let Some(qm) = matches.next() {
+            f(qm);
+        }
+    }
+
+    if is_cancelled() {
+        Err(Error::Cancelled)
+    } else {
+        Ok(())
     }
 }
 
@@ -529,6 +615,26 @@ func main() {
             .iter()
             .map(|i| i.raw_target.as_str())
             .collect()
+    }
+
+    #[test]
+    fn tree_sitter_progress_callback_interrupts_parsing() {
+        let source = (0..20_000)
+            .map(|index| format!("fn item_{index}() {{ let value = {index}; }}\n"))
+            .collect::<String>();
+        let language = language_object("rust").expect("rust language");
+        let mut parser = Parser::new();
+        parser.set_language(&language).expect("set language");
+        let mut checks = 0usize;
+
+        let error = parse_tree(&mut parser, &source, &mut || {
+            checks += 1;
+            checks > 1
+        })
+        .expect_err("progress callback should cancel parsing");
+
+        assert!(matches!(error, Error::Cancelled));
+        assert!(checks > 1, "tree-sitter never polled parse progress");
     }
 
     #[test]
