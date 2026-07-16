@@ -85,6 +85,22 @@ for that candidate: do not tune against the result and present another candidate
 as blind on the same tasks. If the tasks become tuning inputs, copy them to a
 prospective validation manifest and collect a new unseen holdout with a new hash.
 
+The holdout was evaluated once on 2026-07-16 and is now consumed for candidate
+`0b6f80bb4e9d356443ebd130be1d04c0254111cb`. The unchanged Linux x86-64 report
+is [`../benchmarks/reports/holdout-linux-x86_64-2026-07-16.json`](../benchmarks/reports/holdout-linux-x86_64-2026-07-16.json),
+with manifest hash
+`a61d9672ca483dbebbbe75d5b947cbfdcbc56a41218b2f756771667b8912e263`.
+The clean harness verified the candidate runtime tree before evaluation.
+
+This was a negative retrieval result: aggregate labeled-file recall was 36%,
+line-anchor recall was 9%, and 2,806 source tokens were returned in unlabeled
+fragments. Express reached 100% file recall, Gin 75%, Requests, Lodash, and Rack
+50%, while Serde, Flask, Vue, and TypeORM returned none of their labeled files.
+Known-hash resends remained zero and the estimated repeated-range cost was 62
+source tokens. The large apparent source savings are not a product win because
+the responses frequently omitted the labeled evidence. These results were not
+used to alter ranking, prompts, labels, queries, ranges, or budgets.
+
 ## Model-in-the-loop A/B
 
 `model_ab` executes the same frozen task across four arms:
