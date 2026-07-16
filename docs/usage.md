@@ -75,6 +75,11 @@ content hash. Structural fields appear only when syntax supports them.
 Lexical matches remain eligible when structural extraction is unavailable or
 incomplete.
 
+Regex search has explicit file, chunk, candidate, and compiled-program safety
+limits. If a limit would make the answer incomplete, the tool returns
+`LimitExceeded`; use text, identifier, symbol, or reference mode for exhaustive
+indexed lookup on larger repositories.
+
 ## `leantoken_outline`
 
 Returns definitions, imports, signatures, parent relationships, and one-based

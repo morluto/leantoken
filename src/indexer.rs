@@ -48,8 +48,7 @@ impl Indexer {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(workers)
             .thread_name(|index| format!("leantoken-index-{index}"))
-            .build()
-            .map_err(|error| Error::InvalidRequest(format!("index worker pool: {error}")))?;
+            .build()?;
         Ok(Self {
             config,
             storage,
@@ -116,7 +115,7 @@ impl Indexer {
             check_cancelled(cancellation)?;
             // mtime+size alone cannot prove content identity (bind mounts, copy
             // tools that preserve mtime, some network filesystems). Content-hash
-            // before skipping so silent overwrites still reindex (#22).
+            // before skipping so silent overwrites still reindex.
             if !force
                 && let Some(record) = existing.get(&file.relative_path)
                 && record.size_bytes == file.size_bytes
@@ -362,8 +361,8 @@ impl Indexer {
         candidates: &[DiscoveredFile],
         cancellation: &CancellationToken,
     ) -> Result<Vec<PreparedFile>> {
-        // Reuse the pool owned by this indexer (issue #24): one pool per
-        // Services/cache, sized from that instance's Config.max_index_workers.
+        // One pool per Services/cache preserves that instance's configured
+        // worker bound without rebuilding threads on every reconciliation.
         let chunk_lines = self.config.chunk_lines;
         let chunk_bytes = self.config.chunk_bytes;
         let tokenizer = self.config.tokenizer;

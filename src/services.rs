@@ -1,4 +1,3 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::sync::{
     Arc,
@@ -7,42 +6,21 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
-use globset::Glob;
-use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
-use nucleo_matcher::{Config as MatcherConfig, Matcher};
 use tokio_util::sync::CancellationToken;
 
 use crate::coordination::{IndexCoordination, IndexLeadership};
 use crate::error::RetryableOperation;
 use crate::indexer::Indexer;
 use crate::model::*;
-use crate::ranking::{self, Candidate};
-use crate::repository::{git_changed_paths, resolve_existing, validate_relative};
-use crate::storage::{ChunkHit, FileRecord, ReadSession, ReferenceHit, Storage, SymbolHit};
-use crate::text::{byte_range_to_line_range, excerpt, expand_terms, hash, identifier_words};
+use crate::storage::{ReadSession, Storage};
 use crate::{Config, Error, Result};
 
-const MAX_QUERY_BYTES: usize = 64 * 1024;
-const MAX_PATTERN_BYTES: usize = 4 * 1024;
-const MAX_PATH_BYTES: usize = 4 * 1024;
-const MAX_INPUT_ITEMS: usize = 256;
-const GIT_CHANGED_PATHS_MAX: usize = 512;
-const MIN_CONTEXT_RANGE_LINES: usize = 12;
-const MAX_CONTEXT_RANGE_LINES: usize = 128;
-/// Maximum context query terms (symbols/refs/FTS fan-out budget).
-const MAX_CONTEXT_QUERIES: usize = 12;
-/// Per-term symbol/reference candidate cap for context assembly.
-const MAX_CONTEXT_HITS_PER_SOURCE: usize = 20;
-/// Per-term FTS candidate cap for context assembly.
-const MAX_CONTEXT_LEXICAL_HITS: usize = 30;
-/// Absolute regex scan candidate cap (independent of max_results multiplier).
-const MAX_REGEX_CANDIDATES: usize = 2_000;
-/// Maximum files examined during a regex scan before early exit.
-const MAX_REGEX_FILES_SCANNED: usize = 10_000;
-/// Maximum chunks examined per file during a regex scan.
-const MAX_REGEX_CHUNKS_PER_FILE: usize = 256;
-/// Page size when listing files for tree/find/glob and path maps.
-const FILE_LIST_PAGE_SIZE: usize = 1_000;
+mod context;
+mod files;
+mod read;
+mod search;
+mod validation;
+
 const STARTUP_BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 const STARTUP_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(25);
 const STARTUP_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
@@ -53,19 +31,13 @@ const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
 ///
 /// Blocking filesystem and SQLite work runs on Tokio's blocking pool. Index
 /// reconciliations are serialized across processes, while reads use committed
-/// SQLite WAL generations and retry if a generation changes mid-response.
+/// SQLite WAL snapshots so every query in one response sees the same generation.
 pub struct Services {
     config: Arc<Config>,
     storage: Storage,
     indexer: Indexer,
     coordination: IndexCoordination,
     active_reconciliations: Arc<AtomicUsize>,
-}
-
-struct StoredExcerpt {
-    content: String,
-    start_line: usize,
-    end_line: usize,
 }
 
 impl Services {
@@ -86,7 +58,7 @@ impl Services {
         let mut attempt = 0u32;
 
         loop {
-            check_cancelled(cancellation)?;
+            validation::check_cancelled(cancellation)?;
             match Self::open_once(&config, Some(STARTUP_BUSY_TIMEOUT)) {
                 Ok(services) => return Ok(services),
                 Err(error) if is_database_contention(&error) => {
@@ -298,957 +270,10 @@ impl Services {
         })
     }
 
-    fn files_sync(
+    pub(super) fn consistent<T>(
         &self,
-        request: FilesRequest,
-        cancellation: &CancellationToken,
-    ) -> Result<FilesResponse> {
-        check_cancelled(cancellation)?;
-        validate_optional_input(request.path.as_deref(), "path", MAX_PATH_BYTES)?;
-        validate_optional_input(request.query.as_deref(), "query", MAX_QUERY_BYTES)?;
-        validate_optional_input(request.pattern.as_deref(), "pattern", MAX_PATTERN_BYTES)?;
-        self.consistent(|session, generation| {
-            let limit = self.result_limit(request.max_results);
-            let offset = parse_cursor(request.cursor.as_deref(), generation)?;
-            let files = self.all_files(session, cancellation)?;
-            let mut entries = match request.operation {
-                FileOperation::Tree => {
-                    tree_entries(&files, request.path.as_deref(), request.depth)?
-                }
-                FileOperation::Find => fuzzy_entries(&files, request.query.as_deref())?,
-                FileOperation::Glob => glob_entries(&files, request.pattern.as_deref())?,
-            };
-            let has_more = offset.saturating_add(limit) < entries.len();
-            entries = entries.into_iter().skip(offset).take(limit).collect();
-            Ok(FilesResponse {
-                entries,
-                meta: self.meta(
-                    generation,
-                    0,
-                    has_more.then(|| make_cursor(generation, offset + limit)),
-                ),
-            })
-        })
-    }
-
-    fn search_sync(
-        &self,
-        request: SearchRequest,
-        cancellation: &CancellationToken,
-    ) -> Result<SearchResponse> {
-        check_cancelled(cancellation)?;
-        if request.query.trim().is_empty() {
-            return Err(Error::InvalidRequest(
-                "search query must not be empty".into(),
-            ));
-        }
-        validate_input(&request.query, "search query", MAX_QUERY_BYTES)?;
-        validate_patterns(&request.include_paths)?;
-        validate_patterns(&request.exclude_paths)?;
-        validate_patterns(&request.focus_paths)?;
-        self.consistent(|session, generation| {
-            let limit = self.result_limit(request.max_results);
-            let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens);
-            let offset = parse_cursor(request.cursor.as_deref(), generation)?;
-            let context_lines = request
-                .context_lines
-                .unwrap_or(self.config.context_lines)
-                .min(20);
-            let mut hits = Vec::new();
-
-            if matches!(
-                request.mode,
-                SearchMode::Auto | SearchMode::Identifier | SearchMode::Symbol
-            ) {
-                for hit in
-                    session.search_symbols(&request.query, request.case_sensitive, limit * 4)?
-                {
-                    check_cancelled(cancellation)?;
-                    if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)?
-                        && let Some(search_hit) =
-                            self.symbol_search_hit(session, hit, &request.query, context_lines)?
-                    {
-                        hits.push(search_hit);
-                    }
-                }
-            }
-            if matches!(
-                request.mode,
-                SearchMode::Auto | SearchMode::Identifier | SearchMode::Reference
-            ) {
-                for hit in
-                    session.search_references(&request.query, request.case_sensitive, limit * 4)?
-                {
-                    check_cancelled(cancellation)?;
-                    if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)?
-                        && let Some(search_hit) =
-                            self.reference_search_hit(session, hit, &request.query, context_lines)?
-                    {
-                        hits.push(search_hit);
-                    }
-                }
-            }
-
-            let lexical = match request.mode {
-                SearchMode::Regex => {
-                    self.regex_hits(session, &request, limit * 20, cancellation)?
-                }
-                SearchMode::Text | SearchMode::Auto => {
-                    if request.query.chars().count() >= 3 {
-                        session.search_trigram(&request.query, limit * 8)?
-                    } else {
-                        session.search_word(&fts_quote(&request.query), limit * 8)?
-                    }
-                }
-                SearchMode::Identifier => {
-                    session.search_word(&fts_quote(&request.query), limit * 8)?
-                }
-                SearchMode::Symbol | SearchMode::Reference => Vec::new(),
-            };
-            for hit in lexical {
-                check_cancelled(cancellation)?;
-                if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)?
-                    && let Some(search_hit) = chunk_search_hit(
-                        hit,
-                        &request.query,
-                        request.case_sensitive,
-                        context_lines,
-                        matches!(request.mode, SearchMode::Regex),
-                    )?
-                {
-                    hits.push(search_hit);
-                }
-            }
-
-            apply_focus(&mut hits, &request.focus_paths)?;
-            hits.sort_by(|left, right| {
-                right
-                    .score
-                    .total_cmp(&left.score)
-                    .then_with(|| left.path.cmp(&right.path))
-                    .then_with(|| left.start_line.cmp(&right.start_line))
-            });
-            let mut seen = HashSet::new();
-            hits.retain(|hit| {
-                seen.insert((
-                    hit.path.clone(),
-                    hit.start_line,
-                    hit.end_line,
-                    hit.content_hash.clone(),
-                ))
-            });
-
-            let mut emitted_tokens = 0usize;
-            let mut selected = Vec::new();
-            let remaining = hits.len().saturating_sub(offset);
-            let mut consumed = 0usize;
-            for hit in hits.into_iter().skip(offset) {
-                check_cancelled(cancellation)?;
-                if selected.len() >= limit {
-                    break;
-                }
-                consumed += 1;
-                let count = self.config.tokenizer.count(&hit.excerpt);
-                if emitted_tokens.saturating_add(count) > token_limit {
-                    continue;
-                }
-                emitted_tokens += count;
-                selected.push(hit);
-            }
-            let has_more = consumed < remaining;
-            Ok(SearchResponse {
-                hits: selected,
-                meta: self.meta(
-                    generation,
-                    emitted_tokens,
-                    has_more.then(|| make_cursor(generation, offset + consumed)),
-                ),
-            })
-        })
-    }
-
-    fn outline_sync(
-        &self,
-        request: OutlineRequest,
-        cancellation: &CancellationToken,
-    ) -> Result<OutlineResponse> {
-        check_cancelled(cancellation)?;
-        if request.paths.is_empty() {
-            return Err(Error::InvalidRequest(
-                "outline requires at least one path".into(),
-            ));
-        }
-        if request.paths.len() > MAX_INPUT_ITEMS {
-            return Err(Error::LimitExceeded);
-        }
-        for path in &request.paths {
-            validate_input(path, "path", MAX_PATH_BYTES)?;
-        }
-        validate_optional_input(
-            request.symbol_name.as_deref(),
-            "symbol name",
-            MAX_PATTERN_BYTES,
-        )?;
-        validate_optional_input(
-            request.symbol_kind.as_deref(),
-            "symbol kind",
-            MAX_PATTERN_BYTES,
-        )?;
-        self.consistent(|session, generation| {
-            let limit = self.result_limit(request.max_results);
-            let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens);
-            let mut remaining = limit;
-            let mut emitted_tokens = 0usize;
-            let mut files = Vec::new();
-            for path in &request.paths {
-                check_cancelled(cancellation)?;
-                validate_relative(path)?;
-                let file = session
-                    .find_file(path)?
-                    .ok_or_else(|| Error::NotIndexed(path.clone()))?;
-                let mut symbols = session
-                    .get_symbols_for_file_filtered(
-                        file.id,
-                        request.symbol_name.as_deref(),
-                        request.symbol_kind.as_deref(),
-                        remaining.max(1),
-                    )?
-                    .into_iter()
-                    .map(storage_symbol)
-                    .collect::<Vec<_>>();
-                symbols.retain(|symbol| {
-                    let cost = symbol
-                        .signature
-                        .as_deref()
-                        .map_or(1, |value| self.config.tokenizer.count(value));
-                    if remaining == 0 || emitted_tokens.saturating_add(cost) > token_limit {
-                        false
-                    } else {
-                        remaining -= 1;
-                        emitted_tokens += cost;
-                        true
-                    }
-                });
-                let mut imports = session
-                    .get_imports_for_file(file.id, limit)?
-                    .into_iter()
-                    .map(|import| Import {
-                        raw_target: import.raw_target,
-                        resolved_path: import.resolved_path,
-                        line: import.line,
-                    })
-                    .collect::<Vec<_>>();
-                imports.retain(|import| {
-                    let cost = self.config.tokenizer.count(&import.raw_target)
-                        + import
-                            .resolved_path
-                            .as_deref()
-                            .map_or(0, |value| self.config.tokenizer.count(value));
-                    if remaining == 0 || emitted_tokens.saturating_add(cost) > token_limit {
-                        false
-                    } else {
-                        remaining -= 1;
-                        emitted_tokens += cost;
-                        true
-                    }
-                });
-                files.push(OutlineFile {
-                    path: file.path,
-                    language: file.language.clone(),
-                    structurally_complete: file.structurally_complete,
-                    symbols,
-                    imports,
-                });
-                if remaining == 0 {
-                    break;
-                }
-            }
-            Ok(OutlineResponse {
-                files,
-                meta: self.meta(generation, emitted_tokens, None),
-            })
-        })
-    }
-
-    fn read_sync(
-        &self,
-        request: ReadRequest,
-        cancellation: &CancellationToken,
-    ) -> Result<ReadResponse> {
-        check_cancelled(cancellation)?;
-        validate_input(&request.path, "path", MAX_PATH_BYTES)?;
-        validate_optional_input(request.symbol.as_deref(), "symbol", MAX_PATTERN_BYTES)?;
-        validate_optional_input(request.expected_hash.as_deref(), "expected hash", 128)?;
-        validate_relative(&request.path)?;
-        if request.symbol.is_some() && (request.start_line.is_some() || request.end_line.is_some())
-        {
-            return Err(Error::InvalidRequest(
-                "read accepts either symbol or line range, not both".into(),
-            ));
-        }
-        self.consistent(|session, generation| {
-            check_cancelled(cancellation)?;
-            self.read_at_generation(session, &request, generation)
-        })
-    }
-
-    fn read_at_generation(
-        &self,
-        session: &ReadSession,
-        request: &ReadRequest,
-        generation: u64,
-    ) -> Result<ReadResponse> {
-        let indexed = session
-            .find_file(&request.path)?
-            .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
-        let path = resolve_existing(&self.config.root, &request.path)?;
-        let bytes = fs::read(path)?;
-        let source = std::str::from_utf8(&bytes)
-            .map_err(|_| Error::InvalidRequest("requested file is not UTF-8 text".into()))?;
-        let line_count = source.lines().count().max(1);
-
-        let (start_line, requested_end) = if let Some(symbol_name) = &request.symbol {
-            let symbol = session
-                .find_symbol(indexed.id, symbol_name)?
-                .ok_or_else(|| Error::NotIndexed(format!("{}::{symbol_name}", request.path)))?;
-            (symbol.start_line, symbol.end_line)
-        } else {
-            (
-                request.start_line.unwrap_or(1),
-                request.end_line.unwrap_or(line_count),
-            )
-        };
-        if start_line == 0 || requested_end < start_line || start_line > line_count {
-            return Err(Error::InvalidRequest(
-                "invalid or out-of-range line range".into(),
-            ));
-        }
-        let requested_end = requested_end.min(line_count);
-        let content = crate::text::excerpt(source, start_line, requested_end);
-        let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens);
-        let (content, emitted_tokens) = self.config.tokenizer.truncate(&content, max_tokens);
-        let returned_lines = content
-            .lines()
-            .count()
-            .max(usize::from(!content.is_empty()));
-        let end_line = if returned_lines == 0 {
-            start_line
-        } else {
-            start_line + returned_lines - 1
-        };
-        let content_hash = hash(content);
-        let full_hash = crate::text::hash_bytes(&bytes);
-        let index_stale = indexed.content_hash != full_hash;
-        let indexed_hash = Some(indexed.content_hash);
-        let not_modified = request.expected_hash.as_deref() == Some(content_hash.as_str());
-
-        Ok(ReadResponse {
-            path: request.path.clone(),
-            status: if not_modified {
-                ReadStatus::NotModified
-            } else {
-                ReadStatus::Content
-            },
-            start_line,
-            end_line,
-            content: (!not_modified).then(|| content.to_string()),
-            content_hash,
-            indexed_hash,
-            index_stale,
-            meta: self.meta(
-                generation,
-                if not_modified { 0 } else { emitted_tokens },
-                None,
-            ),
-        })
-    }
-
-    fn file_change_boost(
-        file: Option<&FileRecord>,
-        path: &str,
-        changed_paths: &HashSet<String>,
-        prior_generation: Option<u64>,
-    ) -> f64 {
-        let mut boost = 0.0;
-
-        if let Some(prior) = prior_generation
-            && file.is_some_and(|f| f.generation > prior)
-        {
-            boost += 1.0;
-        }
-
-        if changed_paths.contains(path) {
-            boost += 1.0;
-        }
-
-        boost
-    }
-
-    fn context_sync(
-        &self,
-        request: ContextRequest,
-        cancellation: &CancellationToken,
-    ) -> Result<ContextResponse> {
-        check_cancelled(cancellation)?;
-        if request.task.trim().is_empty() || request.token_budget == 0 {
-            return Err(Error::InvalidRequest(
-                "context requires a task and positive token budget".into(),
-            ));
-        }
-        validate_input(&request.task, "task", MAX_QUERY_BYTES)?;
-        validate_patterns(&request.focus_paths)?;
-        validate_patterns(&request.exclude_paths)?;
-        if request.focus_symbols.len() > MAX_INPUT_ITEMS {
-            return Err(Error::LimitExceeded);
-        }
-        for symbol in &request.focus_symbols {
-            validate_input(symbol, "focus symbol", MAX_PATTERN_BYTES)?;
-        }
-        if request.token_budget > self.config.max_output_tokens {
-            return Err(Error::LimitExceeded);
-        }
-        if request.known_hashes.len() > MAX_INPUT_ITEMS {
-            return Err(Error::LimitExceeded);
-        }
-        for hash in &request.known_hashes {
-            validate_input(hash, "known hash", 128)?;
-        }
-        let changed_paths = git_changed_paths(&self.config.root, GIT_CHANGED_PATHS_MAX)
-            .unwrap_or_else(|error| {
-                tracing::debug!(%error, "working-tree signal unavailable");
-                HashSet::new()
-            });
-        self.consistent(|session, generation| {
-            let queries = context_queries(&request.task, MAX_CONTEXT_QUERIES);
-            let terms = queries
-                .iter()
-                .map(|query| query.value.clone())
-                .collect::<Vec<_>>();
-            let files = self.all_files(session, cancellation)?;
-            let file_map: HashMap<String, FileRecord> = files
-                .into_iter()
-                .map(|file| (file.path.clone(), file))
-                .collect();
-            let mut candidates = Vec::new();
-            let mut query_fusion = HashMap::<String, HashMap<String, f64>>::new();
-
-            // Workflow words such as `test` are useful path priors but terrible
-            // retrieval queries: nearly every test function becomes a high-
-            // scoring symbol candidate. Keep them out of candidate generation.
-            for query in queries.iter().filter(|query| query.value != "test") {
-                let term = &query.value;
-                let concept = query.fusion_key.as_deref().unwrap_or(term);
-                check_cancelled(cancellation)?;
-                for (rank, hit) in session
-                    .search_symbols(term, false, MAX_CONTEXT_HITS_PER_SOURCE)?
-                    .into_iter()
-                    .enumerate()
-                {
-                    check_cancelled(cancellation)?;
-                    if !path_allowed(&hit.path, &[], &request.exclude_paths)? {
-                        continue;
-                    }
-                    let Some(excerpt) = self.adaptive_context_excerpt(
-                        session,
-                        hit.symbol.file_id,
-                        hit.symbol.start_line,
-                        hit.symbol.end_line,
-                        hit.symbol.start_line,
-                        request.token_budget,
-                    )?
-                    else {
-                        continue;
-                    };
-                    let exact = f64::from(hit.symbol.name.eq_ignore_ascii_case(term));
-                    let qualified = qualified_symbol_match(
-                        concept,
-                        &hit.symbol.name,
-                        hit.symbol.parent.as_deref(),
-                        hit.symbol.signature.as_deref(),
-                    );
-                    if let Some(fusion_key) = &query.fusion_key {
-                        record_query_hit(
-                            &mut query_fusion,
-                            &hit.path,
-                            fusion_key,
-                            query.weight,
-                            rank,
-                        );
-                    }
-                    let change_boost = Self::file_change_boost(
-                        file_map.get(&hit.path),
-                        &hit.path,
-                        &changed_paths,
-                        request.prior_repository_generation,
-                    );
-                    candidates.push(
-                        Candidate::new(
-                            &hit.path,
-                            excerpt.start_line,
-                            excerpt.end_line,
-                            excerpt.content,
-                        )
-                        .match_kind("symbol")
-                        .concept(
-                            concept,
-                            query.weight + f64::from(query.fusion_key.is_some()),
-                        )
-                        .representation("symbol")
-                        .symbol_name(hit.symbol.name)
-                        .exact(exact + qualified * 1.5)
-                        .symbol(1.0)
-                        .path_score(context_path_score(&hit.path, &terms, &request.task))
-                        .change_boost(change_boost),
-                    );
-                }
-                for (rank, hit) in session
-                    .search_references(term, false, MAX_CONTEXT_HITS_PER_SOURCE)?
-                    .into_iter()
-                    .enumerate()
-                {
-                    check_cancelled(cancellation)?;
-                    if !path_allowed(&hit.path, &[], &request.exclude_paths)? {
-                        continue;
-                    }
-                    let excerpt = if let Some(symbol) = session
-                        .find_enclosing_symbol(hit.reference.file_id, hit.reference.start_line)?
-                    {
-                        self.adaptive_context_excerpt(
-                            session,
-                            hit.reference.file_id,
-                            symbol.start_line,
-                            symbol.end_line,
-                            hit.reference.start_line,
-                            request.token_budget,
-                        )?
-                    } else {
-                        None
-                    };
-                    let excerpt = if excerpt.is_some() {
-                        excerpt
-                    } else {
-                        self.stored_excerpt(
-                            session,
-                            hit.reference.file_id,
-                            hit.reference.start_line,
-                            hit.reference.end_line,
-                            2,
-                            12,
-                        )?
-                    };
-                    let Some(excerpt) = excerpt else {
-                        continue;
-                    };
-                    if let Some(fusion_key) = &query.fusion_key {
-                        record_query_hit(
-                            &mut query_fusion,
-                            &hit.path,
-                            fusion_key,
-                            query.weight,
-                            rank,
-                        );
-                    }
-                    let change_boost = Self::file_change_boost(
-                        file_map.get(&hit.path),
-                        &hit.path,
-                        &changed_paths,
-                        request.prior_repository_generation,
-                    );
-                    candidates.push(
-                        Candidate::new(
-                            &hit.path,
-                            excerpt.start_line,
-                            excerpt.end_line,
-                            excerpt.content,
-                        )
-                        .match_kind("reference")
-                        .concept(
-                            concept,
-                            query.weight + f64::from(query.fusion_key.is_some()),
-                        )
-                        .symbol_name(hit.reference.name)
-                        .reference(1.0)
-                        .path_score(context_path_score(&hit.path, &terms, &request.task))
-                        .change_boost(change_boost),
-                    );
-                }
-                let lexical = if term.chars().count() >= 3 {
-                    session.search_trigram(term, MAX_CONTEXT_LEXICAL_HITS)?
-                } else {
-                    session.search_word(&fts_quote(term), MAX_CONTEXT_LEXICAL_HITS)?
-                };
-                for (rank, hit) in lexical.into_iter().enumerate() {
-                    check_cancelled(cancellation)?;
-                    if !path_allowed(&hit.path, &[], &request.exclude_paths)? {
-                        continue;
-                    }
-                    let Some(search_hit) = chunk_search_hit(hit.clone(), term, false, 2, false)?
-                    else {
-                        continue;
-                    };
-                    let matched_line =
-                        matching_line(&hit, term, false).unwrap_or(search_hit.start_line);
-                    let excerpt = if let Some(symbol) =
-                        session.find_enclosing_symbol(hit.file_id, matched_line)?
-                    {
-                        self.adaptive_context_excerpt(
-                            session,
-                            hit.file_id,
-                            symbol.start_line,
-                            symbol.end_line,
-                            matched_line,
-                            request.token_budget,
-                        )?
-                    } else {
-                        None
-                    }
-                    .unwrap_or(StoredExcerpt {
-                        content: search_hit.excerpt.clone(),
-                        start_line: search_hit.start_line,
-                        end_line: search_hit.end_line,
-                    });
-                    if let Some(fusion_key) = &query.fusion_key {
-                        record_query_hit(
-                            &mut query_fusion,
-                            &search_hit.path,
-                            fusion_key,
-                            query.weight,
-                            rank,
-                        );
-                    }
-                    let occurrences = hit
-                        .content
-                        .to_lowercase()
-                        .matches(&term.to_lowercase())
-                        .count();
-                    let change_boost = Self::file_change_boost(
-                        file_map.get(&search_hit.path),
-                        &search_hit.path,
-                        &changed_paths,
-                        request.prior_repository_generation,
-                    );
-                    let candidate = Candidate::new(
-                        &search_hit.path,
-                        excerpt.start_line,
-                        excerpt.end_line,
-                        excerpt.content,
-                    )
-                    .match_kind("text")
-                    .concept(
-                        concept,
-                        query.weight + f64::from(query.fusion_key.is_some()),
-                    )
-                    .exact(query.weight)
-                    .bm25((-hit.score).max(0.0) * 1_000_000.0)
-                    .path_score(context_path_score(&search_hit.path, &terms, &request.task))
-                    .lexical_frequency_penalty(
-                        (occurrences.saturating_sub(5) as f64 / 20.0).min(1.0),
-                    )
-                    .change_boost(change_boost);
-                    candidates.push(candidate);
-                }
-            }
-
-            apply_query_fusion(&mut candidates, &query_fusion);
-
-            let seed_paths = candidates
-                .iter()
-                .map(|candidate| candidate.path.clone())
-                .collect::<BTreeSet<_>>();
-            let mut neighbor_count = 0usize;
-            for seed_path in seed_paths.iter().take(24) {
-                check_cancelled(cancellation)?;
-                let Some(seed_file) = file_map.get(seed_path) else {
-                    continue;
-                };
-                for import in session.get_imports_for_file(seed_file.id, 32)? {
-                    check_cancelled(cancellation)?;
-                    let Some(target_path) = import.resolved_path else {
-                        continue;
-                    };
-                    if !path_allowed(&target_path, &[], &request.exclude_paths)? {
-                        continue;
-                    }
-                    let Some(target_file) = file_map.get(&target_path) else {
-                        continue;
-                    };
-                    let Some(chunk) = session
-                        .get_chunks_for_file(target_file.id, 1)?
-                        .into_iter()
-                        .next()
-                    else {
-                        continue;
-                    };
-                    let end_line = chunk.end_line.min(chunk.start_line + 29);
-                    let content = crate::text::excerpt(
-                        &chunk.content,
-                        1,
-                        end_line.saturating_sub(chunk.start_line) + 1,
-                    );
-                    let change_boost = Self::file_change_boost(
-                        Some(target_file),
-                        &target_path,
-                        &changed_paths,
-                        request.prior_repository_generation,
-                    );
-                    candidates.push(
-                        Candidate::new(&target_path, chunk.start_line, end_line, content)
-                            .match_kind("import")
-                            .concept(seed_path, 0.2)
-                            .representation("import_neighbor")
-                            .path_score(context_path_score(&target_path, &terms, &request.task))
-                            .import_boost(1.0)
-                            .change_boost(change_boost),
-                    );
-                    neighbor_count += 1;
-                    if neighbor_count >= 24 {
-                        break;
-                    }
-                }
-                if neighbor_count >= 24 {
-                    break;
-                }
-            }
-
-            let mut response = ranking::select_with_tokenizer(
-                candidates,
-                &request,
-                generation,
-                self.config.tokenizer,
-            );
-            response.meta.freshness = self.freshness();
-            if response.fragments.is_empty() {
-                response
-                    .warnings
-                    .push("no relevant indexed evidence found".into());
-            }
-            Ok(response)
-        })
-    }
-
-    fn symbol_search_hit(
-        &self,
-        session: &ReadSession,
-        hit: SymbolHit,
-        query: &str,
-        context: usize,
-    ) -> Result<Option<SearchHit>> {
-        let Some(excerpt) = self.stored_excerpt(
-            session,
-            hit.symbol.file_id,
-            hit.symbol.start_line,
-            hit.symbol.end_line,
-            context,
-            30,
-        )?
-        else {
-            return Ok(None);
-        };
-        let exact = hit.symbol.name == query || hit.symbol.name.eq_ignore_ascii_case(query);
-        Ok(Some(SearchHit {
-            path: hit.path,
-            start_line: excerpt.start_line,
-            end_line: excerpt.end_line,
-            content_hash: hash(&excerpt.content),
-            excerpt: excerpt.content,
-            match_kind: "symbol".into(),
-            role: Some(ReferenceRole::Definition),
-            symbol: Some(hit.symbol.name),
-            enclosing_symbol: hit.symbol.parent,
-            score: if exact { 10.0 } else { 7.0 },
-            score_reasons: vec![if exact {
-                "exact symbol".into()
-            } else {
-                "symbol".into()
-            }],
-        }))
-    }
-
-    fn reference_search_hit(
-        &self,
-        session: &ReadSession,
-        hit: ReferenceHit,
-        query: &str,
-        context: usize,
-    ) -> Result<Option<SearchHit>> {
-        let Some(excerpt) = self.stored_excerpt(
-            session,
-            hit.reference.file_id,
-            hit.reference.start_line,
-            hit.reference.end_line,
-            context,
-            12,
-        )?
-        else {
-            return Ok(None);
-        };
-        let exact = hit.reference.name == query || hit.reference.name.eq_ignore_ascii_case(query);
-        Ok(Some(SearchHit {
-            path: hit.path,
-            start_line: excerpt.start_line,
-            end_line: excerpt.end_line,
-            content_hash: hash(&excerpt.content),
-            excerpt: excerpt.content,
-            match_kind: "reference".into(),
-            role: Some(hit.reference.role),
-            symbol: Some(hit.reference.name),
-            enclosing_symbol: hit.reference.enclosing_symbol,
-            score: if exact { 8.0 } else { 5.0 },
-            score_reasons: vec![if exact {
-                "exact reference".into()
-            } else {
-                "reference".into()
-            }],
-        }))
-    }
-
-    fn stored_excerpt(
-        &self,
-        session: &ReadSession,
-        file_id: i64,
-        start_line: usize,
-        end_line: usize,
-        context: usize,
-        max_lines: usize,
-    ) -> Result<Option<StoredExcerpt>> {
-        let first = start_line.saturating_sub(context).max(1);
-        let mut last = end_line.saturating_add(context);
-        if max_lines > 0 && last.saturating_sub(first).saturating_add(1) > max_lines {
-            last = first + max_lines - 1;
-        }
-        let selected = session.get_chunks_overlapping(file_id, first, last)?;
-        let (Some(first_chunk), Some(last_chunk)) = (selected.first(), selected.last()) else {
-            return Ok(None);
-        };
-        last = last.min(last_chunk.end_line);
-        let base_line = first_chunk.start_line;
-        let mut combined = String::new();
-        for chunk in &selected {
-            combined.push_str(&chunk.content);
-        }
-        let local_start = first.saturating_sub(base_line) + 1;
-        let local_end = last.saturating_sub(base_line) + 1;
-        Ok(Some(StoredExcerpt {
-            content: crate::text::excerpt(&combined, local_start, local_end),
-            start_line: first,
-            end_line: last,
-        }))
-    }
-
-    fn adaptive_context_excerpt(
-        &self,
-        session: &ReadSession,
-        file_id: i64,
-        declaration_start: usize,
-        declaration_end: usize,
-        matched_line: usize,
-        token_budget: usize,
-    ) -> Result<Option<StoredExcerpt>> {
-        let Some(full) =
-            self.stored_excerpt(session, file_id, declaration_start, declaration_end, 0, 0)?
-        else {
-            return Ok(None);
-        };
-        let full_tokens = self.config.tokenizer.count(&full.content).max(1);
-        if full_tokens <= token_budget {
-            return Ok(Some(full));
-        }
-
-        let declaration_lines = declaration_end
-            .saturating_sub(declaration_start)
-            .saturating_add(1);
-        let proportional_lines = declaration_lines
-            .saturating_mul(token_budget)
-            .saturating_div(full_tokens)
-            .clamp(MIN_CONTEXT_RANGE_LINES, MAX_CONTEXT_RANGE_LINES)
-            .min(declaration_lines);
-        let before = proportional_lines / 3;
-        let mut start = matched_line.saturating_sub(before).max(declaration_start);
-        let mut end = start
-            .saturating_add(proportional_lines.saturating_sub(1))
-            .min(declaration_end);
-        if end.saturating_sub(start).saturating_add(1) < proportional_lines {
-            start = end
-                .saturating_add(1)
-                .saturating_sub(proportional_lines)
-                .max(declaration_start);
-        }
-        end = start
-            .saturating_add(proportional_lines.saturating_sub(1))
-            .min(declaration_end);
-        self.stored_excerpt(session, file_id, start, end, 0, 0)
-    }
-
-    fn regex_hits(
-        &self,
-        session: &ReadSession,
-        request: &SearchRequest,
-        max_candidates: usize,
-        cancellation: &CancellationToken,
-    ) -> Result<Vec<ChunkHit>> {
-        // Hard caps prevent O(repo) regex from running unbounded (issue #24).
-        // Prefer FTS/trigram prefilters in other modes; regex verifies patterns
-        // over a bounded slice of the snapshot.
-        let max_candidates = max_candidates.min(MAX_REGEX_CANDIDATES);
-        let regex = regex::RegexBuilder::new(&request.query)
-            .case_insensitive(!request.case_sensitive)
-            .size_limit(1 << 20)
-            .dfa_size_limit(1 << 20)
-            .build()?;
-        let mut hits = Vec::new();
-        let mut files_scanned = 0usize;
-        for file in self.all_files(session, cancellation)? {
-            check_cancelled(cancellation)?;
-            files_scanned += 1;
-            if files_scanned > MAX_REGEX_FILES_SCANNED {
-                break;
-            }
-            for chunk in session.get_chunks_for_file(file.id, MAX_REGEX_CHUNKS_PER_FILE)? {
-                check_cancelled(cancellation)?;
-                if regex.is_match(&chunk.content) {
-                    hits.push(ChunkHit {
-                        chunk_id: chunk.id,
-                        file_id: chunk.file_id,
-                        path: file.path.clone(),
-                        content: chunk.content,
-                        start_line: chunk.start_line,
-                        end_line: chunk.end_line,
-                        start_byte: chunk.start_byte,
-                        end_byte: chunk.end_byte,
-                        token_count: chunk.token_count,
-                        score: 0.0,
-                    });
-                    if hits.len() >= max_candidates {
-                        return Ok(hits);
-                    }
-                }
-            }
-        }
-        Ok(hits)
-    }
-
-    fn all_files(
-        &self,
-        session: &ReadSession,
-        cancellation: &CancellationToken,
-    ) -> Result<Vec<FileRecord>> {
-        // Page through the snapshot; FILE_LIST_PAGE_SIZE bounds memory per round-trip.
-        // Full materialization is still O(files) — see issue #24 / #15 for SQL-side tree work.
-        let mut files = Vec::new();
-        let mut cursor = None;
-        loop {
-            check_cancelled(cancellation)?;
-            let page = session.list_files(FILE_LIST_PAGE_SIZE, cursor)?;
-            if page.is_empty() {
-                break;
-            }
-            cursor = page.last().map(|file| file.id);
-            files.extend(page);
-        }
-        Ok(files)
-    }
-
-    fn consistent<T>(&self, operation: impl Fn(&ReadSession, u64) -> Result<T>) -> Result<T> {
+        operation: impl Fn(&ReadSession, u64) -> Result<T>,
+    ) -> Result<T> {
         self.consistent_inner(false, operation)
     }
 
@@ -1269,51 +294,45 @@ impl Services {
         operation: impl Fn(&ReadSession, u64) -> Result<T>,
     ) -> Result<T> {
         for attempt in 0..3 {
-            let result = self.storage.with_snapshot(|session| {
+            let snapshot = self.storage.begin_read().and_then(|session| {
                 let generation = session.repository_generation()?;
-                if generation == 0 && !allow_empty {
-                    return Err(Error::IndexNotReady);
-                }
-                // Snapshot is pinned for the whole closure; all reads share it.
-                operation(session, generation)
+                Ok((session, generation))
             });
-            match result {
-                Ok(value) => return Ok(value),
-                // Permanent for this snapshot: do not retry as a race.
-                Err(Error::IndexNotReady)
-                | Err(Error::Cancelled)
-                | Err(Error::LimitExceeded)
-                | Err(Error::InvalidRequest(_))
-                | Err(Error::StaleCursor)
-                | Err(Error::NotIndexed(_))
-                | Err(Error::PathOutsideRoot(_))
-                | Err(Error::RootNotFound(_)) => return result,
-                // SQLITE_BUSY / IO while opening snapshot: retry a few times.
-                Err(Error::Sqlite(_)) | Err(Error::Io(_)) if attempt + 1 < 3 => {
-                    thread::sleep(CANCELLATION_POLL_INTERVAL);
+            let (session, generation) = match snapshot {
+                Ok(snapshot) => snapshot,
+                Err(error) if is_database_contention(&error) => {
+                    if attempt + 1 < 3 {
+                        thread::sleep(CANCELLATION_POLL_INTERVAL);
+                    }
                     continue;
                 }
-                Err(_) => return result,
+                Err(error) => return Err(error),
+            };
+            if generation == 0 && !allow_empty {
+                return Err(Error::IndexNotReady);
             }
+            // Do not retry operation errors: after the first read, this session
+            // is pinned and concurrent publication cannot have caused them.
+            return operation(&session, generation);
         }
         Err(Error::RetryableConflict(RetryableOperation::Retrieval))
     }
 
-    fn result_limit(&self, requested: Option<usize>) -> usize {
+    pub(super) fn result_limit(&self, requested: Option<usize>) -> usize {
         requested
             .unwrap_or(self.config.default_results)
             .max(1)
             .min(self.config.max_results)
     }
 
-    fn token_limit(&self, requested: Option<usize>, default: usize) -> usize {
+    pub(super) fn token_limit(&self, requested: Option<usize>, default: usize) -> usize {
         requested
             .unwrap_or(default)
             .max(1)
             .min(self.config.max_output_tokens)
     }
 
-    fn freshness(&self) -> Freshness {
+    pub(super) fn freshness(&self) -> Freshness {
         let local = self.active_reconciliations.load(Ordering::Acquire) > 0;
         let shared = self.coordination.is_reconciling().unwrap_or(true);
         if local || shared {
@@ -1323,7 +342,7 @@ impl Services {
         }
     }
 
-    fn meta(
+    pub(super) fn meta(
         &self,
         generation: u64,
         emitted_tokens: usize,
@@ -1386,18 +405,10 @@ impl Drop for ActiveReconciliation {
     }
 }
 
-fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
-    if cancellation.is_cancelled() {
-        Err(Error::Cancelled)
-    } else {
-        Ok(())
-    }
-}
-
 fn wait_cancellable(cancellation: &CancellationToken, duration: Duration) -> Result<()> {
     let deadline = Instant::now() + duration;
     loop {
-        check_cancelled(cancellation)?;
+        validation::check_cancelled(cancellation)?;
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             return Ok(());
@@ -1406,759 +417,11 @@ fn wait_cancellable(cancellation: &CancellationToken, duration: Duration) -> Res
     }
 }
 
-fn storage_symbol(symbol: crate::storage::SymbolRecord) -> Symbol {
-    Symbol {
-        name: symbol.name,
-        kind: symbol.kind,
-        parent: symbol.parent,
-        signature: symbol.signature,
-        start_line: symbol.start_line,
-        end_line: symbol.end_line,
-        start_byte: symbol.start_byte,
-        end_byte: symbol.end_byte,
-    }
-}
-
-fn tree_entries(
-    files: &[FileRecord],
-    root: Option<&str>,
-    depth: Option<usize>,
-) -> Result<Vec<FileEntry>> {
-    let root = root.unwrap_or("");
-    if !root.is_empty() {
-        validate_relative(root)?;
-    }
-    let root = root.trim_matches('/');
-    let max_depth = depth.unwrap_or(usize::MAX);
-    let root_depth = root.split('/').filter(|part| !part.is_empty()).count();
-    let mut entries = BTreeMap::new();
-    for file in files {
-        if !root.is_empty() && file.path != root && !file.path.starts_with(&format!("{root}/")) {
-            continue;
-        }
-        let parts = file.path.split('/').collect::<Vec<_>>();
-        for index in 1..parts.len() {
-            let path = parts[..index].join("/");
-            let relative_depth = index.saturating_sub(root_depth);
-            if relative_depth <= max_depth
-                && (root.is_empty() || path == root || path.starts_with(&format!("{root}/")))
-            {
-                entries.entry(path.clone()).or_insert(FileEntry {
-                    path,
-                    kind: FileEntryKind::Directory,
-                    language: None,
-                    size_bytes: None,
-                    score: None,
-                });
-            }
-        }
-        let file_depth = parts.len().saturating_sub(root_depth);
-        if file_depth <= max_depth {
-            entries.insert(
-                file.path.clone(),
-                FileEntry {
-                    path: file.path.clone(),
-                    kind: FileEntryKind::File,
-                    language: file.language.clone(),
-                    size_bytes: Some(file.size_bytes),
-                    score: None,
-                },
-            );
-        }
-    }
-    Ok(entries.into_values().collect())
-}
-
-fn fuzzy_entries(files: &[FileRecord], query: Option<&str>) -> Result<Vec<FileEntry>> {
-    let query = query
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| Error::InvalidRequest("find requires query".into()))?;
-    let paths = files
-        .iter()
-        .map(|file| file.path.as_str())
-        .collect::<Vec<_>>();
-    let pattern = Pattern::new(
-        query,
-        CaseMatching::Ignore,
-        Normalization::Smart,
-        AtomKind::Fuzzy,
-    );
-    let mut matcher = Matcher::new(MatcherConfig::DEFAULT.match_paths());
-    let matches = pattern.match_list(paths, &mut matcher);
-    let by_path = files
-        .iter()
-        .map(|file| (file.path.as_str(), file))
-        .collect::<HashMap<_, _>>();
-    Ok(matches
-        .into_iter()
-        .filter_map(|(path, score)| {
-            by_path.get(path).map(|file| FileEntry {
-                path: path.to_string(),
-                kind: FileEntryKind::File,
-                language: file.language.clone(),
-                size_bytes: Some(file.size_bytes),
-                score: Some(f64::from(score)),
-            })
-        })
-        .collect())
-}
-
-fn glob_entries(files: &[FileRecord], pattern: Option<&str>) -> Result<Vec<FileEntry>> {
-    let pattern = pattern
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| Error::InvalidRequest("glob requires pattern".into()))?;
-    let matcher = Glob::new(pattern)?.compile_matcher();
-    Ok(files
-        .iter()
-        .filter(|file| matcher.is_match(&file.path))
-        .map(|file| FileEntry {
-            path: file.path.clone(),
-            kind: FileEntryKind::File,
-            language: file.language.clone(),
-            size_bytes: Some(file.size_bytes),
-            score: None,
-        })
-        .collect())
-}
-
-fn chunk_search_hit(
-    hit: ChunkHit,
-    query: &str,
-    case_sensitive: bool,
-    context: usize,
-    is_regex: bool,
-) -> Result<Option<SearchHit>> {
-    let byte_range = if is_regex {
-        regex::RegexBuilder::new(query)
-            .case_insensitive(!case_sensitive)
-            .build()?
-            .find(&hit.content)
-            .map(|matched| (matched.start(), matched.end()))
-    } else if case_sensitive {
-        hit.content
-            .find(query)
-            .map(|start| (start, start + query.len()))
-    } else {
-        regex::RegexBuilder::new(&regex::escape(query))
-            .case_insensitive(true)
-            .build()?
-            .find(&hit.content)
-            .map(|matched| (matched.start(), matched.end()))
-    };
-    let Some((start, end)) = byte_range else {
-        return Ok(None);
-    };
-    let (local_start, local_end) = byte_range_to_line_range(&hit.content, start, end);
-    let excerpt_start = local_start.saturating_sub(context).max(1);
-    let available_lines = hit.content.lines().count().max(1);
-    let mut excerpt_end = local_end.saturating_add(context).min(available_lines);
-    if excerpt_end.saturating_sub(excerpt_start).saturating_add(1) > 20 {
-        excerpt_end = excerpt_start + 19;
-    }
-    let excerpt = excerpt(&hit.content, excerpt_start, excerpt_end);
-    Ok(Some(SearchHit {
-        path: hit.path,
-        start_line: hit.start_line + excerpt_start - 1,
-        end_line: hit.start_line + excerpt_end - 1,
-        content_hash: hash(&excerpt),
-        excerpt,
-        match_kind: if is_regex {
-            "regex".into()
-        } else {
-            "text".into()
-        },
-        role: None,
-        symbol: None,
-        enclosing_symbol: None,
-        score: 3.0 + (-hit.score).max(0.0) * 1_000_000.0,
-        score_reasons: vec![if is_regex {
-            "regex match".into()
-        } else {
-            "text match".into()
-        }],
-    }))
-}
-
-fn matching_line(hit: &ChunkHit, query: &str, case_sensitive: bool) -> Option<usize> {
-    hit.content
-        .lines()
-        .position(|line| {
-            if case_sensitive {
-                line.contains(query)
-            } else {
-                line.to_lowercase().contains(&query.to_lowercase())
-            }
-        })
-        .map(|offset| hit.start_line + offset)
-}
-
-fn path_allowed(path: &str, includes: &[String], excludes: &[String]) -> Result<bool> {
-    let mut included = includes.is_empty();
-    for pattern in includes {
-        included |= path_matches(path, pattern)?;
-    }
-    let mut excluded = false;
-    for pattern in excludes {
-        excluded |= path_matches(path, pattern)?;
-    }
-    Ok(included && !excluded)
-}
-
-fn path_matches(path: &str, pattern: &str) -> Result<bool> {
-    if pattern.contains(['*', '?', '[', ']']) {
-        Ok(Glob::new(pattern)?.compile_matcher().is_match(path))
-    } else {
-        let pattern = pattern.trim_matches('/');
-        Ok(path == pattern || path.starts_with(&format!("{pattern}/")))
-    }
-}
-
-fn apply_focus(hits: &mut [SearchHit], focus_paths: &[String]) -> Result<()> {
-    for hit in hits {
-        let mut focused = false;
-        for focus in focus_paths {
-            focused |= path_matches(&hit.path, focus)?;
-        }
-        if focused {
-            hit.score += 2.0;
-            hit.score_reasons.push("focus path".into());
-        }
-    }
-    Ok(())
-}
-
-fn context_path_score(path: &str, terms: &[String], task: &str) -> f64 {
-    let path = path.to_lowercase();
-    let mut score = terms
-        .iter()
-        .filter(|term| path.contains(term.to_ascii_lowercase().as_str()))
-        .count() as f64;
-    for code_token in code_tokens(task).into_iter().filter(|token| {
-        token.contains("::")
-            || token
-                .split('.')
-                .any(|part| part.chars().next().is_some_and(char::is_uppercase))
-    }) {
-        let matched_parts = expand_terms(&code_token)
-            .into_iter()
-            .map(|part| part.to_ascii_lowercase())
-            .filter(|part| part.chars().count() >= 2 && path.contains(part))
-            .collect::<HashSet<_>>()
-            .len();
-        if matched_parts >= 2 {
-            #[allow(clippy::cast_precision_loss)]
-            {
-                score += (matched_parts * matched_parts) as f64;
-            }
-        }
-    }
-    for (language, component) in [
-        ("javascript", "/js/"),
-        ("typescript", "/ts/"),
-        ("python", "/python/"),
-        ("rust", "/rust/"),
-        ("go", "/go/"),
-    ] {
-        if task_mentions_language(task, language) && format!("/{path}/").contains(component) {
-            // An explicit language name in the task is strong repository-scope
-            // evidence. Keep this above an exact-name match in another
-            // language so common names such as `Point` do not dominate.
-            score += 12.0;
-        }
-    }
-    score
-}
-
-fn qualified_symbol_match(
-    concept: &str,
-    name: &str,
-    parent: Option<&str>,
-    signature: Option<&str>,
-) -> f64 {
-    if !concept.contains(['.', ':']) {
-        return 0.0;
-    }
-    let parts = concept
-        .split(|character: char| !character.is_alphanumeric() && character != '_')
-        .flat_map(identifier_words)
-        .map(|part| part.to_ascii_lowercase())
-        .filter(|part| part.chars().count() >= 2)
-        .collect::<HashSet<_>>();
-    if parts.len() < 2 {
-        return 0.0;
-    }
-    let haystack = format!(
-        "{} {} {}",
-        name,
-        parent.unwrap_or_default(),
-        signature.unwrap_or_default()
-    )
-    .to_ascii_lowercase();
-    f64::from(parts.iter().all(|part| haystack.contains(part)))
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct ContextQuery {
-    value: String,
-    weight: f64,
-    fusion_key: Option<String>,
-}
-
-fn context_queries(task: &str, limit: usize) -> Vec<ContextQuery> {
-    if limit == 0 {
-        return Vec::new();
-    }
-    let wants_tests = task_terms(task).iter().any(|term| is_test_term(term));
-    let available = limit.saturating_sub(usize::from(wants_tests));
-    let code_terms = code_tokens(task);
-    let code_parts = code_terms
-        .iter()
-        .flat_map(|term| std::iter::once(term.clone()).chain(expand_terms(term)))
-        .map(|term| term.to_ascii_lowercase())
-        .collect::<HashSet<_>>();
-    let mut prose = task_terms(task)
-        .into_iter()
-        .filter(|value| {
-            !is_test_term(value)
-                && !is_context_stop_word(value)
-                && !code_parts.contains(&value.to_ascii_lowercase())
-        })
-        .enumerate()
-        .collect::<Vec<_>>();
-    prose.sort_by(|(left_index, left), (right_index, right)| {
-        context_query_weight(right, false)
-            .total_cmp(&context_query_weight(left, false))
-            .then_with(|| left_index.cmp(right_index))
-    });
-
-    let prose_reserve = prose.len().min(4).min(available);
-    let exact_limit = available.saturating_sub(prose_reserve);
-    let mut seen = HashSet::new();
-    let mut terms = Vec::new();
-    for code_term in code_terms.iter().take(exact_limit) {
-        push_context_query(
-            &mut terms,
-            &mut seen,
-            code_term.clone(),
-            true,
-            Some(code_term.to_ascii_lowercase()),
-        );
-    }
-    for (_, value) in prose.iter().take(prose_reserve) {
-        push_context_query(&mut terms, &mut seen, value.clone(), false, None);
-    }
-
-    let mut expansion_round = 0usize;
-    while terms.len() < available {
-        let before = terms.len();
-        for code_term in &code_terms {
-            let expansions = expand_terms(code_term);
-            if let Some(value) = expansions.get(expansion_round) {
-                push_context_query(
-                    &mut terms,
-                    &mut seen,
-                    value.clone(),
-                    true,
-                    Some(code_term.to_ascii_lowercase()),
-                );
-                if terms.len() == available {
-                    break;
-                }
-            }
-        }
-        if terms.len() == before {
-            break;
-        }
-        expansion_round += 1;
-    }
-    if wants_tests {
-        terms.push(ContextQuery {
-            value: "test".into(),
-            weight: 0.2,
-            fusion_key: None,
-        });
-    }
-    terms
-}
-
-fn push_context_query(
-    terms: &mut Vec<ContextQuery>,
-    seen: &mut HashSet<String>,
-    value: String,
-    explicit_code_token: bool,
-    fusion_key: Option<String>,
-) {
-    if value.chars().count() < 2
-        || is_context_stop_word(&value)
-        || !seen.insert(value.to_ascii_lowercase())
-    {
-        return;
-    }
-    terms.push(ContextQuery {
-        weight: context_query_weight(&value, explicit_code_token),
-        value,
-        fusion_key,
-    });
-}
-
-fn task_terms(task: &str) -> Vec<String> {
-    task.split(|character: char| !character.is_alphanumeric() && character != '_')
-        .filter(|value| value.chars().count() >= 2)
-        .map(str::to_owned)
-        .collect()
-}
-
-fn is_test_term(term: &str) -> bool {
-    matches!(
-        term.to_ascii_lowercase().as_str(),
-        "test" | "tests" | "testing" | "coverage" | "regression"
-    )
-}
-
-fn context_query_weight(term: &str, explicit_code_token: bool) -> f64 {
-    if explicit_code_token {
-        return if term.contains(['_', ':', '.', '-']) {
-            1.0
-        } else {
-            0.95
-        };
-    }
-    if term.contains(['_', ':', '.', '-']) {
-        return 0.9;
-    }
-    match term.chars().count() {
-        10.. => 0.8,
-        7..=9 => 0.65,
-        4..=6 => 0.45,
-        _ => 0.25,
-    }
-}
-
-fn record_query_hit(
-    fusion: &mut HashMap<String, HashMap<String, f64>>,
-    path: &str,
-    fusion_key: &str,
-    weight: f64,
-    rank: usize,
-) {
-    if weight < 0.65 {
-        return;
-    }
-    const RRF_K: f64 = 60.0;
-    #[allow(clippy::cast_precision_loss)]
-    let score = weight * RRF_K / (RRF_K + rank as f64 + 1.0);
-    fusion
-        .entry(path.to_owned())
-        .or_default()
-        .entry(fusion_key.to_owned())
-        .and_modify(|current| *current = current.max(score))
-        .or_insert(score);
-}
-
-fn apply_query_fusion(
-    candidates: &mut [Candidate],
-    fusion: &HashMap<String, HashMap<String, f64>>,
-) {
-    for candidate in candidates {
-        let Some(matches) = fusion.get(&candidate.path) else {
-            continue;
-        };
-        if matches.len() > 1 {
-            let total = matches.values().sum::<f64>();
-            let strongest = matches.values().copied().fold(0.0, f64::max);
-            candidate.path_score += (total - strongest).min(0.2);
-            if !candidate
-                .match_kinds
-                .iter()
-                .any(|kind| kind == "multi-query")
-            {
-                candidate.match_kinds.push("multi-query".into());
-            }
-        }
-    }
-}
-
-fn code_tokens(task: &str) -> Vec<String> {
-    task.split_whitespace()
-        .map(|token| {
-            token.trim_matches(|character: char| !character.is_alphanumeric() && character != '_')
-        })
-        .filter(|token| {
-            token.contains('_')
-                || token.contains("::")
-                || token.contains('.')
-                || (token.contains('-') && token.chars().any(char::is_uppercase))
-        })
-        .map(str::to_owned)
-        .collect()
-}
-
-fn task_mentions_language(task: &str, language: &str) -> bool {
-    task.split(|character: char| !character.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .any(|word| {
-            if language == "go" {
-                word == "Go" || word.eq_ignore_ascii_case("golang")
-            } else {
-                word.eq_ignore_ascii_case(language)
-            }
-        })
-}
-
-fn is_context_stop_word(term: &str) -> bool {
-    matches!(
-        term.to_ascii_lowercase().as_str(),
-        "a" | "an"
-            | "and"
-            | "add"
-            | "adding"
-            | "are"
-            | "as"
-            | "be"
-            | "before"
-            | "both"
-            | "but"
-            | "by"
-            | "calling"
-            | "can"
-            | "change"
-            | "does"
-            | "each"
-            | "fix"
-            | "for"
-            | "from"
-            | "if"
-            | "in"
-            | "into"
-            | "is"
-            | "it"
-            | "its"
-            | "make"
-            | "not"
-            | "of"
-            | "on"
-            | "one"
-            | "only"
-            | "or"
-            | "same"
-            | "so"
-            | "than"
-            | "then"
-            | "the"
-            | "this"
-            | "to"
-            | "update"
-            | "when"
-            | "while"
-            | "within"
-            | "without"
-            | "with"
-    )
-}
-
-fn fts_quote(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
-}
-
-fn validate_patterns(patterns: &[String]) -> Result<()> {
-    if patterns.len() > MAX_INPUT_ITEMS {
-        return Err(Error::LimitExceeded);
-    }
-    for pattern in patterns {
-        validate_input(pattern, "path pattern", MAX_PATTERN_BYTES)?;
-    }
-    Ok(())
-}
-
-fn validate_optional_input(value: Option<&str>, name: &str, max_bytes: usize) -> Result<()> {
-    if let Some(value) = value {
-        validate_input(value, name, max_bytes)?;
-    }
-    Ok(())
-}
-
-fn validate_input(value: &str, name: &str, max_bytes: usize) -> Result<()> {
-    if value.len() > max_bytes {
-        return Err(Error::InvalidRequest(format!(
-            "{name} exceeds {max_bytes} bytes"
-        )));
-    }
-    Ok(())
-}
-
-fn parse_cursor(cursor: Option<&str>, generation: u64) -> Result<usize> {
-    let Some(cursor) = cursor else { return Ok(0) };
-    let Some((cursor_generation, offset)) = cursor.split_once(':') else {
-        return Err(Error::StaleCursor);
-    };
-    if cursor_generation.parse::<u64>().ok() != Some(generation) {
-        return Err(Error::StaleCursor);
-    }
-    offset.parse().map_err(|_| Error::StaleCursor)
-}
-
-fn make_cursor(generation: u64, offset: usize) -> String {
-    format!("{generation}:{offset}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn language_scope_does_not_treat_lowercase_go_as_golang() {
-        assert!(!task_mentions_language("go fix the parser", "go"));
-        assert!(task_mentions_language("fix the Go parser", "go"));
-        assert!(task_mentions_language("fix the golang parser", "go"));
-        assert!(task_mentions_language(
-            "fix TypeScript parsing",
-            "typescript"
-        ));
-    }
-
-    #[test]
-    fn context_queries_keep_identifiers_and_late_test_signals() {
-        let terms = context_queries(
-            "copy_current_request_context reuses one copied request context so calling the decorated function concurrently can corrupt state; add a regression test",
-            12,
-        );
-
-        assert!(
-            terms
-                .iter()
-                .any(|term| term.value == "copy_current_request_context")
-        );
-        assert!(terms.iter().any(|term| term.value == "test"));
-        assert!(!terms.iter().any(|term| term.value == "one"));
-    }
-
-    #[test]
-    fn context_queries_preserve_dotted_and_header_tokens() {
-        let terms = context_queries(
-            "Fix res.send adding Content-Length when Transfer-Encoding is present and add coverage",
-            12,
-        );
-
-        assert!(terms.iter().any(|term| term.value == "res.send"));
-        assert!(terms.iter().any(|term| term.value == "Content-Length"));
-        assert!(terms.iter().any(|term| term.value == "Transfer-Encoding"));
-        assert_eq!(terms.last().map(|term| term.value.as_str()), Some("test"));
-    }
-
-    #[test]
-    fn context_queries_reserve_space_for_task_intent() {
-        let terms = context_queries(
-            "Fix Alpha::first_long_identifier Beta::second_long_identifier while preserving idempotency",
-            12,
-        );
-
-        assert!(
-            terms
-                .iter()
-                .any(|term| term.value == "Alpha::first_long_identifier")
-        );
-        assert!(
-            terms
-                .iter()
-                .any(|term| term.value == "Beta::second_long_identifier")
-        );
-        assert!(terms.iter().any(|term| term.value == "idempotency"));
-    }
-
-    #[test]
-    fn context_query_expansions_share_one_fusion_concept() {
-        let terms = context_queries(
-            "Fix GlobSet::matches_all when one compiled strategy matches",
-            12,
-        );
-        let qualified = terms
-            .iter()
-            .find(|term| term.value == "GlobSet::matches_all")
-            .expect("qualified query");
-        let expansion = terms
-            .iter()
-            .find(|term| term.value != qualified.value && term.fusion_key == qualified.fusion_key)
-            .expect("expanded query");
-
-        assert_eq!(qualified.fusion_key, expansion.fusion_key);
-        assert!(qualified.fusion_key.is_some());
-    }
-
-    #[test]
-    fn qualified_symbol_match_requires_all_owner_and_name_parts() {
-        assert_eq!(
-            qualified_symbol_match(
-                "render.AsciiJSON",
-                "Render",
-                None,
-                Some("func (r AsciiJSON) Render() error"),
-            ),
-            1.0
-        );
-        assert_eq!(
-            qualified_symbol_match(
-                "render.AsciiJSON",
-                "AsciiJSON",
-                None,
-                Some("type AsciiJSON")
-            ),
-            0.0
-        );
-        assert_eq!(
-            qualified_symbol_match("Flask.run", "run", Some("Flask"), Some("def run()")),
-            1.0
-        );
-    }
-
-    #[test]
-    fn qualified_path_evidence_excludes_dynamic_lowercase_receivers() {
-        assert_eq!(
-            context_path_score(
-                "test/app.render.js",
-                &[],
-                "Fix app.render for a trailing dot",
-            ),
-            0.0
-        );
-        assert!(context_path_score("render/json.go", &[], "Fix render.AsciiJSON escaping",) > 0.0);
-        assert!(
-            context_path_score(
-                "tokio/src/fs/file.rs",
-                &[],
-                "Fix tokio::fs::File poll_write",
-            ) > 0.0
-        );
-    }
-
-    #[test]
-    fn fusion_requires_two_independent_query_concepts() {
-        let mut fusion = HashMap::new();
-        record_query_hit(&mut fusion, "one.rs", "globset::matches_all", 1.0, 0);
-        record_query_hit(&mut fusion, "one.rs", "globset::matches_all", 0.95, 1);
-        record_query_hit(&mut fusion, "two.rs", "content-length", 1.0, 0);
-        record_query_hit(&mut fusion, "two.rs", "transfer-encoding", 1.0, 1);
-        let mut candidates = vec![
-            Candidate::new("one.rs", 1, 1, "one"),
-            Candidate::new("two.rs", 1, 1, "two"),
-        ];
-
-        apply_query_fusion(&mut candidates, &fusion);
-
-        assert_eq!(candidates[0].path_score, 0.0);
-        assert!(
-            !candidates[0]
-                .match_kinds
-                .iter()
-                .any(|kind| kind == "multi-query")
-        );
-        assert!(candidates[1].path_score > 0.0);
-        assert!(
-            candidates[1]
-                .match_kinds
-                .iter()
-                .any(|kind| kind == "multi-query")
-        );
-    }
+    use std::fs;
+    use tokio_util::sync::CancellationToken;
 
     #[tokio::test]
     async fn index_search_read_and_hash_delta() {
@@ -2236,14 +499,13 @@ mod tests {
             .find_file("lib.rs")
             .expect("find file")
             .expect("indexed file");
-        let large = services
-            .storage
+        let session = services.storage.begin_read().expect("read session");
+        let large = session
             .find_symbol(file.id, "large")
             .expect("find symbol")
             .expect("large symbol");
         let matched_line = 151;
-        let enclosing = services
-            .storage
+        let enclosing = session
             .find_enclosing_symbol(file.id, matched_line)
             .expect("find enclosing symbol")
             .expect("enclosing symbol");
@@ -2266,8 +528,7 @@ mod tests {
         assert!(bounded.start_line > large.start_line);
         assert!(bounded.end_line <= large.end_line);
 
-        let small = services
-            .storage
+        let small = session
             .find_symbol(file.id, "small")
             .expect("find symbol")
             .expect("small symbol");
@@ -2391,5 +652,83 @@ mod tests {
                 .expect("latest generation"),
             first + 1
         );
+    }
+
+    #[test]
+    fn pinned_snapshot_operation_errors_are_not_retried() {
+        use std::cell::Cell;
+
+        let root = tempfile::tempdir().expect("root");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+        let services = Services::open(config).expect("services");
+        services
+            .storage
+            .full_reconcile("hash-a", Vec::new())
+            .expect("initial generation");
+        let calls = Cell::new(0);
+
+        let error = services
+            .consistent(|_, _| {
+                calls.set(calls.get() + 1);
+                Err::<(), _>(Error::Io(std::io::Error::other("live read failed")))
+            })
+            .expect_err("operation error");
+
+        assert!(matches!(error, Error::Io(_)));
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn regex_candidate_overflow_is_not_reported_as_complete() {
+        use crate::storage::{ChunkInput, IndexedFile};
+
+        let root = tempfile::tempdir().expect("root");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+        let services = Services::open(config).expect("services");
+        let files = (0..=2_000)
+            .map(|index| IndexedFile {
+                path: format!("file_{index:04}.rs"),
+                language: Some("rust".into()),
+                structurally_complete: true,
+                size_bytes: 6,
+                modified_ns: None,
+                content_hash: format!("hash-{index}"),
+                chunks: vec![ChunkInput {
+                    content: "needle".into(),
+                    start_line: 1,
+                    end_line: 1,
+                    start_byte: 0,
+                    end_byte: 6,
+                    token_count: 1,
+                }],
+                symbols: Vec::new(),
+                references: Vec::new(),
+                imports: Vec::new(),
+            })
+            .collect();
+        services
+            .storage
+            .full_reconcile("hash-a", files)
+            .expect("indexed fixture");
+
+        let error = services
+            .search(SearchRequest {
+                query: "needle".into(),
+                mode: SearchMode::Regex,
+                include_paths: Vec::new(),
+                exclude_paths: Vec::new(),
+                focus_paths: Vec::new(),
+                max_results: Some(100),
+                max_tokens: Some(10_000),
+                context_lines: Some(0),
+                case_sensitive: true,
+                cursor: None,
+            })
+            .await
+            .expect_err("candidate overflow must be explicit");
+
+        assert!(matches!(error, Error::LimitExceeded));
     }
 }

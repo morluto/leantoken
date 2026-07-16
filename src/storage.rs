@@ -691,17 +691,6 @@ impl Storage {
         self.begin_read()?.get_chunks_for_file(file_id, max_results)
     }
 
-    #[allow(dead_code)] // one-shot wrapper; multi-query uses ReadSession
-    pub(crate) fn get_chunks_overlapping(
-        &self,
-        file_id: i64,
-        start_line: usize,
-        end_line: usize,
-    ) -> Result<Vec<ChunkRecord>> {
-        self.begin_read()?
-            .get_chunks_overlapping(file_id, start_line, end_line)
-    }
-
     pub fn get_symbols_for_file(
         &self,
         file_id: i64,
@@ -709,32 +698,6 @@ impl Storage {
     ) -> Result<Vec<SymbolRecord>> {
         self.begin_read()?
             .get_symbols_for_file(file_id, max_results)
-    }
-
-    #[allow(dead_code)] // one-shot wrapper; multi-query uses ReadSession
-    pub(crate) fn get_symbols_for_file_filtered(
-        &self,
-        file_id: i64,
-        name: Option<&str>,
-        kind: Option<&str>,
-        max_results: usize,
-    ) -> Result<Vec<SymbolRecord>> {
-        self.begin_read()?
-            .get_symbols_for_file_filtered(file_id, name, kind, max_results)
-    }
-
-    #[allow(dead_code)] // one-shot wrapper; multi-query uses ReadSession
-    pub(crate) fn find_symbol(&self, file_id: i64, name: &str) -> Result<Option<SymbolRecord>> {
-        self.begin_read()?.find_symbol(file_id, name)
-    }
-
-    #[allow(dead_code)] // one-shot wrapper; multi-query uses ReadSession
-    pub(crate) fn find_enclosing_symbol(
-        &self,
-        file_id: i64,
-        line: usize,
-    ) -> Result<Option<SymbolRecord>> {
-        self.begin_read()?.find_enclosing_symbol(file_id, line)
     }
 
     pub fn get_references_for_file(
@@ -797,15 +760,6 @@ impl Storage {
         // for the rest of the connection's transaction lifetime.
         conn.execute_batch("BEGIN DEFERRED")?;
         Ok(ReadSession { conn })
-    }
-
-    /// Run multiple reads against one snapshot transaction.
-    pub fn with_snapshot<F, T>(&self, f: F) -> Result<T>
-    where
-        F: FnOnce(&ReadSession) -> Result<T>,
-    {
-        let session = self.begin_read()?;
-        f(&session)
     }
 
     fn map_file(row: &Row) -> std::result::Result<FileRecord, rusqlite::Error> {

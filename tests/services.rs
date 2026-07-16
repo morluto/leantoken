@@ -199,6 +199,76 @@ async fn five_services_return_bounded_grounded_responses() {
 }
 
 #[tokio::test]
+async fn file_operations_page_without_duplicates() {
+    let root = tempfile::tempdir().expect("root");
+    for name in ["alpha.rs", "bravo.rs", "charlie.rs", "delta.rs", "echo.rs"] {
+        std::fs::write(root.path().join(name), format!("fn {}() {{}}\n", &name[..name.len() - 3]))
+            .expect("source");
+    }
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    for operation in [
+        FileOperation::Tree,
+        FileOperation::Glob,
+        FileOperation::Find,
+    ] {
+        let mut cursor = None;
+        let mut paths = Vec::new();
+        loop {
+            let response = services
+                .files(FilesRequest {
+                    operation: operation.clone(),
+                    path: None,
+                    query: matches!(operation, FileOperation::Find).then(|| "rs".into()),
+                    pattern: matches!(operation, FileOperation::Glob).then(|| "*.rs".into()),
+                    max_results: Some(2),
+                    cursor,
+                    depth: Some(1),
+                })
+                .await
+                .expect("file page");
+            paths.extend(response.entries.into_iter().map(|entry| entry.path));
+            cursor = response.meta.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        let unique = paths.iter().collect::<std::collections::HashSet<_>>();
+        assert_eq!(paths.len(), 5, "{operation:?}");
+        assert_eq!(unique.len(), paths.len(), "{operation:?}");
+    }
+
+    let tree = services
+        .files(FilesRequest {
+            operation: FileOperation::Tree,
+            path: None,
+            query: None,
+            pattern: None,
+            max_results: Some(2),
+            cursor: None,
+            depth: Some(1),
+        })
+        .await
+        .expect("tree page");
+    let error = services
+        .files(FilesRequest {
+            operation: FileOperation::Glob,
+            path: None,
+            query: None,
+            pattern: Some("*.rs".into()),
+            max_results: Some(2),
+            cursor: tree.meta.next_cursor,
+            depth: None,
+        })
+        .await
+        .expect_err("cursor from another operation");
+    assert!(matches!(error, Error::StaleCursor));
+}
+
+#[tokio::test]
 async fn invalid_focus_glob_is_a_typed_error() {
     let (_root, services) = fixture().await;
     let error = services

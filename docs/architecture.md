@@ -26,7 +26,10 @@ ignore-aware discovery -> chunking -> tree-sitter extraction
   conservative import resolution.
 - The storage layer owns migrations, transactions, generations, and FTS5.
 - Retrieval services own validation, freshness checks, ranking inputs, token
-  limits, and response models.
+  limits, and response models. The public `Services` type lives in
+  `services.rs` (startup, indexing, status, snapshot consistency, meta). Sync
+  retrieval paths are split under `services/`: `validation`, `files`, `search`,
+  `context`, and `read`.
 - The MCP adapter owns SDK types, protocol error translation, cancellation, and
   stdio lifecycle. It omits optional output schemas from the catalog and offers
   explicit dual, text-only, and structured-only result modes. Dual remains the
@@ -61,8 +64,8 @@ Each multi-step retrieval (search, context, outline, files, read) opens one
 read-only connection and holds a DEFERRED transaction for the request
 (`ReadSession`). Under WAL that pins a single committed snapshot for every
 query in the assembly, so concurrent publishers cannot mix generations inside
-one response. Transient SQLite busy/IO errors while opening a snapshot are
-retried a few times; generation zero returns a typed `IndexNotReady` error
+one response. SQLite busy/locked errors while opening and pinning a snapshot
+are retried a few times; generation zero returns a typed `IndexNotReady` error
 instead of an empty success.
 
 ## Indexing and freshness
@@ -101,7 +104,7 @@ For existing regular files, the watcher reconciles only the reported paths.
 New paths, directory changes, symlinks, ignore-file changes, configuration
 changes, and ambiguous deletions fall back to full discovery. Path-set
 expansions also reparse unchanged importers so a newly added target can resolve
-previously unresolved edges. Both the watcher path path and full discovery
+previously unresolved edges. Both the watcher path and full discovery
 content-hash files before treating them as unchanged: matching size and mtime
 alone never skips reindexing when the body changed (bind mounts, copy tools that
 preserve mtime, some network filesystems). File replacement, deletion,
@@ -120,9 +123,12 @@ worker limits and reconciles do not rebuild a pool on every pass.
 
 ## Retrieval hot-path bounds
 
-These caps bound worst-case work relative to repository size. They are
-correctness-preserving limits, not monorepo performance claims; measure large
-trees under issue #15 before changing the numbers.
+These limits cap context fan-out, regex work, and file-list memory. A request
+returns `LimitExceeded` instead of silently returning incomplete regex results
+when a scan boundary is reached. Tree/find/glob still scan the indexed path
+table, but page database reads and retain only `max_results + 1` entries rather
+than materializing the repository. The numbers are safety limits, not monorepo
+performance claims.
 
 | Path | Bound |
 | --- | --- |
@@ -131,11 +137,18 @@ trees under issue #15 before changing the numbers.
 | Regex match candidates | `min(max_results × 20, 2000)` |
 | Regex files scanned | 10_000 |
 | Regex chunks per file | 256 |
-| File list page size | 1_000 (full materialization for tree/find/glob is still O(files); SQL-side tree is deferred) |
+| File scan page size | 1_000; tree/find/glob retain at most `max_results + 1` entries |
 
-Regex mode verifies patterns over a bounded slice of the snapshot. Prefer
-symbol/identifier/text modes when a full-repo scan is unnecessary. Compiled
-regex size and DFA cache are also limited so pathological patterns fail closed.
+Regex mode verifies patterns over snapshot file pages without materializing the
+repository path list. Prefer symbol/identifier/text modes when a full-repo scan
+is unnecessary. Compiled regex size and DFA cache are also limited so
+pathological patterns fail closed.
+
+Run the reproducible hot-path profile with, for example,
+`cargo run --example hot_path_bounds --release -- --files 10000 --iterations 20`.
+It reports warm p50/p95 wall time; run the command under `/usr/bin/time -v` when
+process CPU and peak RSS are required. Results are host-local and should only be
+compared on the same machine and release profile.
 
 ## Live read vs index
 
