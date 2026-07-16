@@ -190,7 +190,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
         ));
     }
     let storage = Storage::open(&config.database_path)?;
-    let indexer = Indexer::new(config, storage).expect("indexer");
+    let indexer = Indexer::new(config, storage)?;
 
     let start = Instant::now();
     let initial_response = indexer.reconcile(false)?;
