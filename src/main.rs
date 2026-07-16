@@ -28,9 +28,12 @@ async fn run() -> Result<()> {
 
     if matches!(
         &cli.command,
-        leantoken::cli::Commands::Update | leantoken::cli::Commands::Upgrade
+        leantoken::cli::Commands::Update(_) | leantoken::cli::Commands::Upgrade(_)
     ) {
-        upgrade::run(json)?;
+        let AppRequest::Upgrade { check, yes } = cli.app_request() else {
+            unreachable!("upgrade command checked above")
+        };
+        upgrade::run(upgrade::UpgradeOptions { check, yes, json })?;
         return Ok(());
     }
 
@@ -74,7 +77,7 @@ async fn run() -> Result<()> {
         AppRequest::Setup(_) | AppRequest::Remove(_) => {
             unreachable!("handled before service setup")
         }
-        AppRequest::Upgrade => unreachable!("handled before repository setup"),
+        AppRequest::Upgrade { .. } => unreachable!("handled before repository setup"),
     }
 }
 

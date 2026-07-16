@@ -5,7 +5,7 @@ repeatedly reading whole files. It runs locally as a read-only CLI and MCP
 server, indexes source in SQLite, and keeps retrieval within explicit token
 budgets.
 
-## Installation
+## MCP setup — no global command installed
 
 Set up LeanToken for your coding agents with one command:
 
@@ -19,16 +19,10 @@ detects installed clients, lets you choose which ones to configure, and
 registers LeanToken as a global MCP server. Each client launches it in the
 active workspace.
 
-When setup runs through `npx`, it registers `leantoken` without a version pin
-rather than recording an ephemeral npm cache path. MCP clients therefore
-resolve current releases without requiring setup to be rerun. A global
-installation is also available when you want to use the `leantoken` command
-directly:
-
-```bash
-npm install --global leantoken
-leantoken setup
-```
+This is a zero-install setup: it does not add a global `leantoken` command.
+Run one-off CLI commands with `npx leantoken <command>`. The generated MCP entry
+uses `leantoken` without a version pin rather than recording an ephemeral npm
+cache path, so MCP clients follow current npm releases automatically.
 
 Supported clients are Claude Code, Cursor, OpenCode, Codex, Gemini CLI, and
 Antigravity. To skip the wizard, select clients explicitly or configure all of
@@ -47,6 +41,23 @@ npx leantoken remove
 npx leantoken remove --all --yes
 ```
 
+## Global CLI installation
+
+Install LeanToken globally when you want to run `leantoken` without the `npx`
+prefix:
+
+```bash
+npm install --global leantoken
+leantoken --version
+leantoken setup
+```
+
+The npm package downloads the native binary for the current platform. The MCP
+configuration remains unpinned and updates independently from this persistent
+CLI installation.
+
+## Cargo installation
+
 To build from source instead, install Rust 1.95 or later and a native C/C++
 toolchain, then run `cargo install --git https://github.com/morluto/leantoken`.
 
@@ -61,13 +72,24 @@ setup with the latest package:
 npx leantoken@latest setup --codex --yes
 ```
 
-For a globally installed CLI, `update` and `upgrade` are equivalent:
+For a persistent npm or Cargo installation, `update` and `upgrade` are
+equivalent:
 
 ```bash
 leantoken update
 # or
 leantoken upgrade
 ```
+
+Check without installing, or skip the interactive confirmation:
+
+```bash
+leantoken upgrade --check
+leantoken upgrade --yes
+```
+
+When run through npx, `upgrade` never installs LeanToken globally. It reports
+whether a newer release exists and points to `npx leantoken@latest <command>`.
 
 LeanToken detects whether the executable was installed through npm or Cargo
 and delegates the update to that package manager. If the installation method

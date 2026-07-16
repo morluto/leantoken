@@ -179,6 +179,8 @@ pub struct SetupReport {
     pub operation: SetupOperation,
     /// Whether an interactive user cancelled before mutation.
     pub cancelled: bool,
+    /// Whether setup ran from a persistent CLI installation.
+    pub persistent_cli: bool,
     /// Per-client outcomes.
     pub results: Vec<ClientSetupResult>,
 }
@@ -226,6 +228,7 @@ struct SetupEnvironment {
     home: PathBuf,
     launcher: McpLauncher,
     interactive: bool,
+    persistent_cli: bool,
 }
 
 trait SetupPrompt {
@@ -300,6 +303,8 @@ pub fn run(operation: SetupOperation, request: SetupRequest) -> Result<SetupRepo
         home,
         launcher: McpLauncher::current()?,
         interactive: std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
+        persistent_cli: std::env::var_os("npm_lifecycle_event").as_deref()
+            != Some(std::ffi::OsStr::new("npx")),
     };
     run_with(operation, request, &environment, &DialoguerPrompt)
 }
@@ -353,16 +358,16 @@ fn run_with(
             ));
         }
         let Some(selected) = prompt.select(operation, &detected)? else {
-            return Ok(cancelled_report(operation));
+            return Ok(cancelled_report(operation, environment.persistent_cli));
         };
         if selected.is_empty() {
-            return Ok(cancelled_report(operation));
+            return Ok(cancelled_report(operation, environment.persistent_cli));
         }
         (selected, true)
     };
 
     if prompted && !prompt.confirm(operation, &clients)? {
-        return Ok(cancelled_report(operation));
+        return Ok(cancelled_report(operation, environment.persistent_cli));
     }
 
     let results = clients
@@ -372,14 +377,16 @@ fn run_with(
     Ok(SetupReport {
         operation,
         cancelled: false,
+        persistent_cli: environment.persistent_cli,
         results,
     })
 }
 
-fn cancelled_report(operation: SetupOperation) -> SetupReport {
+fn cancelled_report(operation: SetupOperation, persistent_cli: bool) -> SetupReport {
     SetupReport {
         operation,
         cancelled: true,
+        persistent_cli,
         results: Vec::new(),
     }
 }
@@ -710,6 +717,27 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
             )?;
         }
     }
+    if report.operation == SetupOperation::Setup {
+        writeln!(output)?;
+        if report.persistent_cli {
+            writeln!(output, "CLI command: leantoken --help")?;
+            writeln!(output, "Update later with: leantoken upgrade")?;
+        } else {
+            writeln!(
+                output,
+                "This was a zero-install npx setup; no global `leantoken` command was installed."
+            )?;
+            writeln!(
+                output,
+                "Configured MCP clients follow current npm releases automatically."
+            )?;
+            writeln!(output, "Run one-off commands with: npx leantoken <command>")?;
+            writeln!(
+                output,
+                "Install the shell command with: npm install --global leantoken"
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -741,6 +769,7 @@ mod tests {
             home: temp.path().join("home"),
             launcher: McpLauncher::from_executable(&temp.path().join("bin/lean token")),
             interactive: true,
+            persistent_cli: true,
         }
     }
 

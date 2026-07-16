@@ -270,8 +270,20 @@ fn cli_setup_and_remove_select_clients() {
 
 #[test]
 fn cli_update_and_upgrade_are_aliases() {
-    assert!(matches!(parse(&["update"]).app_request(), AppRequest::Upgrade));
-    assert!(matches!(parse(&["upgrade"]).app_request(), AppRequest::Upgrade));
+    assert!(matches!(
+        parse(&["update", "--check"]).app_request(),
+        AppRequest::Upgrade {
+            check: true,
+            yes: false
+        }
+    ));
+    assert!(matches!(
+        parse(&["upgrade", "--yes"]).app_request(),
+        AppRequest::Upgrade {
+            check: false,
+            yes: true
+        }
+    ));
 }
 
 #[test]
