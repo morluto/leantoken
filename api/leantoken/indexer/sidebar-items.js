@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["PreparedFile"],"fn":["check_cancelled","content_unchanged","is_ignore_control_path","normalize_relative","prepare_file","push_warning","resolve_import","resolve_imports"],"struct":["Indexer"]};
+window.SIDEBAR_ITEMS = {"enum":["PreparedFile"],"fn":["check_cancelled","content_unchanged","is_ignore_control_path","normalize_relative","prepare_file","push_warning","resolve_import","resolve_imports"],"struct":["Indexer","LazyWorkerPool"]};
