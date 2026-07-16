@@ -87,6 +87,7 @@ impl fmt::Debug for Indexer {
 impl Indexer {
     /// Construct an indexer whose dedicated worker pool is created on demand.
     pub fn new(config: Arc<Config>, storage: Storage) -> Result<Self> {
+        Self::validate_config(&config)?;
         Ok(Self {
             config,
             storage,
@@ -119,7 +120,6 @@ impl Indexer {
         rebuild: bool,
         cancellation: &CancellationToken,
     ) -> Result<IndexResponse> {
-        self.validate_config()?;
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
 
@@ -250,7 +250,6 @@ impl Indexer {
         paths: &[String],
         cancellation: &CancellationToken,
     ) -> Result<IndexResponse> {
-        self.validate_config()?;
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
         let config_hash = self.config_hash();
@@ -385,9 +384,9 @@ impl Indexer {
         })
     }
 
-    fn validate_config(&self) -> Result<()> {
-        if self.config.chunk_lines == 0 || self.config.chunk_bytes == 0 {
-            return Err(Error::InvalidRequest(
+    fn validate_config(config: &Config) -> Result<()> {
+        if config.chunk_lines == 0 || config.chunk_bytes == 0 {
+            return Err(Error::InvalidConfiguration(
                 "chunk_lines and chunk_bytes must be positive".into(),
             ));
         }
