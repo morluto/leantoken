@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["PreparedFile"],"fn":["is_database_artifact","is_ignore_control_path","normalize_relative","prepare_file","push_warning","resolve_import","resolve_imports"],"struct":["Indexer"]};
+window.SIDEBAR_ITEMS = {"enum":["PreparedFile"],"fn":["is_ignore_control_path","normalize_relative","prepare_file","push_warning","resolve_import","resolve_imports"],"struct":["Indexer"]};
