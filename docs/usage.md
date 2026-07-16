@@ -30,9 +30,12 @@ Use `leantoken <command> --help` for the complete argument list.
 
 ## MCP server
 
-`leantoken mcp` serves the five retrieval tools over stdio. It reconciles the
-repository before serving, watches later filesystem changes, and reports
-whether responses come from a current or reconciling index generation.
+`leantoken mcp` starts the stdio protocol before opening the repository cache so
+the initialize handshake is never blocked by indexing. After the client's
+initialized notification, one process becomes indexing leader and followers
+reuse its committed SQLite generations. Retrieval calls made before the first
+generation commits return a retryable not-ready error. Later calls report
+whether they use a current or reconciling index generation.
 
 Logs go to stderr. Stdout is reserved for MCP protocol messages.
 
