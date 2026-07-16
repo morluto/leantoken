@@ -28,6 +28,12 @@ struct Manifest {
     dataset_kind: String,
     #[serde(default)]
     frozen_at: Option<String>,
+    #[serde(default)]
+    candidate_revision: Option<String>,
+    #[serde(default)]
+    evaluation_protocol: Option<String>,
+    #[serde(default)]
+    reclassification_rule: Option<String>,
     description: String,
     #[serde(default = "default_rg_max_lines")]
     rg_max_lines_per_query: usize,
@@ -55,6 +61,10 @@ struct CorpusSpec {
 struct TaskSpec {
     id: String,
     prompt: String,
+    #[serde(default)]
+    languages: Vec<String>,
+    #[serde(default)]
+    task_shapes: Vec<String>,
     rg_queries: Vec<String>,
     relevant_files: Vec<RelevantFile>,
     token_budget: usize,
@@ -73,6 +83,9 @@ struct Report {
     dataset_kind: String,
     manifest_blake3: String,
     frozen_at: Option<String>,
+    candidate_revision: Option<String>,
+    evaluation_protocol: Option<String>,
+    reclassification_rule: Option<String>,
     manifest_description: String,
     leantoken_version: &'static str,
     host_os: &'static str,
@@ -147,6 +160,8 @@ struct CorpusReport {
 struct TaskReport {
     id: String,
     prompt: String,
+    languages: Vec<String>,
+    task_shapes: Vec<String>,
     token_budget: usize,
     relevant_files: Vec<String>,
     returned_files: Vec<String>,
@@ -219,7 +234,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let manifest_json = fs::read_to_string(&args.manifest)?;
     let manifest_blake3 = blake3::hash(manifest_json.as_bytes()).to_hex().to_string();
     let manifest: Manifest = serde_json::from_str(&manifest_json)?;
-    if !matches!(manifest.schema_version, 1 | 2) {
+    if !matches!(manifest.schema_version, 1..=3) {
         return Err(format!(
             "unsupported benchmark manifest schema version {}",
             manifest.schema_version
@@ -287,6 +302,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         dataset_kind: manifest.dataset_kind.clone(),
         manifest_blake3,
         frozen_at: manifest.frozen_at,
+        candidate_revision: manifest.candidate_revision,
+        evaluation_protocol: manifest.evaluation_protocol,
+        reclassification_rule: manifest.reclassification_rule,
         manifest_description: manifest.description,
         leantoken_version: env!("CARGO_PKG_VERSION"),
         host_os: std::env::consts::OS,
@@ -350,6 +368,64 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Box<dyn Error>> {
                     .into());
                 }
             }
+        }
+    }
+    if manifest.schema_version >= 3 && manifest.dataset_kind == "blind_holdout" {
+        for (field, value) in [
+            ("candidate_revision", manifest.candidate_revision.as_deref()),
+            (
+                "evaluation_protocol",
+                manifest.evaluation_protocol.as_deref(),
+            ),
+            (
+                "reclassification_rule",
+                manifest.reclassification_rule.as_deref(),
+            ),
+        ] {
+            if value.is_none_or(str::is_empty) {
+                return Err(format!("blind_holdout schema v3 requires {field}").into());
+            }
+        }
+
+        let tasks = manifest
+            .corpora
+            .iter()
+            .flat_map(|corpus| &corpus.tasks)
+            .collect::<Vec<_>>();
+        if tasks.len() < 8 {
+            return Err("blind_holdout schema v3 requires at least eight tasks".into());
+        }
+        let mut languages = HashSet::new();
+        let mut task_shapes = HashSet::new();
+        let allowed_shapes = HashSet::from([
+            "configuration",
+            "cross_file_behavior",
+            "definition_discovery",
+            "framework_behavior",
+            "regression_test_discovery",
+        ]);
+        for task in tasks {
+            if task.languages.is_empty() || task.task_shapes.is_empty() {
+                return Err(format!("{} requires language and task-shape tags", task.id).into());
+            }
+            for language in &task.languages {
+                if language.trim().is_empty() {
+                    return Err(format!("{} has an empty language tag", task.id).into());
+                }
+                languages.insert(language.as_str());
+            }
+            for shape in &task.task_shapes {
+                if !allowed_shapes.contains(shape.as_str()) {
+                    return Err(format!("{} has unsupported task shape {shape}", task.id).into());
+                }
+                task_shapes.insert(shape.as_str());
+            }
+        }
+        if languages.len() < 6 {
+            return Err("blind_holdout schema v3 requires at least six languages".into());
+        }
+        if task_shapes.len() < 4 {
+            return Err("blind_holdout schema v3 requires at least four task shapes".into());
         }
     }
     Ok(())
@@ -556,6 +632,8 @@ async fn run_task(
     Ok(TaskReport {
         id: task.id,
         prompt: task.prompt,
+        languages: task.languages,
+        task_shapes: task.task_shapes,
         token_budget: task.token_budget,
         relevant_files: task
             .relevant_files
@@ -983,6 +1061,16 @@ mod tests {
         manifest.dataset_kind = "blind_holdout".into();
         validate_manifest(&manifest).expect("same provenance is valid for a future blind set");
 
+        manifest.schema_version = 3;
+        manifest.candidate_revision = Some("frozen-candidate".into());
+        manifest.evaluation_protocol = Some("frozen evaluation".into());
+        manifest.reclassification_rule = Some("reclassify after inspection".into());
+        assert!(
+            validate_manifest(&manifest).is_err(),
+            "schema v3 must reject a four-task set"
+        );
+
+        manifest.schema_version = 2;
         manifest.corpora[0].fix_commit = Some("future".into());
         assert!(validate_manifest(&manifest).is_err());
     }
