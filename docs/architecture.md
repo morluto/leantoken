@@ -28,8 +28,9 @@ ignore-aware discovery -> chunking -> tree-sitter extraction
 - Retrieval services own validation, freshness checks, ranking inputs, token
   limits, and response models.
 - The MCP adapter owns SDK types, protocol error translation, cancellation, and
-  stdio lifecycle. It returns structured results while omitting optional output
-  schemas from the catalog to avoid charging every client for duplicate DTOs.
+  stdio lifecycle. It omits optional output schemas from the catalog and offers
+  explicit dual, text-only, and structured-only result modes. Dual remains the
+  compatibility default.
 
 LeanToken does not implement JSON-RPC framing or MCP dispatch. Those remain in
 the official Rust MCP SDK.
@@ -111,13 +112,18 @@ applies only when a path matches multiple independent explicit terms; variants
 of one identifier do not count as separate evidence. Signals change ordering;
 absent structural evidence never removes a lexical match.
 
-Symbol declaration excerpts may cross storage-chunk boundaries, but remain
-capped by the request budget and range limit. This keeps SQLite chunking an
-indexing detail rather than silently truncating a known syntactic range.
+Symbol and lexical matches expand to the complete enclosing declaration when it
+fits. Oversized declarations use a bounded window centered on the exact match,
+so an arbitrary declaration prefix cannot hide the decisive line. Context
+selection first covers independent task concepts, then prefers a second source
+view on the selected definition path before filling by score. This keeps SQLite
+chunking and candidate order from silently truncating known evidence.
 
 Context selection hashes and deduplicates overlapping candidates, omits known
-hashes, applies a per-file diversity cap, and selects only complete fragments
-that fit the source-token budget.
+hashes, applies a relative confidence floor and per-file diversity cap, and
+selects only complete fragments that fit the source-token budget. Fragment
+hashes live once in an aligned receipt table rather than repeating beside every
+fragment.
 
 Each service instance owns its tokenizer configuration. Exact OpenAI BPE
 encodings use `tiktoken-rs` singleton vocabularies; the explicit estimate mode
@@ -149,7 +155,8 @@ appropriate for that repository.
 - Cancellation propagates from MCP request context into blocking retrieval
   loops and leaves the service usable for later calls.
 - File replacement and multi-file reconciliation roll back on storage errors.
-- Committed WAL state survives process failure; corrupt derived state can be
-  removed and rebuilt without touching source.
+- Committed WAL state survives process failure. Confirmed corruption in a
+  LeanToken-owned cache is deleted and rebuilt; an explicitly configured
+  caller-owned database is preserved and the error is returned.
 - EOF and orderly cancellation stop stdio service, watcher, and reconciliation
   tasks without detached worker threads.
