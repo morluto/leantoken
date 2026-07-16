@@ -34,6 +34,19 @@ unlabeled fragment cost, repeated ranges, known-hash resends, and two-turn cost.
 Do not alter prompts, labels, budgets, or pinned revisions after inspecting a
 candidate. Freeze a new dataset version instead.
 
+The prospective-validation report for candidate `2c0388d` and its identical-
+manifest ablation are archived in `benchmarks/reports/`. Against runtime
+revision `0b6f80b`, the candidate improved file recall from 7/11 to 8/11 and
+line-anchor recall from 13/38 to 17/38. It returned four Express anchors where
+the baseline returned none. Dead-end source fell from 1,139 to 1,081 tokens;
+complete first-response JSON increased from 5,569 to 5,797 tokens and complete
+two-turn JSON from 12,367 to 12,410 tokens. Both reports use manifest BLAKE3
+`5991d8a643a873ef61d5a4122f52abd7f589a5403d13ab609ebc6b9428e73d9a`.
+The four validation prompts lead with their task locus. They do not establish
+how original-order prose selection behaves when a long symptom narrative comes
+before decisive terms in a later sentence; retain that phrasing class in future
+validation rather than treating this ablation as a general language result.
+
 ## Model-in-the-loop A/B
 
 `model_ab` executes the same frozen task across four arms:

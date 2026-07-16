@@ -795,6 +795,8 @@ mod tests {
 
         assert!(terms.iter().any(|term| term.value == "view"));
         assert!(terms.iter().any(|term| term.value == "name"));
+        assert!(terms.iter().any(|term| term.value == "ending"));
+        assert!(terms.iter().any(|term| term.value == "dot"));
         assert!(!terms.iter().any(|term| term.value == "callback"));
     }
 

@@ -107,6 +107,14 @@ come from changing tasks or labels.
 
 The repository includes one [Linux x86-64 result](reports/linux-x86_64-2026-07-15.json) as a transparent development record. It is not a cross-platform result or a release claim; rerun the manifest on the target machine for current timings.
 
+The prospective-validation candidate report for `2c0388d` is
+[`reports/validation-2c0388d-linux-x86_64-2026-07-16.json`](reports/validation-2c0388d-linux-x86_64-2026-07-16.json),
+with the identical-manifest comparison in
+[`reports/validation-2c0388d-ablation-linux-x86_64-2026-07-16.json`](reports/validation-2c0388d-ablation-linux-x86_64-2026-07-16.json).
+It improves file and line recall at a 228-token complete first-response JSON
+cost and a 43-token complete two-turn JSON cost. This is tuned prospective
+validation evidence, not a blind generalization result.
+
 ## Measurements
 
 For each task, the runner reports:
