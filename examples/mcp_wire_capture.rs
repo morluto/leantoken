@@ -1,3 +1,6 @@
+#[path = "support/wire_trace.rs"]
+mod wire_trace;
+
 use std::error::Error;
 use std::ffi::OsString;
 use std::fs;
@@ -8,8 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use clap::Parser;
-use serde::Serialize;
+use clap::{Parser, ValueEnum};
+use leantoken::tokens::Tokenizer;
+use wire_trace::{Direction, Event, RepositoryIdentity, TRACE_SCHEMA_V2, Trace};
 
 #[derive(Debug, Parser)]
 #[command(about = "Proxy an MCP stdio server and capture exact JSON-RPC messages")]
@@ -23,31 +27,24 @@ struct Args {
     /// Exact MCP host version recorded with the trace.
     #[arg(long)]
     host_version: String,
+    /// Provider name when known.
+    #[arg(long)]
+    provider: Option<String>,
+    /// Model identifier when known.
+    #[arg(long)]
+    model: Option<String>,
+    /// Pinned repository revision when known.
+    #[arg(long)]
+    repository_revision: Option<String>,
+    /// Hash or stable description of the dirty state.
+    #[arg(long)]
+    dirty_fingerprint: Option<String>,
     /// Tokenizer the analyzer should use.
     #[arg(long, default_value = "cl100k_base")]
     tokenizer: String,
     /// Server command and arguments, following `--`.
     #[arg(required = true, last = true)]
     command: Vec<OsString>,
-}
-
-#[derive(Debug, Serialize)]
-struct Trace {
-    schema_version: u32,
-    host: String,
-    host_version: String,
-    tokenizer: String,
-    generated_at_unix_seconds: u64,
-    provider_total_input_tokens: Option<u64>,
-    events: Vec<Event>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct Event {
-    sequence: u64,
-    direction: &'static str,
-    raw_json: String,
-    provider_input_tokens: Option<u64>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -73,7 +70,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         copy_lines(
             BufReader::new(std::io::stdin().lock()),
             child_stdin,
-            "client_to_server",
+            Direction::ClientToServer,
             &input_events,
             &input_sequence,
         )
@@ -84,7 +81,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         copy_lines(
             BufReader::new(child_stdout),
             std::io::stdout().lock(),
-            "server_to_client",
+            Direction::ServerToClient,
             &output_events,
             &output_sequence,
         )
@@ -101,15 +98,42 @@ fn main() -> Result<(), Box<dyn Error>> {
         .map_err(|_| "wire event recorder was poisoned")?
         .clone();
     events.sort_by_key(|event| event.sequence);
-    let trace = Trace {
-        schema_version: 1,
+    let generated_at = SystemTime::now().duration_since(UNIX_EPOCH)?;
+    let tokenizer = Tokenizer::from_str(&args.tokenizer, false)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+    let repository = match (args.repository_revision, args.dirty_fingerprint) {
+        (Some(revision), Some(dirty_fingerprint)) => Some(RepositoryIdentity {
+            revision,
+            dirty_fingerprint,
+        }),
+        (None, None) => None,
+        _ => {
+            return Err(
+                "repository revision and dirty fingerprint must be supplied together".into(),
+            );
+        }
+    };
+    let mut trace = Trace {
+        schema_version: TRACE_SCHEMA_V2,
+        trace_id: Some(format!("stdio-{}", generated_at.as_millis())),
+        trace_content_blake3: None,
         host: args.host,
         host_version: args.host_version,
+        model: args.model,
+        provider: args.provider,
         tokenizer: args.tokenizer,
-        generated_at_unix_seconds: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+        token_count_exact: Some(tokenizer.is_exact()),
+        generated_at_unix_seconds: Some(generated_at.as_secs()),
+        repository,
+        final_turn: None,
+        provider_usage: None,
         provider_total_input_tokens: None,
+        outcome: None,
         events,
     };
+    trace
+        .seal_content_hash()
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
     if let Some(parent) = args
         .output
         .parent()
@@ -127,7 +151,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn copy_lines(
     mut reader: impl BufRead,
     mut writer: impl Write,
-    direction: &'static str,
+    direction: Direction,
     events: &Mutex<Vec<Event>>,
     sequence: &AtomicU64,
 ) -> std::io::Result<()> {
@@ -145,10 +169,34 @@ fn copy_lines(
         if raw_json.trim().is_empty() {
             continue;
         }
+        let sequence = sequence.fetch_add(1, Ordering::Relaxed);
         let event = Event {
-            sequence: sequence.fetch_add(1, Ordering::Relaxed),
+            sequence: Some(sequence),
             direction,
-            raw_json,
+            turn: None,
+            timestamp_unix_millis: Some(
+                u64::try_from(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map_err(std::io::Error::other)?
+                        .as_millis(),
+                )
+                .unwrap_or(u64::MAX),
+            ),
+            latency_ms: None,
+            category: None,
+            message: None,
+            raw_json: Some(raw_json),
+            provider_visible_payload: None,
+            tool_name: None,
+            call_id: None,
+            result_id: None,
+            ranges: Vec::new(),
+            visible_through_turn: None,
+            stable_prefix: None,
+            cache_eligible: None,
+            compaction: None,
+            provider_usage: None,
             provider_input_tokens: None,
         };
         events
@@ -172,7 +220,7 @@ mod tests {
         copy_lines(
             BufReader::new(&input[..]),
             &mut output,
-            "client_to_server",
+            Direction::ClientToServer,
             &events,
             &sequence,
         )
@@ -181,6 +229,11 @@ mod tests {
         assert_eq!(output, input);
         let events = events.into_inner().expect("events");
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].raw_json, "{ \"jsonrpc\": \"2.0\" }");
+        assert_eq!(
+            events[0].raw_json.as_deref(),
+            Some("{ \"jsonrpc\": \"2.0\" }")
+        );
+        assert_eq!(events[0].sequence, Some(0));
+        assert!(events[0].timestamp_unix_millis.is_some());
     }
 }

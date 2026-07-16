@@ -120,6 +120,51 @@ cargo run --release --example benchmark_ablation -- \
 The command rejects different manifest hashes so an apparent improvement cannot
 come from changing tasks or labels.
 
+## Ranked-region evaluator
+
+`ranked_region_benchmark` converts retrieval output into a versioned JSONL
+contract with pinned revisions, explicit line or source-token budgets, ranked
+regions, retrieval provenance, and evaluator-only core/optional labels. It
+uses interval unions for overlapping ranges and reports file recall, line
+recall/precision/F1, context efficiency, region hit/noise rates, first useful
+hit, line-budget NDCG, source and complete response costs, latency, and
+language/task strata.
+
+The independently authored fixture under
+[`fixtures/ranked_regions/`](fixtures/ranked_regions/) exercises the public
+SWE-Explore record shape plus separate issue and commit maps. Regenerate and
+score it with:
+
+```bash
+cargo run --release --example ranked_region_benchmark -- \
+  convert-swe-explore \
+  --dataset benchmarks/fixtures/ranked_regions/swe_explore.synthetic.jsonl \
+  --issue-map benchmarks/fixtures/ranked_regions/swe_explore.issue_map.json \
+  --commit-map benchmarks/fixtures/ranked_regions/swe_explore.commit_map.json \
+  --output target/swe-explore.manifest.jsonl \
+  --line-budget 8
+
+cargo run --release --example ranked_region_benchmark -- \
+  evaluate \
+  --manifest benchmarks/fixtures/ranked_regions/swe_explore.manifest.jsonl \
+  --predictions benchmarks/fixtures/ranked_regions/swe_explore.predictions.jsonl \
+  --output target/swe-explore.report.json
+```
+
+The checked-in [report](fixtures/ranked_regions/swe_explore.report.json) is a
+cross-platform deterministic contract fixture, not external benchmark
+evidence. The adapter reads caller-provided SWE-Explore data only. As checked
+on 2026-07-16, the official code is MIT while the Hugging Face dataset card is
+`CC-BY-NC-ND-4.0`; see
+[`../docs/measurement.md`](../docs/measurement.md) for pinned provenance and
+the non-vendoring workflow.
+
+The complete Phase 1 Linux x86-64 record is
+[`reports/evidence-economics-v2-linux-x86_64-2026-07-16.json`](reports/evidence-economics-v2-linux-x86_64-2026-07-16.json).
+It preserves the negative retrieval baseline, separate wire/source/provider
+costs, exact artifact hashes, and the decision to defer compact-mode claims
+until a real host trace exists.
+
 The repository includes one [Linux x86-64 result](reports/linux-x86_64-2026-07-15.json) as a transparent development record. It is not a cross-platform result or a release claim; rerun the manifest on the target machine for current timings.
 
 The prospective-validation candidate report for `2c0388d` is
