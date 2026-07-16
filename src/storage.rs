@@ -484,33 +484,6 @@ impl Storage {
         Ok(i64_to_u64(next_generation))
     }
 
-    pub fn replace_file(&self, file: IndexedFile) -> Result<u64> {
-        let mut conn = self
-            .writer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-
-        tx.execute("DELETE FROM files WHERE path = ?1", params![&file.path])?;
-
-        let current_generation: i64 = tx.query_row(
-            "SELECT repository_generation FROM meta WHERE id = 1",
-            [],
-            |row| row.get(0),
-        )?;
-        let next_generation = current_generation.saturating_add(1);
-
-        Self::insert_file(&tx, &file, next_generation)?;
-
-        tx.execute(
-            "UPDATE meta SET repository_generation = ?1 WHERE id = 1",
-            params![next_generation],
-        )?;
-
-        tx.commit()?;
-        Ok(i64_to_u64(next_generation))
-    }
-
     /// Atomically apply one repository reconciliation as a single generation.
     /// Unmentioned files remain unchanged; replacements and deletions become
     /// visible together when the transaction commits.
@@ -568,32 +541,6 @@ impl Storage {
         )?;
         tx.commit()?;
         Ok(i64_to_u64(next_generation))
-    }
-
-    pub fn delete_file(&self, path: &str) -> Result<()> {
-        let mut conn = self
-            .writer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-
-        let affected = tx.execute("DELETE FROM files WHERE path = ?1", params![path])?;
-
-        if affected > 0 {
-            let current_generation: i64 = tx.query_row(
-                "SELECT repository_generation FROM meta WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )?;
-            let next_generation = current_generation.saturating_add(1);
-            tx.execute(
-                "UPDATE meta SET repository_generation = ?1 WHERE id = 1",
-                params![next_generation],
-            )?;
-        }
-
-        tx.commit()?;
-        Ok(())
     }
 
     fn insert_file(tx: &Transaction, file: &IndexedFile, generation: i64) -> Result<()> {
