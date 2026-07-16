@@ -345,9 +345,7 @@ fn process_tags_match(
 fn signature_from_node(source: &str, node: Node) -> Option<String> {
     const MAX_SIGNATURE_CHARS: usize = 512;
 
-    let end = node
-        .child_by_field_name("body")
-        .map_or(node.end_byte(), |body| body.start_byte());
+    let end = first_body_start(node).unwrap_or_else(|| node.end_byte());
     let raw = source.get(node.start_byte()..end)?.trim();
     if raw.is_empty() {
         return None;
@@ -365,6 +363,22 @@ fn signature_from_node(source: &str, node: Node) -> Option<String> {
         compact.extend(part.chars().take(remaining));
     }
     (!compact.is_empty()).then_some(compact)
+}
+
+fn first_body_start(node: Node<'_>) -> Option<usize> {
+    let mut pending = vec![node];
+    let mut earliest = None;
+    while let Some(current) = pending.pop() {
+        if let Some(body) = current.child_by_field_name("body") {
+            earliest = Some(earliest.map_or(body.start_byte(), |start: usize| {
+                start.min(body.start_byte())
+            }));
+            continue;
+        }
+        let mut cursor = current.walk();
+        pending.extend(current.named_children(&mut cursor));
+    }
+    earliest
 }
 
 fn process_imports_match(source: &str, query: &Query, qm: &QueryMatch, imports: &mut Vec<Import>) {
@@ -563,6 +577,10 @@ function greet(name) {
     console.log(helper(name));
 }
 
+app.render = function render(name) {
+    helper(name);
+};
+
 const x = 1;
 "#;
 
@@ -714,6 +732,21 @@ func main() {
         let imports = import_targets(&out);
         assert!(imports.contains(&"./helper.js"), "imports: {imports:?}");
         assert!(imports.contains(&"./utils"), "imports: {imports:?}");
+        let render = out
+            .symbols
+            .iter()
+            .find(|symbol| {
+                symbol.name == "render"
+                    && symbol
+                        .signature
+                        .as_deref()
+                        .is_some_and(|signature| signature.starts_with("app.render"))
+            })
+            .expect("assigned render symbol");
+        assert_eq!(
+            render.signature.as_deref(),
+            Some("app.render = function render(name)")
+        );
         Ok(())
     }
 

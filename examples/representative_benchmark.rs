@@ -22,6 +22,9 @@ struct Args {
     /// Validate the manifest, candidate runtime tree, and pinned checkouts without evaluating.
     #[arg(long)]
     preflight_only: bool,
+    /// Re-run a consumed blind holdout for diagnostics without claiming blind evidence.
+    #[arg(long)]
+    consumed_diagnostic: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,6 +97,7 @@ struct Report {
     harness_revision: String,
     harness_worktree_dirty: bool,
     candidate_runtime_tree_verified: Option<bool>,
+    diagnostic_only: bool,
     host_os: &'static str,
     host_arch: &'static str,
     rustc_version: String,
@@ -123,6 +127,8 @@ struct AggregateReport {
     relevant_files: usize,
     relevant_files_found: usize,
     relevant_file_recall: f64,
+    candidate_relevant_files_found: usize,
+    candidate_relevant_file_recall: f64,
     returned_files: usize,
     labeled_file_precision: f64,
     line_anchors: usize,
@@ -172,8 +178,13 @@ struct TaskReport {
     relevant_files: Vec<String>,
     returned_files: Vec<String>,
     returned_evidence: Vec<EvidenceSummary>,
+    candidate_files: Vec<String>,
+    relevant_candidate_evidence: Vec<CandidateEvidenceSummary>,
+    omitted_relevant_files: Vec<OmittedRelevantFile>,
     relevant_files_found: usize,
     relevant_file_recall: f64,
+    candidate_relevant_files_found: usize,
+    candidate_relevant_file_recall: f64,
     labeled_file_precision: f64,
     line_anchors: usize,
     line_anchors_found: usize,
@@ -216,6 +227,25 @@ struct EvidenceSummary {
 }
 
 #[derive(Debug, Serialize)]
+struct OmittedRelevantFile {
+    path: String,
+    reason: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct CandidateEvidenceSummary {
+    path: String,
+    start_line: usize,
+    end_line: usize,
+    representation: String,
+    match_kinds: Vec<String>,
+    concepts: Vec<String>,
+    concept_weight: f64,
+    score: f64,
+    token_count: usize,
+}
+
+#[derive(Debug, Serialize)]
 struct BaselineRead<'a> {
     path: &'a str,
     content: String,
@@ -248,6 +278,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .into());
     }
     validate_manifest(&manifest)?;
+    if args.consumed_diagnostic && manifest.dataset_kind != "blind_holdout" {
+        return Err("--consumed-diagnostic requires a blind_holdout manifest".into());
+    }
     let source_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let harness_revision = git_output(source_root, &["rev-parse", "HEAD"])?
         .trim()
@@ -258,7 +291,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )?
     .trim()
     .is_empty();
-    let candidate_runtime_tree_verified = verify_candidate_runtime_tree(&manifest, source_root)?;
+    let candidate_runtime_tree_verified = if args.consumed_diagnostic {
+        None
+    } else {
+        verify_candidate_runtime_tree(&manifest, source_root)?
+    };
     let ripgrep_version = command_version("rg")?;
     preflight(&manifest, &args.repos_root)?;
     if args.preflight_only {
@@ -271,6 +308,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 "harness_revision": harness_revision,
                 "harness_worktree_dirty": harness_worktree_dirty,
                 "candidate_runtime_tree_verified": candidate_runtime_tree_verified,
+                "diagnostic_only": args.consumed_diagnostic,
                 "corpus_count": manifest.corpora.len(),
                 "task_count": manifest.corpora.iter().map(|corpus| corpus.tasks.len()).sum::<usize>(),
                 "status": "ready"
@@ -318,6 +356,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     aggregate.corpus_count = corpora.len();
     aggregate.relevant_file_recall =
         ratio(aggregate.relevant_files_found, aggregate.relevant_files);
+    aggregate.candidate_relevant_file_recall = ratio(
+        aggregate.candidate_relevant_files_found,
+        aggregate.relevant_files,
+    );
     aggregate.labeled_file_precision =
         ratio(aggregate.relevant_files_found, aggregate.returned_files);
     aggregate.line_anchor_recall =
@@ -344,6 +386,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         harness_revision,
         harness_worktree_dirty,
         candidate_runtime_tree_verified,
+        diagnostic_only: args.consumed_diagnostic,
         host_os: std::env::consts::OS,
         host_arch: std::env::consts::ARCH,
         rustc_version: command_version("rustc")?,
@@ -360,7 +403,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         },
         aggregate,
         corpora,
-        limitations: benchmark_limitations(&manifest.dataset_kind),
+        limitations: benchmark_limitations(&manifest.dataset_kind, args.consumed_diagnostic),
     };
     let json = serde_json::to_string_pretty(&report)?;
     if let Some(parent) = args
@@ -468,7 +511,7 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn benchmark_limitations(dataset_kind: &str) -> Vec<&'static str> {
+fn benchmark_limitations(dataset_kind: &str, consumed_diagnostic: bool) -> Vec<&'static str> {
     let mut limitations = vec![
         "The oracle baseline assumes perfect file selection and reads whole files rather than exact decisive ranges.",
         "The scripted ripgrep baseline uses fixed queries supplied by the manifest and is not an autonomous agent trajectory.",
@@ -482,6 +525,11 @@ fn benchmark_limitations(dataset_kind: &str) -> Vec<&'static str> {
         limitations.push(
             "A holdout result is evaluation evidence, not permission to tune against the same dataset while continuing to call it blind.",
         );
+        if consumed_diagnostic {
+            limitations.push(
+                "This explicitly diagnostic rerun used a consumed holdout and an unverified runtime tree; it is not blind or generalization evidence.",
+            );
+        }
     } else if dataset_kind == "prospective_validation" {
         limitations.push(
             "Validation prompts and labels were frozen from open issue reports and pinned source inspection, then used during retrieval tuning; this is not blind holdout evidence.",
@@ -553,7 +601,8 @@ async fn run_task(
         prior_repository_generation: None,
     };
     let started = Instant::now();
-    let response = services.context(request.clone()).await?;
+    let evaluation = services.context_evaluation(request.clone()).await?;
+    let response = evaluation.response;
     let first_context_ms = elapsed_ms(started);
     verify_token_accounting(&response)?;
     let canonical_response = serde_json::to_string(&response)?;
@@ -568,6 +617,23 @@ async fn run_task(
         }
     }
     let returned_files = sorted_unique(response.fragments.iter().map(|item| item.path.clone()));
+    let candidate_files = evaluation.generated_candidate_paths;
+    let relevant_candidate_evidence = evaluation
+        .generated_candidates
+        .into_iter()
+        .filter(|candidate| relevant_paths.contains(&candidate.path))
+        .map(|candidate| CandidateEvidenceSummary {
+            path: candidate.path,
+            start_line: candidate.start_line,
+            end_line: candidate.end_line,
+            representation: candidate.representation,
+            match_kinds: candidate.match_kinds,
+            concepts: candidate.concepts,
+            concept_weight: candidate.concept_weight,
+            score: candidate.score,
+            token_count: candidate.token_count,
+        })
+        .collect();
     let returned_evidence = response
         .fragments
         .iter()
@@ -586,6 +652,26 @@ async fn run_task(
         .iter()
         .filter(|path| relevant_paths.contains(*path))
         .count();
+    let candidate_relevant_files_found = candidate_files
+        .iter()
+        .filter(|path| relevant_paths.contains(*path))
+        .count();
+    let omitted_relevant_files = task
+        .relevant_files
+        .iter()
+        .filter_map(|file| {
+            if returned_files.binary_search(&file.path).is_ok() {
+                return None;
+            }
+            candidate_files
+                .binary_search(&file.path)
+                .is_ok()
+                .then(|| OmittedRelevantFile {
+                    path: file.path.clone(),
+                    reason: "generated but not selected",
+                })
+        })
+        .collect();
     let labeled_file_precision = ratio(relevant_files_found, returned_files.len());
     let unlabeled_returned_files = returned_files
         .iter()
@@ -679,8 +765,13 @@ async fn run_task(
             .collect(),
         returned_files,
         returned_evidence,
+        candidate_files,
+        relevant_candidate_evidence,
+        omitted_relevant_files,
         relevant_files_found,
         relevant_file_recall: ratio(relevant_files_found, relevant_paths.len()),
+        candidate_relevant_files_found,
+        candidate_relevant_file_recall: ratio(candidate_relevant_files_found, relevant_paths.len()),
         labeled_file_precision,
         line_anchors,
         line_anchors_found,
@@ -1111,6 +1202,7 @@ fn accumulate(aggregate: &mut AggregateReport, task: &TaskReport) {
     aggregate.task_count += 1;
     aggregate.relevant_files += task.relevant_files.len();
     aggregate.relevant_files_found += task.relevant_files_found;
+    aggregate.candidate_relevant_files_found += task.candidate_relevant_files_found;
     aggregate.returned_files += task.returned_files.len();
     aggregate.line_anchors += task.line_anchors;
     aggregate.line_anchors_found += task.line_anchors_found;

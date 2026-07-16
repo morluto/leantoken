@@ -236,7 +236,7 @@ fn targeted_reconcile_clears_imports_resolved_to_deleted_file() {
 }
 
 #[test]
-fn targeted_reconcile_falls_back_for_deleted_directory() {
+fn targeted_reconcile_applies_deleted_directory_delta() {
     let root = tempfile::tempdir().expect("root");
     std::fs::create_dir(root.path().join("removed")).expect("directory");
     std::fs::write(root.path().join("removed/a.rs"), "fn gone_a() {}\n").expect("a");
@@ -261,7 +261,7 @@ fn targeted_reconcile_falls_back_for_deleted_directory() {
 }
 
 #[test]
-fn targeted_reconcile_falls_back_for_new_files_and_ignore_changes() {
+fn targeted_reconcile_applies_new_file_and_ignore_deltas() {
     let root = tempfile::tempdir().expect("root");
     std::fs::create_dir(root.path().join(".git")).expect("git marker");
     std::fs::write(root.path().join("keep.rs"), "fn keep() {}\n").expect("write keep");
@@ -277,23 +277,22 @@ fn targeted_reconcile_falls_back_for_new_files_and_ignore_changes() {
     std::fs::write(root.path().join("new.rs"), "fn new_file() {}\n").expect("new file");
     let added = indexer
         .reconcile_paths(&["new.rs".into()])
-        .expect("new path fallback");
-    assert!(added.files_seen >= 4, "new files require a full scan");
+        .expect("new path delta");
+    assert_eq!(added.files_seen, 1);
     assert!(storage.find_file("new.rs").expect("find new").is_some());
 
     std::fs::write(root.path().join(".gitignore"), "hide.rs\n").expect("change ignore");
     let ignored = indexer
         .reconcile_paths(&[".gitignore".into()])
-        .expect("ignore fallback");
-    assert!(
-        ignored.files_seen >= 3,
-        "ignore changes require a full scan"
-    );
+        .expect("ignore delta");
+    assert_eq!(ignored.files_seen, 2);
+    assert_eq!(ignored.files_indexed, 1);
+    assert_eq!(ignored.files_removed, 1);
     assert!(storage.find_file("hide.rs").expect("find hidden").is_none());
 }
 
 #[test]
-fn new_file_fallback_resolves_existing_importers() {
+fn new_file_delta_resolves_existing_importers() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(
         root.path().join("consumer.rs"),
@@ -319,9 +318,10 @@ fn new_file_fallback_resolves_existing_importers() {
     );
 
     std::fs::write(root.path().join("target.rs"), "pub fn item() {}\n").expect("target");
-    indexer
-        .reconcile_paths(&["target.rs".into()])
-        .expect("new target fallback");
+    let response = indexer
+        .reconcile_paths(&["target.rs".into(), "consumer.rs".into()])
+        .expect("new target delta");
+    assert_eq!(response.files_indexed, 2);
 
     let consumer = storage
         .find_file("consumer.rs")

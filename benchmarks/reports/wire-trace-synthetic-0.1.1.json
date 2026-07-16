@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "trace_blake3": "881b9f71578273987fe029e9accda5629a5a6f6db391b0bdac7918b73a545125",
+  "trace_blake3": "6c8a78efc7c5be3a9c02192e3f8423e057b431395b7821f253313d5912d4d286",
   "host": "synthetic-fixture",
   "host_version": "0.1.1",
   "tokenizer": "cl100k_base",
   "token_count_exact": true,
   "event_count": 7,
-  "total_local_tokens": 2001,
+  "total_local_tokens": 1984,
   "total_provider_input_tokens": null,
   "categories": {
     "initialize_request": {
@@ -31,7 +31,7 @@
     },
     "tool_call_response": {
       "events": 1,
-      "local_tokens": 257,
+      "local_tokens": 240,
       "provider_input_tokens": null
     },
     "tools_list_request": {
