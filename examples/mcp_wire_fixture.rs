@@ -152,12 +152,14 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
         provider_total_input_tokens: None,
         events: messages
             .into_iter()
-            .map(|(direction, message)| Event {
-                direction,
-                raw_json: serde_json::to_string(&message).expect("fixture message is serializable"),
-                provider_input_tokens: None,
+            .map(|(direction, message)| {
+                Ok(Event {
+                    direction,
+                    raw_json: serde_json::to_string(&message)?,
+                    provider_input_tokens: None,
+                })
             })
-            .collect(),
+            .collect::<Result<Vec<_>, serde_json::Error>>()?,
     })
 }
 
