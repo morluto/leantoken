@@ -1,0 +1,173 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 9 * * 1'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: Create or update release PR
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name != 'pull_request' &&
+      (
+        github.event_name != 'push' ||
+        (
+          !contains(github.event.head_commit.message, '[skip ci]') &&
+          !contains(github.event.head_commit.message, '[no-release]') &&
+          !contains(github.event.head_commit.message, 'chore(main): release')
+        )
+      )
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+
+      - name: Determine next version
+        id: version
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          LATEST_VERSION="${LATEST_TAG#v}"
+          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "latest_version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
+
+          COMMITS_SINCE=$(git rev-list --count "${LATEST_TAG}..HEAD")
+          echo "commits_since=$COMMITS_SINCE" >> "$GITHUB_OUTPUT"
+
+          if [ "$COMMITS_SINCE" -eq 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
+          PATCH=$((PATCH + 1))
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "new_tag=v$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Check for existing release PR
+        id: existing-pr
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          EXISTING=$(gh pr list \
+            --label autorelease \
+            --state open \
+            --base main \
+            --json number,headRefName \
+            --jq '.[0] | "\(.number) \(.headRefName)"' 2>/dev/null || echo "")
+          if [ -n "$EXISTING" ]; then
+            echo "number=$(echo "$EXISTING" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+            echo "branch=$(echo "$EXISTING" | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create release branch
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          BRANCH="release-v${{ steps.version.outputs.new_version }}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+          if [ -n "${{ steps.existing-pr.outputs.branch }}" ]; then
+            git checkout "${{ steps.existing-pr.outputs.branch }}"
+            git reset --hard origin/main
+          else
+            git checkout -b "$BRANCH"
+          fi
+        id: branch
+
+      - name: Bump version in Cargo.toml
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          sed -i 's/^version = ".*"/version = "${{ steps.version.outputs.new_version }}"/' Cargo.toml
+
+      - name: Generate changelog
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          git cliff --config cliff.toml \
+            --tag "${{ steps.version.outputs.new_tag }}" \
+            --output CHANGELOG.md \
+            ${{ steps.version.outputs.latest_tag }}..HEAD
+
+      - name: Commit and push release branch
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml CHANGELOG.md
+          git commit -m "chore(main): release leantoken ${{ steps.version.outputs.new_version }}" || echo "no changes to commit"
+          git push --force origin "${{ steps.branch.outputs.branch }}"
+
+      - name: Create or update release PR
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          BRANCH="${{ steps.branch.outputs.branch }}"
+          VERSION="${{ steps.version.outputs.new_version }}"
+          TAG="${{ steps.version.outputs.new_tag }}"
+          BODY=$(git cliff --config cliff.toml --tag "$TAG" ${{ steps.version.outputs.latest_tag }}..HEAD)
+
+          if [ -n "${{ steps.existing-pr.outputs.number }}" ]; then
+            gh pr edit "${{ steps.existing-pr.outputs.number }}" \
+              --title "chore(main): release leantoken $VERSION" \
+              --body "$BODY"
+            echo "Updated existing PR #${{ steps.existing-pr.outputs.number }}"
+          else
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "chore(main): release leantoken $VERSION" \
+              --label autorelease \
+              --body "$BODY"
+            echo "Created release PR"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  create-tag:
+    name: Create release tag
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'autorelease')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Get version from PR title
+        id: version
+        run: |
+          TITLE="${{ github.event.pull_request.title }}"
+          VERSION=$(echo "$TITLE" | grep -oP 'release leantoken \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+          if [ -z "$VERSION" ]; then
+            echo "Could not extract version from PR title: $TITLE"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        run: |
+          git tag -a "${{ steps.version.outputs.tag }}" -m "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
