@@ -88,8 +88,9 @@ jobs:
           BRANCH="release-v${{ steps.version.outputs.new_version }}"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 
-          if [ -n "${{ steps.existing-pr.outputs.branch }}" ]; then
-            git checkout "${{ steps.existing-pr.outputs.branch }}"
+          EXISTING_BRANCH="${{ steps.existing-pr.outputs.branch }}"
+          if [ -n "$EXISTING_BRANCH" ] && [ "$EXISTING_BRANCH" != "null" ]; then
+            git checkout "$EXISTING_BRANCH"
             git reset --hard origin/main
           else
             git checkout -b "$BRANCH"
@@ -126,11 +127,12 @@ jobs:
           TAG="${{ steps.version.outputs.new_tag }}"
           BODY=$(git cliff --config cliff.toml --tag "$TAG" ${{ steps.version.outputs.latest_tag }}..HEAD)
 
-          if [ -n "${{ steps.existing-pr.outputs.number }}" ]; then
-            gh pr edit "${{ steps.existing-pr.outputs.number }}" \
+          EXISTING_NUMBER="${{ steps.existing-pr.outputs.number }}"
+          if [ -n "$EXISTING_NUMBER" ] && [ "$EXISTING_NUMBER" != "null" ]; then
+            gh pr edit "$EXISTING_NUMBER" \
               --title "chore(main): release leantoken $VERSION" \
               --body "$BODY"
-            echo "Updated existing PR #${{ steps.existing-pr.outputs.number }}"
+            echo "Updated existing PR #$EXISTING_NUMBER"
           else
             gh pr create \
               --base main \
