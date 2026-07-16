@@ -67,9 +67,30 @@ span six languages. Against fork `main`, labeled-file recall rose from 7/25 to
 14/25, but line-anchor recall fell from 8/111 to 5/111. Macro line recall fell
 44.7%, NDCG fell 32.4%, and complete tokens per relevant returned line rose
 56.2%. This fails the exact-identifier and evidence-economy gates by a wide
-margin. The available 848-record SWE-Explore file was not used as a runtime
-pilot because it lacks issue-text and base-commit companion maps and cannot
-provide a six-language sample.
+margin.
+
+The official SWE-Explore companion scripts at revision `3c12dc5` were later
+used to reconstruct issue text and pinned base commits for the verified
+partition. A deterministic 60-task development pilot covered eight Python
+repositories at a 1,200 source-token budget per task. It was selected by fixed
+repository quotas, instance ID, and evaluator-region bounds before running
+LeanToken. The labels are successful-agent read regions, not fix lines, and
+the pilot is not blind.
+
+Against fork `main`, the candidate improved macro file recall by 31.1%, macro
+line recall by 18.5%, macro line F1 by 21.2%, and NDCG by 23.8%; macro noise
+region rate fell by 5.0%. Both small- and medium-repository strata improved
+line recall and NDCG. Complete response tokens rose 17.9%, while complete
+tokens per relevant line rose 1.27%. This is a real retrieval-quality gain
+with a cost tradeoff, but the sample is Python-only and all converted tasks
+fall in the exact-identifier stratum.
+
+One structural follow-up prioritized a second non-overlapping range in an
+already selected owner file and backfilled unused budget into selected owner
+declarations. It was evaluated once on the consumed internal development set,
+where line anchors fell from 17/38 to 15/38 and two-turn JSON rose from 11,358
+to 13,315 tokens. The code was discarded without running the 60-task pilot or
+tuning constants further.
 
 The experiment therefore remains a draft, is not enabled on `main`, and does
 not advance to compact wire or model A/B work. The exact `IndexNotReady`
@@ -81,6 +102,8 @@ regression.
 The complete decision record, artifact hashes, failure classification, and
 verification counts are archived in
 [`../benchmarks/reports/adaptive-evidence-portfolio-phase2-linux-x86_64-2026-07-16.json`](../benchmarks/reports/adaptive-evidence-portfolio-phase2-linux-x86_64-2026-07-16.json).
+The compact external-pilot provenance and metrics are archived in
+[`../benchmarks/reports/adaptive-evidence-portfolio-swe-explore-pilot-linux-x86_64-2026-07-16.json`](../benchmarks/reports/adaptive-evidence-portfolio-swe-explore-pilot-linux-x86_64-2026-07-16.json).
 The development-set candidate and ablation reports are
 [`../benchmarks/reports/validation-adaptive-evidence-portfolio-linux-x86_64-2026-07-16.json`](../benchmarks/reports/validation-adaptive-evidence-portfolio-linux-x86_64-2026-07-16.json)
 and

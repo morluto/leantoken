@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "phase": "adaptive_evidence_portfolio_external_development_pilot",
+  "generated_at": "2026-07-16",
+  "conclusion": "quality_gain_with_cost_tradeoff_but_phase_2_remains_no_go",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "rustc": "1.97.0 (2d8144b78 2026-07-07)",
+    "profile": "release",
+    "tokenizer": "cl100k_base",
+    "token_count_exact": true
+  },
+  "provenance": {
+    "swe_explore_source_revision": "3c12dc5a551937038afcbdb6eb6bbf19f3ddd8c1",
+    "public_dataset": {
+      "records": 848,
+      "sha256": "dc4f114ececd0bfb987361c26ae5e2440456e2cccb36adfccb09ea5385aec202"
+    },
+    "commit_map": {
+      "records": 21836,
+      "sha256": "0c74249753f42c17ed0431db48240b326ddc4ae39e9ddeb27ea3d8b641f90266"
+    },
+    "issue_map": {
+      "records": 42533,
+      "sha256": "dd741dca6c4d2ec7ff8aab803351f0c1fa55252aefe5d2c9f325d64c04fbfb74"
+    },
+    "selected_records_sha256": "265038d9130169fb50664b5bd22130c9196571047bb7d45a1531f9a9cfc5bd29",
+    "ranked_source_manifest_sha256": "57562e949a03e9c8f155e5d1b6a37b32e849925ca6e9d411d9ae791fc316b6df",
+    "representative_manifest": {
+      "blake3": "bc8c68f4e490f3dfa66be8a4847fea82a0cc45fa3726c53db0cc23841275fb15",
+      "sha256": "73322bb804cfa06ea3e95c545d38b5ad2556aa9bb18c1ce2f86536e83c6f09cf"
+    },
+    "selection": {
+      "dataset_partition": "verified",
+      "ordering": "instance_id ascending within fixed repository quotas",
+      "maximum_core_files": 5,
+      "maximum_core_lines": 1000,
+      "range_validation": "all core and optional ranges required positive ordered bounds",
+      "leantoken_output_used_for_selection": false
+    }
+  },
+  "sample": {
+    "tasks": 60,
+    "repositories": 8,
+    "languages": [
+      "python"
+    ],
+    "source_token_budget_per_task": 1200,
+    "evaluator_line_anchors": 26929,
+    "repository_quotas": {
+      "astropy_astropy": 6,
+      "django_django": 12,
+      "psf_requests": 5,
+      "pylint_dev_pylint": 5,
+      "pytest_dev_pytest": 8,
+      "scikit_learn_scikit_learn": 6,
+      "sphinx_doc_sphinx": 8,
+      "sympy_sympy": 10
+    },
+    "label_semantics": "successful-agent read regions, not future fix lines",
+    "blind": false,
+    "role": "consumed external-format development evidence"
+  },
+  "revisions": {
+    "baseline_runtime": "565451c6d436c87c548a8ac305c3fe88b78fa22e",
+    "candidate_runtime": "1747a0eb453d657f41282705c8b1082adbc25e01"
+  },
+  "artifacts": {
+    "baseline_report_sha256": "8a5e260a1ea9702ee291766c65494305ae0af7e87d5ac41e9c94e23d224a49a5",
+    "candidate_report_sha256": "c2cfe8b948199853a894ee9c683fd31c2c2f415455fb2bfb2003d6bb7064d869",
+    "ablation_report_sha256": "8241396d4955a3232e334ad8a69de31e5c55dc527e9ec2945df1f6f97e17c929",
+    "ranked_manifest_blake3": "780234bcf6a8faa4accf894176fadc4d973de5b4f01a74ddd9fb45f930587dc3",
+    "ranked_baseline_report_sha256": "554652fb54b52ae83b477ee7853ca26826514c4d73153dba87092f3c0bb8a427",
+    "ranked_candidate_report_sha256": "7c98943460e8fc163ea0ea5f91a1943842afc7b6c5f5c1c382adb5f664c32c6a",
+    "ranked_comparison_sha256": "27b8303114b81d0e65824e31f8a7b6018a36190df2c4977cd527e20a0f594aea"
+  },
+  "aggregate": {
+    "baseline": {
+      "relevant_files_hit": 51,
+      "relevant_files": 178,
+      "core_lines_hit": 1203,
+      "core_lines": 26929,
+      "source_tokens": 39260,
+      "complete_response_tokens": 73917,
+      "dead_end_fragments": 403,
+      "dead_end_source_tokens": 25717,
+      "two_turn_context_tokens": 197863,
+      "file_recall_macro": 0.30944444444444447,
+      "line_recall_macro": 0.06569021628902118,
+      "line_precision_macro": 0.1910861940720762,
+      "line_f1_macro": 0.08367299001549021,
+      "ndcg_at_budget_macro": 0.19835053794158972,
+      "noise_region_rate_macro": 0.8967261904761904,
+      "complete_tokens_per_relevant_line": 61.443890274314214,
+      "source_tokens_per_relevant_line": 32.63507896924356
+    },
+    "candidate": {
+      "relevant_files_hit": 66,
+      "relevant_files": 178,
+      "core_lines_hit": 1400,
+      "core_lines": 26929,
+      "source_tokens": 51405,
+      "complete_response_tokens": 87114,
+      "dead_end_fragments": 373,
+      "dead_end_source_tokens": 34473,
+      "two_turn_context_tokens": 219443,
+      "file_recall_macro": 0.4055555555555556,
+      "line_recall_macro": 0.07785155715768038,
+      "line_precision_macro": 0.2135122527389258,
+      "line_f1_macro": 0.10144302837826322,
+      "ndcg_at_budget_macro": 0.2455165568976992,
+      "noise_region_rate_macro": 0.8519047619047619,
+      "complete_tokens_per_relevant_line": 62.22428571428571,
+      "source_tokens_per_relevant_line": 36.71785714285714
+    },
+    "relative_deltas": {
+      "file_recall_macro": 0.310592459605027,
+      "line_recall_macro": 0.18513169168376958,
+      "line_precision_macro": 0.11736095731955742,
+      "line_f1_macro": 0.21237484592678327,
+      "ndcg_at_budget_macro": 0.23779123286269546,
+      "noise_region_rate_macro": -0.04998340524394279,
+      "complete_response_tokens": 0.17853809001988716,
+      "source_tokens": 0.30934793683138057,
+      "complete_tokens_per_relevant_line": 0.012700944495660187,
+      "source_tokens_per_relevant_line": 0.12510397714867907
+    }
+  },
+  "repo_size_strata": {
+    "medium": {
+      "tasks": 50,
+      "baseline_line_recall_macro": 0.06873855275361347,
+      "candidate_line_recall_macro": 0.07710961225028902,
+      "baseline_ndcg_at_budget_macro": 0.20133315690271344,
+      "candidate_ndcg_at_budget_macro": 0.24991603949199873,
+      "baseline_complete_tokens_per_relevant_line": 59.90412272291467,
+      "candidate_complete_tokens_per_relevant_line": 63.72923875432526
+    },
+    "small": {
+      "tasks": 10,
+      "baseline_line_recall_macro": 0.05044853396605968,
+      "candidate_line_recall_macro": 0.08156128169463742,
+      "baseline_ndcg_at_budget_macro": 0.1834374431359707,
+      "candidate_ndcg_at_budget_macro": 0.22351914392620134,
+      "baseline_complete_tokens_per_relevant_line": 71.48125,
+      "candidate_complete_tokens_per_relevant_line": 55.09426229508197
+    }
+  },
+  "external_gate": {
+    "minimum_60_tasks": "pass",
+    "minimum_6_languages": "fail_one_language",
+    "two_meaningful_strata_improve_line_recall_or_ndcg": "pass_repo_size_small_and_medium",
+    "exact_identifier_relative_regression_at_most_5_percent": "pass_improved_but_all_tasks_share_this_stratum",
+    "complete_cost_per_relevant_line": "pass_with_tradeoff_quality_gains_exceed_1_27_percent_cost_regression",
+    "deterministic_implementation_tests": "pass",
+    "cross_platform_runtime_matrix": "not_run_for_this_local_pilot"
+  },
+  "rejected_structural_follow_up": {
+    "description": "Owner-file second-range priority plus deterministic remaining-budget backfill",
+    "status": "rejected_and_not_committed",
+    "evaluation": "internal_development_gate_only",
+    "report_sha256": "606e8444208f0f0b1453c094f4bad79248b1312a14dbc5a91565afaa7cbfdbcb",
+    "previous_candidate": {
+      "relevant_files_hit": 8,
+      "core_lines_hit": 17,
+      "source_tokens": 3101,
+      "complete_response_tokens": 5514,
+      "dead_end_source_tokens": 1028,
+      "two_turn_context_tokens": 11358
+    },
+    "follow_up": {
+      "relevant_files_hit": 8,
+      "core_lines_hit": 15,
+      "source_tokens": 3515,
+      "complete_response_tokens": 5985,
+      "dead_end_source_tokens": 1336,
+      "two_turn_context_tokens": 13315
+    },
+    "decision": "stop_without_running_the_60_task_pilot_or_tuning_constants"
+  },
+  "failure_classes": [
+    "The accepted candidate improves file discovery, macro line recall, line F1, and NDCG on this Python pilot, but source cost grows faster than relevant-line coverage.",
+    "Large task-level losses often replace one broad relevant declaration with several narrower or unrelated ranges, so file-level ownership remains an imperfect proxy for decisive within-file evidence.",
+    "A direct owner-range backfill policy regressed the consumed internal validation set and increased repeated-range and two-turn cost.",
+    "The available executable public slice covers sixty tasks but only Python, so it cannot validate multilingual generalization.",
+    "The pilot is development evidence and cannot replace a new blind holdout or model task-success experiment."
+  ],
+  "decision": {
+    "default_enable": false,
+    "merge_to_main": false,
+    "pull_request_mode": "draft_experimental",
+    "continue_to_phase_3": false,
+    "reason": "The strict internal line-recall gate remains failed, the executable external pilot lacks language diversity, and the attempted structural follow-up regressed the internal gate."
+  },
+  "limitations": [
+    "All selected tasks are Python and all converter-produced tasks fall in the exact-identifier stratum.",
+    "Successful-agent read regions can be broad and do not prove that every labeled line is necessary for a fix.",
+    "No model edited code, ran task-specific tests, or produced a validated patch.",
+    "The raw representative benchmark currently emits a stale four-task validation limitation string; this compact report records the actual sixty-task sample.",
+    "Cold indexing and latency are machine-dependent and are not used for the product decision.",
+    "Raw datasets, repository mirrors, worktrees, and large reports remain untracked under target/; hashes above identify the evaluated artifacts."
+  ]
+}

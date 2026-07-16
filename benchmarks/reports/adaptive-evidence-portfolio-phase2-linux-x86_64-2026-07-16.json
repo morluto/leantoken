@@ -10,7 +10,7 @@
   },
   "revisions": {
     "baseline_runtime": "565451c6d436c87c548a8ac305c3fe88b78fa22e",
-    "candidate_runtime": "6e08191fbcf131a900fb64ed0eafc3a3522fe0be",
+    "candidate_runtime": "1747a0eb453d657f41282705c8b1082adbc25e01",
     "implementation_commit": "1f3d57610e5d223496490d5210874a335034f543",
     "exact_owner_fix_commit": "f97eb4f519e1cf0a38918f31cc09eef2aceee2dc",
     "diagnostics_commit": "6e08191fbcf131a900fb64ed0eafc3a3522fe0be"
@@ -68,8 +68,18 @@
     "swe_explore_local_copy": {
       "records": 848,
       "bytes": 13683678,
-      "used_for_runtime_pilot": false,
-      "reason": "The local public records contain evaluator labels but no issue text or pinned base commits. The required companion maps were not available, and the dataset cannot satisfy a six-language pilot."
+      "used_for_runtime_pilot": true,
+      "companion_source_revision": "3c12dc5a551937038afcbdb6eb6bbf19f3ddd8c1",
+      "commit_map_records": 21836,
+      "issue_map_records": 42533,
+      "executable_verified_coverage": 451,
+      "pilot_tasks": 60,
+      "pilot_repositories": 8,
+      "pilot_languages": [
+        "python"
+      ],
+      "report": "benchmarks/reports/adaptive-evidence-portfolio-swe-explore-pilot-linux-x86_64-2026-07-16.json",
+      "reason": "Official companion scripts supplied pinned commits and issue text for the verified partition. A deterministic sixty-task Python pilot was executable, but the public partitions could not provide the requested six-language sample."
     }
   },
   "implementation": {
@@ -176,7 +186,7 @@
       "response_sha256": "5a9038dca41c45248d497c9ef32e841d735bbbb0a770d40941c129c9ced8ab7a"
     }
   },
-  "external_gate": {
+  "consumed_multilanguage_regression_gate": {
     "sample": {
       "tasks": 9,
       "languages": 6,
@@ -237,12 +247,74 @@
       "cross_platform_runtime_matrix": "not_run_locally"
     }
   },
+  "swe_explore_external_pilot": {
+    "report": "benchmarks/reports/adaptive-evidence-portfolio-swe-explore-pilot-linux-x86_64-2026-07-16.json",
+    "sample": {
+      "tasks": 60,
+      "repositories": 8,
+      "languages": 1,
+      "language": "python",
+      "minimum_requested_tasks": 60,
+      "minimum_requested_languages": 6,
+      "blind": false
+    },
+    "baseline": {
+      "relevant_files_hit": 51,
+      "relevant_files": 178,
+      "core_lines_hit": 1203,
+      "core_lines": 26929,
+      "source_tokens": 39260,
+      "complete_response_tokens": 73917,
+      "file_recall_macro": 0.30944444444444447,
+      "line_recall_macro": 0.06569021628902118,
+      "line_f1_macro": 0.08367299001549021,
+      "ndcg_at_budget_macro": 0.19835053794158972,
+      "complete_tokens_per_relevant_line": 61.443890274314214
+    },
+    "candidate": {
+      "relevant_files_hit": 66,
+      "relevant_files": 178,
+      "core_lines_hit": 1400,
+      "core_lines": 26929,
+      "source_tokens": 51405,
+      "complete_response_tokens": 87114,
+      "file_recall_macro": 0.4055555555555556,
+      "line_recall_macro": 0.07785155715768038,
+      "line_f1_macro": 0.10144302837826322,
+      "ndcg_at_budget_macro": 0.2455165568976992,
+      "complete_tokens_per_relevant_line": 62.22428571428571
+    },
+    "requirements": {
+      "minimum_60_tasks": "pass",
+      "minimum_6_languages": "fail_one_language",
+      "two_meaningful_strata_improve_line_recall_or_ndcg": "pass_repo_size_small_and_medium",
+      "exact_identifier_relative_regression_at_most_5_percent": "pass_improved_but_single_stratum",
+      "complete_cost_per_relevant_line_improves_or_is_justified": "pass_with_quality_tradeoff",
+      "deterministic_output": "pass_by_implementation_tests",
+      "cross_platform_runtime_matrix": "not_run_for_local_pilot"
+    }
+  },
+  "rejected_structural_follow_up": {
+    "description": "Owner-file second-range priority plus deterministic remaining-budget backfill",
+    "status": "rejected_and_not_committed",
+    "previous_internal_core_lines_hit": 17,
+    "follow_up_internal_core_lines_hit": 15,
+    "previous_complete_response_tokens": 5514,
+    "follow_up_complete_response_tokens": 5985,
+    "previous_two_turn_tokens": 11358,
+    "follow_up_two_turn_tokens": 13315,
+    "report_sha256": "606e8444208f0f0b1453c094f4bad79248b1312a14dbc5a91565afaa7cbfdbcb",
+    "decision": "stopped_before_running_the_60_task_pilot_or_tuning_constants"
+  },
   "failure_classes": [
     "Facet extraction improves labeled-file discovery but often selects the wrong region within those files.",
     "Qualified and behavior expansions increase file coverage while displacing exact line neighborhoods in the all-exact consumed regression stratum.",
     "Role diversity is too coarse to distinguish a decisive definition or mutation site from another implementation-looking range in the same file.",
     "The planner still has no structural call/data-flow signal, so file-level ownership gains do not reliably become line-level ranking gains.",
-    "The nine-task regression is too small for a release claim and the available SWE-Explore copy cannot provide the required executable multilingual pilot."
+    "The nine-task regression is too small for a release claim.",
+    "The sixty-task SWE-Explore pilot improves macro line recall and NDCG, but source cost grows faster than relevant-line coverage.",
+    "The executable SWE-Explore slice is Python-only and cannot validate multilingual generalization.",
+    "A direct owner-range backfill revision regressed internal line coverage and two-turn cost, so it was rejected without further tuning."
   ],
   "verification": {
     "cargo_fmt": "pass",
@@ -271,12 +343,13 @@
     "merge_to_main": false,
     "pull_request_mode": "draft_experimental",
     "continue_to_phase_3": false,
-    "reason": "The internal line-recall gate did not improve, the consumed multi-language regression lost line recall and NDCG far beyond the exact-identifier tolerance, and complete cost per relevant line worsened."
+    "reason": "The strict internal line-recall gate did not improve, the consumed multi-language regression regressed, the sixty-task external-format pilot lacks language diversity, and the attempted structural follow-up regressed internal coverage and cost."
   },
   "artifacts": {
     "validation_candidate_report": "benchmarks/reports/validation-adaptive-evidence-portfolio-linux-x86_64-2026-07-16.json",
     "validation_ablation_report": "benchmarks/reports/validation-adaptive-evidence-portfolio-ablation-linux-x86_64-2026-07-16.json",
     "phase_report": "benchmarks/reports/adaptive-evidence-portfolio-phase2-linux-x86_64-2026-07-16.json",
+    "swe_explore_pilot_report": "benchmarks/reports/adaptive-evidence-portfolio-swe-explore-pilot-linux-x86_64-2026-07-16.json",
     "local_consumed_regression_candidate": "target/phase2-consumed-holdout-candidate.json",
     "local_consumed_regression_comparison": "target/phase2-holdout-ranked-comparison.json",
     "local_exact_fixture": "target/phase2-exact-context.json"
@@ -284,7 +357,7 @@
   "limitations": [
     "The four-task validation set was used during implementation and cannot support a generalization claim.",
     "The nine-task multi-language set was already revealed for an older candidate and is reported only as consumed regression evidence.",
-    "The external sample has nine tasks rather than the requested sixty.",
+    "The consumed multi-language regression has nine tasks; the larger executable pilot has sixty tasks but only Python.",
     "No model edited code, ran task-specific tests, or produced a validated patch.",
     "No real host/provider-visible trace was added in this phase.",
     "Latency totals include cold repository indexing and are not compared as a stable performance result."
