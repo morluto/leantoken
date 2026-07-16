@@ -1,8 +1,11 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
+use rayon::ThreadPool;
 use rayon::prelude::*;
 use tokio_util::sync::CancellationToken;
 
@@ -16,16 +19,42 @@ use crate::storage::{ChunkInput, ImportInput, IndexedFile, ReferenceInput, Stora
 use crate::text::{PreparedText, TextKind, hash_bytes};
 use crate::{Config, Error, Result};
 
-#[derive(Debug, Clone)]
+/// Owns discovery/parse publication for one repository cache.
+///
+/// The Rayon worker pool is built once per indexer (per `Services` / cache) so
+/// reconciles reuse it without a process-global worker count and without
+/// paying `ThreadPoolBuilder` on every prepare.
+#[derive(Clone)]
 pub struct Indexer {
     config: Arc<Config>,
     storage: Storage,
+    pool: Arc<ThreadPool>,
+}
+
+impl fmt::Debug for Indexer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Indexer")
+            .field("config", &self.config)
+            .field("storage", &self.storage)
+            .field("pool_threads", &self.pool.current_num_threads())
+            .finish()
+    }
 }
 
 impl Indexer {
-    #[must_use]
-    pub fn new(config: Arc<Config>, storage: Storage) -> Self {
-        Self { config, storage }
+    /// Construct an indexer and its dedicated worker pool from config.
+    pub fn new(config: Arc<Config>, storage: Storage) -> Result<Self> {
+        let workers = config.max_index_workers.max(1);
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .thread_name(|index| format!("leantoken-index-{index}"))
+            .build()
+            .map_err(|error| Error::InvalidRequest(format!("index worker pool: {error}")))?;
+        Ok(Self {
+            config,
+            storage,
+            pool: Arc::new(pool),
+        })
     }
 
     /// Reconcile filesystem state into one committed repository generation.
@@ -85,14 +114,19 @@ impl Indexer {
         let mut candidates = Vec::new();
         for file in discovered {
             check_cancelled(cancellation)?;
-            let same = existing.get(&file.relative_path).is_some_and(|record| {
-                record.size_bytes == file.size_bytes && record.modified_ns == file.modified_ns
-            });
-            if !force && same {
+            // mtime+size alone cannot prove content identity (bind mounts, copy
+            // tools that preserve mtime, some network filesystems). Content-hash
+            // before skipping so silent overwrites still reindex (#22).
+            if !force
+                && let Some(record) = existing.get(&file.relative_path)
+                && record.size_bytes == file.size_bytes
+                && record.modified_ns == file.modified_ns
+                && content_unchanged(&file.absolute_path, &record.content_hash)
+            {
                 unchanged += 1;
-            } else {
-                candidates.push(file);
+                continue;
             }
+            candidates.push(file);
         }
 
         let prepared = self.prepare_candidates(&candidates, cancellation)?;
@@ -328,14 +362,12 @@ impl Indexer {
         candidates: &[DiscoveredFile],
         cancellation: &CancellationToken,
     ) -> Result<Vec<PreparedFile>> {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(self.config.max_index_workers.max(1))
-            .build()
-            .map_err(|error| Error::InvalidRequest(format!("index worker pool: {error}")))?;
+        // Reuse the pool owned by this indexer (issue #24): one pool per
+        // Services/cache, sized from that instance's Config.max_index_workers.
         let chunk_lines = self.config.chunk_lines;
         let chunk_bytes = self.config.chunk_bytes;
         let tokenizer = self.config.tokenizer;
-        pool.install(|| {
+        self.pool.install(|| {
             candidates
                 .par_iter()
                 .map(|file| {
@@ -504,6 +536,17 @@ fn push_warning(warnings: &mut Vec<String>, warning: String) {
     }
 }
 
+/// Return whether the on-disk file still matches the indexed content hash.
+///
+/// Used when size and mtime look unchanged so full reconcile cannot skip a
+/// content rewrite that preserved those metadata fields.
+fn content_unchanged(path: &Path, expected_hash: &str) -> bool {
+    match fs::read(path) {
+        Ok(bytes) => hash_bytes(&bytes) == expected_hash,
+        Err(_) => false,
+    }
+}
+
 fn is_ignore_control_path(path: &str) -> bool {
     path == ".gitignore"
         || path == ".ignore"
@@ -666,5 +709,24 @@ mod tests {
             resolve_imports(&mut files, &paths, &cancellation),
             Err(Error::Cancelled)
         ));
+    }
+
+    #[test]
+    fn pool_threads_follow_config_per_indexer() {
+        let root = tempfile::tempdir().expect("root");
+        let mut config_a =
+            Config::discover(root.path(), Some(root.path().join("a.sqlite"))).expect("config a");
+        config_a.max_index_workers = 1;
+        let storage_a = Storage::open(&config_a.database_path).expect("storage a");
+        let indexer_a = Indexer::new(Arc::new(config_a), storage_a).expect("indexer a");
+
+        let mut config_b =
+            Config::discover(root.path(), Some(root.path().join("b.sqlite"))).expect("config b");
+        config_b.max_index_workers = 3;
+        let storage_b = Storage::open(&config_b.database_path).expect("storage b");
+        let indexer_b = Indexer::new(Arc::new(config_b), storage_b).expect("indexer b");
+
+        assert_eq!(indexer_a.pool.current_num_threads(), 1);
+        assert_eq!(indexer_b.pool.current_num_threads(), 3);
     }
 }

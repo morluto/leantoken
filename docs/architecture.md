@@ -55,10 +55,15 @@ One repository-scoped operation lock serializes reconciliation across processes.
 File preparation happens outside SQLite, then an immediate write transaction
 verifies that the generation and config used to build the plan are still
 current. A stale plan is discarded and recomputed. Replacements, deletions, and
-generation advancement then commit together. Readers open short read-only
-connections and retry a response when the repository generation changes while
-it is being assembled. A returned response therefore does not mix committed
-generations.
+generation advancement then commit together.
+
+Each multi-step retrieval (search, context, outline, files, read) opens one
+read-only connection and holds a DEFERRED transaction for the request
+(`ReadSession`). Under WAL that pins a single committed snapshot for every
+query in the assembly, so concurrent publishers cannot mix generations inside
+one response. Transient SQLite busy/IO errors while opening a snapshot are
+retried a few times; generation zero returns a typed `IndexNotReady` error
+instead of an empty success.
 
 ## Indexing and freshness
 
@@ -96,8 +101,10 @@ For existing regular files, the watcher reconciles only the reported paths.
 New paths, directory changes, symlinks, ignore-file changes, configuration
 changes, and ambiguous deletions fall back to full discovery. Path-set
 expansions also reparse unchanged importers so a newly added target can resolve
-previously unresolved edges. Reported files are content-hashed even when size
-and modification time are unchanged. File replacement, deletion,
+previously unresolved edges. Both the watcher path path and full discovery
+content-hash files before treating them as unchanged: matching size and mtime
+alone never skips reindexing when the body changed (bind mounts, copy tools that
+preserve mtime, some network filesystems). File replacement, deletion,
 reverse-import invalidation, and generation advancement commit in one SQLite
 transaction.
 
@@ -105,6 +112,46 @@ Indexing is serialized across processes, but queries continue against the last
 committed WAL generation. The short-lived operation lock makes `reconciling`
 visible to followers as well as the leader. Watcher and reconciliation tasks
 receive caller-owned cancellation and are joined during shutdown.
+
+Each `Services`/`Indexer` instance owns one Rayon worker pool sized from that
+instance's `max_index_workers`. The pool is built when the indexer is opened and
+reused for every prepare, so concurrent service instances keep independent
+worker limits and reconciles do not rebuild a pool on every pass.
+
+## Retrieval hot-path bounds
+
+These caps bound worst-case work relative to repository size. They are
+correctness-preserving limits, not monorepo performance claims; measure large
+trees under issue #15 before changing the numbers.
+
+| Path | Bound |
+| --- | --- |
+| Context query terms | 12 (`MAX_CONTEXT_QUERIES`) |
+| Context hits per term/source | 20 symbols/refs, 30 FTS |
+| Regex match candidates | `min(max_results × 20, 2000)` |
+| Regex files scanned | 10_000 |
+| Regex chunks per file | 256 |
+| File list page size | 1_000 (full materialization for tree/find/glob is still O(files); SQL-side tree is deferred) |
+
+Regex mode verifies patterns over a bounded slice of the snapshot. Prefer
+symbol/identifier/text modes when a full-repo scan is unnecessary. Compiled
+regex size and DFA cache are also limited so pathological patterns fail closed.
+
+## Live read vs index
+
+`leantoken_read` always reads the live filesystem for the returned body while
+symbol resolution and path admission use the index. Responses include:
+
+- `meta.repository_generation` — committed generation used for index lookups;
+- `meta.freshness` — `current` or `reconciling` (local activity or the shared
+  operation lock);
+- `content_hash` — hash of the returned live range;
+- `indexed_hash` — hash of the whole indexed file;
+- `index_stale` — true when the live file body differs from the indexed file.
+
+Agents should re-outline or re-search after edits when `index_stale` is true,
+and pass `expected_hash` on rereads to suppress unchanged ranges. Search and
+outline never invent empty successful results at generation zero.
 
 ## Concurrency design constraints
 

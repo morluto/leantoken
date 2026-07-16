@@ -140,7 +140,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
         Some(database.path().join("index.sqlite")),
     )?);
     let storage = Storage::open(&config.database_path)?;
-    let indexer = Indexer::new(config, storage);
+    let indexer = Indexer::new(config, storage).expect("indexer");
 
     let start = Instant::now();
     let initial_response = indexer.reconcile(false)?;

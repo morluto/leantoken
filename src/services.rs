@@ -18,7 +18,7 @@ use crate::indexer::Indexer;
 use crate::model::*;
 use crate::ranking::{self, Candidate};
 use crate::repository::{git_changed_paths, resolve_existing, validate_relative};
-use crate::storage::{ChunkHit, FileRecord, ReferenceHit, Storage, SymbolHit};
+use crate::storage::{ChunkHit, FileRecord, ReadSession, ReferenceHit, Storage, SymbolHit};
 use crate::text::{byte_range_to_line_range, excerpt, expand_terms, hash, identifier_words};
 use crate::{Config, Error, Result};
 
@@ -29,6 +29,20 @@ const MAX_INPUT_ITEMS: usize = 256;
 const GIT_CHANGED_PATHS_MAX: usize = 512;
 const MIN_CONTEXT_RANGE_LINES: usize = 12;
 const MAX_CONTEXT_RANGE_LINES: usize = 128;
+/// Maximum context query terms (symbols/refs/FTS fan-out budget).
+const MAX_CONTEXT_QUERIES: usize = 12;
+/// Per-term symbol/reference candidate cap for context assembly.
+const MAX_CONTEXT_HITS_PER_SOURCE: usize = 20;
+/// Per-term FTS candidate cap for context assembly.
+const MAX_CONTEXT_LEXICAL_HITS: usize = 30;
+/// Absolute regex scan candidate cap (independent of max_results multiplier).
+const MAX_REGEX_CANDIDATES: usize = 2_000;
+/// Maximum files examined during a regex scan before early exit.
+const MAX_REGEX_FILES_SCANNED: usize = 10_000;
+/// Maximum chunks examined per file during a regex scan.
+const MAX_REGEX_CHUNKS_PER_FILE: usize = 256;
+/// Page size when listing files for tree/find/glob and path maps.
+const FILE_LIST_PAGE_SIZE: usize = 1_000;
 const STARTUP_BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 const STARTUP_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(25);
 const STARTUP_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
@@ -108,20 +122,19 @@ impl Services {
             }
             Err(error) => return Err(error),
         };
-        Ok(Self::from_parts(Arc::new(config.clone()), storage))
+        Self::from_parts(Arc::new(config.clone()), storage)
     }
 
-    #[must_use]
-    fn from_parts(config: Arc<Config>, storage: Storage) -> Self {
-        let indexer = Indexer::new(Arc::clone(&config), storage.clone());
+    fn from_parts(config: Arc<Config>, storage: Storage) -> Result<Self> {
+        let indexer = Indexer::new(Arc::clone(&config), storage.clone())?;
         let coordination = IndexCoordination::for_database(&config.database_path);
-        Self {
+        Ok(Self {
             config,
             storage,
             indexer,
             coordination,
             active_reconciliations: Arc::new(AtomicUsize::new(0)),
-        }
+        })
     }
 
     #[must_use]
@@ -265,8 +278,8 @@ impl Services {
     }
 
     fn status_sync(&self) -> Result<StatusResponse> {
-        self.consistent_allow_empty(|generation| {
-            let counts = self.storage.counts()?;
+        self.consistent_allow_empty(|session, generation| {
+            let counts = session.counts()?;
             Ok(StatusResponse {
                 repository_root: self.config.root.display().to_string(),
                 database_path: self.config.database_path.display().to_string(),
@@ -294,10 +307,10 @@ impl Services {
         validate_optional_input(request.path.as_deref(), "path", MAX_PATH_BYTES)?;
         validate_optional_input(request.query.as_deref(), "query", MAX_QUERY_BYTES)?;
         validate_optional_input(request.pattern.as_deref(), "pattern", MAX_PATTERN_BYTES)?;
-        self.consistent(|generation| {
+        self.consistent(|session, generation| {
             let limit = self.result_limit(request.max_results);
             let offset = parse_cursor(request.cursor.as_deref(), generation)?;
-            let files = self.all_files(cancellation)?;
+            let files = self.all_files(session, cancellation)?;
             let mut entries = match request.operation {
                 FileOperation::Tree => {
                     tree_entries(&files, request.path.as_deref(), request.depth)?
@@ -333,7 +346,7 @@ impl Services {
         validate_patterns(&request.include_paths)?;
         validate_patterns(&request.exclude_paths)?;
         validate_patterns(&request.focus_paths)?;
-        self.consistent(|generation| {
+        self.consistent(|session, generation| {
             let limit = self.result_limit(request.max_results);
             let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens);
             let offset = parse_cursor(request.cursor.as_deref(), generation)?;
@@ -347,15 +360,13 @@ impl Services {
                 request.mode,
                 SearchMode::Auto | SearchMode::Identifier | SearchMode::Symbol
             ) {
-                for hit in self.storage.search_symbols(
-                    &request.query,
-                    request.case_sensitive,
-                    limit * 4,
-                )? {
+                for hit in
+                    session.search_symbols(&request.query, request.case_sensitive, limit * 4)?
+                {
                     check_cancelled(cancellation)?;
                     if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)?
                         && let Some(search_hit) =
-                            self.symbol_search_hit(hit, &request.query, context_lines)?
+                            self.symbol_search_hit(session, hit, &request.query, context_lines)?
                     {
                         hits.push(search_hit);
                     }
@@ -365,15 +376,13 @@ impl Services {
                 request.mode,
                 SearchMode::Auto | SearchMode::Identifier | SearchMode::Reference
             ) {
-                for hit in self.storage.search_references(
-                    &request.query,
-                    request.case_sensitive,
-                    limit * 4,
-                )? {
+                for hit in
+                    session.search_references(&request.query, request.case_sensitive, limit * 4)?
+                {
                     check_cancelled(cancellation)?;
                     if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)?
                         && let Some(search_hit) =
-                            self.reference_search_hit(hit, &request.query, context_lines)?
+                            self.reference_search_hit(session, hit, &request.query, context_lines)?
                     {
                         hits.push(search_hit);
                     }
@@ -381,18 +390,19 @@ impl Services {
             }
 
             let lexical = match request.mode {
-                SearchMode::Regex => self.regex_hits(&request, limit * 20, cancellation)?,
+                SearchMode::Regex => {
+                    self.regex_hits(session, &request, limit * 20, cancellation)?
+                }
                 SearchMode::Text | SearchMode::Auto => {
                     if request.query.chars().count() >= 3 {
-                        self.storage.search_trigram(&request.query, limit * 8)?
+                        session.search_trigram(&request.query, limit * 8)?
                     } else {
-                        self.storage
-                            .search_word(&fts_quote(&request.query), limit * 8)?
+                        session.search_word(&fts_quote(&request.query), limit * 8)?
                     }
                 }
-                SearchMode::Identifier => self
-                    .storage
-                    .search_word(&fts_quote(&request.query), limit * 8)?,
+                SearchMode::Identifier => {
+                    session.search_word(&fts_quote(&request.query), limit * 8)?
+                }
                 SearchMode::Symbol | SearchMode::Reference => Vec::new(),
             };
             for hit in lexical {
@@ -484,7 +494,7 @@ impl Services {
             "symbol kind",
             MAX_PATTERN_BYTES,
         )?;
-        self.consistent(|generation| {
+        self.consistent(|session, generation| {
             let limit = self.result_limit(request.max_results);
             let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens);
             let mut remaining = limit;
@@ -493,12 +503,10 @@ impl Services {
             for path in &request.paths {
                 check_cancelled(cancellation)?;
                 validate_relative(path)?;
-                let file = self
-                    .storage
+                let file = session
                     .find_file(path)?
                     .ok_or_else(|| Error::NotIndexed(path.clone()))?;
-                let mut symbols = self
-                    .storage
+                let mut symbols = session
                     .get_symbols_for_file_filtered(
                         file.id,
                         request.symbol_name.as_deref(),
@@ -521,8 +529,7 @@ impl Services {
                         true
                     }
                 });
-                let mut imports = self
-                    .storage
+                let mut imports = session
                     .get_imports_for_file(file.id, limit)?
                     .into_iter()
                     .map(|import| Import {
@@ -579,15 +586,19 @@ impl Services {
                 "read accepts either symbol or line range, not both".into(),
             ));
         }
-        self.consistent(|generation| {
+        self.consistent(|session, generation| {
             check_cancelled(cancellation)?;
-            self.read_at_generation(&request, generation)
+            self.read_at_generation(session, &request, generation)
         })
     }
 
-    fn read_at_generation(&self, request: &ReadRequest, generation: u64) -> Result<ReadResponse> {
-        let indexed = self
-            .storage
+    fn read_at_generation(
+        &self,
+        session: &ReadSession,
+        request: &ReadRequest,
+        generation: u64,
+    ) -> Result<ReadResponse> {
+        let indexed = session
             .find_file(&request.path)?
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
         let path = resolve_existing(&self.config.root, &request.path)?;
@@ -597,8 +608,7 @@ impl Services {
         let line_count = source.lines().count().max(1);
 
         let (start_line, requested_end) = if let Some(symbol_name) = &request.symbol {
-            let symbol = self
-                .storage
+            let symbol = session
                 .find_symbol(indexed.id, symbol_name)?
                 .ok_or_else(|| Error::NotIndexed(format!("{}::{symbol_name}", request.path)))?;
             (symbol.start_line, symbol.end_line)
@@ -708,13 +718,13 @@ impl Services {
                 tracing::debug!(%error, "working-tree signal unavailable");
                 HashSet::new()
             });
-        self.consistent(|generation| {
-            let queries = context_queries(&request.task, 12);
+        self.consistent(|session, generation| {
+            let queries = context_queries(&request.task, MAX_CONTEXT_QUERIES);
             let terms = queries
                 .iter()
                 .map(|query| query.value.clone())
                 .collect::<Vec<_>>();
-            let files = self.all_files(cancellation)?;
+            let files = self.all_files(session, cancellation)?;
             let file_map: HashMap<String, FileRecord> = files
                 .into_iter()
                 .map(|file| (file.path.clone(), file))
@@ -729,9 +739,8 @@ impl Services {
                 let term = &query.value;
                 let concept = query.fusion_key.as_deref().unwrap_or(term);
                 check_cancelled(cancellation)?;
-                for (rank, hit) in self
-                    .storage
-                    .search_symbols(term, false, 20)?
+                for (rank, hit) in session
+                    .search_symbols(term, false, MAX_CONTEXT_HITS_PER_SOURCE)?
                     .into_iter()
                     .enumerate()
                 {
@@ -740,6 +749,7 @@ impl Services {
                         continue;
                     }
                     let Some(excerpt) = self.adaptive_context_excerpt(
+                        session,
                         hit.symbol.file_id,
                         hit.symbol.start_line,
                         hit.symbol.end_line,
@@ -791,9 +801,8 @@ impl Services {
                         .change_boost(change_boost),
                     );
                 }
-                for (rank, hit) in self
-                    .storage
-                    .search_references(term, false, 20)?
+                for (rank, hit) in session
+                    .search_references(term, false, MAX_CONTEXT_HITS_PER_SOURCE)?
                     .into_iter()
                     .enumerate()
                 {
@@ -801,11 +810,11 @@ impl Services {
                     if !path_allowed(&hit.path, &[], &request.exclude_paths)? {
                         continue;
                     }
-                    let excerpt = if let Some(symbol) = self
-                        .storage
+                    let excerpt = if let Some(symbol) = session
                         .find_enclosing_symbol(hit.reference.file_id, hit.reference.start_line)?
                     {
                         self.adaptive_context_excerpt(
+                            session,
                             hit.reference.file_id,
                             symbol.start_line,
                             symbol.end_line,
@@ -819,6 +828,7 @@ impl Services {
                         excerpt
                     } else {
                         self.stored_excerpt(
+                            session,
                             hit.reference.file_id,
                             hit.reference.start_line,
                             hit.reference.end_line,
@@ -863,9 +873,9 @@ impl Services {
                     );
                 }
                 let lexical = if term.chars().count() >= 3 {
-                    self.storage.search_trigram(term, 30)?
+                    session.search_trigram(term, MAX_CONTEXT_LEXICAL_HITS)?
                 } else {
-                    self.storage.search_word(&fts_quote(term), 30)?
+                    session.search_word(&fts_quote(term), MAX_CONTEXT_LEXICAL_HITS)?
                 };
                 for (rank, hit) in lexical.into_iter().enumerate() {
                     check_cancelled(cancellation)?;
@@ -878,11 +888,11 @@ impl Services {
                     };
                     let matched_line =
                         matching_line(&hit, term, false).unwrap_or(search_hit.start_line);
-                    let excerpt = if let Some(symbol) = self
-                        .storage
-                        .find_enclosing_symbol(hit.file_id, matched_line)?
+                    let excerpt = if let Some(symbol) =
+                        session.find_enclosing_symbol(hit.file_id, matched_line)?
                     {
                         self.adaptive_context_excerpt(
+                            session,
                             hit.file_id,
                             symbol.start_line,
                             symbol.end_line,
@@ -951,7 +961,7 @@ impl Services {
                 let Some(seed_file) = file_map.get(seed_path) else {
                     continue;
                 };
-                for import in self.storage.get_imports_for_file(seed_file.id, 32)? {
+                for import in session.get_imports_for_file(seed_file.id, 32)? {
                     check_cancelled(cancellation)?;
                     let Some(target_path) = import.resolved_path else {
                         continue;
@@ -962,8 +972,7 @@ impl Services {
                     let Some(target_file) = file_map.get(&target_path) else {
                         continue;
                     };
-                    let Some(chunk) = self
-                        .storage
+                    let Some(chunk) = session
                         .get_chunks_for_file(target_file.id, 1)?
                         .into_iter()
                         .next()
@@ -1019,11 +1028,13 @@ impl Services {
 
     fn symbol_search_hit(
         &self,
+        session: &ReadSession,
         hit: SymbolHit,
         query: &str,
         context: usize,
     ) -> Result<Option<SearchHit>> {
         let Some(excerpt) = self.stored_excerpt(
+            session,
             hit.symbol.file_id,
             hit.symbol.start_line,
             hit.symbol.end_line,
@@ -1055,11 +1066,13 @@ impl Services {
 
     fn reference_search_hit(
         &self,
+        session: &ReadSession,
         hit: ReferenceHit,
         query: &str,
         context: usize,
     ) -> Result<Option<SearchHit>> {
         let Some(excerpt) = self.stored_excerpt(
+            session,
             hit.reference.file_id,
             hit.reference.start_line,
             hit.reference.end_line,
@@ -1091,6 +1104,7 @@ impl Services {
 
     fn stored_excerpt(
         &self,
+        session: &ReadSession,
         file_id: i64,
         start_line: usize,
         end_line: usize,
@@ -1102,7 +1116,7 @@ impl Services {
         if max_lines > 0 && last.saturating_sub(first).saturating_add(1) > max_lines {
             last = first + max_lines - 1;
         }
-        let selected = self.storage.get_chunks_overlapping(file_id, first, last)?;
+        let selected = session.get_chunks_overlapping(file_id, first, last)?;
         let (Some(first_chunk), Some(last_chunk)) = (selected.first(), selected.last()) else {
             return Ok(None);
         };
@@ -1123,13 +1137,15 @@ impl Services {
 
     fn adaptive_context_excerpt(
         &self,
+        session: &ReadSession,
         file_id: i64,
         declaration_start: usize,
         declaration_end: usize,
         matched_line: usize,
         token_budget: usize,
     ) -> Result<Option<StoredExcerpt>> {
-        let Some(full) = self.stored_excerpt(file_id, declaration_start, declaration_end, 0, 0)?
+        let Some(full) =
+            self.stored_excerpt(session, file_id, declaration_start, declaration_end, 0, 0)?
         else {
             return Ok(None);
         };
@@ -1160,22 +1176,34 @@ impl Services {
         end = start
             .saturating_add(proportional_lines.saturating_sub(1))
             .min(declaration_end);
-        self.stored_excerpt(file_id, start, end, 0, 0)
+        self.stored_excerpt(session, file_id, start, end, 0, 0)
     }
 
     fn regex_hits(
         &self,
+        session: &ReadSession,
         request: &SearchRequest,
         max_candidates: usize,
         cancellation: &CancellationToken,
     ) -> Result<Vec<ChunkHit>> {
+        // Hard caps prevent O(repo) regex from running unbounded (issue #24).
+        // Prefer FTS/trigram prefilters in other modes; regex verifies patterns
+        // over a bounded slice of the snapshot.
+        let max_candidates = max_candidates.min(MAX_REGEX_CANDIDATES);
         let regex = regex::RegexBuilder::new(&request.query)
             .case_insensitive(!request.case_sensitive)
+            .size_limit(1 << 20)
+            .dfa_size_limit(1 << 20)
             .build()?;
         let mut hits = Vec::new();
-        for file in self.all_files(cancellation)? {
+        let mut files_scanned = 0usize;
+        for file in self.all_files(session, cancellation)? {
             check_cancelled(cancellation)?;
-            for chunk in self.storage.get_chunks_for_file(file.id, 10_000)? {
+            files_scanned += 1;
+            if files_scanned > MAX_REGEX_FILES_SCANNED {
+                break;
+            }
+            for chunk in session.get_chunks_for_file(file.id, MAX_REGEX_CHUNKS_PER_FILE)? {
                 check_cancelled(cancellation)?;
                 if regex.is_match(&chunk.content) {
                     hits.push(ChunkHit {
@@ -1199,12 +1227,18 @@ impl Services {
         Ok(hits)
     }
 
-    fn all_files(&self, cancellation: &CancellationToken) -> Result<Vec<FileRecord>> {
+    fn all_files(
+        &self,
+        session: &ReadSession,
+        cancellation: &CancellationToken,
+    ) -> Result<Vec<FileRecord>> {
+        // Page through the snapshot; FILE_LIST_PAGE_SIZE bounds memory per round-trip.
+        // Full materialization is still O(files) — see issue #24 / #15 for SQL-side tree work.
         let mut files = Vec::new();
         let mut cursor = None;
         loop {
             check_cancelled(cancellation)?;
-            let page = self.storage.list_files(1_000, cursor)?;
+            let page = session.list_files(FILE_LIST_PAGE_SIZE, cursor)?;
             if page.is_empty() {
                 break;
             }
@@ -1214,27 +1248,52 @@ impl Services {
         Ok(files)
     }
 
-    fn consistent<T>(&self, operation: impl Fn(u64) -> Result<T>) -> Result<T> {
+    fn consistent<T>(&self, operation: impl Fn(&ReadSession, u64) -> Result<T>) -> Result<T> {
         self.consistent_inner(false, operation)
     }
 
-    fn consistent_allow_empty<T>(&self, operation: impl Fn(u64) -> Result<T>) -> Result<T> {
+    fn consistent_allow_empty<T>(
+        &self,
+        operation: impl Fn(&ReadSession, u64) -> Result<T>,
+    ) -> Result<T> {
         self.consistent_inner(true, operation)
     }
 
+    /// Assemble a response against one WAL snapshot (DEFERRED read transaction).
+    /// Concurrent writers cannot mix generations inside a single assembly. If
+    /// opening the snapshot fails transiently or the index is still empty,
+    /// returns a typed retryable error rather than a partial response.
     fn consistent_inner<T>(
         &self,
         allow_empty: bool,
-        operation: impl Fn(u64) -> Result<T>,
+        operation: impl Fn(&ReadSession, u64) -> Result<T>,
     ) -> Result<T> {
-        for _ in 0..3 {
-            let before = self.storage.repository_generation()?;
-            if before == 0 && !allow_empty {
-                return Err(Error::IndexNotReady);
-            }
-            let value = operation(before)?;
-            if self.storage.repository_generation()? == before {
-                return Ok(value);
+        for attempt in 0..3 {
+            let result = self.storage.with_snapshot(|session| {
+                let generation = session.repository_generation()?;
+                if generation == 0 && !allow_empty {
+                    return Err(Error::IndexNotReady);
+                }
+                // Snapshot is pinned for the whole closure; all reads share it.
+                operation(session, generation)
+            });
+            match result {
+                Ok(value) => return Ok(value),
+                // Permanent for this snapshot: do not retry as a race.
+                Err(Error::IndexNotReady)
+                | Err(Error::Cancelled)
+                | Err(Error::LimitExceeded)
+                | Err(Error::InvalidRequest(_))
+                | Err(Error::StaleCursor)
+                | Err(Error::NotIndexed(_))
+                | Err(Error::PathOutsideRoot(_))
+                | Err(Error::RootNotFound(_)) => return result,
+                // SQLITE_BUSY / IO while opening snapshot: retry a few times.
+                Err(Error::Sqlite(_)) | Err(Error::Io(_)) if attempt + 1 < 3 => {
+                    thread::sleep(CANCELLATION_POLL_INTERVAL);
+                    continue;
+                }
+                Err(_) => return result,
             }
         }
         Err(Error::RetryableConflict(RetryableOperation::Retrieval))
@@ -2190,8 +2249,16 @@ mod tests {
             .expect("enclosing symbol");
         assert_eq!(enclosing.name, "large");
 
+        let session = services.storage.begin_read().expect("read session");
         let bounded = services
-            .adaptive_context_excerpt(file.id, large.start_line, large.end_line, matched_line, 60)
+            .adaptive_context_excerpt(
+                &session,
+                file.id,
+                large.start_line,
+                large.end_line,
+                matched_line,
+                60,
+            )
             .expect("bounded excerpt")
             .expect("bounded declaration");
         assert!(bounded.start_line <= matched_line);
@@ -2206,6 +2273,7 @@ mod tests {
             .expect("small symbol");
         let complete = services
             .adaptive_context_excerpt(
+                &session,
                 file.id,
                 small.start_line,
                 small.end_line,
@@ -2286,26 +2354,42 @@ mod tests {
     }
 
     #[test]
-    fn repeated_generation_changes_are_a_retryable_conflict() {
+    fn request_snapshot_ignores_concurrent_generation_publish() {
         let root = tempfile::tempdir().expect("root");
         let config =
             Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
         let services = Services::open(config).expect("services");
-        services
+        let first = services
             .storage
-            .full_reconcile("hash", Vec::new())
+            .full_reconcile("hash-a", Vec::new())
             .expect("initial generation");
+        assert_eq!(first, 1);
 
-        let error = services
-            .consistent(|_| {
-                services.storage.full_reconcile("hash", Vec::new())?;
-                Ok(())
+        // One snapshot assembly must report the generation pinned at open, even
+        // if a concurrent publish advances the committed generation mid-request.
+        let observed = services
+            .consistent(|session, generation| {
+                assert_eq!(generation, first);
+                assert_eq!(session.repository_generation()?, first);
+                services
+                    .storage
+                    .full_reconcile("hash-b", Vec::new())
+                    .expect("concurrent publish");
+                assert_eq!(
+                    session.repository_generation()?,
+                    first,
+                    "DEFERRED snapshot must not observe the concurrent publish"
+                );
+                Ok(generation)
             })
-            .expect_err("generation must not stabilize");
-
-        assert!(matches!(
-            error,
-            Error::RetryableConflict(RetryableOperation::Retrieval)
-        ));
+            .expect("snapshot assembly");
+        assert_eq!(observed, first);
+        assert_eq!(
+            services
+                .storage
+                .repository_generation()
+                .expect("latest generation"),
+            first + 1
+        );
     }
 }
