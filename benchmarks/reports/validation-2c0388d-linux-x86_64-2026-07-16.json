@@ -1,0 +1,684 @@
+{
+  "schema_version": 2,
+  "dataset_kind": "prospective_validation",
+  "manifest_blake3": "5991d8a643a873ef61d5a4122f52abd7f589a5403d13ab609ebc6b9428e73d9a",
+  "frozen_at": "2026-07-15",
+  "manifest_description": "Frozen validation tasks derived from issue reports that were still open at collection time and from pinned source inspection. No future patch or proposed pull request was used to construct prompts or labels. The tasks were later used during retrieval tuning, so this is not a blind holdout.",
+  "leantoken_version": "0.1.1",
+  "host_os": "linux",
+  "host_arch": "x86_64",
+  "rustc_version": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+  "ripgrep_version": "ripgrep 15.1.0 (rev af60c2de9d)",
+  "generated_at_unix_seconds": 1784196532,
+  "tokenizer": "cl100k_base",
+  "token_count_exact": true,
+  "methodology": {
+    "oracle_baseline": "Full contents of fix-labeled relevant files, as if an agent chose every file perfectly and paid no discovery cost.",
+    "rg_discovery_baseline": "Bounded, path-sorted ripgrep --json output for fixed-string queries derived from each public bug task.",
+    "scripted_baseline": "One JSON envelope containing the ripgrep discovery output and oracle full-file reads.",
+    "source_tokens": "Tokens in source content only; excludes paths, scores, reasons, receipts, and JSON syntax.",
+    "serialized_tokens": "Tokens in the complete serialized JSON payload, including metadata and syntax."
+  },
+  "aggregate": {
+    "corpus_count": 4,
+    "task_count": 4,
+    "relevant_files": 11,
+    "relevant_files_found": 8,
+    "relevant_file_recall": 0.7272727272727273,
+    "returned_files": 29,
+    "labeled_file_precision": 0.27586206896551724,
+    "line_anchors": 38,
+    "line_anchors_found": 17,
+    "line_anchor_recall": 0.4473684210526316,
+    "oracle_source_tokens": 56202,
+    "rg_discovery_tokens": 32113,
+    "scripted_baseline_total_json_tokens": 103021,
+    "leantoken_source_tokens": 3266,
+    "leantoken_total_json_tokens": 5797,
+    "source_savings_against_oracle_fraction": 0.9418881890324188,
+    "total_json_savings_against_scripted_fraction": 0.9437299191426991,
+    "known_fragments_resent": 0,
+    "dead_end_fragments": 21,
+    "dead_end_source_tokens": 1081,
+    "second_response_source_tokens": 3228,
+    "estimated_repeated_range_source_tokens": 0,
+    "repeat_request_json_tokens": 960,
+    "repeat_total_json_tokens": 5653,
+    "two_turn_context_json_tokens": 12410
+  },
+  "corpora": [
+    {
+      "name": "flask-validation",
+      "url": "https://github.com/pallets/flask",
+      "base_revision": "36e4a824f340fdee7ed50937ba8e7f6bc7d17f81",
+      "fix_commit": null,
+      "issue_url": "https://github.com/pallets/flask/issues/6093",
+      "prompt_provenance": "Issue title, description, and reproductions as published before the dataset freeze; no patch or PR consulted.",
+      "label_provenance": "Exact partition calls named by the issue plus the existing tests owning session_transaction and run configuration behavior.",
+      "indexed_files": 231,
+      "indexed_chunks": 594,
+      "index_warnings": [],
+      "cold_index_ms": 2957.495385,
+      "database_bytes": 15298392,
+      "tasks": [
+        {
+          "id": "flask-ipv6-address-partition",
+          "prompt": "Fix IPv6 address handling in Flask. session_transaction loses the IPv6 host when saving cookies, and Flask.run parses SERVER_NAME=[::1]:8080 incorrectly. Add regression coverage for both behaviors without changing IPv4 host:port behavior.",
+          "token_budget": 1200,
+          "relevant_files": [
+            "src/flask/app.py",
+            "src/flask/testing.py",
+            "tests/test_basic.py",
+            "tests/test_testing.py"
+          ],
+          "returned_files": [
+            "CHANGES.rst",
+            "docs/errorhandling.rst",
+            "docs/server.rst",
+            "src/flask/testing.py",
+            "tests/test_basic.py",
+            "tests/test_testing.py"
+          ],
+          "returned_evidence": [
+            {
+              "path": "src/flask/testing.py",
+              "start_line": 265,
+              "end_line": 298,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 2.8978,
+              "token_count": 321,
+              "content_hash": "fdcc92beb01d095cad255d2b9809873b"
+            },
+            {
+              "path": "src/flask/testing.py",
+              "start_line": 136,
+              "end_line": 183,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 2.3968,
+              "token_count": 331,
+              "content_hash": "3ad8100b83fa03afa758ee9be6b49b85"
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 1902,
+              "end_line": 1906,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.8148,
+              "token_count": 46,
+              "content_hash": "2933b3d7865d056491c05e1a24db67b5"
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 1562,
+              "end_line": 1604,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 1.1492,
+              "token_count": 307,
+              "content_hash": "4be059de107ae4226189b09f0109a413"
+            },
+            {
+              "path": "tests/test_testing.py",
+              "start_line": 157,
+              "end_line": 171,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.7869,
+              "token_count": 109,
+              "content_hash": "289cba234ba405ea9dfdd5f50665909a"
+            },
+            {
+              "path": "CHANGES.rst",
+              "start_line": 1121,
+              "end_line": 1124,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.5619,
+              "token_count": 51,
+              "content_hash": "c3f10e45d2eb6c384f17f0e91a804ddc"
+            },
+            {
+              "path": "docs/errorhandling.rst",
+              "start_line": 137,
+              "end_line": 141,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.4424,
+              "token_count": 8,
+              "content_hash": "92001d01ca9db55aee8a0af072d1138c"
+            },
+            {
+              "path": "docs/server.rst",
+              "start_line": 33,
+              "end_line": 37,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.1872,
+              "token_count": 14,
+              "content_hash": "27ce84a348e58c8dc8da756e974481f0"
+            }
+          ],
+          "relevant_files_found": 3,
+          "relevant_file_recall": 0.75,
+          "labeled_file_precision": 0.5,
+          "line_anchors": 12,
+          "line_anchors_found": 7,
+          "line_anchor_recall": 0.5833333333333334,
+          "unlabeled_returned_files": [
+            "CHANGES.rst",
+            "docs/errorhandling.rst",
+            "docs/server.rst"
+          ],
+          "oracle_source_tokens": 31562,
+          "oracle_minimal_read_json_tokens": 36735,
+          "rg_discovery_tokens": 7280,
+          "rg_discovery_json_tokens": 8405,
+          "scripted_baseline_total_json_tokens": 45143,
+          "leantoken_source_tokens": 1187,
+          "leantoken_total_json_tokens": 1867,
+          "source_savings_against_oracle_fraction": 0.9623914834294405,
+          "total_json_savings_against_scripted_fraction": 0.958642535941342,
+          "first_context_ms": 193.67536099999998,
+          "warm_context_ms_samples": [
+            252.60874,
+            254.35484800000003,
+            255.265071
+          ],
+          "warm_context_median_ms": 254.35484800000003,
+          "warm_context_p95_ms": 255.265071,
+          "second_response_source_tokens": 1080,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 230,
+          "repeat_total_json_tokens": 1712,
+          "two_turn_context_json_tokens": 3809,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 3,
+          "dead_end_source_tokens": 73
+        }
+      ]
+    },
+    {
+      "name": "gin-validation",
+      "url": "https://github.com/gin-gonic/gin",
+      "base_revision": "34dac209ffb6ef85cc78c5d217bbb7ad001d68fd",
+      "fix_commit": null,
+      "issue_url": "https://github.com/gin-gonic/gin/issues/4688",
+      "prompt_provenance": "Issue title, description, and reproduction as published before the dataset freeze; no patch or PR consulted.",
+      "label_provenance": "The AsciiJSON loop and existing AsciiJSON regression-test neighborhood identified directly from the pinned tree.",
+      "indexed_files": 130,
+      "indexed_chunks": 433,
+      "index_warnings": [],
+      "cold_index_ms": 1165.6645290000001,
+      "database_bytes": 12619976,
+      "tasks": [
+        {
+          "id": "gin-ascii-json-non-bmp",
+          "prompt": "Fix render.AsciiJSON so non-BMP Unicode such as emoji round-trips through JSON. JSON unicode escapes must use a UTF-16 surrogate pair instead of a five-digit escape. Preserve current BMP and ASCII behavior and add a regression test.",
+          "token_budget": 900,
+          "relevant_files": [
+            "render/json.go",
+            "render/render_test.go"
+          ],
+          "returned_files": [
+            "context_file_test.go",
+            "context_test.go",
+            "render/json.go",
+            "render/msgpack.go",
+            "render/render_test.go",
+            "response_writer_test.go",
+            "tree.go",
+            "tree_test.go"
+          ],
+          "returned_evidence": [
+            {
+              "path": "render/json.go",
+              "start_line": 155,
+              "end_line": 176,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 4.674,
+              "token_count": 154,
+              "content_hash": "6a6bde1d27c0acae7b102b63d62863e8"
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 272,
+              "end_line": 282,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.9879,
+              "token_count": 106,
+              "content_hash": "5aeed31281e8c54d4214dbfe9ad5594f"
+            },
+            {
+              "path": "context_file_test.go",
+              "start_line": 24,
+              "end_line": 28,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.7743,
+              "token_count": 31,
+              "content_hash": "06b17d0ffc4d7a6c76ea194f7407283b"
+            },
+            {
+              "path": "context_test.go",
+              "start_line": 42,
+              "end_line": 42,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.7773,
+              "token_count": 11,
+              "content_hash": "7cc8fc897e75fb956ad99d8b838b2327"
+            },
+            {
+              "path": "response_writer_test.go",
+              "start_line": 38,
+              "end_line": 40,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 1.1889,
+              "token_count": 12,
+              "content_hash": "522f384e20618cb28c2b3ed82fc0c0fb"
+            },
+            {
+              "path": "tree.go",
+              "start_line": 8,
+              "end_line": 12,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.2339,
+              "token_count": 18,
+              "content_hash": "be6c0a15589b61fbc4401d9f9b18a5ac"
+            },
+            {
+              "path": "tree_test.go",
+              "start_line": 13,
+              "end_line": 17,
+              "representation": "source",
+              "reason": "text",
+              "score": 1.2308,
+              "token_count": 22,
+              "content_hash": "b33d45c4e64613468ccfc04fc9349e5b"
+            },
+            {
+              "path": "render/msgpack.go",
+              "start_line": 34,
+              "end_line": 36,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 2.1801,
+              "token_count": 23,
+              "content_hash": "080f74ce3153a1a310a048a2e8020fc6"
+            }
+          ],
+          "relevant_files_found": 2,
+          "relevant_file_recall": 1.0,
+          "labeled_file_precision": 0.25,
+          "line_anchors": 6,
+          "line_anchors_found": 3,
+          "line_anchor_recall": 0.5,
+          "unlabeled_returned_files": [
+            "context_file_test.go",
+            "context_test.go",
+            "render/msgpack.go",
+            "response_writer_test.go",
+            "tree.go",
+            "tree_test.go"
+          ],
+          "oracle_source_tokens": 7046,
+          "oracle_minimal_read_json_tokens": 8837,
+          "rg_discovery_tokens": 3238,
+          "rg_discovery_json_tokens": 3697,
+          "scripted_baseline_total_json_tokens": 12537,
+          "leantoken_source_tokens": 377,
+          "leantoken_total_json_tokens": 944,
+          "source_savings_against_oracle_fraction": 0.9464944649446494,
+          "total_json_savings_against_scripted_fraction": 0.9247028794767488,
+          "first_context_ms": 217.68248400000002,
+          "warm_context_ms_samples": [
+            219.081717,
+            214.50778,
+            197.154348
+          ],
+          "warm_context_median_ms": 214.50778,
+          "warm_context_p95_ms": 219.081717,
+          "second_response_source_tokens": 534,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 245,
+          "repeat_total_json_tokens": 1088,
+          "two_turn_context_json_tokens": 2277,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 6,
+          "dead_end_source_tokens": 117
+        }
+      ]
+    },
+    {
+      "name": "express-validation",
+      "url": "https://github.com/expressjs/express",
+      "base_revision": "ae6dd37680e3a00618d6c8a3e522f0ee4eeba1a4",
+      "fix_commit": null,
+      "issue_url": "https://github.com/expressjs/express/issues/7350",
+      "prompt_provenance": "Issue title, description, and reproduction as published before the dataset freeze; no patch or PR consulted.",
+      "label_provenance": "View extension parsing, app.render error flow, and the existing missing-view test neighborhood identified from the pinned tree.",
+      "indexed_files": 213,
+      "indexed_chunks": 471,
+      "index_warnings": [],
+      "cold_index_ms": 2272.844149,
+      "database_bytes": 8766672,
+      "tasks": [
+        {
+          "id": "express-trailing-dot-view",
+          "prompt": "Fix app.render and res.render for a view name ending in a dot. app.render('index.', callback) must report the normal failed-to-lookup-view error through the callback instead of throwing because require receives an empty module name. Add regression coverage.",
+          "token_budget": 1000,
+          "relevant_files": [
+            "lib/view.js",
+            "lib/application.js",
+            "test/app.render.js"
+          ],
+          "returned_files": [
+            "examples/auth/index.js",
+            "examples/resource/index.js",
+            "lib/response.js",
+            "lib/view.js",
+            "test/app.render.js",
+            "test/express.static.js",
+            "test/fixtures/blog/index.html",
+            "test/res.render.js"
+          ],
+          "returned_evidence": [
+            {
+              "path": "lib/response.js",
+              "start_line": 897,
+              "end_line": 921,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 3.6776,
+              "token_count": 140,
+              "content_hash": "930e88567d584a16343429b2c8a98ed7"
+            },
+            {
+              "path": "test/res.render.js",
+              "start_line": 87,
+              "end_line": 91,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 2.5831,
+              "token_count": 19,
+              "content_hash": "e199967181d369e3e1bc94591e5f73c2"
+            },
+            {
+              "path": "examples/resource/index.js",
+              "start_line": 42,
+              "end_line": 44,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 2.4864,
+              "token_count": 15,
+              "content_hash": "84717f57941b0301d0fcda2b43c110bf"
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 161,
+              "end_line": 165,
+              "representation": "source",
+              "reason": "text",
+              "score": 2.5131,
+              "token_count": 49,
+              "content_hash": "e94b7e516fbd17e7ed148fa9693de1d2"
+            },
+            {
+              "path": "test/fixtures/blog/index.html",
+              "start_line": 1,
+              "end_line": 1,
+              "representation": "source",
+              "reason": "text",
+              "score": 2.2442,
+              "token_count": 6,
+              "content_hash": "d2b2b3cff91cd4c05ea091d0310acfdd"
+            },
+            {
+              "path": "examples/auth/index.js",
+              "start_line": 75,
+              "end_line": 82,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 1.2172,
+              "token_count": 42,
+              "content_hash": "dfb6c47f90e61348edd1f95c9daef818"
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 52,
+              "end_line": 95,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 2.156,
+              "token_count": 252,
+              "content_hash": "95fde03c41fc3a5308bf1ff34a4902b8"
+            },
+            {
+              "path": "test/express.static.js",
+              "start_line": 551,
+              "end_line": 555,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.5257,
+              "token_count": 29,
+              "content_hash": "96b6a3d3ea6b0b35ee3880461f4a0c91"
+            }
+          ],
+          "relevant_files_found": 2,
+          "relevant_file_recall": 0.6666666666666666,
+          "labeled_file_precision": 0.25,
+          "line_anchors": 11,
+          "line_anchors_found": 4,
+          "line_anchor_recall": 0.36363636363636365,
+          "unlabeled_returned_files": [
+            "examples/auth/index.js",
+            "examples/resource/index.js",
+            "lib/response.js",
+            "test/express.static.js",
+            "test/fixtures/blog/index.html",
+            "test/res.render.js"
+          ],
+          "oracle_source_tokens": 7043,
+          "oracle_minimal_read_json_tokens": 8584,
+          "rg_discovery_tokens": 4486,
+          "rg_discovery_json_tokens": 5119,
+          "scripted_baseline_total_json_tokens": 13706,
+          "leantoken_source_tokens": 552,
+          "leantoken_total_json_tokens": 1141,
+          "source_savings_against_oracle_fraction": 0.9216243078233707,
+          "total_json_savings_against_scripted_fraction": 0.9167517875383044,
+          "first_context_ms": 392.196536,
+          "warm_context_ms_samples": [
+            203.563687,
+            171.947826,
+            185.85586800000002
+          ],
+          "warm_context_median_ms": 185.85586800000002,
+          "warm_context_p95_ms": 203.563687,
+          "second_response_source_tokens": 414,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 244,
+          "repeat_total_json_tokens": 964,
+          "two_turn_context_json_tokens": 2349,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 6,
+          "dead_end_source_tokens": 251
+        }
+      ]
+    },
+    {
+      "name": "tokio-validation",
+      "url": "https://github.com/tokio-rs/tokio",
+      "base_revision": "9cae638de6dc8dd9779c450201df8c102247a242",
+      "fix_commit": null,
+      "issue_url": "https://github.com/tokio-rs/tokio/issues/8182",
+      "prompt_provenance": "Issue title, description, reproduction, and root-cause analysis as published before the dataset freeze; no patch or PR consulted.",
+      "label_provenance": "The two affected write state-machine branches and existing fs::File write-test neighborhood identified from the pinned tree.",
+      "indexed_files": 865,
+      "indexed_chunks": 2820,
+      "index_warnings": [],
+      "cold_index_ms": 9709.560238,
+      "database_bytes": 59960472,
+      "tasks": [
+        {
+          "id": "tokio-file-write-after-spawn-failure",
+          "prompt": "Fix tokio::fs::File so a second poll_write does not panic after spawn_mandatory_blocking failed on the previous write. The failed spawn currently leaves State::Idle without its buffer. Cover poll_write and poll_write_vectored and add a regression test for a shut-down blocking pool.",
+          "token_budget": 1200,
+          "relevant_files": [
+            "tokio/src/fs/file.rs",
+            "tokio/tests/fs_file.rs"
+          ],
+          "returned_files": [
+            "tokio-util/tests/framed_write.rs",
+            "tokio-util/tests/io_simplex.rs",
+            "tokio-util/tests/io_write_all_vectored.rs",
+            "tokio/src/fs/file.rs",
+            "tokio/src/fs/mocks.rs",
+            "tokio/src/fs/read_dir.rs",
+            "tokio/tests/fs_uring_file_read.rs"
+          ],
+          "returned_evidence": [
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 799,
+              "end_line": 868,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 4.3865,
+              "token_count": 467,
+              "content_hash": "8891687ebc7b69fb6fef266570379691"
+            },
+            {
+              "path": "tokio/tests/fs_uring_file_read.rs",
+              "start_line": 1,
+              "end_line": 3,
+              "representation": "source",
+              "reason": "text",
+              "score": 4.2816,
+              "token_count": 21,
+              "content_hash": "c952fac884d62a2b361e4f2c0541395e"
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 23,
+              "end_line": 27,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 4.0666,
+              "token_count": 43,
+              "content_hash": "363bc3cecc13d64e258e4d60b4536e45"
+            },
+            {
+              "path": "tokio/src/fs/read_dir.rs",
+              "start_line": 32,
+              "end_line": 42,
+              "representation": "source",
+              "reason": "text",
+              "score": 2.7359,
+              "token_count": 112,
+              "content_hash": "2c55f4198d9f1bfa1ca601fb23aa3c51"
+            },
+            {
+              "path": "tokio-util/tests/framed_write.rs",
+              "start_line": 193,
+              "end_line": 202,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 2.3962,
+              "token_count": 84,
+              "content_hash": "ea499d39d560b9c93482c31589a5c682"
+            },
+            {
+              "path": "tokio/src/fs/mocks.rs",
+              "start_line": 146,
+              "end_line": 159,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 3.1882,
+              "token_count": 105,
+              "content_hash": "a24fb05eccaf790fd9f6af31b5733477"
+            },
+            {
+              "path": "tokio-util/tests/io_write_all_vectored.rs",
+              "start_line": 19,
+              "end_line": 25,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 2.0608,
+              "token_count": 53,
+              "content_hash": "307d3fd32460346252e2d1ad24a44f85"
+            },
+            {
+              "path": "tokio-util/tests/io_simplex.rs",
+              "start_line": 320,
+              "end_line": 345,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 2.0042,
+              "token_count": 265,
+              "content_hash": "b12c0b6925f680df9fdf284f0553601f"
+            }
+          ],
+          "relevant_files_found": 1,
+          "relevant_file_recall": 0.5,
+          "labeled_file_precision": 0.14285714285714285,
+          "line_anchors": 9,
+          "line_anchors_found": 3,
+          "line_anchor_recall": 0.3333333333333333,
+          "unlabeled_returned_files": [
+            "tokio-util/tests/framed_write.rs",
+            "tokio-util/tests/io_simplex.rs",
+            "tokio-util/tests/io_write_all_vectored.rs",
+            "tokio/src/fs/mocks.rs",
+            "tokio/src/fs/read_dir.rs",
+            "tokio/tests/fs_uring_file_read.rs"
+          ],
+          "oracle_source_tokens": 10551,
+          "oracle_minimal_read_json_tokens": 12370,
+          "rg_discovery_tokens": 17109,
+          "rg_discovery_json_tokens": 19262,
+          "scripted_baseline_total_json_tokens": 31635,
+          "leantoken_source_tokens": 1150,
+          "leantoken_total_json_tokens": 1845,
+          "source_savings_against_oracle_fraction": 0.8910055918870249,
+          "total_json_savings_against_scripted_fraction": 0.9416785206258891,
+          "first_context_ms": 558.922695,
+          "warm_context_ms_samples": [
+            524.7929300000001,
+            530.6884990000001,
+            533.283583
+          ],
+          "warm_context_median_ms": 530.6884990000001,
+          "warm_context_p95_ms": 533.283583,
+          "second_response_source_tokens": 1200,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 241,
+          "repeat_total_json_tokens": 1889,
+          "two_turn_context_json_tokens": 3975,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 6,
+          "dead_end_source_tokens": 640
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "The oracle baseline assumes perfect file selection and reads whole files rather than exact decisive ranges.",
+    "The scripted ripgrep baseline uses fixed queries supplied by the manifest and is not an autonomous agent trajectory.",
+    "No model executes an edit, so this runner does not measure pass rate, prewalk handoff quality, or end-to-end task cost.",
+    "Cold indexing and warm latency depend on host hardware and filesystem cache state.",
+    "Validation prompts and labels were frozen from open issue reports and pinned source inspection, then used during retrieval tuning; this is not blind holdout evidence.",
+    "Four validation tasks are retrieval development evidence, not a statistically powered product claim."
+  ]
+}

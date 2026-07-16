@@ -12,6 +12,13 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
   Adaptive ranges preserve exact internal matches and prefer complete
   declarations when they fit. Concept allocation and qualified-owner matching
   must earn their place through frozen ablations.
+- The frozen prospective-validation ablation for `2c0388d` preserves early task
+  nouns instead of preferring later words only because they are longer. File
+  recall increased from 7/11 to 8/11 and labeled-line recall from 13/38 to
+  17/38; the Express task increased from 1/3 files and 0/11 lines to 2/3 files
+  and 4/11 lines. Dead-end source fell by 58 tokens while complete first-response
+  JSON increased by 228 tokens and complete two-turn JSON by 43 tokens. The
+  consumed blind holdout was not rerun or used for this tuning.
 - Expand the evaluation across more languages and task shapes before making
   broad retrieval claims. Record dead-end source, repeated ranges, known-hash
   resends, and complete two-turn cost alongside recall.

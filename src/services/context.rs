@@ -128,20 +128,14 @@ fn context_queries(task: &str, limit: usize) -> Vec<ContextQuery> {
         .flat_map(|term| std::iter::once(term.clone()).chain(expand_terms(term)))
         .map(|term| term.to_ascii_lowercase())
         .collect::<HashSet<_>>();
-    let mut prose = task_terms(task)
+    let prose = task_terms(task)
         .into_iter()
         .filter(|value| {
             !is_test_term(value)
                 && !is_context_stop_word(value)
                 && !code_parts.contains(&value.to_ascii_lowercase())
         })
-        .enumerate()
         .collect::<Vec<_>>();
-    prose.sort_by(|(left_index, left), (right_index, right)| {
-        context_query_weight(right, false)
-            .total_cmp(&context_query_weight(left, false))
-            .then_with(|| left_index.cmp(right_index))
-    });
 
     let prose_reserve = prose.len().min(4).min(available);
     let exact_limit = available.saturating_sub(prose_reserve);
@@ -156,7 +150,7 @@ fn context_queries(task: &str, limit: usize) -> Vec<ContextQuery> {
             Some(code_term.to_ascii_lowercase()),
         );
     }
-    for (_, value) in prose.iter().take(prose_reserve) {
+    for value in prose.iter().take(prose_reserve) {
         push_context_query(&mut terms, &mut seen, value.clone(), false, None);
     }
 
@@ -790,6 +784,20 @@ mod tests {
         assert!(terms.iter().any(|term| term.value == "Content-Length"));
         assert!(terms.iter().any(|term| term.value == "Transfer-Encoding"));
         assert_eq!(terms.last().map(|term| term.value.as_str()), Some("test"));
+    }
+
+    #[test]
+    fn context_queries_keep_early_domain_nouns_over_later_long_words() {
+        let terms = context_queries(
+            "Fix app.render and res.render for a view name ending in a dot. The callback must report the normal lookup error.",
+            12,
+        );
+
+        assert!(terms.iter().any(|term| term.value == "view"));
+        assert!(terms.iter().any(|term| term.value == "name"));
+        assert!(terms.iter().any(|term| term.value == "ending"));
+        assert!(terms.iter().any(|term| term.value == "dot"));
+        assert!(!terms.iter().any(|term| term.value == "callback"));
     }
 
     #[test]
