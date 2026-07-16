@@ -55,7 +55,7 @@ impl McpLauncher {
                 npm.into(),
                 "exec".into(),
                 "--yes".into(),
-                "--package=leantoken".into(),
+                "--package=leantoken@latest".into(),
                 "--".into(),
                 "leantoken".into(),
                 "mcp".into(),
@@ -69,7 +69,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn npx_launcher_is_unpinned_and_cache_independent() {
+    fn npx_launcher_requests_latest_release_without_using_cache_path() {
         let root = if cfg!(windows) { r"C:\npm" } else { "/npm" };
         assert_eq!(
             McpLauncher::from_npx_paths(
@@ -86,7 +86,7 @@ mod tests {
                         .into_owned(),
                     "exec".into(),
                     "--yes".into(),
-                    "--package=leantoken".into(),
+                    "--package=leantoken@latest".into(),
                     "--".into(),
                     "leantoken".into(),
                     "mcp".into(),

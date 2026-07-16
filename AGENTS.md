@@ -85,3 +85,15 @@ Snapshot tests use `insta`. Review intentional changes with `cargo insta review`
   issues if applicable.
 - MCP schema snapshot changes require explicit review of the diff before
   accepting.
+
+## npm Publication
+
+- Keep the Cargo package version, Git tag, GitHub release, and all npm package
+  versions identical.
+- Publish the five platform packages before the root `leantoken` package. Wait
+  until each platform version resolves from npm before publishing the root; this
+  prevents users from receiving a launcher whose optional native dependency is
+  unavailable.
+- Follow the package order and verification commands in `docs/development.md`.
+  Never attempt to replace an npm version that has already been published; cut
+  the next release instead.

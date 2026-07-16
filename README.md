@@ -10,7 +10,7 @@ budgets.
 Configure LeanToken for your coding agents:
 
 ```bash
-npx leantoken setup
+npx leantoken@latest setup
 ```
 
 The wizard finds supported clients and registers LeanToken as a global MCP
@@ -21,28 +21,34 @@ Antigravity. To skip the wizard, select clients explicitly or configure all of
 them:
 
 ```bash
-npx leantoken setup --claude --codex --yes
-npx leantoken setup --all --yes
+npx leantoken@latest setup --claude --codex --yes
+npx leantoken@latest setup --all --yes
 ```
 
 Setup adds only the `leantoken` MCP entry. It does not add skills, rules, or
 shell hooks. Remove it with:
 
 ```bash
-npx leantoken remove
+npx leantoken@latest remove
 ```
 
 To use the CLI directly, run commands through npx:
 
 ```bash
-npx leantoken status
-npx leantoken --root /path/to/repo search handle_request
+npx leantoken@latest status
+npx leantoken@latest --root /path/to/repo search handle_request
 ```
 
-Or install the CLI globally to omit the npx prefix:
+`npm install leantoken` installs the command only in the current project's
+`node_modules/.bin`; it does not add `leantoken` to the shell `PATH`. Run a
+project-local installation through `npx leantoken`, a package script, or
+`./node_modules/.bin/leantoken`.
+
+To install `leantoken` on the shell `PATH` and omit the npx prefix, use a
+global installation:
 
 ```bash
-npm install --global leantoken
+npm install --global leantoken@latest
 ```
 
 To build from source, install Rust 1.95 or later and a native C/C++ toolchain:
@@ -56,7 +62,7 @@ cargo install --git https://github.com/morluto/leantoken
 MCP entries created by setup follow current npm releases automatically. No
 manual MCP update is required.
 
-For a globally installed CLI:
+For a globally installed CLI or a CLI installed with Cargo:
 
 ```bash
 leantoken upgrade
@@ -69,6 +75,12 @@ Use `--check` to check without installing or `--yes` to skip confirmation.
 leantoken upgrade --check
 leantoken upgrade --yes
 leantoken update
+```
+
+For a project-local npm installation, update the dependency with npm instead:
+
+```bash
+npm install leantoken@latest
 ```
 
 ## What changes

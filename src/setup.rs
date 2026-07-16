@@ -731,10 +731,13 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
                 output,
                 "Configured MCP clients follow current npm releases automatically."
             )?;
-            writeln!(output, "Run one-off commands with: npx leantoken <command>")?;
             writeln!(
                 output,
-                "Install the shell command with: npm install --global leantoken"
+                "Run one-off commands with: npx leantoken@latest <command>"
+            )?;
+            writeln!(
+                output,
+                "Install the shell command with: npm install --global leantoken@latest"
             )?;
         }
     }

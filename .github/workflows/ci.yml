@@ -32,6 +32,9 @@ jobs:
       - name: Validate AGENTS.md
         run: bash scripts/validate-agents-md.sh
 
+      - name: Test npm packaging
+        run: node --test npm/npm-packaging.test.mjs
+
   security:
     name: Security checks
     runs-on: ubuntu-latest
