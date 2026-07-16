@@ -1,26 +1,30 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-## [0.1.0] - 2026-07-16
+## [0.1.1] - 2026-07-16
 ### Benchmarks
 
-- Add token economy regression benchmarks
-### Chores
+- Add retrieval and model evaluation harnesses
+- Freeze prospective validation tasks
+### Bug Fixes
 
-- Initialize repository
+- Guard against null string in release-please step outputs
+- Default release-please PR outputs to empty strings instead of null
+- Request-scoped snapshots, content-hash reconcile, and hot-path bounds
+- Coordinate MCP startup indexing
+- Honor configured home during MCP setup
 ### Continuous Integration
 
-- Add automated doc generation and AGENTS.md validation
-- Add test performance tracking and coverage thresholds
-- Add security and process infrastructure
-- Add code quality tooling (pre-commit, complexity, dupes, TODOs, unused deps)
-- Add cross-platform Rust validation
+- Switch to release-please PR workflow, remove Dependabot, document release policy
+- Add automated release pipeline, changelog generation, and dependency age policy
 ### Documentation
 
-- Add repository contributor guidelines
-- Document the LeanToken MVP
+- Document measurement limits and workflows
 ### Features
 
-- Add dev container configuration for Rust
-- Add token-budgeted repository retrieval
+- Improve retrieval efficiency and resilience
+### Refactoring
+
+- Colocate retrieval entrypoints
+- Bound retrieval paths and split services
 
