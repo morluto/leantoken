@@ -45,6 +45,11 @@ SQLite stores repository metadata, files, text chunks, definitions, syntactic
 references, and imports. External-content FTS5 tables provide word and trigram
 indexes over chunks.
 
+LeanToken does not serialize a separate in-memory index snapshot. In this
+document, a request snapshot means a SQLite read transaction pinned to one
+committed generation. Persisted SQLite generations are disposable derived state
+and are reconciled against repository files by the indexing leader.
+
 The connection is configured with:
 
 - WAL journal mode;

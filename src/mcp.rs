@@ -389,6 +389,38 @@ mod tests {
     }
 
     #[test]
+    fn user_docs_list_the_exact_runtime_tool_catalog() {
+        let expected = LeanTokenMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|tool| tool.name.into_owned())
+            .collect::<std::collections::BTreeSet<_>>();
+
+        let readme = include_str!("../README.md");
+        let readme_tools = readme
+            .split_once("## Available tools")
+            .expect("README tool section")
+            .1
+            .split_once("## CLI usage")
+            .expect("README tool section end")
+            .0
+            .lines()
+            .filter_map(|line| line.strip_prefix("| `"))
+            .filter_map(|line| line.split_once('`').map(|(name, _)| name.to_owned()))
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(readme_tools, expected, "README tool table drifted");
+
+        let usage_tools = include_str!("../docs/usage.md")
+            .lines()
+            .filter_map(|line| line.strip_prefix("## `"))
+            .filter_map(|line| line.strip_suffix('`'))
+            .filter(|name| name.starts_with("leantoken_"))
+            .map(str::to_owned)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(usage_tools, expected, "usage guide tool sections drifted");
+    }
+
+    #[test]
     fn tools_have_input_schemas_without_redundant_output_schemas() {
         let router = LeanTokenMcp::tool_router();
         let tools = router.list_all();
