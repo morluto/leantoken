@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
 use rayon::ThreadPool;
@@ -21,14 +21,54 @@ use crate::{Config, Error, Result};
 
 /// Owns discovery/parse publication for one repository cache.
 ///
-/// The Rayon worker pool is built once per indexer (per `Services` / cache) so
-/// reconciles reuse it without a process-global worker count and without
-/// paying `ThreadPoolBuilder` on every prepare.
+/// The Rayon worker pool is built lazily on the first non-empty prepare and
+/// then reused. Read-only follower processes therefore do not create indexing
+/// threads merely by opening repository services.
 #[derive(Clone)]
 pub struct Indexer {
     config: Arc<Config>,
     storage: Storage,
-    pool: Arc<ThreadPool>,
+    pool: Arc<LazyWorkerPool>,
+}
+
+struct LazyWorkerPool {
+    pool: OnceLock<ThreadPool>,
+    init: Mutex<()>,
+}
+
+impl LazyWorkerPool {
+    fn new() -> Self {
+        Self {
+            pool: OnceLock::new(),
+            init: Mutex::new(()),
+        }
+    }
+
+    fn get_or_build(&self, workers: usize) -> Result<&ThreadPool> {
+        if let Some(pool) = self.pool.get() {
+            return Ok(pool);
+        }
+
+        // Serialize fallible initialization without caching a failure. A later
+        // reconciliation may retry after a transient thread-creation failure.
+        let _guard = self
+            .init
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(pool) = self.pool.get() {
+            return Ok(pool);
+        }
+
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(workers.max(1))
+            .thread_name(|index| format!("leantoken-index-{index}"))
+            .build()?;
+        let _ = self.pool.set(pool);
+        Ok(self
+            .pool
+            .get()
+            .expect("worker pool is initialized while holding its init lock"))
+    }
 }
 
 impl fmt::Debug for Indexer {
@@ -36,23 +76,21 @@ impl fmt::Debug for Indexer {
         f.debug_struct("Indexer")
             .field("config", &self.config)
             .field("storage", &self.storage)
-            .field("pool_threads", &self.pool.current_num_threads())
+            .field(
+                "pool_threads",
+                &self.pool.pool.get().map(ThreadPool::current_num_threads),
+            )
             .finish()
     }
 }
 
 impl Indexer {
-    /// Construct an indexer and its dedicated worker pool from config.
+    /// Construct an indexer whose dedicated worker pool is created on demand.
     pub fn new(config: Arc<Config>, storage: Storage) -> Result<Self> {
-        let workers = config.max_index_workers.max(1);
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(workers)
-            .thread_name(|index| format!("leantoken-index-{index}"))
-            .build()?;
         Ok(Self {
             config,
             storage,
-            pool: Arc::new(pool),
+            pool: Arc::new(LazyWorkerPool::new()),
         })
     }
 
@@ -361,12 +399,20 @@ impl Indexer {
         candidates: &[DiscoveredFile],
         cancellation: &CancellationToken,
     ) -> Result<Vec<PreparedFile>> {
-        // One pool per Services/cache preserves that instance's configured
-        // worker bound without rebuilding threads on every reconciliation.
+        check_cancelled(cancellation)?;
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // One lazy pool per Services/cache preserves that instance's
+        // configured worker bound without allocating threads in followers.
+        let pool = self
+            .pool
+            .get_or_build(self.config.max_index_workers.max(1))?;
         let chunk_lines = self.config.chunk_lines;
         let chunk_bytes = self.config.chunk_bytes;
         let tokenizer = self.config.tokenizer;
-        self.pool.install(|| {
+        pool.install(|| {
             candidates
                 .par_iter()
                 .map(|file| {
@@ -711,7 +757,7 @@ mod tests {
     }
 
     #[test]
-    fn pool_threads_follow_config_per_indexer() {
+    fn worker_pool_is_lazy_and_threads_follow_config_per_indexer() {
         let root = tempfile::tempdir().expect("root");
         let mut config_a =
             Config::discover(root.path(), Some(root.path().join("a.sqlite"))).expect("config a");
@@ -725,7 +771,31 @@ mod tests {
         let storage_b = Storage::open(&config_b.database_path).expect("storage b");
         let indexer_b = Indexer::new(Arc::new(config_b), storage_b).expect("indexer b");
 
-        assert_eq!(indexer_a.pool.current_num_threads(), 1);
-        assert_eq!(indexer_b.pool.current_num_threads(), 3);
+        assert!(indexer_a.pool.pool.get().is_none());
+        assert!(indexer_b.pool.pool.get().is_none());
+        assert!(
+            indexer_a
+                .prepare_candidates(&[], &CancellationToken::new())
+                .expect("empty prepare")
+                .is_empty()
+        );
+        assert!(indexer_a.pool.pool.get().is_none());
+
+        assert_eq!(
+            indexer_a
+                .pool
+                .get_or_build(indexer_a.config.max_index_workers)
+                .expect("pool a")
+                .current_num_threads(),
+            1
+        );
+        assert_eq!(
+            indexer_b
+                .pool
+                .get_or_build(indexer_b.config.max_index_workers)
+                .expect("pool b")
+                .current_num_threads(),
+            3
+        );
     }
 }
