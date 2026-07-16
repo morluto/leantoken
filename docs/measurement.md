@@ -88,6 +88,24 @@ model versions and report repeated runs and variance.
 
 ## Exact MCP wire capture
 
+Before collecting sensitive host traces, generate the deterministic synthetic
+exchange to verify that the current catalog, dual result shape, and analyzer
+still cover every required wire category:
+
+```bash
+cargo run --release --example mcp_wire_fixture -- \
+  --output target/wire_trace.synthetic.json
+
+cargo run --release --example mcp_wire_analyze -- \
+  --trace target/wire_trace.synthetic.json \
+  --output target/wire_trace.synthetic.report.json
+```
+
+The fixture is built from `tool_catalog_json` and `tool_result`, not a copied
+schema. It is plumbing evidence only: its provider totals are null, it has no
+host conversation frame, and its `dual` classification does not prove that any
+real host delivers text or structured content to a model.
+
 Place the stdio proxy where the host would normally launch LeanToken:
 
 ```bash
