@@ -117,7 +117,22 @@ fn compile_regex(request: &SearchRequest) -> Result<regex::Regex> {
 }
 
 impl Services {
-    pub(super) fn search_sync(
+    /// Search indexed lexical and structural evidence.
+    pub async fn search(&self, request: SearchRequest) -> Result<SearchResponse> {
+        self.search_cancellable(request, CancellationToken::new())
+            .await
+    }
+
+    pub async fn search_cancellable(
+        &self,
+        request: SearchRequest,
+        cancellation: CancellationToken,
+    ) -> Result<SearchResponse> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.search_sync(request, &cancellation)).await?
+    }
+
+    fn search_sync(
         &self,
         request: SearchRequest,
         cancellation: &CancellationToken,
@@ -259,7 +274,7 @@ impl Services {
         })
     }
 
-    pub(super) fn symbol_search_hit(
+    fn symbol_search_hit(
         &self,
         session: &ReadSession,
         hit: SymbolHit,
@@ -297,7 +312,7 @@ impl Services {
         }))
     }
 
-    pub(super) fn reference_search_hit(
+    fn reference_search_hit(
         &self,
         session: &ReadSession,
         hit: ReferenceHit,
@@ -335,7 +350,7 @@ impl Services {
         }))
     }
 
-    pub(super) fn regex_hits(
+    fn regex_hits(
         &self,
         session: &ReadSession,
         request: &SearchRequest,

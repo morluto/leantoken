@@ -390,7 +390,22 @@ impl Services {
         boost
     }
 
-    pub(super) fn context_sync(
+    /// Select ranked task evidence within an exact source-token budget.
+    pub async fn context(&self, request: ContextRequest) -> Result<ContextResponse> {
+        self.context_cancellable(request, CancellationToken::new())
+            .await
+    }
+
+    pub async fn context_cancellable(
+        &self,
+        request: ContextRequest,
+        cancellation: CancellationToken,
+    ) -> Result<ContextResponse> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.context_sync(request, &cancellation)).await?
+    }
+
+    fn context_sync(
         &self,
         request: ContextRequest,
         cancellation: &CancellationToken,

@@ -27,9 +27,10 @@ ignore-aware discovery -> chunking -> tree-sitter extraction
 - The storage layer owns migrations, transactions, generations, and FTS5.
 - Retrieval services own validation, freshness checks, ranking inputs, token
   limits, and response models. The public `Services` type lives in
-  `services.rs` (startup, indexing, status, snapshot consistency, meta). Sync
-  retrieval paths are split under `services/`: `validation`, `files`, `search`,
-  `context`, and `read`.
+  `services.rs` (startup, indexing, status, snapshot consistency, meta).
+  Retrieval entrypoints and their implementations live together under
+  `services/`: `files`, `search`, `context`, and `read`, with shared request
+  validation in `validation`.
 - The MCP adapter owns SDK types, protocol error translation, cancellation, and
   stdio lifecycle. It omits optional output schemas from the catalog and offers
   explicit dual, text-only, and structured-only result modes. Dual remains the

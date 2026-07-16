@@ -354,7 +354,22 @@ fn hex_nibble(value: u8) -> Result<u8> {
 }
 
 impl Services {
-    pub(super) fn files_sync(
+    /// Discover repository paths.
+    pub async fn files(&self, request: FilesRequest) -> Result<FilesResponse> {
+        self.files_cancellable(request, CancellationToken::new())
+            .await
+    }
+
+    pub async fn files_cancellable(
+        &self,
+        request: FilesRequest,
+        cancellation: CancellationToken,
+    ) -> Result<FilesResponse> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.files_sync(request, &cancellation)).await?
+    }
+
+    fn files_sync(
         &self,
         request: FilesRequest,
         cancellation: &CancellationToken,

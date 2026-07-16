@@ -38,7 +38,37 @@ fn storage_symbol(symbol: crate::storage::SymbolRecord) -> Symbol {
 }
 
 impl Services {
-    pub(super) fn outline_sync(
+    /// Return bounded structural outlines for indexed files.
+    pub async fn outline(&self, request: OutlineRequest) -> Result<OutlineResponse> {
+        self.outline_cancellable(request, CancellationToken::new())
+            .await
+    }
+
+    pub async fn outline_cancellable(
+        &self,
+        request: OutlineRequest,
+        cancellation: CancellationToken,
+    ) -> Result<OutlineResponse> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.outline_sync(request, &cancellation)).await?
+    }
+
+    /// Read a bounded live source range and report index staleness.
+    pub async fn read(&self, request: ReadRequest) -> Result<ReadResponse> {
+        self.read_cancellable(request, CancellationToken::new())
+            .await
+    }
+
+    pub async fn read_cancellable(
+        &self,
+        request: ReadRequest,
+        cancellation: CancellationToken,
+    ) -> Result<ReadResponse> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.read_sync(request, &cancellation)).await?
+    }
+
+    fn outline_sync(
         &self,
         request: OutlineRequest,
         cancellation: &CancellationToken,
@@ -141,7 +171,7 @@ impl Services {
         })
     }
 
-    pub(super) fn read_sync(
+    fn read_sync(
         &self,
         request: ReadRequest,
         cancellation: &CancellationToken,
@@ -163,7 +193,7 @@ impl Services {
         })
     }
 
-    pub(super) fn read_at_generation(
+    fn read_at_generation(
         &self,
         session: &ReadSession,
         request: &ReadRequest,
