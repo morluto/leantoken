@@ -153,6 +153,65 @@ the source revision, file hash, and applicable data terms for every external
 run; see [`../docs/measurement.md`](../docs/measurement.md) for the import and
 comparison workflow.
 
+### Sealed multilingual development preparation
+
+`swe_bench_multilingual_prepare` turns a caller-provided export of
+[`SWE-bench Multilingual`](https://huggingface.co/datasets/SWE-bench/SWE-bench_Multilingual)
+into two separately bound artifacts:
+
+- a public task JSONL containing issue text, repository, pinned base commit,
+  language, exact/behavioral stratum, budget, and source-record hash;
+- an owner-readable label JSONL containing only patch-derived base-revision
+  core/optional regions and patch hashes.
+
+The tool never copies raw gold/test patch fields, hints, or repository source
+into either output. It uses a structured unified-diff parser. Removed base
+lines are core anchors; a pure insertion uses its adjacent base context; added
+files are counted but cannot become base-revision labels. Test-patch,
+documentation, snapshot, generated, vendored, and lock-file regions are
+optional rather than core evidence.
+
+Keep the source Parquet, JSONL export, public tasks, labels, and repository
+license map under ignored `target/`. The checked receipt is the only publishable
+artifact. Build the harness from a clean revision and run:
+
+```bash
+cargo build --release --example swe_bench_multilingual_prepare
+
+target/release/examples/swe_bench_multilingual_prepare \
+  --dataset target/external/swe-bench-multilingual/test.jsonl \
+  --source-artifact target/external/swe-bench-multilingual/data/test-00000-of-00001.parquet \
+  --source-revision DATASET_GIT_REVISION \
+  --source-url "https://huggingface.co/datasets/SWE-bench/SWE-bench_Multilingual/blob/DATASET_GIT_REVISION/data/test-00000-of-00001.parquet" \
+  --harness-revision "$(git rev-parse HEAD)" \
+  --repository-license-map target/swe-bench-multilingual/licenses.json \
+  --require-license-audit \
+  --tasks-output target/swe-bench-multilingual/tasks.jsonl \
+  --labels-output target/swe-bench-multilingual/labels.sealed.jsonl \
+  --receipt-output target/swe-bench-multilingual/receipt.json
+```
+
+The license map is a JSON array with one entry per unique selected repository
+and base revision: `repository`, `spdx_id`, `source_revision`,
+repository-relative `license_path`, `license_file_blake3`, and an HTTPS
+revision-bound `source_url`. Required audit mode rejects missing/extra
+repository revisions, invalid hashes, duplicate entries, and `NOASSERTION`.
+
+The default selection is fixed before retrieval evaluation: six tasks in each
+of C, C++, Go, Java, JavaScript, TypeScript, PHP, Ruby, and Rust, split evenly
+between title-locus exact identifiers and behavioral tasks, with at most five
+tasks from one repository and a 2,000 `cl100k_base` source-token budget. Each
+task and the receipt bind the exact tokenizer; the preparer rejects estimated
+token counts. Selection uses only the seed, language, task ID, and public title
+stratum; it does not use patch locations or retrieval outcomes.
+
+"Sealed" here means immutable file creation, owner-only label permissions on
+Unix, task/label source-record binding, and a public BLAKE3 commitment. It is
+not encryption against the local user. Keep the label file unopened until the
+runtime candidate, configuration, evaluator, tokenizer, and budget are frozen.
+For Gate B, use an independent evaluator and separately access-controlled
+labels; this public benchmark can only provide development/Gate A evidence.
+
 The repository includes one [Linux x86-64 result](reports/linux-x86_64-2026-07-15.json) as a transparent development record. It is not a cross-platform result or a release claim; rerun the manifest on the target machine for current timings.
 
 The prospective-validation candidate report for `2c0388d` is

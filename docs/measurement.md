@@ -339,6 +339,35 @@ current terms separately from any companion code license, and record the exact
 dataset revision and file hash. The checked-in synthetic fixture is
 repository-authored and contains no released SWE-Explore task.
 
+`swe_bench_multilingual_prepare` provides the data boundary for the next
+integration Gate A. It accepts a local JSONL export plus the pinned source
+Parquet artifact and records both exact-byte identities and an exporter-stable
+canonical-record identity. The default deterministic sample contains 54 tasks:
+six each for C, C++, Go, Java, JavaScript, TypeScript, PHP, Ruby, and Rust, with
+three exact-title and three behavioral-title tasks per language. Raw patches
+and evaluator regions remain in ignored local storage; the checked receipt
+contains only aggregate label statistics, artifact commitments, source and
+harness identities, repository-license evidence, and explicit limitations.
+The default 2,000-token source budget is bound to exact `cl100k_base` counting
+in every task and in the aggregate receipt.
+
+Gold-patch changed lines are a stronger retrieval proxy than successful-agent
+read regions, but they are not causal ground truth. Pure additions are not
+retrievable at the base revision, and patch-derived labels can omit unchanged
+contracts, callers, and tests needed for a correct fix. Report these limits and
+do not treat the development set as task-success or product-generalization
+evidence. The public dataset may also be present in model training data, so it
+must not be reused as the sealed Gate B holdout.
+
+The preparer creates outputs without overwriting existing artifacts, writes the
+label file with mode `0600` on Unix, validates exact/non-exact and repository
+quotas, and requires every selected repository license entry when
+`--require-license-audit` is used. Its receipt binds the release binary to a
+caller-supplied clean Git revision. Reproduce the outputs twice and compare
+bytes before accepting a checked receipt; see
+[`../benchmarks/README.md`](../benchmarks/README.md) for the command and license
+map contract.
+
 Ranked-region metrics measure retrieval against incomplete evaluator labels;
 they do not establish patch correctness, model task success, or that every
 unlabeled line is useless. Comparisons expose deltas and tradeoffs rather than
