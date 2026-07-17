@@ -105,6 +105,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
@@ -115,6 +120,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci-${{ matrix.os }}
+
+      - name: Test npm installation
+        run: node --test npm/npm-install-e2e.mjs
 
       - name: cargo fmt
         run: cargo fmt --all -- --check
