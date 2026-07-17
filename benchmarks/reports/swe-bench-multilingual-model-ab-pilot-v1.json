@@ -60,11 +60,15 @@
     "all_targets_all_features_check_passed": true,
     "deny_warnings_clippy_passed": true,
     "single_threaded_full_suite_passed": true,
-    "default_parallel_full_suite_stable": false,
-    "candidate_parallel_failures_observed": 2,
+    "linux_rust_1_95_full_suite_passed": true,
+    "default_parallel_full_suite_stable": true,
+    "pre_fix_candidate_parallel_failures_observed": 2,
     "frozen_upstream_baseline_reproduced_failure": true,
-    "isolated_operation_lock_test_repetitions_passed": "20/20",
-    "classification": "pre_existing_parallel_freshness_or_operation_lock_race; unrelated to the report-only result commit but a push blocker"
+    "pre_fix_isolated_operation_lock_test_repetitions_passed": "20/20",
+    "post_fix_default_parallel_integration_repetitions_passed": "10/10",
+    "post_fix_default_parallel_full_suite_repetitions_passed": "2/2 across Rust 1.97.0 and MSRV 1.95.0",
+    "cross_target_local_validation_required": false,
+    "classification": "pre_existing operation-lock completion race reproduced on the frozen upstream baseline; explicit unlock before reporting index completion restored the linearizable Current boundary on Linux"
   },
   "task_results": {
     "babel__babel-15445": {
@@ -167,20 +171,19 @@
     "Babel exposed repeated tool-limit, tool-error, and retrieval-contract failures across baseline and adaptive arms; no arm solved the task."
   ],
   "required_successor_work": [
-    "Fix the upstream parallel freshness or operation-lock race so index completion has a linearizable Current boundary; the default parallel full suite must pass repeatedly before push.",
     "Remove broad recovery from the primary product path. Keep strict retrieval as the research candidate and permit native escalation only through an explicit evidence-saturation policy with bounded capability grants.",
     "Add deterministic phase budgets and novelty stopping for discovery, evidence reading, editing, and verification; do not respond to runaway traces by merely raising the global tool-call limit.",
     "Reduce candidate overproduction with per-channel evidence quotas, cross-channel novelty scoring, and language/task-shape routing. Fall back to baseline in buckets without independent evidence of benefit.",
     "Carry path, revision or content hash, and stable range identity into the edit protocol so failed context patches can be re-anchored without repeated repository searches.",
     "Reduce index and context latency through persistent index reuse, incremental reconciliation, and profiling before adding further parser or graph expansion.",
     "Build a newly versioned multilingual development set before tuning a successor. Do not reuse the consumed 54-task labels or this two-task pilot for parameter selection.",
-    "Run native macOS and Windows tests, then execute a separately frozen unseen Gate B with at least 60 tasks before any promotion, push, or pull request."
+    "Execute a separately frozen unseen Gate B with at least 60 tasks before any promotion, push, or pull request. Local correctness validation is Linux-only; native macOS and Windows coverage remains an upstream-CI requirement after a Gate-B-authorized push and before merge."
   ],
   "limitations": [
     "This is a two-task exploratory pilot on public consumed development data; it has low power and may overlap model training data.",
     "Ten Babel runs failed the adapter contract or tool limit, so complete provider-token totals are intentionally null for aggregate arms.",
     "Provider cost, cache-creation input, and provider-visible compact framing are unavailable.",
-    "Native macOS and Windows tests and sealed Gate B remain pending.",
-    "The default parallel integration suite exposed a pre-existing freshness or operation-lock race in both the candidate and frozen upstream baseline; only the single-threaded full suite was fully green."
+    "Sealed Gate B remains pending; native macOS and Windows execution is intentionally deferred to upstream CI after a Gate-B-authorized push.",
+    "The pilot runtime revisions predate the post-run operation-lock correctness fix. The race was reproduced in both candidate and frozen upstream baseline, then resolved locally on Linux with explicit unlock and repeated default-parallel validation."
   ]
 }

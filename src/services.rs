@@ -132,8 +132,10 @@ impl Services {
         active_reconciliations.fetch_add(1, Ordering::AcqRel);
         tokio::task::spawn_blocking(move || {
             let _active = ActiveReconciliation(active_reconciliations);
-            let _operation = this.coordination.acquire_operation(&cancellation)?;
-            this.indexer.reconcile_cancellable(rebuild, &cancellation)
+            let operation = this.coordination.acquire_operation(&cancellation)?;
+            let result = this.indexer.reconcile_cancellable(rebuild, &cancellation);
+            operation.release()?;
+            result
         })
         .await?
     }
@@ -156,9 +158,12 @@ impl Services {
         active_reconciliations.fetch_add(1, Ordering::AcqRel);
         tokio::task::spawn_blocking(move || {
             let _active = ActiveReconciliation(active_reconciliations);
-            let _operation = this.coordination.acquire_operation(&cancellation)?;
-            this.indexer
-                .reconcile_paths_cancellable(&paths, &cancellation)
+            let operation = this.coordination.acquire_operation(&cancellation)?;
+            let result = this
+                .indexer
+                .reconcile_paths_cancellable(&paths, &cancellation);
+            operation.release()?;
+            result
         })
         .await?
     }

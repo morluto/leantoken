@@ -47,26 +47,22 @@ impl IndexCoordination {
     /// Attempt to become the single automatic indexer and watcher.
     pub fn try_acquire_leadership(&self) -> Result<Option<IndexLeadership>> {
         let file = open_lock_file(&self.leadership_path)?;
-        match file.try_lock() {
-            Ok(()) => Ok(Some(IndexLeadership { _file: file })),
-            Err(TryLockError::WouldBlock) => Ok(None),
-            Err(TryLockError::Error(error)) => Err(error.into()),
+        if try_lock_file(&file)? {
+            Ok(Some(IndexLeadership { _file: file }))
+        } else {
+            Ok(None)
         }
     }
 
     /// Wait for exclusive reconciliation ownership while honoring cancellation.
     pub fn acquire_operation(&self, cancellation: &CancellationToken) -> Result<IndexOperation> {
-        acquire(&self.operation_path, cancellation).map(|file| IndexOperation { _file: file })
+        acquire(&self.operation_path, cancellation).map(|file| IndexOperation { file })
     }
 
     /// Return whether another handle or process currently owns a reconciliation.
     pub fn is_reconciling(&self) -> Result<bool> {
         let file = open_lock_file(&self.operation_path)?;
-        match file.try_lock() {
-            Ok(()) => Ok(false),
-            Err(TryLockError::WouldBlock) => Ok(true),
-            Err(TryLockError::Error(error)) => Err(error.into()),
-        }
+        try_lock_file(&file).map(|acquired| !acquired)
     }
 }
 
@@ -85,7 +81,14 @@ pub struct IndexLeadership {
 /// Lifetime proof that one reconciliation is serialized across processes.
 #[derive(Debug)]
 pub struct IndexOperation {
-    _file: File,
+    file: File,
+}
+
+impl IndexOperation {
+    /// Release reconciliation ownership before publishing operation completion.
+    pub(crate) fn release(self) -> Result<()> {
+        unlock_file(&self.file)
+    }
 }
 
 fn acquire(path: &Path, cancellation: &CancellationToken) -> Result<File> {
@@ -94,10 +97,40 @@ fn acquire(path: &Path, cancellation: &CancellationToken) -> Result<File> {
         if cancellation.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        match file.try_lock() {
-            Ok(()) => return Ok(file),
-            Err(TryLockError::WouldBlock) => thread::sleep(LOCK_RETRY_DELAY),
+        if try_lock_file(&file)? {
+            return Ok(file);
+        }
+        thread::sleep(LOCK_RETRY_DELAY);
+    }
+}
+
+fn try_lock_file(file: &File) -> Result<bool> {
+    try_lock_with(|| file.try_lock())
+}
+
+fn unlock_file(file: &File) -> Result<()> {
+    unlock_with(|| file.unlock())
+}
+
+fn try_lock_with(
+    mut attempt: impl FnMut() -> std::result::Result<(), TryLockError>,
+) -> Result<bool> {
+    loop {
+        match attempt() {
+            Ok(()) => return Ok(true),
+            Err(TryLockError::WouldBlock) => return Ok(false),
+            Err(TryLockError::Error(error)) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(TryLockError::Error(error)) => return Err(error.into()),
+        }
+    }
+}
+
+fn unlock_with(mut attempt: impl FnMut() -> std::io::Result<()>) -> Result<()> {
+    loop {
+        match attempt() {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error.into()),
         }
     }
 }
@@ -123,6 +156,8 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+
     use super::*;
 
     #[test]
@@ -162,6 +197,90 @@ mod tests {
         assert!(coordination.is_reconciling().expect("state"));
 
         drop(operation);
+        assert!(!coordination.is_reconciling().expect("released state"));
+    }
+
+    #[test]
+    fn lock_probe_retries_interruption_before_acquiring() {
+        let mut attempts = 0;
+
+        let acquired = try_lock_with(|| {
+            attempts += 1;
+            if attempts < 3 {
+                Err(TryLockError::Error(io::Error::from(
+                    io::ErrorKind::Interrupted,
+                )))
+            } else {
+                Ok(())
+            }
+        })
+        .expect("lock probe");
+
+        assert!(acquired);
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn lock_probe_preserves_would_block_after_interruption() {
+        let mut attempts = 0;
+
+        let acquired = try_lock_with(|| {
+            attempts += 1;
+            if attempts == 1 {
+                Err(TryLockError::Error(io::Error::from(
+                    io::ErrorKind::Interrupted,
+                )))
+            } else {
+                Err(TryLockError::WouldBlock)
+            }
+        })
+        .expect("lock probe");
+
+        assert!(!acquired);
+        assert_eq!(attempts, 2);
+    }
+
+    #[test]
+    fn lock_probe_propagates_non_interruption_errors() {
+        let error = try_lock_with(|| {
+            Err(TryLockError::Error(io::Error::from(
+                io::ErrorKind::PermissionDenied,
+            )))
+        })
+        .expect_err("permission error");
+
+        assert!(
+            matches!(error, Error::Io(source) if source.kind() == io::ErrorKind::PermissionDenied)
+        );
+    }
+
+    #[test]
+    fn unlock_retries_interruption_before_succeeding() {
+        let mut attempts = 0;
+
+        unlock_with(|| {
+            attempts += 1;
+            if attempts < 3 {
+                Err(io::Error::from(io::ErrorKind::Interrupted))
+            } else {
+                Ok(())
+            }
+        })
+        .expect("unlock");
+
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn operation_release_makes_completion_observable() {
+        let directory = tempfile::tempdir().expect("directory");
+        let coordination = IndexCoordination::for_database(&directory.path().join("index.sqlite"));
+        let operation = coordination
+            .acquire_operation(&CancellationToken::new())
+            .expect("operation");
+
+        operation.release().expect("release");
+
         assert!(!coordination.is_reconciling().expect("released state"));
     }
 
