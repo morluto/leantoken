@@ -295,18 +295,21 @@ cargo run --release --example mcp_wire_analyze -- \
 ```
 
 The fixture is built from `tool_catalog_json` and `tool_result`, not a copied
-schema. It is plumbing evidence only: its provider totals are null, it has no
-host conversation frame, and its `dual` classification does not prove that any
-real host delivers text or structured content to a model.
+schema. Its schema-v2 envelope includes deterministic turns, one range identity,
+three-turn visibility, and one synthetic provider-visible handoff. That handoff
+tests accounting only; it is not an observed host conversation frame. Provider
+usage remains null, and the `dual` classification does not prove that any real
+host delivers text or structured content to a model.
 The checked-in [trace](../benchmarks/wire_trace.synthetic.json) and
-[analysis](../benchmarks/reports/wire-trace-synthetic-0.1.1.json) are the
-regenerable baseline for LeanToken 0.1.1.
-The compact-response fixture records 1,984 complete wire tokens: 1,550 for the
-five-tool catalog and 240 for the dual context result. Omitting empty optional
-collections reduced that result from 257 tokens without changing the dual mode,
-non-empty evidence, receipt hashes, freshness, or range metadata. These local
-tokenizer counts remain synthetic serialization evidence, not host or provider
-compatibility evidence.
+[analysis](../benchmarks/reports/wire-trace-synthetic-v2.json) are the
+regenerable schema-v2 baseline. The current fixture records 2,044 complete
+JSON-RPC tokens: 1,610 for the five-tool catalog response and 240 for the dual
+context result. The returned range contains 21 source tokens. The complete
+result envelope remains visible for three turns, producing 720 serialized
+token-turns. Its 13-token synthetic handoff first becomes provider-visible in
+turn two and remains visible through turn three, producing 26 provider-visible
+token-turns. These values are separate measurements and must not be summed into
+a provider billing claim.
 
 A real Codex CLI 0.144.5 capture initialized LeanToken, listed the five-tool
 catalog, and completed `leantoken_files` and `leantoken_read` calls. Its nine
@@ -326,12 +329,20 @@ cargo run --release --example mcp_wire_capture -- \
   --output target/codex-wire.json \
   --host codex \
   --host-version VERSION \
+  --model MODEL \
+  --provider PROVIDER \
+  --repository-revision REVISION \
+  --dirty-fingerprint FINGERPRINT \
   -- leantoken --root /path/to/repo mcp
 ```
 
 The proxy forwards bytes unchanged and records each newline-delimited JSON-RPC
-payload in both directions. It writes only protocol bytes to stdout. Analyze
-the trace:
+payload in both directions. It writes only protocol bytes to stdout and
+atomically replaces the trace after every message, so the last complete v2
+envelope survives abrupt host termination. Repository revision and dirty
+fingerprint are optional but must be supplied together. A transparent stdio
+capture cannot infer turns, range identities, compaction, provider framing, or
+provider usage; host-specific instrumentation must export those fields.
 
 Wire traces can contain repository source, prompts, paths, and host metadata.
 Store them with the same access controls and retention policy as the repository;
@@ -343,12 +354,16 @@ cargo run --release --example mcp_wire_analyze -- \
   --output target/codex-wire-cost.json
 ```
 
-The analyzer separates initialization, tool schemas, calls, results, and
-handoffs. When the host exports a provider-native turn total, put it in the
-trace-level `provider_total_input_tokens`. Optional event values are deltas used
-only for category attribution, never repeated cumulative totals. Partial event
-totals remain null. A host-specific conversation frame or model handoff is
-outside stdio and must be appended as a `handoff` event if the host exposes it.
+The analyzer validates schema-v2 sequence and content hashes and still reads
+schema v1 with explicit legacy limitations. It separates complete JSON-RPC,
+source ranges, handoffs, result lifetime, duplicate/reread ranges, changed
+hashes, stale repository generations, and provider-native usage. Schema-v2
+provider usage has separate uncached input, cache creation, cache read, output,
+and reasoning fields. A trace-level usage object is authoritative; event values
+must be per-event deltas, never repeated cumulative totals. If any required
+event delta is absent, that aggregate remains null. The v1
+`provider_total_input_tokens` field remains a generic legacy total and is not
+relabelled as uncached input.
 
 ## Result compatibility matrix
 
