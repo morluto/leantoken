@@ -34,7 +34,7 @@ const MIN_CORROBORATED_QUERY_WEIGHT: f64 = 0.65;
 const SYMBOL_CONTEXT_TOKEN_CAP: usize = 768;
 const REFERENCE_CONTEXT_TOKEN_CAP: usize = 256;
 const TEXT_CONTEXT_TOKEN_CAP: usize = 256;
-const IMPORT_SYMBOL_CONTEXT_TOKEN_CAP: usize = 256;
+const IMPORT_SYMBOL_CONTEXT_TOKEN_CAP: usize = 384;
 
 #[derive(Clone, Copy)]
 enum ContextExcerptKind {

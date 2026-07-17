@@ -324,7 +324,12 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
     .expect("seed");
     std::fs::write(
         root.path().join("src/target.js"),
-        "export class OwnerAlpha {\n  run() { return 1; }\n}\n",
+        format!(
+            "export class OwnerAlpha {{\n  run(input) {{\n    let total = input;\n{}    return total;\n  }}\n}}\n",
+            (1..=44)
+                .map(|index| format!("    total += input + {index};\n"))
+                .collect::<String>()
+        ),
     )
     .expect("target");
     let config =
@@ -369,6 +374,18 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
         }),
         "candidates: {:?}",
         multi.generated_candidates
+    );
+    let import_symbol = multi
+        .generated_candidates
+        .iter()
+        .find(|candidate| {
+            candidate.path == "src/target.js" && candidate.representation == "import_symbol"
+        })
+        .expect("import symbol candidate");
+    assert_eq!(import_symbol.end_line, 50);
+    assert!(
+        import_symbol.token_count > 256,
+        "import symbol fixture must cover the old cap: {import_symbol:?}"
     );
     assert!(
         multi
