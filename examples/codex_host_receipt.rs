@@ -704,10 +704,10 @@ fn validate_mcp_host_order(trace: &Trace) -> Result<(), Box<dyn Error>> {
                         json_rpc_id(&message).ok_or("MCP initialize request has no scalar ID")?,
                     ));
                 }
-                Some("notifications/initialized") => {
-                    if initialized_notification.replace(index).is_some() {
-                        return Err("MCP trace has duplicate initialized notifications".into());
-                    }
+                Some("notifications/initialized")
+                    if initialized_notification.replace(index).is_some() =>
+                {
+                    return Err("MCP trace has duplicate initialized notifications".into());
                 }
                 Some("tools/list") => {
                     if tools_list_request.is_some() {
