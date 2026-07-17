@@ -28,7 +28,7 @@ cargo package
 ## Release artifacts
 
 The generated release workflow builds native archives for Linux x64/arm64,
-macOS x64/arm64, and Windows x64. A custom global-artifact job converts those
+macOS x64/arm64, and Windows x64. A custom packaging job converts those
 archives into one `leantoken` npm package containing all five native binaries.
 The included JavaScript launcher selects the binary for the current OS and CPU;
 npm installation does not run lifecycle scripts or download a binary from a
@@ -51,9 +51,8 @@ node --test npm/npm-packaging.test.mjs
 Version tags such as `v0.1.0` trigger `.github/workflows/release.yml`. Keep the
 Cargo package version, tag, GitHub release, and npm package version identical.
 
-The first npm release is a manual bootstrap because npm trusted publishing can
-only be configured after the package exists. Once the GitHub release finishes,
-inspect the package before publishing it:
+npm publication is currently manual. Once the GitHub release finishes, inspect
+the package before publishing it:
 
 ```bash
 tar -xOf leantoken-VERSION.tgz package/package.json
