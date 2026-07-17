@@ -73,7 +73,7 @@ pub fn discover_files_cancellable(
             .strip_prefix(root)
             .map_err(|_| Error::PathOutsideRoot(entry.path().to_path_buf()))?;
         let relative_path = slash_path(relative);
-        if relative_path.is_empty() || relative_path.starts_with(".git/") {
+        if relative_path.is_empty() || is_git_metadata_path(&relative_path) {
             continue;
         }
         let modified_ns = metadata
@@ -90,6 +90,10 @@ pub fn discover_files_cancellable(
     }
     files.sort_unstable_by(|left, right| left.relative_path.cmp(&right.relative_path));
     Ok(files)
+}
+
+fn is_git_metadata_path(path: &str) -> bool {
+    path == ".git" || path.starts_with(".git/")
 }
 
 pub fn resolve_existing(root: &Path, requested: &str) -> Result<PathBuf> {
