@@ -55,8 +55,9 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 
 ## Model behavior
 
-- Run the isolated four-arm A/B harness on repeated tasks: filesystem,
-  progressive retrieval, one-shot context, and prewalk handoff.
+- Run the seeded isolated A/B harness on repeated tasks: filesystem, frozen
+  baseline LeanToken, frozen adaptive LeanToken, and adaptive discovery with
+  native recovery. Keep prewalk handoff as an optional additional arm.
 - Improve tool descriptions and examples only when traces show fewer broad,
   repeated, or dead-end reads. Do not add a runtime “next action” field merely
   because it sounds helpful.

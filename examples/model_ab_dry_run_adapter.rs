@@ -9,7 +9,10 @@ use serde::{Deserialize, Serialize};
 struct AdapterRequest {
     schema_version: u32,
     experiment_id: String,
+    manifest_blake3: String,
+    random_seed: u64,
     repetition: usize,
+    arm_order_index: usize,
     arm: String,
     task_id: String,
 }
@@ -35,7 +38,10 @@ struct ProviderUsage {
     kind: &'static str,
     request_schema_version: u32,
     experiment_id: String,
+    manifest_blake3: String,
+    random_seed: u64,
     repetition: usize,
+    arm_order_index: usize,
     arm: String,
     task_id: String,
 }
@@ -58,7 +64,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             kind: "dry_run",
             request_schema_version: request.schema_version,
             experiment_id: request.experiment_id,
+            manifest_blake3: request.manifest_blake3,
+            random_seed: request.random_seed,
             repetition: request.repetition,
+            arm_order_index: request.arm_order_index,
             arm: request.arm,
             task_id: request.task_id,
         },

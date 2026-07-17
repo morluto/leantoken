@@ -221,7 +221,9 @@ Negative results belong in the report. In particular, small relevant files may b
 
 Model task success and prewalk handoffs use the isolated external-adapter
 harness documented in [`../docs/measurement.md`](../docs/measurement.md).
-Retrieval fixtures must not be presented as model pass-rate evidence.
+Its schema-v2 manifest freezes seeded arm order, source revisions, artifact
+hashes, configuration, tool catalogs, and budgets. Retrieval fixtures must not
+be presented as model pass-rate evidence.
 
 ## Indexing and file-read profile
 

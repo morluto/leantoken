@@ -156,16 +156,22 @@ used to alter ranking, prompts, labels, queries, ranges, or budgets.
 
 ## Model-in-the-loop A/B
 
-`model_ab` executes the same frozen task across four arms:
+`model_ab` executes the same frozen task across four required arms:
 
 - ordinary filesystem tools;
-- progressive LeanToken retrieval;
-- one-shot `leantoken_context`;
-- frontier prewalk followed by a cheaper executor.
+- native tools plus a frozen baseline LeanToken runtime;
+- native tools plus a frozen adaptive LeanToken runtime;
+- adaptive LeanToken for discovery with native-tool recovery.
+
+A frontier prewalk followed by a cheaper executor is an optional fifth arm. It
+does not replace any required comparison.
 
 Each run receives a fresh detached Git worktree at the same revision. The
 external adapter receives one JSON request on stdin and must return one JSON
-result on stdout. Start from `benchmarks/model_ab.example.json`:
+result on stdout. For every task and repetition, the harness derives a stable
+arm permutation from the manifest's `random_seed`, task ID, and repetition. The
+report records the actual permutation and each run's zero-based order index.
+Start from `benchmarks/model_ab.example.json`:
 
 ```bash
 cargo run --release --example model_ab -- \
@@ -206,6 +212,28 @@ repository generation. For prewalk, it must transfer the complete
 exploration trajectory, todo state, evidence receipt, and first edit—not only a
 prose plan.
 
+Manifest schema v2 requires each arm to freeze its clean runtime source
+worktree and full revision, runtime binary BLAKE3, adapter source worktree and
+revision, adapter binary BLAKE3, configuration, tool catalog, and budget. The
+harness verifies every revision and binary digest before the first run and
+again before writing the report. The baseline and adaptive runtime sources
+must be separate Git worktrees, even when
+a dry-run uses the same plumbing binary for both. Prepare and hash frozen
+artifacts before writing the final manifest, for example:
+
+```bash
+git worktree add --detach target/model-ab-baseline BASELINE_REVISION
+git worktree add --detach target/model-ab-adaptive ADAPTIVE_REVISION
+cargo run --release --example artifact_blake3 -- \
+  /path/to/baseline/leantoken /path/to/adaptive/leantoken \
+  /path/to/provider-adapter
+```
+
+The harness itself must also run from a clean worktree. Report schema v3 records
+its exact revision and executable BLAKE3, the verified arm definitions, random
+seed, and schedules. A hash records artifact identity; it does not establish
+that two builds used equivalent compilers, dependencies, or host environments.
+
 One run per arm is plumbing evidence, not a pass-rate comparison. Freeze exact
 model versions and report repeated runs and variance. Each arm aggregate reports
 the arithmetic mean and sample variance for input tokens, output tokens, and
@@ -213,8 +241,6 @@ wall-clock duration, both overall and per task. The mean is `null` without a
 completed adapter result, and sample variance is `null` with fewer than two
 samples. Adapter failures, adapter timeouts, validation failures, and validation
 timeouts are recorded per run instead of aborting the remaining experiment.
-The manifest contract remains schema version 1; reports containing these
-run-status and aggregate fields use report schema version 2.
 
 To validate the manifest, worktree, adapter, and success-command plumbing before
 using provider credentials, build and pass the included dry-run adapter:
@@ -228,8 +254,11 @@ cargo run --release --example model_ab -- \
 ```
 
 The dry-run adapter does not call a model, edit the worktree, or report token
-usage. A passing success command therefore validates only the experiment
-plumbing; it is not task-success, quality, or cost evidence.
+usage. Use its binary and source identity in every dry-run arm definition. A
+passing success command therefore validates only deterministic scheduling,
+artifact preflight, isolated task worktrees, adapter invocation, and validation
+plumbing; it is not task-success, quality, or cost evidence. Do not use the
+example manifest as a formal experiment set.
 
 ## Ranked-region interchange
 
