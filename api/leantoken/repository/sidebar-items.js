@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["discover_files","discover_files_cancellable","git_changed_paths","git_changed_paths_with","git_worktree_prefix","parse_git_status","resolve_existing","slash_path","validate_relative"],"struct":["DiscoveredFile"]};
+window.SIDEBAR_ITEMS = {"fn":["discover_files","discover_files_cancellable","git_changed_paths","git_changed_paths_with","git_worktree_prefix","is_git_metadata_path","parse_git_status","resolve_existing","slash_path","validate_relative"],"struct":["DiscoveredFile"]};
