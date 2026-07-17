@@ -1,0 +1,200 @@
+{
+  "schema_version": 2,
+  "input_schema_version": 2,
+  "trace_id": "stdio-1784264628092",
+  "trace_file_blake3": "49107351395450099648aae7116fd71fad613546b30606b42640cad1c1184b83",
+  "trace_content_blake3": "5cf7b588545a37c22f231943ff308350e9262dea6e1dc388c1b2f8405ebf02be",
+  "declared_trace_content_blake3": "5cf7b588545a37c22f231943ff308350e9262dea6e1dc388c1b2f8405ebf02be",
+  "host": "codex-cli",
+  "host_version": "0.144.1",
+  "model": "gpt-5.6-sol",
+  "provider": "openai",
+  "repository": {
+    "revision": "73fd76470d928d2f594dc87685a219d4cc8a0a9f",
+    "dirty_fingerprint": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+  },
+  "tokenizer": "cl100k_base",
+  "token_count_exact": true,
+  "event_count": 11,
+  "total_serialized_json_tokens": 4483,
+  "total_source_tokens": null,
+  "total_provider_visible_payload_tokens": 0,
+  "total_handoff_tokens": 0,
+  "total_observed_boundary_tokens": 4483,
+  "provider_total_input_tokens": null,
+  "provider_usage": {
+    "uncached_input_tokens": null,
+    "cache_creation_input_tokens": null,
+    "cache_read_input_tokens": null,
+    "output_tokens": null,
+    "reasoning_tokens": null
+  },
+  "event_categories": {
+    "initialize_request": {
+      "events": 1,
+      "serialized_json_tokens": 67,
+      "provider_visible_payload_tokens": 0,
+      "provider_input_tokens": null,
+      "provider_usage": {
+        "uncached_input_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "output_tokens": null,
+        "reasoning_tokens": null
+      }
+    },
+    "initialize_response": {
+      "events": 1,
+      "serialized_json_tokens": 118,
+      "provider_visible_payload_tokens": 0,
+      "provider_input_tokens": null,
+      "provider_usage": {
+        "uncached_input_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "output_tokens": null,
+        "reasoning_tokens": null
+      }
+    },
+    "initialized_notification": {
+      "events": 1,
+      "serialized_json_tokens": 14,
+      "provider_visible_payload_tokens": 0,
+      "provider_input_tokens": null,
+      "provider_usage": {
+        "uncached_input_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "output_tokens": null,
+        "reasoning_tokens": null
+      }
+    },
+    "tool_call_request": {
+      "events": 3,
+      "serialized_json_tokens": 949,
+      "provider_visible_payload_tokens": 0,
+      "provider_input_tokens": null,
+      "provider_usage": {
+        "uncached_input_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "output_tokens": null,
+        "reasoning_tokens": null
+      }
+    },
+    "tool_call_response": {
+      "events": 3,
+      "serialized_json_tokens": 1694,
+      "provider_visible_payload_tokens": 0,
+      "provider_input_tokens": null,
+      "provider_usage": {
+        "uncached_input_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "output_tokens": null,
+        "reasoning_tokens": null
+      }
+    },
+    "tools_list_request": {
+      "events": 1,
+      "serialized_json_tokens": 27,
+      "provider_visible_payload_tokens": 0,
+      "provider_input_tokens": null,
+      "provider_usage": {
+        "uncached_input_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "output_tokens": null,
+        "reasoning_tokens": null
+      }
+    },
+    "tools_list_response": {
+      "events": 1,
+      "serialized_json_tokens": 1614,
+      "provider_visible_payload_tokens": 0,
+      "provider_input_tokens": null,
+      "provider_usage": {
+        "uncached_input_tokens": null,
+        "cache_creation_input_tokens": null,
+        "cache_read_input_tokens": null,
+        "output_tokens": null,
+        "reasoning_tokens": null
+      }
+    }
+  },
+  "components": {
+    "call_arguments": {
+      "occurrences": 3,
+      "local_tokens": 69
+    },
+    "catalog": {
+      "occurrences": 1,
+      "local_tokens": 1595
+    },
+    "result_text": {
+      "occurrences": 3,
+      "local_tokens": 854
+    },
+    "structured_content": {
+      "occurrences": 3,
+      "local_tokens": 776
+    }
+  },
+  "component_costs_overlap": true,
+  "tool_result_modes": {
+    "dual": 3
+  },
+  "exact_text_structured_duplicates": 3,
+  "duplicated_result_tokens": 776,
+  "cache_annotations": {
+    "stable_prefix_events": 0,
+    "unstable_prefix_events": 0,
+    "cache_eligible_events": 0,
+    "cache_ineligible_events": 0,
+    "unknown_stable_prefix_events": 11,
+    "unknown_cache_eligibility_events": 11
+  },
+  "latency": {
+    "samples": 0,
+    "total_ms": 0.0,
+    "first_timestamp_unix_millis": 1784264628093,
+    "last_timestamp_unix_millis": 1784264662942
+  },
+  "result_lifetimes": [],
+  "range_identity_count": 0,
+  "same_range_duplicate_ranges": 0,
+  "reread_ranges": 0,
+  "reread_source_tokens": 0,
+  "superseded_hash_ranges": 0,
+  "stale_generation_ranges": 0,
+  "required_exchange_parts": {
+    "initialize_request": true,
+    "initialize_response": true,
+    "initialized_notification": true,
+    "tool_result": true,
+    "tools_call": true,
+    "tools_list": true
+  },
+  "limitations": [
+    {
+      "code": "transport_boundary",
+      "detail": "Transport bytes outside captured JSON-RPC or explicit handoff payloads are not counted."
+    },
+    {
+      "code": "component_overlap",
+      "detail": "Component token categories overlap the complete event envelope and must not be summed as a second total."
+    },
+    {
+      "code": "provider_framing_missing",
+      "detail": "No provider-visible conversation frame was exported; serialized JSON-RPC cost is local-wire evidence only."
+    },
+    {
+      "code": "provider_usage_missing",
+      "detail": "Provider-native uncached, cache creation, cache read, output, and reasoning token totals were not supplied."
+    },
+    {
+      "code": "range_identity_missing",
+      "detail": "No result carries range identity, so source cost, rereads, changed hashes, stale generations, and retention are unobservable."
+    }
+  ]
+}

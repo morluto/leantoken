@@ -47,6 +47,13 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 - Codex CLI 0.144.5 has one captured dual-mode exchange covering initialization,
   catalog listing, and two tool calls. It confirms dual delivery for that exact
   host/version but does not justify changing the default for other hosts.
+- Codex CLI 0.144.1 now has a redacted host-rollout/MCP receipt covering
+  initialization, catalog listing, three tool calls, a known-hash
+  `not_modified` follow-up, provider-native cumulative usage, and two
+  compactions. The matching local wire contains 4,483 tokens and 776 tokens of
+  exact dual-result duplication, but no provider request frame was exported.
+  Treat Phase 3A as measured but provider-framing-inconclusive; do not start
+  Phase 3B or claim provider savings from the local duplication count.
 - Representation tests compare context fragments, search excerpts, outlines,
   full reads, and a compact repository tree under visible source and complete
   JSON token counts.
