@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "experiment_id": "replace-with-a-frozen-experiment-id",
   "random_seed": 20260717,
   "primary_model": "provider/frontier-model-version",
@@ -28,9 +28,9 @@
       "adapter_revision": "0000000000000000000000000000000000000000",
       "adapter_binary_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
       "configuration": { "retrieval": "baseline" },
-      "tool_catalog": ["path_list", "text_search", "file_read", "leantoken", "edit", "shell"],
+      "tool_catalog": ["leantoken", "edit", "shell"],
       "budget": { "tool_call_limit": 40, "context_token_limit": 8000 },
-      "retrieval_contract": "Use native tools plus the frozen baseline LeanToken runtime."
+      "retrieval_contract": "Use the frozen baseline LeanToken runtime for repository discovery and source reads; reserve native shell commands for Git preflight and post-retrieval verification."
     },
     "lean_token_adaptive": {
       "runtime_repository": "/absolute/path/to/adaptive-leantoken-worktree",
@@ -41,9 +41,9 @@
       "adapter_revision": "0000000000000000000000000000000000000000",
       "adapter_binary_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
       "configuration": { "retrieval": "adaptive" },
-      "tool_catalog": ["path_list", "text_search", "file_read", "leantoken", "edit", "shell"],
+      "tool_catalog": ["leantoken", "edit", "shell"],
       "budget": { "tool_call_limit": 40, "context_token_limit": 8000 },
-      "retrieval_contract": "Use native tools plus the frozen adaptive LeanToken runtime."
+      "retrieval_contract": "Use the frozen adaptive LeanToken runtime for repository discovery and source reads; reserve native shell commands for Git preflight and post-retrieval verification."
     },
     "lean_token_adaptive_recovery": {
       "runtime_repository": "/absolute/path/to/adaptive-leantoken-worktree",
@@ -65,7 +65,8 @@
       "repository": "target/validation-repos/flask",
       "revision": "36e4a824f340fdee7ed50937ba8e7f6bc7d17f81",
       "prompt": "Replace this example with a frozen executable task prompt.",
-      "success_command": ["python", "-m", "pytest", "tests/test_testing.py"]
+      "success_command": ["/absolute/path/to/frozen-validator", "--task", "example-task"],
+      "success_command_executable_blake3": "0000000000000000000000000000000000000000000000000000000000000000"
     }
   ]
 }

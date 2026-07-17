@@ -1,0 +1,671 @@
+{
+  "schema_version": 1,
+  "report_kind": "sealed_multilingual_development_preparation",
+  "dataset_version": "v2",
+  "status": "prepared_disjoint_development_data_consumed_by_bounded_import384_gate_a",
+  "preparation": {
+    "schema_version": 2,
+    "dataset_kind": "swe_bench_multilingual_development",
+    "harness": {
+      "revision": "bd093e646f67992f0ccadc94009ee800af785ad1",
+      "operating_system": "linux",
+      "architecture": "x86_64",
+      "debug_assertions": false,
+      "binary_bytes": 3346576,
+      "binary_blake3": "f1a748cd877241519f173695c8ff89e0b108c9f6ac8f9bd4300a7dfbc62bd417"
+    },
+    "source": {
+      "dataset": "SWE-bench/SWE-bench_Multilingual",
+      "url": "https://huggingface.co/datasets/SWE-bench/SWE-bench_Multilingual/blob/2b7aced941b4873e9cad3e76abbae93f481d1beb/data/test-00000-of-00001.parquet",
+      "revision": "2b7aced941b4873e9cad3e76abbae93f481d1beb",
+      "dataset_license": "MIT",
+      "source_artifact_bytes": 1165968,
+      "source_artifact_blake3": "c84895afc2c90da04bad58c90aa6fea8223b3b0810e20de09fcc7507fe6ae037",
+      "jsonl_export_bytes": 3496828,
+      "jsonl_export_blake3": "8037e63f2fbddb906a6957895449d73eff31dace973a0bf48e93a7a3606ee4b7",
+      "canonical_records_blake3": "8037e63f2fbddb906a6957895449d73eff31dace973a0bf48e93a7a3606ee4b7",
+      "input_records": 300
+    },
+    "selection": {
+      "algorithm": "blake3_seeded_language_and_exact_stratified_v2_exclusions",
+      "seed": "leantoken-sbml-development-v2",
+      "requested_languages": [
+        "c",
+        "cpp",
+        "go",
+        "java",
+        "javascript",
+        "typescript",
+        "php",
+        "ruby",
+        "rust"
+      ],
+      "tasks_per_language": 6,
+      "non_exact_per_language": 3,
+      "max_tasks_per_repository": 6,
+      "source_token_budget": 2000,
+      "tokenizer": "cl100k_base",
+      "token_count_exact": true,
+      "eligible_candidates": 245,
+      "eligible_not_selected": 191,
+      "selected_tasks": 54,
+      "selected_repositories": 29,
+      "max_selected_tasks_per_repository": 6,
+      "language_tasks": {
+        "c": 6,
+        "cpp": 6,
+        "go": 6,
+        "java": 6,
+        "javascript": 6,
+        "typescript": 6,
+        "php": 6,
+        "ruby": 6,
+        "rust": 6
+      },
+      "exact_identifier_tasks": 27,
+      "non_exact_tasks": 27,
+      "skipped": {
+        "excluded_by_manifest": 54,
+        "query_exceeds_runtime_limit": 1
+      },
+      "exclusions": {
+        "excluded_tasks": 54,
+        "artifacts": [
+          {
+            "bytes": 144884,
+            "blake3": "68ad229a4c9b496e0880b3eb8d25011dd50ac8edec29d09a6ac16907aaea10fd",
+            "tasks": 54,
+            "dataset_kinds": {
+              "swe_bench_multilingual_development": 54
+            }
+          }
+        ]
+      },
+      "availability_after_exclusions": {
+        "language_tasks": {
+          "c": 24,
+          "cpp": 6,
+          "go": 36,
+          "java": 37,
+          "javascript": 22,
+          "typescript": 9,
+          "php": 37,
+          "ruby": 37,
+          "rust": 37
+        },
+        "language_exact_identifier_tasks": {
+          "c": 4,
+          "cpp": 3,
+          "go": 20,
+          "java": 32,
+          "javascript": 13,
+          "typescript": 3,
+          "php": 27,
+          "ruby": 30,
+          "rust": 7
+        },
+        "language_non_exact_tasks": {
+          "c": 20,
+          "cpp": 3,
+          "go": 16,
+          "java": 5,
+          "javascript": 9,
+          "typescript": 6,
+          "php": 10,
+          "ruby": 7,
+          "rust": 30
+        },
+        "exact_identifier_tasks": 139,
+        "non_exact_tasks": 106
+      }
+    },
+    "labels": {
+      "method": "base_diff_removed_or_insertion_context_v1",
+      "core_regions": 167,
+      "core_lines": 374,
+      "optional_regions": 110,
+      "optional_lines": 303,
+      "core_lines_per_task_p50": 3,
+      "core_lines_per_task_p95": 22,
+      "core_lines_per_task_max": 40,
+      "optional_lines_per_task_p50": 2,
+      "optional_lines_per_task_p95": 19,
+      "optional_lines_per_task_max": 79,
+      "unobservable_added_files": 16,
+      "tasks_with_unobservable_added_files": 6
+    },
+    "license_audit": {
+      "complete": true,
+      "dataset_scope": "Dataset metadata is MIT; repository source and patches remain governed by each upstream repository license and are not vendored.",
+      "repository_source_or_patch_vendored": false,
+      "audited_revisions": 54,
+      "non_osi_repositories": [
+        "jqlang/jq",
+        "micropython/micropython"
+      ],
+      "repositories": [
+        {
+          "repository": "apache/lucene",
+          "spdx_id": "Apache-2.0",
+          "source_revision": "11f2bc205652f1f2b2f61ba286cbfd2d77fd2d1b",
+          "license_path": "LICENSE.txt",
+          "license_file_blake3": "a030019abf8e9c71cf08a9ef79c28b9e7ec481b1f65b2d4d8ab33f85a1c96bd9",
+          "source_url": "https://github.com/apache/lucene/blob/11f2bc205652f1f2b2f61ba286cbfd2d77fd2d1b/LICENSE.txt"
+        },
+        {
+          "repository": "apache/lucene",
+          "spdx_id": "Apache-2.0",
+          "source_revision": "ab291210db08276fef1b52bf7b840d431e96ce08",
+          "license_path": "LICENSE.txt",
+          "license_file_blake3": "a030019abf8e9c71cf08a9ef79c28b9e7ec481b1f65b2d4d8ab33f85a1c96bd9",
+          "source_url": "https://github.com/apache/lucene/blob/ab291210db08276fef1b52bf7b840d431e96ce08/LICENSE.txt"
+        },
+        {
+          "repository": "apache/lucene",
+          "spdx_id": "Apache-2.0",
+          "source_revision": "ce4f56e74ad1087df8bdc019fc09d1b40438e8b3",
+          "license_path": "LICENSE.txt",
+          "license_file_blake3": "a030019abf8e9c71cf08a9ef79c28b9e7ec481b1f65b2d4d8ab33f85a1c96bd9",
+          "source_url": "https://github.com/apache/lucene/blob/ce4f56e74ad1087df8bdc019fc09d1b40438e8b3/LICENSE.txt"
+        },
+        {
+          "repository": "axios/axios",
+          "spdx_id": "MIT",
+          "source_revision": "c30252f685e8f4326722de84923fcbc8cf557f06",
+          "license_path": "LICENSE",
+          "license_file_blake3": "57f25d309c7d8d177065ff788fed7d1735abcf55ec496cbb700a723ae7d99122",
+          "source_url": "https://github.com/axios/axios/blob/c30252f685e8f4326722de84923fcbc8cf557f06/LICENSE"
+        },
+        {
+          "repository": "babel/babel",
+          "spdx_id": "MIT",
+          "source_revision": "35116224d21e16fb863293f9011d1d6c97ed0bf4",
+          "license_path": "LICENSE",
+          "license_file_blake3": "7411242267687b33b2546d54897f2dc161dba0ae073b1266f6d0355048dc21f7",
+          "source_url": "https://github.com/babel/babel/blob/35116224d21e16fb863293f9011d1d6c97ed0bf4/LICENSE"
+        },
+        {
+          "repository": "babel/babel",
+          "spdx_id": "MIT",
+          "source_revision": "4e6e3cf1395cafd27f28f113918034232c6c1db5",
+          "license_path": "LICENSE",
+          "license_file_blake3": "7411242267687b33b2546d54897f2dc161dba0ae073b1266f6d0355048dc21f7",
+          "source_url": "https://github.com/babel/babel/blob/4e6e3cf1395cafd27f28f113918034232c6c1db5/LICENSE"
+        },
+        {
+          "repository": "briannesbitt/carbon",
+          "spdx_id": "MIT",
+          "source_revision": "077657bce453df6992607e5aaa538d957068ae40",
+          "license_path": "LICENSE",
+          "license_file_blake3": "d2161a6f2f920d91aaf6685ec2a14857032ba435e32f15646a8e804842e0dcd7",
+          "source_url": "https://github.com/briannesbitt/carbon/blob/077657bce453df6992607e5aaa538d957068ae40/LICENSE"
+        },
+        {
+          "repository": "briannesbitt/carbon",
+          "spdx_id": "MIT",
+          "source_revision": "640940f4a9303e458fc29341821395460f32b3b5",
+          "license_path": "LICENSE",
+          "license_file_blake3": "d2161a6f2f920d91aaf6685ec2a14857032ba435e32f15646a8e804842e0dcd7",
+          "source_url": "https://github.com/briannesbitt/carbon/blob/640940f4a9303e458fc29341821395460f32b3b5/LICENSE"
+        },
+        {
+          "repository": "briannesbitt/carbon",
+          "spdx_id": "MIT",
+          "source_revision": "cb0fd285ae34041ef2a0f62dc409bece61ff2bc4",
+          "license_path": "LICENSE",
+          "license_file_blake3": "d2161a6f2f920d91aaf6685ec2a14857032ba435e32f15646a8e804842e0dcd7",
+          "source_url": "https://github.com/briannesbitt/carbon/blob/cb0fd285ae34041ef2a0f62dc409bece61ff2bc4/LICENSE"
+        },
+        {
+          "repository": "burntsushi/ripgrep",
+          "spdx_id": "MIT OR Unlicense",
+          "source_revision": "4dc6c73c5a9203c5a8a89ce2161feca542329812",
+          "license_path": "COPYING",
+          "license_file_blake3": "6f51d81f1ebd8a3055ea860bf386d2bd413cc6ef6a66de0decb2302367f3ed8b",
+          "source_url": "https://github.com/burntsushi/ripgrep/blob/4dc6c73c5a9203c5a8a89ce2161feca542329812/COPYING"
+        },
+        {
+          "repository": "caddyserver/caddy",
+          "spdx_id": "Apache-2.0",
+          "source_revision": "198f4385d2f72ccdd853825270f601bea7a7a190",
+          "license_path": "LICENSE",
+          "license_file_blake3": "83cb3a2fcf829b6138e095b083016c34ddcdfa07b68d38782722c14fcf85ace6",
+          "source_url": "https://github.com/caddyserver/caddy/blob/198f4385d2f72ccdd853825270f601bea7a7a190/LICENSE"
+        },
+        {
+          "repository": "caddyserver/caddy",
+          "spdx_id": "Apache-2.0",
+          "source_revision": "4512be49a9fa55270e9afa632be9ff6c9560c455",
+          "license_path": "LICENSE",
+          "license_file_blake3": "83cb3a2fcf829b6138e095b083016c34ddcdfa07b68d38782722c14fcf85ace6",
+          "source_url": "https://github.com/caddyserver/caddy/blob/4512be49a9fa55270e9afa632be9ff6c9560c455/LICENSE"
+        },
+        {
+          "repository": "caddyserver/caddy",
+          "spdx_id": "Apache-2.0",
+          "source_revision": "c839a98ff527932fd14460829142c486f4531a7b",
+          "license_path": "LICENSE",
+          "license_file_blake3": "83cb3a2fcf829b6138e095b083016c34ddcdfa07b68d38782722c14fcf85ace6",
+          "source_url": "https://github.com/caddyserver/caddy/blob/c839a98ff527932fd14460829142c486f4531a7b/LICENSE"
+        },
+        {
+          "repository": "facebook/docusaurus",
+          "spdx_id": "MIT",
+          "source_revision": "b96004e77ebfb23e7349fa495d2177008186bd42",
+          "license_path": "LICENSE",
+          "license_file_blake3": "3dc94c4fb00e0b669f3e9f263f68592cd9be4a55c8480f26435251d69c8764c9",
+          "source_url": "https://github.com/facebook/docusaurus/blob/b96004e77ebfb23e7349fa495d2177008186bd42/LICENSE"
+        },
+        {
+          "repository": "fastlane/fastlane",
+          "spdx_id": "MIT",
+          "source_revision": "6ff1c49bd90bdc29a94b6f99f568cf86fffc376d",
+          "license_path": "LICENSE",
+          "license_file_blake3": "eae4fee1cae353cc795735ed85e7357f6bb038063c9e4a28a5fb1e4e56c458fa",
+          "source_url": "https://github.com/fastlane/fastlane/blob/6ff1c49bd90bdc29a94b6f99f568cf86fffc376d/LICENSE"
+        },
+        {
+          "repository": "fmtlib/fmt",
+          "spdx_id": "MIT",
+          "source_revision": "4b8bda25c05d9f959ffed9a0580f0ded623177e5",
+          "license_path": "LICENSE.rst",
+          "license_file_blake3": "27f0549106fc437648c56d4ed277689f6196dc30db63e6bc551c80ec38d7ec08",
+          "source_url": "https://github.com/fmtlib/fmt/blob/4b8bda25c05d9f959ffed9a0580f0ded623177e5/LICENSE.rst"
+        },
+        {
+          "repository": "fmtlib/fmt",
+          "spdx_id": "MIT",
+          "source_revision": "7612f18dc8e0112e64e0845a1ebe9da6cfb8a123",
+          "license_path": "LICENSE.rst",
+          "license_file_blake3": "27f0549106fc437648c56d4ed277689f6196dc30db63e6bc551c80ec38d7ec08",
+          "source_url": "https://github.com/fmtlib/fmt/blob/7612f18dc8e0112e64e0845a1ebe9da6cfb8a123/LICENSE.rst"
+        },
+        {
+          "repository": "fmtlib/fmt",
+          "spdx_id": "MIT",
+          "source_revision": "80f8d34427d40ec5e7ce3b10ededc46bd4bd5759",
+          "license_path": "LICENSE.rst",
+          "license_file_blake3": "27f0549106fc437648c56d4ed277689f6196dc30db63e6bc551c80ec38d7ec08",
+          "source_url": "https://github.com/fmtlib/fmt/blob/80f8d34427d40ec5e7ce3b10ededc46bd4bd5759/LICENSE.rst"
+        },
+        {
+          "repository": "fmtlib/fmt",
+          "spdx_id": "MIT",
+          "source_revision": "981b517ccf2d91bf3bf52c518ac43710b57b5e17",
+          "license_path": "LICENSE.rst",
+          "license_file_blake3": "27f0549106fc437648c56d4ed277689f6196dc30db63e6bc551c80ec38d7ec08",
+          "source_url": "https://github.com/fmtlib/fmt/blob/981b517ccf2d91bf3bf52c518ac43710b57b5e17/LICENSE.rst"
+        },
+        {
+          "repository": "fmtlib/fmt",
+          "spdx_id": "MIT",
+          "source_revision": "dfe5b12c08dfa803fe5a275b380991df25f4b52d",
+          "license_path": "LICENSE",
+          "license_file_blake3": "bb8d8eacf9653bd9e79673e024d0040eafcf90c2e1a7f87f8acb80bd06fdfdd5",
+          "source_url": "https://github.com/fmtlib/fmt/blob/dfe5b12c08dfa803fe5a275b380991df25f4b52d/LICENSE"
+        },
+        {
+          "repository": "fmtlib/fmt",
+          "spdx_id": "MIT",
+          "source_revision": "ece4b4b33a96db77beccca3957505e689cbc4279",
+          "license_path": "LICENSE.rst",
+          "license_file_blake3": "27f0549106fc437648c56d4ed277689f6196dc30db63e6bc551c80ec38d7ec08",
+          "source_url": "https://github.com/fmtlib/fmt/blob/ece4b4b33a96db77beccca3957505e689cbc4279/LICENSE.rst"
+        },
+        {
+          "repository": "gin-gonic/gin",
+          "spdx_id": "MIT",
+          "source_revision": "c2ba8f19ec19914b73290c53a32de479cd463555",
+          "license_path": "LICENSE",
+          "license_file_blake3": "c7cd1fb43c1f3ba5736881e9316eca8d794b889f022b48e83f8ef83ef992895f",
+          "source_url": "https://github.com/gin-gonic/gin/blob/c2ba8f19ec19914b73290c53a32de479cd463555/LICENSE"
+        },
+        {
+          "repository": "gohugoio/hugo",
+          "spdx_id": "Apache-2.0",
+          "source_revision": "83235262d06a060bd22c168b3413903667b8aeb6",
+          "license_path": "LICENSE",
+          "license_file_blake3": "3833fc3c91a379ff509b431db1f7fd40dea69a6614249f420ec62398957087b1",
+          "source_url": "https://github.com/gohugoio/hugo/blob/83235262d06a060bd22c168b3413903667b8aeb6/LICENSE"
+        },
+        {
+          "repository": "google/gson",
+          "spdx_id": "Apache-2.0",
+          "source_revision": "be0a1f4ff74bcd01580887cc9f3ec592d773f24c",
+          "license_path": "LICENSE",
+          "license_file_blake3": "83cb3a2fcf829b6138e095b083016c34ddcdfa07b68d38782722c14fcf85ace6",
+          "source_url": "https://github.com/google/gson/blob/be0a1f4ff74bcd01580887cc9f3ec592d773f24c/LICENSE"
+        },
+        {
+          "repository": "immutable-js/immutable-js",
+          "spdx_id": "MIT",
+          "source_revision": "493afba6ec17d9c999dc5a15ac80c71c6bdba1c3",
+          "license_path": "LICENSE",
+          "license_file_blake3": "0eb318c44fe699b629e0927b3edc3b6ecef954b24b24bbdbfc5167c566fa8cd5",
+          "source_url": "https://github.com/immutable-js/immutable-js/blob/493afba6ec17d9c999dc5a15ac80c71c6bdba1c3/LICENSE"
+        },
+        {
+          "repository": "jekyll/jekyll",
+          "spdx_id": "MIT",
+          "source_revision": "11dd8934166d0947055bc01017426bad01277bc1",
+          "license_path": "LICENSE",
+          "license_file_blake3": "a9e0695573833a10d5cf755721bf264616a8d5b60472ad579d35690fe7c50e3e",
+          "source_url": "https://github.com/jekyll/jekyll/blob/11dd8934166d0947055bc01017426bad01277bc1/LICENSE"
+        },
+        {
+          "repository": "jekyll/jekyll",
+          "spdx_id": "MIT",
+          "source_revision": "310459370ad8bb9c0b574735dcca4868a5f05803",
+          "license_path": "LICENSE",
+          "license_file_blake3": "a9e0695573833a10d5cf755721bf264616a8d5b60472ad579d35690fe7c50e3e",
+          "source_url": "https://github.com/jekyll/jekyll/blob/310459370ad8bb9c0b574735dcca4868a5f05803/LICENSE"
+        },
+        {
+          "repository": "jekyll/jekyll",
+          "spdx_id": "MIT",
+          "source_revision": "ab6ef0b257e4c7aafec0518d93bea3e9c4b75b75",
+          "license_path": "LICENSE",
+          "license_file_blake3": "a9e0695573833a10d5cf755721bf264616a8d5b60472ad579d35690fe7c50e3e",
+          "source_url": "https://github.com/jekyll/jekyll/blob/ab6ef0b257e4c7aafec0518d93bea3e9c4b75b75/LICENSE"
+        },
+        {
+          "repository": "jekyll/jekyll",
+          "spdx_id": "MIT",
+          "source_revision": "d45fb9647761c8c208865f71cedb9f2f0dc26f1d",
+          "license_path": "LICENSE",
+          "license_file_blake3": "a9e0695573833a10d5cf755721bf264616a8d5b60472ad579d35690fe7c50e3e",
+          "source_url": "https://github.com/jekyll/jekyll/blob/d45fb9647761c8c208865f71cedb9f2f0dc26f1d/LICENSE"
+        },
+        {
+          "repository": "jordansissel/fpm",
+          "spdx_id": "MIT",
+          "source_revision": "809c7269442f6b6e4be7c3d480bb4489caa281c5",
+          "license_path": "LICENSE",
+          "license_file_blake3": "4f5c1af606650b72fa1dcd147fc07c519e9b223a00501dabe17ba926e9acdfda",
+          "source_url": "https://github.com/jordansissel/fpm/blob/809c7269442f6b6e4be7c3d480bb4489caa281c5/LICENSE"
+        },
+        {
+          "repository": "jqlang/jq",
+          "spdx_id": "LicenseRef-Multiple-Permissive",
+          "source_revision": "7f547827e47b5ade563a293329deb4226496d72f",
+          "license_path": "COPYING",
+          "license_file_blake3": "81a0915dd99fbdca0bb9a98007bd1b7ecdb462e501c571a7eb865947876bd386",
+          "source_url": "https://github.com/jqlang/jq/blob/7f547827e47b5ade563a293329deb4226496d72f/COPYING"
+        },
+        {
+          "repository": "laravel/framework",
+          "spdx_id": "MIT",
+          "source_revision": "5362c4aa52beb83078b4c25d980f4d3ff1fff69e",
+          "license_path": "LICENSE.md",
+          "license_file_blake3": "e7bb31dc01d83139cf2267be57664ce6e179d76ab2bdc3cdd097cf6a66bca805",
+          "source_url": "https://github.com/laravel/framework/blob/5362c4aa52beb83078b4c25d980f4d3ff1fff69e/LICENSE.md"
+        },
+        {
+          "repository": "micropython/micropython",
+          "spdx_id": "MIT AND LicenseRef-Third-Party-Notices",
+          "source_revision": "fce8d9fd55409ab1027beee5671bc653fb5beb97",
+          "license_path": "LICENSE",
+          "license_file_blake3": "123cafb84ecc8808900b49e278f1f9a4e8dcca14733a47be19a939210bf717f5",
+          "source_url": "https://github.com/micropython/micropython/blob/fce8d9fd55409ab1027beee5671bc653fb5beb97/LICENSE"
+        },
+        {
+          "repository": "nushell/nushell",
+          "spdx_id": "MIT",
+          "source_revision": "fb34a4fc6c9ca882cc6dc95d437902a45c402e9a",
+          "license_path": "LICENSE",
+          "license_file_blake3": "e73ff808c2c66170a890a2f562c1d3583b54df0ddd7e21af5c99e40205cd287c",
+          "source_url": "https://github.com/nushell/nushell/blob/fb34a4fc6c9ca882cc6dc95d437902a45c402e9a/LICENSE"
+        },
+        {
+          "repository": "php-cs-fixer/php-cs-fixer",
+          "spdx_id": "MIT",
+          "source_revision": "c5cde0cf7542234dc061af8a25f77fcdad430e35",
+          "license_path": "LICENSE",
+          "license_file_blake3": "d1ad23f5778f00ba5a1690d1987ebe6d91db697eb58182eff14e89ee78c7c3b8",
+          "source_url": "https://github.com/php-cs-fixer/php-cs-fixer/blob/c5cde0cf7542234dc061af8a25f77fcdad430e35/LICENSE"
+        },
+        {
+          "repository": "php-cs-fixer/php-cs-fixer",
+          "spdx_id": "MIT",
+          "source_revision": "efe7a396a3e5434123011a808cf8d57681713530",
+          "license_path": "LICENSE",
+          "license_file_blake3": "d1ad23f5778f00ba5a1690d1987ebe6d91db697eb58182eff14e89ee78c7c3b8",
+          "source_url": "https://github.com/php-cs-fixer/php-cs-fixer/blob/efe7a396a3e5434123011a808cf8d57681713530/LICENSE"
+        },
+        {
+          "repository": "preactjs/preact",
+          "spdx_id": "MIT",
+          "source_revision": "13b0afb7a28adb3149d7125fb2b9c16edbcf8e94",
+          "license_path": "LICENSE",
+          "license_file_blake3": "f1ac71aca719335722fb1768ba22cbc78d9586ee832a349839ecbdf9a45f3d52",
+          "source_url": "https://github.com/preactjs/preact/blob/13b0afb7a28adb3149d7125fb2b9c16edbcf8e94/LICENSE"
+        },
+        {
+          "repository": "preactjs/preact",
+          "spdx_id": "MIT",
+          "source_revision": "9457b221fdacd1052ffdb385918e1bab4b10e833",
+          "license_path": "LICENSE",
+          "license_file_blake3": "f1ac71aca719335722fb1768ba22cbc78d9586ee832a349839ecbdf9a45f3d52",
+          "source_url": "https://github.com/preactjs/preact/blob/9457b221fdacd1052ffdb385918e1bab4b10e833/LICENSE"
+        },
+        {
+          "repository": "preactjs/preact",
+          "spdx_id": "MIT",
+          "source_revision": "9c5a82efcc3dcbd0035c694817a3022d81264687",
+          "license_path": "LICENSE",
+          "license_file_blake3": "f1ac71aca719335722fb1768ba22cbc78d9586ee832a349839ecbdf9a45f3d52",
+          "source_url": "https://github.com/preactjs/preact/blob/9c5a82efcc3dcbd0035c694817a3022d81264687/LICENSE"
+        },
+        {
+          "repository": "preactjs/preact",
+          "spdx_id": "MIT",
+          "source_revision": "c12331064f4ea967641cd5e419204422af050fbb",
+          "license_path": "LICENSE",
+          "license_file_blake3": "f1ac71aca719335722fb1768ba22cbc78d9586ee832a349839ecbdf9a45f3d52",
+          "source_url": "https://github.com/preactjs/preact/blob/c12331064f4ea967641cd5e419204422af050fbb/LICENSE"
+        },
+        {
+          "repository": "preactjs/preact",
+          "spdx_id": "MIT",
+          "source_revision": "c77e6284c199761d59467d8cc596a2f03540e72c",
+          "license_path": "LICENSE",
+          "license_file_blake3": "f1ac71aca719335722fb1768ba22cbc78d9586ee832a349839ecbdf9a45f3d52",
+          "source_url": "https://github.com/preactjs/preact/blob/c77e6284c199761d59467d8cc596a2f03540e72c/LICENSE"
+        },
+        {
+          "repository": "projectlombok/lombok",
+          "spdx_id": "MIT AND BSD-3-Clause",
+          "source_revision": "9b3e84717d301d7a6829420f5849cf1465e73131",
+          "license_path": "LICENSE",
+          "license_file_blake3": "03a3281c93e1ce8d48805c757f29bd66e156d4c3af0f44c7145a819881dbb3de",
+          "source_url": "https://github.com/projectlombok/lombok/blob/9b3e84717d301d7a6829420f5849cf1465e73131/LICENSE"
+        },
+        {
+          "repository": "projectlombok/lombok",
+          "spdx_id": "MIT AND BSD-3-Clause",
+          "source_revision": "9e6f66c557205bff3c87eefb4c7a7631d0b89ff0",
+          "license_path": "LICENSE",
+          "license_file_blake3": "dc572e12e882d23a85efba9771b22685ab29e7c23b120c16e603416b9c296d7c",
+          "source_url": "https://github.com/projectlombok/lombok/blob/9e6f66c557205bff3c87eefb4c7a7631d0b89ff0/LICENSE"
+        },
+        {
+          "repository": "prometheus/prometheus",
+          "spdx_id": "Apache-2.0",
+          "source_revision": "25a8d576717f4a69290d6f6755b4a90cfaab08ff",
+          "license_path": "LICENSE",
+          "license_file_blake3": "3833fc3c91a379ff509b431db1f7fd40dea69a6614249f420ec62398957087b1",
+          "source_url": "https://github.com/prometheus/prometheus/blob/25a8d576717f4a69290d6f6755b4a90cfaab08ff/LICENSE"
+        },
+        {
+          "repository": "redis/redis",
+          "spdx_id": "BSD-3-Clause",
+          "source_revision": "45d3310694406fb0f338f7c639cda9754edb88f8",
+          "license_path": "COPYING",
+          "license_file_blake3": "2b6b03fa6cca01a3c9d1633252af7a5bf682b161685eb5111ef0884b9ecbd57c",
+          "source_url": "https://github.com/redis/redis/blob/45d3310694406fb0f338f7c639cda9754edb88f8/COPYING"
+        },
+        {
+          "repository": "redis/redis",
+          "spdx_id": "BSD-3-Clause",
+          "source_revision": "4979cf02ff83e90ced80db5111452a4c3e082c3a",
+          "license_path": "COPYING",
+          "license_file_blake3": "2b6b03fa6cca01a3c9d1633252af7a5bf682b161685eb5111ef0884b9ecbd57c",
+          "source_url": "https://github.com/redis/redis/blob/4979cf02ff83e90ced80db5111452a4c3e082c3a/COPYING"
+        },
+        {
+          "repository": "redis/redis",
+          "spdx_id": "BSD-3-Clause",
+          "source_revision": "7f0a7f0a69318788edeca5a55ce05e278fdaa90b",
+          "license_path": "LICENSE.txt",
+          "license_file_blake3": "7093a336967d81582614f4d882978b488457b2251b85c365156581e83bc95a0d",
+          "source_url": "https://github.com/redis/redis/blob/7f0a7f0a69318788edeca5a55ce05e278fdaa90b/LICENSE.txt"
+        },
+        {
+          "repository": "sharkdp/bat",
+          "spdx_id": "Apache-2.0 OR MIT",
+          "source_revision": "02a9d191ed06e6e37d4e352f12e25e65e8037dd0",
+          "license_path": "NOTICE",
+          "license_file_blake3": "ab3cf3b689755b8add17f15116c217ca7b00b15bd0fceccee2d4e7348ee9421e",
+          "source_url": "https://github.com/sharkdp/bat/blob/02a9d191ed06e6e37d4e352f12e25e65e8037dd0/NOTICE"
+        },
+        {
+          "repository": "sharkdp/bat",
+          "spdx_id": "Apache-2.0 OR MIT",
+          "source_revision": "e2bf85e749d87459e3fced697af5cd9cc96eeb8c",
+          "license_path": "NOTICE",
+          "license_file_blake3": "ab3cf3b689755b8add17f15116c217ca7b00b15bd0fceccee2d4e7348ee9421e",
+          "source_url": "https://github.com/sharkdp/bat/blob/e2bf85e749d87459e3fced697af5cd9cc96eeb8c/NOTICE"
+        },
+        {
+          "repository": "tokio-rs/axum",
+          "spdx_id": "MIT",
+          "source_revision": "b4204e223dc96df3d51fc8893f32d37b66be7005",
+          "license_path": "axum/LICENSE",
+          "license_file_blake3": "bedff1f87e989712fe2bb2aebbdbf3b8d4868ba8915450e85a3fee3cdbe49026",
+          "source_url": "https://github.com/tokio-rs/axum/blob/b4204e223dc96df3d51fc8893f32d37b66be7005/axum/LICENSE"
+        },
+        {
+          "repository": "tokio-rs/tokio",
+          "spdx_id": "MIT",
+          "source_revision": "553cc3b194df875cac8736473e1f01cf3e40a660",
+          "license_path": "LICENSE",
+          "license_file_blake3": "042a2e4eb7066f18c5fb89903be12a6830eadfaa5afdd94187a87961f39cab5b",
+          "source_url": "https://github.com/tokio-rs/tokio/blob/553cc3b194df875cac8736473e1f01cf3e40a660/LICENSE"
+        },
+        {
+          "repository": "valkey-io/valkey",
+          "spdx_id": "BSD-3-Clause",
+          "source_revision": "5d97f5133c271313cd5a172617e8af1fe845e0e2",
+          "license_path": "COPYING",
+          "license_file_blake3": "9747104943dca1843f5a3d10d7f4911147eec34a592a1d156a73c2748ceb3b0d",
+          "source_url": "https://github.com/valkey-io/valkey/blob/5d97f5133c271313cd5a172617e8af1fe845e0e2/COPYING"
+        },
+        {
+          "repository": "vuejs/core",
+          "spdx_id": "MIT",
+          "source_revision": "67d6596d40b1807b9cd8eb0d9282932ea77be3c0",
+          "license_path": "LICENSE",
+          "license_file_blake3": "02c660c7acf8dab51ab375122c045e08f8e7877682f18b988e6023d8436c8a82",
+          "source_url": "https://github.com/vuejs/core/blob/67d6596d40b1807b9cd8eb0d9282932ea77be3c0/LICENSE"
+        },
+        {
+          "repository": "vuejs/core",
+          "spdx_id": "MIT",
+          "source_revision": "706d4ac1d0210b2d9134b3228280187fe02fc971",
+          "license_path": "LICENSE",
+          "license_file_blake3": "02c660c7acf8dab51ab375122c045e08f8e7877682f18b988e6023d8436c8a82",
+          "source_url": "https://github.com/vuejs/core/blob/706d4ac1d0210b2d9134b3228280187fe02fc971/LICENSE"
+        }
+      ]
+    },
+    "artifacts": {
+      "tasks": {
+        "bytes": 142031,
+        "blake3": "8cdb19a77418bfb7c844cfa0d7743cb3d7c0867db46d7ccb75279a7fe203bae4"
+      },
+      "sealed_labels": {
+        "bytes": 45672,
+        "blake3": "49620d5d7fb17ee32fc0397ace14995e2f27f04450c1dea5b086e2b16d4b81e8"
+      }
+    },
+    "limitations": [
+      "Gold-patch base lines are deterministic retrieval labels, not proof that every changed line is causally required.",
+      "Purely added files have no base-revision range and are counted but not labeled as retrievable evidence.",
+      "Test-patch and documentation ranges are optional evidence; generated, vendored, snapshot, and lock-file ranges are not core.",
+      "The public benchmark may be present in model training data; this development set cannot serve as a sealed product holdout.",
+      "The pinned dataset contains 300 tasks from 41 repository identities although the project overview describes 42 repositories.",
+      "The JSONL export is independently hashed because the preparation tool does not parse the source Parquet artifact."
+    ]
+  },
+  "independent_validation": {
+    "reproducibility": {
+      "generation_runs": 2,
+      "tasks_byte_identical": true,
+      "sealed_labels_byte_identical": true,
+      "preparation_receipt_byte_identical": true,
+      "tasks_blake3": "8cdb19a77418bfb7c844cfa0d7743cb3d7c0867db46d7ccb75279a7fe203bae4",
+      "sealed_labels_blake3": "49620d5d7fb17ee32fc0397ace14995e2f27f04450c1dea5b086e2b16d4b81e8",
+      "preparation_receipt_blake3": "d91993717c1d64d494d534b94b901a8297e7c36db008a1687911ec3b02e4778d"
+    },
+    "predecessor_exclusion": {
+      "predecessor_dataset_version": "v1",
+      "predecessor_consumed_tasks": 54,
+      "predecessor_tasks_blake3": "68ad229a4c9b496e0880b3eb8d25011dd50ac8edec29d09a6ac16907aaea10fd",
+      "excluded_source_identities": 54,
+      "current_tasks": 54,
+      "overlapping_task_ids": 0,
+      "source_record_identities_verified": true
+    },
+    "source_export": {
+      "parser": "pyarrow",
+      "parser_version": "25.0.0",
+      "source_artifact_sha256": "28b7f874e48496399077d276f9f2b163a077ddf0a70dc507c148d58da826baa9",
+      "jsonl_export_sha256": "caf1329720ed9e206c4569491b3e4d3f2e712df99435f5aba7b3a49410cc9757",
+      "parquet_rows": 300,
+      "jsonl_rows": 300,
+      "fields_equal": true,
+      "records_equal": true,
+      "reused_pinned_source": true
+    },
+    "base_revision_regions": {
+      "schema_version": 1,
+      "method": "fetch exact GitHub repository/revision/path content and validate maximum labeled end line",
+      "verifier_blake3": "2c0264edf0dc1ad7d03d552c030a6ff7f507642d12d13b7f5ea6de0a2bcaa967",
+      "tasks_blake3": "8cdb19a77418bfb7c844cfa0d7743cb3d7c0867db46d7ccb75279a7fe203bae4",
+      "sealed_labels_blake3": "49620d5d7fb17ee32fc0397ace14995e2f27f04450c1dea5b086e2b16d4b81e8",
+      "tasks": 54,
+      "repository_revisions": 54,
+      "unique_files": 147,
+      "regions": 277,
+      "retrieved_files": 147,
+      "retrieved_bytes": 6879866,
+      "missing_files": 0,
+      "out_of_bounds_files": 0,
+      "content_manifest_blake3": "526b6d129bfe6b8f31d7d4019b01a366c4e29824fe7da5b61db7c2994cd2d96b",
+      "validation_passed": true
+    },
+    "license_audit": {
+      "revision_bound_files": 54,
+      "repository_license_map_blake3": "30b153512a6c1c16ecce71a04480839fad0a1340880de7c59c6171b12fafec9b",
+      "downloaded_file_hashes_recomputed": true,
+      "exact_selection_set_validated_by_preparer": true
+    },
+    "privacy": {
+      "sealed_labels_unix_mode": "0600",
+      "individual_labels_disclosed_by_validation": false,
+      "raw_patch_or_repository_source_vendored": false,
+      "private_artifacts_tracked": false
+    }
+  },
+  "acceptance": {
+    "development_data": "prepared_sealed_and_consumed_by_successor_gate_a",
+    "retrieval_evaluation_consumed_at_preparation": false,
+    "successor_candidate_frozen": true,
+    "successor_candidate_revision": "7afe1fc7bd9fb6eb0ed728de64d83cfdef706a74",
+    "external_development_gate_a_passed": true,
+    "linux_integration_gate_a_passed": true,
+    "gate_a_passed": true,
+    "gate_b_eligible": false,
+    "push_or_pull_request_allowed": false
+  }
+}

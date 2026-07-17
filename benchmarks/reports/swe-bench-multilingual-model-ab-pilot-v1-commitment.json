@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "report_kind": "model_ab_pilot_commitment",
+  "status": "committed_not_started",
+  "committed_on": "2026-07-17",
+  "experiment_id": "swe-bench-multilingual-model-ab-pilot-v1",
+  "scope": {
+    "evidence_class": "exploratory_model_pilot",
+    "confirmation_or_gate_b": false,
+    "model_runs_started": false,
+    "push_or_pull_request_allowed": false,
+    "reason": "The tasks come from a consumed public development set and cannot establish blind generalization or product promotion."
+  },
+  "selection": {
+    "source_tasks_blake3": "fe152f3251912a0dd5543e0143b3e7941ce8cd49b8c25589d17a9139d1199467",
+    "source_task_count": 54,
+    "selection_seed": "leantoken-model-ab-pilot-v1",
+    "selection_hash": "sha256(selection_seed || NUL || task_id)",
+    "algorithm": "Sort public task metadata by selection_hash; select the first exact_identifier task, then the first behavioral task whose language and repository differ from the exact task. Do not use retrieval metrics, labels, gold patches, or model outcomes.",
+    "tasks": [
+      {
+        "task_id": "babel__babel-15445",
+        "selection_digest": "1425b3a497a2d337dca77a24879b0ab5c2b5be20ccfad9b280193a6ef61891e0",
+        "language": "typescript",
+        "task_shape": "exact_identifier",
+        "repository": "https://github.com/babel/babel.git",
+        "revision": "49e4855c10d8f76faf477f2ceb5ecbdbe2c849a3"
+      },
+      {
+        "task_id": "caddyserver__caddy-6051",
+        "selection_digest": "04531efee93fad5dfbc0462fd6acbe431f58c266a85feca1243f8edc70dcb0c5",
+        "language": "go",
+        "task_shape": "behavioral",
+        "repository": "https://github.com/caddyserver/caddy.git",
+        "revision": "4181c79a8130a59c40c76437e15265452422ccb1"
+      }
+    ]
+  },
+  "protocol": {
+    "manifest_schema_version": 3,
+    "manifest_blake3": "293d84291c8dad8c21969764763b03da4cad5d1078c187d9c746726eaed5d206",
+    "preflight_receipt_blake3": "8e296c1cb27f13a2f1d92a79c7d0283e7bd8916d6784feb1cb1df59689d3bdbe",
+    "preflight_status": "preflight_passed",
+    "arm_order_seed": 2026071701,
+    "arm_order_derivation": "leantoken.model-ab.arm-order.v1 from the frozen harness revision, task ID, repetition, and arm",
+    "tasks": 2,
+    "required_arms": 4,
+    "repetitions_per_task_arm": 5,
+    "planned_model_runs": 40,
+    "model_timeout_seconds": 1800,
+    "validator_timeout_seconds": 1500,
+    "tool_call_limit": 40,
+    "per_call_retrieval_source_token_limit": 8000,
+    "fresh_detached_worktree_per_run": true,
+    "provider_seed_exposed": false,
+    "provider_seed_note": "The random seed fixes arm order only; it does not claim provider determinism."
+  },
+  "model": {
+    "provider": "openai",
+    "model": "gpt-5.5",
+    "codex_cli_version": "codex-cli 0.144.1",
+    "codex_executable_blake3": "1c7eb9960cc658bc06cee4ee06f1be2a545551c0cef64f928f5a7f58ac427457",
+    "reasoning_effort": "medium",
+    "service_tier": "default",
+    "tokenizer": "o200k_base",
+    "web_search": "disabled",
+    "user_config_and_rules": "ignored",
+    "sandbox": "workspace-write",
+    "provider_cost_exposed": false,
+    "cache_creation_tokens_exposed": false
+  },
+  "identities": {
+    "harness_revision": "5305111e726bf66c07c90828b8357b6b1937a929",
+    "harness_binary_blake3": "2e69a4999ad25aaef386d82294e731b51911b515b9b54160cf5b26f96b52cd59",
+    "adapter_revision": "5305111e726bf66c07c90828b8357b6b1937a929",
+    "adapter_binary_blake3": "363e0d6818752501ccc0772b062d56257153000e5ae955ab4606cb713f22247c",
+    "validator_revision": "5305111e726bf66c07c90828b8357b6b1937a929",
+    "validator_binary_blake3": "6067837d6ac3fb647630fe63be3332b43b274f4ec4f123d3201597a5a9f6e6ad",
+    "baseline_revision": "3bfce7e9e8234af18d54ac0b86318b447dccfe8e",
+    "baseline_runtime_blake3": "f72086c349e9a807b7d187f0e820f08f341d28ecdc37a28ce671259b1abfe4ed",
+    "adaptive_revision": "4fcbca34d01ee5e18d409f6f05eb7c4a15ef843f",
+    "adaptive_runtime_blake3": "e1cb706da721839b273aff701f24cf5880c73cf037aca68f2ddb74817ce48a92",
+    "double_clean_release_builds_byte_identical": true
+  },
+  "arms": {
+    "filesystem": "Native repository discovery and source reads; no LeanToken MCP server.",
+    "lean_token_baseline": "Frozen baseline LeanToken is the only repository discovery and source-reading tool; native shell is limited to Git preflight and post-retrieval verification.",
+    "lean_token_adaptive": "Frozen adaptive LeanToken under the same strict retrieval contract.",
+    "lean_token_adaptive_recovery": "Frozen adaptive LeanToken must be called first; native repository retrieval is then allowed for recovery."
+  },
+  "official_validation": {
+    "dataset_blake3": "8037e63f2fbddb906a6957895449d73eff31dace973a0bf48e93a7a3606ee4b7",
+    "swe_bench_harness_revision": "f7bbbb2ccdf479001d6467c9e34af59e44a840f9",
+    "python_blake3": "94312fe0aeb17a2acd4127eea7bbeac71e802d1005af55a81b3d5e6c66a5bebb",
+    "uv_blake3": "b2bbb305f8baa1fca49d4d4a2cd440f24d75d914841aabc1feb0401eb486c716",
+    "python_environment_blake3": "d34e4cfb10b3439dba40ea207ece0f084a3b70fdc050d25f8c3defe74e69e6ee",
+    "gold_calibrations": [
+      {
+        "task_id": "babel__babel-15445",
+        "docker_image": "swebench/sweb.eval.x86_64.babel_1776_babel-15445:latest",
+        "docker_image_digest": "sha256:3693179953a675cf963ae49d5da3d2dca76115d5e09574b741af1c99514e4031",
+        "gold_prediction_blake3": "5ff84342a4d0283765920f4932f9146ff87f398fac0b23813e95c5a8edd863f4",
+        "official_report_blake3": "a82d4e6b88d262cb8952ffe6ac343a0cc57b5ecca48b8acc0a84e28fff1b34e8",
+        "completed": true,
+        "resolved": true
+      },
+      {
+        "task_id": "caddyserver__caddy-6051",
+        "docker_image": "swebench/sweb.eval.x86_64.caddyserver_1776_caddy-6051:latest",
+        "docker_image_digest": "sha256:dd5fd18efcfeead659b035c32461ac5abad7223c4ec08b5702c0d91f5ec653d1",
+        "gold_prediction_blake3": "1dd2a639ccbf2e218d66c9fea2455a2765084d8c4b79a5650e16c26b9a03361a",
+        "official_report_blake3": "f51a37c6a1b1769d32d56eb8a6b06ecdc1635ea53a41f5a77808e849f779f2fd",
+        "completed": true,
+        "resolved": true
+      }
+    ]
+  },
+  "pre_registered_interpretation": {
+    "primary_comparison": "lean_token_adaptive_recovery versus filesystem",
+    "secondary_comparison": "lean_token_adaptive versus lean_token_baseline",
+    "positive_primary_requires": [
+      "lean_token_adaptive_recovery has at least one officially validated success",
+      "lean_token_adaptive_recovery total validated successes are not lower than filesystem",
+      "and at least one material improvement: more validated successes, at least 5% lower median complete provider input, at least 5% lower median time to validated patch, or at least 5% lower complete-attempt input tokens per success"
+    ],
+    "inconclusive_if": [
+      "provider or infrastructure failures prevent all five repetitions for a task-arm from receiving an authoritative validator outcome",
+      "both compared arms have zero validated successes",
+      "success is non-inferior but no pre-registered efficiency metric improves materially"
+    ],
+    "negative_if": [
+      "lean_token_adaptive_recovery has fewer validated successes than filesystem",
+      "or task success is equal but every available pre-registered efficiency metric is at least 5% worse"
+    ],
+    "promotion_rule": "A positive exploratory pilot still cannot promote the candidate, authorize push/PR, or replace sealed Gate B."
+  },
+  "limitations": [
+    "Only two public, consumed development tasks are included, so power and language coverage are deliberately limited.",
+    "Public SWE-bench Multilingual tasks may be present in model training data.",
+    "Codex exposes cached input but not cache-creation input or provider cost; unavailable fields remain null.",
+    "Provider request framing and provider-visible compact-mode effects remain unavailable.",
+    "Native shell range, reread, and dead-end attribution is a lower bound.",
+    "Native macOS and Windows tests remain pending; cross-compilation is not native execution evidence.",
+    "The consumed 54-task labels cannot be used to tune a successor candidate or support Gate B."
+  ]
+}

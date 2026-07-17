@@ -233,6 +233,169 @@ async fn five_services_return_bounded_grounded_responses() {
 }
 
 #[tokio::test]
+async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
+    let root = tempfile::tempdir().expect("root");
+    for (path, source) in [
+        (
+            "target.c",
+            "int c_target(int value) {\n    return value + 11;\n}\n",
+        ),
+        (
+            "target.cpp",
+            "class CppTarget {\npublic:\n    int cpp_target() { return 22; }\n};\n",
+        ),
+        (
+            "JavaTarget.java",
+            "class JavaTarget {\n    int javaTarget() {\n        return 33;\n    }\n}\n",
+        ),
+        (
+            "target.php",
+            "<?php\nfunction phpTarget() {\n    return 44;\n}\n",
+        ),
+        (
+            "target.rb",
+            "def ruby_target\n  55\nend\n",
+        ),
+    ] {
+        std::fs::write(root.path().join(path), source).expect("source");
+    }
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    for (path, symbol, marker) in [
+        ("target.c", "c_target", "return value + 11"),
+        ("target.cpp", "cpp_target", "return 22"),
+        ("JavaTarget.java", "javaTarget", "return 33"),
+        ("target.php", "phpTarget", "return 44"),
+        ("target.rb", "ruby_target", "55"),
+    ] {
+        let outline = services
+            .outline(OutlineRequest {
+                paths: vec![path.into()],
+                symbol_name: Some(symbol.into()),
+                symbol_kind: None,
+                max_results: Some(10),
+                max_tokens: Some(200),
+            })
+            .await
+            .expect("outline");
+        assert!(
+            outline.files[0]
+                .symbols
+                .iter()
+                .any(|item| item.name == symbol && item.end_line >= item.start_line),
+            "missing {symbol} in {path}: {:?}",
+            outline.files[0].symbols
+        );
+
+        let context = services
+            .context(ContextRequest {
+                task: format!("Fix {symbol}"),
+                token_budget: 300,
+                focus_paths: Vec::new(),
+                focus_symbols: Vec::new(),
+                exclude_paths: Vec::new(),
+                known_hashes: Vec::new(),
+                prior_repository_generation: None,
+            })
+            .await
+            .expect("context");
+        assert!(
+            context
+                .fragments
+                .iter()
+                .any(|fragment| fragment.path == path && fragment.content.contains(marker)),
+            "missing body for {symbol}: {:?}",
+            context.fragments
+        );
+    }
+}
+
+#[tokio::test]
+async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("src")).expect("src");
+    std::fs::write(
+        root.path().join("src/seed.js"),
+        "import { OwnerAlpha } from './target.js';\nexport function useOwner() { return new OwnerAlpha(); }\n",
+    )
+    .expect("seed");
+    std::fs::write(
+        root.path().join("src/target.js"),
+        format!(
+            "export class OwnerAlpha {{\n  run(input) {{\n    let total = input;\n{}    return total;\n  }}\n}}\n",
+            (1..=44)
+                .map(|index| format!("    total += input + {index};\n"))
+                .collect::<String>()
+        ),
+    )
+    .expect("target");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    let exact = services
+        .context_evaluation(ContextRequest {
+            task: "Fix OwnerAlpha".into(),
+            token_budget: 400,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+        })
+        .await
+        .expect("exact evaluation");
+    assert!(
+        exact
+            .generated_candidates
+            .iter()
+            .all(|candidate| candidate.representation != "import_symbol")
+    );
+
+    let multi = services
+        .context_evaluation(ContextRequest {
+            task: "Fix OwnerAlpha and OtherSignal".into(),
+            token_budget: 400,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+        })
+        .await
+        .expect("multi-concept evaluation");
+    assert!(
+        multi.generated_candidates.iter().any(|candidate| {
+            candidate.path == "src/target.js" && candidate.representation == "import_symbol"
+        }),
+        "candidates: {:?}",
+        multi.generated_candidates
+    );
+    let import_symbol = multi
+        .generated_candidates
+        .iter()
+        .find(|candidate| {
+            candidate.path == "src/target.js" && candidate.representation == "import_symbol"
+        })
+        .expect("import symbol candidate");
+    assert_eq!(import_symbol.end_line, 50);
+    assert!(
+        import_symbol.token_count > 256,
+        "import symbol fixture must cover the old cap: {import_symbol:?}"
+    );
+    assert!(
+        multi
+            .generated_candidates
+            .iter()
+            .all(|candidate| candidate.representation != "import_neighbor")
+    );
+}
+
+#[tokio::test]
 async fn file_operations_page_without_duplicates() {
     let root = tempfile::tempdir().expect("root");
     for name in ["alpha.rs", "bravo.rs", "charlie.rs", "delta.rs", "echo.rs"] {
@@ -812,6 +975,51 @@ async fn context_declaration_excerpt_retains_long_body_across_chunks() {
 
     assert_eq!(declaration.end_line, 51);
     assert!(declaration.content.contains("consume(value_48)"));
+}
+
+#[tokio::test]
+async fn context_text_hits_use_bounded_declaration_excerpts() {
+    let root = tempfile::tempdir().expect("root");
+    let body = (1..=160)
+        .map(|line| format!("    let filler_{line} = {line};\n"))
+        .collect::<String>();
+    std::fs::write(
+        root.path().join("lib.rs"),
+        format!(
+            "fn very_large_handler() {{\n{body}    let rare_runtime_marker = filler_160;\n    consume(rare_runtime_marker);\n}}\n"
+        ),
+    )
+    .expect("source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    let response = services
+        .context(ContextRequest {
+            task: "fix rare_runtime_marker behavior".into(),
+            token_budget: 1200,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+        })
+        .await
+        .expect("context");
+    let text_fragment = response
+        .fragments
+        .iter()
+        .find(|fragment| {
+            fragment.path == "lib.rs" && fragment.reason.contains("text")
+        })
+        .expect("text fragment");
+
+    assert!(
+        text_fragment.token_count <= 320,
+        "oversized text fragment: {text_fragment:?}"
+    );
+    assert!(text_fragment.content.contains("rare_runtime_marker"));
 }
 
 #[tokio::test]

@@ -1,6 +1,6 @@
 //! Task-shaped context candidate assembly and ranking handoff.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use tokio_util::sync::CancellationToken;
 
@@ -16,7 +16,7 @@ use super::validation::{
 use crate::model::*;
 use crate::ranking::{self, Candidate};
 use crate::repository::git_changed_paths;
-use crate::storage::{FileRecord, ReadSession};
+use crate::storage::{FileRecord, ReadSession, SymbolRecord};
 use crate::text::{expand_terms, identifier_words};
 use crate::{Error, Result};
 use facets::{ContextQuery, FacetKind};
@@ -28,6 +28,36 @@ const MAX_CONTEXT_QUERIES: usize = 12;
 const MAX_CONTEXT_HITS_PER_SOURCE: usize = 20;
 /// Per-term FTS candidate cap for context assembly.
 const MAX_CONTEXT_LEXICAL_HITS: usize = 30;
+/// Per-import symbol scan cap for concept-corroborated structural expansion.
+const MAX_IMPORT_SYMBOLS: usize = 128;
+const MIN_CORROBORATED_QUERY_WEIGHT: f64 = 0.65;
+const SYMBOL_CONTEXT_TOKEN_CAP: usize = 768;
+const REFERENCE_CONTEXT_TOKEN_CAP: usize = 256;
+const TEXT_CONTEXT_TOKEN_CAP: usize = 256;
+const IMPORT_SYMBOL_CONTEXT_TOKEN_CAP: usize = 384;
+
+#[derive(Clone, Copy)]
+enum ContextExcerptKind {
+    Symbol,
+    Reference,
+    Text,
+    ImportSymbol,
+}
+
+impl ContextExcerptKind {
+    const fn token_cap(self) -> usize {
+        match self {
+            Self::Symbol => SYMBOL_CONTEXT_TOKEN_CAP,
+            Self::Reference => REFERENCE_CONTEXT_TOKEN_CAP,
+            Self::Text => TEXT_CONTEXT_TOKEN_CAP,
+            Self::ImportSymbol => IMPORT_SYMBOL_CONTEXT_TOKEN_CAP,
+        }
+    }
+}
+
+fn excerpt_budget(request_budget: usize, kind: ContextExcerptKind) -> usize {
+    request_budget.min(kind.token_cap())
+}
 
 fn cached_file(
     session: &ReadSession,
@@ -128,7 +158,7 @@ fn record_query_hit(
     weight: f64,
     rank: usize,
 ) {
-    if weight < 0.65 {
+    if weight < MIN_CORROBORATED_QUERY_WEIGHT {
         return;
     }
     const RRF_K: f64 = 60.0;
@@ -177,6 +207,107 @@ fn annotate_candidate(
     candidate.channel(channel, rank)
 }
 
+fn low_cardinality_exact_query(queries: &[ContextQuery]) -> bool {
+    queries
+        .iter()
+        .filter(|query| query.has_facet(FacetKind::ExactAtom))
+        .map(|query| query.fusion_key.as_str())
+        .collect::<BTreeSet<_>>()
+        .len()
+        == 1
+}
+
+fn corroborated_import_symbol<'a>(
+    symbols: Vec<SymbolRecord>,
+    queries: &'a [ContextQuery],
+    seed_concepts: &BTreeSet<String>,
+) -> Option<(SymbolRecord, &'a ContextQuery, f64)> {
+    let mut best: Option<(usize, usize, usize, SymbolRecord, &ContextQuery, f64)> = None;
+    for (query_rank, query) in queries.iter().enumerate() {
+        if query.concept_weight < MIN_CORROBORATED_QUERY_WEIGHT
+            || !seed_concepts.contains(&query.fusion_key)
+            || !(query.has_facet(FacetKind::ExactAtom)
+                || query.has_facet(FacetKind::Symbol)
+                || query.has_facet(FacetKind::Configuration))
+        {
+            continue;
+        }
+        for symbol in &symbols {
+            let exact = symbol.name.eq_ignore_ascii_case(&query.value);
+            let qualified = qualified_symbol_match(
+                &query.fusion_key,
+                &symbol.name,
+                symbol.parent.as_deref(),
+                symbol.signature.as_deref(),
+            ) > 0.0;
+            if !exact && !qualified {
+                continue;
+            }
+            let class = usize::from(qualified) * 2 + usize::from(exact);
+            let evidence = f64::from(exact) + f64::from(qualified) * 1.5;
+            let candidate = (
+                class,
+                usize::MAX - query_rank,
+                usize::MAX - symbol.start_line,
+                symbol.clone(),
+                query,
+                evidence,
+            );
+            if best.as_ref().is_none_or(|current| {
+                (candidate.0, candidate.1, candidate.2) > (current.0, current.1, current.2)
+            }) {
+                best = Some(candidate);
+            }
+        }
+    }
+    best.map(|(_, _, _, symbol, query, evidence)| (symbol, query, evidence))
+}
+
+fn import_seed_paths(
+    candidates: &[Candidate],
+    queries: &[ContextQuery],
+    tokenizer: crate::tokens::Tokenizer,
+) -> Vec<(String, BTreeSet<String>)> {
+    if low_cardinality_exact_query(queries) {
+        return Vec::new();
+    }
+    let mut paths = BTreeMap::<String, (f64, BTreeSet<String>)>::new();
+    for candidate in candidates {
+        if candidate.concept_weight < MIN_CORROBORATED_QUERY_WEIGHT || candidate.concepts.is_empty()
+        {
+            continue;
+        }
+        let token_count = candidate.token_count_with(tokenizer).max(1);
+        let score = candidate.score(&ranking::Weights::default(), token_count);
+        let entry = paths
+            .entry(candidate.path.clone())
+            .or_insert_with(|| (score, BTreeSet::new()));
+        entry.0 = entry.0.max(score);
+        entry.1.extend(candidate.concepts.iter().cloned());
+    }
+    let mut paths = paths.into_iter().collect::<Vec<_>>();
+    paths.sort_by(|left, right| {
+        right
+            .1
+            .0
+            .total_cmp(&left.1.0)
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    paths
+        .into_iter()
+        .map(|(path, (_, concepts))| (path, concepts))
+        .collect()
+}
+
+struct ImportExpansion<'a> {
+    session: &'a ReadSession,
+    request: &'a ContextRequest,
+    queries: &'a [ContextQuery],
+    terms: &'a [String],
+    changed_paths: &'a HashSet<String>,
+    cancellation: &'a CancellationToken,
+}
+
 fn task_mentions_language(task: &str, language: &str) -> bool {
     task.split(|character: char| !character.is_alphanumeric())
         .filter(|word| !word.is_empty())
@@ -209,6 +340,106 @@ impl Services {
         }
 
         boost
+    }
+
+    fn append_import_symbol_candidates(
+        &self,
+        expansion: ImportExpansion<'_>,
+        file_cache: &mut HashMap<String, Option<FileRecord>>,
+        candidates: &mut Vec<Candidate>,
+    ) -> Result<()> {
+        let seed_paths = import_seed_paths(candidates, expansion.queries, self.config.tokenizer);
+        let mut neighbor_count = 0usize;
+        let mut neighbor_ranges = BTreeSet::new();
+        for (seed_path, seed_concepts) in seed_paths.iter().take(24) {
+            check_cancelled(expansion.cancellation)?;
+            let Some(seed_file) = cached_file(expansion.session, file_cache, seed_path)? else {
+                continue;
+            };
+            for import in expansion.session.get_imports_for_file(seed_file.id, 32)? {
+                check_cancelled(expansion.cancellation)?;
+                let Some(target_path) = import.resolved_path else {
+                    continue;
+                };
+                if !path_allowed(&target_path, &[], &expansion.request.exclude_paths)? {
+                    continue;
+                }
+                let Some(target_file) = cached_file(expansion.session, file_cache, &target_path)?
+                else {
+                    continue;
+                };
+                let Some((symbol, query, exact)) = corroborated_import_symbol(
+                    expansion
+                        .session
+                        .get_symbols_for_file(target_file.id, MAX_IMPORT_SYMBOLS)?,
+                    expansion.queries,
+                    seed_concepts,
+                ) else {
+                    continue;
+                };
+                let Some(excerpt) = self.adaptive_context_excerpt(
+                    expansion.session,
+                    target_file.id,
+                    symbol.start_line,
+                    symbol.end_line,
+                    symbol.start_line,
+                    excerpt_budget(
+                        expansion.request.token_budget,
+                        ContextExcerptKind::ImportSymbol,
+                    ),
+                )?
+                else {
+                    continue;
+                };
+                if !neighbor_ranges.insert((
+                    target_path.clone(),
+                    excerpt.start_line,
+                    excerpt.end_line,
+                )) {
+                    continue;
+                }
+                let change_boost = Self::file_change_boost(
+                    Some(&target_file),
+                    &target_path,
+                    expansion.changed_paths,
+                    expansion.request.prior_repository_generation,
+                );
+                let candidate = Candidate::new(
+                    &target_path,
+                    excerpt.start_line,
+                    excerpt.end_line,
+                    excerpt.content,
+                )
+                .match_kind("import")
+                .match_kind("symbol")
+                .concept(&query.fusion_key, query.concept_weight)
+                .representation("import_symbol")
+                .symbol_name(symbol.name)
+                .exact(exact)
+                .symbol(1.0)
+                .path_score(context_path_score(
+                    &target_path,
+                    expansion.terms,
+                    &expansion.request.task,
+                ))
+                .import_boost(1.0)
+                .change_boost(change_boost);
+                candidates.push(annotate_candidate(
+                    candidate,
+                    query,
+                    "import_symbol",
+                    neighbor_count,
+                ));
+                neighbor_count += 1;
+                if neighbor_count >= 24 {
+                    break;
+                }
+            }
+            if neighbor_count >= 24 {
+                break;
+            }
+        }
+        Ok(())
     }
 
     /// Select ranked task evidence within an exact source-token budget.
@@ -326,7 +557,7 @@ impl Services {
                         hit.symbol.start_line,
                         hit.symbol.end_line,
                         hit.symbol.start_line,
-                        request.token_budget,
+                        excerpt_budget(request.token_budget, ContextExcerptKind::Symbol),
                     )?
                     else {
                         continue;
@@ -388,7 +619,7 @@ impl Services {
                             symbol.start_line,
                             symbol.end_line,
                             hit.reference.start_line,
-                            request.token_budget,
+                            excerpt_budget(request.token_budget, ContextExcerptKind::Reference),
                         )?
                     } else {
                         None
@@ -463,7 +694,7 @@ impl Services {
                             symbol.start_line,
                             symbol.end_line,
                             matched_line,
-                            request.token_budget,
+                            excerpt_budget(request.token_budget, ContextExcerptKind::Text),
                         )?
                     } else {
                         None
@@ -515,65 +746,18 @@ impl Services {
 
             apply_query_fusion(&mut candidates, &query_fusion);
 
-            let seed_paths = candidates
-                .iter()
-                .map(|candidate| candidate.path.clone())
-                .collect::<BTreeSet<_>>();
-            let mut neighbor_count = 0usize;
-            for seed_path in seed_paths.iter().take(24) {
-                check_cancelled(cancellation)?;
-                let Some(seed_file) = cached_file(session, &mut file_cache, seed_path)? else {
-                    continue;
-                };
-                for import in session.get_imports_for_file(seed_file.id, 32)? {
-                    check_cancelled(cancellation)?;
-                    let Some(target_path) = import.resolved_path else {
-                        continue;
-                    };
-                    if !path_allowed(&target_path, &[], &request.exclude_paths)? {
-                        continue;
-                    }
-                    let Some(target_file) = cached_file(session, &mut file_cache, &target_path)?
-                    else {
-                        continue;
-                    };
-                    let Some(chunk) = session
-                        .get_chunks_for_file(target_file.id, 1)?
-                        .into_iter()
-                        .next()
-                    else {
-                        continue;
-                    };
-                    let end_line = chunk.end_line.min(chunk.start_line + 29);
-                    let content = crate::text::excerpt(
-                        &chunk.content,
-                        1,
-                        end_line.saturating_sub(chunk.start_line) + 1,
-                    );
-                    let change_boost = Self::file_change_boost(
-                        Some(&target_file),
-                        &target_path,
-                        &changed_paths,
-                        request.prior_repository_generation,
-                    );
-                    candidates.push(
-                        Candidate::new(&target_path, chunk.start_line, end_line, content)
-                            .match_kind("import")
-                            .concept(seed_path, 0.2)
-                            .representation("import_neighbor")
-                            .path_score(context_path_score(&target_path, &terms, &request.task))
-                            .import_boost(1.0)
-                            .change_boost(change_boost),
-                    );
-                    neighbor_count += 1;
-                    if neighbor_count >= 24 {
-                        break;
-                    }
-                }
-                if neighbor_count >= 24 {
-                    break;
-                }
-            }
+            self.append_import_symbol_candidates(
+                ImportExpansion {
+                    session,
+                    request: &request,
+                    queries: &queries,
+                    terms: &terms,
+                    changed_paths: &changed_paths,
+                    cancellation,
+                },
+                &mut file_cache,
+                &mut candidates,
+            )?;
 
             let generated_candidate_paths = if diagnostics == CandidateDiagnostics::Collect {
                 candidates
@@ -754,6 +938,49 @@ mod tests {
                 .any(|kind| kind == "channel:symbol:2")
         );
         assert_eq!(candidate.reason(), "symbol");
+    }
+
+    #[test]
+    fn low_cardinality_exact_query_disables_neighbor_expansion() {
+        let exact = context_queries("Fix Rack::Deflater", 12);
+        let multi = context_queries("Fix Rack::Deflater and Compression::Writer", 12);
+
+        assert!(low_cardinality_exact_query(&exact));
+        assert!(!low_cardinality_exact_query(&multi));
+    }
+
+    #[test]
+    fn import_symbol_requires_the_same_seed_and_target_concept() {
+        let queries = context_queries("Fix Rack::Deflater and Compression::Writer", 12);
+        let deflater_query = queries
+            .iter()
+            .find(|query| query.fusion_key == "rack::deflater")
+            .expect("deflater query");
+        let symbol = SymbolRecord {
+            id: 1,
+            file_id: 2,
+            name: "Deflater".into(),
+            kind: "class".into(),
+            parent: Some("Rack".into()),
+            signature: Some("class Rack::Deflater".into()),
+            start_line: 10,
+            end_line: 20,
+            start_byte: 100,
+            end_byte: 200,
+        };
+
+        assert!(
+            corroborated_import_symbol(vec![symbol.clone()], &queries, &BTreeSet::new()).is_none()
+        );
+        let matched = corroborated_import_symbol(
+            vec![symbol],
+            &queries,
+            &BTreeSet::from([deflater_query.fusion_key.clone()]),
+        )
+        .expect("same-concept import symbol");
+        assert_eq!(matched.0.name, "Deflater");
+        assert_eq!(matched.1.fusion_key, "rack::deflater");
+        assert!(matched.2 > 0.0);
     }
 
     #[test]

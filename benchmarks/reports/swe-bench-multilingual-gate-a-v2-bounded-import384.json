@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "report_kind": "swe_bench_multilingual_development_gate_a",
+  "dataset_version": "v2",
+  "status": "linux_integration_gate_a_passed_gate_b_not_run",
+  "scope": {
+    "research_admission": true,
+    "product_promotion": false,
+    "local_validation_scope": "linux_only",
+    "cross_target_local_validation": "not_run_by_policy",
+    "push_or_pull_request_allowed": false
+  },
+  "dataset": {
+    "tasks": 54,
+    "languages": 9,
+    "tasks_blake3": "8cdb19a77418bfb7c844cfa0d7743cb3d7c0867db46d7ccb75279a7fe203bae4",
+    "sealed_labels_blake3": "49620d5d7fb17ee32fc0397ace14995e2f27f04450c1dea5b086e2b16d4b81e8",
+    "manifest_blake3": "0f50f0c6c973256e237ef5ca483c7ab8cdfb1509778dc37a386500654c506536",
+    "predecessor_v1_tasks_blake3": "68ad229a4c9b496e0880b3eb8d25011dd50ac8edec29d09a6ac16907aaea10fd",
+    "v1_v2_task_id_overlap": 0
+  },
+  "evaluator": {
+    "revision": "4fcbca34d01ee5e18d409f6f05eb7c4a15ef843f",
+    "binary_blake3": "01931a49fc7d299dfd11b367a677841d546656f810be53a60acde221dab3a6b8",
+    "ranked_region_binary_blake3": "13163594546f3f2369e953a7e5fdb395ab54fedd6a3171ffefc9077ea0b8774c"
+  },
+  "baseline": {
+    "runtime_revision": "3bfce7e9e8234af18d54ac0b86318b447dccfe8e",
+    "runtime_binary_blake3": "f72086c349e9a807b7d187f0e820f08f341d28ecdc37a28ce671259b1abfe4ed",
+    "predictions_blake3": "2fe9431c5b6e0a0858e0f6d06f9fa006add68b754dcd2d4d2031aa7dbde72a1a",
+    "report_blake3": "649f7ec3b6dc521f84980cdaf318c8108d2a2eee3390a5783f3452922ed66b3e"
+  },
+  "candidate": {
+    "arm_id": "bounded-adaptive-import384",
+    "runtime_revision": "7afe1fc7bd9fb6eb0ed728de64d83cfdef706a74",
+    "runtime_binary_blake3": "f7ba78211d2519171b3b73a27279b4d7c8174adaf745ab7a0e25f84c68a2d3e1",
+    "predictions_blake3": "4614df8dba41f7c215e7077915f963feba1a11eafd3a2b85e4d89fc607434a5f",
+    "report_blake3": "dc19149e6fda666afe57a594629b6186c2cee6ddb05ec550bc8fbc6b92960a43",
+    "decision_blake3": "83dfc0e107000a4a9846187735c0618f914c801514cfd25f7f5c599ac5bd3799",
+    "context_excerpt_token_caps": {
+      "symbol": 768,
+      "reference": 256,
+      "text": 256,
+      "import_symbol": 384
+    }
+  },
+  "external_gate_a": {
+    "passed": true,
+    "retrieval_strata_passed": true,
+    "complete_cost_passed": true,
+    "task_count": 54,
+    "index_warning_sum": 0,
+    "repetitions": 2,
+    "all_repetitions_identical": true,
+    "deterministic_responses": true,
+    "baseline": {
+      "file_recall_macro": 0.23456790123456792,
+      "line_recall_macro": 0.0677409010742344,
+      "line_precision_macro": 0.002380124076790898,
+      "line_f1_macro": 0.004061921669696507,
+      "ndcg_at_budget_macro": 0.016955269007849563,
+      "complete_response_tokens": 60136,
+      "source_tokens": 28480,
+      "complete_tokens_per_relevant_line": 4295.428571428572,
+      "source_tokens_per_relevant_line": 2034.2857142857144,
+      "relevant_files_hit": 16,
+      "core_lines_hit": 8,
+      "relevant_returned_lines": 14,
+      "core_regions_hit": 7
+    },
+    "candidate": {
+      "file_recall_macro": 0.3938271604938272,
+      "line_recall_macro": 0.1063949938949939,
+      "line_precision_macro": 0.004063728030513489,
+      "line_f1_macro": 0.007307284666318159,
+      "ndcg_at_budget_macro": 0.021947303542024454,
+      "complete_response_tokens": 84997,
+      "source_tokens": 49761,
+      "complete_tokens_per_relevant_line": 2575.6666666666665,
+      "source_tokens_per_relevant_line": 1507.909090909091,
+      "relevant_files_hit": 27,
+      "core_lines_hit": 31,
+      "relevant_returned_lines": 33,
+      "core_regions_hit": 14
+    },
+    "complete_cost_relative_delta": -0.4003702718283004,
+    "improved_evidence_groups": [
+      "exact_identifier:false",
+      "exact_identifier:true",
+      "language:javascript",
+      "language:php",
+      "language:ruby",
+      "language:typescript"
+    ],
+    "conflicting_strata": [
+      "exact_identifier:true",
+      "language:cpp",
+      "language:go",
+      "language:java",
+      "language:typescript",
+      "tag:task_shape:exact_identifier"
+    ]
+  },
+  "internal_consumed_smoke": {
+    "dataset_kind": "prospective_validation",
+    "manifest_blake3": "5991d8a643a873ef61d5a4122f52abd7f589a5403d13ab609ebc6b9428e73d9a",
+    "baseline_revision": "3bfce7e9e8234af18d54ac0b86318b447dccfe8e",
+    "criterion": "non_inferiority_to_exact_frozen_baseline_for_relevant_files_and_line_anchors",
+    "baseline": {
+      "relevant_files_found": 8,
+      "relevant_files": 11,
+      "line_anchors_found": 16,
+      "line_anchors": 38,
+      "source_tokens": 3318,
+      "total_json_tokens": 5792
+    },
+    "candidate": {
+      "harness_revision": "7afe1fc7bd9fb6eb0ed728de64d83cfdef706a74",
+      "harness_worktree_dirty": false,
+      "relevant_files_found": 9,
+      "relevant_files": 11,
+      "line_anchors_found": 16,
+      "line_anchors": 38,
+      "source_tokens": 3960,
+      "total_json_tokens": 6561,
+      "dead_end_fragments": 17,
+      "dead_end_source_tokens": 1662,
+      "second_response_source_tokens": 3238,
+      "repeat_total_json_tokens": 5749,
+      "two_turn_context_json_tokens": 13213
+    },
+    "passed": true,
+    "historical_17_of_38_floor_met": false
+  },
+  "linux_validation": {
+    "commands_passed": [
+      "cargo fmt --all -- --check",
+      "cargo check --all-targets --all-features",
+      "cargo clippy --all-targets --all-features -- -D warnings",
+      "cargo test --all-targets --all-features",
+      "cargo doc --no-deps",
+      "rustup run 1.95.0 cargo check --all-targets --all-features",
+      "rustup run 1.95.0 cargo test --all-targets --all-features",
+      "cargo run --release --example representative_benchmark -- --manifest benchmarks/validation.json --repos-root target/validation-repos --output target/phase2-consumed-validation-bounded.json",
+      "swe_bench_multilingual_gate predict",
+      "swe_bench_multilingual_gate decide",
+      "git diff --check"
+    ],
+    "git_tracked_preparation_files": 0
+  },
+  "limitations": [
+    "This is development evidence, not a blind product holdout.",
+    "The v2 labels are now consumed and must not be reused as Gate B.",
+    "Java, C++, Go, TypeScript, and exact-identifier conflicts remain.",
+    "The candidate increases raw complete and source tokens versus baseline, although cost per relevant returned line improves.",
+    "Local validation is Linux-only by current task policy; native macOS and Windows remain upstream CI merge requirements after an authorized push.",
+    "Gate B has not been prepared or executed, and no push or pull request is allowed from this evidence alone."
+  ]
+}

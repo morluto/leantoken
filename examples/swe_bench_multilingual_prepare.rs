@@ -25,6 +25,9 @@ struct Args {
     /// Stable selection seed committed before candidate evaluation.
     #[arg(long, default_value = "leantoken-sbml-development-v1")]
     seed: String,
+    /// Public task JSONL to exclude; repeat to create disjoint dataset partitions.
+    #[arg(long = "exclude-tasks")]
+    excluded_task_manifests: Vec<PathBuf>,
     /// Exact 40-character Git revision used to build this harness.
     #[arg(long)]
     harness_revision: String,
@@ -77,6 +80,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         source_revision: &args.source_revision,
         source_url: &args.source_url,
         seed: &args.seed,
+        excluded_task_manifests: &args.excluded_task_manifests,
         harness_revision: &args.harness_revision,
         harness_binary: &harness_binary,
         languages,

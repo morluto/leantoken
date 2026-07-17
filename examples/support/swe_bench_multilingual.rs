@@ -5,7 +5,7 @@ use std::{
     error::Error,
     fs::{self, OpenOptions},
     io::Write,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use leantoken::tokens::Tokenizer;
@@ -22,7 +22,9 @@ use patch::{
 };
 use selection::{query_contains_exact_identifier, select_candidates, selection_key};
 
-const SCHEMA_VERSION: u32 = 1;
+const TASK_SCHEMA_VERSION: u32 = 1;
+const PREPARATION_SCHEMA_VERSION: u32 = 1;
+const PREPARATION_EXCLUSIONS_SCHEMA_VERSION: u32 = 2;
 const DATASET_KIND: &str = "swe_bench_multilingual_development";
 const DATASET_NAME: &str = "SWE-bench/SWE-bench_Multilingual";
 const DATASET_LICENSE: &str = "MIT";
@@ -101,6 +103,7 @@ pub(crate) struct PrepareConfig<'a> {
     pub(crate) source_revision: &'a str,
     pub(crate) source_url: &'a str,
     pub(crate) seed: &'a str,
+    pub(crate) excluded_task_manifests: &'a [PathBuf],
     pub(crate) harness_revision: &'a str,
     pub(crate) harness_binary: &'a Path,
     pub(crate) languages: BTreeSet<Language>,
@@ -249,6 +252,41 @@ struct SelectionReceipt {
     exact_identifier_tasks: usize,
     non_exact_tasks: usize,
     skipped: BTreeMap<String, usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exclusions: Option<ExclusionReceipt>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    availability_after_exclusions: Option<CandidateAvailabilityReceipt>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct ExclusionReceipt {
+    excluded_tasks: usize,
+    artifacts: Vec<ExclusionArtifactReceipt>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct ExclusionArtifactReceipt {
+    bytes: usize,
+    blake3: String,
+    tasks: usize,
+    dataset_kinds: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct CandidateAvailabilityReceipt {
+    language_tasks: BTreeMap<Language, usize>,
+    language_exact_identifier_tasks: BTreeMap<Language, usize>,
+    language_non_exact_tasks: BTreeMap<Language, usize>,
+    exact_identifier_tasks: usize,
+    non_exact_tasks: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExcludedTaskRecord {
+    schema_version: u32,
+    dataset_kind: String,
+    task_id: String,
+    source_record_blake3: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -339,6 +377,12 @@ pub(crate) fn prepare(config: &PrepareConfig<'_>) -> Result<PreparationReceipt, 
     let records = parse_source_records(&dataset_bytes)?;
     let input_record_count = records.len();
     let canonical_records_blake3 = canonical_records_blake3(&records)?;
+    let source_record_identities = records
+        .iter()
+        .map(|(record, hash)| (record.instance_id.clone(), hash.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let (excluded_task_ids, exclusion_receipt) =
+        load_excluded_task_manifests(config.excluded_task_manifests, &source_record_identities)?;
     let mut seen_ids = HashSet::new();
     let mut candidates = Vec::new();
     let mut skipped = BTreeMap::new();
@@ -346,6 +390,10 @@ pub(crate) fn prepare(config: &PrepareConfig<'_>) -> Result<PreparationReceipt, 
     for (record, source_record_blake3) in records {
         if !seen_ids.insert(record.instance_id.clone()) {
             return Err(format!("duplicate dataset instance ID {}", record.instance_id).into());
+        }
+        if excluded_task_ids.contains(&record.instance_id) {
+            *skipped.entry("excluded_by_manifest".into()).or_insert(0) += 1;
+            continue;
         }
         match build_candidate(&record, &source_record_blake3, config)? {
             CandidateOutcome::Selected(candidate) => candidates.push(*candidate),
@@ -359,6 +407,9 @@ pub(crate) fn prepare(config: &PrepareConfig<'_>) -> Result<PreparationReceipt, 
     if eligible_candidate_count + skipped.values().sum::<usize>() != input_record_count {
         return Err("candidate accounting does not reconcile to the input dataset".into());
     }
+    let availability_after_exclusions = exclusion_receipt
+        .as_ref()
+        .map(|_| candidate_availability(&candidates));
     let selected = select_candidates(candidates, config)?;
     let tasks = selected
         .iter()
@@ -383,6 +434,8 @@ pub(crate) fn prepare(config: &PrepareConfig<'_>) -> Result<PreparationReceipt, 
         &source_artifact_bytes,
         &harness_binary_bytes,
         &canonical_records_blake3,
+        exclusion_receipt,
+        availability_after_exclusions,
         input_record_count,
         eligible_candidate_count,
         &selected,
@@ -477,6 +530,109 @@ fn canonical_records_blake3(records: &[(SweBenchRecord, String)]) -> Result<Stri
     Ok(blake3_hex(&canonical))
 }
 
+fn load_excluded_task_manifests(
+    paths: &[PathBuf],
+    source_record_identities: &BTreeMap<String, String>,
+) -> Result<(HashSet<String>, Option<ExclusionReceipt>), DynError> {
+    if paths.is_empty() {
+        return Ok((HashSet::new(), None));
+    }
+
+    let mut excluded_task_ids = HashSet::new();
+    let mut artifacts = Vec::with_capacity(paths.len());
+    for path in paths {
+        let bytes = fs::read(path)?;
+        let text = std::str::from_utf8(&bytes)?;
+        let mut tasks = 0usize;
+        let mut dataset_kinds = BTreeMap::new();
+        for (index, line) in text.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let record: ExcludedTaskRecord = serde_json::from_str(line).map_err(|error| {
+                format!(
+                    "invalid excluded task JSONL {} line {}: {error}",
+                    path.display(),
+                    index + 1
+                )
+            })?;
+            if record.schema_version != TASK_SCHEMA_VERSION {
+                return Err(format!(
+                    "excluded task {} uses unsupported schema version {}",
+                    record.task_id, record.schema_version
+                )
+                .into());
+            }
+            if record.dataset_kind.trim().is_empty() || record.task_id.trim().is_empty() {
+                return Err("excluded tasks require non-empty dataset kind and task ID".into());
+            }
+            validate_hex_hash(
+                &record.source_record_blake3,
+                "excluded source record BLAKE3",
+            )?;
+            let expected_hash = source_record_identities
+                .get(&record.task_id)
+                .ok_or_else(|| {
+                    format!("excluded task {} is absent from the source", record.task_id)
+                })?;
+            if expected_hash != &record.source_record_blake3 {
+                return Err(format!(
+                    "excluded task {} does not match the pinned source record",
+                    record.task_id
+                )
+                .into());
+            }
+            if !excluded_task_ids.insert(record.task_id) {
+                return Err("excluded task manifests contain a duplicate task ID".into());
+            }
+            *dataset_kinds.entry(record.dataset_kind).or_insert(0) += 1;
+            tasks += 1;
+        }
+        if tasks == 0 {
+            return Err(format!("excluded task manifest {} is empty", path.display()).into());
+        }
+        artifacts.push(ExclusionArtifactReceipt {
+            bytes: bytes.len(),
+            blake3: blake3_hex(&bytes),
+            tasks,
+            dataset_kinds,
+        });
+    }
+
+    let excluded_tasks = excluded_task_ids.len();
+    Ok((
+        excluded_task_ids,
+        Some(ExclusionReceipt {
+            excluded_tasks,
+            artifacts,
+        }),
+    ))
+}
+
+fn candidate_availability(candidates: &[Candidate]) -> CandidateAvailabilityReceipt {
+    let mut language_tasks = BTreeMap::new();
+    let mut language_exact_identifier_tasks = BTreeMap::new();
+    let mut language_non_exact_tasks = BTreeMap::new();
+    let mut exact_identifier_tasks = 0usize;
+    for candidate in candidates {
+        *language_tasks.entry(candidate.language).or_insert(0) += 1;
+        let shape_counts = if candidate.exact_identifier {
+            &mut language_exact_identifier_tasks
+        } else {
+            &mut language_non_exact_tasks
+        };
+        *shape_counts.entry(candidate.language).or_insert(0) += 1;
+        exact_identifier_tasks += usize::from(candidate.exact_identifier);
+    }
+    CandidateAvailabilityReceipt {
+        language_tasks,
+        language_exact_identifier_tasks,
+        language_non_exact_tasks,
+        exact_identifier_tasks,
+        non_exact_tasks: candidates.len() - exact_identifier_tasks,
+    }
+}
+
 fn build_candidate(
     record: &SweBenchRecord,
     source_record_blake3: &str,
@@ -530,7 +686,7 @@ fn build_candidate(
     };
     let source_record_blake3 = source_record_blake3.to_owned();
     let task = DevelopmentTask {
-        schema_version: SCHEMA_VERSION,
+        schema_version: TASK_SCHEMA_VERSION,
         dataset_kind: DATASET_KIND.into(),
         task_id: record.instance_id.clone(),
         repository: RepositorySpec {
@@ -554,7 +710,7 @@ fn build_candidate(
         source_record_blake3: source_record_blake3.clone(),
     };
     let label = SealedLabel {
-        schema_version: SCHEMA_VERSION,
+        schema_version: TASK_SCHEMA_VERSION,
         task_id: record.instance_id.clone(),
         source_record_blake3,
         label_method: "base_diff_removed_or_insertion_context_v1".into(),
@@ -656,6 +812,8 @@ fn build_receipt(
     source_artifact_bytes: &[u8],
     harness_binary_bytes: &[u8],
     canonical_records_blake3: &str,
+    exclusion_receipt: Option<ExclusionReceipt>,
+    availability_after_exclusions: Option<CandidateAvailabilityReceipt>,
     input_record_count: usize,
     eligible_candidate_count: usize,
     selected: &[Candidate],
@@ -718,9 +876,19 @@ fn build_receipt(
         .map(str::to_owned)
         .collect::<Vec<_>>();
     let audited_revisions = licenses.as_deref().unwrap_or_default().len();
+    let receipt_schema_version = if exclusion_receipt.is_some() {
+        PREPARATION_EXCLUSIONS_SCHEMA_VERSION
+    } else {
+        PREPARATION_SCHEMA_VERSION
+    };
+    let selection_algorithm = if exclusion_receipt.is_some() {
+        "blake3_seeded_language_and_exact_stratified_v2_exclusions"
+    } else {
+        "blake3_seeded_language_and_exact_stratified_v1"
+    };
 
     Ok(PreparationReceipt {
-        schema_version: SCHEMA_VERSION,
+        schema_version: receipt_schema_version,
         dataset_kind: DATASET_KIND.into(),
         harness: HarnessReceipt {
             revision: config.harness_revision.into(),
@@ -743,7 +911,7 @@ fn build_receipt(
             input_records: input_record_count,
         },
         selection: SelectionReceipt {
-            algorithm: "blake3_seeded_language_and_exact_stratified_v1".into(),
+            algorithm: selection_algorithm.into(),
             seed: config.seed.into(),
             requested_languages: config.languages.iter().copied().collect(),
             tasks_per_language: config.tasks_per_language,
@@ -761,6 +929,8 @@ fn build_receipt(
             exact_identifier_tasks,
             non_exact_tasks: selected.len() - exact_identifier_tasks,
             skipped,
+            exclusions: exclusion_receipt,
+            availability_after_exclusions,
         },
         labels: LabelReceipt {
             method: "base_diff_removed_or_insertion_context_v1".into(),
