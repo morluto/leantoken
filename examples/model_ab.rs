@@ -42,6 +42,9 @@ struct Args {
     /// Root directory for immutable per-run trace, trajectory, usage, and patch artifacts.
     #[arg(long, default_value = "target/model_ab_artifacts")]
     artifacts_dir: PathBuf,
+    /// Verify every frozen identity and task source without invoking the adapter.
+    #[arg(long)]
+    preflight_only: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -321,6 +324,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     let adapter_binary_blake3 = hash_file(&args.adapter)?;
     let arm_definitions =
         prepare_arm_definitions(&manifest.arms, &args.adapter, &adapter_binary_blake3)?;
+    for task in &manifest.tasks {
+        verify_clean_revision(&task.repository, &task.revision)?;
+        verify_success_command_identity(task, manifest.schema_version)?;
+    }
+    if args.preflight_only {
+        let receipt = serde_json::json!({
+            "schema_version": 1,
+            "status": "preflight_passed",
+            "experiment_id": &manifest.experiment_id,
+            "manifest_blake3": &manifest_blake3,
+            "harness_revision": &harness_identity.revision,
+            "harness_binary_blake3": &harness_binary_blake3,
+            "adapter_binary_blake3": &adapter_binary_blake3,
+            "arm_definitions": &arm_definitions,
+            "task_definitions": &manifest.tasks,
+        });
+        println!("{}", serde_json::to_string_pretty(&receipt)?);
+        return Ok(());
+    }
     fs::create_dir_all(&args.artifacts_dir)?;
     let artifacts_root = args.artifacts_dir.canonicalize()?;
 

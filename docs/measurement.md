@@ -178,10 +178,21 @@ Start from `benchmarks/model_ab.example.json`:
 cargo run --release --example model_ab -- \
   --manifest target/model_ab.json \
   --adapter /path/to/provider-adapter \
+  --preflight-only
+
+cargo run --release --example model_ab -- \
+  --manifest target/model_ab.json \
+  --adapter /path/to/provider-adapter \
   --repetitions 5 \
   --artifacts-dir target/model_ab-artifacts \
   --output target/model_ab-report.json
 ```
+
+`--preflight-only` verifies the clean harness, adapter, runtime and task source
+revisions, every executable digest, the arm definitions, and validator identity,
+then prints a binding receipt without creating run artifacts or invoking the
+provider adapter. Run it against the exact final manifest before the first
+formal model call.
 
 The adapter result contract is provider-neutral:
 
