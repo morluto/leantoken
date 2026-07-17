@@ -19,6 +19,7 @@ use statrs::statistics::Statistics;
 use wait_timeout::ChildExt;
 
 const PATCH_FILE: &str = "patch.diff";
+const VALIDATION_RECEIPT_FILE: &str = "validation-receipt.json";
 
 #[derive(Debug, Parser)]
 #[command(about = "Run controlled model-in-the-loop retrieval A/B experiments")]
@@ -62,6 +63,8 @@ struct Task {
     revision: String,
     prompt: String,
     success_command: Vec<String>,
+    #[serde(default)]
+    success_command_executable_blake3: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -132,6 +135,7 @@ struct AdapterRequest<'a> {
     prompt: &'a str,
     success_command: &'a [String],
     artifacts_directory: &'a Path,
+    timeout_seconds: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -231,6 +235,7 @@ struct Report {
     executor_model: String,
     repetitions: usize,
     arm_definitions: BTreeMap<Arm, ArmDefinition>,
+    task_definitions: Vec<Task>,
     schedules: Vec<RunSchedule>,
     arms: BTreeMap<Arm, ArmAggregate>,
     task_arms: BTreeMap<String, BTreeMap<Arm, ArmAggregate>>,
@@ -251,6 +256,7 @@ struct RunArtifacts {
     tool_trace: Option<ArtifactIdentity>,
     trajectory: Option<ArtifactIdentity>,
     provider_usage: Option<ArtifactIdentity>,
+    validation_receipt: Option<ArtifactIdentity>,
     patch: ArtifactIdentity,
     patch_valid: bool,
     tool_call_records: Option<usize>,
@@ -268,6 +274,25 @@ struct ArtifactIdentity {
 struct SourceIdentity {
     revision: String,
     dirty: bool,
+}
+
+struct ValidationContext<'a> {
+    artifacts_directory: &'a Path,
+    experiment_id: &'a str,
+    manifest_blake3: &'a str,
+    task_id: &'a str,
+    repetition: usize,
+    arm: Arm,
+}
+
+#[derive(Debug, Deserialize)]
+struct ValidationReceiptBinding {
+    schema_version: u32,
+    experiment_id: String,
+    manifest_blake3: String,
+    task_id: String,
+    repetition: usize,
+    arm: String,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -296,6 +321,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     for repetition in 1..=args.repetitions {
         for task in &manifest.tasks {
             verify_clean_revision(&task.repository, &task.revision)?;
+            verify_success_command_identity(task, manifest.schema_version)?;
             let arm_order = seeded_arm_order(
                 manifest.random_seed,
                 &task.id,
@@ -342,6 +368,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     prompt: &task.prompt,
                     success_command: &task.success_command,
                     artifacts_directory: &artifacts_directory,
+                    timeout_seconds: manifest.timeout_seconds,
                 };
                 let started = Instant::now();
                 let invocation = invoke_adapter(
@@ -429,20 +456,42 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
                 let agent_reported_success = result.task_success;
                 let validation_started = Instant::now();
+                let validation_context = ValidationContext {
+                    artifacts_directory: &artifacts_directory,
+                    experiment_id: &manifest.experiment_id,
+                    manifest_blake3: &manifest_blake3,
+                    task_id: &task.id,
+                    repetition,
+                    arm,
+                };
+                verify_success_command_identity(task, manifest.schema_version)?;
                 let validation = run_validation(
                     workspace.path(),
                     &task.success_command,
+                    &validation_context,
                     Duration::from_secs(manifest.timeout_seconds),
                 );
                 let validation_duration_ms = validation_started.elapsed().as_millis();
+                artifacts.validation_receipt =
+                    artifact_identity_if_present(&artifacts_directory, VALIDATION_RECEIPT_FILE)?;
+                let receipt_error = if manifest.schema_version >= 3 {
+                    validate_validation_receipt(&artifacts_directory, &validation_context)
+                        .err()
+                        .map(|error| error.to_string())
+                } else {
+                    None
+                };
                 let (status, validation_exit_code, error) = match validation {
-                    Ok(Some(exit_code)) => (RunStatus::Completed, Some(exit_code), None),
                     Ok(None) => (
                         RunStatus::ValidationTimedOut,
                         None,
                         Some("success command timed out".to_owned()),
                     ),
                     Err(error) => (RunStatus::ValidationFailed, None, Some(error.to_string())),
+                    Ok(Some(_)) if receipt_error.is_some() => {
+                        (RunStatus::ValidationFailed, None, receipt_error)
+                    }
+                    Ok(Some(exit_code)) => (RunStatus::Completed, Some(exit_code), None),
                 };
                 result.task_success =
                     matches!(status, RunStatus::Completed) && validation_exit_code == Some(0);
@@ -466,9 +515,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     prepare_arm_definitions(&arm_definitions, &args.adapter, &adapter_binary_blake3)?;
+    for task in &manifest.tasks {
+        verify_success_command_identity(task, manifest.schema_version)?;
+    }
 
     let report = Report {
-        schema_version: 4,
+        schema_version: 5,
         experiment_id: manifest.experiment_id,
         manifest_blake3,
         random_seed: manifest.random_seed,
@@ -481,6 +533,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         executor_model: manifest.executor_model,
         repetitions: args.repetitions,
         arm_definitions,
+        task_definitions: manifest.tasks,
         schedules,
         arms: aggregate(&runs),
         task_arms: aggregate_by_task(&runs),
@@ -567,7 +620,7 @@ impl Drop for IsolatedWorkspace {
 }
 
 fn validate_manifest(manifest: &Manifest) -> Result<(), Box<dyn Error>> {
-    if manifest.schema_version != 2 {
+    if !matches!(manifest.schema_version, 2 | 3) {
         return Err("unsupported model A/B manifest schema".into());
     }
     if manifest.experiment_id.trim().is_empty()
@@ -623,9 +676,37 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Box<dyn Error>> {
         }
         validate_revision(&task.revision, "task revision")?;
         validate_artifact_path_segment(&task.id, "task id")?;
+        if manifest.schema_version >= 3 {
+            let digest = task
+                .success_command_executable_blake3
+                .as_deref()
+                .ok_or("schema v3 task is missing success_command_executable_blake3")?;
+            validate_blake3(digest, "success_command_executable_blake3")?;
+            if !Path::new(&task.success_command[0]).is_absolute() {
+                return Err("schema v3 success command executable must be absolute".into());
+            }
+        }
         if !task_ids.insert(task.id.as_str()) {
             return Err(format!("duplicate task id: {}", task.id).into());
         }
+    }
+    Ok(())
+}
+
+fn verify_success_command_identity(
+    task: &Task,
+    manifest_schema_version: u32,
+) -> Result<(), Box<dyn Error>> {
+    if manifest_schema_version < 3 {
+        return Ok(());
+    }
+    let executable = Path::new(&task.success_command[0]).canonicalize()?;
+    let expected = task
+        .success_command_executable_blake3
+        .as_deref()
+        .ok_or("schema v3 task is missing success command identity")?;
+    if hash_file(&executable)? != expected {
+        return Err(format!("task {} success command hash mismatch", task.id).into());
     }
     Ok(())
 }
@@ -827,6 +908,7 @@ fn capture_run_artifacts(
         tool_trace: artifact_identity_if_present(directory, TOOL_TRACE_FILE)?,
         trajectory: artifact_identity_if_present(directory, TRAJECTORY_FILE)?,
         provider_usage: artifact_identity_if_present(directory, PROVIDER_USAGE_FILE)?,
+        validation_receipt: None,
         patch: artifact_identity(&patch_path)?,
         patch_valid: diff_check.status.success() && reverse_apply_valid,
         tool_call_records: None,
@@ -873,6 +955,12 @@ fn validate_run_artifacts(
     result: &AdapterResult,
     artifacts: &mut RunArtifacts,
 ) -> Result<(), Box<dyn Error>> {
+    if directory.join(VALIDATION_RECEIPT_FILE).exists() {
+        return Err(format!(
+            "adapter wrote reserved artifact {VALIDATION_RECEIPT_FILE} before validation"
+        )
+        .into());
+    }
     if result.schema_version != 3 {
         return Err("unsupported model A/B adapter result schema".into());
     }
@@ -1129,12 +1217,28 @@ impl AdapterFailure {
 fn run_validation(
     repository: &Path,
     command: &[String],
+    context: &ValidationContext<'_>,
     timeout: Duration,
 ) -> Result<Option<i32>, Box<dyn Error>> {
     let (program, args) = command.split_first().ok_or("success command is empty")?;
     let mut child = Command::new(program)
         .args(args)
         .current_dir(repository)
+        .env(
+            "LEANTOKEN_MODEL_AB_ARTIFACTS_DIRECTORY",
+            context.artifacts_directory,
+        )
+        .env("LEANTOKEN_MODEL_AB_EXPERIMENT_ID", context.experiment_id)
+        .env(
+            "LEANTOKEN_MODEL_AB_MANIFEST_BLAKE3",
+            context.manifest_blake3,
+        )
+        .env("LEANTOKEN_MODEL_AB_TASK_ID", context.task_id)
+        .env(
+            "LEANTOKEN_MODEL_AB_REPETITION",
+            context.repetition.to_string(),
+        )
+        .env("LEANTOKEN_MODEL_AB_ARM", context.arm.as_str())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1145,6 +1249,27 @@ fn run_validation(
     child.kill()?;
     let _ = child.wait();
     Ok(None)
+}
+
+fn validate_validation_receipt(
+    directory: &Path,
+    context: &ValidationContext<'_>,
+) -> Result<(), Box<dyn Error>> {
+    let path = directory.join(VALIDATION_RECEIPT_FILE);
+    let receipt: ValidationReceiptBinding =
+        serde_json::from_slice(&fs::read(&path).map_err(|error| {
+            format!("success command did not persist readable {VALIDATION_RECEIPT_FILE}: {error}")
+        })?)?;
+    if receipt.schema_version != 1
+        || receipt.experiment_id != context.experiment_id
+        || receipt.manifest_blake3 != context.manifest_blake3
+        || receipt.task_id != context.task_id
+        || receipt.repetition != context.repetition
+        || receipt.arm != context.arm.as_str()
+    {
+        return Err("validation receipt run binding mismatch".into());
+    }
+    Ok(())
 }
 
 fn verify_revision(repository: &Path, revision: &str) -> Result<(), Box<dyn Error>> {
@@ -1359,6 +1484,7 @@ mod tests {
                 tool_trace: None,
                 trajectory: None,
                 provider_usage: None,
+                validation_receipt: None,
                 patch: ArtifactIdentity {
                     path: PathBuf::from("patch.diff"),
                     bytes: 0,
@@ -1428,6 +1554,38 @@ mod tests {
                 .expect_err("invalid binary identity")
                 .to_string()
                 .contains("runtime_binary_blake3")
+        );
+
+        let mut manifest = valid_manifest();
+        manifest.schema_version = 3;
+        assert!(
+            validate_manifest(&manifest)
+                .expect_err("schema v3 must bind the validator executable")
+                .to_string()
+                .contains("success_command_executable_blake3")
+        );
+    }
+
+    #[test]
+    fn schema_v3_success_command_identity_is_verified() {
+        let directory = tempfile::tempdir().expect("validator directory");
+        let validator = directory.path().join("validator");
+        fs::write(&validator, b"frozen validator").expect("validator fixture");
+        let digest = hash_file(&validator).expect("validator hash");
+        let mut manifest = valid_manifest();
+        manifest.schema_version = 3;
+        manifest.tasks[0].success_command = vec![validator.to_string_lossy().into_owned()];
+        manifest.tasks[0].success_command_executable_blake3 = Some(digest);
+
+        validate_manifest(&manifest).expect("valid schema v3 manifest");
+        verify_success_command_identity(&manifest.tasks[0], manifest.schema_version)
+            .expect("matching validator identity");
+        fs::write(&validator, b"changed validator").expect("mutate validator");
+        assert!(
+            verify_success_command_identity(&manifest.tasks[0], manifest.schema_version)
+                .expect_err("changed validator")
+                .to_string()
+                .contains("hash mismatch")
         );
     }
 
@@ -1603,6 +1761,70 @@ mod tests {
     }
 
     #[test]
+    fn adapter_cannot_prewrite_validation_receipt() {
+        let directory = tempfile::tempdir().expect("artifact directory");
+        let binding = artifact_binding();
+        persist_valid_adapter_artifacts(directory.path(), &binding);
+        fs::write(directory.path().join(VALIDATION_RECEIPT_FILE), b"reserved")
+            .expect("reserved receipt");
+        let mut artifacts = artifact_identities(directory.path());
+
+        assert!(
+            validate_run_artifacts(
+                directory.path(),
+                &binding,
+                &artifact_arm_definition(),
+                &valid_adapter_result(),
+                &mut artifacts,
+            )
+            .expect_err("adapter-written validation receipt")
+            .to_string()
+            .contains("reserved artifact")
+        );
+    }
+
+    #[test]
+    fn validation_receipt_must_match_run_binding() {
+        let directory = tempfile::tempdir().expect("artifact directory");
+        let manifest_blake3 = "a".repeat(64);
+        let context = ValidationContext {
+            artifacts_directory: directory.path(),
+            experiment_id: "experiment",
+            manifest_blake3: &manifest_blake3,
+            task_id: "task",
+            repetition: 2,
+            arm: Arm::LeanTokenAdaptive,
+        };
+        let mut receipt = serde_json::json!({
+            "schema_version": 1,
+            "experiment_id": context.experiment_id,
+            "manifest_blake3": context.manifest_blake3,
+            "task_id": context.task_id,
+            "repetition": context.repetition,
+            "arm": context.arm.as_str()
+        });
+        fs::write(
+            directory.path().join(VALIDATION_RECEIPT_FILE),
+            serde_json::to_vec(&receipt).expect("receipt JSON"),
+        )
+        .expect("receipt fixture");
+        validate_validation_receipt(directory.path(), &context).expect("matching receipt");
+
+        receipt["arm"] = serde_json::json!(Arm::Filesystem.as_str());
+        fs::write(
+            directory.path().join(VALIDATION_RECEIPT_FILE),
+            serde_json::to_vec(&receipt).expect("receipt JSON"),
+        )
+        .expect("mismatched receipt fixture");
+        assert!(
+            validate_validation_receipt(directory.path(), &context)
+                .expect_err("mismatched receipt")
+                .to_string()
+                .contains("binding mismatch")
+        );
+    }
+
+    #[test]
     fn patch_capture_includes_tracked_and_untracked_changes() {
         let (repository, revision) = initialized_repository();
         fs::write(repository.path().join("file.txt"), "changed\n").expect("tracked edit");
@@ -1767,6 +1989,7 @@ mod tests {
             tool_trace: artifact_identity_if_present(directory, TOOL_TRACE_FILE).unwrap(),
             trajectory: artifact_identity_if_present(directory, TRAJECTORY_FILE).unwrap(),
             provider_usage: artifact_identity_if_present(directory, PROVIDER_USAGE_FILE).unwrap(),
+            validation_receipt: None,
             patch: artifact_identity(&directory.join(PATCH_FILE)).unwrap(),
             patch_valid: true,
             tool_call_records: None,
@@ -1858,6 +2081,7 @@ mod tests {
                 revision,
                 prompt: "fix the task".to_owned(),
                 success_command: vec!["test-command".to_owned()],
+                success_command_executable_blake3: None,
             }],
         }
     }

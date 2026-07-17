@@ -159,9 +159,10 @@ used to alter ranking, prompts, labels, queries, ranges, or budgets.
 `model_ab` executes the same frozen task across four required arms:
 
 - ordinary filesystem tools;
-- native tools plus a frozen baseline LeanToken runtime;
-- native tools plus a frozen adaptive LeanToken runtime;
-- adaptive LeanToken for discovery with native-tool recovery.
+- a frozen baseline LeanToken runtime as the only repository discovery and
+  source-reading tool;
+- a frozen adaptive LeanToken runtime under the same retrieval restriction;
+- adaptive LeanToken first, followed by native-tool recovery when needed.
 
 A frontier prewalk followed by a cheaper executor is an optional fifth arm. It
 does not replace any required comparison.
@@ -239,7 +240,7 @@ observed repository generation. For prewalk, it must transfer the complete
 exploration trajectory, todo state, evidence receipt, and first edit—not only a
 prose plan.
 
-Manifest schema v2 requires each arm to freeze its clean runtime source
+Manifest schema v3 requires each arm to freeze its clean runtime source
 worktree and full revision, runtime binary BLAKE3, adapter source worktree and
 revision, adapter binary BLAKE3, configuration, tool catalog, and budget. The
 harness verifies every revision and binary digest before the first run and
@@ -256,11 +257,57 @@ cargo run --release --example artifact_blake3 -- \
   /path/to/provider-adapter
 ```
 
-The harness itself must also run from a clean worktree. Report schema v4 records
-its exact revision and executable BLAKE3, the verified arm definitions, random
-seed, schedules, and per-run artifact identities. A hash records artifact
-identity; it does not establish that two builds used equivalent compilers,
-dependencies, or host environments.
+The harness itself must also run from a clean worktree. Report schema v5 records
+its exact revision and executable BLAKE3, the verified arm and task definitions,
+random seed, schedules, per-run artifact identities, and validation-receipt
+identities. A hash records artifact identity; it does not establish that two
+builds used equivalent compilers, dependencies, or host environments.
+
+Schema v3 tasks also require `success_command_executable_blake3` and an absolute
+success-command executable. The harness verifies that digest before every run
+and before report publication. It supplies the run binding and artifact path in
+`LEANTOKEN_MODEL_AB_*` environment variables. The validator must write
+`validation-receipt.json`; the harness rejects a receipt written early by the
+model adapter, verifies its experiment, manifest, task, repetition, and arm
+binding, and records the post-validation receipt identity. This binds the
+validator executable, but task-specific arguments and external environments
+must still be frozen in the manifest and validator receipt. The success-command
+executable identity is checked immediately before every arm's validation and
+again before report publication.
+
+`model_ab_codex_adapter` is the concrete Codex CLI adapter. It verifies the
+native Codex executable and LeanToken runtime hashes, uses an ephemeral ignored
+user configuration, disables web search, fixes reasoning effort and service
+tier, and configures only the selected arm's frozen LeanToken MCP server. It
+parses official `codex exec --json` events into immutable tool, trajectory, and
+provider-usage artifacts. Codex exposes total input, cached input, output, and
+reasoning tokens, but not cache-creation input or provider cost; those fields
+remain `null`. LeanToken structured results retain exact range identities.
+Native shell output has exact local source-token counts but does not expose
+reliable repository range identities, so native reread and dead-end metrics are
+lower bounds.
+
+The adapter also enforces the retrieval arm from the completed tool trajectory.
+Baseline and adaptive-only runs must call LeanToken before any substantive
+command or edit and reject native repository listing, search, and source-read
+commands. They must receive at least one successful, nonempty LeanToken evidence
+result. The recovery arm has the same LeanToken-first requirement but permits
+native retrieval afterward, including recovery from an empty or failed initial
+call. Git status/revision preflight is allowed before LeanToken, and build,
+test, lint, and patch-verification commands remain allowed afterward. The
+adapter explicitly approves the frozen local MCP server's tools because
+noninteractive `codex exec` otherwise cancels MCP approval prompts under a
+workspace-write sandbox. A prompt-only distinction is not sufficient evidence
+for an arm. Its `task_success` diagnostic is conservative: at least one edit
+must complete and no recorded tool call may fail. The official task validator
+still determines report success.
+
+`swe_bench_validator` captures the complete Git patch, runs the pinned official
+SWE-bench Docker harness for one instance, and preserves aggregate, instance,
+test-output, stdout, stderr, and validation-receipt artifacts. Its receipt binds
+the dataset, official harness revision, Python and `uv` executables, frozen
+Python package set, Docker image digest, prediction, and official report. A
+gold-patch self-test must resolve before model-generated patches are evaluated.
 
 One run per arm is plumbing evidence, not a pass-rate comparison. Freeze exact
 model versions and report repeated runs and variance. Each arm aggregate reports

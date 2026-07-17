@@ -411,11 +411,12 @@ Negative results belong in the report. In particular, small relevant files may b
 
 Model task success and prewalk handoffs use the isolated external-adapter
 harness documented in [`../docs/measurement.md`](../docs/measurement.md).
-Its schema-v2 manifest freezes seeded arm order, source revisions, artifact
+Its schema-v3 manifest freezes seeded arm order, source revisions, artifact
 hashes, configuration, tool catalogs, and budgets. Retrieval fixtures must not
 be presented as model pass-rate evidence. Adapter schema v3 also binds each run
 to an immutable tool trace, trajectory, raw provider-usage receipt, and
-harness-captured Git patch; report schema v4 records their BLAKE3 identities.
+harness-captured Git patch; report schema v5 records their BLAKE3 identities and
+the frozen task definitions plus post-validation receipts.
 
 ## Indexing and file-read profile
 
