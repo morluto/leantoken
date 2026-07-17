@@ -41,12 +41,21 @@ dist generate --check
 dist plan
 ```
 
-Test the package generator and a Linux x64 installation with lifecycle scripts
-disabled:
+Test the package generator, including its complete binary layout:
 
 ```bash
 node --test npm/npm-packaging.test.mjs
 ```
+
+Test a host-native npm installation with lifecycle scripts disabled, including
+the npm command shim, JavaScript launcher, executable selection, and argument
+forwarding:
+
+```bash
+node --test npm/npm-install-e2e.mjs
+```
+
+CI runs the host-native installation test on Linux, macOS, and Windows.
 
 Version tags such as `v0.1.0` trigger `.github/workflows/release.yml`. Keep the
 Cargo package version, tag, GitHub release, and npm package version identical.
