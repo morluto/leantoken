@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 import { PLATFORMS } from "../scripts/build-npm-packages.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const NPM = process.platform === "win32" ? "npm.cmd" : "npm";
 
 function run(program, args, options = {}) {
   const result = spawnSync(program, args, {
@@ -23,6 +22,13 @@ function run(program, args, options = {}) {
     `${program} ${args.join(" ")} failed:\n${result.stderr || result.stdout}`,
   );
   return result;
+}
+
+function runNpm(args, options = {}) {
+  if (process.platform === "win32") {
+    return run(process.env.ComSpec ?? "cmd.exe", ["/d", "/c", "npm.cmd", ...args], options);
+  }
+  return run("npm", args, options);
 }
 
 test("installs and runs the host-native npm package without lifecycle scripts", async () => {
@@ -73,7 +79,7 @@ test("installs and runs the host-native npm package without lifecycle scripts", 
       })}\n`,
     );
 
-    run(NPM, ["pack", "--silent", "--pack-destination", outputDir, packageDir], { env });
+    runNpm(["pack", "--silent", "--pack-destination", outputDir, packageDir], { env });
     const tarball = join(outputDir, `leantoken-${version}.tgz`);
     await writeFile(
       join(installDir, "package.json"),
@@ -83,15 +89,13 @@ test("installs and runs the host-native npm package without lifecycle scripts", 
       })}\n`,
     );
 
-    const install = run(
-      NPM,
+    const install = runNpm(
       ["install", "--ignore-scripts", "--offline", "--no-audit", "--no-fund"],
       { cwd: installDir, env },
     );
     assert.doesNotMatch(install.stderr, /allow-scripts|lifecycle script|postinstall/i);
 
-    const execution = run(
-      NPM,
+    const execution = runNpm(
       ["exec", "--offline", "--", "leantoken", "status", "two words", "--flag=value"],
       { cwd: installDir, env },
     );
