@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
@@ -56,7 +56,7 @@ test("reads the npm package version from Cargo.toml", async () => {
   assert.match(await readCargoVersion(), /^\d+\.\d+\.\d+/);
 });
 
-test("builds script-free platform packages and launcher", async () => {
+test("builds one script-free package containing every native binary", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "leantoken-npm-test-"));
   const artifacts = join(workspace, "artifacts");
   const output = join(workspace, "packages");
@@ -68,35 +68,24 @@ test("builds script-free platform packages and launcher", async () => {
     await buildNpmPackages({ artifactsDir: artifacts, outputDir: output, version });
 
     const tarballs = (await readdir(output)).sort();
-    assert.equal(tarballs.length, PLATFORMS.length + 1);
-    assert.ok(tarballs.includes(`leantoken-${version}.tgz`));
+    assert.deepEqual(tarballs, [`leantoken-${version}.tgz`]);
 
     const rootTarball = join(output, `leantoken-${version}.tgz`);
     const root = await unpackPackage(rootTarball, workspace);
     const rootPackage = JSON.parse(await readFile(join(root, "package", "package.json")));
     assert.equal(rootPackage.scripts, undefined);
-    assert.deepEqual(
-      rootPackage.optionalDependencies,
-      Object.fromEntries(PLATFORMS.map(({ packageName }) => [packageName, version])),
-    );
+    assert.equal(rootPackage.optionalDependencies, undefined);
 
     for (const platform of PLATFORMS) {
-      const unpacked = await unpackPackage(
-        join(output, `${platform.packageName}-${version}.tgz`),
-        workspace,
+      const binary = await stat(
+        join(root, "package", "bin", "native", platform.target, platform.binary),
       );
-      const packageJson = JSON.parse(
-        await readFile(join(unpacked, "package", "package.json")),
-      );
-      assert.equal(packageJson.scripts, undefined);
-      assert.deepEqual(packageJson.os, [platform.os]);
-      assert.deepEqual(packageJson.cpu, [platform.cpu]);
-      if (platform.libc) assert.deepEqual(packageJson.libc, [platform.libc]);
+      assert.equal(binary.isFile(), true);
+      assert.notEqual(binary.mode & 0o111, 0);
     }
 
     if (process.platform === "linux" && process.arch === "x64") {
       const install = join(workspace, "install");
-      const nativePackage = "leantoken-linux-x64";
       await mkdir(install);
       await writeFile(
         join(install, "package.json"),
@@ -104,7 +93,6 @@ test("builds script-free platform packages and launcher", async () => {
           private: true,
           dependencies: {
             leantoken: `file:${rootTarball}`,
-            [nativePackage]: `file:${join(output, `${nativePackage}-${version}.tgz`)}`,
           },
         })}\n`,
       );
@@ -113,7 +101,6 @@ test("builds script-free platform packages and launcher", async () => {
         [
           "install",
           "--ignore-scripts",
-          "--omit=optional",
           "--offline",
           "--no-audit",
           "--no-fund",
@@ -124,6 +111,24 @@ test("builds script-free platform packages and launcher", async () => {
         run(join(install, "node_modules", ".bin", "leantoken"), ["status", "check"]),
         "fake-leantoken:status check",
       );
+
+      const launcher = join(
+        install,
+        "node_modules",
+        "leantoken",
+        "bin",
+        "leantoken.cjs",
+      );
+      const musl = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          `process.report.getReport = () => ({ header: {} }); require(${JSON.stringify(launcher)});`,
+        ],
+        { encoding: "utf8" },
+      );
+      assert.equal(musl.status, 1);
+      assert.match(musl.stderr, /does not provide an npm binary for linux-x64-musl/);
     }
   } finally {
     await rm(workspace, { recursive: true, force: true });

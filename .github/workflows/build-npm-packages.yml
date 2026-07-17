@@ -1,4 +1,4 @@
-name: Build npm packages
+name: Build npm package
 
 on:
   workflow_call:
@@ -26,13 +26,13 @@ jobs:
           path: target/distrib
           merge-multiple: true
 
-      - name: Build script-free npm packages
+      - name: Build script-free npm package
         run: |
           node scripts/build-npm-packages.mjs \
             --artifacts target/distrib \
             --out target/npm-packages
 
-      - name: Upload npm packages
+      - name: Upload npm package
         uses: actions/upload-artifact@v7
         with:
           name: artifacts-npm-packages
