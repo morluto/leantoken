@@ -1,3 +1,6 @@
+#[path = "support/model_ab_artifacts.rs"]
+mod model_ab_artifacts;
+
 use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::fs::{self, File};
@@ -7,9 +10,15 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
+use model_ab_artifacts::{
+    ARTIFACT_SCHEMA_V1, PROVIDER_USAGE_FILE, ProviderUsage, ProviderUsageReceipt, RunBinding,
+    TOOL_TRACE_FILE, TRAJECTORY_FILE, ToolOutcome, ToolTrace, Trajectory,
+};
 use serde::{Deserialize, Serialize};
 use statrs::statistics::Statistics;
 use wait_timeout::ChildExt;
+
+const PATCH_FILE: &str = "patch.diff";
 
 #[derive(Debug, Parser)]
 #[command(about = "Run controlled model-in-the-loop retrieval A/B experiments")]
@@ -29,6 +38,9 @@ struct Args {
     /// JSON report path.
     #[arg(long, default_value = "target/model_ab_report.json")]
     output: PathBuf,
+    /// Root directory for immutable per-run trace, trajectory, usage, and patch artifacts.
+    #[arg(long, default_value = "target/model_ab_artifacts")]
+    artifacts_dir: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -119,25 +131,28 @@ struct AdapterRequest<'a> {
     task_id: &'a str,
     prompt: &'a str,
     success_command: &'a [String],
+    artifacts_directory: &'a Path,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct AdapterResult {
+    schema_version: u32,
     task_success: bool,
-    total_input_tokens: u64,
+    total_input_tokens: Option<u64>,
     #[serde(default)]
-    total_output_tokens: u64,
+    total_output_tokens: Option<u64>,
     #[serde(default)]
     provider_reported_cost_usd: Option<f64>,
     tool_calls: usize,
     rereads: usize,
     #[serde(default)]
     reread_tokens: u64,
+    failed_tool_calls: usize,
     failed_searches: usize,
     #[serde(default)]
     dead_end_reads: usize,
     #[serde(default)]
-    provider_usage: serde_json::Value,
+    provider_usage: ProviderUsage,
     #[serde(default)]
     evidence_receipt: Option<serde_json::Value>,
     #[serde(default)]
@@ -158,6 +173,7 @@ struct RunReport {
     validation_exit_code: Option<i32>,
     agent_reported_success: Option<bool>,
     error: Option<String>,
+    artifacts: RunArtifacts,
     result: Option<AdapterResult>,
 }
 
@@ -178,13 +194,14 @@ struct ArmAggregate {
     run_errors: usize,
     successes: usize,
     success_rate: f64,
-    total_input_tokens: u64,
-    total_output_tokens: u64,
+    total_input_tokens: Option<u64>,
+    total_output_tokens: Option<u64>,
     provider_reported_cost_usd: Option<f64>,
     total_duration_ms: u128,
     tool_calls: usize,
     rereads: usize,
     reread_tokens: u64,
+    failed_tool_calls: usize,
     failed_searches: usize,
     dead_end_reads: usize,
     input_tokens: SampleStatistics,
@@ -228,6 +245,26 @@ struct RunSchedule {
     arms: Vec<Arm>,
 }
 
+#[derive(Debug, Serialize)]
+struct RunArtifacts {
+    directory: PathBuf,
+    tool_trace: Option<ArtifactIdentity>,
+    trajectory: Option<ArtifactIdentity>,
+    provider_usage: Option<ArtifactIdentity>,
+    patch: ArtifactIdentity,
+    patch_valid: bool,
+    tool_call_records: Option<usize>,
+    range_identities: Option<usize>,
+    trajectory_events: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+struct ArtifactIdentity {
+    path: PathBuf,
+    bytes: u64,
+    blake3: String,
+}
+
 struct SourceIdentity {
     revision: String,
     dirty: bool,
@@ -251,6 +288,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let adapter_binary_blake3 = hash_file(&args.adapter)?;
     let arm_definitions =
         prepare_arm_definitions(&manifest.arms, &args.adapter, &adapter_binary_blake3)?;
+    fs::create_dir_all(&args.artifacts_dir)?;
+    let artifacts_root = args.artifacts_dir.canonicalize()?;
 
     let mut runs = Vec::new();
     let mut schedules = Vec::new();
@@ -271,8 +310,22 @@ fn main() -> Result<(), Box<dyn Error>> {
             for (arm_order_index, arm) in arm_order.into_iter().enumerate() {
                 let arm_definition = arm_definitions.get(&arm).expect("scheduled arm definition");
                 let workspace = IsolatedWorkspace::create(&task.repository, &task.revision)?;
+                let binding = RunBinding {
+                    experiment_id: manifest.experiment_id.clone(),
+                    manifest_blake3: manifest_blake3.clone(),
+                    task_id: task.id.clone(),
+                    repetition,
+                    arm: arm.as_str().to_owned(),
+                };
+                let artifacts_directory = create_run_artifact_directory(
+                    &artifacts_root,
+                    &manifest.experiment_id,
+                    &task.id,
+                    repetition,
+                    arm,
+                )?;
                 let request = AdapterRequest {
-                    schema_version: 2,
+                    schema_version: 3,
                     experiment_id: &manifest.experiment_id,
                     manifest_blake3: &manifest_blake3,
                     random_seed: manifest.random_seed,
@@ -288,6 +341,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     task_id: &task.id,
                     prompt: &task.prompt,
                     success_command: &task.success_command,
+                    artifacts_directory: &artifacts_directory,
                 };
                 let started = Instant::now();
                 let invocation = invoke_adapter(
@@ -296,6 +350,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     &request,
                     Duration::from_secs(manifest.timeout_seconds),
                 );
+                let mut artifacts =
+                    capture_run_artifacts(workspace.path(), &task.revision, &artifacts_directory)?;
                 let mut result = match invocation {
                     Ok(result) => result,
                     Err(failure) => {
@@ -316,11 +372,38 @@ fn main() -> Result<(), Box<dyn Error>> {
                             validation_exit_code: None,
                             agent_reported_success: None,
                             error: Some(failure.message),
+                            artifacts,
                             result: None,
                         });
                         continue;
                     }
                 };
+                if let Err(error) = validate_run_artifacts(
+                    &artifacts_directory,
+                    &binding,
+                    arm_definition,
+                    &result,
+                    &mut artifacts,
+                ) {
+                    runs.push(RunReport {
+                        task_id: task.id.clone(),
+                        repetition,
+                        arm_order_index,
+                        arm,
+                        primary_model: manifest.primary_model.clone(),
+                        executor_model: (arm == Arm::Prewalk)
+                            .then(|| manifest.executor_model.clone()),
+                        duration_ms: started.elapsed().as_millis(),
+                        status: RunStatus::AdapterFailed,
+                        validation_duration_ms: None,
+                        validation_exit_code: None,
+                        agent_reported_success: Some(result.task_success),
+                        error: Some(format!("adapter artifact validation failed: {error}")),
+                        artifacts,
+                        result: Some(result),
+                    });
+                    continue;
+                }
                 if result.tool_calls > arm_definition.budget.tool_call_limit {
                     runs.push(RunReport {
                         task_id: task.id.clone(),
@@ -339,6 +422,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             "adapter reported {} tool calls, exceeding the limit of {}",
                             result.tool_calls, arm_definition.budget.tool_call_limit
                         )),
+                        artifacts,
                         result: Some(result),
                     });
                     continue;
@@ -375,6 +459,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     validation_exit_code,
                     agent_reported_success: Some(agent_reported_success),
                     error,
+                    artifacts,
                     result: Some(result),
                 });
             }
@@ -383,7 +468,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     prepare_arm_definitions(&arm_definitions, &args.adapter, &adapter_binary_blake3)?;
 
     let report = Report {
-        schema_version: 3,
+        schema_version: 4,
         experiment_id: manifest.experiment_id,
         manifest_blake3,
         random_seed: manifest.random_seed,
@@ -492,6 +577,7 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Box<dyn Error>> {
     {
         return Err("model A/B manifest has empty or zero required fields".into());
     }
+    validate_artifact_path_segment(&manifest.experiment_id, "experiment_id")?;
     for arm in Arm::REQUIRED {
         if !manifest.arms.contains_key(&arm) {
             return Err(format!(
@@ -536,9 +622,24 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Box<dyn Error>> {
             return Err(format!("task {} is incomplete", task.id).into());
         }
         validate_revision(&task.revision, "task revision")?;
+        validate_artifact_path_segment(&task.id, "task id")?;
         if !task_ids.insert(task.id.as_str()) {
             return Err(format!("duplicate task id: {}", task.id).into());
         }
+    }
+    Ok(())
+}
+
+fn validate_artifact_path_segment(value: &str, field: &str) -> Result<(), Box<dyn Error>> {
+    if matches!(value, "." | "..")
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(format!(
+            "{field} must contain only ASCII letters, digits, dots, underscores, or hyphens"
+        )
+        .into());
     }
     Ok(())
 }
@@ -637,6 +738,312 @@ fn hash_file(path: &Path) -> Result<String, Box<dyn Error>> {
         hasher.update(&buffer[..read]);
     }
     Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn create_run_artifact_directory(
+    root: &Path,
+    experiment_id: &str,
+    task_id: &str,
+    repetition: usize,
+    arm: Arm,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let directory = root
+        .join(experiment_id)
+        .join(task_id)
+        .join(format!("repetition-{repetition}"))
+        .join(arm.as_str());
+    let parent = directory.parent().expect("run artifact parent");
+    fs::create_dir_all(parent)?;
+    fs::create_dir(&directory).map_err(|error| {
+        format!(
+            "could not create immutable run artifact directory {}: {error}",
+            directory.display()
+        )
+    })?;
+    Ok(directory.canonicalize()?)
+}
+
+fn capture_run_artifacts(
+    repository: &Path,
+    revision: &str,
+    directory: &Path,
+) -> Result<RunArtifacts, Box<dyn Error>> {
+    verify_revision(repository, revision)?;
+    let temporary_index = tempfile::tempdir()?;
+    let index_path = temporary_index.path().join("index");
+    let read_tree = git_raw_output_with_index(repository, &["read-tree", "HEAD"], &index_path)?;
+    if !read_tree.status.success() {
+        return Err(format!(
+            "could not initialize temporary patch index: {}",
+            String::from_utf8_lossy(&read_tree.stderr).trim()
+        )
+        .into());
+    }
+    let intent = git_raw_output_with_index(
+        repository,
+        &["add", "--intent-to-add", "--all"],
+        &index_path,
+    )?;
+    if !intent.status.success() {
+        return Err(format!(
+            "could not prepare untracked files for patch capture: {}",
+            String::from_utf8_lossy(&intent.stderr).trim()
+        )
+        .into());
+    }
+    let diff = git_raw_output_with_index(
+        repository,
+        &["diff", "--binary", "--full-index", "HEAD", "--"],
+        &index_path,
+    )?;
+    if !diff.status.success() {
+        return Err(format!(
+            "could not capture run patch: {}",
+            String::from_utf8_lossy(&diff.stderr).trim()
+        )
+        .into());
+    }
+    let patch_path = directory.join(PATCH_FILE);
+    fs::write(&patch_path, &diff.stdout)?;
+    let diff_check =
+        git_raw_output_with_index(repository, &["diff", "--check", "HEAD", "--"], &index_path)?;
+    let reverse_apply_valid = if diff.stdout.is_empty() {
+        true
+    } else {
+        git_raw_output(
+            repository,
+            &[
+                "apply",
+                "--check",
+                "--reverse",
+                patch_path.to_string_lossy().as_ref(),
+            ],
+        )?
+        .status
+        .success()
+    };
+    Ok(RunArtifacts {
+        directory: directory.to_owned(),
+        tool_trace: artifact_identity_if_present(directory, TOOL_TRACE_FILE)?,
+        trajectory: artifact_identity_if_present(directory, TRAJECTORY_FILE)?,
+        provider_usage: artifact_identity_if_present(directory, PROVIDER_USAGE_FILE)?,
+        patch: artifact_identity(&patch_path)?,
+        patch_valid: diff_check.status.success() && reverse_apply_valid,
+        tool_call_records: None,
+        range_identities: None,
+        trajectory_events: None,
+    })
+}
+
+fn artifact_identity_if_present(
+    directory: &Path,
+    name: &str,
+) -> Result<Option<ArtifactIdentity>, Box<dyn Error>> {
+    let path = directory.join(name);
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_file() {
+                return Err(
+                    format!("run artifact {} is not a regular file", path.display()).into(),
+                );
+            }
+            Ok(Some(artifact_identity(&path)?))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn artifact_identity(path: &Path) -> Result<ArtifactIdentity, Box<dyn Error>> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() {
+        return Err(format!("run artifact {} is not a regular file", path.display()).into());
+    }
+    Ok(ArtifactIdentity {
+        path: path.canonicalize()?,
+        bytes: metadata.len(),
+        blake3: hash_file(path)?,
+    })
+}
+
+fn validate_run_artifacts(
+    directory: &Path,
+    binding: &RunBinding,
+    arm: &ArmDefinition,
+    result: &AdapterResult,
+    artifacts: &mut RunArtifacts,
+) -> Result<(), Box<dyn Error>> {
+    if result.schema_version != 3 {
+        return Err("unsupported model A/B adapter result schema".into());
+    }
+    if !artifacts.patch_valid {
+        return Err("captured patch failed Git validation".into());
+    }
+    for (name, artifact) in [
+        (TOOL_TRACE_FILE, artifacts.tool_trace.as_ref()),
+        (TRAJECTORY_FILE, artifacts.trajectory.as_ref()),
+        (PROVIDER_USAGE_FILE, artifacts.provider_usage.as_ref()),
+    ] {
+        if artifact.is_none() {
+            return Err(format!("adapter did not persist required artifact {name}").into());
+        }
+    }
+
+    let trace: ToolTrace = read_artifact_json(directory, TOOL_TRACE_FILE)?;
+    validate_artifact_header(
+        trace.schema_version,
+        &trace.binding,
+        binding,
+        TOOL_TRACE_FILE,
+    )?;
+    let mut call_ids = HashSet::new();
+    let mut result_ids = HashSet::new();
+    let mut rereads = 0usize;
+    let mut reread_tokens = 0u64;
+    let mut failed_tool_calls = 0usize;
+    let mut failed_searches = 0usize;
+    let mut dead_end_reads = 0usize;
+    let mut range_identities = 0usize;
+    for (expected_sequence, call) in trace.calls.iter().enumerate() {
+        if call.sequence != expected_sequence {
+            return Err(format!(
+                "tool trace sequence {} is not contiguous at {expected_sequence}",
+                call.sequence
+            )
+            .into());
+        }
+        if call.tool_name.trim().is_empty() || !arm.tool_catalog.contains(&call.tool_name) {
+            return Err(format!("tool trace names unavailable tool {}", call.tool_name).into());
+        }
+        if call.call_id.trim().is_empty() || !call_ids.insert(call.call_id.as_str()) {
+            return Err("tool trace has an empty or duplicate call_id".into());
+        }
+        if call.result_id.trim().is_empty() || !result_ids.insert(call.result_id.as_str()) {
+            return Err("tool trace has an empty or duplicate result_id".into());
+        }
+        rereads += usize::from(call.reread);
+        if call.reread {
+            reread_tokens = reread_tokens
+                .checked_add(call.result_source_tokens)
+                .ok_or("reread source token total overflow")?;
+        }
+        failed_tool_calls += usize::from(matches!(
+            call.outcome,
+            ToolOutcome::FailedSearch | ToolOutcome::Error
+        ));
+        failed_searches += usize::from(call.outcome == ToolOutcome::FailedSearch);
+        dead_end_reads += usize::from(call.outcome == ToolOutcome::DeadEndRead);
+        for range in &call.ranges {
+            validate_range_identity(range)?;
+            range_identities += 1;
+        }
+    }
+    if trace.calls.len() != result.tool_calls
+        || rereads != result.rereads
+        || reread_tokens != result.reread_tokens
+        || failed_tool_calls != result.failed_tool_calls
+        || failed_searches != result.failed_searches
+        || dead_end_reads != result.dead_end_reads
+    {
+        return Err("adapter summary counters do not match the exact tool trace".into());
+    }
+
+    let trajectory: Trajectory = read_artifact_json(directory, TRAJECTORY_FILE)?;
+    validate_artifact_header(
+        trajectory.schema_version,
+        &trajectory.binding,
+        binding,
+        TRAJECTORY_FILE,
+    )?;
+    let usage: ProviderUsageReceipt = read_artifact_json(directory, PROVIDER_USAGE_FILE)?;
+    validate_artifact_header(
+        usage.schema_version,
+        &usage.binding,
+        binding,
+        PROVIDER_USAGE_FILE,
+    )?;
+    if usage.usage != result.provider_usage {
+        return Err("adapter provider usage does not match its persisted raw receipt".into());
+    }
+    if usage.raw_receipt.is_null() {
+        return Err("persisted provider usage must retain a non-null raw receipt".into());
+    }
+    validate_usage_totals(result)?;
+    artifacts.tool_call_records = Some(trace.calls.len());
+    artifacts.range_identities = Some(range_identities);
+    artifacts.trajectory_events = Some(trajectory.events.len());
+    Ok(())
+}
+
+fn validate_artifact_header(
+    schema_version: u32,
+    actual: &RunBinding,
+    expected: &RunBinding,
+    name: &str,
+) -> Result<(), Box<dyn Error>> {
+    if schema_version != ARTIFACT_SCHEMA_V1 {
+        return Err(format!("unsupported schema version in {name}").into());
+    }
+    if actual != expected {
+        return Err(format!("run binding mismatch in {name}").into());
+    }
+    Ok(())
+}
+
+fn validate_range_identity(
+    range: &model_ab_artifacts::RangeIdentity,
+) -> Result<(), Box<dyn Error>> {
+    let path = Path::new(&range.path);
+    if range.path.is_empty()
+        || range.path.contains('\\')
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        || range.start_line == 0
+        || range.end_line < range.start_line
+    {
+        return Err(format!("invalid tool-result range {}", range.path).into());
+    }
+    validate_blake3(&range.content_hash, "range content_hash")
+}
+
+fn validate_usage_totals(result: &AdapterResult) -> Result<(), Box<dyn Error>> {
+    let usage = &result.provider_usage;
+    if let (Some(uncached), Some(created), Some(read), Some(total)) = (
+        usage.uncached_input_tokens,
+        usage.cache_creation_input_tokens,
+        usage.cache_read_input_tokens,
+        result.total_input_tokens,
+    ) {
+        let categorized = uncached
+            .checked_add(created)
+            .and_then(|value| value.checked_add(read))
+            .ok_or("provider input token total overflow")?;
+        if categorized != total {
+            return Err("provider input categories do not match total_input_tokens".into());
+        }
+    }
+    if let (Some(provider_output), Some(total_output)) =
+        (usage.output_tokens, result.total_output_tokens)
+        && provider_output != total_output
+    {
+        return Err("provider output usage does not match total_output_tokens".into());
+    }
+    if result
+        .provider_reported_cost_usd
+        .is_some_and(|cost| !cost.is_finite() || cost < 0.0)
+    {
+        return Err("provider-reported cost must be finite and non-negative".into());
+    }
+    Ok(())
+}
+
+fn read_artifact_json<T: serde::de::DeserializeOwned>(
+    directory: &Path,
+    name: &str,
+) -> Result<T, Box<dyn Error>> {
+    Ok(serde_json::from_slice(&fs::read(directory.join(name))?)?)
 }
 
 fn invoke_adapter(
@@ -780,12 +1187,7 @@ fn source_identity(repository: &Path) -> Result<SourceIdentity, Box<dyn Error>> 
 }
 
 fn git_output(repository: &Path, args: &[&str]) -> Result<String, Box<dyn Error>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repository)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()?;
+    let output = git_raw_output(repository, args)?;
     if !output.status.success() {
         return Err(format!(
             "git command failed with {}: {}",
@@ -795,6 +1197,32 @@ fn git_output(repository: &Path, args: &[&str]) -> Result<String, Box<dyn Error>
         .into());
     }
     Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+}
+
+fn git_raw_output(
+    repository: &Path,
+    args: &[&str],
+) -> Result<std::process::Output, Box<dyn Error>> {
+    Ok(Command::new("git")
+        .arg("-C")
+        .arg(repository)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()?)
+}
+
+fn git_raw_output_with_index(
+    repository: &Path,
+    args: &[&str],
+    index_path: &Path,
+) -> Result<std::process::Output, Box<dyn Error>> {
+    Ok(Command::new("git")
+        .arg("-C")
+        .arg(repository)
+        .args(args)
+        .env("GIT_INDEX_FILE", index_path)
+        .stdin(Stdio::null())
+        .output()?)
 }
 
 fn aggregate<'a>(runs: impl IntoIterator<Item = &'a RunReport>) -> BTreeMap<Arm, ArmAggregate> {
@@ -807,11 +1235,10 @@ fn aggregate<'a>(runs: impl IntoIterator<Item = &'a RunReport>) -> BTreeMap<Arm,
         if let Some(result) = &run.result {
             item.adapter_completed += 1;
             item.successes += usize::from(result.task_success);
-            item.total_input_tokens += result.total_input_tokens;
-            item.total_output_tokens += result.total_output_tokens;
             item.tool_calls += result.tool_calls;
             item.rereads += result.rereads;
             item.reread_tokens += result.reread_tokens;
+            item.failed_tool_calls += result.failed_tool_calls;
             item.failed_searches += result.failed_searches;
             item.dead_end_reads += result.dead_end_reads;
         }
@@ -839,16 +1266,20 @@ fn aggregate<'a>(runs: impl IntoIterator<Item = &'a RunReport>) -> BTreeMap<Arm,
                     .map(|costs| costs.into_iter().sum())
             })
             .flatten();
+        item.total_input_tokens =
+            complete_sum(results.iter().map(|result| result.total_input_tokens));
+        item.total_output_tokens =
+            complete_sum(results.iter().map(|result| result.total_output_tokens));
         item.input_tokens = sample_statistics(
             results
                 .iter()
-                .map(|result| result.total_input_tokens as f64)
+                .filter_map(|result| result.total_input_tokens.map(|tokens| tokens as f64))
                 .collect(),
         );
         item.output_tokens = sample_statistics(
             results
                 .iter()
-                .map(|result| result.total_output_tokens as f64)
+                .filter_map(|result| result.total_output_tokens.map(|tokens| tokens as f64))
                 .collect(),
         );
         item.duration_ms = sample_statistics(
@@ -859,6 +1290,16 @@ fn aggregate<'a>(runs: impl IntoIterator<Item = &'a RunReport>) -> BTreeMap<Arm,
         );
     }
     aggregates
+}
+
+fn complete_sum(values: impl IntoIterator<Item = Option<u64>>) -> Option<u64> {
+    let mut count = 0usize;
+    let mut total = 0u64;
+    for value in values {
+        total = total.checked_add(value?)?;
+        count += 1;
+    }
+    (count > 0).then_some(total)
 }
 
 fn sample_statistics(samples: Vec<f64>) -> SampleStatistics {
@@ -882,6 +1323,7 @@ fn aggregate_by_task(runs: &[RunReport]) -> BTreeMap<String, BTreeMap<Arm, ArmAg
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model_ab_artifacts::{RangeIdentity, ToolCall};
 
     #[test]
     fn sample_statistics_reports_mean_and_sample_variance() {
@@ -912,6 +1354,21 @@ mod tests {
             validation_exit_code: None,
             agent_reported_success: None,
             error: Some("adapter failed".to_owned()),
+            artifacts: RunArtifacts {
+                directory: PathBuf::from("artifacts"),
+                tool_trace: None,
+                trajectory: None,
+                provider_usage: None,
+                patch: ArtifactIdentity {
+                    path: PathBuf::from("patch.diff"),
+                    bytes: 0,
+                    blake3: "0".repeat(64),
+                },
+                patch_valid: true,
+                tool_call_records: None,
+                range_identities: None,
+                trajectory_events: None,
+            },
             result: None,
         };
 
@@ -1061,6 +1518,269 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn run_artifacts_validate_exact_trace_binding_ranges_and_usage() {
+        let directory = tempfile::tempdir().expect("artifact directory");
+        let binding = artifact_binding();
+        persist_valid_adapter_artifacts(directory.path(), &binding);
+        let mut artifacts = artifact_identities(directory.path());
+
+        validate_run_artifacts(
+            directory.path(),
+            &binding,
+            &artifact_arm_definition(),
+            &valid_adapter_result(),
+            &mut artifacts,
+        )
+        .expect("valid artifact chain");
+
+        assert_eq!(artifacts.tool_call_records, Some(2));
+        assert_eq!(artifacts.range_identities, Some(2));
+        assert_eq!(artifacts.trajectory_events, Some(1));
+    }
+
+    #[test]
+    fn run_artifacts_reject_binding_and_summary_mismatches() {
+        let directory = tempfile::tempdir().expect("artifact directory");
+        let binding = artifact_binding();
+        let mut wrong_binding = binding.clone();
+        wrong_binding.repetition += 1;
+        persist_valid_adapter_artifacts(directory.path(), &wrong_binding);
+        let mut artifacts = artifact_identities(directory.path());
+        assert!(
+            validate_run_artifacts(
+                directory.path(),
+                &binding,
+                &artifact_arm_definition(),
+                &valid_adapter_result(),
+                &mut artifacts,
+            )
+            .expect_err("binding mismatch")
+            .to_string()
+            .contains("run binding mismatch")
+        );
+
+        persist_valid_adapter_artifacts(directory.path(), &binding);
+        let mut result = valid_adapter_result();
+        result.reread_tokens += 1;
+        let mut artifacts = artifact_identities(directory.path());
+        assert!(
+            validate_run_artifacts(
+                directory.path(),
+                &binding,
+                &artifact_arm_definition(),
+                &result,
+                &mut artifacts,
+            )
+            .expect_err("summary mismatch")
+            .to_string()
+            .contains("summary counters")
+        );
+    }
+
+    #[test]
+    fn run_artifacts_reject_missing_required_receipt() {
+        let directory = tempfile::tempdir().expect("artifact directory");
+        let binding = artifact_binding();
+        persist_valid_adapter_artifacts(directory.path(), &binding);
+        fs::remove_file(directory.path().join(PROVIDER_USAGE_FILE)).expect("remove receipt");
+        let mut artifacts = artifact_identities(directory.path());
+
+        assert!(
+            validate_run_artifacts(
+                directory.path(),
+                &binding,
+                &artifact_arm_definition(),
+                &valid_adapter_result(),
+                &mut artifacts,
+            )
+            .expect_err("missing receipt")
+            .to_string()
+            .contains(PROVIDER_USAGE_FILE)
+        );
+    }
+
+    #[test]
+    fn patch_capture_includes_tracked_and_untracked_changes() {
+        let (repository, revision) = initialized_repository();
+        fs::write(repository.path().join("file.txt"), "changed\n").expect("tracked edit");
+        fs::write(repository.path().join("new.txt"), "new\n").expect("untracked edit");
+        let directory = tempfile::tempdir().expect("artifact directory");
+
+        let artifacts = capture_run_artifacts(repository.path(), &revision, directory.path())
+            .expect("capture patch");
+        let patch = fs::read_to_string(directory.path().join(PATCH_FILE)).expect("read patch");
+
+        assert!(artifacts.patch_valid);
+        assert!(patch.contains("a/file.txt"));
+        assert!(patch.contains("b/new.txt"));
+        assert_eq!(
+            artifacts.patch.blake3,
+            hash_file(&artifacts.patch.path).unwrap()
+        );
+        assert!(
+            git_raw_output(repository.path(), &["diff", "--cached", "--quiet"])
+                .expect("inspect real index")
+                .status
+                .success(),
+            "patch capture must not mutate the task worktree index"
+        );
+    }
+
+    #[test]
+    fn artifact_directories_are_immutable_per_run_identity() {
+        let root = tempfile::tempdir().expect("artifact root");
+        create_run_artifact_directory(root.path(), "experiment", "task", 1, Arm::Filesystem)
+            .expect("first run directory");
+
+        assert!(
+            create_run_artifact_directory(root.path(), "experiment", "task", 1, Arm::Filesystem)
+                .expect_err("duplicate run directory")
+                .to_string()
+                .contains("immutable run artifact directory")
+        );
+    }
+
+    #[test]
+    fn complete_sums_preserve_missing_usage() {
+        assert_eq!(complete_sum([Some(2), Some(3)]), Some(5));
+        assert_eq!(complete_sum([Some(2), None]), None);
+        assert_eq!(complete_sum([]), None);
+        assert_eq!(complete_sum([Some(u64::MAX), Some(1)]), None);
+    }
+
+    fn artifact_binding() -> RunBinding {
+        RunBinding {
+            experiment_id: "experiment".to_owned(),
+            manifest_blake3: "a".repeat(64),
+            task_id: "task".to_owned(),
+            repetition: 1,
+            arm: Arm::Filesystem.as_str().to_owned(),
+        }
+    }
+
+    fn valid_adapter_result() -> AdapterResult {
+        AdapterResult {
+            schema_version: 3,
+            task_success: false,
+            total_input_tokens: Some(6),
+            total_output_tokens: Some(4),
+            provider_reported_cost_usd: Some(0.01),
+            tool_calls: 2,
+            rereads: 1,
+            reread_tokens: 17,
+            failed_tool_calls: 1,
+            failed_searches: 1,
+            dead_end_reads: 1,
+            provider_usage: ProviderUsage {
+                uncached_input_tokens: Some(1),
+                cache_creation_input_tokens: Some(2),
+                cache_read_input_tokens: Some(3),
+                output_tokens: Some(4),
+                reasoning_tokens: Some(1),
+            },
+            evidence_receipt: None,
+            repository_generation: Some(7),
+        }
+    }
+
+    fn persist_valid_adapter_artifacts(directory: &Path, binding: &RunBinding) {
+        write_json_fixture(
+            directory.join(TOOL_TRACE_FILE),
+            &ToolTrace {
+                schema_version: ARTIFACT_SCHEMA_V1,
+                binding: binding.clone(),
+                calls: vec![
+                    ToolCall {
+                        sequence: 0,
+                        tool_name: "file_read".to_owned(),
+                        call_id: "call-0".to_owned(),
+                        result_id: "result-0".to_owned(),
+                        outcome: ToolOutcome::FailedSearch,
+                        result_source_tokens: 17,
+                        reread: true,
+                        ranges: vec![RangeIdentity {
+                            repository_generation: 7,
+                            path: "src/lib.rs".to_owned(),
+                            start_line: 2,
+                            end_line: 4,
+                            content_hash: "b".repeat(64),
+                            source_tokens: Some(17),
+                        }],
+                    },
+                    ToolCall {
+                        sequence: 1,
+                        tool_name: "file_read".to_owned(),
+                        call_id: "call-1".to_owned(),
+                        result_id: "result-1".to_owned(),
+                        outcome: ToolOutcome::DeadEndRead,
+                        result_source_tokens: 9,
+                        reread: false,
+                        ranges: vec![RangeIdentity {
+                            repository_generation: 7,
+                            path: "tests/integration.rs".to_owned(),
+                            start_line: 1,
+                            end_line: 1,
+                            content_hash: "c".repeat(64),
+                            source_tokens: Some(9),
+                        }],
+                    },
+                ],
+            },
+        );
+        write_json_fixture(
+            directory.join(TRAJECTORY_FILE),
+            &Trajectory {
+                schema_version: ARTIFACT_SCHEMA_V1,
+                binding: binding.clone(),
+                events: vec![serde_json::json!({"kind": "model_turn", "sequence": 0})],
+            },
+        );
+        write_json_fixture(
+            directory.join(PROVIDER_USAGE_FILE),
+            &ProviderUsageReceipt {
+                schema_version: ARTIFACT_SCHEMA_V1,
+                binding: binding.clone(),
+                usage: valid_adapter_result().provider_usage,
+                raw_receipt: serde_json::json!({"provider": "fixture"}),
+            },
+        );
+    }
+
+    fn artifact_arm_definition() -> ArmDefinition {
+        arm_definition(
+            Path::new("runtime-repository"),
+            &"0".repeat(40),
+            Path::new("adapter-repository"),
+            &"0".repeat(40),
+            Path::new("runtime-binary"),
+            &"0".repeat(64),
+        )
+    }
+
+    fn artifact_identities(directory: &Path) -> RunArtifacts {
+        fs::write(directory.join(PATCH_FILE), []).expect("empty patch");
+        RunArtifacts {
+            directory: directory.to_owned(),
+            tool_trace: artifact_identity_if_present(directory, TOOL_TRACE_FILE).unwrap(),
+            trajectory: artifact_identity_if_present(directory, TRAJECTORY_FILE).unwrap(),
+            provider_usage: artifact_identity_if_present(directory, PROVIDER_USAGE_FILE).unwrap(),
+            patch: artifact_identity(&directory.join(PATCH_FILE)).unwrap(),
+            patch_valid: true,
+            tool_call_records: None,
+            range_identities: None,
+            trajectory_events: None,
+        }
+    }
+
+    fn write_json_fixture(path: PathBuf, value: &impl Serialize) {
+        fs::write(
+            path,
+            serde_json::to_vec_pretty(value).expect("serialize fixture"),
+        )
+        .expect("write fixture");
     }
 
     fn initialized_repository() -> (tempfile::TempDir, String) {
