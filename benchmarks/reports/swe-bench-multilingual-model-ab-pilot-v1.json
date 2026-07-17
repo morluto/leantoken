@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "report_kind": "model_ab_pilot_result",
+  "status": "primary_negative_secondary_task_local_positive_no_promotion",
+  "evaluated_on": "2026-07-17",
+  "experiment_id": "swe-bench-multilingual-model-ab-pilot-v1",
+  "scope": {
+    "evidence_class": "exploratory_model_pilot",
+    "confirmation_or_gate_b": false,
+    "public_consumed_development_tasks": true,
+    "candidate_promotion_allowed": false,
+    "push_or_pull_request_allowed": false
+  },
+  "identities": {
+    "commitment_revision": "0d19b63",
+    "commitment_blake3": "f2a36ada77a65de98ceb904b9b8fffb9f90475b8fdfc057ccf1463f97eaaf426",
+    "manifest_blake3": "293d84291c8dad8c21969764763b03da4cad5d1078c187d9c746726eaed5d206",
+    "preflight_receipt_blake3": "8e296c1cb27f13a2f1d92a79c7d0283e7bd8916d6784feb1cb1df59689d3bdbe",
+    "full_report_schema_version": 5,
+    "full_report_blake3": "dcc36b1ad38197458a5c32b2eeed78c3e45f83b6726bc03ae2160ae1daa04bf0",
+    "gate_a_result_blake3": "648986b6269f96859616873e27244a6a8c1878c70d99567348f6d7b8a4e037af",
+    "harness_revision": "5305111e726bf66c07c90828b8357b6b1937a929",
+    "harness_binary_blake3": "2e69a4999ad25aaef386d82294e731b51911b515b9b54160cf5b26f96b52cd59",
+    "adapter_binary_blake3": "363e0d6818752501ccc0772b062d56257153000e5ae955ab4606cb713f22247c",
+    "validator_binary_blake3": "6067837d6ac3fb647630fe63be3332b43b274f4ec4f123d3201597a5a9f6e6ad",
+    "baseline_revision": "3bfce7e9e8234af18d54ac0b86318b447dccfe8e",
+    "baseline_runtime_blake3": "f72086c349e9a807b7d187f0e820f08f341d28ecdc37a28ce671259b1abfe4ed",
+    "adaptive_revision": "4fcbca34d01ee5e18d409f6f05eb7c4a15ef843f",
+    "adaptive_runtime_blake3": "e1cb706da721839b273aff701f24cf5880c73cf037aca68f2ddb74817ce48a92",
+    "codex_executable_blake3": "1c7eb9960cc658bc06cee4ee06f1be2a545551c0cef64f928f5a7f58ac427457"
+  },
+  "protocol": {
+    "model": "gpt-5.5",
+    "codex_cli_version": "codex-cli 0.144.1",
+    "reasoning_effort": "medium",
+    "service_tier": "default",
+    "tasks": 2,
+    "arms": 4,
+    "repetitions_per_task_arm": 5,
+    "planned_and_executed_runs": 40,
+    "tool_call_limit": 40,
+    "per_call_retrieval_source_token_limit": 8000,
+    "official_validator": "SWE-bench Docker harness",
+    "primary_comparison": "lean_token_adaptive_recovery versus filesystem",
+    "secondary_comparison": "lean_token_adaptive versus lean_token_baseline"
+  },
+  "execution_integrity": {
+    "adapter_completed_runs": 30,
+    "adapter_failed_runs": 10,
+    "official_validation_receipts": 30,
+    "official_validation_receipts_completed": 30,
+    "official_validation_receipts_resolved": 15,
+    "report_bound_artifacts": 190,
+    "report_bound_artifact_hashes_independently_verified": true,
+    "report_identity_and_preflight_matched": true,
+    "full_report_and_private_artifacts_tracked": false
+  },
+  "task_results": {
+    "babel__babel-15445": {
+      "language": "typescript",
+      "task_shape": "exact_identifier",
+      "filesystem": {
+        "successes": 0,
+        "runs": 5,
+        "adapter_completed": 4
+      },
+      "lean_token_baseline": {
+        "successes": 0,
+        "runs": 5,
+        "adapter_completed": 1
+      },
+      "lean_token_adaptive": {
+        "successes": 0,
+        "runs": 5,
+        "adapter_completed": 1
+      },
+      "lean_token_adaptive_recovery": {
+        "successes": 0,
+        "runs": 5,
+        "adapter_completed": 4
+      },
+      "interpretation": "All arms were at the task-success floor. Tool-limit and retrieval-contract failures make this a control-loop stress case, not evidence of retrieval superiority."
+    },
+    "caddyserver__caddy-6051": {
+      "language": "go",
+      "task_shape": "behavioral",
+      "filesystem": {
+        "successes": 4,
+        "runs": 5,
+        "median_input_tokens": 337839,
+        "input_tokens_per_success": 426650.25,
+        "median_duration_ms": 137645,
+        "tool_calls": 113,
+        "failed_tool_calls": 7
+      },
+      "lean_token_baseline": {
+        "successes": 4,
+        "runs": 5,
+        "median_input_tokens": 387342,
+        "input_tokens_per_success": 511377.75,
+        "median_duration_ms": 128339,
+        "tool_calls": 87,
+        "failed_tool_calls": 8,
+        "leantoken_source_tokens": 42981
+      },
+      "lean_token_adaptive": {
+        "successes": 5,
+        "runs": 5,
+        "median_input_tokens": 270549,
+        "input_tokens_per_success": 330160.4,
+        "median_duration_ms": 121831,
+        "tool_calls": 85,
+        "failed_tool_calls": 4,
+        "leantoken_source_tokens": 28032
+      },
+      "lean_token_adaptive_recovery": {
+        "successes": 2,
+        "runs": 5,
+        "median_input_tokens": 404228,
+        "input_tokens_per_success": 1023906.0,
+        "median_duration_ms": 141251,
+        "tool_calls": 108,
+        "failed_tool_calls": 8,
+        "leantoken_calls": 5,
+        "native_shell_calls": 92,
+        "leantoken_source_tokens": 12198
+      }
+    }
+  },
+  "pre_registered_decision": {
+    "primary": {
+      "decision": "negative",
+      "reason": "Adaptive recovery resolved 2/5 Caddy runs while filesystem resolved 4/5; the required success non-inferiority was not met.",
+      "recovery_median_input_relative_delta": 0.19651076400297174,
+      "recovery_median_duration_relative_delta": 0.026197827745286784,
+      "recovery_input_tokens_per_success_relative_delta": 1.3998720263260132
+    },
+    "secondary": {
+      "decision": "task_local_exploratory_positive",
+      "reason": "On Caddy only, adaptive strict resolved 5/5 versus baseline 4/5 while reducing all pre-registered efficiency metrics. Babel remained 0/5 for both arms and had incomplete adapter outcomes, so the result does not establish multilingual generalization.",
+      "adaptive_median_input_relative_delta": -0.3015242343975092,
+      "adaptive_median_duration_relative_delta": -0.050709449193152456,
+      "adaptive_input_tokens_per_success_relative_delta": -0.3543708149210637,
+      "adaptive_leantoken_source_tokens_relative_delta": -0.34780484400083755
+    },
+    "candidate_promoted": false,
+    "gate_b_authorized": false,
+    "push_or_pull_request_authorized": false
+  },
+  "combined_findings": [
+    "The frozen 54-task retrieval evaluation supports the structural-range direction: file recall improved 23.08%, line recall 216.67%, and NDCG 78.03%.",
+    "The same retrieval evaluation rejects product readiness: line precision fell 7.69%, macro F1 was flat, candidate source tokens rose 143.63%, and 97.65% of returned regions remained label-noise.",
+    "Adaptive strict showed a useful Caddy-local result: one additional validated success, 30.15% lower median provider input, 5.07% lower median validated duration, and 35.44% lower input tokens per success than baseline.",
+    "Adaptive recovery was harmful: it fell from four to two successes versus filesystem while median provider input increased 19.65% and input tokens per success increased 139.99%.",
+    "The recovery traces show only five LeanToken calls followed by 92 native shell calls across five Caddy runs, so LeanToken-first plus broad fallback added cost without preserving the strict arm's evidence discipline.",
+    "Babel exposed repeated tool-limit, tool-error, and retrieval-contract failures across baseline and adaptive arms; no arm solved the task."
+  ],
+  "required_successor_work": [
+    "Remove broad recovery from the primary product path. Keep strict retrieval as the research candidate and permit native escalation only through an explicit evidence-saturation policy with bounded capability grants.",
+    "Add deterministic phase budgets and novelty stopping for discovery, evidence reading, editing, and verification; do not respond to runaway traces by merely raising the global tool-call limit.",
+    "Reduce candidate overproduction with per-channel evidence quotas, cross-channel novelty scoring, and language/task-shape routing. Fall back to baseline in buckets without independent evidence of benefit.",
+    "Carry path, revision or content hash, and stable range identity into the edit protocol so failed context patches can be re-anchored without repeated repository searches.",
+    "Reduce index and context latency through persistent index reuse, incremental reconciliation, and profiling before adding further parser or graph expansion.",
+    "Build a newly versioned multilingual development set before tuning a successor. Do not reuse the consumed 54-task labels or this two-task pilot for parameter selection.",
+    "Run native macOS and Windows tests, then execute a separately frozen unseen Gate B with at least 60 tasks before any promotion, push, or pull request."
+  ],
+  "limitations": [
+    "This is a two-task exploratory pilot on public consumed development data; it has low power and may overlap model training data.",
+    "Ten Babel runs failed the adapter contract or tool limit, so complete provider-token totals are intentionally null for aggregate arms.",
+    "Provider cost, cache-creation input, and provider-visible compact framing are unavailable.",
+    "Native macOS and Windows tests and sealed Gate B remain pending."
+  ]
+}
