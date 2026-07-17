@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "report_kind": "swe_bench_multilingual_gate_a_commitment",
+  "status": "frozen_before_sealed_label_consumption",
+  "frozen_on": "2026-07-17",
+  "source": {
+    "repository": "https://github.com/morluto/leantoken.git",
+    "baseline_revision": "3bfce7e9e8234af18d54ac0b86318b447dccfe8e",
+    "candidate_revision": "4fcbca34d01ee5e18d409f6f05eb7c4a15ef843f",
+    "evaluator_revision": "4fcbca34d01ee5e18d409f6f05eb7c4a15ef843f",
+    "tracked_worktrees_clean": true
+  },
+  "development_data": {
+    "dataset_kind": "swe_bench_multilingual_development",
+    "tasks": 54,
+    "languages": [
+      "c",
+      "cpp",
+      "go",
+      "java",
+      "javascript",
+      "typescript",
+      "php",
+      "ruby",
+      "rust"
+    ],
+    "tasks_per_language": 6,
+    "exact_identifier_tasks": 27,
+    "behavioral_tasks": 27,
+    "tasks_blake3": "68ad229a4c9b496e0880b3eb8d25011dd50ac8edec29d09a6ac16907aaea10fd",
+    "sealed_labels_blake3": "1982d01ae08d2c1f324eb9897589ad7795b9c9a4e0e58dfbb750294cfb54e740",
+    "label_method": "base_diff_removed_or_insertion_context_v1",
+    "individual_labels_viewed_by_implementer": false,
+    "labels_consumed_by_retrieval_evaluation": false
+  },
+  "configuration": {
+    "budget_kind": "source_tokens",
+    "budget_amount": 2000,
+    "tokenizer": "cl100k_base",
+    "token_count_exact": true,
+    "prediction_repetitions": 2,
+    "context_response_determinism": "exact_stdout_bytes",
+    "minimum_stratum_tasks": 6,
+    "required_distinct_improved_evidence_groups": 2,
+    "stratum_improvement_rule": "candidate macro relevant-line recall or NDCG is strictly greater than baseline",
+    "maximum_complete_tokens_per_relevant_line_regression": 0.05,
+    "equivalent_strata_rule": "exact_identifier and its task_shape alias count as one evidence group",
+    "thresholds_cli_overridable": false
+  },
+  "candidate": {
+    "id": "minimal_adaptive_runtime_v1",
+    "changes": [
+      "tree-sitter structural definitions and references for all nine development languages",
+      "same-path overlapping candidate provenance merge with score recomputation",
+      "content-identical evidence at distinct paths is preserved",
+      "unconditional import file-head expansion is replaced by same-concept imported symbols",
+      "single-concept exact queries disable import expansion",
+      "index signature v4 forces rebuild for the parser coverage change"
+    ],
+    "unchanged": [
+      "default ranking weights",
+      "2000-token default context budget",
+      "five-tool MCP catalog",
+      "public MCP request and response schemas"
+    ]
+  },
+  "artifacts": {
+    "baseline_runtime": {
+      "blake3": "f72086c349e9a807b7d187f0e820f08f341d28ecdc37a28ce671259b1abfe4ed",
+      "bytes": 23335920
+    },
+    "candidate_runtime": {
+      "blake3": "e1cb706da721839b273aff701f24cf5880c73cf037aca68f2ddb74817ce48a92",
+      "bytes": 31014704
+    },
+    "gate_evaluator": {
+      "blake3": "01931a49fc7d299dfd11b367a677841d546656f810be53a60acde221dab3a6b8",
+      "bytes": 10614496,
+      "independent_release_builds": 2,
+      "independent_build_hashes_identical": true
+    },
+    "ranked_region_evaluator": {
+      "blake3": "13163594546f3f2369e953a7e5fdb395ab54fedd6a3171ffefc9077ea0b8774c",
+      "bytes": 1465408,
+      "independent_release_builds": 2,
+      "independent_build_hashes_identical": true
+    }
+  },
+  "pre_label_checks": {
+    "platform": "Linux 6.1.0-50-cloud-amd64 x86_64",
+    "rustc": "1.97.0 (2d8144b78 2026-07-07)",
+    "msrv_checked": "1.95",
+    "cargo_fmt": "passed",
+    "cargo_check_all_targets_all_features": "passed",
+    "cargo_clippy_deny_warnings": "passed",
+    "cargo_test_all_targets_all_features": "passed",
+    "cargo_doc_no_deps": "passed",
+    "synthetic_gate_contract_tests": 6,
+    "mcp_snapshot_changes": 0,
+    "preparation_tracked_files": 0
+  },
+  "disclosed_tradeoffs": {
+    "candidate_runtime_size_relative_delta": 0.329054265,
+    "candidate_runtime_size_reason": "five additional compiled tree-sitter grammars",
+    "cross_platform_native_ci": "pending until a remote branch is allowed",
+    "provider_visible_framing": "not observable and not part of this retrieval candidate",
+    "gate_a_scope": "development research admission only",
+    "gate_b_scope": "requires a separate unseen set and is not satisfied by this development run"
+  },
+  "failure_policy": [
+    "Do not modify the candidate, evaluator, budget, tokenizer, labels, or thresholds after development labels are consumed.",
+    "If any internal, external, correctness, determinism, or cost gate fails, record no-go and require a newly versioned development set for another candidate.",
+    "Do not push or open a pull request until the user-required effectiveness and correctness sequence is complete."
+  ]
+}
