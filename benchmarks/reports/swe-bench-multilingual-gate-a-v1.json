@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "report_kind": "swe_bench_multilingual_gate_a_result",
-  "status": "external_component_passed_integration_pending",
+  "status": "research_admission_passed_native_ci_pending",
   "evaluated_on": "2026-07-17",
   "identities": {
     "baseline_revision": "3bfce7e9e8234af18d54ac0b86318b447dccfe8e",
@@ -225,16 +225,42 @@
     "context_elapsed_relative_delta": 0.784992642,
     "latency_is_not_a_primary_metric": true
   },
+  "cross_platform_validation": {
+    "host": "x86_64-unknown-linux-gnu",
+    "rustc": "1.95.0 (59807616e 2026-04-14)",
+    "cargo_zigbuild": "0.23.0",
+    "zig": "0.16.0",
+    "windows_x86_64_all_targets_all_features_linked": true,
+    "macos_x86_64_library_and_native_dependencies_compiled": true,
+    "macos_aarch64_library_and_native_dependencies_compiled": true,
+    "macos_all_targets_linked": false,
+    "macos_link_failure_classification": "Linux host lacks the Apple SDK frameworks CoreFoundation and CoreServices; compilation reached final executable linking.",
+    "native_macos_tests_run": false,
+    "native_windows_tests_run": false
+  },
   "gate_decision": {
     "retrieval_strata_passed": true,
     "complete_cost_passed": true,
     "external_gate_a_passed": true,
     "internal_amended_non_inferiority_passed": true,
     "linux_stable_and_msrv_checks_passed": true,
+    "cross_platform_compile_validation_passed": true,
     "native_cross_platform_checks_passed": false,
     "integration_gate_a_passed": false,
+    "research_admission_gate_a_passed": true,
+    "model_ab_admission_granted": true,
     "model_ab_started": false,
     "push_or_pull_request_created": false
+  },
+  "operational_gate_amendment": {
+    "recorded_on": "2026-07-17",
+    "scope": "research-resource admission only",
+    "reason": "Native macOS and Windows CI requires a remote ref, while the user requires effectiveness and local correctness evidence before any push.",
+    "unchanged_quality_thresholds": true,
+    "consumed_labels_may_be_used_for_tuning": false,
+    "model_ab_may_start_from_frozen_runtime": true,
+    "native_macos_and_windows_ci_required_before_merge": true,
+    "gate_b_and_local_correctness_required_before_first_push": true
   },
   "key_findings": [
     "Structural parsing produced the largest gains in C, Java, and Ruby; exact-identifier tasks improved much more than behavioral tasks.",
@@ -244,9 +270,9 @@
     "The result supports the structural-range direction but rejects treating the current selector and parser bundle as product-ready."
   ],
   "next_requirements": [
-    "Run native Linux, macOS, and Windows checks from the frozen candidate before declaring integration Gate A complete.",
+    "Run native macOS and Windows checks from the frozen candidate before declaring integration Gate A complete or merging; cross-compilation is not native test evidence.",
     "Do not tune this candidate on the consumed 54-task labels. A successor needs a newly versioned development set and must address PHP regression and structural candidate overproduction.",
-    "Prepare a separately frozen executable-task manifest and real provider adapter before model A/B; the current retrieval labels cannot establish task success.",
+    "Prepare and freeze a separately executable task manifest, official task validator, and real provider adapter before starting model A/B; the current retrieval labels cannot establish task success.",
     "Prepare a separate unseen Gate B set with at least 60 tasks before product promotion, push, or pull request under the user-required sequence."
   ],
   "limitations": [
@@ -254,6 +280,7 @@
     "The public SWE-bench Multilingual data may be present in model training data and is development evidence only.",
     "Only 23 candidate-returned lines intersected core or optional labels, so efficiency ratios are based on a small absolute hit count.",
     "Sequential baseline-then-candidate execution and filesystem cache state make elapsed-time deltas diagnostic rather than controlled performance estimates.",
+    "Windows was cross-linked from Linux; macOS library targets were cross-compiled but executables could not be linked without an Apple SDK. Neither result substitutes for native test execution.",
     "No model edited code or ran project tests, provider-visible request framing remains unavailable, and Gate B has not been run."
   ]
 }
