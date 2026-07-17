@@ -26,6 +26,9 @@ use crate::model::{
 };
 use crate::tokens;
 
+const FACET_PREFIX: &str = "facet:";
+const CHANNEL_PREFIX: &str = "channel:";
+
 /// Overlap ratio above which two candidates in the same file are considered
 /// duplicates.  Measured against the smaller candidate's line count.
 const OVERLAP_THRESHOLD: f64 = 0.5;
@@ -130,6 +133,22 @@ impl Candidate {
     pub fn match_kind(mut self, kind: impl Into<String>) -> Self {
         self.match_kinds.push(kind.into());
         self
+    }
+
+    pub(crate) fn facet(mut self, kind: &str, fusion_key: &str) -> Self {
+        self.push_metadata(format!("{FACET_PREFIX}{kind}:{fusion_key}"));
+        self
+    }
+
+    pub(crate) fn channel(mut self, channel: &str, rank: usize) -> Self {
+        self.push_metadata(format!("{CHANNEL_PREFIX}{channel}:{rank}"));
+        self
+    }
+
+    fn push_metadata(&mut self, value: String) {
+        if !self.match_kinds.contains(&value) {
+            self.match_kinds.push(value);
+        }
     }
 
     /// Associate this evidence with an independently extracted task concept.
@@ -268,7 +287,12 @@ impl Candidate {
     /// Short human-readable reason for why the candidate was selected.
     #[must_use]
     pub fn reason(&self) -> String {
-        let mut parts: Vec<&str> = self.match_kinds.iter().map(String::as_str).collect();
+        let mut parts: Vec<&str> = self
+            .match_kinds
+            .iter()
+            .map(String::as_str)
+            .filter(|kind| !is_internal_metadata(kind))
+            .collect();
         if self.focus_boost > 0.0 && !parts.contains(&"focus") {
             parts.push("focus");
         }
@@ -284,6 +308,10 @@ impl Candidate {
             parts.join("; ")
         }
     }
+}
+
+fn is_internal_metadata(kind: &str) -> bool {
+    kind.starts_with(FACET_PREFIX) || kind.starts_with(CHANNEL_PREFIX)
 }
 
 /// A candidate with a fully resolved score, token count, content hash, and
@@ -914,6 +942,28 @@ mod tests {
         let score = candidate.score(&weights, candidate.token_count());
         assert!(score.is_finite());
         assert!(score >= 0.0);
+    }
+
+    #[test]
+    fn internal_facet_provenance_does_not_expand_response_reasons() {
+        let candidate = Candidate::new("src/lib.rs", 1, 1, "target")
+            .match_kind("symbol")
+            .facet("exact_atom", "target")
+            .channel("symbol", 3);
+
+        assert_eq!(candidate.reason(), "symbol");
+        assert!(
+            candidate
+                .match_kinds
+                .iter()
+                .any(|kind| kind == "facet:exact_atom:target")
+        );
+        assert!(
+            candidate
+                .match_kinds
+                .iter()
+                .any(|kind| kind == "channel:symbol:3")
+        );
     }
 
     #[test]

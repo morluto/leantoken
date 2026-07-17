@@ -35,6 +35,12 @@ It also reports sorted pre-selection candidate paths and signal summaries for
 labeled files. Candidate recall separates query/index generation failures from
 deduplication, ranking, and allocation failures without adding diagnostics to
 the MCP response schema.
+Evaluation candidate `match_kinds` also include bounded internal provenance in
+the forms `facet:<kind>:<fusion-key>` and `channel:<source>:<rank>`. Facets
+preserve exact technical atoms and classify symbol, path, behavior, test-intent,
+and configuration evidence. This metadata is omitted from production fragment
+reasons and does not by itself enable role reservations or portfolio selection;
+use it to diagnose a frozen candidate before proposing a scoring change.
 Do not alter prompts, labels, budgets, or pinned revisions after inspecting a
 candidate. Freeze a new dataset version instead.
 
