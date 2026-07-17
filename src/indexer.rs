@@ -528,7 +528,7 @@ impl Indexer {
 
     fn config_hash(&self) -> String {
         let input = format!(
-            "leantoken-index-v3\0{}\0{}\0{}\0{}\0{}",
+            "leantoken-index-v4-9-language\0{}\0{}\0{}\0{}\0{}",
             env!("CARGO_PKG_VERSION"),
             self.config.max_file_bytes,
             self.config.chunk_lines,

@@ -390,8 +390,25 @@ fn rank_with_tokenizer(
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
 pub fn deduplicate(candidates: Vec<ScoredCandidate>) -> Vec<ScoredCandidate> {
+    deduplicate_with_options(
+        candidates,
+        &Weights::default(),
+        tokens::Tokenizer::default(),
+    )
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn deduplicate_with_options(
+    candidates: Vec<ScoredCandidate>,
+    weights: &Weights,
+    tokenizer: tokens::Tokenizer,
+) -> Vec<ScoredCandidate> {
     let mut sorted = candidates;
     sorted.sort_by(|a, b| {
+        let ord = b.candidate.exact.total_cmp(&a.candidate.exact);
+        if ord != Ordering::Equal {
+            return ord;
+        }
         let ord = b.score.total_cmp(&a.score);
         if ord != Ordering::Equal {
             return ord;
@@ -404,26 +421,29 @@ pub fn deduplicate(candidates: Vec<ScoredCandidate>) -> Vec<ScoredCandidate> {
     });
 
     let mut kept: Vec<ScoredCandidate> = Vec::with_capacity(sorted.len());
-    let mut seen_hashes: HashSet<String> = HashSet::new();
+    let mut seen_hashes: HashMap<(String, String), usize> = HashMap::new();
 
     for candidate in sorted {
-        if seen_hashes.contains(&candidate.content_hash) {
+        let hash_key = (
+            candidate.candidate.path.clone(),
+            candidate.content_hash.clone(),
+        );
+        if let Some(existing) = seen_hashes.get(&hash_key).copied() {
+            merge_scored_candidate(&mut kept[existing], &candidate, weights, tokenizer);
             continue;
         }
 
-        let mut is_duplicate = false;
         let candidate_lines = candidate.candidate.line_count();
-
-        for existing in &kept {
+        let duplicate = kept.iter().position(|existing| {
             if existing.candidate.path != candidate.candidate.path {
-                continue;
+                return false;
             }
 
             // Non-overlapping ranges cannot be duplicates.
             if candidate.candidate.end_line < existing.candidate.start_line
                 || candidate.candidate.start_line > existing.candidate.end_line
             {
-                continue;
+                return false;
             }
 
             let overlap_start = candidate
@@ -437,21 +457,63 @@ pub fn deduplicate(candidates: Vec<ScoredCandidate>) -> Vec<ScoredCandidate> {
             let overlap_lines = overlap_end - overlap_start + 1;
             let min_lines = candidate_lines.min(existing.candidate.line_count());
 
-            if overlap_lines as f64 >= OVERLAP_THRESHOLD * min_lines as f64 {
-                is_duplicate = true;
-                break;
-            }
-        }
-
-        if is_duplicate {
+            overlap_lines as f64 >= OVERLAP_THRESHOLD * min_lines as f64
+        });
+        if let Some(existing) = duplicate {
+            merge_scored_candidate(&mut kept[existing], &candidate, weights, tokenizer);
             continue;
         }
 
-        seen_hashes.insert(candidate.content_hash.clone());
+        seen_hashes.insert(hash_key, kept.len());
         kept.push(candidate);
     }
 
+    kept.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then_with(|| a.candidate.path.cmp(&b.candidate.path))
+            .then_with(|| a.candidate.start_line.cmp(&b.candidate.start_line))
+    });
     kept
+}
+
+fn merge_scored_candidate(
+    existing: &mut ScoredCandidate,
+    duplicate: &ScoredCandidate,
+    weights: &Weights,
+    tokenizer: tokens::Tokenizer,
+) {
+    merge_candidate_signals(&mut existing.candidate, &duplicate.candidate);
+    *existing = ScoredCandidate::new_with_tokenizer(existing.candidate.clone(), weights, tokenizer);
+}
+
+fn merge_candidate_signals(existing: &mut Candidate, duplicate: &Candidate) {
+    for kind in &duplicate.match_kinds {
+        if !existing.match_kinds.contains(kind) {
+            existing.match_kinds.push(kind.clone());
+        }
+    }
+    for concept in &duplicate.concepts {
+        if !existing.concepts.contains(concept) {
+            existing.concepts.push(concept.clone());
+        }
+    }
+    existing.concept_weight = existing.concept_weight.max(duplicate.concept_weight);
+    if existing.symbol_name.is_none() {
+        existing.symbol_name.clone_from(&duplicate.symbol_name);
+    }
+    existing.exact = existing.exact.max(duplicate.exact);
+    existing.symbol = existing.symbol.max(duplicate.symbol);
+    existing.reference = existing.reference.max(duplicate.reference);
+    existing.bm25 = existing.bm25.max(duplicate.bm25);
+    existing.path_score = existing.path_score.max(duplicate.path_score);
+    existing.lexical_frequency_penalty = existing
+        .lexical_frequency_penalty
+        .min(duplicate.lexical_frequency_penalty);
+    existing.size_score = existing.size_score.max(duplicate.size_score);
+    existing.focus_boost = existing.focus_boost.max(duplicate.focus_boost);
+    existing.import_boost = existing.import_boost.max(duplicate.import_boost);
+    existing.change_boost = existing.change_boost.max(duplicate.change_boost);
 }
 
 /// Select the highest-relevance candidates that fit within the token budget
@@ -553,7 +615,7 @@ fn select_with_options(
     }
 
     let ranked = rank_with_tokenizer(eligible, weights, tokenizer);
-    let deduped = deduplicate(ranked);
+    let deduped = deduplicate_with_options(ranked, weights, tokenizer);
 
     let budget = request.token_budget;
     let max_per_file = (budget / DIVERSITY_DIVISOR).clamp(1, 3);
@@ -1032,6 +1094,84 @@ mod tests {
 
         assert_eq!(deduped.len(), 1);
         assert!(deduped[0].score > 0.9);
+    }
+
+    #[test]
+    fn dedup_keeps_content_identical_candidates_at_distinct_paths() {
+        let implementation = Candidate::new("src/lib.rs", 1, 1, "same body").exact(1.0);
+        let contract = Candidate::new("examples/lib.rs", 1, 1, "same body").exact(0.5);
+
+        let deduped = deduplicate(rank(vec![implementation, contract], &Weights::default()));
+
+        assert_eq!(deduped.len(), 2);
+    }
+
+    #[test]
+    fn dedup_merges_multi_channel_provenance_and_recomputes_score() {
+        let symbol = Candidate::new("src/lib.rs", 1, 2, "fn target() {}")
+            .concept("target", 2.0)
+            .match_kind("symbol")
+            .facet("exact_atom", "target")
+            .channel("symbol", 0)
+            .symbol(1.0);
+        let text = Candidate::new("src/lib.rs", 1, 2, "fn target() {}")
+            .concept("behavior", 0.8)
+            .match_kind("text")
+            .facet("behavior", "behavior")
+            .channel("text", 2)
+            .exact(1.0)
+            .bm25(1_000_000.0);
+        let best_single = rank(vec![symbol.clone(), text.clone()], &Weights::default())
+            .into_iter()
+            .map(|candidate| candidate.score)
+            .fold(0.0, f64::max);
+
+        let deduped = deduplicate(rank(vec![symbol, text], &Weights::default()));
+
+        assert_eq!(deduped.len(), 1);
+        let merged = &deduped[0];
+        assert!(merged.score > best_single);
+        assert!(
+            merged
+                .candidate
+                .concepts
+                .iter()
+                .any(|value| value == "target")
+        );
+        assert!(
+            merged
+                .candidate
+                .concepts
+                .iter()
+                .any(|value| value == "behavior")
+        );
+        assert!(
+            merged
+                .candidate
+                .match_kinds
+                .iter()
+                .any(|value| value == "symbol")
+        );
+        assert!(
+            merged
+                .candidate
+                .match_kinds
+                .iter()
+                .any(|value| value == "text")
+        );
+    }
+
+    #[test]
+    fn dedup_preserves_exact_range_when_a_broader_candidate_overlaps() {
+        let broad = Candidate::new("a.rs", 1, 10, "broad")
+            .bm25(1_000_000.0)
+            .path_score(2.0);
+        let exact = Candidate::new("a.rs", 5, 15, "exact").exact(1.0);
+
+        let deduped = deduplicate(rank(vec![broad, exact], &Weights::default()));
+
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].candidate.start_line, 5);
     }
 
     #[test]

@@ -239,6 +239,87 @@ the report also identifies custom repository license references. No upstream
 source or patch is vendored. This accepts the data boundary only; it is not a
 Gate A retrieval result.
 
+### Frozen multilingual Gate A runner
+
+`swe_bench_multilingual_gate` is the one-shot bridge from the sealed
+development data to `ranked_region_benchmark`. Freeze and commit the runtime,
+evaluator, baseline, candidate configuration, source-token budget, and the
+following two input commitments before running it:
+
+```text
+tasks BLAKE3:        68ad229a4c9b496e0880b3eb8d25011dd50ac8edec29d09a6ac16907aaea10fd
+sealed-label BLAKE3: 1982d01ae08d2c1f324eb9897589ad7795b9c9a4e0e58dfbb750294cfb54e740
+tokenizer/budget:    cl100k_base / 2,000 source tokens
+```
+
+Build the evaluator in a clean detached evaluator worktree, record the binary
+BLAKE3, and materialize the private evaluator manifest without printing it:
+
+```bash
+EVALUATOR=target/release/examples/swe_bench_multilingual_gate
+
+"$EVALUATOR" materialize \
+  --tasks target/sbml-dev-v1-final-c/tasks.jsonl \
+  --labels target/sbml-dev-v1-final-c/labels.sealed.jsonl \
+  --expected-tasks-blake3 68ad229a4c9b496e0880b3eb8d25011dd50ac8edec29d09a6ac16907aaea10fd \
+  --expected-labels-blake3 1982d01ae08d2c1f324eb9897589ad7795b9c9a4e0e58dfbb750294cfb54e740 \
+  --output target/gate-a/manifest.private.jsonl \
+  --receipt-output target/gate-a/materialize.receipt.private.json \
+  --evaluator-repository EVALUATOR_WORKTREE \
+  --evaluator-revision EVALUATOR_REVISION \
+  --evaluator-binary-blake3 EVALUATOR_BINARY_BLAKE3
+```
+
+Run each clean, revision-pinned runtime binary in a new arm-specific work root.
+The predictor treats the manifest as opaque bytes, indexes each of the 54 exact
+base revisions, runs context exactly twice, and rejects non-byte-identical
+responses or source-token accounting differences:
+
+```bash
+"$EVALUATOR" predict \
+  --tasks target/sbml-dev-v1-final-c/tasks.jsonl \
+  --expected-tasks-blake3 68ad229a4c9b496e0880b3eb8d25011dd50ac8edec29d09a6ac16907aaea10fd \
+  --manifest target/gate-a/manifest.private.jsonl \
+  --runtime-binary RUNTIME_BINARY \
+  --runtime-binary-blake3 RUNTIME_BINARY_BLAKE3 \
+  --runtime-repository RUNTIME_WORKTREE \
+  --runtime-revision RUNTIME_REVISION \
+  --arm-id baseline \
+  --repository-cache target/gate-a/repository-cache \
+  --work-root target/gate-a/baseline-work \
+  --output target/gate-a/baseline.predictions.jsonl \
+  --receipt-output target/gate-a/baseline.receipt.json \
+  --evaluator-repository EVALUATOR_WORKTREE \
+  --evaluator-revision EVALUATOR_REVISION \
+  --evaluator-binary-blake3 EVALUATOR_BINARY_BLAKE3
+```
+
+Evaluate baseline and candidate predictions with the same private manifest,
+then run `decide`. `decide` invokes and verifies the frozen ranked-region
+scoring binary itself; precomputed, unbound reports are not accepted:
+
+```bash
+"$EVALUATOR" decide \
+  --manifest target/gate-a/manifest.private.jsonl \
+  --baseline-predictions target/gate-a/baseline.predictions.jsonl \
+  --candidate-predictions target/gate-a/candidate.predictions.jsonl \
+  --ranked-evaluator-binary target/release/examples/ranked_region_benchmark \
+  --ranked-evaluator-binary-blake3 RANKED_EVALUATOR_BINARY_BLAKE3 \
+  --baseline-report-output target/gate-a/baseline.report.json \
+  --candidate-report-output target/gate-a/candidate.report.json \
+  --output target/gate-a/external-decision.json \
+  --evaluator-repository EVALUATOR_WORKTREE \
+  --evaluator-revision EVALUATOR_REVISION \
+  --evaluator-binary-blake3 EVALUATOR_BINARY_BLAKE3
+```
+
+The fixed decision requires two distinct predefined evidence groups to improve
+line recall or NDCG and permits at most 5% regression in complete tokens per
+relevant line. Equivalent `exact_identifier` and `task_shape` strata count
+once. The decision reports conflicting strata and can pass only the external
+retrieval component; internal smoke, correctness, tradeoff, model A/B, and
+Gate B remain separate gates.
+
 The repository includes one [Linux x86-64 result](reports/linux-x86_64-2026-07-15.json) as a transparent development record. It is not a cross-platform result or a release claim; rerun the manifest on the target machine for current timings.
 
 The prospective-validation candidate report for `2c0388d` is

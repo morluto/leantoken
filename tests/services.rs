@@ -233,6 +233,152 @@ async fn five_services_return_bounded_grounded_responses() {
 }
 
 #[tokio::test]
+async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
+    let root = tempfile::tempdir().expect("root");
+    for (path, source) in [
+        (
+            "target.c",
+            "int c_target(int value) {\n    return value + 11;\n}\n",
+        ),
+        (
+            "target.cpp",
+            "class CppTarget {\npublic:\n    int cpp_target() { return 22; }\n};\n",
+        ),
+        (
+            "JavaTarget.java",
+            "class JavaTarget {\n    int javaTarget() {\n        return 33;\n    }\n}\n",
+        ),
+        (
+            "target.php",
+            "<?php\nfunction phpTarget() {\n    return 44;\n}\n",
+        ),
+        (
+            "target.rb",
+            "def ruby_target\n  55\nend\n",
+        ),
+    ] {
+        std::fs::write(root.path().join(path), source).expect("source");
+    }
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    for (path, symbol, marker) in [
+        ("target.c", "c_target", "return value + 11"),
+        ("target.cpp", "cpp_target", "return 22"),
+        ("JavaTarget.java", "javaTarget", "return 33"),
+        ("target.php", "phpTarget", "return 44"),
+        ("target.rb", "ruby_target", "55"),
+    ] {
+        let outline = services
+            .outline(OutlineRequest {
+                paths: vec![path.into()],
+                symbol_name: Some(symbol.into()),
+                symbol_kind: None,
+                max_results: Some(10),
+                max_tokens: Some(200),
+            })
+            .await
+            .expect("outline");
+        assert!(
+            outline.files[0]
+                .symbols
+                .iter()
+                .any(|item| item.name == symbol && item.end_line >= item.start_line),
+            "missing {symbol} in {path}: {:?}",
+            outline.files[0].symbols
+        );
+
+        let context = services
+            .context(ContextRequest {
+                task: format!("Fix {symbol}"),
+                token_budget: 300,
+                focus_paths: Vec::new(),
+                focus_symbols: Vec::new(),
+                exclude_paths: Vec::new(),
+                known_hashes: Vec::new(),
+                prior_repository_generation: None,
+            })
+            .await
+            .expect("context");
+        assert!(
+            context
+                .fragments
+                .iter()
+                .any(|fragment| fragment.path == path && fragment.content.contains(marker)),
+            "missing body for {symbol}: {:?}",
+            context.fragments
+        );
+    }
+}
+
+#[tokio::test]
+async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("src")).expect("src");
+    std::fs::write(
+        root.path().join("src/seed.js"),
+        "import { OwnerAlpha } from './target.js';\nexport function useOwner() { return new OwnerAlpha(); }\n",
+    )
+    .expect("seed");
+    std::fs::write(
+        root.path().join("src/target.js"),
+        "export class OwnerAlpha {\n  run() { return 1; }\n}\n",
+    )
+    .expect("target");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    let exact = services
+        .context_evaluation(ContextRequest {
+            task: "Fix OwnerAlpha".into(),
+            token_budget: 400,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+        })
+        .await
+        .expect("exact evaluation");
+    assert!(
+        exact
+            .generated_candidates
+            .iter()
+            .all(|candidate| candidate.representation != "import_symbol")
+    );
+
+    let multi = services
+        .context_evaluation(ContextRequest {
+            task: "Fix OwnerAlpha and OtherSignal".into(),
+            token_budget: 400,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+        })
+        .await
+        .expect("multi-concept evaluation");
+    assert!(
+        multi.generated_candidates.iter().any(|candidate| {
+            candidate.path == "src/target.js" && candidate.representation == "import_symbol"
+        }),
+        "candidates: {:?}",
+        multi.generated_candidates
+    );
+    assert!(
+        multi
+            .generated_candidates
+            .iter()
+            .all(|candidate| candidate.representation != "import_neighbor")
+    );
+}
+
+#[tokio::test]
 async fn file_operations_page_without_duplicates() {
     let root = tempfile::tempdir().expect("root");
     for name in ["alpha.rs", "bravo.rs", "charlie.rs", "delta.rs", "echo.rs"] {

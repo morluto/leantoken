@@ -26,6 +26,11 @@ const GO_DEFS_QUERY: &str = r#"
 (const_declaration (const_spec name: (identifier) @name)) @definition.constant
 "#;
 
+const PHP_REFS_QUERY: &str = r#"
+(function_call_expression
+  function: (name) @name) @reference.call
+"#;
+
 const RUST_IMPORT_QUERY: &str = r#"
 (use_declaration
   argument: (_) @raw) @import
@@ -76,9 +81,16 @@ pub struct ParseOutput {
 pub fn language_by_path(path: impl AsRef<Path>) -> Option<String> {
     let ext = path.as_ref().extension()?.to_str()?;
     Some(match ext.to_lowercase().as_str() {
+        "c" => "c".to_string(),
+        "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx" | "inl" | "ipp" | "tpp" => {
+            "cpp".to_string()
+        }
+        "java" => "java".to_string(),
         "rs" => "rust".to_string(),
         "py" | "pyi" => "python".to_string(),
-        "js" | "mjs" | "cjs" => "javascript".to_string(),
+        "php" => "php".to_string(),
+        "rb" => "ruby".to_string(),
+        "js" | "jsx" | "mjs" | "cjs" => "javascript".to_string(),
         "ts" | "mts" | "cts" => "typescript".to_string(),
         "tsx" => "tsx".to_string(),
         "go" => "go".to_string(),
@@ -139,9 +151,11 @@ fn parse_language_with_cancellation(
     run_query(source, &tags_query, root, &mut is_cancelled, |qm| {
         process_tags_match(source, &tags_query, qm, &mut symbols, &mut references);
     })?;
-    run_query(source, &import_query, root, &mut is_cancelled, |qm| {
-        process_imports_match(source, &import_query, qm, &mut imports);
-    })?;
+    if let Some(import_query) = import_query {
+        run_query(source, &import_query, root, &mut is_cancelled, |qm| {
+            process_imports_match(source, &import_query, qm, &mut imports);
+        })?;
+    }
 
     if is_cancelled() {
         return Err(Error::Cancelled);
@@ -201,8 +215,13 @@ fn parse_tree(
 
 fn language_object(name: &str) -> Option<Language> {
     Some(match name {
+        "c" => tree_sitter_c::LANGUAGE.into(),
+        "cpp" => tree_sitter_cpp::LANGUAGE.into(),
+        "java" => tree_sitter_java::LANGUAGE.into(),
         "rust" => tree_sitter_rust::LANGUAGE.into(),
         "python" => tree_sitter_python::LANGUAGE.into(),
+        "php" => tree_sitter_php::LANGUAGE_PHP.into(),
+        "ruby" => tree_sitter_ruby::LANGUAGE.into(),
         "javascript" => tree_sitter_javascript::LANGUAGE.into(),
         "typescript" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         "tsx" => tree_sitter_typescript::LANGUAGE_TSX.into(),
@@ -213,8 +232,13 @@ fn language_object(name: &str) -> Option<Language> {
 
 fn build_tags_query(language: &str, lang: &Language) -> Result<Query> {
     let base = match language {
+        "c" => tree_sitter_c::TAGS_QUERY,
+        "cpp" => tree_sitter_cpp::TAGS_QUERY,
+        "java" => tree_sitter_java::TAGS_QUERY,
         "rust" => tree_sitter_rust::TAGS_QUERY,
         "python" => tree_sitter_python::TAGS_QUERY,
+        "php" => tree_sitter_php::TAGS_QUERY,
+        "ruby" => tree_sitter_ruby::TAGS_QUERY,
         "javascript" => tree_sitter_javascript::TAGS_QUERY,
         // The TypeScript crate's query contains only TypeScript-specific
         // additions. Its grammar inherits JavaScript definitions, so both
@@ -228,6 +252,7 @@ fn build_tags_query(language: &str, lang: &Language) -> Result<Query> {
     match language {
         "rust" => source.push_str(RUST_DEFS_QUERY),
         "go" => source.push_str(GO_DEFS_QUERY),
+        "php" => source.push_str(PHP_REFS_QUERY),
         "typescript" | "tsx" => source.push_str(tree_sitter_typescript::TAGS_QUERY),
         _ => {}
     }
@@ -235,16 +260,19 @@ fn build_tags_query(language: &str, lang: &Language) -> Result<Query> {
     Query::new(lang, &source).map_err(Error::TreeSitterQuery)
 }
 
-fn build_import_query(language: &str, lang: &Language) -> Result<Query> {
+fn build_import_query(language: &str, lang: &Language) -> Result<Option<Query>> {
     let src = match language {
         "rust" => RUST_IMPORT_QUERY,
         "python" => PYTHON_IMPORT_QUERY,
         "javascript" | "typescript" | "tsx" => JS_IMPORT_QUERY,
         "go" => GO_IMPORT_QUERY,
+        "c" | "cpp" | "java" | "php" | "ruby" => return Ok(None),
         _ => return Err(Error::UnsupportedLanguage(language.to_string())),
     };
 
-    Query::new(lang, src).map_err(Error::TreeSitterQuery)
+    Query::new(lang, src)
+        .map(Some)
+        .map_err(Error::TreeSitterQuery)
 }
 
 fn run_query<F>(
@@ -315,6 +343,7 @@ fn process_tags_match(
     for (is_definition, kind, kind_node) in kind_captures {
         let kind = kind.to_string();
         if is_definition {
+            let kind_node = definition_extent(kind_node);
             let (start_line, end_line, start_byte, end_byte) = range_from_node(kind_node);
             symbols.push(Symbol {
                 name: name.clone(),
@@ -340,6 +369,23 @@ fn process_tags_match(
             });
         }
     }
+}
+
+fn definition_extent(node: Node<'_>) -> Node<'_> {
+    if node.kind() != "function_declarator" {
+        return node;
+    }
+    let mut current = node;
+    while let Some(parent) = current.parent() {
+        if parent.kind() == "function_definition" {
+            return parent;
+        }
+        if matches!(parent.kind(), "declaration" | "translation_unit") {
+            break;
+        }
+        current = parent;
+    }
+    node
 }
 
 fn signature_from_node(source: &str, node: Node) -> Option<String> {
@@ -619,6 +665,45 @@ func main() {
 }
 "#;
 
+    const C_SRC: &str = r#"
+struct Point { int x; };
+
+int add(int left, int right) {
+    return left + right;
+}
+"#;
+
+    const CPP_SRC: &str = r#"
+class Formatter {
+public:
+    int format() { return helper(); }
+};
+"#;
+
+    const JAVA_SRC: &str = r#"
+class Formatter {
+    int format() {
+        return helper();
+    }
+}
+"#;
+
+    const PHP_SRC: &str = r#"<?php
+class Formatter {
+    public function format() {
+        return helper();
+    }
+}
+"#;
+
+    const RUBY_SRC: &str = r#"
+class Formatter
+  def format
+    helper
+  end
+end
+"#;
+
     fn symbol_names(output: &ParseOutput) -> Vec<&str> {
         output.symbols.iter().map(|s| s.name.as_str()).collect()
     }
@@ -663,6 +748,73 @@ func main() {
         assert!(out.references.is_empty());
         assert!(out.imports.is_empty());
         assert!(!out.structurally_complete);
+        Ok(())
+    }
+
+    #[test]
+    fn development_languages_are_detected_by_path() {
+        for (path, expected) in [
+            ("src/value.c", "c"),
+            ("include/value.h", "cpp"),
+            ("src/value.cpp", "cpp"),
+            ("include/value.hpp", "cpp"),
+            ("src/Value.java", "java"),
+            ("src/value.php", "php"),
+            ("lib/value.rb", "ruby"),
+        ] {
+            assert_eq!(language_by_path(path).as_deref(), Some(expected), "{path}");
+        }
+    }
+
+    #[test]
+    fn c_and_cpp_definitions_keep_function_bodies() -> Result<()> {
+        let c = parse_language("c", C_SRC)?;
+        assert!(c.structurally_complete);
+        assert!(symbol_names(&c).contains(&"Point"));
+        let add = c
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "add")
+            .expect("C function");
+        assert!(add.end_line > add.start_line, "symbol: {add:?}");
+
+        let c_header_as_cpp = parse_language("cpp", C_SRC)?;
+        assert!(symbol_names(&c_header_as_cpp).contains(&"add"));
+
+        let cpp = parse_language("cpp", CPP_SRC)?;
+        assert!(cpp.structurally_complete);
+        assert!(symbol_names(&cpp).contains(&"Formatter"));
+        let format = cpp
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "format")
+            .expect("C++ method");
+        assert!(
+            format
+                .signature
+                .as_deref()
+                .is_some_and(|value| value.contains("format"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn java_php_and_ruby_parse_definitions_and_calls() -> Result<()> {
+        for (language, source) in [("java", JAVA_SRC), ("php", PHP_SRC), ("ruby", RUBY_SRC)] {
+            let output = parse_language(language, source)?;
+            assert!(output.structurally_complete, "{language}");
+            let names = symbol_names(&output);
+            assert!(
+                names.contains(&"Formatter"),
+                "{language} symbols: {names:?}"
+            );
+            assert!(names.contains(&"format"), "{language} symbols: {names:?}");
+            let references = reference_names(&output);
+            assert!(
+                references.contains(&"helper"),
+                "{language} references: {references:?}"
+            );
+        }
         Ok(())
     }
 
