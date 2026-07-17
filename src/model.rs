@@ -11,6 +11,17 @@ pub enum Freshness {
     Reconciling,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+/// Consistency boundary applied before repository retrieval.
+pub enum IndexConsistency {
+    /// Query the latest committed index generation without waiting for filesystem changes.
+    #[default]
+    Committed,
+    /// Reconcile the current working tree before querying the resulting generation.
+    WorkingTree,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ResponseMeta {
     pub repository_generation: u64,

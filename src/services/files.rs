@@ -360,6 +360,18 @@ impl Services {
             .await
     }
 
+    /// Discover paths after applying the requested index consistency boundary.
+    pub async fn files_with_consistency_cancellable(
+        &self,
+        request: FilesRequest,
+        consistency: IndexConsistency,
+        cancellation: CancellationToken,
+    ) -> Result<FilesResponse> {
+        self.apply_consistency(consistency, cancellation.clone())
+            .await?;
+        self.files_cancellable(request, cancellation).await
+    }
+
     pub async fn files_cancellable(
         &self,
         request: FilesRequest,

@@ -94,6 +94,10 @@ retrieval.
 | `leantoken_read` | Read an exact line or symbol range under a token limit. |
 | `leantoken_context` | Rank task evidence when narrow discovery leaves the scope uncertain. |
 
+Every retrieval tool accepts `consistency: "working_tree"` when completed edits
+must be reconciled before the query. The default, `"committed"`, returns the
+latest completed index generation without waiting for filesystem changes.
+
 The catalog stays intentionally small because every tool description and
 schema also consumes model context.
 

@@ -47,6 +47,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .expect("server instructions");
     assert!(instructions.contains("Retrieve progressively"));
     assert!(instructions.contains("Use context only when scope remains uncertain"));
+    assert!(instructions.contains("consistency=working_tree"));
     assert!(instructions.contains("native tools for edits, commands, and tests"));
 
     let tools = client.peer().list_all_tools().await.expect("list tools");
@@ -89,6 +90,33 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     assert_ne!(response.is_error, Some(true));
     let structured = response.structured_content.expect("structured response");
     assert_eq!(structured["entries"][0]["path"], "lib.rs");
+
+    std::fs::write(
+        root.path().join("new_package.rs"),
+        "pub fn newly_committed_package() {}\n",
+    )
+    .expect("write source after initial index");
+    let working_tree_arguments = serde_json::json!({
+        "query": "newly_committed_package",
+        "mode": "identifier",
+        "max_results": 5,
+        "max_tokens": 100,
+        "consistency": "working_tree"
+    })
+    .as_object()
+    .expect("working-tree search arguments")
+    .clone();
+    let response = client
+        .peer()
+        .call_tool(
+            CallToolRequestParams::new("leantoken_search")
+                .with_arguments(working_tree_arguments),
+        )
+        .await
+        .expect("working-tree search");
+    assert_ne!(response.is_error, Some(true));
+    let structured = response.structured_content.expect("structured response");
+    assert_eq!(structured["hits"][0]["path"], "new_package.rs");
 
     let invalid_arguments = serde_json::json!({ "path": "../secret" })
         .as_object()

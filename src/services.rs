@@ -257,6 +257,17 @@ impl Services {
             .min(self.config.max_output_tokens)
     }
 
+    pub(super) async fn apply_consistency(
+        &self,
+        consistency: IndexConsistency,
+        cancellation: CancellationToken,
+    ) -> Result<()> {
+        if consistency == IndexConsistency::WorkingTree {
+            self.index_cancellable(false, cancellation).await?;
+        }
+        Ok(())
+    }
+
     pub(super) fn freshness(&self) -> Freshness {
         let local = self.active_reconciliations.load(Ordering::Acquire) > 0;
         let shared = self.coordination.is_reconciling().unwrap_or(true);
