@@ -4,6 +4,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use tokio_util::sync::CancellationToken;
 
+mod facets;
+
 use super::Services;
 use super::read::StoredExcerpt;
 use super::search::{chunk_search_hit, fts_quote, matching_line};
@@ -17,6 +19,7 @@ use crate::repository::git_changed_paths;
 use crate::storage::{FileRecord, ReadSession};
 use crate::text::{expand_terms, identifier_words};
 use crate::{Error, Result};
+use facets::{ContextQuery, FacetKind};
 
 const GIT_CHANGED_PATHS_MAX: usize = 512;
 /// Maximum context query terms (symbols/refs/FTS fan-out budget).
@@ -45,12 +48,15 @@ fn context_path_score(path: &str, terms: &[String], task: &str) -> f64 {
         .iter()
         .filter(|term| path.contains(term.to_ascii_lowercase().as_str()))
         .count() as f64;
-    for code_token in code_tokens(task).into_iter().filter(|token| {
-        token.contains("::")
-            || token
-                .split('.')
-                .any(|part| part.chars().next().is_some_and(char::is_uppercase))
-    }) {
+    for code_token in facets::legacy_code_tokens(task)
+        .into_iter()
+        .filter(|token| {
+            token.contains("::")
+                || token
+                    .split('.')
+                    .any(|part| part.chars().next().is_some_and(char::is_uppercase))
+        })
+    {
         let matched_parts = expand_terms(&code_token)
             .into_iter()
             .map(|part| part.to_ascii_lowercase())
@@ -115,137 +121,6 @@ fn qualified_symbol_match(
     f64::from(parts.iter().all(|part| haystack.contains(part)))
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct ContextQuery {
-    value: String,
-    weight: f64,
-    fusion_key: Option<String>,
-}
-
-fn context_queries(task: &str, limit: usize) -> Vec<ContextQuery> {
-    if limit == 0 {
-        return Vec::new();
-    }
-    let wants_tests = task_terms(task).iter().any(|term| is_test_term(term));
-    let available = limit.saturating_sub(usize::from(wants_tests));
-    let code_terms = code_tokens(task);
-    let code_parts = code_terms
-        .iter()
-        .flat_map(|term| std::iter::once(term.clone()).chain(expand_terms(term)))
-        .map(|term| term.to_ascii_lowercase())
-        .collect::<HashSet<_>>();
-    let prose = task_terms(task)
-        .into_iter()
-        .filter(|value| {
-            !is_test_term(value)
-                && !is_context_stop_word(value)
-                && !code_parts.contains(&value.to_ascii_lowercase())
-        })
-        .collect::<Vec<_>>();
-
-    let prose_reserve = prose.len().min(4).min(available);
-    let exact_limit = available.saturating_sub(prose_reserve);
-    let mut seen = HashSet::new();
-    let mut terms = Vec::new();
-    for code_term in code_terms.iter().take(exact_limit) {
-        push_context_query(
-            &mut terms,
-            &mut seen,
-            code_term.clone(),
-            true,
-            Some(code_term.to_ascii_lowercase()),
-        );
-    }
-    for value in prose.iter().take(prose_reserve) {
-        push_context_query(&mut terms, &mut seen, value.clone(), false, None);
-    }
-
-    let mut expansion_round = 0usize;
-    while terms.len() < available {
-        let before = terms.len();
-        for code_term in &code_terms {
-            let expansions = expand_terms(code_term);
-            if let Some(value) = expansions.get(expansion_round) {
-                push_context_query(
-                    &mut terms,
-                    &mut seen,
-                    value.clone(),
-                    true,
-                    Some(code_term.to_ascii_lowercase()),
-                );
-                if terms.len() == available {
-                    break;
-                }
-            }
-        }
-        if terms.len() == before {
-            break;
-        }
-        expansion_round += 1;
-    }
-    if wants_tests {
-        terms.push(ContextQuery {
-            value: "test".into(),
-            weight: 0.2,
-            fusion_key: None,
-        });
-    }
-    terms
-}
-
-fn push_context_query(
-    terms: &mut Vec<ContextQuery>,
-    seen: &mut HashSet<String>,
-    value: String,
-    explicit_code_token: bool,
-    fusion_key: Option<String>,
-) {
-    if value.chars().count() < 2
-        || is_context_stop_word(&value)
-        || !seen.insert(value.to_ascii_lowercase())
-    {
-        return;
-    }
-    terms.push(ContextQuery {
-        weight: context_query_weight(&value, explicit_code_token),
-        value,
-        fusion_key,
-    });
-}
-
-fn task_terms(task: &str) -> Vec<String> {
-    task.split(|character: char| !character.is_alphanumeric() && character != '_')
-        .filter(|value| value.chars().count() >= 2)
-        .map(str::to_owned)
-        .collect()
-}
-
-fn is_test_term(term: &str) -> bool {
-    matches!(
-        term.to_ascii_lowercase().as_str(),
-        "test" | "tests" | "testing" | "coverage" | "regression"
-    )
-}
-
-fn context_query_weight(term: &str, explicit_code_token: bool) -> f64 {
-    if explicit_code_token {
-        return if term.contains(['_', ':', '.', '-']) {
-            1.0
-        } else {
-            0.95
-        };
-    }
-    if term.contains(['_', ':', '.', '-']) {
-        return 0.9;
-    }
-    match term.chars().count() {
-        10.. => 0.8,
-        7..=9 => 0.65,
-        4..=6 => 0.45,
-        _ => 0.25,
-    }
-}
-
 fn record_query_hit(
     fusion: &mut HashMap<String, HashMap<String, f64>>,
     path: &str,
@@ -290,19 +165,16 @@ fn apply_query_fusion(
     }
 }
 
-fn code_tokens(task: &str) -> Vec<String> {
-    task.split_whitespace()
-        .map(|token| {
-            token.trim_matches(|character: char| !character.is_alphanumeric() && character != '_')
-        })
-        .filter(|token| {
-            token.contains('_')
-                || token.contains("::")
-                || token.contains('.')
-                || (token.contains('-') && token.chars().any(char::is_uppercase))
-        })
-        .map(str::to_owned)
-        .collect()
+fn annotate_candidate(
+    mut candidate: Candidate,
+    query: &ContextQuery,
+    channel: &str,
+    rank: usize,
+) -> Candidate {
+    for facet in query.facet_names() {
+        candidate = candidate.facet(facet, &query.fusion_key);
+    }
+    candidate.channel(channel, rank)
 }
 
 fn task_mentions_language(task: &str, language: &str) -> bool {
@@ -315,57 +187,6 @@ fn task_mentions_language(task: &str, language: &str) -> bool {
                 word.eq_ignore_ascii_case(language)
             }
         })
-}
-
-fn is_context_stop_word(term: &str) -> bool {
-    matches!(
-        term.to_ascii_lowercase().as_str(),
-        "a" | "an"
-            | "and"
-            | "add"
-            | "adding"
-            | "are"
-            | "as"
-            | "be"
-            | "before"
-            | "both"
-            | "but"
-            | "by"
-            | "calling"
-            | "can"
-            | "change"
-            | "does"
-            | "each"
-            | "fix"
-            | "for"
-            | "from"
-            | "if"
-            | "in"
-            | "into"
-            | "is"
-            | "it"
-            | "its"
-            | "make"
-            | "not"
-            | "of"
-            | "on"
-            | "one"
-            | "only"
-            | "or"
-            | "same"
-            | "so"
-            | "than"
-            | "then"
-            | "the"
-            | "this"
-            | "to"
-            | "update"
-            | "when"
-            | "while"
-            | "within"
-            | "without"
-            | "with"
-    )
 }
 
 impl Services {
@@ -470,7 +291,8 @@ impl Services {
                 HashSet::new()
             });
         self.consistent(|session, generation| {
-            let queries = context_queries(&request.task, MAX_CONTEXT_QUERIES);
+            let facet_plan = facets::plan(&request.task, MAX_CONTEXT_QUERIES);
+            let queries = facet_plan.queries;
             let terms = queries
                 .iter()
                 .map(|query| query.value.clone())
@@ -482,9 +304,12 @@ impl Services {
             // Workflow words such as `test` are useful path priors but terrible
             // retrieval queries: nearly every test function becomes a high-
             // scoring symbol candidate. Keep them out of candidate generation.
-            for query in queries.iter().filter(|query| query.value != "test") {
+            for query in queries
+                .iter()
+                .filter(|query| !query.has_facet(FacetKind::TestIntent))
+            {
                 let term = &query.value;
-                let concept = query.fusion_key.as_deref().unwrap_or(term);
+                let concept = query.fusion_key.as_str();
                 check_cancelled(cancellation)?;
                 for (rank, hit) in session
                     .search_symbols(term, false, MAX_CONTEXT_HITS_PER_SOURCE)?
@@ -513,11 +338,11 @@ impl Services {
                         hit.symbol.parent.as_deref(),
                         hit.symbol.signature.as_deref(),
                     );
-                    if let Some(fusion_key) = &query.fusion_key {
+                    if query.fuse {
                         record_query_hit(
                             &mut query_fusion,
                             &hit.path,
-                            fusion_key,
+                            &query.fusion_key,
                             query.weight,
                             rank,
                         );
@@ -529,25 +354,21 @@ impl Services {
                         &changed_paths,
                         request.prior_repository_generation,
                     );
-                    candidates.push(
-                        Candidate::new(
-                            &hit.path,
-                            excerpt.start_line,
-                            excerpt.end_line,
-                            excerpt.content,
-                        )
-                        .match_kind("symbol")
-                        .concept(
-                            concept,
-                            query.weight + f64::from(query.fusion_key.is_some()),
-                        )
-                        .representation("symbol")
-                        .symbol_name(hit.symbol.name)
-                        .exact(exact + qualified * 1.5)
-                        .symbol(1.0)
-                        .path_score(context_path_score(&hit.path, &terms, &request.task))
-                        .change_boost(change_boost),
-                    );
+                    let candidate = Candidate::new(
+                        &hit.path,
+                        excerpt.start_line,
+                        excerpt.end_line,
+                        excerpt.content,
+                    )
+                    .match_kind("symbol")
+                    .concept(concept, query.concept_weight)
+                    .representation("symbol")
+                    .symbol_name(hit.symbol.name)
+                    .exact(exact + qualified * 1.5)
+                    .symbol(1.0)
+                    .path_score(context_path_score(&hit.path, &terms, &request.task))
+                    .change_boost(change_boost);
+                    candidates.push(annotate_candidate(candidate, query, "symbol", rank));
                 }
                 for (rank, hit) in session
                     .search_references(term, false, MAX_CONTEXT_HITS_PER_SOURCE)?
@@ -587,11 +408,11 @@ impl Services {
                     let Some(excerpt) = excerpt else {
                         continue;
                     };
-                    if let Some(fusion_key) = &query.fusion_key {
+                    if query.fuse {
                         record_query_hit(
                             &mut query_fusion,
                             &hit.path,
-                            fusion_key,
+                            &query.fusion_key,
                             query.weight,
                             rank,
                         );
@@ -603,23 +424,19 @@ impl Services {
                         &changed_paths,
                         request.prior_repository_generation,
                     );
-                    candidates.push(
-                        Candidate::new(
-                            &hit.path,
-                            excerpt.start_line,
-                            excerpt.end_line,
-                            excerpt.content,
-                        )
-                        .match_kind("reference")
-                        .concept(
-                            concept,
-                            query.weight + f64::from(query.fusion_key.is_some()),
-                        )
-                        .symbol_name(hit.reference.name)
-                        .reference(1.0)
-                        .path_score(context_path_score(&hit.path, &terms, &request.task))
-                        .change_boost(change_boost),
-                    );
+                    let candidate = Candidate::new(
+                        &hit.path,
+                        excerpt.start_line,
+                        excerpt.end_line,
+                        excerpt.content,
+                    )
+                    .match_kind("reference")
+                    .concept(concept, query.concept_weight)
+                    .symbol_name(hit.reference.name)
+                    .reference(1.0)
+                    .path_score(context_path_score(&hit.path, &terms, &request.task))
+                    .change_boost(change_boost);
+                    candidates.push(annotate_candidate(candidate, query, "reference", rank));
                 }
                 let lexical = if term.chars().count() >= 3 {
                     session.search_trigram(term, MAX_CONTEXT_LEXICAL_HITS)?
@@ -656,11 +473,11 @@ impl Services {
                         start_line: search_hit.start_line,
                         end_line: search_hit.end_line,
                     });
-                    if let Some(fusion_key) = &query.fusion_key {
+                    if query.fuse {
                         record_query_hit(
                             &mut query_fusion,
                             &search_hit.path,
-                            fusion_key,
+                            &query.fusion_key,
                             query.weight,
                             rank,
                         );
@@ -684,10 +501,7 @@ impl Services {
                         excerpt.content,
                     )
                     .match_kind("text")
-                    .concept(
-                        concept,
-                        query.weight + f64::from(query.fusion_key.is_some()),
-                    )
+                    .concept(concept, query.concept_weight)
                     .exact(query.weight)
                     .bm25((-hit.score).max(0.0) * 1_000_000.0)
                     .path_score(context_path_score(&search_hit.path, &terms, &request.task))
@@ -695,7 +509,7 @@ impl Services {
                         (occurrences.saturating_sub(5) as f64 / 20.0).min(1.0),
                     )
                     .change_boost(change_boost);
-                    candidates.push(candidate);
+                    candidates.push(annotate_candidate(candidate, query, "text", rank));
                 }
             }
 
@@ -817,6 +631,10 @@ impl Services {
 mod tests {
     use super::*;
 
+    fn context_queries(task: &str, limit: usize) -> Vec<ContextQuery> {
+        facets::plan(task, limit).queries
+    }
+
     #[test]
     fn language_scope_does_not_treat_lowercase_go_as_golang() {
         assert!(!task_mentions_language("go fix the parser", "go"));
@@ -907,7 +725,35 @@ mod tests {
             .expect("expanded query");
 
         assert_eq!(qualified.fusion_key, expansion.fusion_key);
-        assert!(qualified.fusion_key.is_some());
+        assert!(!qualified.fusion_key.is_empty());
+    }
+
+    #[test]
+    fn candidate_diagnostics_retain_facet_and_ranked_channel_provenance() {
+        let query = context_queries("Fix Rack::Deflater behavior", 12)
+            .into_iter()
+            .find(|query| query.value == "Rack::Deflater")
+            .expect("exact technical query");
+        let candidate = annotate_candidate(
+            Candidate::new("src/lib.rs", 1, 1, "target").match_kind("symbol"),
+            &query,
+            "symbol",
+            2,
+        );
+
+        assert!(
+            candidate
+                .match_kinds
+                .iter()
+                .any(|kind| kind == "facet:exact_atom:rack::deflater")
+        );
+        assert!(
+            candidate
+                .match_kinds
+                .iter()
+                .any(|kind| kind == "channel:symbol:2")
+        );
+        assert_eq!(candidate.reason(), "symbol");
     }
 
     #[test]
