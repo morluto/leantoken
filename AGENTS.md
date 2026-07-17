@@ -88,12 +88,10 @@ Snapshot tests use `insta`. Review intentional changes with `cargo insta review`
 
 ## npm Publication
 
-- Keep the Cargo package version, Git tag, GitHub release, and all npm package
-  versions identical.
-- Publish the five platform packages before the root `leantoken` package. Wait
-  until each platform version resolves from npm before publishing the root; this
-  prevents users from receiving a launcher whose optional native dependency is
-  unavailable.
-- Follow the package order and verification commands in `docs/development.md`.
+- Keep the Cargo package version, Git tag, GitHub release, and npm package
+  version identical.
+- Publish only the root `leantoken` package. Its tarball must contain every
+  native target listed in `npm/platforms.json`; do not publish a partial bundle.
+- Follow the verification and publication commands in `docs/development.md`.
   Never attempt to replace an npm version that has already been published; cut
   the next release instead.

@@ -100,37 +100,10 @@ function commonMetadata(name, version, description) {
   };
 }
 
-async function buildPlatformPackage(stagingDir, artifactsDir, platform, version) {
-  const packageDir = join(stagingDir, platform.packageName);
-  await mkdir(packageDir, { recursive: true });
-  const packageJson = {
-    ...commonMetadata(
-      platform.packageName,
-      version,
-      `LeanToken native binary for ${platform.os}-${platform.cpu}`,
-    ),
-    os: [platform.os],
-    cpu: [platform.cpu],
-    ...(platform.libc ? { libc: [platform.libc] } : {}),
-    files: [platform.binary, "LICENSE-APACHE", "LICENSE-MIT", "README.md"],
-  };
-  await writeJson(join(packageDir, "package.json"), packageJson);
-  await copyPackageDocs(packageDir);
-  await extractBinary(
-    await findArchive(artifactsDir, platform.target),
-    platform.binary,
-    join(packageDir, platform.binary),
-  );
-  return packageDir;
-}
-
-async function buildRootPackage(stagingDir, version) {
+async function buildRootPackage(stagingDir, artifactsDir, version) {
   const packageDir = join(stagingDir, "leantoken");
   const binDir = join(packageDir, "bin");
   await mkdir(binDir, { recursive: true });
-  const optionalDependencies = Object.fromEntries(
-    PLATFORMS.map(({ packageName }) => [packageName, version]),
-  );
   const packageJson = {
     ...commonMetadata(
       "leantoken",
@@ -138,20 +111,23 @@ async function buildRootPackage(stagingDir, version) {
       "Token-budgeted repository context for coding agents",
     ),
     bin: { leantoken: "bin/leantoken.cjs" },
-    files: [
-      "bin/leantoken.cjs",
-      "platforms.json",
-      "LICENSE-APACHE",
-      "LICENSE-MIT",
-      "README.md",
-    ],
-    optionalDependencies,
+    files: ["bin", "platforms.json", "LICENSE-APACHE", "LICENSE-MIT", "README.md"],
   };
   await writeJson(join(packageDir, "package.json"), packageJson);
   await copyPackageDocs(packageDir);
   await copyFile(join(ROOT, "npm", "leantoken.cjs"), join(binDir, "leantoken.cjs"));
   await copyFile(join(ROOT, "npm", "platforms.json"), join(packageDir, "platforms.json"));
   await chmod(join(binDir, "leantoken.cjs"), 0o755);
+
+  for (const platform of PLATFORMS) {
+    const nativeDir = join(binDir, "native", platform.target);
+    await mkdir(nativeDir, { recursive: true });
+    await extractBinary(
+      await findArchive(artifactsDir, platform.target),
+      platform.binary,
+      join(nativeDir, platform.binary),
+    );
+  }
   return packageDir;
 }
 
@@ -175,13 +151,7 @@ export async function buildNpmPackages({ artifactsDir, outputDir, version }) {
 
   const stagingDir = await mkdtemp(join(tmpdir(), "leantoken-npm-packages-"));
   try {
-    for (const platform of PLATFORMS) {
-      pack(
-        await buildPlatformPackage(stagingDir, resolvedArtifacts, platform, version),
-        resolvedOutput,
-      );
-    }
-    pack(await buildRootPackage(stagingDir, version), resolvedOutput);
+    pack(await buildRootPackage(stagingDir, resolvedArtifacts, version), resolvedOutput);
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
   }

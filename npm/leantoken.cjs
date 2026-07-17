@@ -1,29 +1,30 @@
 #!/usr/bin/env node
 
 const { spawn } = require("node:child_process");
+const { join } = require("node:path");
 const platforms = require("../platforms.json");
 
+const libc =
+  process.platform === "linux"
+    ? process.report?.getReport?.().header?.glibcVersionRuntime
+      ? "glibc"
+      : "musl"
+    : undefined;
 const target = platforms.find(
-  ({ os, cpu }) => os === process.platform && cpu === process.arch,
+  ({ os, cpu, libc: requiredLibc }) =>
+    os === process.platform &&
+    cpu === process.arch &&
+    (requiredLibc === undefined || requiredLibc === libc),
 );
 if (!target) {
+  const runtime = [process.platform, process.arch, libc].filter(Boolean).join("-");
   console.error(
-    `LeanToken does not provide an npm binary for ${process.platform}-${process.arch}.`,
+    `LeanToken does not provide an npm binary for ${runtime}.`,
   );
   process.exit(1);
 }
 
-const { packageName, binary: binaryName } = target;
-let binaryPath;
-try {
-  binaryPath = require.resolve(`${packageName}/${binaryName}`);
-} catch {
-  console.error(`LeanToken native package ${packageName} is missing.`);
-  console.error(
-    "Reinstall leantoken without omitting optional dependencies, or use a Cargo installation.",
-  );
-  process.exit(1);
-}
+const binaryPath = join(__dirname, "native", target.target, target.binary);
 
 const child = spawn(binaryPath, process.argv.slice(2), {
   stdio: "inherit",

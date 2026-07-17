@@ -29,10 +29,10 @@ cargo package
 
 The generated release workflow builds native archives for Linux x64/arm64,
 macOS x64/arm64, and Windows x64. A custom global-artifact job converts those
-archives into five platform-specific npm packages and a small `leantoken`
-launcher package. The launcher selects an optional dependency for the current
-OS and CPU; npm installation does not run lifecycle scripts or download a
-binary from a postinstall hook.
+archives into one `leantoken` npm package containing all five native binaries.
+The included JavaScript launcher selects the binary for the current OS and CPU;
+npm installation does not run lifecycle scripts or download a binary from a
+postinstall hook.
 
 Verify release configuration changes before pushing them:
 
@@ -51,22 +51,32 @@ node --test npm/npm-packaging.test.mjs
 Version tags such as `v0.1.0` trigger `.github/workflows/release.yml`. Keep the
 Cargo package version, tag, GitHub release, and npm package version identical.
 
-The first release of each npm package is a manual bootstrap because npm trusted
-publishing can only be configured after the package exists. Once the GitHub
-release finishes, publish the five platform tarballs before the root package:
+The first npm release is a manual bootstrap because npm trusted publishing can
+only be configured after the package exists. Once the GitHub release finishes,
+inspect the package before publishing it:
 
 ```bash
-npm publish leantoken-darwin-arm64-VERSION.tgz --access public
-npm publish leantoken-darwin-x64-VERSION.tgz --access public
-npm publish leantoken-linux-arm64-VERSION.tgz --access public
-npm publish leantoken-linux-x64-VERSION.tgz --access public
-npm publish leantoken-win32-x64-VERSION.tgz --access public
+tar -xOf leantoken-VERSION.tgz package/package.json
+npm publish leantoken-VERSION.tgz --dry-run
+```
+
+The dry-run file list must contain one binary for every target in
+`npm/platforms.json`, and the manifest must not define lifecycle scripts or
+dependencies. Publish only after those checks pass:
+
+```bash
 npm publish leantoken-VERSION.tgz --access public
 ```
 
-Publishing the root package last prevents users from resolving it before its
-native optional dependencies are available. Configure trusted publishing for
-all six packages before automating later npm releases.
+Confirm the release from the registry rather than a local package or npm cache:
+
+```bash
+npm view leantoken@VERSION version
+npx --yes leantoken@VERSION --version
+```
+
+Configure trusted publishing for `leantoken` before automating later npm
+releases.
 
 ## Test responsibilities
 
