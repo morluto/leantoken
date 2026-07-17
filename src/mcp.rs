@@ -11,11 +11,33 @@ use rmcp::{
     tool, tool_handler, tool_router,
     transport::stdio,
 };
-use serde::Serialize;
+use schemars::{JsonSchema, Schema, SchemaGenerator};
+use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::model::{ContextRequest, FilesRequest, OutlineRequest, ReadRequest, SearchRequest};
+use crate::model::{
+    ContextRequest, FilesRequest, IndexConsistency, OutlineRequest, ReadRequest, SearchRequest,
+};
 use crate::services::Services;
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+/// MCP retrieval input with an optional working-tree synchronization boundary.
+struct RetrievalRequest<T> {
+    /// Tool-specific retrieval input.
+    #[serde(flatten)]
+    request: T,
+    /// Use `working_tree` after edits; otherwise `committed`.
+    #[serde(default)]
+    #[schemars(schema_with = "index_consistency_schema")]
+    consistency: IndexConsistency,
+}
+
+fn index_consistency_schema(_: &mut SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "type": "string",
+        "enum": ["committed", "working_tree"]
+    })
+}
 
 /// LeanToken MCP server.
 #[derive(Clone)]
@@ -174,92 +196,102 @@ impl McpServices {
 impl LeanTokenMcp {
     #[tool(
         name = "leantoken_files",
-        description = "Start here when repository paths are unknown. Returns only a compact tree or path matches: tree for hierarchy, find for fuzzy names, glob for patterns. Then use outline or search; no source bodies are returned."
+        description = "Start here when paths are unknown. Return paths only: tree for hierarchy, find for fuzzy names, glob for patterns."
     )]
     async fn leantoken_files(
         &self,
-        Parameters(req): Parameters<FilesRequest>,
+        Parameters(req): Parameters<RetrievalRequest<FilesRequest>>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let services = match self.services() {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let resp = services.files_cancellable(req, context.ct.clone()).await;
+        let resp = services
+            .files_with_consistency_cancellable(req.request, req.consistency, context.ct.clone())
+            .await;
         self.service_result(resp)
     }
 
     #[tool(
         name = "leantoken_search",
-        description = "Ranked, token-bounded source lookup. Use symbol for definitions, reference for usages, identifier for exact names, text for substrings, regex for patterns, or auto to combine evidence. Follow a hit with leantoken_read for the exact required range."
+        description = "Find ranked source by symbol, reference, identifier, text, regex, or auto. Follow a hit with leantoken_read."
     )]
     async fn leantoken_search(
         &self,
-        Parameters(req): Parameters<SearchRequest>,
+        Parameters(req): Parameters<RetrievalRequest<SearchRequest>>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let services = match self.services() {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let resp = services.search_cancellable(req, context.ct.clone()).await;
+        let resp = services
+            .search_with_consistency_cancellable(req.request, req.consistency, context.ct.clone())
+            .await;
         self.service_result(resp)
     }
 
     #[tool(
         name = "leantoken_outline",
-        description = "Structural map of definitions, signatures, imports, and ranges, replacing whole-file orientation reads. Use before leantoken_read when the relevant symbol or range is unknown. Omits source bodies."
+        description = "Map definitions, signatures, imports, and ranges without source bodies. Avoid whole-file reads when the relevant range is unknown."
     )]
     async fn leantoken_outline(
         &self,
-        Parameters(req): Parameters<OutlineRequest>,
+        Parameters(req): Parameters<RetrievalRequest<OutlineRequest>>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let services = match self.services() {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let resp = services.outline_cancellable(req, context.ct.clone()).await;
+        let resp = services
+            .outline_with_consistency_cancellable(req.request, req.consistency, context.ct.clone())
+            .await;
         self.service_result(resp)
     }
 
     #[tool(
         name = "leantoken_read",
-        description = "Read an exact symbol or narrow line range. Prefer this after files, outline, or search instead of reading a whole file. Reuse content_hash as expected_hash to receive not_modified without duplicate source."
+        description = "Read an exact symbol or line range. Reuse content_hash as expected_hash to suppress unchanged source."
     )]
     async fn leantoken_read(
         &self,
-        Parameters(req): Parameters<ReadRequest>,
+        Parameters(req): Parameters<RetrievalRequest<ReadRequest>>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let services = match self.services() {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let resp = services.read_cancellable(req, context.ct.clone()).await;
+        let resp = services
+            .read_with_consistency_cancellable(req.request, req.consistency, context.ct.clone())
+            .await;
         self.service_result(resp)
     }
 
     #[tool(
         name = "leantoken_context",
-        description = "Use when task scope is still uncertain after narrow discovery, or when one-shot orientation is worth its metadata cost. Finds and ranks evidence within a token budget. Pass receipt fragment_hashes as known_hashes on later calls to avoid resending exact evidence."
+        description = "Rank task evidence within a token budget when scope is still uncertain. Reuse receipt fragment_hashes as known_hashes."
     )]
     async fn leantoken_context(
         &self,
-        Parameters(req): Parameters<ContextRequest>,
+        Parameters(req): Parameters<RetrievalRequest<ContextRequest>>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let services = match self.services() {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let resp = services.context_cancellable(req, context.ct.clone()).await;
+        let resp = services
+            .context_with_consistency_cancellable(req.request, req.consistency, context.ct.clone())
+            .await;
         self.service_result(resp)
     }
 }
 
 #[tool_handler(
-    instructions = "Retrieve progressively: files for paths, outline or search for candidates, then read exact symbols or ranges. Use context only when scope remains uncertain. Reuse hashes to suppress unchanged evidence. Use native tools for edits, commands, and tests."
+    instructions = "Retrieve progressively: files for paths, outline or search for candidates, then read exact symbols or ranges. Use context only when scope remains uncertain. Reuse hashes to suppress unchanged evidence. Set consistency=working_tree when edits, generated files, branch changes, or external commits must be visible. Use native tools for edits, commands, and tests."
 )]
 impl ServerHandler for LeanTokenMcp {
     fn on_initialized(
@@ -517,6 +549,36 @@ mod tests {
                     field
                 );
             }
+        }
+    }
+
+    #[test]
+    fn retrieval_tools_expose_consistency_boundary() {
+        for tool in LeanTokenMcp::tool_router().list_all() {
+            let consistency = tool
+                .input_schema
+                .get("properties")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|properties| properties.get("consistency"))
+                .unwrap_or_else(|| panic!("{} consistency schema missing", tool.name));
+            assert_eq!(
+                consistency.get("default"),
+                Some(&serde_json::json!("committed"))
+            );
+            assert_eq!(
+                consistency.get("enum"),
+                Some(&serde_json::json!(["committed", "working_tree"]))
+            );
+            assert!(
+                consistency
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|description| {
+                        description.contains("working_tree") && description.contains("edits")
+                    }),
+                "{}.consistency must tell agents when to synchronize",
+                tool.name
+            );
         }
     }
 

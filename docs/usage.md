@@ -52,6 +52,20 @@ Prefer progressive retrieval:
 files -> outline/search -> exact read -> context only if scope remains uncertain
 ```
 
+All five MCP retrieval tools accept an optional `consistency` input:
+
+- `committed` (default) queries the latest completed index generation without
+  waiting for filesystem changes;
+- `working_tree` first reconciles the current working tree, then queries the
+  resulting committed generation.
+
+Use `working_tree` when edits, generated files, branch changes, or external
+commits must be visible to the current call. Reconciliation uses the same
+ignore rules and cross-process operation lock as automatic indexing, and the
+request remains cancellable. Writes that begin concurrently with the call may
+require another `working_tree` request. CLI users can run `leantoken index`
+immediately before retrieval when they need to reconcile first.
+
 ## `leantoken_files`
 
 Discovers repository structure without returning source bodies.
@@ -111,10 +125,10 @@ indexed version (for example after an edit that has not been reindexed yet).
 and symbol lookup; `meta.freshness` is `reconciling` while an index operation
 is active on this cache.
 
-When the index has never completed a generation, tools other than status return
-a retryable not-ready error rather than an empty success. After local edits,
-prefer outline/search again once freshness is `current`, or trust `index_stale`
-and re-read with `expected_hash` for unchanged ranges.
+When the index has never completed a generation, retrieval tools return a
+retryable not-ready error rather than an empty success. After local edits, set
+`consistency` to `working_tree` on the next MCP retrieval. A committed read may
+still use `index_stale` and `expected_hash` to detect or suppress live ranges.
 
 ## `leantoken_context`
 

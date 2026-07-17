@@ -396,6 +396,18 @@ impl Services {
             .await
     }
 
+    /// Retrieve context after applying the requested index consistency boundary.
+    pub async fn context_with_consistency_cancellable(
+        &self,
+        request: ContextRequest,
+        consistency: IndexConsistency,
+        cancellation: CancellationToken,
+    ) -> Result<ContextResponse> {
+        self.apply_consistency(consistency, cancellation.clone())
+            .await?;
+        self.context_cancellable(request, cancellation).await
+    }
+
     pub async fn context_cancellable(
         &self,
         request: ContextRequest,

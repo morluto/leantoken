@@ -123,6 +123,18 @@ impl Services {
             .await
     }
 
+    /// Search after applying a cancellable index consistency boundary.
+    pub async fn search_with_consistency_cancellable(
+        &self,
+        request: SearchRequest,
+        consistency: IndexConsistency,
+        cancellation: CancellationToken,
+    ) -> Result<SearchResponse> {
+        self.apply_consistency(consistency, cancellation.clone())
+            .await?;
+        self.search_cancellable(request, cancellation).await
+    }
+
     pub async fn search_cancellable(
         &self,
         request: SearchRequest,

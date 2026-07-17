@@ -44,6 +44,18 @@ impl Services {
             .await
     }
 
+    /// Outline files after applying the requested index consistency boundary.
+    pub async fn outline_with_consistency_cancellable(
+        &self,
+        request: OutlineRequest,
+        consistency: IndexConsistency,
+        cancellation: CancellationToken,
+    ) -> Result<OutlineResponse> {
+        self.apply_consistency(consistency, cancellation.clone())
+            .await?;
+        self.outline_cancellable(request, cancellation).await
+    }
+
     pub async fn outline_cancellable(
         &self,
         request: OutlineRequest,
@@ -57,6 +69,18 @@ impl Services {
     pub async fn read(&self, request: ReadRequest) -> Result<ReadResponse> {
         self.read_cancellable(request, CancellationToken::new())
             .await
+    }
+
+    /// Read source after applying the requested index consistency boundary.
+    pub async fn read_with_consistency_cancellable(
+        &self,
+        request: ReadRequest,
+        consistency: IndexConsistency,
+        cancellation: CancellationToken,
+    ) -> Result<ReadResponse> {
+        self.apply_consistency(consistency, cancellation.clone())
+            .await?;
+        self.read_cancellable(request, cancellation).await
     }
 
     pub async fn read_cancellable(

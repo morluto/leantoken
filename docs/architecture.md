@@ -74,6 +74,13 @@ one response. SQLite busy/locked errors while opening and pinning a snapshot
 are retried a few times; generation zero returns a typed `IndexNotReady` error
 instead of an empty success.
 
+MCP retrieval inputs expose an explicit consistency boundary. `committed`, the
+default, opens the latest completed snapshot immediately. `working_tree` first
+runs a non-rebuild reconciliation under the repository-scoped operation lock,
+then opens the resulting committed snapshot. This makes filesystem changes
+completed before reconciliation visible without exposing a partially prepared
+generation. Changes written concurrently may require a later request.
+
 ## Indexing and freshness
 
 Discovery follows Git-compatible ignore rules, skips symlinks and oversized or
@@ -95,10 +102,11 @@ an unexpected runtime exit cannot leave tools permanently reporting startup.
 
 MCP processes sharing one cache compete for a repository-scoped leadership
 lock. The leader alone owns automatic indexing and one filesystem watcher;
-followers read the same committed SQLite generations without scanning or
-watching. Followers retry leadership periodically, so an operating-system lock
-release after process exit provides failover without a PID lease or stale-lock
-cleanup.
+followers normally read the same committed SQLite generations without scanning
+or watching. An explicit `working_tree` retrieval may reconcile from any
+process under the shared operation lock. Followers retry leadership
+periodically, so an operating-system lock release after process exit provides
+failover without a PID lease or stale-lock cleanup.
 
 The leader registers its watcher before the initial reconciliation. Events that
 arrive during discovery or parsing remain queued and are applied after the
@@ -169,9 +177,10 @@ symbol resolution and path admission use the index. Responses include:
 - `indexed_hash` — hash of the whole indexed file;
 - `index_stale` — true when the live file body differs from the indexed file.
 
-Agents should re-outline or re-search after edits when `index_stale` is true,
-and pass `expected_hash` on rereads to suppress unchanged ranges. Search and
-outline never invent empty successful results at generation zero.
+When `index_stale` is true, agents should re-outline or re-search with
+`consistency=working_tree` if the next retrieval must include those edits. Pass
+`expected_hash` on rereads to suppress unchanged ranges. Search and outline
+never invent empty successful results at generation zero.
 
 ## Concurrency design constraints
 
