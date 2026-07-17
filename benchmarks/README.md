@@ -212,6 +212,33 @@ runtime candidate, configuration, evaluator, tokenizer, and budget are frozen.
 For Gate B, use an independent evaluator and separately access-controlled
 labels; this public benchmark can only provide development/Gate A evidence.
 
+Validate every sealed region against its exact GitHub base revision without
+printing individual paths or labels:
+
+```bash
+cargo build --example artifact_blake3
+
+benchmarks/validate_swe_bench_regions.sh \
+  target/swe-bench-multilingual/tasks.jsonl \
+  target/swe-bench-multilingual/labels.sealed.jsonl \
+  target/swe-bench-multilingual/base-region-validation.json
+```
+
+The verifier refuses to overwrite its aggregate receipt, binds both inputs and
+its own script with BLAKE3, and commits only a hash of the temporary per-file
+content manifest. It requires `bash`, `curl`, and `jq`; individual repository
+paths remain inside an owner-only temporary directory and are deleted on exit.
+
+The checked [development-set report](reports/swe-bench-multilingual-development-v1.json)
+records the pinned 300-row source, two byte-identical preparation runs, 54
+selected tasks across nine languages and 30 repositories, all 54 repository
+revision license audits, and successful bounds checks for 950 regions in 144
+base-revision files. A separate pinned `pyarrow 25.0.0` comparison found all
+Parquet and JSONL records equal. Terraform tasks remain governed by BUSL-1.1;
+the report also identifies custom repository license references. No upstream
+source or patch is vendored. This accepts the data boundary only; it is not a
+Gate A retrieval result.
+
 The repository includes one [Linux x86-64 result](reports/linux-x86_64-2026-07-15.json) as a transparent development record. It is not a cross-platform result or a release claim; rerun the manifest on the target machine for current timings.
 
 The prospective-validation candidate report for `2c0388d` is

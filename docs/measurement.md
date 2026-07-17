@@ -368,6 +368,16 @@ bytes before accepting a checked receipt; see
 [`../benchmarks/README.md`](../benchmarks/README.md) for the command and license
 map contract.
 
+The accepted preparation evidence is checked at
+[`../benchmarks/reports/swe-bench-multilingual-development-v1.json`](../benchmarks/reports/swe-bench-multilingual-development-v1.json).
+It includes a semantic Parquet/JSONL equality check and the aggregate output of
+[`../benchmarks/validate_swe_bench_regions.sh`](../benchmarks/validate_swe_bench_regions.sh),
+which verified that all 144 unique labeled files exist at their 54 pinned base
+revisions and that all 950 core/optional regions are in bounds. This validation
+does not reveal individual labels or evaluate retrieval. Freeze the runtime
+candidate, evaluator binary, configuration, and prediction contract before the
+single Gate A run consumes the development labels.
+
 Ranked-region metrics measure retrieval against incomplete evaluator labels;
 they do not establish patch correctness, model task success, or that every
 unlabeled line is useless. Comparisons expose deltas and tradeoffs rather than
