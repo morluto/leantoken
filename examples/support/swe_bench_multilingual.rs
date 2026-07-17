@@ -869,6 +869,8 @@ fn serialize_jsonl<T: Serialize>(values: &[T]) -> Result<Vec<u8>, DynError> {
 }
 
 fn write_new(path: &Path, bytes: &[u8], private: bool) -> Result<(), DynError> {
+    #[cfg(not(unix))]
+    let _ = private;
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
