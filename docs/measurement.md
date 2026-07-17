@@ -225,6 +225,60 @@ The dry-run adapter does not call a model, edit the worktree, or report token
 usage. A passing success command therefore validates only the experiment
 plumbing; it is not task-success, quality, or cost evidence.
 
+## Ranked-region interchange
+
+`ranked_region_benchmark` separates retriever output from evaluator labels with
+a versioned JSONL contract. Task records contain the repository URL, pinned
+40-character revision, path style, query, language and strata, exact budget,
+relevant files, and evaluator-only core and optional regions. Prediction
+records bind themselves to the exact manifest BLAKE3, repository revision,
+budget, and tokenizer, then provide contiguous ranked regions with optional
+channel, facet, score, token count, complete response cost, source cost,
+latency, and index generation.
+
+The evaluator rejects malformed or absolute paths, unpinned revisions,
+noncontiguous ranks, duplicate task IDs, budget overruns, and comparison inputs
+with different manifest, dataset, budget, or tokenizer identities. It uses
+interval unions for overlapping predictions and reports macro and micro file
+recall, line recall/precision/F1, context efficiency, hit/noise region rates,
+first useful hit, line-budget NDCG, strata, and token cost per relevant line.
+
+Convert an existing LeanToken representative or validation report into the
+same boundary, then score and compare it:
+
+```bash
+cargo run --release --example ranked_region_benchmark -- \
+  import-representative \
+  --manifest benchmarks/validation.json \
+  --report target/validation.json \
+  --manifest-output target/validation-ranked.manifest.jsonl \
+  --predictions-output target/validation-ranked.predictions.jsonl
+
+cargo run --release --example ranked_region_benchmark -- \
+  evaluate \
+  --manifest target/validation-ranked.manifest.jsonl \
+  --predictions target/validation-ranked.predictions.jsonl \
+  --output target/validation-ranked.report.json
+
+cargo run --release --example ranked_region_benchmark -- \
+  compare \
+  --baseline target/baseline-ranked.report.json \
+  --candidate target/candidate-ranked.report.json \
+  --output target/ranked-ablation.json
+```
+
+The SWE-Explore converter accepts a caller-provided JSONL path and optional
+JSON object maps from instance ID to issue text and pinned base commit. It does
+not fetch data. Keep external datasets outside this repository, verify their
+current terms separately from any companion code license, and record the exact
+dataset revision and file hash. The checked-in synthetic fixture is
+repository-authored and contains no released SWE-Explore task.
+
+Ranked-region metrics measure retrieval against incomplete evaluator labels;
+they do not establish patch correctness, model task success, or that every
+unlabeled line is useless. Comparisons expose deltas and tradeoffs rather than
+emitting a synthetic overall winner.
+
 ## Exact MCP wire capture
 
 Before collecting sensitive host traces, generate the deterministic synthetic

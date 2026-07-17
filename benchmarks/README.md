@@ -120,6 +120,39 @@ cargo run --release --example benchmark_ablation -- \
 The command rejects different manifest hashes so an apparent improvement cannot
 come from changing tasks or labels.
 
+## Ranked-region evaluator
+
+`ranked_region_benchmark` provides a versioned JSONL boundary between retrieval
+systems and evaluator-owned labels. It validates pinned repository revisions,
+line or source-token budgets, ranked regions, manifest identity, tokenizer
+identity, and optional retrieval provenance. Overlapping ranges are measured as
+interval unions rather than being charged or credited more than once.
+
+Run the repository-owned deterministic fixture with:
+
+```bash
+cargo run --release --example ranked_region_benchmark -- \
+  convert-swe-explore \
+  --dataset benchmarks/fixtures/ranked_regions/swe_explore.synthetic.jsonl \
+  --issue-map benchmarks/fixtures/ranked_regions/swe_explore.issue_map.json \
+  --commit-map benchmarks/fixtures/ranked_regions/swe_explore.commit_map.json \
+  --output target/swe-explore.manifest.jsonl \
+  --line-budget 8
+
+cargo run --release --example ranked_region_benchmark -- \
+  evaluate \
+  --manifest benchmarks/fixtures/ranked_regions/swe_explore.manifest.jsonl \
+  --predictions benchmarks/fixtures/ranked_regions/swe_explore.predictions.jsonl \
+  --output target/swe-explore.report.json
+```
+
+The checked-in [report](fixtures/ranked_regions/swe_explore.report.json) is a
+contract fixture, not external benchmark evidence. The converter accepts only
+caller-provided local data and never downloads or vendors SWE-Explore. Record
+the source revision, file hash, and applicable data terms for every external
+run; see [`../docs/measurement.md`](../docs/measurement.md) for the import and
+comparison workflow.
+
 The repository includes one [Linux x86-64 result](reports/linux-x86_64-2026-07-15.json) as a transparent development record. It is not a cross-platform result or a release claim; rerun the manifest on the target machine for current timings.
 
 The prospective-validation candidate report for `2c0388d` is
