@@ -205,6 +205,16 @@ tool result cost 875 tokens in dual mode, 464 as text only, and 433 as structure
 content only. That measures serialization opportunity, not host compatibility;
 dual remains the default until a real host trace proves a smaller mode works.
 
+The real Codex CLI 0.144.1 run publishes two redacted artifacts: a
+[host lifecycle receipt](reports/codex-host-receipt-0.144.1.json) and its
+[local wire analysis](reports/wire-trace-codex-cli-0.144.1.json). The receipt
+binds frozen source and binary identities, validates three host/MCP result
+correlations, and records cumulative provider usage and compaction without
+retaining prompts, arguments, outputs, credentials, IDs, or absolute paths.
+The wire report measures catalog and dual-result serialization, but no provider
+request frame was available. Neither artifact proves that removing local wire
+duplication would reduce provider input.
+
 ## Interpretation limits
 
 - Eight hand-selected fixes are too few for a general performance or quality claim.

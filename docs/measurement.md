@@ -387,6 +387,29 @@ The first real-host attempt also showed that hosts may terminate a proxy rather
 than close stdio cooperatively; the capture proxy now atomically persists after
 every message so such sessions retain evidence.
 
+A second real Codex CLI 0.144.1 session against frozen upstream revision
+`73fd764` correlates the private host rollout with an 11-event MCP trace. It
+completed `leantoken_files`, `leantoken_read`, and a known-hash repeat read in
+one turn; the repeated read returned `not_modified`. The publishable
+[host receipt](../benchmarks/reports/codex-host-receipt-0.144.1.json) records
+two compactions, five distinct cumulative provider-usage snapshots, and 3/3
+semantic matches between host rollout results and MCP responses. The paired
+[wire analysis](../benchmarks/reports/wire-trace-codex-cli-0.144.1.json)
+records 4,483 local JSON-RPC tokens: 1,595 catalog tokens, 69 call-argument
+tokens, 854 result-text tokens, and 776 structured-content tokens. All three
+dual results duplicated their structured payload in text, accounting for 776
+local tokens.
+
+The host receipt's final cumulative provider accounting contains 7,672
+uncached input, 63,232 cache-read input, 282 output, and 87 reasoning tokens;
+cache-creation input is unavailable and remains `null`. Each tool result is
+followed by a model response and a later provider-usage event in the same turn.
+This establishes host lifecycle correlation, not the provider's serialized
+request body or per-tool attribution. The MCP analyzer therefore correctly
+keeps its provider-usage fields null and marks the exchange local-wire-only.
+Without a provider-visible conversation frame, these results do not authorize
+compact mode or a provider-saving claim.
+
 Place the stdio proxy where the host would normally launch LeanToken:
 
 ```bash
@@ -412,6 +435,29 @@ provider usage; host-specific instrumentation must export those fields.
 Wire traces can contain repository source, prompts, paths, and host metadata.
 Store them with the same access controls and retention policy as the repository;
 do not publish a raw trace merely to support a token-cost claim.
+
+Build a deterministic publishable receipt from a private Codex rollout and its
+matching private MCP trace with frozen source and binary identities:
+
+```bash
+cargo run --release --example codex_host_receipt -- \
+  --rollout PRIVATE_ROLLOUT.jsonl \
+  --mcp-trace PRIVATE_MCP_TRACE.json \
+  --harness-revision HARNESS_GIT_REVISION \
+  --runtime-revision RUNTIME_GIT_REVISION \
+  --host-binary /path/to/codex-native-binary \
+  --runtime-binary /path/to/frozen-leantoken \
+  --capture-binary /path/to/mcp_wire_capture \
+  --output target/codex-host-receipt.json
+```
+
+The command rejects mismatched host/model/provider identities, invalid MCP
+lifecycle order, unresolved or reordered calls, semantic result differences,
+cross-turn follow-up evidence, regressing provider usage, unsafe repository
+identities, and non-regular frozen artifact paths. It hashes or omits session
+and call IDs and never copies prompts, tool arguments, tool outputs,
+credentials, or absolute paths into the receipt. Keep both private inputs out
+of version control; only the reviewed receipt is publishable.
 
 ```bash
 cargo run --release --example mcp_wire_analyze -- \

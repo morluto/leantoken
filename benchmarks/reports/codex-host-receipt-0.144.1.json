@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "source_rollout_blake3": "204ccb7487c6a9bba6eeaf1d98c37fc812ce720ae1c5631eb88c9d798ce58780",
+  "source_mcp_trace_blake3": "49107351395450099648aae7116fd71fad613546b30606b42640cad1c1184b83",
+  "source_mcp_content_blake3": "5cf7b588545a37c22f231943ff308350e9262dea6e1dc388c1b2f8405ebf02be",
+  "harness_revision": "4034ca1e2418724f33728e1abf7ea8639c209c68",
+  "runtime_revision": "73fd76470d928d2f594dc87685a219d4cc8a0a9f",
+  "host_binary_blake3": "1c7eb9960cc658bc06cee4ee06f1be2a545551c0cef64f928f5a7f58ac427457",
+  "runtime_binary_blake3": "8e01c30ec69fd8122eb45b1bd8339371be98bfca044a0b2488301918d52fa59d",
+  "capture_binary_blake3": "de7ebe71e360a167ce1417b3e63b1da7e1f335a3054548d523fbc3cd0a69ca0d",
+  "receipt_binary_blake3": "f57c22a764eb4db67824e9efbc3ebb2509d548518edae1db5ec40a70c3806e95",
+  "host": "codex-cli",
+  "host_version": "0.144.1",
+  "model": "gpt-5.6-sol",
+  "provider": "openai",
+  "tokenizer": "cl100k_base",
+  "token_count_exact": true,
+  "host_os": "linux",
+  "host_arch": "x86_64",
+  "repository": {
+    "revision": "73fd76470d928d2f594dc87685a219d4cc8a0a9f",
+    "dirty_fingerprint": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+  },
+  "rollout_record_count": 40,
+  "turn_count": 1,
+  "completed_turns": 1,
+  "aborted_turns": 0,
+  "compactions": [
+    {
+      "sequence": 0,
+      "after_turn": 0,
+      "window_number": 1,
+      "replacement_history_entries": 6
+    },
+    {
+      "sequence": 1,
+      "after_turn": 0,
+      "window_number": 2,
+      "replacement_history_entries": 6
+    }
+  ],
+  "distinct_provider_usage_snapshots": 5,
+  "total_input_tokens": 70904,
+  "provider_usage": {
+    "uncached_input_tokens": 7672,
+    "cache_creation_input_tokens": null,
+    "cache_read_input_tokens": 63232,
+    "output_tokens": 282,
+    "reasoning_tokens": 87
+  },
+  "tool_calls": [
+    {
+      "sequence": 0,
+      "turn": 0,
+      "tool_name": "leantoken_files",
+      "call_id_blake3": "af75c882037b428412bc6d129b7a66126535fbf698932f58fdc24e52bbbec53e",
+      "output_blake3": "e1b71cca55060bca1ab41b96ab6e6c24037e44a97532799fb69d6cb7a11cb039",
+      "output_tokens": 863,
+      "expected_hash_supplied": false,
+      "known_hash_followup": false,
+      "result_status": null,
+      "result_is_error": false,
+      "followed_by_model_response": true,
+      "followed_by_provider_usage": true
+    },
+    {
+      "sequence": 1,
+      "turn": 0,
+      "tool_name": "leantoken_read",
+      "call_id_blake3": "4d28a37459092e755e213a1dd7affe230067d6118669960abba6bd3a009b2b7f",
+      "output_blake3": "d266c1cc7ced3be08d42ffa407bec9cf927dfe0d93e99e95ff6bad66b33edf71",
+      "output_tokens": 579,
+      "expected_hash_supplied": false,
+      "known_hash_followup": false,
+      "result_status": "content",
+      "result_is_error": false,
+      "followed_by_model_response": true,
+      "followed_by_provider_usage": true
+    },
+    {
+      "sequence": 2,
+      "turn": 0,
+      "tool_name": "leantoken_read",
+      "call_id_blake3": "928eab7cde802f74434f4af9da84fa3a5d8b8995f328d9063617b923eedb3c62",
+      "output_blake3": "ea58bcfa478c1980f110ff5f7b323193066f098f232b55326f7ffd4b1fdf1f22",
+      "output_tokens": 212,
+      "expected_hash_supplied": true,
+      "known_hash_followup": true,
+      "result_status": "not_modified",
+      "result_is_error": false,
+      "followed_by_model_response": true,
+      "followed_by_provider_usage": true
+    }
+  ],
+  "mcp_correlation": {
+    "rollout_tool_calls": 3,
+    "mcp_tool_calls": 3,
+    "tool_order_matches": true,
+    "protocol_order_valid": true,
+    "semantic_output_matches": 3,
+    "all_semantic_outputs_match": true,
+    "known_hash_followups": 1,
+    "not_modified_results": 1
+  },
+  "privacy": {
+    "raw_rollout_retained": false,
+    "raw_mcp_messages_retained": false,
+    "prompts_retained": false,
+    "tool_arguments_retained": false,
+    "tool_outputs_retained": false,
+    "credentials_retained": false,
+    "absolute_paths_retained": false,
+    "session_and_call_ids_hashed_or_omitted": true
+  },
+  "limitations": [
+    "Codex rollout usage is provider-native session accounting, but the receipt does not contain provider request framing.",
+    "Codex exposes cached input but not cache-creation input, so cache_creation_input_tokens remains null.",
+    "Tool-output token counts use the selected local tokenizer and are not provider billing counts.",
+    "A later provider-usage event proves another model request occurred after each tool output; it does not expose the provider's serialized request body.",
+    "Private rollout and MCP payloads are represented only by BLAKE3 identities and must remain outside version control."
+  ]
+}
