@@ -109,6 +109,33 @@ fn selection_is_seeded_stratified_and_repository_bounded() {
 }
 
 #[test]
+fn candidate_availability_reports_language_and_shape_capacity() {
+    let mut rust_exact = fixture_candidate(0, true);
+    let mut rust_behavioral = fixture_candidate(1, false);
+    let mut go_exact = fixture_candidate(2, true);
+    go_exact.language = Language::Go;
+    go_exact.task.language = Language::Go;
+    rust_exact.language = Language::Rust;
+    rust_behavioral.language = Language::Rust;
+
+    let availability = candidate_availability(&[rust_exact, rust_behavioral, go_exact]);
+
+    assert_eq!(availability.language_tasks[&Language::Rust], 2);
+    assert_eq!(availability.language_tasks[&Language::Go], 1);
+    assert_eq!(
+        availability.language_exact_identifier_tasks[&Language::Rust],
+        1
+    );
+    assert_eq!(availability.language_non_exact_tasks[&Language::Rust], 1);
+    assert_eq!(
+        availability.language_exact_identifier_tasks[&Language::Go],
+        1
+    );
+    assert_eq!(availability.exact_identifier_tasks, 2);
+    assert_eq!(availability.non_exact_tasks, 1);
+}
+
+#[test]
 fn paths_reject_parent_and_absolute_components() {
     assert!(normalize_diff_path("../secret").is_err());
     assert!(normalize_diff_path("/secret").is_err());
@@ -144,6 +171,68 @@ fn source_record_identity_is_independent_of_json_field_order() {
         canonical_records_blake3(&first).unwrap(),
         canonical_records_blake3(&second).unwrap()
     );
+}
+
+#[test]
+fn excluded_task_manifest_binds_source_identity_and_artifact() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("consumed.jsonl");
+    let candidate = fixture_candidate(0, true);
+    let bytes = serialize_jsonl(std::slice::from_ref(&candidate.task)).expect("manifest");
+    fs::write(&path, &bytes).expect("write manifest");
+    let identities = BTreeMap::from([(
+        candidate.task.task_id.clone(),
+        candidate.task.source_record_blake3.clone(),
+    )]);
+
+    let (excluded, receipt) =
+        load_excluded_task_manifests(&[path], &identities).expect("exclusions");
+    let receipt = receipt.expect("receipt");
+
+    assert_eq!(excluded, HashSet::from([candidate.task.task_id]));
+    assert_eq!(receipt.excluded_tasks, 1);
+    assert_eq!(receipt.artifacts.len(), 1);
+    assert_eq!(receipt.artifacts[0].bytes, bytes.len());
+    assert_eq!(receipt.artifacts[0].blake3, blake3_hex(&bytes));
+    assert_eq!(receipt.artifacts[0].dataset_kinds[DATASET_KIND], 1);
+}
+
+#[test]
+fn excluded_task_manifest_rejects_source_identity_mismatch() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("mismatch.jsonl");
+    let candidate = fixture_candidate(0, true);
+    fs::write(
+        &path,
+        serialize_jsonl(std::slice::from_ref(&candidate.task)).expect("manifest"),
+    )
+    .expect("write manifest");
+    let identities = BTreeMap::from([(candidate.task.task_id, "f".repeat(HASH_HEX_LEN))]);
+
+    let error =
+        load_excluded_task_manifests(&[path], &identities).expect_err("mismatch must be rejected");
+
+    assert!(error.to_string().contains("does not match"));
+}
+
+#[test]
+fn excluded_task_manifests_reject_duplicate_task_ids() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let first = directory.path().join("first.jsonl");
+    let second = directory.path().join("second.jsonl");
+    let candidate = fixture_candidate(0, true);
+    let bytes = serialize_jsonl(std::slice::from_ref(&candidate.task)).expect("manifest");
+    fs::write(&first, &bytes).expect("first manifest");
+    fs::write(&second, bytes).expect("second manifest");
+    let identities = BTreeMap::from([(
+        candidate.task.task_id.clone(),
+        candidate.task.source_record_blake3,
+    )]);
+
+    let error = load_excluded_task_manifests(&[first, second], &identities)
+        .expect_err("duplicate must be rejected");
+
+    assert!(error.to_string().contains("duplicate task ID"));
 }
 
 #[test]
@@ -217,6 +306,7 @@ fn test_config() -> PrepareConfig<'static> {
         source_revision: "0123456789abcdef0123456789abcdef01234567",
         source_url: "https://example.invalid/0123456789abcdef0123456789abcdef01234567/dataset",
         seed: "fixture",
+        excluded_task_manifests: &[],
         harness_revision: "0123456789abcdef0123456789abcdef01234567",
         harness_binary: Path::new("harness"),
         languages: BTreeSet::from([Language::Rust]),
@@ -239,7 +329,7 @@ fn fixture_candidate(index: usize, exact_identifier: bool) -> Candidate {
     let source_record_blake3 = "0".repeat(HASH_HEX_LEN);
     Candidate {
         task: DevelopmentTask {
-            schema_version: SCHEMA_VERSION,
+            schema_version: TASK_SCHEMA_VERSION,
             dataset_kind: DATASET_KIND.into(),
             task_id: task_id.clone(),
             repository: RepositorySpec {
@@ -268,7 +358,7 @@ fn fixture_candidate(index: usize, exact_identifier: bool) -> Candidate {
             source_record_blake3: source_record_blake3.clone(),
         },
         label: SealedLabel {
-            schema_version: SCHEMA_VERSION,
+            schema_version: TASK_SCHEMA_VERSION,
             task_id,
             source_record_blake3,
             label_method: "fixture".into(),
