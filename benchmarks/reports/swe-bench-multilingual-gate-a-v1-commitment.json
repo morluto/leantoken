@@ -107,6 +107,57 @@
     "gate_a_scope": "development research admission only",
     "gate_b_scope": "requires a separate unseen set and is not satisfied by this development run"
   },
+  "pre_label_internal_smoke_amendment": {
+    "status": "amended_before_sealed_multilingual_label_consumption",
+    "reason": "The historical 17/38 absolute anchor floor was not reproducible on the exact frozen upstream baseline. The baseline at 3bfce7e and candidate were then compared on the same consumed manifest, repositories, host, tokenizer, and harness protocol.",
+    "historical_absolute_floor": {
+      "relevant_files": "8/11",
+      "line_anchors": "17/38",
+      "candidate_met_file_floor": true,
+      "candidate_met_line_floor": false,
+      "retained_as_conflicting_evidence": true
+    },
+    "amended_internal_criterion": "Candidate must be non-inferior to the exact frozen baseline for relevant files and line anchors on every aggregate; historical absolute results remain disclosed and cannot support an improvement claim.",
+    "baseline_report": {
+      "blake3": "2364d2377c81ecaa669b7f8ff025f43b808071c240f5b62e3efc6e1fb2aae405",
+      "relevant_files": "8/11",
+      "line_anchors": "16/38",
+      "source_tokens": 3318,
+      "complete_first_response_tokens": 5792,
+      "dead_end_source_tokens": 1193,
+      "second_response_source_tokens": 2601,
+      "repeat_request_tokens": 955,
+      "complete_second_response_tokens": 4909,
+      "two_turn_context_tokens": 11656
+    },
+    "candidate_report": {
+      "blake3": "db677be6553c16d3d55108054172bbe4a096ab30e42edda07f08fc53bcee543a",
+      "relevant_files": "9/11",
+      "line_anchors": "16/38",
+      "source_tokens": 3728,
+      "complete_first_response_tokens": 6188,
+      "dead_end_source_tokens": 1430,
+      "second_response_source_tokens": 3549,
+      "repeat_request_tokens": 905,
+      "complete_second_response_tokens": 6109,
+      "two_turn_context_tokens": 13202
+    },
+    "candidate_relative_deltas": {
+      "source_tokens": 0.123568415,
+      "complete_first_response_tokens": 0.068370166,
+      "dead_end_source_tokens": 0.198658843,
+      "second_response_source_tokens": 0.364475202,
+      "repeat_request_tokens": -0.052356021,
+      "complete_second_response_tokens": 0.244448971,
+      "two_turn_context_tokens": 0.132635553
+    },
+    "decision": "Proceed to the frozen external development evaluation without changing runtime, evaluator, data, or thresholds. The external 5% complete-cost-per-relevant-line limit is unchanged; failure there is no-go.",
+    "limitations": [
+      "The consumed four-task set contains no C, C++, Java, PHP, or Ruby task and cannot measure the new grammar coverage directly.",
+      "Line anchors tied baseline task by task; the candidate may claim one additional relevant file, not an internal line-retrieval improvement.",
+      "All reported complete-wire, dead-end, second-response, and two-turn costs worsened except the repeat-request envelope."
+    ]
+  },
   "failure_policy": [
     "Do not modify the candidate, evaluator, budget, tokenizer, labels, or thresholds after development labels are consumed.",
     "If any internal, external, correctness, determinism, or cost gate fails, record no-go and require a newly versioned development set for another candidate.",
