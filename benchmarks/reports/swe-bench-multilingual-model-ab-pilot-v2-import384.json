@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "report_kind": "model_ab_pilot_result",
+  "status": "completed_negative_primary",
+  "generated_on": "2026-07-17",
+  "experiment_id": "swe-bench-multilingual-model-ab-pilot-v2-import384",
+  "scope": {
+    "evidence_class": "exploratory_model_pilot",
+    "confirmation_or_gate_b": false,
+    "product_promotion_allowed": false,
+    "push_or_pull_request_allowed_by_latest_operator_instruction": true,
+    "reason": "This is a public consumed two-task model pilot. It is useful for PR review and future design, but it is not sealed Gate B evidence."
+  },
+  "artifacts": {
+    "manifest": "target/model-ab-groundwork/swe-bench-multilingual-model-ab-pilot-v2-import384.manifest.json",
+    "manifest_blake3": "c3a516b0a7385b8346e7f997023efed2dd4f859b5ca2fc6af3d36bd5d6518675",
+    "preflight_receipt": "target/model-ab-groundwork/swe-bench-multilingual-model-ab-pilot-v2-import384.preflight.json",
+    "preflight_receipt_blake3": "f1f678de270cfcc8666df272d3785ddc15230e9bb1a942fa7f77387efe8bd495",
+    "result_report": "target/model-ab-groundwork/swe-bench-multilingual-model-ab-pilot-v2-import384.report.json",
+    "result_report_blake3": "5fb3c09e1bcf46e1e1f21a3a7a222e58cda8f1f44b8a83690f8d17495ad3190f",
+    "result_generated_at_utc": "2026-07-17T19:03:25Z"
+  },
+  "identities": {
+    "harness_revision": "5305111e726bf66c07c90828b8357b6b1937a929",
+    "harness_worktree_dirty": false,
+    "harness_binary_blake3": "2e69a4999ad25aaef386d82294e731b51911b515b9b54160cf5b26f96b52cd59",
+    "adapter_binary_blake3": "363e0d6818752501ccc0772b062d56257153000e5ae955ab4606cb713f22247c",
+    "baseline_revision": "3bfce7e9e8234af18d54ac0b86318b447dccfe8e",
+    "baseline_runtime_blake3": "f72086c349e9a807b7d187f0e820f08f341d28ecdc37a28ce671259b1abfe4ed",
+    "adaptive_revision": "7afe1fc7bd9fb6eb0ed728de64d83cfdef706a74",
+    "adaptive_runtime_blake3": "f7ba78211d2519171b3b73a27279b4d7c8174adaf745ab7a0e25f84c68a2d3e1"
+  },
+  "protocol": {
+    "model": "gpt-5.5",
+    "codex_cli_version": "codex-cli 0.144.1",
+    "random_seed": 2026071702,
+    "tasks": 2,
+    "arms": 4,
+    "repetitions_per_task_arm": 5,
+    "runs": 40,
+    "validator_outcomes": 31,
+    "fresh_detached_worktree_per_run": true,
+    "web_search": "disabled",
+    "tool_call_limit": 40,
+    "provider_cost_exposed": false
+  },
+  "arm_results": {
+    "filesystem": {
+      "runs": 10,
+      "adapter_completed": 10,
+      "adapter_failed": 0,
+      "validated_successes": 3,
+      "success_rate": 0.3,
+      "median_input_tokens": 371601,
+      "median_duration_ms": 173008
+    },
+    "lean_token_baseline": {
+      "runs": 10,
+      "adapter_completed": 7,
+      "adapter_failed": 4,
+      "validated_successes": 4,
+      "success_rate": 0.4,
+      "median_input_tokens": 335951,
+      "median_duration_ms": 259334
+    },
+    "lean_token_adaptive": {
+      "runs": 10,
+      "adapter_completed": 6,
+      "adapter_failed": 4,
+      "validated_successes": 4,
+      "success_rate": 0.4,
+      "median_input_tokens": 456921.5,
+      "median_duration_ms": 293958.5
+    },
+    "lean_token_adaptive_recovery": {
+      "runs": 10,
+      "adapter_completed": 10,
+      "adapter_failed": 1,
+      "validated_successes": 3,
+      "success_rate": 0.3,
+      "median_input_tokens": 499534,
+      "median_duration_ms": 195996
+    }
+  },
+  "task_results": {
+    "babel__babel-15445": {
+      "filesystem_successes": "0/5",
+      "lean_token_baseline_successes": "0/5",
+      "lean_token_adaptive_successes": "0/5",
+      "lean_token_adaptive_recovery_successes": "0/5",
+      "note": "No arm solved the Babel task."
+    },
+    "caddyserver__caddy-6051": {
+      "filesystem_successes": "3/5",
+      "lean_token_baseline_successes": "4/5",
+      "lean_token_adaptive_successes": "4/5",
+      "lean_token_adaptive_recovery_successes": "3/5",
+      "note": "LeanToken strict baseline and strict adaptive both beat filesystem on validated successes for this task, but adaptive does not beat baseline."
+    }
+  },
+  "pre_registered_interpretation": {
+    "primary_comparison": "lean_token_adaptive versus lean_token_baseline",
+    "result": "negative",
+    "reason": "Validated successes are tied at 4/10, but strict adaptive does not deliver a material efficiency improvement: median input tokens are higher, median duration is higher, and adapter completion is lower than baseline.",
+    "secondary_comparison": "lean_token_adaptive_recovery versus filesystem",
+    "secondary_result": "negative",
+    "secondary_reason": "Adaptive recovery and filesystem both have 3/10 validated successes, while recovery has higher median input tokens and no product-relevant win."
+  },
+  "failures_and_risks": {
+    "non_completed_runs": [
+      "babel__babel-15445 repetition 1 lean_token_adaptive: model adapter exited with status 1",
+      "caddyserver__caddy-6051 repetition 1 lean_token_adaptive: model adapter exited with status 1",
+      "caddyserver__caddy-6051 repetition 1 lean_token_adaptive_recovery: captured patch failed Git validation",
+      "caddyserver__caddy-6051 repetition 1 lean_token_baseline: captured patch failed Git validation",
+      "babel__babel-15445 repetition 2 lean_token_adaptive: model adapter exited with status 1",
+      "babel__babel-15445 repetition 3 lean_token_baseline: model adapter exited with status 1",
+      "babel__babel-15445 repetition 4 lean_token_baseline: model adapter exited with status 1",
+      "babel__babel-15445 repetition 5 lean_token_baseline: model adapter exited with status 1",
+      "babel__babel-15445 repetition 5 lean_token_adaptive: model adapter exited with status 1"
+    ],
+    "interpretation": "Several LeanToken-only runs failed the host/tool contract or artifact validation before official validation. That is part of the model-using-system result and counts against practical usability."
+  },
+  "limitations": [
+    "Only two public consumed tasks are included.",
+    "The run is real model evidence but not blind confirmation.",
+    "Provider cost is not exposed by the harness.",
+    "Gate B was not prepared or run.",
+    "Local validation scope remains Linux-only."
+  ]
+}
