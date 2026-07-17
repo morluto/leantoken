@@ -201,6 +201,8 @@ struct ArmAggregate {
     total_input_tokens: Option<u64>,
     total_output_tokens: Option<u64>,
     provider_reported_cost_usd: Option<f64>,
+    input_tokens_per_success: Option<f64>,
+    provider_reported_cost_per_success_usd: Option<f64>,
     total_duration_ms: u128,
     tool_calls: usize,
     rereads: usize,
@@ -210,13 +212,19 @@ struct ArmAggregate {
     dead_end_reads: usize,
     input_tokens: SampleStatistics,
     output_tokens: SampleStatistics,
+    provider_cost_usd: SampleStatistics,
     duration_ms: SampleStatistics,
+    successful_input_tokens: SampleStatistics,
+    successful_duration_ms: SampleStatistics,
 }
 
 #[derive(Debug, Default, Serialize)]
 struct SampleStatistics {
     samples: usize,
+    minimum: Option<f64>,
+    median: Option<f64>,
     mean: Option<f64>,
+    maximum: Option<f64>,
     sample_variance: Option<f64>,
 }
 
@@ -542,7 +550,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "Each run receives a fresh detached Git worktree at the frozen revision. The harness runs the frozen success command after the adapter; agent-reported success is retained only as a diagnostic.",
             "The random seed, actual arm order, clean source revisions, and verified harness, adapter, and runtime binary hashes are recorded for reproducibility; they do not establish provider determinism.",
             "Provider-reported usage is retained verbatim. Local tokenizer estimates must not be substituted for provider billing counts without an explicit label.",
-            "One run per arm is a smoke test, not evidence of a stable pass-rate difference; use repeated runs and report variance for claims.",
+            "One run per arm is a smoke test, not evidence of a stable pass-rate difference; use repeated runs and report medians, ranges, and sample variance for claims.",
         ],
     };
     let json = serde_json::to_string_pretty(&report)?;
@@ -1377,12 +1385,18 @@ fn aggregate<'a>(runs: impl IntoIterator<Item = &'a RunReport>) -> BTreeMap<Arm,
         };
     }
     for (arm, item) in &mut aggregates {
+        let arm_runs = runs
+            .iter()
+            .filter(|run| run.arm == *arm)
+            .copied()
+            .collect::<Vec<_>>();
         let results = runs
             .iter()
             .filter(|run| run.arm == *arm)
             .filter_map(|run| run.result.as_ref())
             .collect::<Vec<_>>();
-        item.provider_reported_cost_usd = (!results.is_empty())
+        let all_runs_have_results = results.len() == item.runs;
+        item.provider_reported_cost_usd = (all_runs_have_results && !results.is_empty())
             .then(|| {
                 results
                     .iter()
@@ -1391,10 +1405,20 @@ fn aggregate<'a>(runs: impl IntoIterator<Item = &'a RunReport>) -> BTreeMap<Arm,
                     .map(|costs| costs.into_iter().sum())
             })
             .flatten();
-        item.total_input_tokens =
-            complete_sum(results.iter().map(|result| result.total_input_tokens));
-        item.total_output_tokens =
-            complete_sum(results.iter().map(|result| result.total_output_tokens));
+        item.total_input_tokens = all_runs_have_results
+            .then(|| complete_sum(results.iter().map(|result| result.total_input_tokens)))
+            .flatten();
+        item.total_output_tokens = all_runs_have_results
+            .then(|| complete_sum(results.iter().map(|result| result.total_output_tokens)))
+            .flatten();
+        item.input_tokens_per_success = item
+            .total_input_tokens
+            .filter(|_| item.successes > 0)
+            .map(|tokens| tokens as f64 / item.successes as f64);
+        item.provider_reported_cost_per_success_usd = item
+            .provider_reported_cost_usd
+            .filter(|_| item.successes > 0)
+            .map(|cost| cost / item.successes as f64);
         item.input_tokens = sample_statistics(
             results
                 .iter()
@@ -1407,9 +1431,34 @@ fn aggregate<'a>(runs: impl IntoIterator<Item = &'a RunReport>) -> BTreeMap<Arm,
                 .filter_map(|result| result.total_output_tokens.map(|tokens| tokens as f64))
                 .collect(),
         );
-        item.duration_ms = sample_statistics(
-            runs.iter()
-                .filter(|run| run.arm == *arm)
+        item.provider_cost_usd = sample_statistics(
+            results
+                .iter()
+                .filter_map(|result| result.provider_reported_cost_usd)
+                .collect(),
+        );
+        item.duration_ms =
+            sample_statistics(arm_runs.iter().map(|run| run.duration_ms as f64).collect());
+        item.successful_input_tokens = sample_statistics(
+            arm_runs
+                .iter()
+                .filter_map(|run| {
+                    run.result
+                        .as_ref()
+                        .filter(|result| result.task_success)
+                        .and_then(|result| result.total_input_tokens)
+                        .map(|tokens| tokens as f64)
+                })
+                .collect(),
+        );
+        item.successful_duration_ms = sample_statistics(
+            arm_runs
+                .iter()
+                .filter(|run| {
+                    run.result
+                        .as_ref()
+                        .is_some_and(|result| result.task_success)
+                })
                 .map(|run| run.duration_ms as f64)
                 .collect(),
         );
@@ -1427,10 +1476,19 @@ fn complete_sum(values: impl IntoIterator<Item = Option<u64>>) -> Option<u64> {
     (count > 0).then_some(total)
 }
 
-fn sample_statistics(samples: Vec<f64>) -> SampleStatistics {
+fn sample_statistics(mut samples: Vec<f64>) -> SampleStatistics {
+    samples.sort_by(f64::total_cmp);
+    let median = match samples.len() {
+        0 => None,
+        length if length % 2 == 1 => Some(samples[length / 2]),
+        length => Some((samples[length / 2 - 1] + samples[length / 2]) / 2.0),
+    };
     SampleStatistics {
         samples: samples.len(),
+        minimum: samples.first().copied(),
+        median,
         mean: (!samples.is_empty()).then(|| samples.as_slice().mean()),
+        maximum: samples.last().copied(),
         sample_variance: (samples.len() > 1).then(|| samples.as_slice().variance()),
     }
 }
@@ -1451,12 +1509,15 @@ mod tests {
     use crate::model_ab_artifacts::{RangeIdentity, ToolCall};
 
     #[test]
-    fn sample_statistics_reports_mean_and_sample_variance() {
-        let statistics = sample_statistics(vec![10.0, 20.0, 30.0]);
+    fn sample_statistics_reports_distribution_and_sample_variance() {
+        let statistics = sample_statistics(vec![40.0, 10.0, 30.0, 20.0]);
 
-        assert_eq!(statistics.samples, 3);
-        assert_eq!(statistics.mean, Some(20.0));
-        assert_eq!(statistics.sample_variance, Some(100.0));
+        assert_eq!(statistics.samples, 4);
+        assert_eq!(statistics.minimum, Some(10.0));
+        assert_eq!(statistics.median, Some(25.0));
+        assert_eq!(statistics.mean, Some(25.0));
+        assert_eq!(statistics.maximum, Some(40.0));
+        assert_eq!(statistics.sample_variance, Some(500.0 / 3.0));
         assert_eq!(
             sample_statistics(vec![10.0]).sample_variance,
             None,

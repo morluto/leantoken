@@ -311,11 +311,15 @@ gold-patch self-test must resolve before model-generated patches are evaluated.
 
 One run per arm is plumbing evidence, not a pass-rate comparison. Freeze exact
 model versions and report repeated runs and variance. Each arm aggregate reports
-the arithmetic mean and sample variance for input tokens, output tokens, and
-wall-clock duration, both overall and per task. The mean is `null` without a
-completed adapter result, and sample variance is `null` with fewer than two
-samples. Adapter failures, adapter timeouts, validation failures, and validation
-timeouts are recorded per run instead of aborting the remaining experiment.
+the minimum, median, arithmetic mean, maximum, and sample variance for input
+tokens, output tokens, provider cost when exposed, and wall-clock duration, both
+overall and per task. It separately reports input-token and duration
+distributions for validated successes plus complete-attempt input and provider
+cost per success. Aggregate totals are `null` if any run lacks the corresponding
+provider result instead of silently dropping failed attempts. Sample variance is
+`null` with fewer than two samples. Adapter failures, adapter timeouts,
+validation failures, and validation timeouts are recorded per run instead of
+aborting the remaining experiment.
 
 To validate the manifest, worktree, adapter, and success-command plumbing before
 using provider credentials, build and pass the included dry-run adapter:
