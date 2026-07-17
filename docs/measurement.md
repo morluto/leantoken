@@ -178,6 +178,7 @@ cargo run --release --example model_ab -- \
   --manifest target/model_ab.json \
   --adapter /path/to/provider-adapter \
   --repetitions 5 \
+  --artifacts-dir target/model_ab-artifacts \
   --output target/model_ab-report.json
 ```
 
@@ -185,6 +186,7 @@ The adapter result contract is provider-neutral:
 
 ```json
 {
+  "schema_version": 3,
   "task_success": false,
   "total_input_tokens": 12345,
   "total_output_tokens": 678,
@@ -192,9 +194,16 @@ The adapter result contract is provider-neutral:
   "tool_calls": 12,
   "rereads": 2,
   "reread_tokens": 300,
+  "failed_tool_calls": 1,
   "failed_searches": 1,
   "dead_end_reads": 2,
-  "provider_usage": {},
+  "provider_usage": {
+    "uncached_input_tokens": 9000,
+    "cache_creation_input_tokens": 2000,
+    "cache_read_input_tokens": 1345,
+    "output_tokens": 678,
+    "reasoning_tokens": 120
+  },
   "evidence_receipt": null,
   "repository_generation": 42
 }
@@ -203,12 +212,30 @@ The adapter result contract is provider-neutral:
 `task_success` is the agent's own claim; the authoritative report value is
 replaced with the frozen success-command result.
 
-The adapter owns provider authentication, the actual model/tool harness, and
-raw trace retention. The harness runs the frozen success command itself after
-each arm; agent-reported success is retained only as a diagnostic. The adapter
-reports provider input and output tokens, cost, tool calls, rereads, reread
-tokens, failed searches, dead-end reads, raw receipts, and the observed
-repository generation. For prewalk, it must transfer the complete
+The adapter owns provider authentication and the actual model/tool harness.
+For request schema v3 it must write `tool-trace.json`, `trajectory.json`, and
+`provider-usage.json` into the supplied `artifacts_directory` before returning.
+All three use artifact schema v1 and repeat the experiment ID, manifest BLAKE3,
+task ID, repetition, and arm supplied by the harness. Tool-trace records have
+contiguous sequence numbers, unique call and result IDs, source-token counts,
+outcomes, reread markers, and exact repository-relative result ranges with
+generation, line bounds, and content BLAKE3. The usage artifact retains the raw
+provider receipt beside typed uncached-input, cache-creation, cache-read,
+output, and reasoning categories. Use `null` for categories the provider does
+not expose; do not infer or replace them with zero.
+
+The harness rejects missing files, binding mismatches, unavailable tools,
+invalid ranges, duplicate IDs, and summary counts that cannot be recomputed
+from the trace. It captures the run's complete Git diff itself as `patch.diff`,
+checks that the patch reverses cleanly, and records every artifact's byte count
+and BLAKE3 in the report. Per-run artifact directories are immutable identities,
+so a repeated experiment must use a new artifact root or experiment ID.
+
+The harness runs the frozen success command itself after each arm;
+agent-reported success is retained only as a diagnostic. The adapter reports
+provider input and output tokens, cost, tool calls, rereads, reread tokens,
+failed tool calls, failed searches, dead-end reads, raw receipts, and the
+observed repository generation. For prewalk, it must transfer the complete
 exploration trajectory, todo state, evidence receipt, and first edit—not only a
 prose plan.
 
@@ -229,10 +256,11 @@ cargo run --release --example artifact_blake3 -- \
   /path/to/provider-adapter
 ```
 
-The harness itself must also run from a clean worktree. Report schema v3 records
+The harness itself must also run from a clean worktree. Report schema v4 records
 its exact revision and executable BLAKE3, the verified arm definitions, random
-seed, and schedules. A hash records artifact identity; it does not establish
-that two builds used equivalent compilers, dependencies, or host environments.
+seed, schedules, and per-run artifact identities. A hash records artifact
+identity; it does not establish that two builds used equivalent compilers,
+dependencies, or host environments.
 
 One run per arm is plumbing evidence, not a pass-rate comparison. Freeze exact
 model versions and report repeated runs and variance. Each arm aggregate reports
@@ -250,11 +278,13 @@ cargo build --release --example model_ab_dry_run_adapter
 cargo run --release --example model_ab -- \
   --manifest target/model_ab.json \
   --adapter target/release/examples/model_ab_dry_run_adapter \
+  --artifacts-dir target/model_ab-dry-run-artifacts \
   --output target/model_ab-dry-run-report.json
 ```
 
-The dry-run adapter does not call a model, edit the worktree, or report token
-usage. Use its binary and source identity in every dry-run arm definition. A
+The dry-run adapter does not call a model or edit the worktree. It writes the
+required empty trace and trajectory plus an explicit zero-usage dry-run receipt.
+Use its binary and source identity in every dry-run arm definition. A
 passing success command therefore validates only deterministic scheduling,
 artifact preflight, isolated task worktrees, adapter invocation, and validation
 plumbing; it is not task-success, quality, or cost evidence. Do not use the
