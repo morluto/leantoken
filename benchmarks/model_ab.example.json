@@ -1,16 +1,70 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "experiment_id": "replace-with-a-frozen-experiment-id",
+  "random_seed": 20260717,
   "primary_model": "provider/frontier-model-version",
   "executor_model": "provider/cheaper-model-version",
-  "tool_call_limit": 40,
   "timeout_seconds": 1800,
+  "arms": {
+    "filesystem": {
+      "runtime_repository": "/absolute/path/to/native-runtime-worktree",
+      "runtime_revision": "0000000000000000000000000000000000000000",
+      "runtime_binary": "/absolute/path/to/native-runtime-binary",
+      "runtime_binary_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
+      "adapter_repository": "/absolute/path/to/provider-adapter-worktree",
+      "adapter_revision": "0000000000000000000000000000000000000000",
+      "adapter_binary_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
+      "configuration": { "retrieval": "native" },
+      "tool_catalog": ["path_list", "text_search", "file_read", "edit", "shell"],
+      "budget": { "tool_call_limit": 40, "context_token_limit": 8000 },
+      "retrieval_contract": "Use the frozen native filesystem tool catalog without LeanToken."
+    },
+    "lean_token_baseline": {
+      "runtime_repository": "/absolute/path/to/baseline-leantoken-worktree",
+      "runtime_revision": "0000000000000000000000000000000000000000",
+      "runtime_binary": "/absolute/path/to/baseline-leantoken-binary",
+      "runtime_binary_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
+      "adapter_repository": "/absolute/path/to/provider-adapter-worktree",
+      "adapter_revision": "0000000000000000000000000000000000000000",
+      "adapter_binary_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
+      "configuration": { "retrieval": "baseline" },
+      "tool_catalog": ["path_list", "text_search", "file_read", "leantoken", "edit", "shell"],
+      "budget": { "tool_call_limit": 40, "context_token_limit": 8000 },
+      "retrieval_contract": "Use native tools plus the frozen baseline LeanToken runtime."
+    },
+    "lean_token_adaptive": {
+      "runtime_repository": "/absolute/path/to/adaptive-leantoken-worktree",
+      "runtime_revision": "0000000000000000000000000000000000000000",
+      "runtime_binary": "/absolute/path/to/adaptive-leantoken-binary",
+      "runtime_binary_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
+      "adapter_repository": "/absolute/path/to/provider-adapter-worktree",
+      "adapter_revision": "0000000000000000000000000000000000000000",
+      "adapter_binary_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
+      "configuration": { "retrieval": "adaptive" },
+      "tool_catalog": ["path_list", "text_search", "file_read", "leantoken", "edit", "shell"],
+      "budget": { "tool_call_limit": 40, "context_token_limit": 8000 },
+      "retrieval_contract": "Use native tools plus the frozen adaptive LeanToken runtime."
+    },
+    "lean_token_adaptive_recovery": {
+      "runtime_repository": "/absolute/path/to/adaptive-leantoken-worktree",
+      "runtime_revision": "0000000000000000000000000000000000000000",
+      "runtime_binary": "/absolute/path/to/adaptive-leantoken-binary",
+      "runtime_binary_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
+      "adapter_repository": "/absolute/path/to/provider-adapter-worktree",
+      "adapter_revision": "0000000000000000000000000000000000000000",
+      "adapter_binary_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
+      "configuration": { "retrieval": "adaptive_discovery_native_recovery" },
+      "tool_catalog": ["path_list", "text_search", "file_read", "leantoken", "edit", "shell"],
+      "budget": { "tool_call_limit": 40, "context_token_limit": 8000 },
+      "retrieval_contract": "Use adaptive LeanToken for discovery and native tools for recovery and verification."
+    }
+  },
   "tasks": [
     {
       "id": "example-task",
       "repository": "target/validation-repos/flask",
       "revision": "36e4a824f340fdee7ed50937ba8e7f6bc7d17f81",
-      "prompt": "Replace this example with a frozen task prompt.",
+      "prompt": "Replace this example with a frozen executable task prompt.",
       "success_command": ["python", "-m", "pytest", "tests/test_testing.py"]
     }
   ]
