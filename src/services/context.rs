@@ -31,6 +31,33 @@ const MAX_CONTEXT_LEXICAL_HITS: usize = 30;
 /// Per-import symbol scan cap for concept-corroborated structural expansion.
 const MAX_IMPORT_SYMBOLS: usize = 128;
 const MIN_CORROBORATED_QUERY_WEIGHT: f64 = 0.65;
+const SYMBOL_CONTEXT_TOKEN_CAP: usize = 768;
+const REFERENCE_CONTEXT_TOKEN_CAP: usize = 256;
+const TEXT_CONTEXT_TOKEN_CAP: usize = 256;
+const IMPORT_SYMBOL_CONTEXT_TOKEN_CAP: usize = 256;
+
+#[derive(Clone, Copy)]
+enum ContextExcerptKind {
+    Symbol,
+    Reference,
+    Text,
+    ImportSymbol,
+}
+
+impl ContextExcerptKind {
+    const fn token_cap(self) -> usize {
+        match self {
+            Self::Symbol => SYMBOL_CONTEXT_TOKEN_CAP,
+            Self::Reference => REFERENCE_CONTEXT_TOKEN_CAP,
+            Self::Text => TEXT_CONTEXT_TOKEN_CAP,
+            Self::ImportSymbol => IMPORT_SYMBOL_CONTEXT_TOKEN_CAP,
+        }
+    }
+}
+
+fn excerpt_budget(request_budget: usize, kind: ContextExcerptKind) -> usize {
+    request_budget.min(kind.token_cap())
+}
 
 fn cached_file(
     session: &ReadSession,
@@ -356,7 +383,10 @@ impl Services {
                     symbol.start_line,
                     symbol.end_line,
                     symbol.start_line,
-                    expansion.request.token_budget,
+                    excerpt_budget(
+                        expansion.request.token_budget,
+                        ContextExcerptKind::ImportSymbol,
+                    ),
                 )?
                 else {
                     continue;
@@ -527,7 +557,7 @@ impl Services {
                         hit.symbol.start_line,
                         hit.symbol.end_line,
                         hit.symbol.start_line,
-                        request.token_budget,
+                        excerpt_budget(request.token_budget, ContextExcerptKind::Symbol),
                     )?
                     else {
                         continue;
@@ -589,7 +619,7 @@ impl Services {
                             symbol.start_line,
                             symbol.end_line,
                             hit.reference.start_line,
-                            request.token_budget,
+                            excerpt_budget(request.token_budget, ContextExcerptKind::Reference),
                         )?
                     } else {
                         None
@@ -664,7 +694,7 @@ impl Services {
                             symbol.start_line,
                             symbol.end_line,
                             matched_line,
-                            request.token_budget,
+                            excerpt_budget(request.token_budget, ContextExcerptKind::Text),
                         )?
                     } else {
                         None

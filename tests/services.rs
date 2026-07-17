@@ -961,6 +961,51 @@ async fn context_declaration_excerpt_retains_long_body_across_chunks() {
 }
 
 #[tokio::test]
+async fn context_text_hits_use_bounded_declaration_excerpts() {
+    let root = tempfile::tempdir().expect("root");
+    let body = (1..=160)
+        .map(|line| format!("    let filler_{line} = {line};\n"))
+        .collect::<String>();
+    std::fs::write(
+        root.path().join("lib.rs"),
+        format!(
+            "fn very_large_handler() {{\n{body}    let rare_runtime_marker = filler_160;\n    consume(rare_runtime_marker);\n}}\n"
+        ),
+    )
+    .expect("source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    let response = services
+        .context(ContextRequest {
+            task: "fix rare_runtime_marker behavior".into(),
+            token_budget: 1200,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+        })
+        .await
+        .expect("context");
+    let text_fragment = response
+        .fragments
+        .iter()
+        .find(|fragment| {
+            fragment.path == "lib.rs" && fragment.reason.contains("text")
+        })
+        .expect("text fragment");
+
+    assert!(
+        text_fragment.token_count <= 320,
+        "oversized text fragment: {text_fragment:?}"
+    );
+    assert!(text_fragment.content.contains("rare_runtime_marker"));
+}
+
+#[tokio::test]
 async fn regex_search_respects_absolute_candidate_cap() {
     let root = tempfile::tempdir().expect("root");
     // Many matching files so limit*20 alone would exceed MAX_REGEX_CANDIDATES if
