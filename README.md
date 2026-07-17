@@ -51,6 +51,11 @@ global installation:
 npm install --global leantoken@latest
 ```
 
+The npm package includes native binaries for macOS ARM64/x64, glibc Linux
+ARM64/x64, and Windows x64. Installation does not run lifecycle scripts or
+download an executable from a postinstall hook. Other targets, including musl
+Linux, must build from source.
+
 To build from source, install Rust 1.95 or later and a native C/C++ toolchain:
 
 ```bash
