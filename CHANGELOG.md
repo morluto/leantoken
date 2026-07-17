@@ -1,8 +1,8 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-## [0.1.4] - 2026-07-17
-### Bug Fixes
+## [0.1.5] - 2026-07-17
+### Documentation
 
-- Bundle native binaries in npm package
+- Document bundled npm distribution
 
