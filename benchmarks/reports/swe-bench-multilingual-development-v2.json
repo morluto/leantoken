@@ -2,7 +2,7 @@
   "schema_version": 1,
   "report_kind": "sealed_multilingual_development_preparation",
   "dataset_version": "v2",
-  "status": "prepared_disjoint_development_data_not_yet_evaluated",
+  "status": "prepared_disjoint_development_data_consumed_by_bounded_import384_gate_a",
   "preparation": {
     "schema_version": 2,
     "dataset_kind": "swe_bench_multilingual_development",
@@ -658,10 +658,13 @@
     }
   },
   "acceptance": {
-    "development_data": "prepared_and_sealed",
+    "development_data": "prepared_sealed_and_consumed_by_successor_gate_a",
     "retrieval_evaluation_consumed_at_preparation": false,
-    "successor_candidate_frozen": false,
-    "gate_a_passed": false,
+    "successor_candidate_frozen": true,
+    "successor_candidate_revision": "7afe1fc7bd9fb6eb0ed728de64d83cfdef706a74",
+    "external_development_gate_a_passed": true,
+    "linux_integration_gate_a_passed": true,
+    "gate_a_passed": true,
     "gate_b_eligible": false,
     "push_or_pull_request_allowed": false
   }
