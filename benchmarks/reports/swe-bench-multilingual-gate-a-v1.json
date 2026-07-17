@@ -1,0 +1,259 @@
+{
+  "schema_version": 1,
+  "report_kind": "swe_bench_multilingual_gate_a_result",
+  "status": "external_component_passed_integration_pending",
+  "evaluated_on": "2026-07-17",
+  "identities": {
+    "baseline_revision": "3bfce7e9e8234af18d54ac0b86318b447dccfe8e",
+    "baseline_runtime_blake3": "f72086c349e9a807b7d187f0e820f08f341d28ecdc37a28ce671259b1abfe4ed",
+    "candidate_revision": "4fcbca34d01ee5e18d409f6f05eb7c4a15ef843f",
+    "candidate_runtime_blake3": "e1cb706da721839b273aff701f24cf5880c73cf037aca68f2ddb74817ce48a92",
+    "evaluator_revision": "4fcbca34d01ee5e18d409f6f05eb7c4a15ef843f",
+    "gate_evaluator_blake3": "01931a49fc7d299dfd11b367a677841d546656f810be53a60acde221dab3a6b8",
+    "ranked_region_evaluator_blake3": "13163594546f3f2369e953a7e5fdb395ab54fedd6a3171ffefc9077ea0b8774c",
+    "tasks_blake3": "68ad229a4c9b496e0880b3eb8d25011dd50ac8edec29d09a6ac16907aaea10fd",
+    "sealed_labels_blake3": "1982d01ae08d2c1f324eb9897589ad7795b9c9a4e0e58dfbb750294cfb54e740",
+    "private_ranked_manifest_blake3": "25724b00a43dac4d7a2ec1257087fead8c53fb761f7d703c8f0a48196086f273",
+    "baseline_predictions_blake3": "057470933ecdcb0999a5ba0bd40c6e7eb2675616bb43549998211b5ec5451266",
+    "candidate_predictions_blake3": "669ebfc0961d5bf71575b6af3f2c1a7fe6d7f5652f20790442866c47e2165775",
+    "baseline_report_blake3": "1eb651f2f41fa98c4b459e8034f6de22991d1294d11f69a8398fb3f7811aea1c",
+    "candidate_report_blake3": "9edf8c602c12191e5a56a1a89061ac99f548c7b5e2aa2c5f261f72d8675c4c4e",
+    "materialize_receipt_blake3": "ca0b8f31ff125f3365d7e404655405ccd03b895e0a762843801c7442aa9bdc84",
+    "baseline_prediction_receipt_blake3": "2c2496971d1ac2dd0f4d12a4c82eda5d934ad5ac56ef3732a7e955e2ca058e9f",
+    "candidate_prediction_receipt_blake3": "2905a50b0393cc7c35063d88c1a68057ad38717c716ba6d8fe4da85dc51a2a78",
+    "external_decision_blake3": "793342f1ac34298b1e28682599c5ef24fa7f744c4e459474d12fc22763b64079"
+  },
+  "contract": {
+    "tasks": 54,
+    "languages": 9,
+    "tasks_per_language": 6,
+    "exact_identifier_tasks": 27,
+    "behavioral_tasks": 27,
+    "core_regions": 762,
+    "optional_regions": 188,
+    "budget_kind": "source_tokens",
+    "budget_amount": 2000,
+    "tokenizer": "cl100k_base",
+    "prediction_repetitions": 2,
+    "minimum_stratum_tasks": 6,
+    "required_distinct_improved_evidence_groups": 2,
+    "maximum_complete_tokens_per_relevant_line_regression": 0.05
+  },
+  "execution_integrity": {
+    "baseline_tasks_completed": 54,
+    "candidate_tasks_completed": 54,
+    "baseline_index_warnings": 0,
+    "candidate_index_warnings": 0,
+    "baseline_responses_byte_deterministic": true,
+    "candidate_responses_byte_deterministic": true,
+    "source_token_recounts_exact": true,
+    "repository_generations_matched_indexes": true,
+    "maximum_baseline_source_tokens": 1803,
+    "maximum_candidate_source_tokens": 1998,
+    "prediction_hashes_independently_verified": true
+  },
+  "internal_consumed_smoke": {
+    "criterion": "non-inferior to the exact frozen baseline after the pre-label baseline-drift amendment",
+    "historical_17_of_38_line_floor_met": false,
+    "baseline_relevant_files": "8/11",
+    "candidate_relevant_files": "9/11",
+    "baseline_line_anchors": "16/38",
+    "candidate_line_anchors": "16/38",
+    "line_anchors_tied_in_every_task": true,
+    "candidate_source_token_relative_delta": 0.123568415,
+    "candidate_complete_first_response_relative_delta": 0.068370166,
+    "candidate_dead_end_source_relative_delta": 0.198658843,
+    "candidate_second_response_source_relative_delta": 0.364475202,
+    "candidate_complete_second_response_relative_delta": 0.244448971,
+    "candidate_two_turn_context_relative_delta": 0.132635553,
+    "decision": "amended non-inferiority passed; historical absolute conflict retained"
+  },
+  "external_aggregate": {
+    "baseline": {
+      "relevant_files_hit": 17,
+      "relevant_files": 76,
+      "core_lines_hit": 6,
+      "core_lines": 1159,
+      "relevant_returned_lines": 8,
+      "returned_lines": 2866,
+      "core_regions_hit": 3,
+      "core_regions": 762,
+      "file_recall_macro": 0.2808641975308642,
+      "line_recall_macro": 0.03148148148148148,
+      "line_precision_macro": 0.002888414730519994,
+      "line_f1_macro": 0.005141176198086767,
+      "ndcg_at_budget_macro": 0.01665663924569866,
+      "noise_region_rate_macro": 0.9884259259259259,
+      "complete_response_tokens": 56209,
+      "source_tokens": 25196,
+      "complete_tokens_per_relevant_line": 7026.125,
+      "source_tokens_per_relevant_line": 3149.5
+    },
+    "candidate": {
+      "relevant_files_hit": 21,
+      "relevant_files": 76,
+      "core_lines_hit": 21,
+      "core_lines": 1159,
+      "relevant_returned_lines": 23,
+      "returned_lines": 7394,
+      "core_regions_hit": 13,
+      "core_regions": 762,
+      "file_recall_macro": 0.34567901234567905,
+      "line_recall_macro": 0.09969135802469135,
+      "line_precision_macro": 0.0026661996582277377,
+      "line_f1_macro": 0.005137874472142377,
+      "ndcg_at_budget_macro": 0.029654414404169188,
+      "noise_region_rate_macro": 0.9768518518518519,
+      "complete_response_tokens": 98863,
+      "source_tokens": 61384,
+      "complete_tokens_per_relevant_line": 4298.391304347826,
+      "source_tokens_per_relevant_line": 2668.8695652173915
+    },
+    "candidate_relative_deltas": {
+      "file_recall_macro": 0.230769231,
+      "line_recall_macro": 2.166666667,
+      "line_precision_macro": -0.076933229,
+      "line_f1_macro": -0.000642212,
+      "ndcg_at_budget_macro": 0.780335995,
+      "noise_region_rate_macro": -0.011709602,
+      "complete_response_tokens": 0.758846448,
+      "source_tokens": 1.436259724,
+      "relevant_returned_lines": 1.875,
+      "complete_tokens_per_relevant_line": -0.38822732240775304,
+      "source_tokens_per_relevant_line": -0.152604995
+    }
+  },
+  "predefined_strata": [
+    {
+      "name": "exact_identifier:false",
+      "tasks": 27,
+      "line_recall_delta": 0.006172839506172846,
+      "ndcg_delta": -0.012045420961247348,
+      "improved": true,
+      "conflicts": true
+    },
+    {
+      "name": "exact_identifier:true",
+      "tasks": 27,
+      "line_recall_delta": 0.1302469135802469,
+      "ndcg_delta": 0.03804097127818841,
+      "improved": true,
+      "conflicts": false
+    },
+    {
+      "name": "language:c",
+      "tasks": 6,
+      "line_recall_delta": 0.16666666666666666,
+      "ndcg_delta": 0.027695947234227896,
+      "improved": true,
+      "conflicts": false
+    },
+    {
+      "name": "language:cpp",
+      "tasks": 6,
+      "line_recall_delta": 0.0,
+      "ndcg_delta": 0.001526184366614891,
+      "improved": true,
+      "conflicts": false
+    },
+    {
+      "name": "language:go",
+      "tasks": 6,
+      "line_recall_delta": 0.0,
+      "ndcg_delta": 0.0,
+      "improved": false,
+      "conflicts": false
+    },
+    {
+      "name": "language:java",
+      "tasks": 6,
+      "line_recall_delta": 0.3083333333333333,
+      "ndcg_delta": 0.09418793480872864,
+      "improved": true,
+      "conflicts": false
+    },
+    {
+      "name": "language:javascript",
+      "tasks": 6,
+      "line_recall_delta": 0.0,
+      "ndcg_delta": 0.0,
+      "improved": false,
+      "conflicts": false
+    },
+    {
+      "name": "language:php",
+      "tasks": 6,
+      "line_recall_delta": -0.16666666666666666,
+      "ndcg_delta": -0.10247993415865152,
+      "improved": false,
+      "conflicts": true
+    },
+    {
+      "name": "language:ruby",
+      "tasks": 6,
+      "line_recall_delta": 0.3055555555555555,
+      "ndcg_delta": 0.0958269641614234,
+      "improved": true,
+      "conflicts": false
+    },
+    {
+      "name": "language:rust",
+      "tasks": 6,
+      "line_recall_delta": 0.0,
+      "ndcg_delta": 0.00022288001389145218,
+      "improved": true,
+      "conflicts": false
+    },
+    {
+      "name": "language:typescript",
+      "tasks": 6,
+      "line_recall_delta": 0.0,
+      "ndcg_delta": 0.0,
+      "improved": false,
+      "conflicts": false
+    }
+  ],
+  "operational_tradeoffs": {
+    "baseline_runtime_bytes": 23335920,
+    "candidate_runtime_bytes": 31014704,
+    "runtime_size_relative_delta": 0.329054265,
+    "baseline_total_index_elapsed_ms": 715606,
+    "candidate_total_index_elapsed_ms": 907752,
+    "index_elapsed_relative_delta": 0.26850809,
+    "baseline_total_context_elapsed_ms_for_two_repetitions": 60477,
+    "candidate_total_context_elapsed_ms_for_two_repetitions": 107951,
+    "context_elapsed_relative_delta": 0.784992642,
+    "latency_is_not_a_primary_metric": true
+  },
+  "gate_decision": {
+    "retrieval_strata_passed": true,
+    "complete_cost_passed": true,
+    "external_gate_a_passed": true,
+    "internal_amended_non_inferiority_passed": true,
+    "linux_stable_and_msrv_checks_passed": true,
+    "native_cross_platform_checks_passed": false,
+    "integration_gate_a_passed": false,
+    "model_ab_started": false,
+    "push_or_pull_request_created": false
+  },
+  "key_findings": [
+    "Structural parsing produced the largest gains in C, Java, and Ruby; exact-identifier tasks improved much more than behavioral tasks.",
+    "The candidate returned 2.58 times as many unique source lines and 2.44 times as many source tokens, so raw payload cost increased even though cost per relevant line improved.",
+    "PHP regressed from nonzero line recall and NDCG to zero; Go, JavaScript, and TypeScript showed no line-recall or NDCG gain.",
+    "Macro line precision regressed 7.69%, macro F1 was effectively flat, and 97.65% of predicted regions remained label-noise under incomplete patch-derived labels.",
+    "The result supports the structural-range direction but rejects treating the current selector and parser bundle as product-ready."
+  ],
+  "next_requirements": [
+    "Run native Linux, macOS, and Windows checks from the frozen candidate before declaring integration Gate A complete.",
+    "Do not tune this candidate on the consumed 54-task labels. A successor needs a newly versioned development set and must address PHP regression and structural candidate overproduction.",
+    "Prepare a separately frozen executable-task manifest and real provider adapter before model A/B; the current retrieval labels cannot establish task success.",
+    "Prepare a separate unseen Gate B set with at least 60 tasks before product promotion, push, or pull request under the user-required sequence."
+  ],
+  "limitations": [
+    "Patch-derived regions are incomplete causal labels and favor changed lines over unchanged contracts and callers.",
+    "The public SWE-bench Multilingual data may be present in model training data and is development evidence only.",
+    "Only 23 candidate-returned lines intersected core or optional labels, so efficiency ratios are based on a small absolute hit count.",
+    "Sequential baseline-then-candidate execution and filesystem cache state make elapsed-time deltas diagnostic rather than controlled performance estimates.",
+    "No model edited code or ran project tests, provider-visible request framing remains unavailable, and Gate B has not been run."
+  ]
+}

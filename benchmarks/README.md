@@ -320,6 +320,15 @@ once. The decision reports conflicting strata and can pass only the external
 retrieval component; internal smoke, correctness, tradeoff, model A/B, and
 Gate B remain separate gates.
 
+The first frozen run is recorded in
+[`reports/swe-bench-multilingual-gate-a-v1.json`](reports/swe-bench-multilingual-gate-a-v1.json).
+Its external retrieval and efficiency component passed, but integration Gate A
+remains pending native cross-platform checks. The candidate increased macro
+line recall and NDCG while also increasing raw source and complete-response
+tokens substantially; PHP regressed, several languages were flat, and absolute
+precision remained low. It is development evidence, not a product or market
+claim, and no model A/B, Gate B, push, or pull request followed from it.
+
 The repository includes one [Linux x86-64 result](reports/linux-x86_64-2026-07-15.json) as a transparent development record. It is not a cross-platform result or a release claim; rerun the manifest on the target machine for current timings.
 
 The prospective-validation candidate report for `2c0388d` is
