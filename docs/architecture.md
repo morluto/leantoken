@@ -90,7 +90,8 @@ hashed, chunked on UTF-8 boundaries, and parsed in a bounded Rayon pool.
 MCP starts the stdio protocol before opening SQLite or indexing. It answers the
 mandatory initialize exchange first, then starts repository services after the
 client's initialized notification. A generation-zero tool call returns a
-retryable tool error rather than an empty successful result. An existing
+successful structured `status: "retryable"` result rather than a tool error or
+an empty retrieval result. An existing
 complete generation remains queryable while its replacement is prepared.
 
 Cache initialization, schema migration, and managed-cache corruption recovery

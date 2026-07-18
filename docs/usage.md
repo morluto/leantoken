@@ -34,8 +34,9 @@ Use `leantoken <command> --help` for the complete argument list.
 the initialize handshake is never blocked by indexing. After the client's
 initialized notification, one process becomes indexing leader and followers
 reuse its committed SQLite generations. Retrieval calls made before the first
-generation commits return a retryable not-ready error. Later calls report
-whether they use a current or reconciling index generation.
+generation commits return successful structured retry guidance with a reason
+and `retry_after_ms`. Later calls report whether they use a current or
+reconciling index generation.
 
 Logs go to stderr. Stdout is reserved for MCP protocol messages.
 
@@ -46,10 +47,15 @@ representation. The catalog publishes documented input schemas but omits
 optional output schemas; repeating full response DTOs in every `tools/list`
 result costs model context without changing tool behavior.
 
-Prefer progressive retrieval:
+Prefer LeanToken over shell discovery and whole-file reads. For a broad coding,
+debugging, review, or architecture task, start with `leantoken_context`. Use the
+narrow tools directly when the target is already known:
 
 ```text
-files -> outline/search -> exact read -> context only if scope remains uncertain
+broad task -> context
+known identifier/text -> search -> read
+known file, unknown range -> outline -> read
+unknown path -> files
 ```
 
 All five MCP retrieval tools accept an optional `consistency` input:
@@ -72,12 +78,14 @@ Discovers repository structure without returning source bodies.
 
 Operations:
 
-- `tree`: compact hierarchy with optional `path` and `depth` limits;
-- `find`: fuzzy path and basename matching using `query`;
-- `glob`: indexed path matching using `pattern`.
+- `{"kind":"tree","path":"src","depth":2}`: compact hierarchy;
+- `{"kind":"find","query":"mcp"}`: fuzzy path and basename matching;
+- `{"kind":"glob","pattern":"src/**/*.rs"}`: indexed path matching.
 
-Common inputs are `max_results` and `cursor`. Output contains bounded
-file/directory entries with language and size metadata when available.
+Pass one of those tagged objects as `operation`. Operation-specific fields
+cannot be mixed. Common inputs are `max_results` (default 20, maximum 100) and
+`cursor`. Output contains bounded file/directory entries with language and size
+metadata when available.
 
 ## `leantoken_search`
 
@@ -85,7 +93,8 @@ Returns ranked source excerpts. Modes are `auto`, `text`, `regex`,
 `identifier`, `symbol`, and `reference`.
 
 Inputs include path filters, focus paths, result and token limits, context-line
-count, case sensitivity, and a generation-bound cursor. Each hit includes its
+count, case sensitivity, and a generation-bound cursor. Defaults are 20 results,
+8,000 source tokens, and two context lines. Each hit includes its
 path, one-based returned line range, excerpt, match kind, score reasons, and
 content hash. Structural fields appear only when syntax supports them.
 
@@ -112,11 +121,13 @@ being presented as precise.
 Reads an exact source range.
 
 - `path` is required.
-- `start_line` and `end_line` select a one-based range.
-- `symbol` selects an indexed symbol range and cannot be combined with lines.
-- `max_tokens` bounds returned source.
+- `target: {"kind":"lines","start":40,"end":90}` selects an inclusive
+  one-based range.
+- `target: {"kind":"symbol","name":"LeanTokenMcp"}` selects one indexed
+  symbol definition.
+- `max_tokens` defaults to 8,000 and is capped at 32,000.
 - `expected_hash` returns `not_modified` without source when it matches the
-  hash from the same prior read range.
+  hash from the same prior target.
 
 `content_hash` identifies the returned range. `indexed_hash` identifies the
 whole indexed file. `index_stale` is true when the live file differs from the
@@ -126,13 +137,15 @@ and symbol lookup; `meta.freshness` is `reconciling` while an index operation
 is active on this cache.
 
 When the index has never completed a generation, retrieval tools return a
-retryable not-ready error rather than an empty success. After local edits, set
-`consistency` to `working_tree` on the next MCP retrieval. A committed read may
-still use `index_stale` and `expected_hash` to detect or suppress live ranges.
+successful retry result such as `{"status":"retryable","reason":"index_building",
+"retry_after_ms":500}`. Retry the same call after that delay. After local edits,
+set `consistency` to `working_tree` on the next MCP retrieval. A committed read
+may still use `index_stale` and `expected_hash` to detect or suppress live ranges.
 
 ## `leantoken_context`
 
-Turns a task into a ranked set of source evidence under `token_budget`.
+Turns a task into a ranked set of source evidence. `task` is the only required
+input; `token_budget` defaults to 3,000 and is capped at 32,000.
 
 Optional inputs focus or exclude paths and symbols, provide hashes already held
 by the caller, and identify a prior repository generation. The selector merges

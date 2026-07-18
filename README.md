@@ -88,11 +88,11 @@ retrieval.
 
 | Tool | Purpose |
 | --- | --- |
-| `leantoken_files` | Browse a compact tree or find paths without source bodies. |
-| `leantoken_search` | Search text, regex, identifiers, symbols, or syntactic references. |
-| `leantoken_outline` | Return definitions, signatures, parents, imports, and ranges. |
-| `leantoken_read` | Read an exact line or symbol range under a token limit. |
-| `leantoken_context` | Rank task evidence when narrow discovery leaves the scope uncertain. |
+| `leantoken_context` | Default first call for broad tasks; rank relevant evidence under a token budget. |
+| `leantoken_search` | Prefer over grep/rg for ranked text, regex, identifier, symbol, or reference search. |
+| `leantoken_files` | Prefer over find/ls/glob for compact, ignore-aware path discovery. |
+| `leantoken_outline` | Inspect definitions, signatures, imports, and ranges without whole-file reads. |
+| `leantoken_read` | Prefer over cat/head/sed for one exact symbol or inclusive line range. |
 
 Every retrieval tool accepts `consistency: "working_tree"` when completed edits
 must be reconciled before the query. The default, `"committed"`, returns the
