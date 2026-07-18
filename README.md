@@ -31,6 +31,18 @@ npx leantoken@latest setup
 The setup wizard finds supported clients and registers LeanToken as a global
 MCP server. Each client launches the current release in its active workspace.
 
+Restart or reload the configured clients, then verify the complete MCP
+handshake and first retrieval from a repository:
+
+```bash
+npx leantoken@latest doctor
+```
+
+Start with a broad task such as: *Use LeanToken to map the relevant repository
+context before editing.* The MCP initialization guidance routes the agent to
+`leantoken_context` first and keeps native tools available for edits, builds,
+and tests.
+
 <table>
 <tr>
 <td width="33%" valign="top">
@@ -107,6 +119,7 @@ Run LeanToken directly through `npx`:
 
 ```bash
 npx leantoken@latest status
+npx leantoken@latest doctor
 npx leantoken@latest --root /path/to/repo search handle_request
 ```
 

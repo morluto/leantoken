@@ -38,10 +38,10 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .expect("initialize MCP client");
     let mut server = server_start.await.expect("join server startup");
 
-    let instructions = client
-        .peer()
-        .peer_info()
-        .expect("server initialize result")
+    let server_info = client.peer().peer_info().expect("server initialize result");
+    assert_eq!(server_info.server_info.name, "leantoken");
+    assert_eq!(server_info.server_info.version, env!("CARGO_PKG_VERSION"));
+    let instructions = server_info
         .instructions
         .clone()
         .expect("server instructions");

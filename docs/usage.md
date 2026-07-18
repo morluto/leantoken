@@ -18,6 +18,7 @@ responses are bounded.
 ```text
 leantoken index [--rebuild]
 leantoken status
+leantoken doctor
 leantoken files <tree|find|glob> [options]
 leantoken search <query> [options]
 leantoken outline <path>...
@@ -27,6 +28,14 @@ leantoken mcp [--result-mode dual|text|structured]
 ```
 
 Use `leantoken <command> --help` for the complete argument list.
+
+## First-run doctor
+
+`leantoken doctor` launches the current executable as a real MCP subprocess and
+verifies its initialization identity and agent instructions, exact five-tool
+catalog, and first `leantoken_context` retrieval. On a cold repository it
+follows structured `retry_after_ms` guidance until the first index generation
+is ready. Use `--json` for a machine-readable readiness report.
 
 ## MCP server
 

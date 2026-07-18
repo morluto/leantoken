@@ -637,6 +637,7 @@ impl LeanTokenMcp {
 }
 
 #[tool_handler(
+    name = "leantoken",
     instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken_context first with the user's task. PREFER leantoken_search over grep or rg for source search; leantoken_files over find, ls, or glob for paths; leantoken_outline over opening whole files to discover structure; and leantoken_read over cat, head, or sed for exact symbols and ranges. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=working_tree after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, generated artifacts, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
 )]
 impl ServerHandler for LeanTokenMcp {
