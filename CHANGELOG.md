@@ -1,26 +1,58 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.1.6] - 2026-07-18
+### Benchmarks
 
-## [Unreleased]
+- Record bounded model ab v2
+- Preflight bounded model ab v2
+- Record bounded multilingual gate a v2
+- Freeze disjoint multilingual development v2
+- Enforce disjoint multilingual partitions
+- Record parallel validation blocker
+- Record model A/B pilot result
+- Commit multilingual model A/B pilot
+- Add model A/B identity preflight
+- Report complete model A/B distributions
+- Add executable model A/B validation
+- Record cross-platform Gate A evidence
+- Record multilingual Gate A result
+- Record internal Gate A baseline drift
+- Freeze multilingual Gate A identities
+- Record multilingual development commitment
+- Prepare sealed multilingual development data
+- Record Codex host lifecycle evidence
+- Correlate Codex host rollout receipts
+- Bind model runs to trace artifacts
+- Freeze reproducible model experiment arms
+- Measure evidence lifetime wire traces
+- Evaluate ranked code regions
+### Bug Fixes
 
-### Changed
+- Preserve import symbol tails
+- Release index lock before reporting completion
+- Keep sealed output helper warning-free on Windows
+- Keep receipt harness compatible with MSRV clippy
+- Exclude git pointer files from discovery
+### Continuous Integration
 
-- Make `leantoken_context` the preferred first MCP call for broad repository tasks and position the narrow retrieval tools explicitly against shell equivalents.
-- Replace ambiguous flat `leantoken_files` and `leantoken_read` arguments with tagged operation and target objects; the old MCP argument shapes are no longer accepted.
-- Publish closed, bounded MCP input schemas with concrete defaults and examples.
-- Return successful structured retry guidance while the index is starting, building, or changing instead of transient tool errors.
-
-### Added
-
-- Add `leantoken doctor` to verify MCP identity, agent guidance, the five-tool catalog, and cold first-retrieval readiness.
-- Add a Context Distillery setup handoff with configuration verification, restart guidance, a doctor command, and a first prompt.
-
-### Fixed
-
-- Report LeanToken's package name and version in the MCP initialization response instead of the Rust SDK identity.
-
-## [0.1.5] - 2026-07-17
+- **deps:** Bump actions/checkout from 4 to 7
+- **deps:** Bump gitleaks/gitleaks-action from 2 to 3
 ### Documentation
 
-- Document bundled npm distribution
+- **mcp:** Document preferred retrieval workflow
+- Document ranked-region evaluation
+- Add visual README overview
+### Features
+
+- Add Context Distillery onboarding diagnostics
+- **mcp:** Redesign tool discovery contract
+- Bound adaptive context excerpts
+- Add multilingual adaptive retrieval gate
+- Expose bounded task facet provenance
+- Add working-tree consistency to MCP retrieval
+### Testing
+
+- Launch npm through cmd on Windows
+- Verify npm installation across platforms
+
