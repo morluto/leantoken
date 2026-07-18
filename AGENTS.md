@@ -6,6 +6,7 @@
 src/           Application crate (lib + bin)
   cli.rs         CLI argument parsing and AppRequest dispatch
   config.rs      Repository config and cache-path discovery
+  doctor.rs      Executable MCP identity and first-run readiness checks
   error.rs       Shared error and result types
   indexer.rs     File discovery, parsing, and reconciliation
   main.rs        Binary entrypoint, tracing init, watcher lifecycle

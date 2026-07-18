@@ -46,6 +46,60 @@ fn cli_indexes_statuses_and_searches_as_json() {
 }
 
 #[test]
+fn doctor_verifies_identity_catalog_and_first_retrieval() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "pub fn context_distillery_ready() -> bool { true }\n",
+    )
+    .expect("write fixture");
+    let database = root.path().join("index.sqlite");
+
+    let report = run(root.path(), &database, &["doctor"]);
+    assert_eq!(report["status"], "ready");
+    assert_eq!(report["server_name"], "leantoken");
+    assert_eq!(report["server_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(report["instructions_loaded"], true);
+    assert_eq!(report["tools"].as_array().map(Vec::len), Some(5));
+    assert_eq!(report["first_call"]["status"], "ready");
+    assert!(
+        report["first_call"]["attempts"]
+            .as_u64()
+            .is_some_and(|attempts| attempts >= 1)
+    );
+}
+
+#[test]
+fn doctor_human_output_uses_context_distillery_handoff() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write fixture");
+    let database = root.path().join("index.sqlite");
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .args([
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--database",
+            database.to_str().expect("database UTF-8"),
+            "doctor",
+        ])
+        .output()
+        .expect("run doctor");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Context Distillery is checking"));
+    assert!(stdout.contains("LeanToken // Context Distillery"));
+    assert!(stdout.contains("MCP identity: leantoken"));
+    assert!(stdout.contains("Tool catalog: 5 retrieval tools"));
+    assert!(stdout.contains("leantoken_context first"));
+}
+
+#[test]
 fn mcp_repeatedly_exits_cleanly_on_stdio_eof() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
@@ -144,6 +198,90 @@ fn mcp_initialize_precedes_storage_open() {
             generation == 1 && files == 1
         })
     });
+}
+
+#[test]
+fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "pub fn context_distillery_ready() -> bool { true }\n",
+    )
+    .expect("write fixture");
+    let database = root.path().join("index.sqlite");
+    let mut process = McpProcess::spawn(root.path(), &database);
+
+    let initialize = process.initialize();
+    assert_eq!(initialize["result"]["serverInfo"]["name"], "leantoken");
+    assert_eq!(
+        initialize["result"]["serverInfo"]["version"],
+        env!("CARGO_PKG_VERSION")
+    );
+    assert!(
+        initialize["result"]["instructions"]
+            .as_str()
+            .is_some_and(|instructions| instructions.contains("call leantoken_context first"))
+    );
+    process.send_initialized();
+
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list",
+        "params": {}
+    }));
+    let tools = process.response(Duration::from_secs(5));
+    let names = tools["result"]["tools"]
+        .as_array()
+        .expect("tool catalog")
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        names,
+        [
+            "leantoken_context",
+            "leantoken_files",
+            "leantoken_outline",
+            "leantoken_read",
+            "leantoken_search",
+        ]
+        .into_iter()
+        .collect()
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut id = 3;
+    let mut saw_retryable = false;
+    loop {
+        process.send(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {
+                "name": "leantoken_context",
+                "arguments": {
+                    "task": "find context_distillery_ready",
+                    "token_budget": 200
+                }
+            }
+        }));
+        let response = process.response(deadline.saturating_duration_since(Instant::now()));
+        assert_ne!(response["result"]["isError"], true, "{response}");
+        if response["result"]["structuredContent"]["status"] == "retryable" {
+            saw_retryable = true;
+            id += 1;
+            std::thread::sleep(Duration::from_millis(50));
+            continue;
+        }
+        assert_eq!(
+            response["result"]["structuredContent"]["fragments"][0]["path"],
+            "lib.rs",
+            "{response}"
+        );
+        assert!(saw_retryable, "cold first call never exposed retry guidance");
+        break;
+    }
 }
 
 #[test]
@@ -462,6 +600,11 @@ fn npx_setup_explains_that_it_does_not_install_a_global_cli() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("LeanToken // Context Distillery"));
+    assert!(stdout.contains("Configuration verified for 1 client."));
+    assert!(stdout.contains("Restart or reload"));
+    assert!(stdout.contains("npx leantoken@latest doctor"));
+    assert!(stdout.contains("First prompt:"));
     assert!(stdout.contains("no global `leantoken` command was installed"));
     assert!(stdout.contains("npx leantoken@latest <command>"));
     assert!(stdout.contains("npm install --global leantoken@latest"));
@@ -531,7 +674,7 @@ impl McpProcess {
         }
     }
 
-    fn initialize(&mut self) {
+    fn initialize(&mut self) -> serde_json::Value {
         self.send(serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -545,6 +688,7 @@ impl McpProcess {
         let response = self.response(Duration::from_secs(5));
         assert_eq!(response["id"], 1);
         assert!(response.get("result").is_some(), "{response}");
+        response
     }
 
     fn send_initialized(&mut self) {

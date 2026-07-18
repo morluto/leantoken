@@ -62,6 +62,7 @@ impl Cli {
             Commands::Outline(args) => AppRequest::Outline(args.into()),
             Commands::Read(args) => AppRequest::Read(args.into()),
             Commands::Context(args) => AppRequest::Context(args.into()),
+            Commands::Doctor => AppRequest::Doctor,
             Commands::Mcp(args) => AppRequest::Mcp {
                 result_mode: args.result_mode,
             },
@@ -85,6 +86,7 @@ pub enum AppRequest {
     Outline(OutlineRequest),
     Read(ReadRequest),
     Context(ContextRequest),
+    Doctor,
     Mcp { result_mode: McpResultMode },
     Setup(SetupRequest),
     Remove(SetupRequest),
@@ -117,6 +119,9 @@ pub enum Commands {
 
     /// Retrieve ranked task context within a token budget.
     Context(ContextArgs),
+
+    /// Verify MCP identity, tools, and first-retrieval readiness.
+    Doctor,
 
     /// Run the MCP server over stdio.
     Mcp(McpArgs),

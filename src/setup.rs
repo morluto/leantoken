@@ -693,11 +693,12 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
         writeln!(output, "LeanToken {} cancelled.", report.operation.action())?;
         return Ok(());
     }
-    let heading = match report.operation {
-        SetupOperation::Setup => "LeanToken global MCP setup",
-        SetupOperation::Remove => "LeanToken global MCP removal",
+    writeln!(output, "◆ LeanToken // Context Distillery")?;
+    let operation_label = match report.operation {
+        SetupOperation::Setup => "Global MCP setup",
+        SetupOperation::Remove => "Global MCP removal",
     };
-    writeln!(output, "{heading}")?;
+    writeln!(output, "  {operation_label}")?;
     for result in &report.results {
         if let Some(error) = &result.error {
             writeln!(
@@ -718,9 +719,24 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
         }
     }
     if report.operation == SetupOperation::Setup {
+        let configured = report
+            .results
+            .iter()
+            .filter(|result| result.error.is_none())
+            .count();
+        writeln!(output)?;
+        writeln!(
+            output,
+            "Configuration verified for {configured} client{}.",
+            if configured == 1 { "" } else { "s" }
+        )?;
+        writeln!(
+            output,
+            "Restart or reload those clients to connect LeanToken."
+        )?;
         writeln!(output)?;
         if report.persistent_cli {
-            writeln!(output, "CLI command: leantoken --help")?;
+            writeln!(output, "Verify from a repository: leantoken doctor")?;
             writeln!(output, "Update later with: leantoken upgrade")?;
         } else {
             writeln!(
@@ -733,6 +749,10 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
             )?;
             writeln!(
                 output,
+                "Verify from a repository: npx leantoken@latest doctor"
+            )?;
+            writeln!(
+                output,
                 "Run one-off commands with: npx leantoken@latest <command>"
             )?;
             writeln!(
@@ -740,6 +760,12 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
                 "Install the shell command with: npm install --global leantoken@latest"
             )?;
         }
+        writeln!(output)?;
+        writeln!(output, "First prompt:")?;
+        writeln!(
+            output,
+            "  \"Use LeanToken to map the relevant repository context before editing.\""
+        )?;
     }
     Ok(())
 }

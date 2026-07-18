@@ -269,6 +269,12 @@ fn cli_setup_and_remove_select_clients() {
 }
 
 #[test]
+fn cli_doctor_selects_executable_readiness_diagnostic() {
+    let cli = parse(&["doctor"]);
+    assert!(matches!(cli.app_request(), AppRequest::Doctor));
+}
+
+#[test]
 fn cli_update_and_upgrade_are_aliases() {
     assert!(matches!(
         parse(&["update", "--check"]).app_request(),

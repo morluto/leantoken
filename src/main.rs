@@ -4,7 +4,7 @@ use clap::Parser;
 use leantoken::{
     Config, Result,
     cli::{AppRequest, Cli},
-    mcp,
+    doctor, mcp,
     services::Services,
     setup::{self, SetupOperation},
     upgrade,
@@ -59,6 +59,15 @@ async fn run() -> Result<()> {
     let config = cli.config()?;
     let request = cli.app_request();
 
+    if let AppRequest::Doctor = request {
+        if !json {
+            doctor::print_progress()?;
+        }
+        let report = doctor::run(&config)?;
+        doctor::print_report(&report, json)?;
+        return Ok(());
+    }
+
     if let AppRequest::Mcp { result_mode } = request {
         return run_mcp(config, result_mode).await;
     }
@@ -73,6 +82,7 @@ async fn run() -> Result<()> {
         AppRequest::Outline(request) => print(&services.outline(request).await?, json),
         AppRequest::Read(request) => print(&services.read(request).await?, json),
         AppRequest::Context(request) => print(&services.context(request).await?, json),
+        AppRequest::Doctor => unreachable!("handled before service setup"),
         AppRequest::Mcp { .. } => unreachable!("handled before service setup"),
         AppRequest::Setup(_) | AppRequest::Remove(_) => {
             unreachable!("handled before service setup")
