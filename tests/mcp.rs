@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use leantoken::{
-    Config, ContextRequest, FileOperation, FilesRequest, mcp::LeanTokenMcp, services::Services,
+    Config, ContextRequest, mcp::LeanTokenMcp, services::Services,
 };
 use rmcp::{
     model::{CallToolRequestParams, ClientRequest, ErrorCode, Request},
@@ -45,10 +45,11 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .instructions
         .clone()
         .expect("server instructions");
-    assert!(instructions.contains("Retrieve progressively"));
-    assert!(instructions.contains("Use context only when scope remains uncertain"));
+    assert!(instructions.contains("preferred repository discovery"));
+    assert!(instructions.contains("call leantoken_context first"));
+    assert!(instructions.contains("leantoken_search over grep or rg"));
     assert!(instructions.contains("consistency=working_tree"));
-    assert!(instructions.contains("native tools for edits, commands, and tests"));
+    assert!(instructions.contains("native tools for edits, builds, tests"));
 
     let tools = client.peer().list_all_tools().await.expect("list tools");
     let names = tools
@@ -66,17 +67,10 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         assert!(names.contains(name));
     }
 
-    let request = FilesRequest {
-        operation: FileOperation::Tree,
-        path: None,
-        query: None,
-        pattern: None,
-        max_results: Some(10),
-        cursor: None,
-        depth: Some(2),
-    };
-    let files_arguments = serde_json::to_value(request)
-        .expect("serialize request")
+    let files_arguments = serde_json::json!({
+        "operation": {"kind": "tree", "depth": 2},
+        "max_results": 10
+    })
         .as_object()
         .expect("request object")
         .clone();
@@ -90,6 +84,23 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     assert_ne!(response.is_error, Some(true));
     let structured = response.structured_content.expect("structured response");
     assert_eq!(structured["entries"][0]["path"], "lib.rs");
+
+    let legacy_files_arguments = serde_json::json!({"operation": "tree"})
+        .as_object()
+        .expect("legacy files arguments")
+        .clone();
+    let legacy_result = client
+        .peer()
+        .call_tool(
+            CallToolRequestParams::new("leantoken_files")
+                .with_arguments(legacy_files_arguments),
+        )
+        .await
+        .expect("legacy arguments receive an MCP tool result");
+    assert_eq!(legacy_result.is_error, Some(true));
+    assert!(legacy_result.content[0]
+        .as_text()
+        .is_some_and(|text| text.text.contains("failed to deserialize parameters")));
 
     std::fs::write(
         root.path().join("new_package.rs"),
@@ -118,7 +129,10 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let structured = response.structured_content.expect("structured response");
     assert_eq!(structured["hits"][0]["path"], "new_package.rs");
 
-    let invalid_arguments = serde_json::json!({ "path": "../secret" })
+    let invalid_arguments = serde_json::json!({
+        "path": "../secret",
+        "target": {"kind": "lines", "start": 1, "end": 1}
+    })
         .as_object()
         .expect("invalid read arguments")
         .clone();
@@ -178,6 +192,30 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
             .is_some_and(|tokens| tokens <= 50)
     );
 
+    let default_context_arguments = serde_json::json!({
+        "task": "find the answer definition"
+    })
+    .as_object()
+    .expect("default context arguments")
+    .clone();
+    let default_context = client
+        .peer()
+        .call_tool(
+            CallToolRequestParams::new("leantoken_context")
+                .with_arguments(default_context_arguments),
+        )
+        .await
+        .expect("context with default token budget");
+    assert_ne!(default_context.is_error, Some(true));
+    assert!(
+        default_context
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.pointer("/meta/emitted_tokens"))
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|tokens| tokens <= 3_000)
+    );
+
     let context = ContextRequest {
         task: "find answer and its caller".into(),
         token_budget: 100,
@@ -218,7 +256,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
 }
 
 #[tokio::test]
-async fn pending_and_empty_indexes_return_retryable_tool_errors() {
+async fn pending_and_empty_indexes_return_successful_retry_guidance() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
         .expect("write fixture");
@@ -238,7 +276,7 @@ async fn pending_and_empty_indexes_return_retryable_tool_errors() {
     let mut server = server_start.await.expect("join server startup");
 
     let request = || {
-        let arguments = serde_json::json!({ "operation": "tree" })
+        let arguments = serde_json::json!({ "operation": {"kind": "tree"} })
             .as_object()
             .expect("arguments")
             .clone();
@@ -250,11 +288,10 @@ async fn pending_and_empty_indexes_return_retryable_tool_errors() {
         .call_tool(request())
         .await
         .expect("starting result");
-    assert_eq!(starting.is_error, Some(true));
-    assert!(
-        starting.content[0]
-            .as_text()
-            .is_some_and(|text| text.text.contains("starting"))
+    assert_eq!(starting.is_error, Some(false));
+    assert_eq!(
+        starting.structured_content.as_ref().and_then(|value| value["reason"].as_str()),
+        Some("index_starting")
     );
 
     let services = Arc::new(Services::open(config).expect("services"));
@@ -264,11 +301,10 @@ async fn pending_and_empty_indexes_return_retryable_tool_errors() {
         .call_tool(request())
         .await
         .expect("building result");
-    assert_eq!(building.is_error, Some(true));
-    assert!(
-        building.content[0]
-            .as_text()
-            .is_some_and(|text| text.text.contains("being built"))
+    assert_eq!(building.is_error, Some(false));
+    assert_eq!(
+        building.structured_content.as_ref().and_then(|value| value["reason"].as_str()),
+        Some("index_building")
     );
 
     services.index(false).await.expect("index");

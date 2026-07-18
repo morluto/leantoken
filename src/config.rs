@@ -6,6 +6,12 @@ use std::{
 use crate::tokens::Tokenizer;
 use crate::{Error, Result};
 
+pub(crate) const DEFAULT_RESULTS: usize = 20;
+pub(crate) const MAX_RESULTS: usize = 100;
+pub(crate) const DEFAULT_READ_TOKENS: usize = 8_000;
+pub(crate) const MAX_OUTPUT_TOKENS: usize = 32_000;
+pub(crate) const DEFAULT_CONTEXT_LINES: usize = 2;
+
 #[derive(Debug, Clone)]
 /// Resolved repository paths and bounded runtime defaults.
 pub struct Config {
@@ -70,11 +76,11 @@ impl Config {
             database_path,
             database_is_managed_cache,
             max_file_bytes: 2 * 1024 * 1024,
-            default_results: 20,
-            max_results: 100,
-            default_read_tokens: 8_000,
-            max_output_tokens: 32_000,
-            context_lines: 2,
+            default_results: DEFAULT_RESULTS,
+            max_results: MAX_RESULTS,
+            default_read_tokens: DEFAULT_READ_TOKENS,
+            max_output_tokens: MAX_OUTPUT_TOKENS,
+            context_lines: DEFAULT_CONTEXT_LINES,
             chunk_lines: 80,
             chunk_bytes: 32 * 1024,
             max_index_workers: std::thread::available_parallelism()

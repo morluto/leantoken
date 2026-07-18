@@ -15,21 +15,345 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
+use crate::config::{
+    DEFAULT_CONTEXT_LINES, DEFAULT_READ_TOKENS, DEFAULT_RESULTS, MAX_OUTPUT_TOKENS, MAX_RESULTS,
+};
 use crate::model::{
-    ContextRequest, FilesRequest, IndexConsistency, OutlineRequest, ReadRequest, SearchRequest,
+    ContextRequest, FileOperation, FilesRequest, IndexConsistency, OutlineRequest, ReadRequest,
+    SearchMode, SearchRequest,
 };
 use crate::services::Services;
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-/// MCP retrieval input with an optional working-tree synchronization boundary.
-struct RetrievalRequest<T> {
-    /// Tool-specific retrieval input.
-    #[serde(flatten)]
-    request: T,
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct FilesMcpRequest {
+    /// Path operation and its operation-specific arguments.
+    operation: FilesMcpOperation,
+    /// Maximum entries to return (default 20, maximum 100).
+    #[serde(default = "default_results")]
+    #[schemars(default = "default_results", range(min = 1, max = MAX_RESULTS))]
+    max_results: usize,
+    /// Cursor returned by the same operation and repository generation.
+    #[serde(default)]
+    #[schemars(length(max = 4096))]
+    cursor: Option<String>,
     /// Use `working_tree` after edits; otherwise `committed`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SearchMcpRequest {
+    /// Non-empty text, identifier, symbol, or Rust regular expression to find.
+    #[schemars(length(min = 1, max = 65536))]
+    query: String,
+    /// Candidate source to search (default `auto`).
+    #[serde(default)]
+    mode: SearchMode,
+    /// Include only matching repository paths.
+    #[serde(default)]
+    #[schemars(length(max = 256), inner(length(max = 4096)))]
+    include_paths: Vec<String>,
+    /// Exclude matching repository paths.
+    #[serde(default)]
+    #[schemars(length(max = 256), inner(length(max = 4096)))]
+    exclude_paths: Vec<String>,
+    /// Boost matching paths without filtering other results.
+    #[serde(default)]
+    #[schemars(length(max = 256), inner(length(max = 4096)))]
+    focus_paths: Vec<String>,
+    /// Maximum hits to return (default 20, maximum 100).
+    #[serde(default = "default_results")]
+    #[schemars(default = "default_results", range(min = 1, max = MAX_RESULTS))]
+    max_results: usize,
+    /// Maximum source tokens across excerpts (default 8000, maximum 32000).
+    #[serde(default = "default_read_tokens")]
+    #[schemars(default = "default_read_tokens", range(min = 1, max = MAX_OUTPUT_TOKENS))]
+    max_tokens: usize,
+    /// Lines before and after each match (default 2, maximum 20).
+    #[serde(default = "default_context_lines")]
+    #[schemars(default = "default_context_lines", range(max = 20))]
+    context_lines: usize,
+    /// Preserve query case when matching.
+    #[serde(default)]
+    case_sensitive: bool,
+    /// Cursor returned by the same search and repository generation.
+    #[serde(default)]
+    #[schemars(length(max = 4096))]
+    cursor: Option<String>,
+    /// Use `working_tree` after edits; otherwise `committed`.
+    #[serde(default)]
+    #[schemars(schema_with = "index_consistency_schema")]
+    consistency: IndexConsistency,
+}
+
+impl SearchMcpRequest {
+    fn into_parts(self) -> (SearchRequest, IndexConsistency) {
+        (
+            SearchRequest {
+                query: self.query,
+                mode: self.mode,
+                include_paths: self.include_paths,
+                exclude_paths: self.exclude_paths,
+                focus_paths: self.focus_paths,
+                max_results: Some(self.max_results),
+                max_tokens: Some(self.max_tokens),
+                context_lines: Some(self.context_lines),
+                case_sensitive: self.case_sensitive,
+                cursor: self.cursor,
+            },
+            self.consistency,
+        )
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct OutlineMcpRequest {
+    /// One to 256 repository-relative source files to outline.
+    #[schemars(length(min = 1, max = 256), inner(length(max = 4096)))]
+    paths: Vec<String>,
+    /// Keep definitions whose names contain this value.
+    #[serde(default)]
+    #[schemars(length(max = 4096))]
+    symbol_name: Option<String>,
+    /// Keep definitions of this exact syntax kind.
+    #[serde(default)]
+    #[schemars(length(max = 4096))]
+    symbol_kind: Option<String>,
+    /// Maximum definitions and imports to return (default 20, maximum 100).
+    #[serde(default = "default_results")]
+    #[schemars(default = "default_results", range(min = 1, max = MAX_RESULTS))]
+    max_results: usize,
+    /// Maximum signature and import tokens (default 8000, maximum 32000).
+    #[serde(default = "default_read_tokens")]
+    #[schemars(default = "default_read_tokens", range(min = 1, max = MAX_OUTPUT_TOKENS))]
+    max_tokens: usize,
+    /// Use `working_tree` after edits; otherwise `committed`.
+    #[serde(default)]
+    #[schemars(schema_with = "index_consistency_schema")]
+    consistency: IndexConsistency,
+}
+
+impl OutlineMcpRequest {
+    fn into_parts(self) -> (OutlineRequest, IndexConsistency) {
+        (
+            OutlineRequest {
+                paths: self.paths,
+                symbol_name: self.symbol_name,
+                symbol_kind: self.symbol_kind,
+                max_results: Some(self.max_results),
+                max_tokens: Some(self.max_tokens),
+            },
+            self.consistency,
+        )
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum FilesMcpOperation {
+    /// Return a compact hierarchy, optionally below one repository-relative directory.
+    Tree {
+        /// Optional repository-relative directory.
+        #[serde(default)]
+        #[schemars(length(max = 4096))]
+        path: Option<String>,
+        /// Maximum hierarchy depth below `path`.
+        #[serde(default)]
+        depth: Option<usize>,
+    },
+    /// Fuzzy-match repository paths and basenames.
+    Find {
+        /// Non-empty fuzzy filename or path query.
+        #[schemars(length(min = 1, max = 65536))]
+        query: String,
+    },
+    /// Match indexed repository paths with a glob.
+    Glob {
+        /// Non-empty glob pattern such as `src/**/*.rs`.
+        #[schemars(length(min = 1, max = 4096))]
+        pattern: String,
+    },
+}
+
+impl FilesMcpRequest {
+    fn into_parts(self) -> (FilesRequest, IndexConsistency) {
+        let (operation, path, query, pattern, depth) = match self.operation {
+            FilesMcpOperation::Tree { path, depth } => {
+                (FileOperation::Tree, path, None, None, depth)
+            }
+            FilesMcpOperation::Find { query } => {
+                (FileOperation::Find, None, Some(query), None, None)
+            }
+            FilesMcpOperation::Glob { pattern } => {
+                (FileOperation::Glob, None, None, Some(pattern), None)
+            }
+        };
+        (
+            FilesRequest {
+                operation,
+                path,
+                query,
+                pattern,
+                max_results: Some(self.max_results),
+                cursor: self.cursor,
+                depth,
+            },
+            self.consistency,
+        )
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ReadMcpRequest {
+    /// Repository-relative UTF-8 source file.
+    #[schemars(length(min = 1, max = 4096))]
+    path: String,
+    /// Exact symbol or inclusive line range to read.
+    target: ReadMcpTarget,
+    /// Maximum source tokens to return (default 8000, maximum 32000).
+    #[serde(default = "default_read_tokens")]
+    #[schemars(default = "default_read_tokens", range(min = 1, max = MAX_OUTPUT_TOKENS))]
+    max_tokens: usize,
+    /// Hash from the same prior target; matching content returns `not_modified`.
+    #[serde(default)]
+    #[schemars(length(max = 128))]
+    expected_hash: Option<String>,
+    /// Use `working_tree` after edits; otherwise `committed`.
+    #[serde(default)]
+    #[schemars(schema_with = "index_consistency_schema")]
+    consistency: IndexConsistency,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum ReadMcpTarget {
+    /// Read one indexed symbol definition.
+    Symbol {
+        /// Exact indexed symbol name.
+        #[schemars(length(min = 1, max = 4096))]
+        name: String,
+    },
+    /// Read one inclusive one-based line range.
+    Lines {
+        /// First one-based line.
+        #[schemars(range(min = 1))]
+        start: usize,
+        /// Last one-based line; must be at least `start`.
+        #[schemars(range(min = 1))]
+        end: usize,
+    },
+}
+
+impl ReadMcpRequest {
+    fn into_parts(self) -> (ReadRequest, IndexConsistency) {
+        let (start_line, end_line, symbol) = match self.target {
+            ReadMcpTarget::Symbol { name } => (None, None, Some(name)),
+            ReadMcpTarget::Lines { start, end } => (Some(start), Some(end), None),
+        };
+        (
+            ReadRequest {
+                path: self.path,
+                start_line,
+                end_line,
+                symbol,
+                max_tokens: Some(self.max_tokens),
+                expected_hash: self.expected_hash,
+            },
+            self.consistency,
+        )
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ContextMcpRequest {
+    /// Natural-language coding task; include known identifiers and constraints.
+    #[schemars(length(min = 3, max = 65536))]
+    task: String,
+    /// Maximum source tokens across selected fragments (default 3000, maximum 32000).
+    #[serde(default = "default_context_tokens")]
+    #[schemars(default = "default_context_tokens", range(min = 1, max = MAX_OUTPUT_TOKENS))]
+    token_budget: usize,
+    /// Boost matching paths without filtering other candidates.
+    #[serde(default)]
+    #[schemars(length(max = 256), inner(length(max = 4096)))]
+    focus_paths: Vec<String>,
+    /// Boost candidates for these exact symbol names.
+    #[serde(default)]
+    #[schemars(length(max = 256), inner(length(max = 4096)))]
+    focus_symbols: Vec<String>,
+    /// Exclude matching repository paths.
+    #[serde(default)]
+    #[schemars(length(max = 256), inner(length(max = 4096)))]
+    exclude_paths: Vec<String>,
+    /// Fragment hashes already held by the caller and not to resend.
+    #[serde(default)]
+    #[schemars(length(max = 256), inner(length(max = 128)))]
+    known_hashes: Vec<String>,
+    /// Earlier generation used to boost files indexed since that response.
+    #[serde(default)]
+    prior_repository_generation: Option<u64>,
+    /// Use `working_tree` after edits; otherwise `committed`.
+    #[serde(default)]
+    #[schemars(schema_with = "index_consistency_schema")]
+    consistency: IndexConsistency,
+}
+
+impl ContextMcpRequest {
+    fn into_parts(self) -> (ContextRequest, IndexConsistency) {
+        (
+            ContextRequest {
+                task: self.task,
+                token_budget: self.token_budget,
+                focus_paths: self.focus_paths,
+                focus_symbols: self.focus_symbols,
+                exclude_paths: self.exclude_paths,
+                known_hashes: self.known_hashes,
+                prior_repository_generation: self.prior_repository_generation,
+            },
+            self.consistency,
+        )
+    }
+}
+
+const fn default_read_tokens() -> usize {
+    DEFAULT_READ_TOKENS
+}
+
+const fn default_results() -> usize {
+    DEFAULT_RESULTS
+}
+
+const fn default_context_lines() -> usize {
+    DEFAULT_CONTEXT_LINES
+}
+
+const fn default_context_tokens() -> usize {
+    3_000
+}
+
+#[derive(Debug, Serialize)]
+struct RetryableToolResponse {
+    status: &'static str,
+    reason: &'static str,
+    message: &'static str,
+    retry_after_ms: u64,
+}
+
+impl RetryableToolResponse {
+    const fn new(reason: &'static str, message: &'static str, retry_after_ms: u64) -> Self {
+        Self {
+            status: "retryable",
+            reason,
+            message,
+            retry_after_ms,
+        }
+    }
 }
 
 fn index_consistency_schema(_: &mut SchemaGenerator) -> Schema {
@@ -109,13 +433,22 @@ impl LeanTokenMcp {
     fn services(&self) -> std::result::Result<Arc<Services>, CallToolResult> {
         match self.services.get() {
             McpServiceState::Ready(services) => Ok(services),
-            McpServiceState::Starting => Err(tool_unavailable(
-                "repository index is starting; retry shortly",
-            )),
+            McpServiceState::Starting => Err(self.retryable_result(RetryableToolResponse::new(
+                "index_starting",
+                "repository index is starting; retry the same call shortly",
+                500,
+            ))),
             McpServiceState::Failed => Err(tool_unavailable(
                 "repository index is unavailable; check server logs and retry",
             )),
         }
+    }
+
+    fn retryable_result(&self, response: RetryableToolResponse) -> CallToolResult {
+        self.result(response).unwrap_or_else(|error| {
+            tracing::error!(%error, "MCP retry response serialization failed");
+            tool_unavailable("repository retrieval is temporarily unavailable; retry shortly")
+        })
     }
 
     fn service_result<T: Serialize>(
@@ -124,12 +457,20 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         match result {
             Ok(value) => self.result(value),
-            Err(crate::Error::IndexNotReady) => Ok(tool_unavailable(
-                "repository index is being built; retry shortly",
-            )),
-            Err(crate::Error::RetryableConflict(_)) => Ok(tool_unavailable(
-                "repository index changed during retrieval; retry shortly",
-            )),
+            Err(crate::Error::IndexNotReady) => {
+                Ok(self.retryable_result(RetryableToolResponse::new(
+                    "index_building",
+                    "repository index is being built; retry the same call shortly",
+                    500,
+                )))
+            }
+            Err(crate::Error::RetryableConflict(_)) => {
+                Ok(self.retryable_result(RetryableToolResponse::new(
+                    "repository_changed",
+                    "repository index changed during retrieval; retry the same call",
+                    100,
+                )))
+            }
             Err(error) => Err(into_mcp_error(error)),
         }
     }
@@ -196,102 +537,107 @@ impl McpServices {
 impl LeanTokenMcp {
     #[tool(
         name = "leantoken_files",
-        description = "Start here when paths are unknown. Return paths only: tree for hierarchy, find for fuzzy names, glob for patterns."
+        description = "Preferred repository path discovery instead of find, ls, or glob. Use tree for hierarchy, find for fuzzy filenames, and glob for path patterns; returns paths, not source. Example: {\"operation\":{\"kind\":\"find\",\"query\":\"mcp\"}}."
     )]
     async fn leantoken_files(
         &self,
-        Parameters(req): Parameters<RetrievalRequest<FilesRequest>>,
+        Parameters(req): Parameters<FilesMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let services = match self.services() {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
+        let (request, consistency) = req.into_parts();
         let resp = services
-            .files_with_consistency_cancellable(req.request, req.consistency, context.ct.clone())
+            .files_with_consistency_cancellable(request, consistency, context.ct.clone())
             .await;
         self.service_result(resp)
     }
 
     #[tool(
         name = "leantoken_search",
-        description = "Find ranked source by symbol, reference, identifier, text, regex, or auto. Follow a hit with leantoken_read."
+        description = "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches; then use leantoken_read on the best exact ranges. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
     )]
     async fn leantoken_search(
         &self,
-        Parameters(req): Parameters<RetrievalRequest<SearchRequest>>,
+        Parameters(req): Parameters<SearchMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let services = match self.services() {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
+        let (request, consistency) = req.into_parts();
         let resp = services
-            .search_with_consistency_cancellable(req.request, req.consistency, context.ct.clone())
+            .search_with_consistency_cancellable(request, consistency, context.ct.clone())
             .await;
         self.service_result(resp)
     }
 
     #[tool(
         name = "leantoken_outline",
-        description = "Map definitions, signatures, imports, and ranges without source bodies. Avoid whole-file reads when the relevant range is unknown."
+        description = "Inspect file structure without reading whole source files. Prefer this when the file is known but the relevant symbol or range is not; then use leantoken_read. Example: {\"paths\":[\"src/mcp.rs\"]}."
     )]
     async fn leantoken_outline(
         &self,
-        Parameters(req): Parameters<RetrievalRequest<OutlineRequest>>,
+        Parameters(req): Parameters<OutlineMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let services = match self.services() {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
+        let (request, consistency) = req.into_parts();
         let resp = services
-            .outline_with_consistency_cancellable(req.request, req.consistency, context.ct.clone())
+            .outline_with_consistency_cancellable(request, consistency, context.ct.clone())
             .await;
         self.service_result(resp)
     }
 
     #[tool(
         name = "leantoken_read",
-        description = "Read an exact symbol or line range. Reuse content_hash as expected_hash to suppress unchanged source."
+        description = "Preferred exact source reader instead of cat, head, or sed. Read one indexed symbol or inclusive line range; reuse content_hash as expected_hash to suppress unchanged source. Example: {\"path\":\"src/mcp.rs\",\"target\":{\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}}."
     )]
     async fn leantoken_read(
         &self,
-        Parameters(req): Parameters<RetrievalRequest<ReadRequest>>,
+        Parameters(req): Parameters<ReadMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let services = match self.services() {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
+        let (request, consistency) = req.into_parts();
         let resp = services
-            .read_with_consistency_cancellable(req.request, req.consistency, context.ct.clone())
+            .read_with_consistency_cancellable(request, consistency, context.ct.clone())
             .await;
         self.service_result(resp)
     }
 
     #[tool(
         name = "leantoken_context",
-        description = "Rank task evidence within a token budget when scope is still uncertain. Reuse receipt fragment_hashes as known_hashes."
+        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}."
     )]
     async fn leantoken_context(
         &self,
-        Parameters(req): Parameters<RetrievalRequest<ContextRequest>>,
+        Parameters(req): Parameters<ContextMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let services = match self.services() {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
+        let (request, consistency) = req.into_parts();
         let resp = services
-            .context_with_consistency_cancellable(req.request, req.consistency, context.ct.clone())
+            .context_with_consistency_cancellable(request, consistency, context.ct.clone())
             .await;
         self.service_result(resp)
     }
 }
 
 #[tool_handler(
-    instructions = "Retrieve progressively: files for paths, outline or search for candidates, then read exact symbols or ranges. Use context only when scope remains uncertain. Reuse hashes to suppress unchanged evidence. Set consistency=working_tree when edits, generated files, branch changes, or external commits must be visible. Use native tools for edits, commands, and tests."
+    instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken_context first with the user's task. PREFER leantoken_search over grep or rg for source search; leantoken_files over find, ls, or glob for paths; leantoken_outline over opening whole files to discover structure; and leantoken_read over cat, head, or sed for exact symbols and ranges. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=working_tree after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, generated artifacts, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
 )]
 impl ServerHandler for LeanTokenMcp {
     fn on_initialized(
@@ -494,7 +840,7 @@ mod tests {
     }
 
     #[test]
-    fn retryable_conflicts_are_tool_errors_instead_of_invalid_parameters() {
+    fn retryable_conflicts_are_successful_structured_results() {
         let (server, _state) = LeanTokenMcp::pending();
         let result = server
             .service_result::<()>(Err(crate::Error::RetryableConflict(
@@ -502,12 +848,11 @@ mod tests {
             )))
             .expect("tool result");
 
-        assert_eq!(result.is_error, Some(true));
-        assert!(
-            result.content[0]
-                .as_text()
-                .is_some_and(|text| text.text.contains("retry"))
-        );
+        assert_eq!(result.is_error, Some(false));
+        let structured = result.structured_content.expect("structured retry result");
+        assert_eq!(structured["status"], "retryable");
+        assert_eq!(structured["reason"], "repository_changed");
+        assert_eq!(structured["retry_after_ms"], 100);
     }
 
     #[test]
@@ -594,11 +939,82 @@ mod tests {
                 )
             })
             .collect::<std::collections::HashMap<_, _>>();
-        assert!(descriptions["leantoken_files"].contains("Start here"));
-        assert!(descriptions["leantoken_search"].contains("Follow a hit"));
-        assert!(descriptions["leantoken_outline"].contains("whole-file"));
+        assert!(descriptions["leantoken_files"].contains("instead of find"));
+        assert!(descriptions["leantoken_search"].contains("instead of grep or rg"));
+        assert!(descriptions["leantoken_outline"].contains("without reading whole source files"));
         assert!(descriptions["leantoken_read"].contains("expected_hash"));
-        assert!(descriptions["leantoken_context"].contains("scope is still uncertain"));
+        assert!(descriptions["leantoken_read"].contains("instead of cat"));
+        assert!(descriptions["leantoken_context"].contains("DEFAULT FIRST CALL"));
+        assert!(
+            descriptions
+                .values()
+                .all(|description| description.contains("Example:"))
+        );
+    }
+
+    #[test]
+    fn tool_schemas_are_closed_bounded_and_remove_ambiguous_inputs() {
+        let tools = LeanTokenMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|tool| {
+                (
+                    tool.name.into_owned(),
+                    serde_json::Value::Object((*tool.input_schema).clone()),
+                )
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+
+        for (name, schema) in &tools {
+            assert_eq!(
+                schema.get("additionalProperties"),
+                Some(&serde_json::json!(false)),
+                "{name} must reject unknown arguments"
+            );
+        }
+        assert_eq!(
+            tools["leantoken_context"].pointer("/properties/token_budget/default"),
+            Some(&serde_json::json!(3_000))
+        );
+        assert!(
+            tools["leantoken_files"]
+                .pointer("/properties/query")
+                .is_none()
+        );
+        assert!(
+            tools["leantoken_files"]
+                .pointer("/properties/pattern")
+                .is_none()
+        );
+        assert!(
+            tools["leantoken_read"]
+                .pointer("/properties/symbol")
+                .is_none()
+        );
+        assert!(
+            tools["leantoken_read"]
+                .pointer("/properties/start_line")
+                .is_none()
+        );
+        assert!(
+            tools["leantoken_read"]
+                .pointer("/properties/target")
+                .is_some()
+        );
+
+        assert!(
+            serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
+                "operation": {"kind": "find", "query": "mcp", "pattern": "*.rs"}
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+                "path": "src/mcp.rs",
+                "target": {"kind": "symbol", "name": "LeanTokenMcp", "start": 1}
+            }))
+            .is_err()
+        );
     }
 
     #[test]
@@ -607,7 +1023,7 @@ mod tests {
         let json = serde_json::to_string(&tools).expect("tool catalog JSON");
         let token_count = crate::tokens::count(&json);
         assert!(
-            token_count <= 1_600,
+            token_count <= 2_250,
             "five-tool catalog grew to {token_count} cl100k tokens"
         );
     }
