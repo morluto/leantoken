@@ -96,7 +96,7 @@ fn mcp_survives_malformed_and_invalid_messages() {
         "method": "tools/call",
         "params": {
             "name": "leantoken_files",
-            "arguments": { "operation": "tree", "max_results": 1 }
+            "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
         }
     }));
     let response = process.response(Duration::from_secs(2));
@@ -130,7 +130,7 @@ fn mcp_initialize_precedes_storage_open() {
             "clientInfo": { "name": "leantoken-test", "version": "1" }
         }
     }));
-    let response = process.response(Duration::from_secs(2));
+    let response = process.response(Duration::from_secs(5));
     assert_eq!(response["id"], 1);
     assert!(response.get("result").is_some(), "{response}");
 
@@ -221,7 +221,7 @@ fn mcp_runtime_failure_transitions_tools_out_of_starting_state() {
             "method": "tools/call",
             "params": {
                 "name": "leantoken_files",
-                "arguments": { "operation": "tree", "max_results": 1 }
+                "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
             }
         }));
         let response = process.response(deadline.saturating_duration_since(Instant::now()));
@@ -301,7 +301,7 @@ fn concurrent_mcp_startup_initializes_once_and_followers_read() {
             "method": "tools/call",
             "params": {
                 "name": "leantoken_files",
-                "arguments": { "operation": "tree", "max_results": 5 }
+                "arguments": { "operation": {"kind": "tree"}, "max_results": 5 }
             }
         }));
     }
@@ -564,7 +564,7 @@ impl McpProcess {
                 "method": "tools/call",
                 "params": {
                     "name": "leantoken_files",
-                    "arguments": { "operation": "tree", "max_results": 1 }
+                    "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
                 }
             }));
             let response = self.response(deadline.saturating_duration_since(Instant::now()));

@@ -5,9 +5,10 @@ expression: tools
 [
   {
     "name": "leantoken_context",
-    "description": "Rank task evidence within a token budget when scope is still uncertain. Reuse receipt fragment_hashes as known_hashes.",
+    "description": "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
       "properties": {
         "consistency": {
           "default": "committed",
@@ -22,32 +23,40 @@ expression: tools
           "default": [],
           "description": "Exclude matching repository paths.",
           "items": {
+            "maxLength": 4096,
             "type": "string"
           },
+          "maxItems": 256,
           "type": "array"
         },
         "focus_paths": {
           "default": [],
           "description": "Boost matching paths without filtering other candidates.",
           "items": {
+            "maxLength": 4096,
             "type": "string"
           },
+          "maxItems": 256,
           "type": "array"
         },
         "focus_symbols": {
           "default": [],
           "description": "Boost candidates for these exact symbol names.",
           "items": {
+            "maxLength": 4096,
             "type": "string"
           },
+          "maxItems": 256,
           "type": "array"
         },
         "known_hashes": {
           "default": [],
           "description": "Fragment hashes already held by the caller and not to resend.",
           "items": {
+            "maxLength": 128,
             "type": "string"
           },
+          "maxItems": 256,
           "type": "array"
         },
         "prior_repository_generation": {
@@ -61,50 +70,113 @@ expression: tools
           ]
         },
         "task": {
-          "description": "Natural-language coding task used to retrieve evidence.",
+          "description": "Natural-language coding task; include known identifiers and constraints.",
+          "maxLength": 65536,
+          "minLength": 3,
           "type": "string"
         },
         "token_budget": {
-          "description": "Maximum source tokens across selected fragments.",
+          "default": 3000,
+          "description": "Maximum source tokens across selected fragments (default 3000, maximum 32000).",
           "format": "uint",
-          "minimum": 0,
+          "maximum": 32000,
+          "minimum": 1,
           "type": "integer"
         }
       },
       "required": [
-        "task",
-        "token_budget"
+        "task"
       ],
       "type": "object"
     }
   },
   {
     "name": "leantoken_files",
-    "description": "Start here when paths are unknown. Return paths only: tree for hierarchy, find for fuzzy names, glob for patterns.",
+    "description": "Preferred repository path discovery instead of find, ls, or glob. Use tree for hierarchy, find for fuzzy filenames, and glob for path patterns; returns paths, not source. Example: {\"operation\":{\"kind\":\"find\",\"query\":\"mcp\"}}.",
     "inputSchema": {
       "$defs": {
-        "FileOperation": {
-          "description": "Repository path-discovery operation.",
+        "FilesMcpOperation": {
           "oneOf": [
             {
-              "const": "tree",
-              "description": "Return a compact hierarchy.",
-              "type": "string"
+              "additionalProperties": false,
+              "description": "Return a compact hierarchy, optionally below one repository-relative directory.",
+              "properties": {
+                "depth": {
+                  "default": null,
+                  "description": "Maximum hierarchy depth below `path`.",
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "kind": {
+                  "const": "tree",
+                  "type": "string"
+                },
+                "path": {
+                  "default": null,
+                  "description": "Optional repository-relative directory.",
+                  "maxLength": 4096,
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
             },
             {
-              "const": "find",
-              "description": "Fuzzy-match paths and basenames.",
-              "type": "string"
+              "additionalProperties": false,
+              "description": "Fuzzy-match repository paths and basenames.",
+              "properties": {
+                "kind": {
+                  "const": "find",
+                  "type": "string"
+                },
+                "query": {
+                  "description": "Non-empty fuzzy filename or path query.",
+                  "maxLength": 65536,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "query"
+              ],
+              "type": "object"
             },
             {
-              "const": "glob",
-              "description": "Match indexed paths with a glob.",
-              "type": "string"
+              "additionalProperties": false,
+              "description": "Match indexed repository paths with a glob.",
+              "properties": {
+                "kind": {
+                  "const": "glob",
+                  "type": "string"
+                },
+                "pattern": {
+                  "description": "Non-empty glob pattern such as `src/**/*.rs`.",
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "pattern"
+              ],
+              "type": "object"
             }
           ]
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
       "properties": {
         "consistency": {
           "default": "committed",
@@ -117,59 +189,24 @@ expression: tools
         },
         "cursor": {
           "default": null,
-          "description": "Cursor returned by an earlier response from the same generation.",
+          "description": "Cursor returned by the same operation and repository generation.",
+          "maxLength": 4096,
           "type": [
             "string",
-            "null"
-          ]
-        },
-        "depth": {
-          "default": null,
-          "description": "Maximum hierarchy depth below `path` for `tree`.",
-          "format": "uint",
-          "minimum": 0,
-          "type": [
-            "integer",
             "null"
           ]
         },
         "max_results": {
-          "default": null,
-          "description": "Maximum entries to return.",
+          "default": 20,
+          "description": "Maximum entries to return (default 20, maximum 100).",
           "format": "uint",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
         },
         "operation": {
-          "$ref": "#/$defs/FileOperation",
-          "description": "Discovery operation to perform."
-        },
-        "path": {
-          "default": null,
-          "description": "Optional repository-relative tree root.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "pattern": {
-          "default": null,
-          "description": "Glob pattern used by `glob`.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "query": {
-          "default": null,
-          "description": "Fuzzy path query used by `find`.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "$ref": "#/$defs/FilesMcpOperation",
+          "description": "Path operation and its operation-specific arguments."
         }
       },
       "required": [
@@ -180,9 +217,10 @@ expression: tools
   },
   {
     "name": "leantoken_outline",
-    "description": "Map definitions, signatures, imports, and ranges without source bodies. Avoid whole-file reads when the relevant range is unknown.",
+    "description": "Inspect file structure without reading whole source files. Prefer this when the file is known but the relevant symbol or range is not; then use leantoken_read. Example: {\"paths\":[\"src/mcp.rs\"]}.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
       "properties": {
         "consistency": {
           "default": "committed",
@@ -194,35 +232,35 @@ expression: tools
           "type": "string"
         },
         "max_results": {
-          "default": null,
-          "description": "Maximum definitions and imports to return.",
+          "default": 20,
+          "description": "Maximum definitions and imports to return (default 20, maximum 100).",
           "format": "uint",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
         },
         "max_tokens": {
-          "default": null,
-          "description": "Maximum tokens across signatures and import targets.",
+          "default": 8000,
+          "description": "Maximum signature and import tokens (default 8000, maximum 32000).",
           "format": "uint",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
+          "maximum": 32000,
+          "minimum": 1,
+          "type": "integer"
         },
         "paths": {
-          "description": "Repository-relative files to outline.",
+          "description": "One to 256 repository-relative source files to outline.",
           "items": {
+            "maxLength": 4096,
             "type": "string"
           },
+          "maxItems": 256,
+          "minItems": 1,
           "type": "array"
         },
         "symbol_kind": {
           "default": null,
           "description": "Keep definitions of this exact syntax kind.",
+          "maxLength": 4096,
           "type": [
             "string",
             "null"
@@ -231,6 +269,7 @@ expression: tools
         "symbol_name": {
           "default": null,
           "description": "Keep definitions whose names contain this value.",
+          "maxLength": 4096,
           "type": [
             "string",
             "null"
@@ -245,9 +284,65 @@ expression: tools
   },
   {
     "name": "leantoken_read",
-    "description": "Read an exact symbol or line range. Reuse content_hash as expected_hash to suppress unchanged source.",
+    "description": "Preferred exact source reader instead of cat, head, or sed. Read one indexed symbol or inclusive line range; reuse content_hash as expected_hash to suppress unchanged source. Example: {\"path\":\"src/mcp.rs\",\"target\":{\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}}.",
     "inputSchema": {
+      "$defs": {
+        "ReadMcpTarget": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Read one indexed symbol definition.",
+              "properties": {
+                "kind": {
+                  "const": "symbol",
+                  "type": "string"
+                },
+                "name": {
+                  "description": "Exact indexed symbol name.",
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "name"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Read one inclusive one-based line range.",
+              "properties": {
+                "end": {
+                  "description": "Last one-based line; must be at least `start`.",
+                  "format": "uint",
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "lines",
+                  "type": "string"
+                },
+                "start": {
+                  "description": "First one-based line.",
+                  "format": "uint",
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "start",
+                "end"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
       "properties": {
         "consistency": {
           "default": "committed",
@@ -258,66 +353,44 @@ expression: tools
           ],
           "type": "string"
         },
-        "end_line": {
-          "default": null,
-          "description": "Last one-based line; defaults to the end of the file.",
-          "format": "uint",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
         "expected_hash": {
           "default": null,
-          "description": "Hash from the same prior range; matching content returns `not_modified`.",
+          "description": "Hash from the same prior target; matching content returns `not_modified`.",
+          "maxLength": 128,
           "type": [
             "string",
             "null"
           ]
         },
         "max_tokens": {
-          "default": null,
-          "description": "Maximum source tokens to return.",
+          "default": 8000,
+          "description": "Maximum source tokens to return (default 8000, maximum 32000).",
           "format": "uint",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
+          "maximum": 32000,
+          "minimum": 1,
+          "type": "integer"
         },
         "path": {
-          "description": "Repository-relative file path.",
+          "description": "Repository-relative UTF-8 source file.",
+          "maxLength": 4096,
+          "minLength": 1,
           "type": "string"
         },
-        "start_line": {
-          "default": null,
-          "description": "First one-based line; defaults to the start of the file.",
-          "format": "uint",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "symbol": {
-          "default": null,
-          "description": "Indexed symbol to read; cannot be combined with line fields.",
-          "type": [
-            "string",
-            "null"
-          ]
+        "target": {
+          "$ref": "#/$defs/ReadMcpTarget",
+          "description": "Exact symbol or inclusive line range to read."
         }
       },
       "required": [
-        "path"
+        "path",
+        "target"
       ],
       "type": "object"
     }
   },
   {
     "name": "leantoken_search",
-    "description": "Find ranked source by symbol, reference, identifier, text, regex, or auto. Follow a hit with leantoken_read.",
+    "description": "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches; then use leantoken_read on the best exact ranges. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}.",
     "inputSchema": {
       "$defs": {
         "SearchMode": {
@@ -357,6 +430,7 @@ expression: tools
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
       "properties": {
         "case_sensitive": {
           "default": false,
@@ -373,18 +447,17 @@ expression: tools
           "type": "string"
         },
         "context_lines": {
-          "default": null,
-          "description": "Lines included before and after each match.",
+          "default": 2,
+          "description": "Lines before and after each match (default 2, maximum 20).",
           "format": "uint",
+          "maximum": 20,
           "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
+          "type": "integer"
         },
         "cursor": {
           "default": null,
-          "description": "Cursor returned by an earlier response from the same generation.",
+          "description": "Cursor returned by the same search and repository generation.",
+          "maxLength": 4096,
           "type": [
             "string",
             "null"
@@ -394,53 +467,57 @@ expression: tools
           "default": [],
           "description": "Exclude matching repository paths.",
           "items": {
+            "maxLength": 4096,
             "type": "string"
           },
+          "maxItems": 256,
           "type": "array"
         },
         "focus_paths": {
           "default": [],
-          "description": "Boost matching repository paths without filtering other results.",
+          "description": "Boost matching paths without filtering other results.",
           "items": {
+            "maxLength": 4096,
             "type": "string"
           },
+          "maxItems": 256,
           "type": "array"
         },
         "include_paths": {
           "default": [],
           "description": "Include only matching repository paths.",
           "items": {
+            "maxLength": 4096,
             "type": "string"
           },
+          "maxItems": 256,
           "type": "array"
         },
         "max_results": {
-          "default": null,
-          "description": "Maximum hits to return.",
+          "default": 20,
+          "description": "Maximum hits to return (default 20, maximum 100).",
           "format": "uint",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
         },
         "max_tokens": {
-          "default": null,
-          "description": "Maximum source tokens across returned excerpts.",
+          "default": 8000,
+          "description": "Maximum source tokens across excerpts (default 8000, maximum 32000).",
           "format": "uint",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
+          "maximum": 32000,
+          "minimum": 1,
+          "type": "integer"
         },
         "mode": {
           "$ref": "#/$defs/SearchMode",
           "default": "auto",
-          "description": "Candidate source to search."
+          "description": "Candidate source to search (default `auto`)."
         },
         "query": {
-          "description": "Text, identifier, symbol, or regular expression to find.",
+          "description": "Non-empty text, identifier, symbol, or Rust regular expression to find.",
+          "maxLength": 65536,
+          "minLength": 1,
           "type": "string"
         }
       },
