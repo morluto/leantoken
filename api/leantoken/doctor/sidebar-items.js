@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["EXPECTED_TOOLS","READY_TIMEOUT","RESPONSE_TIMEOUT"],"fn":["doctor_error","print_progress","print_report","required_string","result_object","run","tool_message"],"struct":["DoctorReport","DoctorTransport","FirstCallReport"]};
