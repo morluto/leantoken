@@ -184,9 +184,12 @@ pub struct IntegrationArgs {
     /// Select every supported client.
     #[arg(long)]
     pub all: bool,
-    /// Skip prompts and use detected clients when none are selected explicitly.
+    /// Apply without prompting; requires explicit client flags or --all.
     #[arg(short = 'y', long)]
     pub yes: bool,
+    /// Show the exact configuration plan without making changes.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 impl From<IntegrationArgs> for SetupRequest {
@@ -214,6 +217,7 @@ impl From<IntegrationArgs> for SetupRequest {
             clients,
             all: args.all,
             yes: args.yes,
+            dry_run: args.dry_run,
         }
     }
 }

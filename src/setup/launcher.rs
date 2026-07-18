@@ -9,6 +9,7 @@ use crate::{Error, Result};
 pub(super) struct McpLauncher {
     command: PathBuf,
     pub(super) args: Vec<String>,
+    uses_npx: bool,
 }
 
 impl McpLauncher {
@@ -31,7 +32,12 @@ impl McpLauncher {
         Self {
             command: executable.into(),
             args: vec!["mcp".into()],
+            uses_npx: false,
         }
+    }
+
+    pub(super) fn uses_npx(&self) -> bool {
+        self.uses_npx
     }
 
     pub(super) fn command(&self) -> Result<&str> {
@@ -60,6 +66,7 @@ impl McpLauncher {
                 "leantoken".into(),
                 "mcp".into(),
             ],
+            uses_npx: true,
         })
     }
 }
@@ -91,6 +98,7 @@ mod tests {
                     "leantoken".into(),
                     "mcp".into(),
                 ],
+                uses_npx: true,
             }
         );
     }

@@ -6,8 +6,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use dialoguer::{Confirm, MultiSelect, theme::ColorfulTheme};
 use directories::BaseDirs;
+use inquire::{Confirm, InquireError, MultiSelect};
 use jsonc_parser::{ParseOptions, cst::CstInputValue, cst::CstRootNode};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -145,6 +145,20 @@ impl SetupOperation {
             Self::Remove => "Remove",
         }
     }
+
+    fn selection_prompt(self) -> &'static str {
+        match self {
+            Self::Setup => "Which coding agents should use LeanToken?",
+            Self::Remove => "Remove LeanToken from which coding agents?",
+        }
+    }
+
+    fn plan_label(self) -> &'static str {
+        match self {
+            Self::Setup => "setup",
+            Self::Remove => "removal",
+        }
+    }
 }
 
 /// Parsed request for the setup or removal workflow.
@@ -154,8 +168,63 @@ pub struct SetupRequest {
     pub clients: Vec<SetupClient>,
     /// Select every supported client.
     pub all: bool,
-    /// Skip interactive prompts and use detected clients when none are explicit.
+    /// Apply an explicitly scoped plan without interactive confirmation.
     pub yes: bool,
+    /// Resolve and print the setup plan without changing configuration.
+    pub dry_run: bool,
+}
+
+/// Planned action for one client configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientPlanAction {
+    /// Create a new configuration file.
+    Create,
+    /// Update an existing configuration file.
+    Update,
+    /// The requested setup is already current.
+    AlreadyCurrent,
+    /// Remove an existing LeanToken entry.
+    Remove,
+    /// No LeanToken entry exists to remove.
+    NotConfigured,
+}
+
+impl fmt::Display for ClientPlanAction {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            Self::Create => "create",
+            Self::Update => "update",
+            Self::AlreadyCurrent => "already current",
+            Self::Remove => "remove",
+            Self::NotConfigured => "not configured",
+        };
+        formatter.write_str(label)
+    }
+}
+
+/// Public, secret-free description of one planned client effect.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ClientSetupPlan {
+    /// Client whose global configuration was inspected.
+    pub client: SetupClient,
+    /// Exact global configuration path.
+    pub path: PathBuf,
+    /// Resolved action for the current state.
+    pub action: ClientPlanAction,
+    /// Whether local client state was detected.
+    pub detected: bool,
+}
+
+/// Exact MCP launcher that setup will register.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LauncherPlan {
+    /// Executable written to client configuration.
+    pub command: String,
+    /// Arguments written to client configuration.
+    pub args: Vec<String>,
+    /// Whether client startup may contact npm and execute the latest release.
+    pub follows_latest_npm_release: bool,
 }
 
 /// Outcome for one client configuration.
@@ -179,8 +248,15 @@ pub struct SetupReport {
     pub operation: SetupOperation,
     /// Whether an interactive user cancelled before mutation.
     pub cancelled: bool,
+    /// Whether this report describes a dry-run without mutation.
+    pub dry_run: bool,
     /// Whether setup ran from a persistent CLI installation.
     pub persistent_cli: bool,
+    /// Exact launcher considered for setup, omitted for removal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launcher: Option<LauncherPlan>,
+    /// Secret-free resolved plan used for confirmation and execution.
+    pub plan: Vec<ClientSetupPlan>,
     /// Per-client outcomes.
     pub results: Vec<ClientSetupResult>,
 }
@@ -238,75 +314,99 @@ trait SetupPrompt {
         detected: &[SetupClient],
     ) -> Result<Option<Vec<SetupClient>>>;
 
-    fn confirm(&self, operation: SetupOperation, clients: &[SetupClient]) -> Result<bool>;
+    fn confirm(&self, operation: SetupOperation, plan: &ResolvedSetupPlan) -> Result<bool>;
 }
 
-struct DialoguerPrompt;
+struct InteractivePrompt;
 
-impl SetupPrompt for DialoguerPrompt {
+#[derive(Clone)]
+struct AgentOption {
+    client: SetupClient,
+    detected: bool,
+}
+
+impl fmt::Display for AgentOption {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.client.display_name())?;
+        if self.detected {
+            formatter.write_str(" — detected")?;
+        }
+        Ok(())
+    }
+}
+
+impl SetupPrompt for InteractivePrompt {
     fn select(
         &self,
         operation: SetupOperation,
         detected: &[SetupClient],
     ) -> Result<Option<Vec<SetupClient>>> {
-        let labels = SetupClient::ALL
+        let stderr = std::io::stderr();
+        let mut output = stderr.lock();
+        writeln!(output, "◆ LeanToken // Context Distillery")?;
+        writeln!(
+            output,
+            "  Detected agents are labeled for context; none are selected automatically."
+        )?;
+        writeln!(output)?;
+        drop(output);
+        let options = SetupClient::ALL
             .iter()
-            .map(|client| client.display_name())
+            .copied()
+            .map(|client| AgentOption {
+                client,
+                detected: detected.contains(&client),
+            })
             .collect::<Vec<_>>();
-        let defaults = SetupClient::ALL
-            .iter()
-            .map(|client| detected.contains(client))
-            .collect::<Vec<_>>();
-        let selection = MultiSelect::with_theme(&ColorfulTheme::default())
-            .with_prompt(format!(
-                "Which clients should LeanToken {}?",
-                operation.action()
-            ))
-            .items(&labels)
-            .defaults(&defaults)
-            .interact_opt()
-            .map_err(prompt_error)?;
-        Ok(selection.map(|indices| {
-            indices
-                .into_iter()
-                .map(|index| SetupClient::ALL[index])
-                .collect()
-        }))
+        match MultiSelect::new(operation.selection_prompt(), options)
+            .without_filtering()
+            .with_help_message("↑/↓ move • Space select • Enter continue • Esc cancel")
+            .prompt_skippable()
+        {
+            Ok(selection) => {
+                Ok(selection
+                    .map(|options| options.into_iter().map(|option| option.client).collect()))
+            }
+            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => Ok(None),
+            Err(error) => Err(prompt_error(error)),
+        }
     }
 
-    fn confirm(&self, operation: SetupOperation, clients: &[SetupClient]) -> Result<bool> {
-        let names = clients
-            .iter()
-            .map(|client| client.display_name())
-            .collect::<Vec<_>>()
-            .join(", ");
-        Confirm::with_theme(&ColorfulTheme::default())
-            .with_prompt(format!(
-                "{} LeanToken for {names}?",
-                operation.action_label()
-            ))
-            .default(true)
-            .interact()
-            .map_err(prompt_error)
+    fn confirm(&self, operation: SetupOperation, plan: &ResolvedSetupPlan) -> Result<bool> {
+        print_preflight(plan)?;
+        match Confirm::new(&format!("{} these changes?", operation.action_label()))
+            .with_default(false)
+            .prompt()
+        {
+            Ok(answer) => Ok(answer),
+            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => Ok(false),
+            Err(error) => Err(prompt_error(error)),
+        }
     }
 }
 
-fn prompt_error(error: dialoguer::Error) -> Error {
+fn prompt_error(error: InquireError) -> Error {
     Error::InvalidRequest(format!("interactive setup failed: {error}"))
 }
 
 /// Run global MCP setup or removal using the current user environment.
-pub fn run(operation: SetupOperation, request: SetupRequest) -> Result<SetupReport> {
+pub fn run(
+    operation: SetupOperation,
+    request: SetupRequest,
+    json_output: bool,
+) -> Result<SetupReport> {
     let home = home_directory()
         .ok_or_else(|| Error::InvalidRequest("could not determine the home directory".into()))?;
+    let launcher = McpLauncher::current()?;
     let environment = SetupEnvironment {
         home,
-        launcher: McpLauncher::current()?,
-        interactive: std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
-        persistent_cli: std::env::var_os("npm_lifecycle_event").as_deref()
-            != Some(std::ffi::OsStr::new("npx")),
+        persistent_cli: !launcher.uses_npx(),
+        launcher,
+        interactive: !json_output
+            && std::io::stdin().is_terminal()
+            && std::io::stderr().is_terminal(),
     };
-    run_with(operation, request, &environment, &DialoguerPrompt)
+    run_with(operation, request, &environment, &InteractivePrompt)
 }
 
 fn home_directory() -> Option<PathBuf> {
@@ -339,17 +439,14 @@ fn run_with(
         .filter(|client| client.is_detected(&environment.home))
         .collect::<Vec<_>>();
 
-    let (clients, prompted) = if request.all {
-        (SetupClient::ALL.to_vec(), false)
+    let clients = if request.all {
+        SetupClient::ALL.to_vec()
     } else if !request.clients.is_empty() {
-        (deduplicate(request.clients), false)
+        deduplicate(request.clients)
     } else if request.yes {
-        if detected.is_empty() {
-            return Err(Error::InvalidRequest(
-                "no supported clients detected; pass a client flag or --all".into(),
-            ));
-        }
-        (detected.clone(), false)
+        return Err(Error::InvalidRequest(
+            "--yes requires explicit client flags or --all; detection is not consent".into(),
+        ));
     } else {
         if !environment.interactive {
             return Err(Error::InvalidRequest(
@@ -358,35 +455,66 @@ fn run_with(
             ));
         }
         let Some(selected) = prompt.select(operation, &detected)? else {
-            return Ok(cancelled_report(operation, environment.persistent_cli));
+            return Ok(empty_report(operation, environment.persistent_cli));
         };
         if selected.is_empty() {
-            return Ok(cancelled_report(operation, environment.persistent_cli));
+            return Ok(empty_report(operation, environment.persistent_cli));
         }
-        (selected, true)
+        selected
     };
 
-    if prompted && !prompt.confirm(operation, &clients)? {
-        return Ok(cancelled_report(operation, environment.persistent_cli));
+    if !environment.interactive && !request.dry_run && !request.yes {
+        return Err(Error::InvalidRequest(
+            "non-interactive setup requires explicit client flags or --all with --yes".into(),
+        ));
     }
 
-    let results = clients
-        .into_iter()
-        .map(|client| configure_client(operation, client, &environment.home, &environment.launcher))
-        .collect();
-    Ok(SetupReport {
+    let plan = resolve_plan(
         operation,
-        cancelled: false,
-        persistent_cli: environment.persistent_cli,
-        results,
-    })
+        &clients,
+        &detected,
+        &environment.home,
+        &environment.launcher,
+        environment.persistent_cli,
+    )?;
+
+    if request.dry_run {
+        return Ok(report_from_plan(&plan, false, true, Vec::new()));
+    }
+
+    if !request.yes && !prompt.confirm(operation, &plan)? {
+        return Ok(report_from_plan(&plan, true, false, Vec::new()));
+    }
+
+    let results = apply_plan(&plan);
+    Ok(report_from_plan(&plan, false, false, results))
 }
 
-fn cancelled_report(operation: SetupOperation, persistent_cli: bool) -> SetupReport {
+fn report_from_plan(
+    plan: &ResolvedSetupPlan,
+    cancelled: bool,
+    dry_run: bool,
+    results: Vec<ClientSetupResult>,
+) -> SetupReport {
+    SetupReport {
+        operation: plan.operation,
+        cancelled,
+        dry_run,
+        persistent_cli: plan.persistent_cli,
+        launcher: plan.launcher.clone(),
+        plan: plan.edits.iter().map(|edit| edit.public.clone()).collect(),
+        results,
+    }
+}
+
+fn empty_report(operation: SetupOperation, persistent_cli: bool) -> SetupReport {
     SetupReport {
         operation,
         cancelled: true,
+        dry_run: false,
         persistent_cli,
+        launcher: None,
+        plan: Vec::new(),
         results: Vec::new(),
     }
 }
@@ -398,33 +526,127 @@ fn deduplicate(clients: Vec<SetupClient>) -> Vec<SetupClient> {
         .collect()
 }
 
-fn configure_client(
+#[derive(Debug)]
+struct ResolvedSetupPlan {
     operation: SetupOperation,
-    client: SetupClient,
+    persistent_cli: bool,
+    launcher: Option<LauncherPlan>,
+    edits: Vec<PlannedClientEdit>,
+}
+
+#[derive(Debug)]
+struct PlannedClientEdit {
+    public: ClientSetupPlan,
+    status: EditStatus,
+    original: Option<String>,
+    updated: Option<String>,
+}
+
+fn resolve_plan(
+    operation: SetupOperation,
+    clients: &[SetupClient],
+    detected: &[SetupClient],
     home: &Path,
     launcher: &McpLauncher,
-) -> ClientSetupResult {
+    persistent_cli: bool,
+) -> Result<ResolvedSetupPlan> {
+    let edits = clients
+        .iter()
+        .copied()
+        .map(|client| resolve_client_edit(operation, client, detected, home, launcher))
+        .collect::<Result<Vec<_>>>()?;
+    let launcher = (operation == SetupOperation::Setup)
+        .then(|| launcher_plan(launcher))
+        .transpose()?;
+    Ok(ResolvedSetupPlan {
+        operation,
+        persistent_cli,
+        launcher,
+        edits,
+    })
+}
+
+fn launcher_plan(launcher: &McpLauncher) -> Result<LauncherPlan> {
+    Ok(LauncherPlan {
+        command: launcher.command()?.to_string(),
+        args: launcher.args.clone(),
+        follows_latest_npm_release: launcher.uses_npx(),
+    })
+}
+
+fn resolve_client_edit(
+    operation: SetupOperation,
+    client: SetupClient,
+    detected: &[SetupClient],
+    home: &Path,
+    launcher: &McpLauncher,
+) -> Result<PlannedClientEdit> {
     let definition = client.definition(home);
-    let outcome = match definition.format {
+    let (status, original, updated) = match definition.format {
         ConfigFormat::Json { section, shape } => {
-            edit_json_config(operation, &definition.path, section, shape, launcher)
+            resolve_json_edit(operation, &definition.path, section, shape, launcher)?
         }
-        ConfigFormat::Toml => edit_toml_config(operation, &definition.path, launcher),
+        ConfigFormat::Toml => resolve_toml_edit(operation, &definition.path, launcher)?,
     };
-    match outcome {
-        Ok(status) => ClientSetupResult {
+    let action = match status {
+        EditStatus::Configured if original.is_none() => ClientPlanAction::Create,
+        EditStatus::Configured | EditStatus::Updated => ClientPlanAction::Update,
+        EditStatus::AlreadyConfigured => ClientPlanAction::AlreadyCurrent,
+        EditStatus::Removed => ClientPlanAction::Remove,
+        EditStatus::NotConfigured => ClientPlanAction::NotConfigured,
+    };
+    Ok(PlannedClientEdit {
+        public: ClientSetupPlan {
             client,
             path: definition.path,
-            status: status.to_string(),
-            error: None,
+            action,
+            detected: detected.contains(&client),
         },
-        Err(error) => ClientSetupResult {
-            client,
-            path: definition.path,
-            status: "failed".into(),
-            error: Some(error.to_string()),
-        },
+        status,
+        original,
+        updated,
+    })
+}
+
+fn apply_plan(plan: &ResolvedSetupPlan) -> Vec<ClientSetupResult> {
+    plan.edits
+        .iter()
+        .map(|edit| {
+            let outcome = apply_edit(edit);
+            match outcome {
+                Ok(()) => ClientSetupResult {
+                    client: edit.public.client,
+                    path: edit.public.path.clone(),
+                    status: edit.status.to_string(),
+                    error: None,
+                },
+                Err(error) => ClientSetupResult {
+                    client: edit.public.client,
+                    path: edit.public.path.clone(),
+                    status: "failed".into(),
+                    error: Some(error.to_string()),
+                },
+            }
+        })
+        .collect()
+}
+
+fn apply_edit(edit: &PlannedClientEdit) -> Result<()> {
+    let current = read_optional(&edit.public.path)?;
+    if current != edit.original {
+        return Err(Error::InvalidRequest(format!(
+            "configuration changed after preflight: {}",
+            edit.public.path.display()
+        )));
     }
+    if let Some(updated) = &edit.updated {
+        write_if_changed(
+            &edit.public.path,
+            edit.original.as_deref().unwrap_or_default(),
+            updated,
+        )?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -449,6 +671,7 @@ impl fmt::Display for EditStatus {
     }
 }
 
+#[cfg(test)]
 fn edit_json_config(
     operation: SetupOperation,
     path: &Path,
@@ -456,8 +679,33 @@ fn edit_json_config(
     shape: JsonEntryShape,
     launcher: &McpLauncher,
 ) -> Result<EditStatus> {
-    let original = read_optional(path)?.unwrap_or_else(|| "{}\n".into());
-    let root = CstRootNode::parse(&original, &ParseOptions::default())
+    let (status, original, updated) =
+        resolve_json_edit(operation, path, section_name, shape, launcher)?;
+    let edit = PlannedClientEdit {
+        public: ClientSetupPlan {
+            client: SetupClient::Claude,
+            path: path.to_path_buf(),
+            action: ClientPlanAction::Update,
+            detected: false,
+        },
+        status,
+        original,
+        updated,
+    };
+    apply_edit(&edit)?;
+    Ok(status)
+}
+
+fn resolve_json_edit(
+    operation: SetupOperation,
+    path: &Path,
+    section_name: &str,
+    shape: JsonEntryShape,
+    launcher: &McpLauncher,
+) -> Result<(EditStatus, Option<String>, Option<String>)> {
+    let original = read_optional(path)?;
+    let source = original.clone().unwrap_or_else(|| "{}\n".into());
+    let root = CstRootNode::parse(&source, &ParseOptions::default())
         .map_err(|error| invalid_config(path, error))?;
     let object = root
         .object_value_or_create()
@@ -486,7 +734,7 @@ fn edit_json_config(
                     )
                     .map_err(|error| invalid_config(path, error))?;
                     if current_value == expected {
-                        return Ok(EditStatus::AlreadyConfigured);
+                        return Ok((EditStatus::AlreadyConfigured, original, None));
                     }
                     property.set_value(to_cst_input(&expected));
                     EditStatus::Updated
@@ -499,7 +747,7 @@ fn edit_json_config(
         }
         SetupOperation::Remove => {
             let Some(property) = section.get(SERVER_NAME) else {
-                return Ok(EditStatus::NotConfigured);
+                return Ok((EditStatus::NotConfigured, original, None));
             };
             property.remove();
             if section.properties().is_empty() {
@@ -512,8 +760,8 @@ fn edit_json_config(
         }
     };
 
-    write_if_changed(path, &original, &root.to_string())?;
-    Ok(status)
+    let updated = root.to_string();
+    Ok((status, original, Some(updated)))
 }
 
 fn json_entry(shape: JsonEntryShape, launcher: &McpLauncher) -> Result<Value> {
@@ -547,16 +795,39 @@ fn to_cst_input(value: &Value) -> CstInputValue {
     }
 }
 
+#[cfg(test)]
 fn edit_toml_config(
     operation: SetupOperation,
     path: &Path,
     launcher: &McpLauncher,
 ) -> Result<EditStatus> {
-    let original = read_optional(path)?.unwrap_or_default();
-    let mut document = if original.trim().is_empty() {
+    let (status, original, updated) = resolve_toml_edit(operation, path, launcher)?;
+    let edit = PlannedClientEdit {
+        public: ClientSetupPlan {
+            client: SetupClient::Codex,
+            path: path.to_path_buf(),
+            action: ClientPlanAction::Update,
+            detected: false,
+        },
+        status,
+        original,
+        updated,
+    };
+    apply_edit(&edit)?;
+    Ok(status)
+}
+
+fn resolve_toml_edit(
+    operation: SetupOperation,
+    path: &Path,
+    launcher: &McpLauncher,
+) -> Result<(EditStatus, Option<String>, Option<String>)> {
+    let original = read_optional(path)?;
+    let source = original.clone().unwrap_or_default();
+    let mut document = if source.trim().is_empty() {
         DocumentMut::new()
     } else {
-        original
+        source
             .parse::<DocumentMut>()
             .map_err(|error| invalid_config(path, error))?
     };
@@ -568,7 +839,7 @@ fn edit_toml_config(
             if let Some(existing) = servers.get(SERVER_NAME)
                 && toml_entry_matches(existing, command, &launcher.args)
             {
-                return Ok(EditStatus::AlreadyConfigured);
+                return Ok((EditStatus::AlreadyConfigured, original, None));
             }
             let existed = servers.contains_key(SERVER_NAME);
             let mut server = Table::new();
@@ -589,13 +860,13 @@ fn edit_toml_config(
         }
         SetupOperation::Remove => {
             let Some(servers_item) = document.get_mut("mcp_servers") else {
-                return Ok(EditStatus::NotConfigured);
+                return Ok((EditStatus::NotConfigured, original, None));
             };
             let servers = servers_item
                 .as_table_mut()
                 .ok_or_else(|| invalid_config(path, "mcp_servers must be a table"))?;
             if servers.remove(SERVER_NAME).is_none() {
-                return Ok(EditStatus::NotConfigured);
+                return Ok((EditStatus::NotConfigured, original, None));
             }
             if servers.is_empty() {
                 document.remove("mcp_servers");
@@ -604,8 +875,7 @@ fn edit_toml_config(
         }
     };
 
-    write_if_changed(path, &original, &document.to_string())?;
-    Ok(status)
+    Ok((status, original, Some(document.to_string())))
 }
 
 fn ensure_toml_table<'a>(
@@ -680,6 +950,81 @@ fn invalid_config(path: &Path, error: impl fmt::Display) -> Error {
     ))
 }
 
+fn print_preflight(plan: &ResolvedSetupPlan) -> Result<()> {
+    let stderr = std::io::stderr();
+    let mut output = stderr.lock();
+    writeln!(output)?;
+    writeln!(output, "◆ LeanToken {} plan", plan.operation.plan_label())?;
+    for edit in &plan.edits {
+        writeln!(
+            output,
+            "  {} {}",
+            plan_symbol(edit.public.action),
+            edit.public.client.display_name()
+        )?;
+        writeln!(
+            output,
+            "    {} · {}",
+            edit.public.action,
+            edit.public.path.display()
+        )?;
+    }
+    if let Some(launcher) = &plan.launcher {
+        writeln!(output)?;
+        writeln!(output, "  MCP launcher")?;
+        writeln!(output, "    command: {}", launcher.command)?;
+        writeln!(output, "    args: {}", launcher.args.join(" "))?;
+        if launcher.follows_latest_npm_release {
+            writeln!(
+                output,
+                "    Client startup may contact npm and execute the latest LeanToken release."
+            )?;
+        } else {
+            writeln!(output, "    Uses the current LeanToken executable.")?;
+        }
+    }
+    writeln!(output)?;
+    writeln!(
+        output,
+        "  Only the `leantoken` MCP entry will change; unrelated settings are preserved."
+    )?;
+    Ok(())
+}
+
+fn plan_symbol(action: ClientPlanAction) -> &'static str {
+    match action {
+        ClientPlanAction::Create | ClientPlanAction::Update | ClientPlanAction::Remove => "◇",
+        ClientPlanAction::AlreadyCurrent | ClientPlanAction::NotConfigured => "─",
+    }
+}
+
+fn print_report_plan(output: &mut impl Write, report: &SetupReport) -> Result<()> {
+    writeln!(output, "◆ LeanToken dry-run")?;
+    writeln!(output, "  No changes were made.")?;
+    for effect in &report.plan {
+        writeln!(
+            output,
+            "  {} {}: {} ({})",
+            plan_symbol(effect.action),
+            effect.client.display_name(),
+            effect.path.display(),
+            effect.action
+        )?;
+    }
+    if let Some(launcher) = &report.launcher {
+        writeln!(output)?;
+        writeln!(output, "  Launcher: {}", launcher.command)?;
+        writeln!(output, "  Arguments: {}", launcher.args.join(" "))?;
+        if launcher.follows_latest_npm_release {
+            writeln!(
+                output,
+                "  Client startup may contact npm and execute the latest LeanToken release."
+            )?;
+        }
+    }
+    Ok(())
+}
+
 /// Print a setup report as JSON or concise human-readable output.
 pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
     let stdout = std::io::stdout();
@@ -690,7 +1035,15 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
         return Ok(());
     }
     if report.cancelled {
-        writeln!(output, "LeanToken {} cancelled.", report.operation.action())?;
+        writeln!(
+            output,
+            "LeanToken {} cancelled. No changes were made.",
+            report.operation.action()
+        )?;
+        return Ok(());
+    }
+    if report.dry_run {
+        print_report_plan(&mut output, report)?;
         return Ok(());
     }
     writeln!(output, "◆ LeanToken // Context Distillery")?;
@@ -724,16 +1077,30 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
             .iter()
             .filter(|result| result.error.is_none())
             .count();
+        let changed = report
+            .results
+            .iter()
+            .filter(|result| matches!(result.status.as_str(), "configured" | "updated"))
+            .count();
         writeln!(output)?;
         writeln!(
             output,
-            "Configuration verified for {configured} client{}.",
+            "LeanToken is configured for {configured} client{}.",
             if configured == 1 { "" } else { "s" }
         )?;
-        writeln!(
-            output,
-            "Restart or reload those clients to connect LeanToken."
-        )?;
+        if report.has_failures() {
+            writeln!(
+                output,
+                "Some selected clients failed; successful changes were not rolled back."
+            )?;
+        } else if changed > 0 {
+            writeln!(
+                output,
+                "Restart or reload the configured clients to connect LeanToken."
+            )?;
+        } else {
+            writeln!(output, "No configuration changes were needed.")?;
+        }
         writeln!(output)?;
         if report.persistent_cli {
             writeln!(output, "Verify from a repository: leantoken doctor")?;
@@ -760,12 +1127,6 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
                 "Install the shell command with: npm install --global leantoken@latest"
             )?;
         }
-        writeln!(output)?;
-        writeln!(output, "First prompt:")?;
-        writeln!(
-            output,
-            "  \"Use LeanToken to map the relevant repository context before editing.\""
-        )?;
     }
     Ok(())
 }
@@ -788,7 +1149,7 @@ mod tests {
             Ok(self.selected.clone())
         }
 
-        fn confirm(&self, _operation: SetupOperation, _clients: &[SetupClient]) -> Result<bool> {
+        fn confirm(&self, _operation: SetupOperation, _plan: &ResolvedSetupPlan) -> Result<bool> {
             Ok(self.confirmed)
         }
     }
@@ -965,6 +1326,7 @@ mod tests {
                 clients: Vec::new(),
                 all: false,
                 yes: false,
+                dry_run: false,
             },
             &environment(&temp),
             &FixedPrompt {
@@ -978,23 +1340,27 @@ mod tests {
     }
 
     #[test]
-    fn yes_requires_detected_or_explicit_clients() {
+    fn yes_requires_explicit_clients_even_when_a_client_is_detected() {
         let temp = tempfile::tempdir().unwrap();
+        let environment = environment(&temp);
+        fs::create_dir_all(environment.home.join(".codex")).unwrap();
         let error = run_with(
             SetupOperation::Setup,
             SetupRequest {
                 clients: Vec::new(),
                 all: false,
                 yes: true,
+                dry_run: false,
             },
-            &environment(&temp),
+            &environment,
             &FixedPrompt {
                 selected: None,
                 confirmed: true,
             },
         )
         .unwrap_err();
-        assert!(error.to_string().contains("no supported clients detected"));
+        assert!(error.to_string().contains("detection is not consent"));
+        assert!(!environment.home.join(".codex/config.toml").exists());
     }
 
     #[test]
@@ -1005,6 +1371,7 @@ mod tests {
             clients: Vec::new(),
             all: true,
             yes: true,
+            dry_run: false,
         };
         let first = run_with(
             SetupOperation::Setup,
@@ -1066,17 +1433,74 @@ mod tests {
     }
 
     #[test]
-    fn one_malformed_client_does_not_block_other_clients() {
+    fn malformed_client_blocks_the_entire_plan_before_writes() {
         let temp = tempfile::tempdir().unwrap();
         let environment = environment(&temp);
         fs::create_dir_all(&environment.home).unwrap();
         fs::write(environment.home.join(".claude.json"), "{ broken").unwrap();
-        let report = run_with(
+        let error = run_with(
             SetupOperation::Setup,
             SetupRequest {
                 clients: vec![SetupClient::Claude, SetupClient::Cursor],
                 all: false,
                 yes: true,
+                dry_run: false,
+            },
+            &environment,
+            &FixedPrompt {
+                selected: None,
+                confirmed: true,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("refusing to overwrite malformed config")
+        );
+        assert_eq!(
+            fs::read_to_string(environment.home.join(".claude.json")).unwrap(),
+            "{ broken"
+        );
+        assert!(!environment.home.join(".cursor/mcp.json").exists());
+    }
+
+    #[test]
+    fn non_interactive_explicit_selection_requires_yes() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut environment = environment(&temp);
+        environment.interactive = false;
+        let error = run_with(
+            SetupOperation::Setup,
+            SetupRequest {
+                clients: vec![SetupClient::Codex],
+                all: false,
+                yes: false,
+                dry_run: false,
+            },
+            &environment,
+            &FixedPrompt {
+                selected: None,
+                confirmed: true,
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("non-interactive setup requires"));
+        assert!(!environment.home.join(".codex/config.toml").exists());
+    }
+
+    #[test]
+    fn dry_run_resolves_exact_plan_without_writes_or_yes() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut environment = environment(&temp);
+        environment.interactive = false;
+        let report = run_with(
+            SetupOperation::Setup,
+            SetupRequest {
+                clients: vec![SetupClient::Codex],
+                all: false,
+                yes: false,
+                dry_run: true,
             },
             &environment,
             &FixedPrompt {
@@ -1085,13 +1509,32 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(report.has_failures());
-        assert!(report.results[0].error.is_some());
-        assert_eq!(report.results[1].status, "configured");
-        assert_eq!(
-            fs::read_to_string(environment.home.join(".claude.json")).unwrap(),
-            "{ broken"
-        );
-        assert!(environment.home.join(".cursor/mcp.json").exists());
+        assert!(report.dry_run);
+        assert_eq!(report.plan[0].action, ClientPlanAction::Create);
+        assert!(report.results.is_empty());
+        assert!(!environment.home.join(".codex/config.toml").exists());
+    }
+
+    #[test]
+    fn explicit_interactive_selection_still_requires_confirmation() {
+        let temp = tempfile::tempdir().unwrap();
+        let environment = environment(&temp);
+        let report = run_with(
+            SetupOperation::Setup,
+            SetupRequest {
+                clients: vec![SetupClient::Codex],
+                all: false,
+                yes: false,
+                dry_run: false,
+            },
+            &environment,
+            &FixedPrompt {
+                selected: None,
+                confirmed: false,
+            },
+        )
+        .unwrap();
+        assert!(report.cancelled);
+        assert!(!environment.home.join(".codex/config.toml").exists());
     }
 }
