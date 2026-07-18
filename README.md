@@ -25,7 +25,7 @@ Add LeanToken to Claude Code, Cursor, OpenCode, Codex, Gemini CLI, or
 Antigravity:
 
 ```bash
-npx leantoken@latest setup
+npx leantoken setup
 ```
 
 The setup wizard finds supported clients and registers LeanToken as a global
@@ -35,7 +35,7 @@ Restart or reload the configured clients, then verify the complete MCP
 handshake and first retrieval from a repository:
 
 ```bash
-npx leantoken@latest doctor
+npx leantoken doctor
 ```
 
 Start with a broad task such as: *Use LeanToken to map the relevant repository
@@ -67,15 +67,15 @@ To skip the wizard, select clients explicitly or configure all supported
 clients:
 
 ```bash
-npx leantoken@latest setup --claude --codex --yes
-npx leantoken@latest setup --all --yes
+npx leantoken setup --claude --codex --yes
+npx leantoken setup --all --yes
 ```
 
 Setup adds only the `leantoken` MCP entry. It does not add skills, rules, or
 shell hooks. Remove the entry with:
 
 ```bash
-npx leantoken@latest remove
+npx leantoken remove
 ```
 
 ## Why LeanToken
@@ -118,9 +118,9 @@ schema also consumes model context.
 Run LeanToken directly through `npx`:
 
 ```bash
-npx leantoken@latest status
-npx leantoken@latest doctor
-npx leantoken@latest --root /path/to/repo search handle_request
+npx leantoken status
+npx leantoken doctor
+npx leantoken --root /path/to/repo search handle_request
 ```
 
 Or use a globally installed binary:
