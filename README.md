@@ -28,8 +28,11 @@ Antigravity:
 npx leantoken setup
 ```
 
-The setup wizard finds supported clients and registers LeanToken as a global
-MCP server. Each client launches the current release in its active workspace.
+The setup wizard labels supported clients it detects, but leaves every client
+unselected so you choose exactly which coding agents receive LeanToken. Before
+writing anything, it shows the exact configuration paths and MCP launcher and
+asks for confirmation. Each configured client launches LeanToken in its active
+workspace.
 
 Restart or reload the configured clients, then verify the complete MCP
 handshake and first retrieval from a repository:
@@ -69,6 +72,13 @@ clients:
 ```bash
 npx leantoken setup --claude --codex --yes
 npx leantoken setup --all --yes
+```
+
+Automation never treats detection as consent: `--yes` requires explicit client
+flags or `--all`. Preview the same resolved plan without changing files:
+
+```bash
+npx leantoken setup --codex --cursor --dry-run
 ```
 
 Setup adds only the `leantoken` MCP entry. It does not add skills, rules, or

@@ -540,6 +540,67 @@ fn setup_and_remove_do_not_require_a_repository() {
 }
 
 #[test]
+fn setup_requires_yes_before_non_interactive_mutation() {
+    let temp = tempfile::tempdir().expect("temporary home");
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", temp.path())
+        .env("USERPROFILE", temp.path())
+        .args(["--json", "setup", "--codex"])
+        .output()
+        .expect("run setup");
+    assert!(!output.status.success());
+    assert!(!temp.path().join(".codex/config.toml").exists());
+    let error: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("structured setup error");
+    assert!(
+        error["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("requires explicit client flags"))
+    );
+}
+
+#[test]
+fn setup_dry_run_reports_exact_plan_without_mutation() {
+    let temp = tempfile::tempdir().expect("temporary home");
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", temp.path())
+        .env("USERPROFILE", temp.path())
+        .args(["--json", "setup", "--codex", "--dry-run"])
+        .output()
+        .expect("run setup dry-run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("dry-run JSON output");
+    assert_eq!(report["dry_run"], true);
+    assert_eq!(report["plan"][0]["client"], "codex");
+    assert_eq!(report["plan"][0]["action"], "create");
+    assert_eq!(report["launcher"]["follows_latest_npm_release"], false);
+    assert!(!temp.path().join(".codex/config.toml").exists());
+}
+
+#[test]
+fn malformed_selected_config_blocks_all_setup_writes() {
+    let temp = tempfile::tempdir().expect("temporary home");
+    std::fs::write(temp.path().join(".claude.json"), "{ broken")
+        .expect("write malformed config");
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", temp.path())
+        .env("USERPROFILE", temp.path())
+        .args(["--json", "setup", "--claude", "--cursor", "--yes"])
+        .output()
+        .expect("run setup");
+    assert!(!output.status.success());
+    assert!(!temp.path().join(".cursor/mcp.json").exists());
+}
+
+#[test]
 fn npx_setup_registers_latest_release_instead_of_its_cache_path() {
     let temp = tempfile::tempdir().expect("temporary home");
     let node = temp.path().join("node");
@@ -558,6 +619,12 @@ fn npx_setup_registers_latest_release_instead_of_its_cache_path() {
         setup.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&setup.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&setup.stdout).expect("setup JSON output");
+    assert_eq!(
+        report["launcher"]["follows_latest_npm_release"],
+        true
     );
 
     let config: serde_json::Value = serde_json::from_str(
@@ -601,10 +668,9 @@ fn npx_setup_explains_that_it_does_not_install_a_global_cli() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("LeanToken // Context Distillery"));
-    assert!(stdout.contains("Configuration verified for 1 client."));
+    assert!(stdout.contains("LeanToken is configured for 1 client."));
     assert!(stdout.contains("Restart or reload"));
     assert!(stdout.contains("npx leantoken@latest doctor"));
-    assert!(stdout.contains("First prompt:"));
     assert!(stdout.contains("no global `leantoken` command was installed"));
     assert!(stdout.contains("npx leantoken@latest <command>"));
     assert!(stdout.contains("npm install --global leantoken@latest"));

@@ -17,7 +17,11 @@ use tokio_util::sync::CancellationToken;
 async fn main() {
     init_tracing();
     if let Err(error) = run().await {
-        tracing::error!(%error, "leantoken failed");
+        if std::env::args_os().any(|argument| argument == "--json") {
+            eprintln!("{}", serde_json::json!({ "error": error.to_string() }));
+        } else {
+            eprintln!("Error: {error}");
+        }
         std::process::exit(1);
     }
 }
@@ -46,7 +50,7 @@ async fn run() -> Result<()> {
             AppRequest::Remove(request) => (SetupOperation::Remove, request),
             _ => unreachable!("integration command checked above"),
         };
-        let report = setup::run(operation, request)?;
+        let report = setup::run(operation, request, json)?;
         setup::print_report(&report, json)?;
         if report.has_failures() {
             return Err(leantoken::Error::InvalidRequest(

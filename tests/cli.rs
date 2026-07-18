@@ -258,6 +258,7 @@ fn cli_setup_and_remove_select_clients() {
     );
     assert!(!request.all);
     assert!(request.yes);
+    assert!(!request.dry_run);
 
     let cli = parse(&["remove", "--all", "-y"]);
     let AppRequest::Remove(request) = cli.app_request() else {
@@ -266,6 +267,13 @@ fn cli_setup_and_remove_select_clients() {
     assert!(request.clients.is_empty());
     assert!(request.all);
     assert!(request.yes);
+
+    let cli = parse(&["setup", "--cursor", "--dry-run"]);
+    let AppRequest::Setup(request) = cli.app_request() else {
+        panic!("expected setup request");
+    };
+    assert_eq!(request.clients, vec![SetupClient::Cursor]);
+    assert!(request.dry_run);
 }
 
 #[test]
