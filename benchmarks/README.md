@@ -442,10 +442,13 @@ cargo run --release --example indexing_profile -- \
 The runner creates and removes its own deterministic temporary corpus. It
 reports full no-op reconciliation, full and targeted modification, create,
 delete, rename, and ignore-control reconciliation, repeated reads from a small
-hot set, reads spread across the corpus, and in-memory byte copies. Lifecycle
+hot set, reads spread across the corpus, in-memory byte copies, read-session
+open plus snapshot pinning, pooled checkout plus snapshot pinning, and
+generation queries on an already pinned session. Lifecycle
 operations call the same path-reconciliation entry point used by watcher
 events. Create, rename, and ignore changes measure visibility-delta handling;
-importers are reparsed only when their stored resolution changes.
+importers are reparsed only when a changed path intersects their stored reverse
+candidate projection.
 
 For a real repository, pin a clean checkout and pass it with `--repository`.
 The profiler resolves its commit and uses LeanToken's ignore-aware discovery to
@@ -466,7 +469,7 @@ cargo run --release --example indexing_profile -- \
   --output target/indexing_profile_tokio_linux.json
 ```
 
-The schema-version 3 report records the caller-supplied corpus label, exact
+The schema-version 4 report records the caller-supplied corpus label, exact
 revision, ignore-visible file count, total and mean bytes, maximum directory
 depth, and extension mix. The label is explicit so the profiler never copies a
 possibly credential-bearing Git remote into a report. Run the same pinned

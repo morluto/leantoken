@@ -104,8 +104,9 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
   separate stress measurements.
 - A five-sample pinned-Tokio run first measured median create, rename, and
   ignore-change rebuilds at 21.1 s, 13.5 s, and 29.9 s. The implementation now
-  uses existing indexed imports to reparse only changed paths and importers
-  whose resolution changes. On the same 865-file tree, medians fell to 226 ms,
+  stores every bounded import candidate in an indexed reverse projection
+  and reparses only changed paths and importers affected by membership changes.
+  On the same 865-file tree, medians fell to 226 ms,
   89 ms, and 49 ms; create indexed one file, rename indexed one and removed one,
   and a comment-only ignore change indexed only `.gitignore`. This addresses
   [#48](https://github.com/morluto/leantoken/issues/48) without a journal,
