@@ -37,6 +37,10 @@ struct LazyWorkerPool {
 }
 
 #[derive(Debug, Default)]
+/// Explicit filesystem membership classification used to drive incremental work.
+///
+/// Only creations and deletions can change which bounded import candidate paths
+/// resolve. Content-only modifications do not trigger reverse-import expansion.
 struct ChangeSet {
     created: Vec<String>,
     modified: Vec<String>,

@@ -59,8 +59,8 @@ The connection is configured with:
 - bundled SQLite with an FTS5 trigram startup probe;
 - transactional schema migrations;
 - prepared-statement caching within each request session;
-- file/range, reverse-import, and path lookup indexes added through versioned migrations so existing
-  databases receive the same query plan as new databases.
+- file/range, reverse-import, and path lookup indexes added through versioned
+  migrations so existing databases receive the same query plan as new databases.
 
 Repository-aware service startup binds each database to its canonical
 repository root. Default cache paths are already repository-specific; an
@@ -84,10 +84,43 @@ one response. SQLite busy/locked errors while opening and pinning a snapshot
 are retried a few times; generation zero returns a typed `IndexNotReady` error
 instead of an empty success.
 
+The pool holds at most eight read connections per `Storage` instance. Cloned
+services share that pool; separate processes and separate repository caches do
+not. This is a concurrency bound, not a promise that eight readers improve
+every workload. Change it only with release-mode contention measurements that
+include SQLite wait time, end-to-end latency, and memory across the expected
+number of simultaneous agents.
+
 Structural search and context assembly pass bounded range/location sets through
 SQLite JSON table-valued inputs. SQLite joins hydrate excerpts and enclosing
 symbols in batches inside the same request snapshot; LeanToken keeps only the
 domain-specific candidate fusion, overlap, and token-selection policy in Rust.
+
+### Storage and policy ownership
+
+The boundary is deliberate:
+
+- SQLite owns indexes, joins, FTS5 search, transactions, relational path
+  projection, and keyset pagination.
+- `rusqlite` owns prepared-statement caching. Bounded multi-value requests use
+  SQLite's `json_each` table-valued input instead of dynamically assembled
+  placeholder lists or a local batching framework.
+- `r2d2_sqlite` owns connection pooling. The application does not implement a
+  second cache or pool above it.
+- The indexer owns language-specific import candidate generation because those
+  candidates are product policy, then stores them in indexed relational tables
+  for resolution and reverse invalidation.
+- Ranking owns evidence fusion, overlap-aware deterministic deduplication, and
+  token-budget selection. These semantics are observable retrieval behavior and
+  are not delegated to the storage engine.
+- Reconciliation owns explicit change classification and generation-checked
+  publication. SQLite supplies atomicity; the application decides what a
+  repository change means.
+
+New hot-path code should first express data access as a bounded storage query.
+Add a custom data structure only after a release-mode profile identifies a
+remaining bottleneck and the replacement preserves snapshot, ordering, and
+limit semantics.
 
 MCP retrieval inputs expose an explicit consistency boundary. `committed`, the
 default, opens the latest completed snapshot immediately. `working_tree` first

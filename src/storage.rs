@@ -14,7 +14,9 @@ use rusqlite_migration::{M, Migrations};
 use crate::model::ReferenceRole;
 use crate::{Error, Result};
 
+/// Default row limit used by callers that do not provide a tighter bound.
 pub const DEFAULT_MAX_RESULTS: usize = 100;
+/// Absolute row limit applied by storage queries, including internal batch reads.
 pub const HARD_MAX_RESULTS: usize = 10_000;
 
 const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_millis(5_000);
@@ -202,6 +204,11 @@ const MIGRATIONS_SLICE: &[M<'_>] = &[
 const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
 
 #[derive(Debug, Clone)]
+/// Version and publication state read from the singleton metadata row.
+///
+/// `repository_generation` identifies an atomically published repository view.
+/// A reconciliation plan must retain this record and pass it back to a checked
+/// publication method so stale filesystem work cannot overwrite newer state.
 pub struct MetaRecord {
     pub schema_version: i64,
     pub index_version: i64,
@@ -304,6 +311,12 @@ pub struct ReferenceRecord {
 }
 
 #[derive(Debug, Clone)]
+/// One parsed import and the bounded path candidates produced by the indexer's
+/// language-specific import policy.
+///
+/// Storage persists every candidate in priority order for reverse invalidation;
+/// `resolved_path` is populated only when exactly one candidate exists in the
+/// repository view used to prepare the file.
 pub struct ImportInput {
     pub raw_target: String,
     pub resolved_path: Option<String>,
@@ -321,6 +334,10 @@ pub struct ImportRecord {
 }
 
 #[derive(Debug, Clone)]
+/// Complete derived representation of one file, ready for transactional publication.
+///
+/// The indexer constructs this value outside SQLite. Storage treats its chunks,
+/// symbols, references, imports, and path projection as one replacement unit.
 pub struct IndexedFile {
     pub path: String,
     pub language: Option<String>,
@@ -379,6 +396,13 @@ pub struct StorageCounts {
     pub languages: Vec<(String, usize)>,
 }
 
+/// SQLite-backed repository index with one serialized writer and pooled readers.
+///
+/// Clones share the same writer mutex and established read pool. Each
+/// [`ReadSession`] checks out one read-only connection and pins a WAL snapshot,
+/// while reconciliation publishes through one immediate transaction. Pooling is
+/// process-local; repository ownership and cross-process write serialization are
+/// enforced separately by the services and coordination layers.
 pub struct Storage {
     writer: Arc<Mutex<Connection>>,
     readers: r2d2::Pool<SqliteConnectionManager>,
@@ -431,6 +455,11 @@ impl FtsTable {
 }
 
 impl Storage {
+    /// Open or migrate a SQLite index without binding it to a repository root.
+    ///
+    /// Application code should normally construct [`crate::services::Services`],
+    /// which also verifies repository ownership. This lower-level constructor is
+    /// useful for storage tests and tools that deliberately manage that invariant.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         Self::open_with_startup_timeout(path, DEFAULT_BUSY_TIMEOUT)
     }
@@ -582,21 +611,31 @@ impl Storage {
         Ok(())
     }
 
+    /// Read the currently committed schema, configuration, and generation metadata.
     pub fn meta(&self) -> Result<MetaRecord> {
         self.begin_read()?.meta()
     }
 
+    /// Return the identifier of the latest atomically committed repository view.
     pub fn repository_generation(&self) -> Result<u64> {
         self.begin_read()?.repository_generation()
     }
 
+    /// Replace the complete index using an internally captured optimistic baseline.
+    ///
+    /// Indexing code that performs filesystem work before publication should use
+    /// [`Self::full_reconcile_at`] with the baseline captured before that work.
     pub fn full_reconcile(&self, config_hash: &str, files: Vec<IndexedFile>) -> Result<u64> {
         let baseline = self.meta()?;
         self.full_reconcile_at(&baseline, config_hash, files)
     }
 
-    /// Replace the complete index only if the generation used to build the
-    /// reconciliation plan is still current.
+    /// Replace the complete index only if the generation and configuration used
+    /// to build the reconciliation plan are still current.
+    ///
+    /// On success, all derived rows and the next generation become visible in one
+    /// commit. A stale baseline returns [`Error::StaleReconciliation`] before any
+    /// mutation is published.
     pub fn full_reconcile_at(
         &self,
         baseline: &MetaRecord,
@@ -632,9 +671,12 @@ impl Storage {
         Ok(i64_to_u64(next_generation))
     }
 
-    /// Atomically apply one repository reconciliation as a single generation.
-    /// Unmentioned files remain unchanged; replacements and deletions become
-    /// visible together when the transaction commits.
+    /// Atomically apply one repository reconciliation using an internally captured baseline.
+    ///
+    /// Unmentioned files remain unchanged; replacements, deletions, derived path
+    /// rows, import edges, and generation advancement become visible together.
+    /// Indexing code should prefer [`Self::reconcile_files_at`] when planning and
+    /// publication are separated by filesystem or parsing work.
     pub fn reconcile_files(
         &self,
         config_hash: &str,
@@ -647,6 +689,10 @@ impl Storage {
 
     /// Publish an incremental plan only if its source generation and config
     /// still match the committed cache state.
+    ///
+    /// Replacements are whole-file units and deletions are repository-relative
+    /// paths. A no-op preserves the current generation when the configuration is
+    /// unchanged. Stale plans fail before publishing any mutation.
     pub fn reconcile_files_at(
         &self,
         baseline: &MetaRecord,
@@ -811,6 +857,11 @@ impl Storage {
         Ok(())
     }
 
+    /// Return files in increasing row-id order after an optional keyset cursor.
+    ///
+    /// The returned record's `id` is the cursor for the next page. Callers that
+    /// require a consistent multi-page view must use [`ReadSession::list_files`]
+    /// on one session because file replacement can assign a new row id.
     pub fn list_files(&self, max_results: usize, cursor: Option<i64>) -> Result<Vec<FileRecord>> {
         self.begin_read()?.list_files(max_results, cursor)
     }
@@ -892,6 +943,9 @@ impl Storage {
 
     /// Open a read-only connection and begin a DEFERRED transaction so callers
     /// observe one WAL snapshot until the session is dropped.
+    ///
+    /// Keep one session for every multi-query response. Dropping it rolls back
+    /// the read transaction and returns the connection to the bounded pool.
     pub fn begin_read(&self) -> Result<ReadSession> {
         let conn = self.readers.get()?;
         // Under WAL, the first read in a DEFERRED transaction pins the snapshot
@@ -984,6 +1038,7 @@ impl Storage {
 }
 
 impl ReadSession {
+    /// Read metadata from this session's pinned repository snapshot.
     pub fn meta(&self) -> Result<MetaRecord> {
         self.conn
             .query_row(
@@ -1001,6 +1056,7 @@ impl ReadSession {
             .map_err(Into::into)
     }
 
+    /// Return the repository generation pinned by this session.
     pub fn repository_generation(&self) -> Result<u64> {
         let generation: i64 = self.conn.query_row(
             "SELECT repository_generation FROM meta WHERE id = 1",
@@ -1010,6 +1066,11 @@ impl ReadSession {
         Ok(i64_to_u64(generation))
     }
 
+    /// Return a row-id keyset page from this session's pinned snapshot.
+    ///
+    /// Use the final record's `id` as the next cursor. Cursors are storage-layer
+    /// values and should not be exposed as service cursors without binding them
+    /// to the repository generation and operation parameters.
     pub fn list_files(&self, max_results: usize, cursor: Option<i64>) -> Result<Vec<FileRecord>> {
         let limit = bounded_limit(max_results);
         let mut stmt = self.conn.prepare_cached(
@@ -1023,6 +1084,7 @@ impl ReadSession {
         Ok(files)
     }
 
+    /// Read a lexicographically ordered keyset page from the relational path projection.
     pub(crate) fn list_tree_paths(
         &self,
         root: &str,
@@ -1066,6 +1128,7 @@ impl ReadSession {
         Ok(rows.next().transpose()?)
     }
 
+    /// Find importers whose persisted candidate set intersects changed repository paths.
     fn affected_importers(&self, candidate_paths: &[String]) -> Result<Vec<String>> {
         if candidate_paths.is_empty() {
             return Ok(Vec::new());
@@ -1083,6 +1146,10 @@ impl ReadSession {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
+    /// Batch import expansion for context ranking, bounded independently per seed.
+    ///
+    /// `seed_index` in each result maps back to the original input order. SQL
+    /// performs the joins and per-seed limits; ranking decides which evidence to use.
     pub(crate) fn import_symbol_targets(
         &self,
         seed_paths: &[String],
@@ -1217,6 +1284,10 @@ impl ReadSession {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
+    /// Hydrate overlapping chunks for every requested range in one SQL query.
+    ///
+    /// The outer vector is aligned one-for-one with `ranges`, including duplicate
+    /// requests and ranges with no matches. Each inner vector is ordered by line.
     pub(crate) fn get_chunks_overlapping_batch(
         &self,
         ranges: &[(i64, usize, usize)],
@@ -1348,6 +1419,10 @@ impl ReadSession {
             .optional()?)
     }
 
+    /// Find the narrowest enclosing symbol for every requested file/line pair.
+    ///
+    /// Results preserve input order and cardinality; `None` marks a location with
+    /// no enclosing declaration. Duplicate locations remain duplicate outputs.
     pub(crate) fn find_enclosing_symbols_batch(
         &self,
         locations: &[(i64, usize)],

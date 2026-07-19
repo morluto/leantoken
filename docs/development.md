@@ -121,6 +121,25 @@ CI runs the complete suite on Linux, macOS, and Windows. A local Linux pass is
 not evidence for native watcher or path behavior on the other platforms; rely
 on the matrix before merging portability changes.
 
+## Storage and retrieval changes
+
+Treat the SQLite schema and retrieval ordering as behavioral contracts, not
+implementation details. When changing them:
+
+- use a versioned migration and test both a new database and an upgraded one;
+- keep multi-query responses inside one `ReadSession` snapshot;
+- bind public pagination cursors to the committed generation and operation
+  parameters, even when the underlying query uses a simpler keyset;
+- preserve deterministic ranking, overlap, and token-budget behavior when
+  replacing per-item reads with batched joins;
+- record every new fan-out or scan bound in `docs/architecture.md`; and
+- collect timing evidence with a release build on a representative corpus.
+
+Prefer query-plan evidence (`EXPLAIN QUERY PLAN`) and focused integration tests
+for storage changes. A faster microbenchmark is insufficient if it weakens
+atomic publication, stale-plan rejection, bounded memory, or deterministic
+results.
+
 ## MCP schema snapshots
 
 The generated five-tool catalog is snapshot-tested. Review snapshot changes as
