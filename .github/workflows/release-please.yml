@@ -11,6 +11,7 @@ on:
     - cron: '0 9 * * 1'
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -178,3 +179,11 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "${{ steps.version.outputs.tag }}" -m "${{ steps.version.outputs.tag }}"
           git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Dispatch release workflow
+        run: |
+          gh workflow run release.yml \
+            --ref "${{ steps.version.outputs.tag }}" \
+            --field tag="${{ steps.version.outputs.tag }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

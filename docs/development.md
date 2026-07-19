@@ -57,8 +57,9 @@ node --test npm/npm-install-e2e.mjs
 
 CI runs the host-native installation test on Linux, macOS, and Windows.
 
-Version tags such as `v0.1.0` trigger `.github/workflows/release.yml`. Keep the
-Cargo package version, tag, GitHub release, and npm package version identical.
+Merging an `autorelease` PR creates a version tag such as `v0.1.0` and
+dispatches `.github/workflows/release.yml` with that tag. Keep the Cargo package
+version, tag, GitHub release, and npm package version identical.
 
 npm publication is currently manual. Once the GitHub release finishes, inspect
 the package before publishing it:

@@ -7,6 +7,9 @@ members = ["cargo:."]
 cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
+# Release Please creates tags with GITHUB_TOKEN, so explicitly dispatch the
+# generated release workflow instead of relying on a suppressed tag-push event.
+dispatch-releases = true
 # Native npm packages are assembled from dist archives without install scripts.
 installers = []
 global-artifacts-jobs = ["./build-npm-packages"]
