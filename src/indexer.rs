@@ -36,6 +36,54 @@ struct LazyWorkerPool {
     init: Mutex<()>,
 }
 
+#[derive(Debug, Default)]
+/// Explicit filesystem membership classification used to drive incremental work.
+///
+/// Only creations and deletions can change which bounded import candidate paths
+/// resolve. Content-only modifications do not trigger reverse-import expansion.
+struct ChangeSet {
+    created: Vec<String>,
+    modified: Vec<String>,
+    deleted: Vec<String>,
+    visibility_recomputed: bool,
+}
+
+impl ChangeSet {
+    fn classify(
+        existing: &HashMap<String, crate::storage::FileRecord>,
+        candidates: &HashMap<String, DiscoveredFile>,
+        deletions: &HashSet<String>,
+        visibility_recomputed: bool,
+    ) -> Self {
+        let mut created = Vec::new();
+        let mut modified = Vec::new();
+        for path in candidates.keys() {
+            if existing.contains_key(path) {
+                modified.push(path.clone());
+            } else {
+                created.push(path.clone());
+            }
+        }
+        let mut deleted = deletions.iter().cloned().collect::<Vec<_>>();
+        created.sort_unstable();
+        modified.sort_unstable();
+        deleted.sort_unstable();
+        Self {
+            created,
+            modified,
+            deleted,
+            visibility_recomputed,
+        }
+    }
+
+    fn membership_changes(&self) -> Vec<String> {
+        let mut paths = Vec::with_capacity(self.created.len() + self.deleted.len());
+        paths.extend(self.created.iter().cloned());
+        paths.extend(self.deleted.iter().cloned());
+        paths
+    }
+}
+
 impl LazyWorkerPool {
     fn new() -> Self {
         Self {
@@ -368,44 +416,19 @@ impl Indexer {
             }
         }
 
-        for deletion in &deletions {
+        let change_set = ChangeSet::classify(&existing, &candidates, &deletions, visibility_delta);
+        debug_assert_eq!(
+            change_set.modified.len() + change_set.created.len(),
+            candidates.len()
+        );
+        debug_assert_eq!(change_set.visibility_recomputed, visibility_delta);
+
+        for deletion in &change_set.deleted {
             repository_paths.remove(deletion);
         }
         repository_paths.extend(candidates.keys().cloned());
-        let mut forced_importers = HashSet::new();
-        for import in self.storage.import_resolutions()? {
-            check_cancelled(cancellation)?;
-            if deletions.contains(&import.file_path) {
-                continue;
-            }
-            let resolved = resolve_import(&import.file_path, &import.raw_target, &repository_paths);
-            if resolved == import.resolved_path {
-                continue;
-            }
-            forced_importers.insert(import.file_path.clone());
-            if candidates.contains_key(&import.file_path) {
-                continue;
-            }
-            let absolute_path = self.config.root.join(&import.file_path);
-            let metadata = fs::symlink_metadata(&absolute_path)?;
-            if !metadata.file_type().is_file() || metadata.len() > self.config.max_file_bytes {
-                continue;
-            }
-            let modified_ns = metadata
-                .modified()
-                .ok()
-                .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
-                .map(|duration| duration.as_nanos());
-            candidates.insert(
-                import.file_path.clone(),
-                DiscoveredFile {
-                    absolute_path,
-                    relative_path: import.file_path,
-                    size_bytes: metadata.len(),
-                    modified_ns,
-                },
-            );
-        }
+        let forced_importers =
+            self.add_affected_importers(&mut candidates, &deletions, &change_set, cancellation)?;
 
         let files_seen = candidates.len() + deletions.len();
         let candidates = candidates.into_values().collect::<Vec<_>>();
@@ -503,6 +526,47 @@ impl Indexer {
                 })
                 .collect()
         })
+    }
+
+    fn add_affected_importers(
+        &self,
+        candidates: &mut HashMap<String, DiscoveredFile>,
+        deletions: &HashSet<String>,
+        change_set: &ChangeSet,
+        cancellation: &CancellationToken,
+    ) -> Result<HashSet<String>> {
+        let membership_changes = change_set.membership_changes();
+        let mut forced_importers = HashSet::new();
+        for importer_path in self.storage.affected_importers(&membership_changes)? {
+            check_cancelled(cancellation)?;
+            if deletions.contains(&importer_path) {
+                continue;
+            }
+            forced_importers.insert(importer_path.clone());
+            if candidates.contains_key(&importer_path) {
+                continue;
+            }
+            let absolute_path = self.config.root.join(&importer_path);
+            let metadata = fs::symlink_metadata(&absolute_path)?;
+            if !metadata.file_type().is_file() || metadata.len() > self.config.max_file_bytes {
+                continue;
+            }
+            let modified_ns = metadata
+                .modified()
+                .ok()
+                .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_nanos());
+            candidates.insert(
+                importer_path.clone(),
+                DiscoveredFile {
+                    absolute_path,
+                    relative_path: importer_path,
+                    size_bytes: metadata.len(),
+                    modified_ns,
+                },
+            );
+        }
+        Ok(forced_importers)
     }
 
     fn existing_files(
@@ -640,6 +704,7 @@ fn prepare_file(
         .map(|import| ImportInput {
             raw_target: import.raw_target,
             resolved_path: import.resolved_path,
+            candidate_paths: Vec::new(),
             line: import.line,
         })
         .collect();
@@ -695,17 +760,27 @@ fn resolve_imports(
         check_cancelled(cancellation)?;
         for import in &mut file.imports {
             check_cancelled(cancellation)?;
-            import.resolved_path = resolve_import(&file.path, &import.raw_target, repository_paths);
+            import.candidate_paths = import_candidates(&file.path, &import.raw_target);
+            import.resolved_path =
+                resolve_import_candidates(&import.candidate_paths, repository_paths);
         }
     }
     Ok(())
 }
 
+#[cfg(test)]
 fn resolve_import(
     source_path: &str,
     raw_target: &str,
     repository_paths: &HashSet<String>,
 ) -> Option<String> {
+    resolve_import_candidates(
+        &import_candidates(source_path, raw_target),
+        repository_paths,
+    )
+}
+
+fn import_candidates(source_path: &str, raw_target: &str) -> Vec<String> {
     let source = std::path::Path::new(source_path);
     let parent = source.parent().unwrap_or_else(|| std::path::Path::new(""));
     let mut bases = Vec::new();
@@ -718,13 +793,16 @@ fn resolve_import(
     ) {
         bases.push(parent.join(raw_target.replace('.', "/")));
     } else if source.extension().and_then(|ext| ext.to_str()) == Some("rs") {
-        let module = raw_target
+        let Some(module) = raw_target
             .split(['{', ':', ',', ' '])
-            .find(|part| !part.is_empty() && !matches!(*part, "crate" | "self" | "super"))?;
+            .find(|part| !part.is_empty() && !matches!(*part, "crate" | "self" | "super"))
+        else {
+            return Vec::new();
+        };
         bases.push(parent.join(module));
         bases.push(std::path::Path::new("src").join(module));
     } else {
-        return None;
+        return Vec::new();
     }
 
     let extensions: &[&str] = match source.extension().and_then(|ext| ext.to_str()) {
@@ -757,13 +835,24 @@ fn resolve_import(
                     candidate.with_extension(extension)
                 };
                 let candidate = candidate.to_string_lossy().replace('\\', "/");
-                if repository_paths.contains(&candidate) && !matches.contains(&candidate) {
+                if !matches.contains(&candidate) {
                     matches.push(candidate);
                 }
             }
         }
     }
-    (matches.len() == 1).then(|| matches.remove(0))
+    matches
+}
+
+fn resolve_import_candidates(
+    candidates: &[String],
+    repository_paths: &HashSet<String>,
+) -> Option<String> {
+    let mut matches = candidates
+        .iter()
+        .filter(|candidate| repository_paths.contains(*candidate));
+    let resolved = matches.next()?.clone();
+    matches.next().is_none().then_some(resolved)
 }
 
 fn normalize_relative(path: &std::path::Path) -> Option<std::path::PathBuf> {
@@ -828,6 +917,7 @@ mod tests {
             imports: vec![ImportInput {
                 raw_target: "./lib".into(),
                 resolved_path: None,
+                candidate_paths: Vec::new(),
                 line: 1,
             }],
         }];

@@ -10,7 +10,11 @@
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use leantoken::{Config, ContextRequest, SearchMode, SearchRequest, services::Services};
+use leantoken::ranking::{self, Candidate, Weights};
+use leantoken::{
+    Config, ContextRequest, FileOperation, FilesRequest, SearchMode, SearchRequest,
+    services::Services,
+};
 
 #[derive(Debug, Parser)]
 #[command(about = "Measure bounded regex and context retrieval paths")]
@@ -24,12 +28,16 @@ struct Args {
     /// Approximate source lines per file.
     #[arg(long, default_value_t = 64)]
     file_lines: usize,
+    /// Candidate count for same-path and many-path overlap measurements.
+    #[arg(long, default_value_t = 2_000)]
+    dedup_candidates: usize,
 }
 
 #[tokio::main]
 async fn main() -> leantoken::Result<()> {
     let args = Args::parse();
-    if args.files == 0 || args.iterations == 0 || args.file_lines < 4 {
+    if args.files == 0 || args.iterations == 0 || args.file_lines < 4 || args.dedup_candidates == 0
+    {
         return Err(leantoken::Error::InvalidRequest(
             "files and iterations must be positive; file-lines must be at least 4".into(),
         ));
@@ -78,9 +86,19 @@ async fn main() -> leantoken::Result<()> {
         known_hashes: Vec::new(),
         prior_repository_generation: None,
     };
+    let tree_request = FilesRequest {
+        operation: FileOperation::Tree,
+        path: None,
+        query: None,
+        pattern: None,
+        max_results: Some(100),
+        cursor: None,
+        depth: None,
+    };
 
     services.search(regex_request.clone()).await?;
     services.context(context_request.clone()).await?;
+    services.files(tree_request.clone()).await?;
 
     let mut regex_durations = Vec::with_capacity(args.iterations);
     let mut regex_hits = 0usize;
@@ -88,6 +106,62 @@ async fn main() -> leantoken::Result<()> {
         let started = Instant::now();
         regex_hits = services.search(regex_request.clone()).await?.hits.len();
         regex_durations.push(started.elapsed());
+    }
+
+    let mut tree_first_durations = Vec::with_capacity(args.iterations);
+    for _ in 0..args.iterations {
+        let started = Instant::now();
+        services.files(tree_request.clone()).await?;
+        tree_first_durations.push(started.elapsed());
+    }
+    let mut deep_request = tree_request.clone();
+    for _ in 0..(args.files / 200).max(1) {
+        let page = services.files(deep_request.clone()).await?;
+        let Some(cursor) = page.meta.next_cursor else {
+            break;
+        };
+        deep_request.cursor = Some(cursor);
+    }
+    let mut tree_deep_durations = Vec::with_capacity(args.iterations);
+    for _ in 0..args.iterations {
+        let started = Instant::now();
+        services.files(deep_request.clone()).await?;
+        tree_deep_durations.push(started.elapsed());
+    }
+
+    let same_path = (0..args.dedup_candidates)
+        .map(|index| {
+            Candidate::new(
+                "src/one.rs",
+                index.saturating_mul(3).saturating_add(1),
+                index.saturating_mul(3).saturating_add(1),
+                format!("line {index}"),
+            )
+            .exact(1.0)
+        })
+        .collect::<Vec<_>>();
+    let many_paths = (0..args.dedup_candidates)
+        .map(|index| {
+            Candidate::new(
+                format!("src/file_{index}.rs"),
+                1,
+                1,
+                format!("line {index}"),
+            )
+            .exact(1.0)
+        })
+        .collect::<Vec<_>>();
+    let same_path_scored = ranking::rank(same_path, &Weights::default());
+    let many_paths_scored = ranking::rank(many_paths, &Weights::default());
+    let mut same_path_durations = Vec::with_capacity(args.iterations);
+    let mut many_paths_durations = Vec::with_capacity(args.iterations);
+    for _ in 0..args.iterations {
+        let started = Instant::now();
+        std::hint::black_box(ranking::deduplicate(same_path_scored.clone()));
+        same_path_durations.push(started.elapsed());
+        let started = Instant::now();
+        std::hint::black_box(ranking::deduplicate(many_paths_scored.clone()));
+        many_paths_durations.push(started.elapsed());
     }
 
     let mut context_durations = Vec::with_capacity(args.iterations);
@@ -111,6 +185,7 @@ async fn main() -> leantoken::Result<()> {
             "files": args.files,
             "approximate_lines_per_file": args.file_lines,
             "iterations": args.iterations,
+            "dedup_candidates": args.dedup_candidates,
         },
         "index": {
             "generation": indexed.repository_generation,
@@ -130,6 +205,15 @@ async fn main() -> leantoken::Result<()> {
             "query_cap": 12,
             "symbol_and_reference_hits_per_query": 20,
             "lexical_hits_per_query": 30,
+        },
+        "tree": {
+            "first_page_timing_ms": timing_stats(tree_first_durations),
+            "deep_page_timing_ms": timing_stats(tree_deep_durations),
+            "page_size": 100,
+        },
+        "deduplication": {
+            "same_path_timing_ms": timing_stats(same_path_durations),
+            "many_paths_timing_ms": timing_stats(many_paths_durations),
         },
         "limitations": [
             "Synthetic Rust controls file count and size but not real monorepo language mix or directory shape.",

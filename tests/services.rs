@@ -20,6 +20,79 @@ async fn fixture() -> (tempfile::TempDir, Services) {
     (root, services)
 }
 
+#[test]
+fn services_reject_database_owned_by_another_repository() {
+    let first_root = tempfile::tempdir().expect("first root");
+    let second_root = tempfile::tempdir().expect("second root");
+    let cache = tempfile::tempdir().expect("cache");
+    let database = cache.path().join("shared.sqlite");
+
+    let first_config =
+        Config::discover(first_root.path(), Some(database.clone())).expect("first config");
+    let first = Services::open(first_config).expect("claim database");
+    let second_config =
+        Config::discover(second_root.path(), Some(database.clone())).expect("second config");
+    let error = Services::open(second_config).expect_err("different root must be rejected");
+
+    assert!(matches!(error, Error::RepositoryMismatch { .. }));
+    drop(first);
+    Services::open(
+        Config::discover(first_root.path(), Some(database)).expect("same-root config"),
+    )
+    .expect("same root may share database");
+}
+
+#[tokio::test]
+async fn same_repository_services_share_committed_generations() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("lib.rs"), "fn shared() {}\n").expect("source");
+    let database = root.path().join("index.sqlite");
+    let first = Services::open(
+        Config::discover(root.path(), Some(database.clone())).expect("first config"),
+    )
+    .expect("first services");
+    let second = Services::open(
+        Config::discover(root.path(), Some(database)).expect("second config"),
+    )
+    .expect("second services");
+
+    let indexed = first.index(false).await.expect("index");
+    let observed = second.status().await.expect("follower status");
+
+    assert_eq!(observed.repository_generation, indexed.repository_generation);
+}
+
+#[tokio::test]
+async fn independent_repositories_index_concurrently_without_result_leakage() {
+    let first_root = tempfile::tempdir().expect("first root");
+    let second_root = tempfile::tempdir().expect("second root");
+    let cache = tempfile::tempdir().expect("cache");
+    std::fs::write(first_root.path().join("first.rs"), "fn alpha_only() {}\n")
+        .expect("first source");
+    std::fs::write(second_root.path().join("second.rs"), "fn beta_only() {}\n")
+        .expect("second source");
+    let first = Services::open(
+        Config::discover(first_root.path(), Some(cache.path().join("first.sqlite")))
+            .expect("first config"),
+    )
+    .expect("first services");
+    let second = Services::open(
+        Config::discover(second_root.path(), Some(cache.path().join("second.sqlite")))
+            .expect("second config"),
+    )
+    .expect("second services");
+
+    let (first_index, second_index) = tokio::join!(first.index(false), second.index(false));
+    first_index.expect("first index");
+    second_index.expect("second index");
+    let first_status = first.status().await.expect("first status");
+    let second_status = second.status().await.expect("second status");
+
+    assert_eq!(first_status.file_count, 1);
+    assert_eq!(second_status.file_count, 1);
+    assert_ne!(first.config().database_path, second.config().database_path);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn index_excludes_database_below_missing_symlinked_parent() {
@@ -463,6 +536,59 @@ async fn file_operations_page_without_duplicates() {
         .await
         .expect_err("cursor from another operation");
     assert!(matches!(error, Error::StaleCursor));
+}
+
+#[tokio::test]
+async fn file_tree_projection_respects_root_depth_and_removes_empty_directories() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir_all(root.path().join("src/deep")).expect("directories");
+    std::fs::write(root.path().join("src/top.rs"), "fn top() {}\n").expect("top source");
+    std::fs::write(root.path().join("src/deep/lib.rs"), "fn deep() {}\n")
+        .expect("deep source");
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index");
+
+    let tree = services
+        .files(FilesRequest {
+            operation: FileOperation::Tree,
+            path: Some("src".into()),
+            query: None,
+            pattern: None,
+            max_results: Some(20),
+            cursor: None,
+            depth: Some(1),
+        })
+        .await
+        .expect("tree");
+    assert_eq!(
+        tree.entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["src", "src/deep", "src/top.rs"]
+    );
+
+    std::fs::remove_file(root.path().join("src/deep/lib.rs")).expect("delete deep source");
+    services
+        .index_paths(vec!["src/deep/lib.rs".into()])
+        .await
+        .expect("reconcile deletion");
+    let after = services
+        .files(FilesRequest {
+            operation: FileOperation::Tree,
+            path: Some("src".into()),
+            query: None,
+            pattern: None,
+            max_results: Some(20),
+            cursor: None,
+            depth: Some(2),
+        })
+        .await
+        .expect("tree after deletion");
+    assert!(after.entries.iter().all(|entry| entry.path != "src/deep"));
 }
 
 #[tokio::test]

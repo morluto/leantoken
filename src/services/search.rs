@@ -6,6 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::Services;
 use super::files::FILE_LIST_PAGE_SIZE;
+use super::read::{StoredExcerpt, StoredExcerptRequest};
 use super::validation::{
     MAX_QUERY_BYTES, check_cancelled, make_cursor, parse_cursor, path_allowed, path_matches,
     validate_input, validate_patterns,
@@ -175,15 +176,31 @@ impl Services {
                 request.mode,
                 SearchMode::Auto | SearchMode::Identifier | SearchMode::Symbol
             ) {
+                let mut symbol_hits = Vec::new();
                 for hit in
                     session.search_symbols(&request.query, request.case_sensitive, limit * 4)?
                 {
                     check_cancelled(cancellation)?;
-                    if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)?
-                        && let Some(search_hit) =
-                            self.symbol_search_hit(session, hit, &request.query, context_lines)?
-                    {
-                        hits.push(search_hit);
+                    if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)? {
+                        symbol_hits.push(hit);
+                    }
+                }
+                let excerpt_requests = symbol_hits
+                    .iter()
+                    .map(|hit| StoredExcerptRequest {
+                        file_id: hit.symbol.file_id,
+                        start_line: hit.symbol.start_line,
+                        end_line: hit.symbol.end_line,
+                        context: context_lines,
+                        max_lines: 30,
+                    })
+                    .collect::<Vec<_>>();
+                for (hit, excerpt) in symbol_hits
+                    .into_iter()
+                    .zip(self.stored_excerpts(session, &excerpt_requests)?)
+                {
+                    if let Some(excerpt) = excerpt {
+                        hits.push(self.symbol_search_hit(hit, &request.query, excerpt));
                     }
                 }
             }
@@ -191,15 +208,31 @@ impl Services {
                 request.mode,
                 SearchMode::Auto | SearchMode::Identifier | SearchMode::Reference
             ) {
+                let mut reference_hits = Vec::new();
                 for hit in
                     session.search_references(&request.query, request.case_sensitive, limit * 4)?
                 {
                     check_cancelled(cancellation)?;
-                    if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)?
-                        && let Some(search_hit) =
-                            self.reference_search_hit(session, hit, &request.query, context_lines)?
-                    {
-                        hits.push(search_hit);
+                    if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)? {
+                        reference_hits.push(hit);
+                    }
+                }
+                let excerpt_requests = reference_hits
+                    .iter()
+                    .map(|hit| StoredExcerptRequest {
+                        file_id: hit.reference.file_id,
+                        start_line: hit.reference.start_line,
+                        end_line: hit.reference.end_line,
+                        context: context_lines,
+                        max_lines: 12,
+                    })
+                    .collect::<Vec<_>>();
+                for (hit, excerpt) in reference_hits
+                    .into_iter()
+                    .zip(self.stored_excerpts(session, &excerpt_requests)?)
+                {
+                    if let Some(excerpt) = excerpt {
+                        hits.push(self.reference_search_hit(hit, &request.query, excerpt));
                     }
                 }
             }
@@ -286,26 +319,9 @@ impl Services {
         })
     }
 
-    fn symbol_search_hit(
-        &self,
-        session: &ReadSession,
-        hit: SymbolHit,
-        query: &str,
-        context: usize,
-    ) -> Result<Option<SearchHit>> {
-        let Some(excerpt) = self.stored_excerpt(
-            session,
-            hit.symbol.file_id,
-            hit.symbol.start_line,
-            hit.symbol.end_line,
-            context,
-            30,
-        )?
-        else {
-            return Ok(None);
-        };
+    fn symbol_search_hit(&self, hit: SymbolHit, query: &str, excerpt: StoredExcerpt) -> SearchHit {
         let exact = hit.symbol.name == query || hit.symbol.name.eq_ignore_ascii_case(query);
-        Ok(Some(SearchHit {
+        SearchHit {
             path: hit.path,
             start_line: excerpt.start_line,
             end_line: excerpt.end_line,
@@ -321,29 +337,17 @@ impl Services {
             } else {
                 "symbol".into()
             }],
-        }))
+        }
     }
 
     fn reference_search_hit(
         &self,
-        session: &ReadSession,
         hit: ReferenceHit,
         query: &str,
-        context: usize,
-    ) -> Result<Option<SearchHit>> {
-        let Some(excerpt) = self.stored_excerpt(
-            session,
-            hit.reference.file_id,
-            hit.reference.start_line,
-            hit.reference.end_line,
-            context,
-            12,
-        )?
-        else {
-            return Ok(None);
-        };
+        excerpt: StoredExcerpt,
+    ) -> SearchHit {
         let exact = hit.reference.name == query || hit.reference.name.eq_ignore_ascii_case(query);
-        Ok(Some(SearchHit {
+        SearchHit {
             path: hit.path,
             start_line: excerpt.start_line,
             end_line: excerpt.end_line,
@@ -359,7 +363,7 @@ impl Services {
             } else {
                 "reference".into()
             }],
-        }))
+        }
     }
 
     fn regex_hits(
@@ -412,6 +416,7 @@ impl Services {
                             start_byte: chunk.start_byte,
                             end_byte: chunk.end_byte,
                             token_count: chunk.token_count,
+                            generation: file.generation,
                             score: 0.0,
                         });
                     }

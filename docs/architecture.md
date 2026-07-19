@@ -42,8 +42,9 @@ the official Rust MCP SDK.
 ## Storage
 
 SQLite stores repository metadata, files, text chunks, definitions, syntactic
-references, and imports. External-content FTS5 tables provide word and trigram
-indexes over chunks.
+references, imports, reverse import candidates, and an ordinary relational path
+projection. External-content FTS5 tables provide word and trigram indexes over
+chunks.
 
 LeanToken does not serialize a separate in-memory index snapshot. In this
 document, a request snapshot means a SQLite read transaction pinned to one
@@ -57,8 +58,16 @@ The connection is configured with:
 - a bounded busy timeout;
 - bundled SQLite with an FTS5 trigram startup probe;
 - transactional schema migrations;
-- file/range lookup indexes added through a versioned migration so existing
-  databases receive the same query plan as new databases.
+- prepared-statement caching within each request session;
+- file/range, reverse-import, and path lookup indexes added through versioned
+  migrations so existing databases receive the same query plan as new databases.
+
+Repository-aware service startup binds each database to its canonical
+repository root. Default cache paths are already repository-specific; an
+explicit database path claimed by a different root is rejected before either
+repository can reconcile it. Different repositories therefore have independent
+database, lock, watcher, worker, and failure domains. Multiple agents on one
+repository intentionally share the same cache and committed generations.
 
 One repository-scoped operation lock serializes reconciliation across processes.
 File preparation happens outside SQLite, then an immediate write transaction
@@ -67,12 +76,51 @@ current. A stale plan is discarded and recomputed. Replacements, deletions, and
 generation advancement then commit together.
 
 Each multi-step retrieval (search, context, outline, files, read) opens one
-read-only connection and holds a DEFERRED transaction for the request
+checked-out read-only connection from an established, bounded `r2d2_sqlite`
+pool and holds a DEFERRED transaction for the request
 (`ReadSession`). Under WAL that pins a single committed snapshot for every
 query in the assembly, so concurrent publishers cannot mix generations inside
 one response. SQLite busy/locked errors while opening and pinning a snapshot
 are retried a few times; generation zero returns a typed `IndexNotReady` error
 instead of an empty success.
+
+The pool holds at most eight read connections per `Storage` instance. Cloned
+services share that pool; separate processes and separate repository caches do
+not. This is a concurrency bound, not a promise that eight readers improve
+every workload. Change it only with release-mode contention measurements that
+include SQLite wait time, end-to-end latency, and memory across the expected
+number of simultaneous agents.
+
+Structural search and context assembly pass bounded range/location sets through
+SQLite JSON table-valued inputs. SQLite joins hydrate excerpts and enclosing
+symbols in batches inside the same request snapshot; LeanToken keeps only the
+domain-specific candidate fusion, overlap, and token-selection policy in Rust.
+
+### Storage and policy ownership
+
+The boundary is deliberate:
+
+- SQLite owns indexes, joins, FTS5 search, transactions, relational path
+  projection, and keyset pagination.
+- `rusqlite` owns prepared-statement caching. Bounded multi-value requests use
+  SQLite's `json_each` table-valued input instead of dynamically assembled
+  placeholder lists or a local batching framework.
+- `r2d2_sqlite` owns connection pooling. The application does not implement a
+  second cache or pool above it.
+- The indexer owns language-specific import candidate generation because those
+  candidates are product policy, then stores them in indexed relational tables
+  for resolution and reverse invalidation.
+- Ranking owns evidence fusion, overlap-aware deterministic deduplication, and
+  token-budget selection. These semantics are observable retrieval behavior and
+  are not delegated to the storage engine.
+- Reconciliation owns explicit change classification and generation-checked
+  publication. SQLite supplies atomicity; the application decides what a
+  repository change means.
+
+New hot-path code should first express data access as a bounded storage query.
+Add a custom data structure only after a release-mode profile identifies a
+remaining bottleneck and the replacement preserves snapshot, ordering, and
+limit semantics.
 
 MCP retrieval inputs expose an explicit consistency boundary. `committed`, the
 default, opens the latest completed snapshot immediately. `working_tree` first
@@ -118,8 +166,10 @@ backend rescan requests, and queue overflow request a full reconciliation.
 For existing regular files, the watcher reconciles only the reported paths.
 New paths, directory changes, symlinks, ignore-file changes, configuration
 changes, and ambiguous deletions fall back to full discovery. Path-set
-expansions also reparse unchanged importers so a newly added target can resolve
-previously unresolved edges. Both the watcher path and full discovery
+expansions query the indexed `import_candidates` reverse projection so only
+importers whose bounded candidate paths gained or lost membership are reparsed.
+New targets can therefore resolve previously unresolved edges without scanning
+every stored import. Both the watcher path and full discovery
 content-hash files before treating them as unchanged: matching size and mtime
 alone never skips reindexing when the body changed (bind mounts, copy tools that
 preserve mtime, some network filesystems). File replacement, deletion,
@@ -141,10 +191,10 @@ worker bound without rebuilding a pool on every reconciliation.
 
 These limits cap context fan-out, regex work, and file-list memory. A request
 returns `LimitExceeded` instead of silently returning incomplete regex results
-when a scan boundary is reached. Tree/find/glob still scan the indexed path
-table, but page database reads and retain only `max_results + 1` entries rather
-than materializing the repository. The numbers are safety limits, not monorepo
-performance claims.
+when a scan boundary is reached. Tree pages use the indexed `path_entries`
+projection and a path keyset cursor. Find and glob retain bounded page state but
+still scan indexed files because their application matchers do not map to tree
+ordering. The numbers are safety limits, not monorepo performance claims.
 
 | Path | Bound |
 | --- | --- |
@@ -153,7 +203,7 @@ performance claims.
 | Regex match candidates | `min(max_results × 20, 2000)` |
 | Regex files scanned | 10_000 |
 | Regex chunks per file | 256 |
-| File scan page size | 1_000; tree/find/glob retain at most `max_results + 1` entries |
+| File scan page size | 1_000 for regex/find/glob; tree queries `max_results + 1` projected paths |
 
 Regex mode verifies patterns over snapshot file pages without materializing the
 repository path list. Prefer symbol/identifier/text modes when a full-repo scan
@@ -198,6 +248,11 @@ never invent empty successful results at generation zero.
   ancestor before missing descendants are appended. Database, WAL, SHM, and
   lock artifacts therefore share one identity even below symlink aliases and
   cannot enter repository discovery or watcher reconciliation.
+- A repository root is persisted in cache metadata. Canonical aliases of the
+  same root share it; a different root cannot reuse that database explicitly.
+- Connection capacity remains per process/repository. The bounded established
+  pool reuses read-only connections and prepared statements; it is not a global
+  multi-repository coordination mechanism.
 - Retrieval never exposes a partially built generation, and generation zero is
   never rendered as a successful empty repository.
 - Automatic work does not delay the MCP initialize response, and startup does

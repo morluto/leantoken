@@ -422,6 +422,7 @@ fn deduplicate_with_options(
 
     let mut kept: Vec<ScoredCandidate> = Vec::with_capacity(sorted.len());
     let mut seen_hashes: HashMap<(String, String), usize> = HashMap::new();
+    let mut kept_by_path: HashMap<String, Vec<usize>> = HashMap::new();
 
     for candidate in sorted {
         let hash_key = (
@@ -434,37 +435,44 @@ fn deduplicate_with_options(
         }
 
         let candidate_lines = candidate.candidate.line_count();
-        let duplicate = kept.iter().position(|existing| {
-            if existing.candidate.path != candidate.candidate.path {
-                return false;
-            }
+        let duplicate = kept_by_path
+            .get(&candidate.candidate.path)
+            .and_then(|indices| {
+                indices.iter().copied().find(|&index| {
+                    let existing = &kept[index];
 
-            // Non-overlapping ranges cannot be duplicates.
-            if candidate.candidate.end_line < existing.candidate.start_line
-                || candidate.candidate.start_line > existing.candidate.end_line
-            {
-                return false;
-            }
+                    // Non-overlapping ranges cannot be duplicates.
+                    if candidate.candidate.end_line < existing.candidate.start_line
+                        || candidate.candidate.start_line > existing.candidate.end_line
+                    {
+                        return false;
+                    }
 
-            let overlap_start = candidate
-                .candidate
-                .start_line
-                .max(existing.candidate.start_line);
-            let overlap_end = candidate
-                .candidate
-                .end_line
-                .min(existing.candidate.end_line);
-            let overlap_lines = overlap_end - overlap_start + 1;
-            let min_lines = candidate_lines.min(existing.candidate.line_count());
+                    let overlap_start = candidate
+                        .candidate
+                        .start_line
+                        .max(existing.candidate.start_line);
+                    let overlap_end = candidate
+                        .candidate
+                        .end_line
+                        .min(existing.candidate.end_line);
+                    let overlap_lines = overlap_end - overlap_start + 1;
+                    let min_lines = candidate_lines.min(existing.candidate.line_count());
 
-            overlap_lines as f64 >= OVERLAP_THRESHOLD * min_lines as f64
-        });
+                    overlap_lines as f64 >= OVERLAP_THRESHOLD * min_lines as f64
+                })
+            });
         if let Some(existing) = duplicate {
             merge_scored_candidate(&mut kept[existing], &candidate, weights, tokenizer);
             continue;
         }
 
-        seen_hashes.insert(hash_key, kept.len());
+        let kept_index = kept.len();
+        seen_hashes.insert(hash_key, kept_index);
+        kept_by_path
+            .entry(candidate.candidate.path.clone())
+            .or_default()
+            .push(kept_index);
         kept.push(candidate);
     }
 

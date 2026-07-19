@@ -47,9 +47,20 @@ fn sample_file(path: &str, content: &str) -> IndexedFile {
         imports: vec![ImportInput {
             raw_target: "std::io".to_string(),
             resolved_path: None,
+            candidate_paths: Vec::new(),
             line: 1,
         }],
     }
+}
+
+fn query_plan(connection: &rusqlite::Connection, sql: &str, parameters: &[&dyn rusqlite::ToSql]) -> String {
+    let mut statement = connection.prepare(sql).expect("prepare query plan");
+    statement
+        .query_map(parameters, |row| row.get::<_, String>(3))
+        .expect("query plan")
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("query plan rows")
+        .join("\n")
 }
 
 #[test]
@@ -58,7 +69,7 @@ fn storage_opens_and_validates_fts5_support() {
     let db = dir.path().join("index.sqlite");
     let storage = Storage::open(&db).expect("open");
     let meta = storage.meta().expect("meta");
-    assert_eq!(meta.schema_version, 1);
+    assert_eq!(meta.schema_version, 4);
     assert_eq!(meta.repository_generation, 0);
     assert!(db.exists());
 }
@@ -81,13 +92,43 @@ fn storage_reopen_uses_existing_index() {
 }
 
 #[test]
+fn pooled_read_sessions_serve_concurrent_snapshot_queries() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");
+    storage
+        .full_reconcile("hash", vec![sample_file("lib.rs", "fn pooled() {}\n")])
+        .expect("reconcile");
+
+    let handles = (0..32)
+        .map(|_| {
+            let storage = storage.clone();
+            std::thread::spawn(move || {
+                let session = storage.begin_read().expect("read session");
+                session.repository_generation().expect("generation")
+            })
+        })
+        .collect::<Vec<_>>();
+    for handle in handles {
+        assert_eq!(handle.join().expect("reader thread"), 1);
+    }
+}
+
+#[test]
 fn storage_applies_lookup_index_migration_to_existing_databases() {
     let dir = tempfile::tempdir().expect("tempdir");
     let db = dir.path().join("index.sqlite");
     drop(Storage::open(&db).expect("open first"));
     let connection = rusqlite::Connection::open(&db).expect("raw connection");
     connection
-        .execute_batch("DROP INDEX chunks_file_line_idx; PRAGMA user_version = 1;")
+        .execute_batch(
+            "DROP INDEX chunks_file_line_idx;
+             DROP TABLE path_entries;
+             DROP TABLE import_candidates;
+             ALTER TABLE meta DROP COLUMN repository_identity;
+             ALTER TABLE meta DROP COLUMN repository_root;
+             UPDATE meta SET schema_version = 1 WHERE id = 1;
+             PRAGMA user_version = 1;",
+        )
         .expect("simulate version one database");
     drop(connection);
 
@@ -102,6 +143,72 @@ fn storage_applies_lookup_index_migration_to_existing_databases() {
         .expect("index count");
 
     assert_eq!(index_count, 1);
+}
+
+#[test]
+fn hot_relational_projections_use_their_indexes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("index.sqlite");
+    let storage = Storage::open(&db).expect("open");
+    let mut importer = sample_file("src/app.rs", "fn app() {}\n");
+    importer.imports[0].candidate_paths = vec!["src/lib.rs".into()];
+    importer.imports[0].resolved_path = Some("src/lib.rs".into());
+    storage
+        .full_reconcile(
+            "hash",
+            vec![importer, sample_file("src/lib.rs", "fn library() {}\n")],
+        )
+        .expect("reconcile");
+
+    let connection = rusqlite::Connection::open(&db).expect("inspect");
+    let changed = serde_json::to_string(&["src/lib.rs"]).expect("json");
+    let import_plan = query_plan(
+        &connection,
+        "EXPLAIN QUERY PLAN
+         SELECT DISTINCT files.path
+         FROM json_each(?1) AS changed
+         JOIN import_candidates ON import_candidates.candidate_path = changed.value
+         JOIN imports ON imports.id = import_candidates.import_id
+         JOIN files ON files.id = imports.file_id",
+        &[&changed],
+    );
+    assert!(
+        import_plan.contains("import_candidates_path_idx"),
+        "unexpected reverse-import plan: {import_plan}"
+    );
+
+    let ranges = serde_json::json!([{"file_id": 1, "start_line": 1, "end_line": 2}]);
+    let range_plan = query_plan(
+        &connection,
+        "EXPLAIN QUERY PLAN
+         WITH requested AS (
+             SELECT CAST(value ->> 'file_id' AS INTEGER) AS file_id,
+                    CAST(value ->> 'start_line' AS INTEGER) AS start_line,
+                    CAST(value ->> 'end_line' AS INTEGER) AS end_line
+             FROM json_each(?1)
+         )
+         SELECT chunks.id FROM requested
+         JOIN chunks ON chunks.file_id = requested.file_id
+                    AND chunks.end_line >= requested.start_line
+                    AND chunks.start_line <= requested.end_line",
+        &[&ranges.to_string()],
+    );
+    assert!(
+        range_plan.contains("chunks_file_line_idx"),
+        "unexpected batched-range plan: {range_plan}"
+    );
+
+    let tree_plan = query_plan(
+        &connection,
+        "EXPLAIN QUERY PLAN
+         SELECT path FROM path_entries
+         WHERE path > ?1 ORDER BY path LIMIT ?2",
+        &[&"src", &10_i64],
+    );
+    assert!(
+        tree_plan.contains("sqlite_autoindex_path_entries_1"),
+        "unexpected tree keyset plan: {tree_plan}"
+    );
 }
 
 #[test]

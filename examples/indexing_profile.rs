@@ -68,6 +68,9 @@ struct Report {
     warm_hot_file_reads: ReadMeasurement,
     warm_spread_file_reads: ReadMeasurement,
     memory_hot_file_copies: ReadMeasurement,
+    unpooled_read_session_open_and_generation: TimingStats,
+    pooled_read_session_checkout_and_generation: TimingStats,
+    pinned_generation_query: TimingStats,
     limitations: Vec<String>,
 }
 
@@ -210,7 +213,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
         ));
     }
     let storage = Storage::open(&config.database_path)?;
-    let indexer = Indexer::new(config, storage)?;
+    let indexer = Indexer::new(Arc::clone(&config), storage.clone())?;
 
     let start = Instant::now();
     let initial_response = indexer.reconcile(false)?;
@@ -345,10 +348,41 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
     let warm_hot_file_reads = measure_file_reads(hot_paths, args.read_samples)?;
     let warm_spread_file_reads = measure_file_reads(&paths, args.read_samples)?;
     let memory_hot_file_copies = measure_memory_copies(&hot_contents, args.read_samples);
+    let mut unpooled_session_durations = Vec::with_capacity(args.read_samples);
+    for _ in 0..args.read_samples {
+        let start = Instant::now();
+        let connection = rusqlite::Connection::open_with_flags(
+            &config.database_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        connection.busy_timeout(Duration::from_secs(5))?;
+        connection.execute_batch("BEGIN DEFERRED")?;
+        black_box(connection.query_row(
+            "SELECT repository_generation FROM meta WHERE id = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?);
+        connection.execute_batch("ROLLBACK")?;
+        unpooled_session_durations.push(start.elapsed());
+    }
+    let mut pooled_session_durations = Vec::with_capacity(args.read_samples);
+    for _ in 0..args.read_samples {
+        let start = Instant::now();
+        let session = storage.begin_read()?;
+        black_box(session.repository_generation()?);
+        pooled_session_durations.push(start.elapsed());
+    }
+    let session = storage.begin_read()?;
+    let mut pinned_query_durations = Vec::with_capacity(args.read_samples);
+    for _ in 0..args.read_samples {
+        let start = Instant::now();
+        black_box(session.repository_generation()?);
+        pinned_query_durations.push(start.elapsed());
+    }
 
     let (leantoken_git_revision, leantoken_worktree_dirty) = leantoken_source_identity();
     Ok(Report {
-        schema_version: 3,
+        schema_version: 4,
         leantoken_version: env!("CARGO_PKG_VERSION"),
         leantoken_git_revision,
         leantoken_worktree_dirty,
@@ -372,10 +406,18 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
         warm_hot_file_reads,
         warm_spread_file_reads,
         memory_hot_file_copies,
+        unpooled_read_session_open_and_generation: TimingStats::from_durations(
+            unpooled_session_durations,
+        ),
+        pooled_read_session_checkout_and_generation: TimingStats::from_durations(
+            pooled_session_durations,
+        ),
+        pinned_generation_query: TimingStats::from_durations(pinned_query_durations),
         limitations: vec![
             corpus.limitation.to_string(),
             "File-read measurements use the operating system's warm page cache; they do not represent cold, remote, encrypted, or heavily contended filesystems.".into(),
             "The in-memory comparison copies bytes but excludes cache lookup, eviction, synchronization, invalidation, and memory-pressure costs.".into(),
+            "Read-session measurements compare opening a read-only SQLite connection, checking out an established per-service pool connection, and a generation query on one already pinned session; they do not simulate concurrent process contention.".into(),
             "Lifecycle measurements invoke the paths emitted by the watcher directly; they do not include notify backend or debounce latency.".into(),
             "Watcher-overflow and interrupted reconciliation still require separate stress measurements.".into(),
             "Timing is machine-specific. Compare runs only on the same host and build profile, and use release builds for decisions.".into(),
