@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior, params,
 };
@@ -162,9 +163,41 @@ CREATE INDEX IF NOT EXISTS imports_file_line_idx
 ON imports(file_id, line);
 "#;
 
+const REPOSITORY_OWNERSHIP_SQL: &str = r#"
+ALTER TABLE meta ADD COLUMN repository_root TEXT NOT NULL DEFAULT '';
+ALTER TABLE meta ADD COLUMN repository_identity TEXT NOT NULL DEFAULT '';
+UPDATE meta SET schema_version = 2 WHERE id = 1;
+"#;
+
+const IMPORT_CANDIDATES_SQL: &str = r#"
+CREATE TABLE import_candidates (
+    import_id INTEGER NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
+    candidate_path TEXT NOT NULL,
+    priority INTEGER NOT NULL,
+    PRIMARY KEY(import_id, candidate_path)
+);
+CREATE INDEX import_candidates_path_idx
+ON import_candidates(candidate_path, import_id);
+UPDATE meta SET schema_version = 3 WHERE id = 1;
+"#;
+
+const PATH_PROJECTION_SQL: &str = r#"
+CREATE TABLE path_entries (
+    path TEXT PRIMARY KEY,
+    depth INTEGER NOT NULL,
+    kind INTEGER NOT NULL,
+    file_id INTEGER UNIQUE REFERENCES files(id) ON DELETE CASCADE
+);
+CREATE INDEX path_entries_depth_path_idx ON path_entries(depth, path);
+UPDATE meta SET schema_version = 4 WHERE id = 1;
+"#;
+
 const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(SCHEMA_SQL).foreign_key_check(),
     M::up(LOOKUP_INDEXES_SQL),
+    M::up(REPOSITORY_OWNERSHIP_SQL),
+    M::up(IMPORT_CANDIDATES_SQL),
+    M::up(PATH_PROJECTION_SQL),
 ];
 const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
 
@@ -186,6 +219,14 @@ pub struct FileRecord {
     pub modified_ns: Option<u128>,
     pub content_hash: String,
     pub generation: u64,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PathRecord {
+    pub path: String,
+    pub is_directory: bool,
+    pub language: Option<String>,
+    pub size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -266,6 +307,7 @@ pub struct ReferenceRecord {
 pub struct ImportInput {
     pub raw_target: String,
     pub resolved_path: Option<String>,
+    pub candidate_paths: Vec<String>,
     pub line: usize,
 }
 
@@ -276,13 +318,6 @@ pub struct ImportRecord {
     pub raw_target: String,
     pub resolved_path: Option<String>,
     pub line: usize,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ImportResolutionRecord {
-    pub file_path: String,
-    pub raw_target: String,
-    pub resolved_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -310,6 +345,7 @@ pub struct ChunkHit {
     pub start_byte: usize,
     pub end_byte: usize,
     pub token_count: usize,
+    pub generation: u64,
     pub score: f64,
 }
 
@@ -317,6 +353,7 @@ pub struct ChunkHit {
 pub struct SymbolHit {
     pub path: String,
     pub content_hash: String,
+    pub generation: u64,
     pub symbol: SymbolRecord,
 }
 
@@ -324,7 +361,14 @@ pub struct SymbolHit {
 pub struct ReferenceHit {
     pub path: String,
     pub content_hash: String,
+    pub generation: u64,
     pub reference: ReferenceRecord,
+}
+
+pub(crate) struct ImportSymbolTarget {
+    pub seed_index: usize,
+    pub target_file: FileRecord,
+    pub symbols: Vec<SymbolRecord>,
 }
 
 #[derive(Debug, Clone)]
@@ -337,6 +381,7 @@ pub struct StorageCounts {
 
 pub struct Storage {
     writer: Arc<Mutex<Connection>>,
+    readers: r2d2::Pool<SqliteConnectionManager>,
     path: PathBuf,
 }
 
@@ -344,6 +389,7 @@ impl Clone for Storage {
     fn clone(&self) -> Self {
         Self {
             writer: Arc::clone(&self.writer),
+            readers: self.readers.clone(),
             path: self.path.clone(),
         }
     }
@@ -360,7 +406,7 @@ impl fmt::Debug for Storage {
 /// One read-only connection held under a DEFERRED transaction so all queries
 /// on this session observe a single SQLite WAL snapshot.
 pub struct ReadSession {
-    conn: Connection,
+    conn: r2d2::PooledConnection<SqliteConnectionManager>,
 }
 
 impl Drop for ReadSession {
@@ -400,13 +446,79 @@ impl Storage {
         let mut conn = Connection::open(&path)?;
         Self::configure(&mut conn, startup_timeout)?;
         MIGRATIONS.to_latest(&mut conn)?;
+        Self::ensure_path_projection(&mut conn)?;
         Self::validate_fts5(&mut conn)?;
         conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
 
+        let manager = SqliteConnectionManager::file(&path)
+            .with_flags(OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
+            .with_init(|connection| {
+                connection.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
+                connection.pragma_update(None, "foreign_keys", "ON")
+            });
+        let readers = r2d2::Pool::builder()
+            .max_size(8)
+            .connection_timeout(DEFAULT_BUSY_TIMEOUT)
+            .test_on_check_out(false)
+            .build(manager)?;
+
         Ok(Self {
             writer: Arc::new(Mutex::new(conn)),
+            readers,
             path,
         })
+    }
+
+    pub(crate) fn open_for_repository(
+        path: impl AsRef<Path>,
+        repository_root: &Path,
+    ) -> Result<Self> {
+        Self::open_for_repository_with_startup_timeout(path, repository_root, DEFAULT_BUSY_TIMEOUT)
+    }
+
+    pub(crate) fn open_for_repository_with_startup_timeout(
+        path: impl AsRef<Path>,
+        repository_root: &Path,
+        startup_timeout: Duration,
+    ) -> Result<Self> {
+        let storage = Self::open_with_startup_timeout(path, startup_timeout)?;
+        storage.bind_repository(repository_root)?;
+        Ok(storage)
+    }
+
+    fn bind_repository(&self, repository_root: &Path) -> Result<()> {
+        let actual_repository = repository_root.to_path_buf();
+        let actual_display = repository_root.to_string_lossy();
+        let actual_identity = repository_identity(repository_root);
+        let mut conn = self
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (expected_repository, expected_identity): (String, String) = tx.query_row(
+            "SELECT repository_root, repository_identity FROM meta WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+
+        if expected_identity.is_empty() {
+            tx.execute(
+                "UPDATE meta SET repository_root = ?1, repository_identity = ?2 WHERE id = 1",
+                params![actual_display.as_ref(), actual_identity],
+            )?;
+            tx.commit()?;
+            return Ok(());
+        }
+        if expected_identity != actual_identity {
+            return Err(Error::RepositoryMismatch {
+                database: self.path.clone(),
+                expected_repository,
+                actual_repository,
+            });
+        }
+
+        tx.commit()?;
+        Ok(())
     }
 
     fn configure(conn: &mut Connection, startup_timeout: Duration) -> Result<()> {
@@ -446,6 +558,30 @@ impl Storage {
         }
     }
 
+    fn ensure_path_projection(conn: &mut Connection) -> Result<()> {
+        let file_count: i64 = conn.query_row("SELECT count(*) FROM files", [], |row| row.get(0))?;
+        let projected_files: i64 = conn.query_row(
+            "SELECT count(*) FROM path_entries WHERE kind = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        if file_count == projected_files {
+            return Ok(());
+        }
+        let paths = {
+            let mut stmt = conn.prepare("SELECT id, path FROM files ORDER BY id")?;
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<std::result::Result<Vec<(i64, String)>, _>>()?
+        };
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute("DELETE FROM path_entries", [])?;
+        for (file_id, path) in paths {
+            Self::insert_path_projection(&tx, &path, file_id)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn meta(&self) -> Result<MetaRecord> {
         self.begin_read()?.meta()
     }
@@ -480,6 +616,7 @@ impl Storage {
         verify_baseline(baseline, current_generation, &current_config)?;
 
         tx.execute("DELETE FROM files", [])?;
+        tx.execute("DELETE FROM path_entries", [])?;
         let next_generation = current_generation.saturating_add(1);
 
         for file in files {
@@ -546,6 +683,9 @@ impl Storage {
             tx.execute("DELETE FROM files WHERE path = ?1", params![&file.path])?;
             Self::insert_file(&tx, &file, next_generation)?;
         }
+        if !deletions.is_empty() {
+            Self::remove_orphan_path_entries(&tx)?;
+        }
         tx.execute(
             "UPDATE meta SET config_hash = ?1, repository_generation = ?2, index_version = index_version + 1 WHERE id = 1",
             params![config_hash, next_generation],
@@ -568,6 +708,7 @@ impl Storage {
             ],
         )?;
         let file_id = tx.last_insert_rowid();
+        Self::insert_path_projection(tx, &file.path, file_id)?;
 
         for chunk in &file.chunks {
             tx.execute(
@@ -628,8 +769,45 @@ impl Storage {
                     usize_to_i64(import.line)?,
                 ],
             )?;
+            let import_id = tx.last_insert_rowid();
+            for (priority, candidate_path) in import.candidate_paths.iter().enumerate() {
+                tx.execute(
+                    "INSERT INTO import_candidates(import_id, candidate_path, priority) VALUES (?1, ?2, ?3)",
+                    params![import_id, candidate_path, usize_to_i64(priority)?],
+                )?;
+            }
         }
 
+        Ok(())
+    }
+
+    fn insert_path_projection(tx: &Transaction, path: &str, file_id: i64) -> Result<()> {
+        let parts = path.split('/').collect::<Vec<_>>();
+        for index in 1..parts.len() {
+            let directory = parts[..index].join("/");
+            tx.execute(
+                "INSERT OR IGNORE INTO path_entries(path, depth, kind, file_id) VALUES (?1, ?2, 0, NULL)",
+                params![directory, usize_to_i64(index)?],
+            )?;
+        }
+        tx.execute(
+            "INSERT OR REPLACE INTO path_entries(path, depth, kind, file_id) VALUES (?1, ?2, 1, ?3)",
+            params![path, usize_to_i64(parts.len())?, file_id],
+        )?;
+        Ok(())
+    }
+
+    fn remove_orphan_path_entries(tx: &Transaction) -> Result<()> {
+        tx.execute(
+            "DELETE FROM path_entries
+             WHERE kind = 0
+               AND NOT EXISTS (
+                   SELECT 1 FROM files
+                   WHERE substr(files.path, 1, length(path_entries.path) + 1)
+                         = path_entries.path || '/'
+               )",
+            [],
+        )?;
         Ok(())
     }
 
@@ -676,8 +854,8 @@ impl Storage {
             .get_imports_for_file(file_id, max_results)
     }
 
-    pub(crate) fn import_resolutions(&self) -> Result<Vec<ImportResolutionRecord>> {
-        self.begin_read()?.import_resolutions()
+    pub(crate) fn affected_importers(&self, candidate_paths: &[String]) -> Result<Vec<String>> {
+        self.begin_read()?.affected_importers(candidate_paths)
     }
 
     pub fn search_word(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
@@ -715,9 +893,7 @@ impl Storage {
     /// Open a read-only connection and begin a DEFERRED transaction so callers
     /// observe one WAL snapshot until the session is dropped.
     pub fn begin_read(&self) -> Result<ReadSession> {
-        let conn = Connection::open_with_flags(&self.path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
-        conn.pragma_update(None, "foreign_keys", "ON")?;
+        let conn = self.readers.get()?;
         // Under WAL, the first read in a DEFERRED transaction pins the snapshot
         // for the rest of the connection's transaction lifetime.
         conn.execute_batch("BEGIN DEFERRED")?;
@@ -801,7 +977,8 @@ impl Storage {
             start_byte: i64_to_usize(row.get(6)?),
             end_byte: i64_to_usize(row.get(7)?),
             token_count: i64_to_usize(row.get(8)?),
-            score: row.get::<_, f64>(9)?,
+            generation: i64_to_u64(row.get(9)?),
+            score: row.get::<_, f64>(10)?,
         })
     }
 }
@@ -835,7 +1012,7 @@ impl ReadSession {
 
     pub fn list_files(&self, max_results: usize, cursor: Option<i64>) -> Result<Vec<FileRecord>> {
         let limit = bounded_limit(max_results);
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT id, path, language, size_bytes, modified_ns, content_hash, generation, structurally_complete FROM files WHERE (?1 IS NULL OR id > ?1) ORDER BY id LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![cursor, limit], Storage::map_file)?;
@@ -846,28 +1023,166 @@ impl ReadSession {
         Ok(files)
     }
 
+    pub(crate) fn list_tree_paths(
+        &self,
+        root: &str,
+        max_depth: usize,
+        after: Option<&str>,
+        max_results: usize,
+    ) -> Result<Vec<PathRecord>> {
+        let root_depth = root.split('/').filter(|part| !part.is_empty()).count();
+        let depth_limit = i64::try_from(root_depth.saturating_add(max_depth)).unwrap_or(i64::MAX);
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT path_entries.path, path_entries.kind, files.language, files.size_bytes
+             FROM path_entries
+             LEFT JOIN files ON files.id = path_entries.file_id
+             WHERE (?1 = '' OR path_entries.path = ?1
+                    OR substr(path_entries.path, 1, length(?1) + 1) = ?1 || '/')
+               AND path_entries.depth <= ?2
+               AND (?3 IS NULL OR path_entries.path > ?3)
+             ORDER BY path_entries.path
+             LIMIT ?4",
+        )?;
+        let rows = stmt.query_map(
+            params![root, depth_limit, after, bounded_limit(max_results)],
+            |row| {
+                let kind: i64 = row.get(1)?;
+                Ok(PathRecord {
+                    path: row.get(0)?,
+                    is_directory: kind == 0,
+                    language: row.get(2)?,
+                    size_bytes: row.get::<_, Option<i64>>(3)?.map(i64_to_u64),
+                })
+            },
+        )?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     pub fn find_file(&self, path: &str) -> Result<Option<FileRecord>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT id, path, language, size_bytes, modified_ns, content_hash, generation, structurally_complete FROM files WHERE path = ?1",
         )?;
         let mut rows = stmt.query_map(params![path], Storage::map_file)?;
         Ok(rows.next().transpose()?)
     }
 
-    fn import_resolutions(&self) -> Result<Vec<ImportResolutionRecord>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT files.path, imports.raw_target, imports.resolved_path
-             FROM imports JOIN files ON files.id = imports.file_id
-             ORDER BY files.path, imports.id",
+    fn affected_importers(&self, candidate_paths: &[String]) -> Result<Vec<String>> {
+        if candidate_paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let input = serde_json::to_string(candidate_paths)?;
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT DISTINCT files.path
+             FROM json_each(?1) AS changed
+             JOIN import_candidates ON import_candidates.candidate_path = changed.value
+             JOIN imports ON imports.id = import_candidates.import_id
+             JOIN files ON files.id = imports.file_id
+             ORDER BY files.path",
         )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(ImportResolutionRecord {
-                file_path: row.get(0)?,
-                raw_target: row.get(1)?,
-                resolved_path: row.get(2)?,
-            })
-        })?;
+        let rows = stmt.query_map(params![input], |row| row.get(0))?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub(crate) fn import_symbol_targets(
+        &self,
+        seed_paths: &[String],
+        max_imports_per_seed: usize,
+        max_symbols_per_target: usize,
+    ) -> Result<Vec<ImportSymbolTarget>> {
+        if seed_paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let input = serde_json::to_string(seed_paths)?;
+        let mut stmt = self.conn.prepare_cached(
+            "WITH requested AS (
+                 SELECT CAST(key AS INTEGER) AS seed_index, value AS seed_path
+                 FROM json_each(?1)
+             ), ranked_imports AS (
+                 SELECT requested.seed_index,
+                        imports.id AS import_id,
+                        imports.resolved_path,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY requested.seed_index
+                            ORDER BY imports.line, imports.id
+                        ) AS import_rank
+                 FROM requested
+                 JOIN files AS seed ON seed.path = requested.seed_path
+                 JOIN imports ON imports.file_id = seed.id
+                 WHERE imports.resolved_path IS NOT NULL
+             )
+             SELECT ranked_imports.seed_index, ranked_imports.import_rank,
+                    target.id, target.path, target.language, target.size_bytes,
+                    target.modified_ns, target.content_hash, target.generation,
+                    target.structurally_complete,
+                    symbols.id, symbols.file_id, symbols.name, symbols.kind,
+                    symbols.parent, symbols.signature,
+                    symbols.start_line, symbols.end_line,
+                    symbols.start_byte, symbols.end_byte
+             FROM ranked_imports
+             JOIN files AS target ON target.path = ranked_imports.resolved_path
+             JOIN symbols ON symbols.file_id = target.id
+                         AND symbols.id IN (
+                             SELECT limited.id
+                             FROM symbols AS limited
+                             WHERE limited.file_id = target.id
+                             ORDER BY limited.start_byte
+                             LIMIT ?3
+                         )
+             WHERE ranked_imports.import_rank <= ?2
+             ORDER BY ranked_imports.seed_index, ranked_imports.import_rank, symbols.start_byte",
+        )?;
+        let rows = stmt.query_map(
+            params![
+                input,
+                bounded_limit(max_imports_per_seed),
+                bounded_limit(max_symbols_per_target)
+            ],
+            |row| {
+                let seed_index = i64_to_usize(row.get(0)?);
+                let import_rank: i64 = row.get(1)?;
+                let target_file = FileRecord {
+                    id: row.get(2)?,
+                    path: row.get(3)?,
+                    language: row.get(4)?,
+                    size_bytes: i64_to_u64(row.get(5)?),
+                    modified_ns: row.get::<_, Option<i64>>(6)?.map(i64_to_u128),
+                    content_hash: row.get(7)?,
+                    generation: i64_to_u64(row.get(8)?),
+                    structurally_complete: row.get(9)?,
+                };
+                let symbol = SymbolRecord {
+                    id: row.get(10)?,
+                    file_id: row.get(11)?,
+                    name: row.get(12)?,
+                    kind: row.get(13)?,
+                    parent: row.get(14)?,
+                    signature: row.get(15)?,
+                    start_line: i64_to_usize(row.get(16)?),
+                    end_line: i64_to_usize(row.get(17)?),
+                    start_byte: i64_to_usize(row.get(18)?),
+                    end_byte: i64_to_usize(row.get(19)?),
+                };
+                Ok((seed_index, import_rank, target_file, symbol))
+            },
+        )?;
+        let mut grouped = Vec::<ImportSymbolTarget>::new();
+        let mut current_key = None;
+        for row in rows {
+            let (seed_index, import_rank, target_file, symbol) = row?;
+            let key = (seed_index, import_rank);
+            if current_key != Some(key) {
+                grouped.push(ImportSymbolTarget {
+                    seed_index,
+                    target_file,
+                    symbols: Vec::new(),
+                });
+                current_key = Some(key);
+            }
+            if let Some(target) = grouped.last_mut() {
+                target.symbols.push(symbol);
+            }
+        }
+        Ok(grouped)
     }
 
     pub fn get_chunks_for_file(
@@ -876,13 +1191,14 @@ impl ReadSession {
         max_results: usize,
     ) -> Result<Vec<ChunkRecord>> {
         let limit = bounded_limit(max_results);
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT id, file_id, content, start_line, end_line, start_byte, end_byte, token_count FROM chunks WHERE file_id = ?1 ORDER BY start_byte LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![file_id, limit], Storage::map_chunk)?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
+    #[cfg(test)]
     pub(crate) fn get_chunks_overlapping(
         &self,
         file_id: i64,
@@ -891,7 +1207,7 @@ impl ReadSession {
     ) -> Result<Vec<ChunkRecord>> {
         let start_line = usize_to_i64(start_line)?;
         let end_line = usize_to_i64(end_line)?;
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT id, file_id, content, start_line, end_line, start_byte, end_byte, token_count
                  FROM chunks
                  WHERE file_id = ?1 AND end_line >= ?2 AND start_line <= ?3
@@ -901,13 +1217,74 @@ impl ReadSession {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
+    pub(crate) fn get_chunks_overlapping_batch(
+        &self,
+        ranges: &[(i64, usize, usize)],
+    ) -> Result<Vec<Vec<ChunkRecord>>> {
+        if ranges.is_empty() {
+            return Ok(Vec::new());
+        }
+        let input = ranges
+            .iter()
+            .map(|(file_id, start_line, end_line)| {
+                serde_json::json!({
+                    "file_id": file_id,
+                    "start_line": start_line,
+                    "end_line": end_line,
+                })
+            })
+            .collect::<Vec<_>>();
+        let input = serde_json::to_string(&input)?;
+        let mut stmt = self.conn.prepare_cached(
+            "WITH requested AS (
+                 SELECT CAST(key AS INTEGER) AS request_index,
+                        CAST(value ->> 'file_id' AS INTEGER) AS file_id,
+                        CAST(value ->> 'start_line' AS INTEGER) AS start_line,
+                        CAST(value ->> 'end_line' AS INTEGER) AS end_line
+                 FROM json_each(?1)
+             )
+             SELECT requested.request_index,
+                    chunks.id, chunks.file_id, chunks.content,
+                    chunks.start_line, chunks.end_line,
+                    chunks.start_byte, chunks.end_byte, chunks.token_count
+             FROM requested
+             JOIN chunks
+               ON chunks.file_id = requested.file_id
+              AND chunks.end_line >= requested.start_line
+              AND chunks.start_line <= requested.end_line
+             ORDER BY requested.request_index, chunks.start_line",
+        )?;
+        let rows = stmt.query_map(params![input], |row| {
+            let request_index = i64_to_usize(row.get(0)?);
+            let chunk = ChunkRecord {
+                id: row.get(1)?,
+                file_id: row.get(2)?,
+                content: row.get(3)?,
+                start_line: i64_to_usize(row.get(4)?),
+                end_line: i64_to_usize(row.get(5)?),
+                start_byte: i64_to_usize(row.get(6)?),
+                end_byte: i64_to_usize(row.get(7)?),
+                token_count: i64_to_usize(row.get(8)?),
+            };
+            Ok((request_index, chunk))
+        })?;
+        let mut grouped = vec![Vec::new(); ranges.len()];
+        for row in rows {
+            let (request_index, chunk) = row?;
+            if let Some(chunks) = grouped.get_mut(request_index) {
+                chunks.push(chunk);
+            }
+        }
+        Ok(grouped)
+    }
+
     pub fn get_symbols_for_file(
         &self,
         file_id: i64,
         max_results: usize,
     ) -> Result<Vec<SymbolRecord>> {
         let limit = bounded_limit(max_results);
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte FROM symbols WHERE file_id = ?1 ORDER BY start_byte LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![file_id, limit], Storage::map_symbol)?;
@@ -922,7 +1299,7 @@ impl ReadSession {
         max_results: usize,
     ) -> Result<Vec<SymbolRecord>> {
         let limit = bounded_limit(max_results);
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
                  FROM symbols
                  WHERE file_id = ?1
@@ -950,6 +1327,7 @@ impl ReadSession {
             .optional()?)
     }
 
+    #[cfg(test)]
     pub(crate) fn find_enclosing_symbol(
         &self,
         file_id: i64,
@@ -970,13 +1348,75 @@ impl ReadSession {
             .optional()?)
     }
 
+    pub(crate) fn find_enclosing_symbols_batch(
+        &self,
+        locations: &[(i64, usize)],
+    ) -> Result<Vec<Option<SymbolRecord>>> {
+        if locations.is_empty() {
+            return Ok(Vec::new());
+        }
+        let input = locations
+            .iter()
+            .map(|(file_id, line)| serde_json::json!({ "file_id": file_id, "line": line }))
+            .collect::<Vec<_>>();
+        let input = serde_json::to_string(&input)?;
+        let mut stmt = self.conn.prepare_cached(
+            "WITH requested AS (
+                 SELECT CAST(key AS INTEGER) AS request_index,
+                        CAST(value ->> 'file_id' AS INTEGER) AS file_id,
+                        CAST(value ->> 'line' AS INTEGER) AS line
+                 FROM json_each(?1)
+             )
+             SELECT requested.request_index,
+                    symbols.id, symbols.file_id, symbols.name, symbols.kind,
+                    symbols.parent, symbols.signature,
+                    symbols.start_line, symbols.end_line,
+                    symbols.start_byte, symbols.end_byte
+             FROM requested
+             JOIN symbols ON symbols.id = (
+                 SELECT enclosing.id
+                 FROM symbols AS enclosing
+                 WHERE enclosing.file_id = requested.file_id
+                   AND enclosing.start_line <= requested.line
+                   AND enclosing.end_line >= requested.line
+                 ORDER BY (enclosing.end_line - enclosing.start_line), enclosing.start_byte
+                 LIMIT 1
+             )
+             ORDER BY requested.request_index",
+        )?;
+        let rows = stmt.query_map(params![input], |row| {
+            let request_index = i64_to_usize(row.get(0)?);
+            let symbol = SymbolRecord {
+                id: row.get(1)?,
+                file_id: row.get(2)?,
+                name: row.get(3)?,
+                kind: row.get(4)?,
+                parent: row.get(5)?,
+                signature: row.get(6)?,
+                start_line: i64_to_usize(row.get(7)?),
+                end_line: i64_to_usize(row.get(8)?),
+                start_byte: i64_to_usize(row.get(9)?),
+                end_byte: i64_to_usize(row.get(10)?),
+            };
+            Ok((request_index, symbol))
+        })?;
+        let mut symbols = vec![None; locations.len()];
+        for row in rows {
+            let (request_index, symbol) = row?;
+            if let Some(slot) = symbols.get_mut(request_index) {
+                *slot = Some(symbol);
+            }
+        }
+        Ok(symbols)
+    }
+
     pub fn get_references_for_file(
         &self,
         file_id: i64,
         max_results: usize,
     ) -> Result<Vec<ReferenceRecord>> {
         let limit = bounded_limit(max_results);
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT id, file_id, name, kind, role, enclosing_symbol, start_line, end_line, start_byte, end_byte FROM symbol_refs WHERE file_id = ?1 ORDER BY start_byte LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![file_id, limit], Storage::map_reference)?;
@@ -989,7 +1429,7 @@ impl ReadSession {
         max_results: usize,
     ) -> Result<Vec<ImportRecord>> {
         let limit = bounded_limit(max_results);
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT id, file_id, raw_target, resolved_path, line FROM imports WHERE file_id = ?1 ORDER BY line LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![file_id, limit], Storage::map_import)?;
@@ -1016,8 +1456,8 @@ impl ReadSession {
         max_results: usize,
     ) -> Result<Vec<SymbolHit>> {
         let limit = bounded_limit(max_results);
-        let mut stmt = self.conn.prepare(
-            "SELECT f.path, f.content_hash, s.id, s.file_id, s.name, s.kind, s.parent, s.signature, s.start_line, s.end_line, s.start_byte, s.end_byte
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT f.path, f.content_hash, f.generation, s.id, s.file_id, s.name, s.kind, s.parent, s.signature, s.start_line, s.end_line, s.start_byte, s.end_byte
                  FROM symbols s JOIN files f ON f.id = s.file_id
                  WHERE CASE WHEN ?2 THEN instr(s.name, ?1) > 0 ELSE instr(lower(s.name), lower(?1)) > 0 END
                  ORDER BY CASE WHEN CASE WHEN ?2 THEN s.name = ?1 ELSE lower(s.name) = lower(?1) END THEN 0 ELSE 1 END,
@@ -1028,17 +1468,18 @@ impl ReadSession {
             Ok(SymbolHit {
                 path: row.get(0)?,
                 content_hash: row.get(1)?,
+                generation: i64_to_u64(row.get(2)?),
                 symbol: SymbolRecord {
-                    id: row.get(2)?,
-                    file_id: row.get(3)?,
-                    name: row.get(4)?,
-                    kind: row.get(5)?,
-                    parent: row.get(6)?,
-                    signature: row.get(7)?,
-                    start_line: i64_to_usize(row.get(8)?),
-                    end_line: i64_to_usize(row.get(9)?),
-                    start_byte: i64_to_usize(row.get(10)?),
-                    end_byte: i64_to_usize(row.get(11)?),
+                    id: row.get(3)?,
+                    file_id: row.get(4)?,
+                    name: row.get(5)?,
+                    kind: row.get(6)?,
+                    parent: row.get(7)?,
+                    signature: row.get(8)?,
+                    start_line: i64_to_usize(row.get(9)?),
+                    end_line: i64_to_usize(row.get(10)?),
+                    start_byte: i64_to_usize(row.get(11)?),
+                    end_byte: i64_to_usize(row.get(12)?),
                 },
             })
         })?;
@@ -1052,8 +1493,8 @@ impl ReadSession {
         max_results: usize,
     ) -> Result<Vec<ReferenceHit>> {
         let limit = bounded_limit(max_results);
-        let mut stmt = self.conn.prepare(
-            "SELECT f.path, f.content_hash, r.id, r.file_id, r.name, r.kind, r.role, r.enclosing_symbol, r.start_line, r.end_line, r.start_byte, r.end_byte
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT f.path, f.content_hash, f.generation, r.id, r.file_id, r.name, r.kind, r.role, r.enclosing_symbol, r.start_line, r.end_line, r.start_byte, r.end_byte
                  FROM symbol_refs r JOIN files f ON f.id = r.file_id
                  WHERE CASE WHEN ?2 THEN instr(r.name, ?1) > 0 ELSE instr(lower(r.name), lower(?1)) > 0 END
                  ORDER BY CASE WHEN CASE WHEN ?2 THEN r.name = ?1 ELSE lower(r.name) = lower(?1) END THEN 0 ELSE 1 END,
@@ -1064,17 +1505,18 @@ impl ReadSession {
             Ok(ReferenceHit {
                 path: row.get(0)?,
                 content_hash: row.get(1)?,
+                generation: i64_to_u64(row.get(2)?),
                 reference: ReferenceRecord {
-                    id: row.get(2)?,
-                    file_id: row.get(3)?,
-                    name: row.get(4)?,
-                    kind: row.get(5)?,
-                    role: role_from_str(&row.get::<_, String>(6)?),
-                    enclosing_symbol: row.get(7)?,
-                    start_line: i64_to_usize(row.get(8)?),
-                    end_line: i64_to_usize(row.get(9)?),
-                    start_byte: i64_to_usize(row.get(10)?),
-                    end_byte: i64_to_usize(row.get(11)?),
+                    id: row.get(3)?,
+                    file_id: row.get(4)?,
+                    name: row.get(5)?,
+                    kind: row.get(6)?,
+                    role: role_from_str(&row.get::<_, String>(7)?),
+                    enclosing_symbol: row.get(8)?,
+                    start_line: i64_to_usize(row.get(9)?),
+                    end_line: i64_to_usize(row.get(10)?),
+                    start_byte: i64_to_usize(row.get(11)?),
+                    end_byte: i64_to_usize(row.get(12)?),
                 },
             })
         })?;
@@ -1096,7 +1538,7 @@ impl ReadSession {
             [],
             |row| row.get(0),
         )?);
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT language, count(*) FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY language",
         )?;
         let languages = stmt
@@ -1119,7 +1561,7 @@ impl ReadSession {
         let limit = bounded_limit(max_results);
         let table_name = table.as_str();
         let sql = format!(
-            "SELECT c.id, c.file_id, f.path, c.content, c.start_line, c.end_line, c.start_byte, c.end_byte, c.token_count, bm25({table_name}) as score \
+            "SELECT c.id, c.file_id, f.path, c.content, c.start_line, c.end_line, c.start_byte, c.end_byte, c.token_count, f.generation, bm25({table_name}) as score \
              FROM {table_name} \
              JOIN chunks c ON {table_name}.rowid = c.rowid \
              JOIN files f ON c.file_id = f.id \
@@ -1127,7 +1569,7 @@ impl ReadSession {
              ORDER BY bm25({table_name}), f.path, c.start_byte \
              LIMIT ?2"
         );
-        let mut stmt = self.conn.prepare(&sql)?;
+        let mut stmt = self.conn.prepare_cached(&sql)?;
         let rows = stmt.query_map(params![query, limit], Storage::map_chunk_hit)?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
@@ -1151,6 +1593,25 @@ fn verify_baseline(
 fn bounded_limit(limit: usize) -> i64 {
     let capped = limit.clamp(1, HARD_MAX_RESULTS);
     i64::try_from(capped).unwrap_or(i64::MAX)
+}
+
+fn repository_identity(path: &Path) -> String {
+    let mut hasher = blake3::Hasher::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        hasher.update(path.as_os_str().as_bytes());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        for unit in path.as_os_str().encode_wide() {
+            hasher.update(&unit.to_le_bytes());
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    hasher.update(path.to_string_lossy().as_bytes());
+    hasher.finalize().to_hex().to_string()
 }
 
 fn u64_to_i64(value: u64) -> Result<i64> {

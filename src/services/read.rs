@@ -18,10 +18,54 @@ use crate::{Error, Result};
 const MIN_CONTEXT_RANGE_LINES: usize = 12;
 const MAX_CONTEXT_RANGE_LINES: usize = 128;
 
+#[derive(Clone)]
 pub(super) struct StoredExcerpt {
     pub(super) content: String,
     pub(super) start_line: usize,
     pub(super) end_line: usize,
+}
+
+pub(super) struct StoredExcerptRequest {
+    pub file_id: i64,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub context: usize,
+    pub max_lines: usize,
+}
+
+pub(super) struct AdaptiveExcerptRequest {
+    pub file_id: i64,
+    pub declaration_start: usize,
+    pub declaration_end: usize,
+    pub matched_line: usize,
+    pub token_budget: usize,
+}
+
+fn assemble_stored_excerpt(
+    request: &StoredExcerptRequest,
+    selected: &[crate::storage::ChunkRecord],
+) -> Option<StoredExcerpt> {
+    let first = request.start_line.saturating_sub(request.context).max(1);
+    let mut last = request.end_line.saturating_add(request.context);
+    if request.max_lines > 0 && last.saturating_sub(first).saturating_add(1) > request.max_lines {
+        last = first + request.max_lines - 1;
+    }
+    let (Some(first_chunk), Some(last_chunk)) = (selected.first(), selected.last()) else {
+        return None;
+    };
+    last = last.min(last_chunk.end_line);
+    let base_line = first_chunk.start_line;
+    let mut combined = String::new();
+    for chunk in selected {
+        combined.push_str(&chunk.content);
+    }
+    let local_start = first.saturating_sub(base_line) + 1;
+    let local_end = last.saturating_sub(base_line) + 1;
+    Some(StoredExcerpt {
+        content: crate::text::excerpt(&combined, local_start, local_end),
+        start_line: first,
+        end_line: last,
+    })
 }
 
 fn storage_symbol(symbol: crate::storage::SymbolRecord) -> Symbol {
@@ -288,6 +332,7 @@ impl Services {
         })
     }
 
+    #[cfg(test)]
     pub(super) fn stored_excerpt(
         &self,
         session: &ReadSession,
@@ -297,30 +342,49 @@ impl Services {
         context: usize,
         max_lines: usize,
     ) -> Result<Option<StoredExcerpt>> {
+        let request = StoredExcerptRequest {
+            file_id,
+            start_line,
+            end_line,
+            context,
+            max_lines,
+        };
         let first = start_line.saturating_sub(context).max(1);
         let mut last = end_line.saturating_add(context);
         if max_lines > 0 && last.saturating_sub(first).saturating_add(1) > max_lines {
             last = first + max_lines - 1;
         }
         let selected = session.get_chunks_overlapping(file_id, first, last)?;
-        let (Some(first_chunk), Some(last_chunk)) = (selected.first(), selected.last()) else {
-            return Ok(None);
-        };
-        last = last.min(last_chunk.end_line);
-        let base_line = first_chunk.start_line;
-        let mut combined = String::new();
-        for chunk in &selected {
-            combined.push_str(&chunk.content);
-        }
-        let local_start = first.saturating_sub(base_line) + 1;
-        let local_end = last.saturating_sub(base_line) + 1;
-        Ok(Some(StoredExcerpt {
-            content: crate::text::excerpt(&combined, local_start, local_end),
-            start_line: first,
-            end_line: last,
-        }))
+        Ok(assemble_stored_excerpt(&request, &selected))
     }
 
+    pub(super) fn stored_excerpts(
+        &self,
+        session: &ReadSession,
+        requests: &[StoredExcerptRequest],
+    ) -> Result<Vec<Option<StoredExcerpt>>> {
+        let ranges = requests
+            .iter()
+            .map(|request| {
+                let first = request.start_line.saturating_sub(request.context).max(1);
+                let mut last = request.end_line.saturating_add(request.context);
+                if request.max_lines > 0
+                    && last.saturating_sub(first).saturating_add(1) > request.max_lines
+                {
+                    last = first + request.max_lines - 1;
+                }
+                (request.file_id, first, last)
+            })
+            .collect::<Vec<_>>();
+        let chunks = session.get_chunks_overlapping_batch(&ranges)?;
+        Ok(requests
+            .iter()
+            .zip(chunks)
+            .map(|(request, chunks)| assemble_stored_excerpt(request, &chunks))
+            .collect())
+    }
+
+    #[cfg(test)]
     pub(super) fn adaptive_context_excerpt(
         &self,
         session: &ReadSession,
@@ -363,5 +427,73 @@ impl Services {
             .saturating_add(proportional_lines.saturating_sub(1))
             .min(declaration_end);
         self.stored_excerpt(session, file_id, start, end, 0, 0)
+    }
+
+    pub(super) fn adaptive_context_excerpts(
+        &self,
+        session: &ReadSession,
+        requests: &[AdaptiveExcerptRequest],
+    ) -> Result<Vec<Option<StoredExcerpt>>> {
+        let full_requests = requests
+            .iter()
+            .map(|request| StoredExcerptRequest {
+                file_id: request.file_id,
+                start_line: request.declaration_start,
+                end_line: request.declaration_end,
+                context: 0,
+                max_lines: 0,
+            })
+            .collect::<Vec<_>>();
+        let mut excerpts = self.stored_excerpts(session, &full_requests)?;
+        let mut narrowed_indices = Vec::new();
+        let mut narrowed_requests = Vec::new();
+        for (index, (request, excerpt)) in requests.iter().zip(&excerpts).enumerate() {
+            let Some(excerpt) = excerpt else {
+                continue;
+            };
+            let full_tokens = self.config.tokenizer.count(&excerpt.content).max(1);
+            if full_tokens <= request.token_budget {
+                continue;
+            }
+            let declaration_lines = request
+                .declaration_end
+                .saturating_sub(request.declaration_start)
+                .saturating_add(1);
+            let proportional_lines = declaration_lines
+                .saturating_mul(request.token_budget)
+                .saturating_div(full_tokens)
+                .clamp(MIN_CONTEXT_RANGE_LINES, MAX_CONTEXT_RANGE_LINES)
+                .min(declaration_lines);
+            let before = proportional_lines / 3;
+            let mut start = request
+                .matched_line
+                .saturating_sub(before)
+                .max(request.declaration_start);
+            let mut end = start
+                .saturating_add(proportional_lines.saturating_sub(1))
+                .min(request.declaration_end);
+            if end.saturating_sub(start).saturating_add(1) < proportional_lines {
+                start = end
+                    .saturating_add(1)
+                    .saturating_sub(proportional_lines)
+                    .max(request.declaration_start);
+            }
+            end = start
+                .saturating_add(proportional_lines.saturating_sub(1))
+                .min(request.declaration_end);
+            narrowed_indices.push(index);
+            narrowed_requests.push(StoredExcerptRequest {
+                file_id: request.file_id,
+                start_line: start,
+                end_line: end,
+                context: 0,
+                max_lines: 0,
+            });
+        }
+        let narrowed = self.stored_excerpts(session, &narrowed_requests)?;
+        for (index, excerpt) in narrowed_indices.into_iter().zip(narrowed) {
+            excerpts[index] = excerpt;
+        }
+        Ok(excerpts)
     }
 }

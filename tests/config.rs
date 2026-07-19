@@ -15,6 +15,17 @@ fn config_discovers_existing_root() {
 }
 
 #[test]
+fn default_cache_identity_is_independent_per_repository() {
+    let first_root = tempfile::tempdir().expect("first root");
+    let second_root = tempfile::tempdir().expect("second root");
+
+    let first = Config::discover(first_root.path(), None).expect("first config");
+    let second = Config::discover(second_root.path(), None).expect("second config");
+
+    assert_ne!(first.database_path, second.database_path);
+}
+
+#[test]
 fn config_canonicalizes_explicit_database_parent() {
     let root = tempfile::tempdir().expect("tempdir");
     let db = root.path().join("custom.sqlite");

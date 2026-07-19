@@ -34,6 +34,14 @@ pub enum Error {
     InvalidRequest(String),
     #[error("invalid repository configuration: {0}")]
     InvalidConfiguration(String),
+    #[error(
+        "SQLite index {database} belongs to repository {expected_repository}, not {actual_repository}"
+    )]
+    RepositoryMismatch {
+        database: PathBuf,
+        expected_repository: String,
+        actual_repository: PathBuf,
+    },
     #[error("stale cursor")]
     StaleCursor,
     #[error("request cancelled")]
@@ -60,6 +68,8 @@ pub enum Error {
     Sqlite(#[from] rusqlite::Error),
     #[error("database migration error: {0}")]
     Migration(#[from] rusqlite_migration::Error),
+    #[error("SQLite connection pool error: {0}")]
+    ConnectionPool(#[from] r2d2::Error),
     #[error("tree-sitter language error: {0}")]
     TreeSitterLanguage(#[from] tree_sitter::LanguageError),
     #[error("tree-sitter query error: {0}")]

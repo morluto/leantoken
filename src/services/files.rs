@@ -74,53 +74,34 @@ fn tree_entries(
     }
     let root = root.trim_matches('/');
     let max_depth = depth.unwrap_or(usize::MAX);
-    let root_depth = root.split('/').filter(|part| !part.is_empty()).count();
     let after = cursor_path(cursor)?;
-    let capacity = limit.saturating_add(1);
-    let mut entries = BTreeMap::new();
-    for_each_file(session, cancellation, |file| {
-        if !root.is_empty() && file.path != root && !file.path.starts_with(&format!("{root}/")) {
-            return Ok(());
-        }
-        let parts = file.path.split('/').collect::<Vec<_>>();
-        for index in 1..parts.len() {
-            let path = parts[..index].join("/");
-            let relative_depth = index.saturating_sub(root_depth);
-            if relative_depth <= max_depth
-                && (root.is_empty() || path == root || path.starts_with(&format!("{root}/")))
-            {
-                retain_path_entry(
-                    &mut entries,
-                    FileEntry {
-                        path,
-                        kind: FileEntryKind::Directory,
-                        language: None,
-                        size_bytes: None,
-                        score: None,
-                    },
-                    after.as_deref(),
-                    capacity,
-                );
-            }
-        }
-        let file_depth = parts.len().saturating_sub(root_depth);
-        if file_depth <= max_depth {
-            retain_path_entry(
-                &mut entries,
-                FileEntry {
-                    path: file.path.clone(),
-                    kind: FileEntryKind::File,
-                    language: file.language.clone(),
-                    size_bytes: Some(file.size_bytes),
-                    score: None,
-                },
-                after.as_deref(),
-                capacity,
-            );
-        }
-        Ok(())
-    })?;
-    Ok(finish_path_page(entries, limit, PathOperation::Tree))
+    check_cancelled(cancellation)?;
+    let projected =
+        session.list_tree_paths(root, max_depth, after.as_deref(), limit.saturating_add(1))?;
+    let has_more = projected.len() > limit;
+    let entries = projected
+        .into_iter()
+        .take(limit)
+        .map(|entry| FileEntry {
+            path: entry.path,
+            kind: if entry.is_directory {
+                FileEntryKind::Directory
+            } else {
+                FileEntryKind::File
+            },
+            language: entry.language,
+            size_bytes: entry.size_bytes,
+            score: None,
+        })
+        .collect::<Vec<_>>();
+    let next = has_more
+        .then(|| entries.last())
+        .flatten()
+        .map(|entry| FileCursor::Path {
+            operation: PathOperation::Tree,
+            path: entry.path.clone(),
+        });
+    Ok(FilePage { entries, next })
 }
 
 fn fuzzy_entries(

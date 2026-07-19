@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 mod facets;
 
 use super::Services;
-use super::read::StoredExcerpt;
+use super::read::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
 use super::search::{chunk_search_hit, fts_quote, matching_line};
 use super::validation::{
     MAX_INPUT_ITEMS, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, check_cancelled, path_allowed,
@@ -16,7 +16,7 @@ use super::validation::{
 use crate::model::*;
 use crate::ranking::{self, Candidate};
 use crate::repository::git_changed_paths;
-use crate::storage::{FileRecord, ReadSession, SymbolRecord};
+use crate::storage::{ReadSession, SymbolRecord};
 use crate::text::{expand_terms, identifier_words};
 use crate::{Error, Result};
 use facets::{ContextQuery, FacetKind};
@@ -57,19 +57,6 @@ impl ContextExcerptKind {
 
 fn excerpt_budget(request_budget: usize, kind: ContextExcerptKind) -> usize {
     request_budget.min(kind.token_cap())
-}
-
-fn cached_file(
-    session: &ReadSession,
-    cache: &mut HashMap<String, Option<FileRecord>>,
-    path: &str,
-) -> Result<Option<FileRecord>> {
-    if let Some(file) = cache.get(path) {
-        return Ok(file.clone());
-    }
-    let file = session.find_file(path)?;
-    cache.insert(path.to_owned(), file.clone());
-    Ok(file)
 }
 
 fn context_path_score(path: &str, terms: &[String], task: &str) -> f64 {
@@ -322,7 +309,7 @@ fn task_mentions_language(task: &str, language: &str) -> bool {
 
 impl Services {
     fn file_change_boost(
-        file: Option<&FileRecord>,
+        file_generation: Option<u64>,
         path: &str,
         changed_paths: &HashSet<String>,
         prior_generation: Option<u64>,
@@ -330,7 +317,7 @@ impl Services {
         let mut boost = 0.0;
 
         if let Some(prior) = prior_generation
-            && file.is_some_and(|f| f.generation > prior)
+            && file_generation.is_some_and(|generation| generation > prior)
         {
             boost += 1.0;
         }
@@ -345,96 +332,92 @@ impl Services {
     fn append_import_symbol_candidates(
         &self,
         expansion: ImportExpansion<'_>,
-        file_cache: &mut HashMap<String, Option<FileRecord>>,
         candidates: &mut Vec<Candidate>,
     ) -> Result<()> {
         let seed_paths = import_seed_paths(candidates, expansion.queries, self.config.tokenizer);
-        let mut neighbor_count = 0usize;
-        let mut neighbor_ranges = BTreeSet::new();
-        for (seed_path, seed_concepts) in seed_paths.iter().take(24) {
+        let requested_paths = seed_paths
+            .iter()
+            .take(24)
+            .map(|(path, _)| path.clone())
+            .collect::<Vec<_>>();
+        let targets =
+            expansion
+                .session
+                .import_symbol_targets(&requested_paths, 32, MAX_IMPORT_SYMBOLS)?;
+        let mut pending = Vec::new();
+        for target in targets {
             check_cancelled(expansion.cancellation)?;
-            let Some(seed_file) = cached_file(expansion.session, file_cache, seed_path)? else {
+            let Some((_, seed_concepts)) = seed_paths.get(target.seed_index) else {
                 continue;
             };
-            for import in expansion.session.get_imports_for_file(seed_file.id, 32)? {
-                check_cancelled(expansion.cancellation)?;
-                let Some(target_path) = import.resolved_path else {
-                    continue;
-                };
-                if !path_allowed(&target_path, &[], &expansion.request.exclude_paths)? {
-                    continue;
-                }
-                let Some(target_file) = cached_file(expansion.session, file_cache, &target_path)?
-                else {
-                    continue;
-                };
-                let Some((symbol, query, exact)) = corroborated_import_symbol(
-                    expansion
-                        .session
-                        .get_symbols_for_file(target_file.id, MAX_IMPORT_SYMBOLS)?,
-                    expansion.queries,
-                    seed_concepts,
-                ) else {
-                    continue;
-                };
-                let Some(excerpt) = self.adaptive_context_excerpt(
-                    expansion.session,
-                    target_file.id,
-                    symbol.start_line,
-                    symbol.end_line,
-                    symbol.start_line,
-                    excerpt_budget(
-                        expansion.request.token_budget,
-                        ContextExcerptKind::ImportSymbol,
-                    ),
-                )?
-                else {
-                    continue;
-                };
-                if !neighbor_ranges.insert((
-                    target_path.clone(),
-                    excerpt.start_line,
-                    excerpt.end_line,
-                )) {
-                    continue;
-                }
-                let change_boost = Self::file_change_boost(
-                    Some(&target_file),
-                    &target_path,
-                    expansion.changed_paths,
-                    expansion.request.prior_repository_generation,
-                );
-                let candidate = Candidate::new(
-                    &target_path,
-                    excerpt.start_line,
-                    excerpt.end_line,
-                    excerpt.content,
-                )
-                .match_kind("import")
-                .match_kind("symbol")
-                .concept(&query.fusion_key, query.concept_weight)
-                .representation("import_symbol")
-                .symbol_name(symbol.name)
-                .exact(exact)
-                .symbol(1.0)
-                .path_score(context_path_score(
-                    &target_path,
-                    expansion.terms,
-                    &expansion.request.task,
-                ))
-                .import_boost(1.0)
-                .change_boost(change_boost);
-                candidates.push(annotate_candidate(
-                    candidate,
-                    query,
-                    "import_symbol",
-                    neighbor_count,
-                ));
-                neighbor_count += 1;
-                if neighbor_count >= 24 {
-                    break;
-                }
+            let target_path = &target.target_file.path;
+            if !path_allowed(target_path, &[], &expansion.request.exclude_paths)? {
+                continue;
             }
+            let Some((symbol, query, exact)) =
+                corroborated_import_symbol(target.symbols, expansion.queries, seed_concepts)
+            else {
+                continue;
+            };
+            pending.push((target.target_file, symbol, query.clone(), exact));
+        }
+        let excerpt_requests = pending
+            .iter()
+            .map(|(target_file, symbol, _, _)| AdaptiveExcerptRequest {
+                file_id: target_file.id,
+                declaration_start: symbol.start_line,
+                declaration_end: symbol.end_line,
+                matched_line: symbol.start_line,
+                token_budget: excerpt_budget(
+                    expansion.request.token_budget,
+                    ContextExcerptKind::ImportSymbol,
+                ),
+            })
+            .collect::<Vec<_>>();
+        let excerpts = self.adaptive_context_excerpts(expansion.session, &excerpt_requests)?;
+        let mut neighbor_count = 0usize;
+        let mut neighbor_ranges = BTreeSet::new();
+        for ((target_file, symbol, query, exact), excerpt) in pending.into_iter().zip(excerpts) {
+            check_cancelled(expansion.cancellation)?;
+            let Some(excerpt) = excerpt else { continue };
+            let target_path = target_file.path;
+            if !neighbor_ranges.insert((target_path.clone(), excerpt.start_line, excerpt.end_line))
+            {
+                continue;
+            }
+            let change_boost = Self::file_change_boost(
+                Some(target_file.generation),
+                &target_path,
+                expansion.changed_paths,
+                expansion.request.prior_repository_generation,
+            );
+            let candidate = Candidate::new(
+                &target_path,
+                excerpt.start_line,
+                excerpt.end_line,
+                excerpt.content,
+            )
+            .match_kind("import")
+            .match_kind("symbol")
+            .concept(&query.fusion_key, query.concept_weight)
+            .representation("import_symbol")
+            .symbol_name(symbol.name)
+            .exact(exact)
+            .symbol(1.0)
+            .path_score(context_path_score(
+                &target_path,
+                expansion.terms,
+                &expansion.request.task,
+            ))
+            .import_boost(1.0)
+            .change_boost(change_boost);
+            candidates.push(annotate_candidate(
+                candidate,
+                &query,
+                "import_symbol",
+                neighbor_count,
+            ));
+            neighbor_count += 1;
             if neighbor_count >= 24 {
                 break;
             }
@@ -528,7 +511,6 @@ impl Services {
                 .iter()
                 .map(|query| query.value.clone())
                 .collect::<Vec<_>>();
-            let mut file_cache = HashMap::<String, Option<FileRecord>>::new();
             let mut candidates = Vec::new();
             let mut query_fusion = HashMap::<String, HashMap<String, f64>>::new();
 
@@ -542,26 +524,36 @@ impl Services {
                 let term = &query.value;
                 let concept = query.fusion_key.as_str();
                 check_cancelled(cancellation)?;
+                let mut symbol_hits = Vec::new();
                 for (rank, hit) in session
                     .search_symbols(term, false, MAX_CONTEXT_HITS_PER_SOURCE)?
                     .into_iter()
                     .enumerate()
                 {
                     check_cancelled(cancellation)?;
-                    if !path_allowed(&hit.path, &[], &request.exclude_paths)? {
-                        continue;
+                    if path_allowed(&hit.path, &[], &request.exclude_paths)? {
+                        symbol_hits.push((rank, hit));
                     }
-                    let Some(excerpt) = self.adaptive_context_excerpt(
-                        session,
-                        hit.symbol.file_id,
-                        hit.symbol.start_line,
-                        hit.symbol.end_line,
-                        hit.symbol.start_line,
-                        excerpt_budget(request.token_budget, ContextExcerptKind::Symbol),
-                    )?
-                    else {
-                        continue;
-                    };
+                }
+                let symbol_excerpt_requests = symbol_hits
+                    .iter()
+                    .map(|(_, hit)| AdaptiveExcerptRequest {
+                        file_id: hit.symbol.file_id,
+                        declaration_start: hit.symbol.start_line,
+                        declaration_end: hit.symbol.end_line,
+                        matched_line: hit.symbol.start_line,
+                        token_budget: excerpt_budget(
+                            request.token_budget,
+                            ContextExcerptKind::Symbol,
+                        ),
+                    })
+                    .collect::<Vec<_>>();
+                for ((rank, hit), excerpt) in symbol_hits
+                    .into_iter()
+                    .zip(self.adaptive_context_excerpts(session, &symbol_excerpt_requests)?)
+                {
+                    check_cancelled(cancellation)?;
+                    let Some(excerpt) = excerpt else { continue };
                     let exact = f64::from(hit.symbol.name.eq_ignore_ascii_case(term));
                     let qualified = qualified_symbol_match(
                         concept,
@@ -578,9 +570,8 @@ impl Services {
                             rank,
                         );
                     }
-                    let file = cached_file(session, &mut file_cache, &hit.path)?;
                     let change_boost = Self::file_change_boost(
-                        file.as_ref(),
+                        Some(hit.generation),
                         &hit.path,
                         &changed_paths,
                         request.prior_repository_generation,
@@ -601,41 +592,65 @@ impl Services {
                     .change_boost(change_boost);
                     candidates.push(annotate_candidate(candidate, query, "symbol", rank));
                 }
+                let mut reference_hits = Vec::new();
                 for (rank, hit) in session
                     .search_references(term, false, MAX_CONTEXT_HITS_PER_SOURCE)?
                     .into_iter()
                     .enumerate()
                 {
                     check_cancelled(cancellation)?;
-                    if !path_allowed(&hit.path, &[], &request.exclude_paths)? {
-                        continue;
+                    if path_allowed(&hit.path, &[], &request.exclude_paths)? {
+                        reference_hits.push((rank, hit));
                     }
-                    let excerpt = if let Some(symbol) = session
-                        .find_enclosing_symbol(hit.reference.file_id, hit.reference.start_line)?
-                    {
-                        self.adaptive_context_excerpt(
-                            session,
-                            hit.reference.file_id,
-                            symbol.start_line,
-                            symbol.end_line,
-                            hit.reference.start_line,
-                            excerpt_budget(request.token_budget, ContextExcerptKind::Reference),
-                        )?
-                    } else {
-                        None
-                    };
-                    let excerpt = if excerpt.is_some() {
-                        excerpt
-                    } else {
-                        self.stored_excerpt(
-                            session,
-                            hit.reference.file_id,
-                            hit.reference.start_line,
-                            hit.reference.end_line,
-                            2,
-                            12,
-                        )?
-                    };
+                }
+                let reference_locations = reference_hits
+                    .iter()
+                    .map(|(_, hit)| (hit.reference.file_id, hit.reference.start_line))
+                    .collect::<Vec<_>>();
+                let enclosing = session.find_enclosing_symbols_batch(&reference_locations)?;
+                let mut adaptive_indices = Vec::new();
+                let mut adaptive_requests = Vec::new();
+                for (index, ((_, hit), symbol)) in reference_hits.iter().zip(enclosing).enumerate()
+                {
+                    if let Some(symbol) = symbol {
+                        adaptive_indices.push(index);
+                        adaptive_requests.push(AdaptiveExcerptRequest {
+                            file_id: hit.reference.file_id,
+                            declaration_start: symbol.start_line,
+                            declaration_end: symbol.end_line,
+                            matched_line: hit.reference.start_line,
+                            token_budget: excerpt_budget(
+                                request.token_budget,
+                                ContextExcerptKind::Reference,
+                            ),
+                        });
+                    }
+                }
+                let mut adaptive_excerpts = vec![None; reference_hits.len()];
+                for (index, excerpt) in adaptive_indices
+                    .into_iter()
+                    .zip(self.adaptive_context_excerpts(session, &adaptive_requests)?)
+                {
+                    adaptive_excerpts[index] = excerpt;
+                }
+                let fallback_requests = reference_hits
+                    .iter()
+                    .map(|(_, hit)| StoredExcerptRequest {
+                        file_id: hit.reference.file_id,
+                        start_line: hit.reference.start_line,
+                        end_line: hit.reference.end_line,
+                        context: 2,
+                        max_lines: 12,
+                    })
+                    .collect::<Vec<_>>();
+                let fallback_excerpts = self.stored_excerpts(session, &fallback_requests)?;
+                for (((rank, hit), adaptive), fallback) in reference_hits
+                    .into_iter()
+                    .zip(adaptive_excerpts)
+                    .zip(fallback_excerpts)
+                {
+                    check_cancelled(cancellation)?;
+                    let excerpt = adaptive.or(fallback);
                     let Some(excerpt) = excerpt else {
                         continue;
                     };
@@ -648,9 +663,8 @@ impl Services {
                             rank,
                         );
                     }
-                    let file = cached_file(session, &mut file_cache, &hit.path)?;
                     let change_boost = Self::file_change_boost(
-                        file.as_ref(),
+                        Some(hit.generation),
                         &hit.path,
                         &changed_paths,
                         request.prior_repository_generation,
@@ -674,6 +688,7 @@ impl Services {
                 } else {
                     session.search_word(&fts_quote(term), MAX_CONTEXT_LEXICAL_HITS)?
                 };
+                let mut lexical_hits = Vec::new();
                 for (rank, hit) in lexical.into_iter().enumerate() {
                     check_cancelled(cancellation)?;
                     if !path_allowed(&hit.path, &[], &request.exclude_paths)? {
@@ -685,21 +700,44 @@ impl Services {
                     };
                     let matched_line =
                         matching_line(&hit, term, false).unwrap_or(search_hit.start_line);
-                    let excerpt = if let Some(symbol) =
-                        session.find_enclosing_symbol(hit.file_id, matched_line)?
-                    {
-                        self.adaptive_context_excerpt(
-                            session,
-                            hit.file_id,
-                            symbol.start_line,
-                            symbol.end_line,
-                            matched_line,
-                            excerpt_budget(request.token_budget, ContextExcerptKind::Text),
-                        )?
-                    } else {
-                        None
+                    lexical_hits.push((rank, hit, search_hit, matched_line));
+                }
+                let lexical_locations = lexical_hits
+                    .iter()
+                    .map(|(_, hit, _, matched_line)| (hit.file_id, *matched_line))
+                    .collect::<Vec<_>>();
+                let enclosing = session.find_enclosing_symbols_batch(&lexical_locations)?;
+                let mut adaptive_indices = Vec::new();
+                let mut adaptive_requests = Vec::new();
+                for (index, ((_, hit, _, matched_line), symbol)) in
+                    lexical_hits.iter().zip(enclosing).enumerate()
+                {
+                    if let Some(symbol) = symbol {
+                        adaptive_indices.push(index);
+                        adaptive_requests.push(AdaptiveExcerptRequest {
+                            file_id: hit.file_id,
+                            declaration_start: symbol.start_line,
+                            declaration_end: symbol.end_line,
+                            matched_line: *matched_line,
+                            token_budget: excerpt_budget(
+                                request.token_budget,
+                                ContextExcerptKind::Text,
+                            ),
+                        });
                     }
-                    .unwrap_or(StoredExcerpt {
+                }
+                let mut adaptive_excerpts = vec![None; lexical_hits.len()];
+                for (index, excerpt) in adaptive_indices
+                    .into_iter()
+                    .zip(self.adaptive_context_excerpts(session, &adaptive_requests)?)
+                {
+                    adaptive_excerpts[index] = excerpt;
+                }
+                for ((rank, hit, search_hit, _), adaptive) in
+                    lexical_hits.into_iter().zip(adaptive_excerpts)
+                {
+                    check_cancelled(cancellation)?;
+                    let excerpt = adaptive.unwrap_or(StoredExcerpt {
                         content: search_hit.excerpt.clone(),
                         start_line: search_hit.start_line,
                         end_line: search_hit.end_line,
@@ -718,9 +756,8 @@ impl Services {
                         .to_lowercase()
                         .matches(&term.to_lowercase())
                         .count();
-                    let file = cached_file(session, &mut file_cache, &search_hit.path)?;
                     let change_boost = Self::file_change_boost(
-                        file.as_ref(),
+                        Some(hit.generation),
                         &search_hit.path,
                         &changed_paths,
                         request.prior_repository_generation,
@@ -755,7 +792,6 @@ impl Services {
                     changed_paths: &changed_paths,
                     cancellation,
                 },
-                &mut file_cache,
                 &mut candidates,
             )?;
 
