@@ -143,7 +143,10 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .expect_err("invalid path should be a protocol error");
     assert!(matches!(
         error,
-        ServiceError::McpError(data) if data.code == ErrorCode::INVALID_PARAMS
+        ServiceError::McpError(data)
+            if data.code == ErrorCode::INVALID_PARAMS
+                && data.data.as_ref().and_then(|value| value["category"].as_str())
+                    == Some("path_outside_root")
     ));
 
     let oversized_arguments = serde_json::json!({
@@ -164,7 +167,10 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .expect_err("oversized request should be rejected");
     assert!(matches!(
         error,
-        ServiceError::McpError(data) if data.code == ErrorCode::INVALID_PARAMS
+        ServiceError::McpError(data)
+            if data.code == ErrorCode::INVALID_PARAMS
+                && data.data.as_ref().and_then(|value| value["category"].as_str())
+                    == Some("input_too_long")
     ));
 
     let bounded_arguments = serde_json::json!({
@@ -250,6 +256,79 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .await
         .expect("call after cancellation");
     assert_ne!(response.is_error, Some(true));
+
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn mcp_path_errors_redact_external_and_absolute_paths() {
+    use std::os::unix::fs::symlink;
+
+    let root = tempfile::tempdir().expect("temporary repository");
+    let outside = tempfile::tempdir().expect("external directory");
+    let indexed_path = root.path().join("escape.rs");
+    let external_path = outside.path().join("private-secret-target.rs");
+    std::fs::write(&indexed_path, "fn indexed_before_escape() {}\n").expect("indexed fixture");
+    std::fs::write(&external_path, "fn private_secret() {}\n").expect("external fixture");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Arc::new(Services::open(config).expect("services"));
+    services.index(false).await.expect("index fixture");
+    std::fs::remove_file(&indexed_path).expect("remove indexed fixture");
+    symlink(&external_path, &indexed_path).expect("external symlink");
+
+    let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
+    let server = LeanTokenMcp::new(services);
+    let server_start = tokio::spawn(async move {
+        serve_server(server, server_stream)
+            .await
+            .expect("start MCP server")
+    });
+    let mut client = serve_client((), client_stream)
+        .await
+        .expect("initialize MCP client");
+    let mut server = server_start.await.expect("join server startup");
+
+    for requested in [
+        "escape.rs",
+        "/home/alice/private-secret.rs",
+        r"C:\Users\alice\private-secret.rs",
+    ] {
+        let arguments = serde_json::json!({
+            "path": requested,
+            "target": {"kind": "lines", "start": 1, "end": 1}
+        })
+        .as_object()
+        .expect("read arguments")
+        .clone();
+        let error = client
+            .peer()
+            .call_tool(CallToolRequestParams::new("leantoken_read").with_arguments(arguments))
+            .await
+            .expect_err("path must be rejected");
+        let ServiceError::McpError(data) = error else {
+            panic!("unexpected service error: {error}");
+        };
+        assert_eq!(data.code, ErrorCode::INVALID_PARAMS);
+        assert_eq!(
+            data.data
+                .as_ref()
+                .and_then(|value| value["category"].as_str()),
+            Some("path_outside_root")
+        );
+        let wire = serde_json::to_string(&data).expect("serialize error");
+        for secret in [
+            requested,
+            external_path.to_str().expect("external UTF-8"),
+            "private-secret",
+            "/home/alice",
+            r"C:\Users\alice",
+        ] {
+            assert!(!wire.contains(secret), "MCP error leaked {secret}: {wire}");
+        }
+    }
 
     client.close().await.expect("close client");
     server.close().await.expect("close server");

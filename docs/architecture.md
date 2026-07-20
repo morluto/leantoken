@@ -34,7 +34,9 @@ ignore-aware discovery -> chunking -> tree-sitter extraction
 - The MCP adapter owns SDK types, protocol error translation, cancellation, and
   stdio lifecycle. It omits optional output schemas from the catalog and offers
   explicit dual, text-only, and structured-only result modes. Dual remains the
-  compatibility default.
+  compatibility default. Protocol errors cross an explicit allowlist: clients
+  receive fixed safe messages and stable category data, while path-bearing and
+  infrastructure details remain in stderr diagnostics.
 
 LeanToken does not implement JSON-RPC framing or MCP dispatch. Those remain in
 the official Rust MCP SDK.

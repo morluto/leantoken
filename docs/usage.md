@@ -69,7 +69,11 @@ batch byte limit must be at least the per-file byte limit. Limit failures stop
 automatic MCP indexing until the process is restarted with a narrower root or
 adjusted limits, preventing a fixed tree from being rescanned every 500 ms.
 
-Logs go to stderr. Stdout is reserved for MCP protocol messages.
+Logs go to stderr. Stdout is reserved for MCP protocol messages. LeanToken
+service errors exposed through MCP use fixed, allowlisted messages and a stable
+`data.category` for client handling. Repository, database, and external
+canonical paths, plus underlying I/O and SQLite details, remain in stderr
+diagnostics rather than protocol responses.
 
 The default `dual` mode returns JSON as text and `structuredContent` for broad
 host compatibility. `text` and `structured` remove that duplication, but use
@@ -230,7 +234,9 @@ state.
 
 Oversized inputs, invalid regular expressions or globs, stale cursors,
 unsupported structured reads, and unsafe paths return request errors without
-terminating the server. Internal storage and I/O failures are logged without
+terminating the server. Their MCP `data.category` values are stable enough for
+client branching, while messages never echo caller-supplied or resolved paths.
+Internal repository configuration, storage, and I/O failures are logged without
 including source bodies and are returned as generic MCP internal errors.
 
 Default limits include:

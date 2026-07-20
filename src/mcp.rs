@@ -673,41 +673,110 @@ pub fn tool_result<T: Serialize>(
         })
         .map_err(|error| {
             tracing::error!(%error, "MCP response serialization failed");
-            ErrorData::internal_error("repository retrieval failed", None)
+            ErrorData::internal_error(
+                "repository retrieval failed",
+                mcp_error_data("response_serialization"),
+            )
         })
 }
 
 fn into_mcp_error(error: crate::Error) -> ErrorData {
     match &error {
-        crate::Error::Cancelled => ErrorData::invalid_request("request cancelled", None),
+        crate::Error::Cancelled => {
+            ErrorData::invalid_request("request cancelled", mcp_error_data("request_cancelled"))
+        }
+        crate::Error::PathOutsideRoot(_) => {
+            tracing::debug!(%error, "MCP path rejected outside repository root");
+            ErrorData::invalid_params(
+                "path must stay within the repository root",
+                mcp_error_data("path_outside_root"),
+            )
+        }
+        crate::Error::NotIndexed(_) => ErrorData::invalid_params(
+            "requested path or symbol is not indexed",
+            mcp_error_data("not_indexed"),
+        ),
+        crate::Error::LimitExceeded => ErrorData::invalid_params(
+            "request exceeds a configured limit",
+            mcp_error_data("request_limit_exceeded"),
+        ),
+        crate::Error::UnsupportedLanguage(_) => ErrorData::invalid_params(
+            "requested structured language is unsupported",
+            mcp_error_data("unsupported_language"),
+        ),
+        crate::Error::InvalidInput { field, reason } => ErrorData::invalid_params(
+            format!("invalid {field}: {reason}"),
+            Some(serde_json::json!({
+                "category": "invalid_input",
+                "field": field,
+            })),
+        ),
+        crate::Error::InputTooLong { field, max_bytes } => ErrorData::invalid_params(
+            "request input exceeds its byte limit",
+            Some(serde_json::json!({
+                "category": "input_too_long",
+                "field": field,
+                "limit": max_bytes,
+            })),
+        ),
+        crate::Error::InvalidRequest(_) => ErrorData::invalid_params(
+            "request parameters are invalid",
+            mcp_error_data("invalid_request"),
+        ),
+        crate::Error::StaleCursor => {
+            ErrorData::invalid_params("cursor is stale or invalid", mcp_error_data("stale_cursor"))
+        }
+        crate::Error::Regex(_) => ErrorData::invalid_params(
+            "regular expression is invalid",
+            mcp_error_data("invalid_regex"),
+        ),
+        crate::Error::Glob(_) => {
+            ErrorData::invalid_params("glob pattern is invalid", mcp_error_data("invalid_glob"))
+        }
         crate::Error::RootNotFound(_)
-        | crate::Error::PathOutsideRoot(_)
-        | crate::Error::NotIndexed(_)
-        | crate::Error::LimitExceeded
-        | crate::Error::UnsupportedLanguage(_)
-        | crate::Error::InvalidRequest(_)
-        | crate::Error::StaleCursor
-        | crate::Error::Regex(_)
-        | crate::Error::Glob(_) => ErrorData::invalid_params(error.to_string(), None),
-        crate::Error::InvalidConfiguration(_) => {
+        | crate::Error::UnsafeRepositoryRoot(_)
+        | crate::Error::RepositoryMismatch { .. }
+        | crate::Error::InvalidConfiguration(_) => {
             tracing::error!(%error, "repository configuration is invalid");
-            ErrorData::internal_error("repository configuration is invalid", None)
+            ErrorData::internal_error(
+                "repository configuration is invalid",
+                mcp_error_data("repository_configuration"),
+            )
+        }
+        crate::Error::IndexLimitExceeded { .. } => {
+            tracing::error!(%error, "repository indexing limit exceeded");
+            ErrorData::internal_error(
+                "repository indexing limit exceeded",
+                mcp_error_data("repository_index_limit"),
+            )
         }
         crate::Error::RuntimeCapabilityUnavailable { .. } => {
             tracing::error!(%error, "repository runtime is unavailable");
-            ErrorData::internal_error("repository runtime is unavailable", None)
+            ErrorData::internal_error(
+                "repository runtime is unavailable",
+                mcp_error_data("runtime_unavailable"),
+            )
         }
-        crate::Error::IndexNotReady => {
-            ErrorData::internal_error("repository index is not ready", None)
-        }
-        crate::Error::RetryableConflict(_) => {
-            ErrorData::internal_error("repository operation should be retried", None)
-        }
+        crate::Error::IndexNotReady => ErrorData::internal_error(
+            "repository index is not ready",
+            mcp_error_data("index_not_ready"),
+        ),
+        crate::Error::RetryableConflict(_) => ErrorData::internal_error(
+            "repository operation should be retried",
+            mcp_error_data("retryable_conflict"),
+        ),
         _ => {
             tracing::error!(%error, "MCP tool failed");
-            ErrorData::internal_error("repository retrieval failed", None)
+            ErrorData::internal_error(
+                "repository retrieval failed",
+                mcp_error_data("repository_retrieval"),
+            )
         }
     }
+}
+
+fn mcp_error_data(category: &'static str) -> Option<serde_json::Value> {
+    Some(serde_json::json!({ "category": category }))
 }
 
 fn tool_unavailable(message: &'static str) -> CallToolResult {
@@ -861,8 +930,22 @@ mod tests {
 
     #[test]
     fn mcp_error_mapping_separates_invalid_input_from_internal_failures() {
-        let invalid = into_mcp_error(crate::Error::InvalidRequest("bad filter".into()));
+        let invalid = into_mcp_error(crate::Error::InputTooLong {
+            field: "search query",
+            max_bytes: 64,
+        });
         assert_eq!(invalid.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert_eq!(
+            invalid
+                .data
+                .as_ref()
+                .and_then(|data| data["category"].as_str()),
+            Some("input_too_long")
+        );
+        assert_eq!(
+            invalid.data.as_ref().map(|data| &data["limit"]),
+            Some(&serde_json::json!(64))
+        );
 
         let internal = [
             crate::Error::InvalidConfiguration("chunk size must be positive".into()),
@@ -875,6 +958,58 @@ mod tests {
             assert_eq!(
                 into_mcp_error(error).code,
                 rmcp::model::ErrorCode::INTERNAL_ERROR
+            );
+        }
+    }
+
+    #[test]
+    fn mcp_error_mapping_never_serializes_internal_or_input_paths() {
+        let unix_secret = "/home/alice/private-secret/.ssh/id_ed25519";
+        let windows_secret = r"C:\Users\alice\private-secret\index.sqlite";
+        let invalid_regex = ["(?P<", "private-secret", ">"].concat();
+        let errors = [
+            crate::Error::RootNotFound(unix_secret.into()),
+            crate::Error::UnsafeRepositoryRoot(unix_secret.into()),
+            crate::Error::PathOutsideRoot(unix_secret.into()),
+            crate::Error::PathOutsideRoot(windows_secret.into()),
+            crate::Error::NotIndexed(unix_secret.into()),
+            crate::Error::UnsupportedLanguage(unix_secret.into()),
+            crate::Error::InvalidRequest(format!("invalid path: {unix_secret}")),
+            crate::Error::RepositoryMismatch {
+                database: windows_secret.into(),
+                expected_repository: unix_secret.into(),
+                actual_repository: unix_secret.into(),
+            },
+            crate::Error::Io(std::io::Error::other(format!(
+                "permission denied at {unix_secret}"
+            ))),
+            crate::Error::Sqlite(rusqlite::Error::InvalidPath(windows_secret.into())),
+            crate::Error::Regex(regex::Regex::new(&invalid_regex).expect_err("regex")),
+            crate::Error::Glob(globset::Glob::new("[private-secret").expect_err("glob")),
+        ];
+
+        for error in errors {
+            let response = into_mcp_error(error);
+            let wire = serde_json::to_string(&response).expect("serialize public error");
+            for secret in [
+                unix_secret,
+                windows_secret,
+                "private-secret",
+                ".ssh",
+                "alice",
+            ] {
+                assert!(
+                    !wire.contains(secret),
+                    "public error leaked {secret}: {wire}"
+                );
+            }
+            assert!(
+                response
+                    .data
+                    .as_ref()
+                    .and_then(|data| data["category"].as_str())
+                    .is_some(),
+                "public error has no stable category: {wire}"
             );
         }
     }

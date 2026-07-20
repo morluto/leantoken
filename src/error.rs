@@ -70,6 +70,22 @@ pub enum Error {
     LimitExceeded,
     #[error("unsupported structured language for {0}")]
     UnsupportedLanguage(String),
+    /// Request input failed a validation rule described entirely by static text.
+    #[error("invalid {field}: {reason}")]
+    InvalidInput {
+        /// Safe public field label.
+        field: &'static str,
+        /// Safe public validation rule.
+        reason: &'static str,
+    },
+    /// Request input crossed its configured byte bound.
+    #[error("{field} exceeds {max_bytes} bytes")]
+    InputTooLong {
+        /// Safe public field label.
+        field: &'static str,
+        /// Inclusive byte bound.
+        max_bytes: usize,
+    },
     #[error("invalid request: {0}")]
     InvalidRequest(String),
     #[error("invalid repository configuration: {0}")]
