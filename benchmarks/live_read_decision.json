@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "experiment": "live-read-decision-v1",
+  "profile": {
+    "iterations": 200,
+    "hot_set": 8,
+    "max_tokens": 512,
+    "pressure_bytes": 268435456,
+    "candidate_cache_bytes": 67108864
+  },
+  "adoption_threshold": {
+    "minimum_avoidable_read_p95_ms": 1.0,
+    "minimum_live_read_share_percent": 10.0,
+    "minimum_material_corpus_platform_pairs": 2,
+    "rule": "Prototype a byte-bounded LRU only when every threshold is met; otherwise publish a no-cache decision."
+  },
+  "corpora": [
+    {
+      "id": "flask",
+      "repository": "https://github.com/pallets/flask.git",
+      "revision": "2ac89889f4cc330eabd50f295dcef02828522c69"
+    },
+    {
+      "id": "vue-core",
+      "repository": "https://github.com/vuejs/core.git",
+      "revision": "31d0f23757afb410c638a9c29d44d76d0944e18f"
+    }
+  ]
+}
