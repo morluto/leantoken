@@ -210,9 +210,10 @@ pub fn resolve_existing(root: &Path, requested: &str) -> Result<PathBuf> {
 
 pub fn validate_relative(requested: &str) -> Result<PathBuf> {
     if requested.is_empty() || requested.contains('\0') {
-        return Err(Error::InvalidRequest(
-            "path must be a non-empty relative path".into(),
-        ));
+        return Err(Error::InvalidInput {
+            field: "path",
+            reason: "must be a non-empty relative path",
+        });
     }
     // `Path` only recognizes prefixes for the host platform. Reject common
     // Windows absolute forms explicitly so a request has the same contract on

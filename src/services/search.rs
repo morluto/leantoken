@@ -168,9 +168,10 @@ impl Services {
     ) -> Result<SearchResponse> {
         check_cancelled(cancellation)?;
         if request.query.trim().is_empty() {
-            return Err(Error::InvalidRequest(
-                "search query must not be empty".into(),
-            ));
+            return Err(Error::InvalidInput {
+                field: "search query",
+                reason: "must not be empty",
+            });
         }
         validate_input(&request.query, "search query", MAX_QUERY_BYTES)?;
         validate_patterns(&request.include_paths)?;

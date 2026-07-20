@@ -113,7 +113,10 @@ fn fuzzy_entries(
 ) -> Result<FilePage> {
     let query = query
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| Error::InvalidRequest("find requires query".into()))?;
+        .ok_or(Error::InvalidInput {
+            field: "query",
+            reason: "is required for find",
+        })?;
     let pattern = Pattern::new(
         query,
         CaseMatching::Ignore,
@@ -176,7 +179,10 @@ fn glob_entries(
 ) -> Result<FilePage> {
     let pattern = pattern
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| Error::InvalidRequest("glob requires pattern".into()))?;
+        .ok_or(Error::InvalidInput {
+            field: "pattern",
+            reason: "is required for glob",
+        })?;
     let matcher = Glob::new(pattern)?.compile_matcher();
     let after = cursor_path(cursor)?;
     let capacity = limit.saturating_add(1);

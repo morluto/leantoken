@@ -143,9 +143,10 @@ impl Services {
     ) -> Result<OutlineResponse> {
         check_cancelled(cancellation)?;
         if request.paths.is_empty() {
-            return Err(Error::InvalidRequest(
-                "outline requires at least one path".into(),
-            ));
+            return Err(Error::InvalidInput {
+                field: "paths",
+                reason: "must contain at least one path",
+            });
         }
         if request.paths.len() > MAX_INPUT_ITEMS {
             return Err(Error::LimitExceeded);
@@ -251,9 +252,10 @@ impl Services {
         validate_relative(&request.path)?;
         if request.symbol.is_some() && (request.start_line.is_some() || request.end_line.is_some())
         {
-            return Err(Error::InvalidRequest(
-                "read accepts either symbol or line range, not both".into(),
-            ));
+            return Err(Error::InvalidInput {
+                field: "read target",
+                reason: "must use either a symbol or line range, not both",
+            });
         }
         self.consistent(|session, generation| {
             check_cancelled(cancellation)?;
@@ -272,8 +274,10 @@ impl Services {
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
         let path = resolve_existing(&self.config.root, &request.path)?;
         let bytes = fs::read(path)?;
-        let source = std::str::from_utf8(&bytes)
-            .map_err(|_| Error::InvalidRequest("requested file is not UTF-8 text".into()))?;
+        let source = std::str::from_utf8(&bytes).map_err(|_| Error::InvalidInput {
+            field: "path",
+            reason: "must identify UTF-8 text",
+        })?;
         let line_count = source.lines().count().max(1);
 
         let (start_line, requested_end) = if let Some(symbol_name) = &request.symbol {
@@ -288,9 +292,10 @@ impl Services {
             )
         };
         if start_line == 0 || requested_end < start_line || start_line > line_count {
-            return Err(Error::InvalidRequest(
-                "invalid or out-of-range line range".into(),
-            ));
+            return Err(Error::InvalidInput {
+                field: "line range",
+                reason: "must be ordered and within the requested file",
+            });
         }
         let requested_end = requested_end.min(line_count);
         let content = crate::text::excerpt(source, start_line, requested_end);
