@@ -22,6 +22,12 @@ impl std::fmt::Display for RetryableOperation {
 pub enum Error {
     #[error("repository root does not exist: {0}")]
     RootNotFound(PathBuf),
+    /// Automatic indexing refused a filesystem root, home directory, or parent
+    /// of the current user's home directory.
+    #[error(
+        "repository root is too broad for automatic indexing: {0}; pass --allow-broad-root to override"
+    )]
+    UnsafeRepositoryRoot(PathBuf),
     #[error("path escapes repository root: {0}")]
     PathOutsideRoot(PathBuf),
     #[error("path is not indexed: {0}")]

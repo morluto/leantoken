@@ -126,6 +126,22 @@ fn config_rejects_file_as_root() {
 }
 
 #[test]
+fn config_rejects_the_current_home_directory_by_default() {
+    let home = directories::BaseDirs::new()
+        .expect("home directories")
+        .home_dir()
+        .canonicalize()
+        .expect("canonical home");
+
+    let error = Config::discover(&home, None).expect_err("home root must fail closed");
+
+    assert!(matches!(
+        error,
+        leantoken::Error::UnsafeRepositoryRoot(path) if path == home
+    ));
+}
+
+#[test]
 fn config_defaults_bound_output_and_timing() {
     let root = tempfile::tempdir().expect("tempdir");
     let config = Config::discover(root.path(), None).expect("discover");

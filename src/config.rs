@@ -53,8 +53,21 @@ impl Config {
     /// path outside the source tree when the platform provides one. An existing
     /// explicit database, or otherwise its existing parent, is canonicalized so
     /// coordination and repository discovery use one cache identity across path
-    /// aliases.
+    /// aliases. Filesystem roots, the current user's home directory, and parents
+    /// of that home directory are rejected by default.
     pub fn discover(root: impl AsRef<Path>, database_path: Option<PathBuf>) -> Result<Self> {
+        Self::discover_with_broad_root(root, database_path, false)
+    }
+
+    /// Resolve a repository root with an explicit broad-root safety override.
+    ///
+    /// Set `allow_broad_root` only when indexing a filesystem root, the current
+    /// user's home directory, or one of its parents is deliberate.
+    pub fn discover_with_broad_root(
+        root: impl AsRef<Path>,
+        database_path: Option<PathBuf>,
+        allow_broad_root: bool,
+    ) -> Result<Self> {
         let root = root.as_ref().canonicalize().map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 Error::RootNotFound(root.as_ref().to_path_buf())
@@ -67,6 +80,9 @@ impl Config {
                 "repository root is not a directory: {}",
                 root.display()
             )));
+        }
+        if !allow_broad_root && is_unsafe_repository_root(&root, home_directory().as_deref()) {
+            return Err(Error::UnsafeRepositoryRoot(root));
         }
         let database_is_managed_cache = database_path.is_none();
         let database_path = database_path.unwrap_or_else(|| default_database_path(&root));
@@ -113,6 +129,19 @@ impl Config {
     }
 }
 
+fn home_directory() -> Option<PathBuf> {
+    directories::BaseDirs::new().map(|directories| {
+        directories
+            .home_dir()
+            .canonicalize()
+            .unwrap_or_else(|_| directories.home_dir().to_path_buf())
+    })
+}
+
+fn is_unsafe_repository_root(root: &Path, home: Option<&Path>) -> bool {
+    root.parent().is_none() || home.is_some_and(|home| home.starts_with(root))
+}
+
 fn canonicalize_database_path(path: PathBuf) -> PathBuf {
     let path = std::path::absolute(&path).unwrap_or(path);
     if let Ok(canonical) = path.canonicalize() {
@@ -148,4 +177,35 @@ fn default_database_path(root: &Path) -> PathBuf {
             .join("index.sqlite");
     }
     root.join(".leantoken").join("index.sqlite")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsafe_root_policy_rejects_home_and_its_ancestors() {
+        let directory = tempfile::tempdir().expect("directory");
+        let home = directory.path().join("users/example");
+        std::fs::create_dir_all(&home).expect("home");
+
+        assert!(is_unsafe_repository_root(directory.path(), Some(&home)));
+        assert!(is_unsafe_repository_root(&home, Some(&home)));
+        assert!(!is_unsafe_repository_root(
+            &directory.path().join("workspace"),
+            Some(&home)
+        ));
+    }
+
+    #[test]
+    fn unsafe_root_policy_rejects_a_filesystem_root_without_home_context() {
+        let root = std::env::current_dir()
+            .expect("current directory")
+            .ancestors()
+            .last()
+            .expect("filesystem root")
+            .to_path_buf();
+
+        assert!(is_unsafe_repository_root(&root, None));
+    }
 }

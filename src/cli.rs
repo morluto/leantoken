@@ -24,6 +24,10 @@ pub struct Cli {
     #[arg(long, value_name = "PATH", global = true, default_value = ".")]
     pub root: PathBuf,
 
+    /// Allow indexing a filesystem root, home directory, or parent of home.
+    #[arg(long, global = true)]
+    pub allow_broad_root: bool,
+
     /// SQLite database path.
     #[arg(long, value_name = "PATH", global = true)]
     pub database: Option<PathBuf>,
@@ -45,9 +49,14 @@ impl Cli {
     ///
     /// # Errors
     ///
-    /// Returns an error when the repository root cannot be canonicalized.
+    /// Returns an error when the repository root cannot be canonicalized or is
+    /// an unsafe broad root without the explicit override.
     pub fn config(&self) -> Result<Config> {
-        let mut config = Config::discover(&self.root, self.database.clone())?;
+        let mut config = Config::discover_with_broad_root(
+            &self.root,
+            self.database.clone(),
+            self.allow_broad_root,
+        )?;
         config.tokenizer = self.tokenizer;
         Ok(config)
     }
