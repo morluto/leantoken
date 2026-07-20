@@ -944,6 +944,7 @@ mod tests {
         let root = temp.path().join("managed");
         let repository = temp.path().join("repository");
         fs::create_dir(&repository).expect("repository");
+        let repository = fs::canonicalize(repository).expect("canonical repository");
         let directory = root.join(managed_cache_id(&repository));
         fs::create_dir_all(&directory).expect("cache directory");
         let database = directory.join(DATABASE_NAME);
@@ -965,7 +966,11 @@ mod tests {
         drop(follower);
 
         let deleted = manager.prune(&prune).expect("inactive prune");
-        assert_eq!(deleted.results[0].action, CachePruneAction::Deleted);
+        assert_eq!(
+            deleted.results[0].action,
+            CachePruneAction::Deleted,
+            "unexpected prune report: {deleted:#?}"
+        );
         assert!(!database.exists());
         assert!(directory.join(LEASE_NAME).exists());
         assert!(manager.list().expect("empty list").entries.is_empty());
