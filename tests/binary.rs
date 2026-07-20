@@ -726,7 +726,9 @@ fn setup_dry_run_reports_exact_plan_without_mutation() {
     assert_eq!(report["dry_run"], true);
     assert_eq!(report["plan"][0]["client"], "codex");
     assert_eq!(report["plan"][0]["action"], "create");
-    assert_eq!(report["launcher"]["follows_latest_npm_release"], false);
+    assert_eq!(report["launcher"]["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(report["launcher"]["package"], serde_json::Value::Null);
+    assert_eq!(report["launcher"]["may_contact_network"], false);
     assert!(!temp.path().join(".codex/config.toml").exists());
 }
 
@@ -747,10 +749,11 @@ fn malformed_selected_config_blocks_all_setup_writes() {
 }
 
 #[test]
-fn npx_setup_registers_latest_release_instead_of_its_cache_path() {
+fn npx_setup_registers_exact_release_instead_of_its_cache_path() {
     let temp = tempfile::tempdir().expect("temporary home");
-    let node = temp.path().join("node");
-    let npm = temp.path().join("npm-cli.js");
+    let runtime = temp.path().join("node runtime");
+    let node = runtime.join(if cfg!(windows) { "node.exe" } else { "node" });
+    let npm = runtime.join("npm cli.js");
     let setup = Command::cargo_bin("leantoken")
         .expect("binary")
         .env("HOME", temp.path())
@@ -768,10 +771,11 @@ fn npx_setup_registers_latest_release_instead_of_its_cache_path() {
     );
     let report: serde_json::Value =
         serde_json::from_slice(&setup.stdout).expect("setup JSON output");
-    assert_eq!(
-        report["launcher"]["follows_latest_npm_release"],
-        true
-    );
+    let package = format!("leantoken@{}", env!("CARGO_PKG_VERSION"));
+    assert_eq!(report["launcher"]["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(report["launcher"]["package"], package);
+    assert_eq!(report["launcher"]["may_contact_network"], true);
+    assert!(!report.to_string().contains("@latest"));
 
     let config: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(temp.path().join(".claude.json"))
@@ -785,12 +789,59 @@ fn npx_setup_registers_latest_release_instead_of_its_cache_path() {
             npm.to_str().unwrap(),
             "exec",
             "--yes",
-            "--package=leantoken@latest",
+            format!("--package=leantoken@{}", env!("CARGO_PKG_VERSION")),
             "--",
             "leantoken",
             "mcp"
         ])
     );
+    assert!(!config.to_string().contains("@latest"));
+}
+
+#[test]
+fn setup_refresh_targets_only_existing_mcp_entries() {
+    let temp = tempfile::tempdir().expect("temporary home");
+    let node = temp.path().join("node");
+    let npm = temp.path().join("npm-cli.js");
+    let command = || {
+        let mut command = Command::cargo_bin("leantoken").expect("binary");
+        command
+            .env("HOME", temp.path())
+            .env("USERPROFILE", temp.path())
+            .env("npm_lifecycle_event", "npx")
+            .env("npm_node_execpath", &node)
+            .env("npm_execpath", &npm);
+        command
+    };
+    let setup = command()
+        .args(["--json", "setup", "--claude", "--yes"])
+        .output()
+        .expect("run initial setup");
+    assert!(setup.status.success());
+    std::fs::create_dir_all(temp.path().join(".cursor")).expect("Cursor directory");
+    std::fs::write(
+        temp.path().join(".cursor/mcp.json"),
+        "{\"mcpServers\":{\"other\":{\"command\":\"other\"}}}\n",
+    )
+    .expect("Cursor config");
+
+    let refresh = command()
+        .args(["--json", "setup", "--refresh", "--yes"])
+        .output()
+        .expect("run setup refresh");
+    assert!(
+        refresh.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&refresh.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&refresh.stdout).expect("refresh JSON output");
+    assert_eq!(report["plan"].as_array().unwrap().len(), 1);
+    assert_eq!(report["plan"][0]["client"], "claude");
+    assert_eq!(report["plan"][0]["action"], "already_current");
+    let cursor = std::fs::read_to_string(temp.path().join(".cursor/mcp.json"))
+        .expect("Cursor config after refresh");
+    assert!(!cursor.contains("\"leantoken\""));
 }
 
 #[test]
@@ -816,9 +867,16 @@ fn npx_setup_explains_that_it_does_not_install_a_global_cli() {
     assert!(stdout.contains("LeanToken // Context Distillery"));
     assert!(stdout.contains("LeanToken is configured for 1 client."));
     assert!(stdout.contains("Restart or reload"));
-    assert!(stdout.contains("npx leantoken@latest doctor"));
+    assert!(stdout.contains(&format!(
+        "npx leantoken@{} doctor",
+        env!("CARGO_PKG_VERSION")
+    )));
     assert!(stdout.contains("no global `leantoken` command was installed"));
-    assert!(stdout.contains("npx leantoken@latest <command>"));
+    assert!(stdout.contains("npx --yes leantoken@latest setup --refresh --yes"));
+    assert!(stdout.contains(&format!(
+        "pinned to LeanToken v{}",
+        env!("CARGO_PKG_VERSION")
+    )));
     assert!(stdout.contains("npm install --global leantoken@latest"));
 }
 
