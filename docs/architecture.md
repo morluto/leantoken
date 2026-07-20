@@ -189,11 +189,21 @@ process under the shared operation lock. Followers retry leadership
 periodically, so an operating-system lock release after process exit provides
 failover without a PID lease or stale-lock cleanup.
 
-The leader registers its watcher before the initial reconciliation. Events that
-arrive during discovery or parsing remain queued and are applied after the
-commit, closing the startup event gap without an unconditional second full
-walk. Later events are debounced and coalesced; ambiguous rename sequences,
-backend rescan requests, and queue overflow request a full reconciliation.
+The leader registers its watcher before the initial reconciliation, preserving
+the startup event-gap guarantee. The automatic-indexing runtime uses a
+single-slot public queue; raw events, retained paths, and incomplete rename
+cookies have separate hard bounds. Overflow or ambiguity discards detailed
+path state in favor of one sticky full-reconciliation request, so a long initial
+scan cannot accumulate an unbounded event backlog.
+
+After any scan, queued messages drain into one bounded scheduler state. Path
+changes deduplicate and wait for the configured quiet period. Ambiguous rename
+sequences, backend rescan requests, public queue overflow, or scheduler path
+overflow upgrade that state to one full reconciliation. Consecutive full scans
+use a capped exponential cooldown, while transient reconciliation failures
+retain the same pending work under a separate capped exponential retry. Root,
+limit, repository-binding, and configuration failures are terminal and stop
+the indexing runtime instead of entering either retry loop.
 
 For existing regular files, the watcher reconciles only the reported paths.
 New paths, directory changes, symlinks, ignore-file changes, configuration
