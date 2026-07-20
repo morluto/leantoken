@@ -399,6 +399,67 @@ fn targeted_reconcile_applies_new_file_and_ignore_deltas() {
 }
 
 #[test]
+fn targeted_reconcile_applies_leantokenignore_add_change_and_removal() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("first.rs"), "fn first() {}\n").expect("first");
+    std::fs::write(root.path().join("second.rs"), "fn second() {}\n").expect("second");
+    let config = Arc::new(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    );
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+    indexer.reconcile(false).expect("initial reconcile");
+
+    std::fs::write(root.path().join(".leantokenignore"), "first.rs\n").expect("add ignore");
+    indexer
+        .reconcile_paths(&[".leantokenignore".into()])
+        .expect("apply added ignore");
+    assert!(storage.find_file("first.rs").expect("first lookup").is_none());
+    assert!(storage.find_file("second.rs").expect("second lookup").is_some());
+
+    std::fs::write(root.path().join(".leantokenignore"), "second.rs\n")
+        .expect("change ignore");
+    indexer
+        .reconcile_paths(&[".leantokenignore".into()])
+        .expect("apply changed ignore");
+    assert!(storage.find_file("first.rs").expect("first lookup").is_some());
+    assert!(storage.find_file("second.rs").expect("second lookup").is_none());
+
+    std::fs::remove_file(root.path().join(".leantokenignore")).expect("remove ignore");
+    indexer
+        .reconcile_paths(&[".leantokenignore".into()])
+        .expect("apply removed ignore");
+    assert!(storage.find_file("first.rs").expect("first lookup").is_some());
+    assert!(storage.find_file("second.rs").expect("second lookup").is_some());
+}
+
+#[test]
+fn changing_generated_policy_invalidates_the_index_configuration_hash() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    std::fs::create_dir(root.path().join("target")).expect("target");
+    std::fs::write(root.path().join("target/generated.rs"), "fn generated() {}\n")
+        .expect("generated");
+    let first_config = Arc::new(Config::discover(root.path(), Some(database.clone())).expect("config"));
+    let storage = Storage::open(&database).expect("storage");
+    Indexer::new(first_config, storage.clone())
+        .expect("indexer")
+        .reconcile(false)
+        .expect("initial reconcile");
+    assert!(storage.find_file("target/generated.rs").expect("lookup").is_none());
+
+    let mut changed = Config::discover(root.path(), Some(database)).expect("changed config");
+    changed.include_generated = true;
+    let response = Indexer::new(Arc::new(changed), storage.clone())
+        .expect("changed indexer")
+        .reconcile(false)
+        .expect("configuration rebuild");
+
+    assert_eq!(response.repository_generation, 2);
+    assert!(storage.find_file("target/generated.rs").expect("lookup").is_some());
+}
+
+#[test]
 fn new_file_delta_resolves_existing_importers() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(

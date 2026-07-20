@@ -14,7 +14,7 @@ use crate::error::RetryableOperation;
 use crate::model::IndexResponse;
 use crate::parser::{self, ParseOutput};
 use crate::repository::{
-    DiscoveredFile, discover_files_with_limits_and_filter, enforce_limit, slash_path,
+    DiscoveredFile, discover_files_with_limits_policy_and_filter, enforce_limit, slash_path,
     validate_relative,
 };
 use crate::storage::{ChunkInput, ImportInput, IndexedFile, ReferenceInput, Storage, SymbolInput};
@@ -173,9 +173,10 @@ impl Indexer {
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
 
-        let discovery = discover_files_with_limits_and_filter(
+        let discovery = discover_files_with_limits_policy_and_filter(
             &self.config.root,
             self.config.discovery_limits(),
+            self.config.discovery_policy(),
             cancellation,
             |path| !self.config.is_database_artifact_path(path),
         )?;
@@ -338,7 +339,11 @@ impl Indexer {
         let visibility_delta = paths.iter().any(|requested| {
             let relative = Path::new(requested);
             let relative_path = slash_path(relative);
-            if is_ignore_control_path(&relative_path) {
+            if self
+                .config
+                .discovery_policy()
+                .is_ignore_control_path(&relative_path)
+            {
                 return true;
             }
             let absolute = self.config.root.join(relative);
@@ -354,9 +359,10 @@ impl Indexer {
         });
         let discovered = visibility_delta
             .then(|| {
-                discover_files_with_limits_and_filter(
+                discover_files_with_limits_policy_and_filter(
                     &self.config.root,
                     self.config.discovery_limits(),
+                    self.config.discovery_policy(),
                     cancellation,
                     |path| !self.config.is_database_artifact_path(path),
                 )
@@ -661,7 +667,7 @@ impl Indexer {
 
     fn config_hash(&self) -> String {
         let input = format!(
-            "leantoken-index-v5-9-language\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
+            "leantoken-index-v6-9-language\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
             env!("CARGO_PKG_VERSION"),
             self.config.max_walk_entries,
             self.config.max_files,
@@ -670,6 +676,7 @@ impl Indexer {
             self.config.max_file_bytes,
             self.config.max_prepare_batch_files,
             self.config.max_prepare_batch_bytes,
+            self.config.include_generated,
             self.config.chunk_lines,
             self.config.chunk_bytes,
             self.config.tokenizer.name()
@@ -852,13 +859,6 @@ fn content_unchanged(path: &Path, expected_hash: &str, max_file_bytes: u64) -> b
         Err(_) => false,
         Ok(None) => false,
     }
-}
-
-fn is_ignore_control_path(path: &str) -> bool {
-    path == ".gitignore"
-        || path == ".ignore"
-        || path.ends_with("/.gitignore")
-        || path.ends_with("/.ignore")
 }
 
 fn resolve_imports(

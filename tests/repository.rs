@@ -1,7 +1,8 @@
 use std::fs;
 
 use leantoken::repository::{
-    discover_files, discover_files_with_limits, discover_files_with_limits_cancellable,
+    DiscoveryPolicy, discover_files, discover_files_with_limits,
+    discover_files_with_limits_and_policy, discover_files_with_limits_cancellable,
     git_changed_paths, resolve_existing, slash_path, validate_relative,
 };
 use leantoken::{DiscoveryLimits, Error, IndexLimitKind};
@@ -60,6 +61,116 @@ fn discover_files_honors_gitignore() {
     assert!(paths.contains(&".github/workflows/ci.yml"));
     assert!(!paths.contains(&"ignored.rs"));
     assert!(!paths.contains(&".git/config"));
+}
+
+#[test]
+fn discover_files_excludes_generated_trees_without_hiding_repository_dotfiles() {
+    let root = tempfile::tempdir().expect("tempdir");
+    for (path, contents) in [
+        ("node_modules/pkg/index.js", "export const generated = true;\n"),
+        ("target/debug/generated.rs", "fn generated() {}\n"),
+        (".venv/lib/site.py", "generated = True\n"),
+        (".tox/py/bin/tool.py", "generated = True\n"),
+        (".cache/tool/data.rs", "fn cached() {}\n"),
+        (".yarn/cache/pkg.zip", "cache\n"),
+        (".github/workflows/ci.yml", "name: ci\n"),
+        (".devcontainer/devcontainer.json", "{}\n"),
+        (".cargo/config.toml", "[build]\n"),
+        (".env.example", "KEY=value\n"),
+        ("src/target", "ordinary file\n"),
+    ] {
+        let absolute = root.path().join(path);
+        fs::create_dir_all(absolute.parent().expect("fixture parent")).expect("fixture directory");
+        fs::write(absolute, contents).expect("fixture file");
+    }
+    let default = discover_files_with_limits(root.path(), DiscoveryLimits::default())
+        .expect("default discovery");
+    let paths = default
+        .files
+        .iter()
+        .map(|file| file.relative_path.as_str())
+        .collect::<Vec<_>>();
+    for included in [
+        ".github/workflows/ci.yml",
+        ".devcontainer/devcontainer.json",
+        ".cargo/config.toml",
+        ".env.example",
+        "src/target",
+    ] {
+        assert!(paths.contains(&included), "default policy omitted {included}");
+    }
+    for excluded in [
+        "node_modules/pkg/index.js",
+        "target/debug/generated.rs",
+        ".venv/lib/site.py",
+        ".tox/py/bin/tool.py",
+        ".cache/tool/data.rs",
+        ".yarn/cache/pkg.zip",
+    ] {
+        assert!(!paths.contains(&excluded), "default policy admitted {excluded}");
+    }
+
+    let inclusive = discover_files_with_limits_and_policy(
+        root.path(),
+        DiscoveryLimits::default(),
+        DiscoveryPolicy::new(true),
+    )
+    .expect("inclusive discovery");
+    let inclusive_paths = inclusive
+        .files
+        .iter()
+        .map(|file| file.relative_path.as_str())
+        .collect::<Vec<_>>();
+    assert!(inclusive_paths.contains(&"node_modules/pkg/index.js"));
+    assert!(inclusive_paths.contains(&"target/debug/generated.rs"));
+    assert!(inclusive_paths.contains(&".venv/lib/site.py"));
+}
+
+#[test]
+fn leantokenignore_has_precedence_over_gitignore_and_applies_when_nested() {
+    let root = tempfile::tempdir().expect("tempdir");
+    fs::create_dir(root.path().join(".git")).expect("git marker");
+    fs::create_dir_all(root.path().join("fixtures/nested")).expect("fixtures");
+    fs::write(root.path().join("fixtures/keep.rs"), "fn keep() {}\n").expect("keep");
+    fs::write(root.path().join("fixtures/drop.rs"), "fn drop() {}\n").expect("drop");
+    fs::write(
+        root.path().join("fixtures/nested/drop.rs"),
+        "fn nested_drop() {}\n",
+    )
+    .expect("nested drop");
+    fs::write(root.path().join(".gitignore"), "fixtures/\n").expect("gitignore");
+    fs::write(
+        root.path().join(".leantokenignore"),
+        "!fixtures/\n!fixtures/**\nfixtures/drop.rs\n",
+    )
+    .expect("leantokenignore");
+    fs::write(
+        root.path().join("fixtures/nested/.leantokenignore"),
+        "drop.rs\n",
+    )
+    .expect("nested leantokenignore");
+
+    let files = discover_files(root.path(), 1024).expect("discovery");
+    let paths = files
+        .iter()
+        .map(|file| file.relative_path.as_str())
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&".leantokenignore"));
+    assert!(paths.contains(&"fixtures/keep.rs"));
+    assert!(paths.contains(&"fixtures/nested/.leantokenignore"));
+    assert!(!paths.contains(&"fixtures/drop.rs"));
+    assert!(!paths.contains(&"fixtures/nested/drop.rs"));
+}
+
+#[test]
+fn discovery_policy_case_behavior_matches_the_host_platform() {
+    let policy = DiscoveryPolicy::default();
+    assert!(!policy.includes_path("node_modules/pkg/index.js", false));
+    assert!(policy.includes_path("target", false));
+    assert_eq!(
+        policy.includes_path("NODE_MODULES/pkg/index.js", false),
+        !cfg!(windows)
+    );
 }
 
 #[test]

@@ -32,6 +32,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub allow_broad_root: bool,
 
+    /// Include known generated and package-cache directories.
+    #[arg(long, global = true)]
+    pub include_generated: bool,
+
     /// Maximum filesystem entries yielded by repository discovery.
     #[arg(long, value_name = "COUNT", global = true)]
     pub max_walk_entries: Option<NonZeroU64>,
@@ -110,6 +114,7 @@ impl Cli {
         if let Some(value) = self.max_prepare_batch_bytes {
             config.max_prepare_batch_bytes = value.get();
         }
+        config.include_generated = self.include_generated;
         config.tokenizer = self.tokenizer;
         config.discovery_limits().validate()?;
         Ok(config)

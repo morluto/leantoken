@@ -69,6 +69,20 @@ batch byte limit must be at least the per-file byte limit. Limit failures stop
 automatic MCP indexing until the process is restarted with a narrower root or
 adjusted limits, preventing a fixed tree from being rescanned every 500 ms.
 
+Discovery keeps useful hidden repository content, including `.github`,
+`.devcontainer`, root dotfiles, and `.cargo/config.toml`. It skips known
+generated and cache trees such as `node_modules`, `target`, `.venv`, `venv`,
+`.tox`, `.cache`, package-manager caches, Python caches, `.gradle`, and
+`.rustup`. Use `--include-generated` only when those trees are intentional
+source inputs.
+
+Place `.leantokenignore` files at the repository root or in nested directories
+to add gitignore-style rules. They have higher precedence than `.gitignore` and
+`.ignore`; negation rules can therefore restore paths hidden by those files.
+Built-in generated-tree exclusions run before ignore matching, so restoring
+those requires `--include-generated`. Changes to any ignore control file cause
+one bounded visibility reconciliation.
+
 Logs go to stderr. Stdout is reserved for MCP protocol messages. LeanToken
 service errors exposed through MCP use fixed, allowlisted messages and a stable
 `data.category` for client handling. Repository, database, and external

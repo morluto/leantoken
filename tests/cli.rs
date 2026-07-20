@@ -318,6 +318,21 @@ fn cli_global_root_and_database_options() {
         root.path().canonicalize().unwrap().join("custom.sqlite")
     );
     assert!(!cli.allow_broad_root);
+    assert!(!cli.include_generated);
+}
+
+#[test]
+fn cli_generated_tree_override_is_explicit_and_global() {
+    let root = tempfile::tempdir().expect("root");
+    let cli = parse(&[
+        "status",
+        "--root",
+        root.path().to_str().expect("root UTF-8"),
+        "--include-generated",
+    ]);
+
+    assert!(cli.include_generated);
+    assert!(cli.config().expect("config").include_generated);
 }
 
 #[test]
