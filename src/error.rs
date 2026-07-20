@@ -1,5 +1,29 @@
 use std::path::PathBuf;
 
+/// Repository indexing resource whose configured hard limit was exceeded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexLimitKind {
+    /// Filesystem entries yielded by repository traversal.
+    WalkEntries,
+    /// Files admitted to the source index.
+    Files,
+    /// Aggregate bytes of files admitted to the source index.
+    TotalSourceBytes,
+    /// Repository-relative traversal depth below the root.
+    Depth,
+}
+
+impl std::fmt::Display for IndexLimitKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WalkEntries => formatter.write_str("walk entries"),
+            Self::Files => formatter.write_str("source files"),
+            Self::TotalSourceBytes => formatter.write_str("total source bytes"),
+            Self::Depth => formatter.write_str("repository depth"),
+        }
+    }
+}
+
 /// Repository operation that may be retried after concurrent state changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetryableOperation {
@@ -28,6 +52,16 @@ pub enum Error {
         "repository root is too broad for automatic indexing: {0}; pass --allow-broad-root to override"
     )]
     UnsafeRepositoryRoot(PathBuf),
+    /// Repository discovery stopped instead of returning a truncated index.
+    #[error("index {kind} limit exceeded: observed {observed}, limit {limit}")]
+    IndexLimitExceeded {
+        /// Resource whose configured bound was crossed.
+        kind: IndexLimitKind,
+        /// First observed value outside the configured bound.
+        observed: u64,
+        /// Configured inclusive maximum.
+        limit: u64,
+    },
     #[error("path escapes repository root: {0}")]
     PathOutsideRoot(PathBuf),
     #[error("path is not indexed: {0}")]

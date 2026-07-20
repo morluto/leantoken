@@ -29,6 +29,100 @@ fn indexer_initial_reconcile_indexes_files_and_advances_generation() {
 }
 
 #[test]
+fn full_reconcile_limit_error_preserves_the_committed_generation() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    std::fs::write(root.path().join("a.rs"), "fn old() {}\n").expect("a");
+    let first_config = Arc::new(Config::discover(root.path(), Some(database.clone())).expect("config"));
+    let storage = Storage::open(&database).expect("storage");
+    Indexer::new(first_config, storage.clone())
+        .expect("indexer")
+        .reconcile(false)
+        .expect("initial reconcile");
+    std::fs::write(root.path().join("b.rs"), "fn new() {}\n").expect("b");
+
+    let mut limited = Config::discover(root.path(), Some(database)).expect("limited config");
+    limited.max_files = 1;
+    let error = Indexer::new(Arc::new(limited), storage.clone())
+        .expect("limited indexer")
+        .reconcile(false)
+        .expect_err("file limit");
+
+    assert!(matches!(
+        error,
+        Error::IndexLimitExceeded {
+            kind: leantoken::IndexLimitKind::Files,
+            observed: 2,
+            limit: 1
+        }
+    ));
+    assert_eq!(storage.meta().expect("meta").repository_generation, 1);
+    assert!(storage.find_file("a.rs").expect("a").is_some());
+    assert!(storage.find_file("b.rs").expect("b").is_none());
+}
+
+#[test]
+fn targeted_reconcile_enforces_aggregate_bytes_before_publication() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    std::fs::write(root.path().join("a.rs"), "a").expect("a");
+    std::fs::write(root.path().join("b.rs"), "b").expect("b");
+    let mut config = Config::discover(root.path(), Some(database)).expect("config");
+    config.max_total_source_bytes = 2;
+    let config = Arc::new(config);
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+    indexer.reconcile(false).expect("initial reconcile");
+
+    std::fs::write(root.path().join("a.rs"), "aa").expect("grow a");
+    let error = indexer
+        .reconcile_paths(&["a.rs".into()])
+        .expect_err("aggregate limit");
+
+    assert!(matches!(
+        error,
+        Error::IndexLimitExceeded {
+            kind: leantoken::IndexLimitKind::TotalSourceBytes,
+            observed: 3,
+            limit: 2
+        }
+    ));
+    assert_eq!(storage.meta().expect("meta").repository_generation, 1);
+    assert_eq!(
+        storage
+            .find_file("a.rs")
+            .expect("a")
+            .expect("indexed a")
+            .size_bytes,
+        1
+    );
+}
+
+#[test]
+fn changing_discovery_limits_invalidates_the_index_configuration_hash() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    std::fs::write(root.path().join("a.rs"), "fn stable() {}\n").expect("a");
+    let first_config = Arc::new(Config::discover(root.path(), Some(database.clone())).expect("config"));
+    let storage = Storage::open(&database).expect("storage");
+    Indexer::new(first_config, storage.clone())
+        .expect("indexer")
+        .reconcile(false)
+        .expect("initial reconcile");
+
+    let mut changed = Config::discover(root.path(), Some(database)).expect("changed config");
+    changed.max_files -= 1;
+    let response = Indexer::new(Arc::new(changed), storage.clone())
+        .expect("changed indexer")
+        .reconcile(false)
+        .expect("configuration rebuild");
+
+    assert_eq!(response.repository_generation, 2);
+    assert_eq!(response.files_indexed, 1);
+    assert_eq!(storage.meta().expect("meta").repository_generation, 2);
+}
+
+#[test]
 fn indexer_rejects_invalid_chunk_configuration_at_construction() {
     let root = tempfile::tempdir().expect("root");
     let mut config =
@@ -37,6 +131,19 @@ fn indexer_rejects_invalid_chunk_configuration_at_construction() {
     let storage = Storage::open(&config.database_path).expect("storage");
 
     let error = Indexer::new(Arc::new(config), storage).expect_err("invalid chunk configuration");
+
+    assert!(matches!(error, Error::InvalidConfiguration(_)));
+}
+
+#[test]
+fn indexer_rejects_zero_discovery_limits_at_construction() {
+    let root = tempfile::tempdir().expect("root");
+    let mut config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    config.max_walk_entries = 0;
+    let storage = Storage::open(&config.database_path).expect("storage");
+
+    let error = Indexer::new(Arc::new(config), storage).expect_err("invalid discovery limits");
 
     assert!(matches!(error, Error::InvalidConfiguration(_)));
 }

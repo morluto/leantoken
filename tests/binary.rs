@@ -46,6 +46,39 @@ fn cli_indexes_statuses_and_searches_as_json() {
 }
 
 #[test]
+fn cli_index_limit_error_is_structured_and_does_not_publish_partial_files() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("a.rs"), "fn a() {}\n").expect("a");
+    std::fs::write(root.path().join("b.rs"), "fn b() {}\n").expect("b");
+    let database = root.path().join("index.sqlite");
+
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .args([
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--database",
+            database.to_str().expect("database UTF-8"),
+            "--max-files",
+            "1",
+            "--json",
+            "index",
+        ])
+        .output()
+        .expect("run index");
+
+    assert!(!output.status.success());
+    let error: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("structured error");
+    assert_eq!(
+        error["error"],
+        "index source files limit exceeded: observed 2, limit 1"
+    );
+    assert_eq!(database_state(&database).map(|state| state.0), Some(0));
+    assert_eq!(database_state(&database).map(|state| state.1), Some(0));
+}
+
+#[test]
 fn doctor_verifies_identity_catalog_and_first_retrieval() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
@@ -430,6 +463,70 @@ fn mcp_rejects_home_root_after_initialize_without_opening_storage() {
 }
 
 #[test]
+fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("a.rs"), "fn original() {}\n").expect("fixture");
+    std::fs::write(root.path().join("b.rs"), "fn crosses_limit() {}\n").expect("second file");
+    let database = root.path().join("index.sqlite");
+    let mut process = McpProcess::spawn_with_args(
+        root.path(),
+        &database,
+        &["--max-files", "1"],
+    );
+    process.initialize();
+    process.send_initialized();
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut id = 100;
+    loop {
+        process.send(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {
+                "name": "leantoken_files",
+                "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
+            }
+        }));
+        let response = process.response(deadline.saturating_duration_since(Instant::now()));
+        let message = response["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
+        if message.contains("unavailable") {
+            assert_eq!(response["result"]["isError"], true);
+            break;
+        }
+        assert!(Instant::now() < deadline, "limit remained retryable: {response}");
+        id += 1;
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(database_state(&database).map(|state| state.0), Some(0));
+    assert_eq!(database_state(&database).map(|state| state.1), Some(0));
+
+    std::fs::remove_file(root.path().join("b.rs")).expect("shrink tree");
+    std::thread::sleep(Duration::from_millis(1_250));
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id + 1,
+        "method": "tools/call",
+        "params": {
+            "name": "leantoken_files",
+            "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
+        }
+    }));
+    let response = process.response(Duration::from_secs(5));
+    assert_eq!(response["result"]["isError"], true, "runtime retried: {response}");
+    assert!(
+        response["result"]["content"][0]["text"]
+            .as_str()
+            .is_some_and(|message| message.contains("unavailable"))
+    );
+    assert_eq!(database_state(&database).map(|state| state.0), Some(0));
+    assert_eq!(database_state(&database).map(|state| state.1), Some(0));
+    assert!(process.child.try_wait().expect("poll process").is_none());
+}
+
+#[test]
 fn concurrent_mcp_startup_initializes_once_and_followers_read() {
     let root = tempfile::tempdir().expect("temporary repository");
     for file in 0..60 {
@@ -758,14 +855,25 @@ struct McpProcess {
 
 impl McpProcess {
     fn spawn(root: &std::path::Path, database: &std::path::Path) -> Self {
-        let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin!("leantoken"))
+        Self::spawn_with_args(root, database, &[])
+    }
+
+    fn spawn_with_args(
+        root: &std::path::Path,
+        database: &std::path::Path,
+        arguments: &[&str],
+    ) -> Self {
+        let mut command = std::process::Command::new(assert_cmd::cargo::cargo_bin!("leantoken"));
+        command
             .args([
                 "--root",
                 root.to_str().expect("root UTF-8"),
                 "--database",
                 database.to_str().expect("database UTF-8"),
-                "mcp",
             ])
+            .args(arguments)
+            .arg("mcp");
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

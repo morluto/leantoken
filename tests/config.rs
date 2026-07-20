@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use leantoken::Config;
+use leantoken::{Config, DiscoveryLimits};
 use leantoken::tokens::Tokenizer;
 
 #[test]
@@ -145,7 +145,7 @@ fn config_rejects_the_current_home_directory_by_default() {
 fn config_defaults_bound_output_and_timing() {
     let root = tempfile::tempdir().expect("tempdir");
     let config = Config::discover(root.path(), None).expect("discover");
-    assert!(config.max_file_bytes > 0);
+    assert_eq!(config.discovery_limits(), DiscoveryLimits::default());
     assert!(config.max_results > 0);
     assert!(config.max_output_tokens > 0);
     assert!(config.context_lines > 0);

@@ -40,6 +40,6 @@ pub mod upgrade;
 /// Debounced repository watching and reconciliation signals.
 pub mod watcher;
 
-pub use config::Config;
-pub use error::{Error, Result};
+pub use config::{Config, DiscoveryLimits};
+pub use error::{Error, IndexLimitKind, Result};
 pub use model::*;

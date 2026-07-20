@@ -184,6 +184,9 @@ async fn run_mcp_runtime(
                 return Ok(());
             }
             if let Err(error) = result {
+                if is_terminal_index_error(&error) {
+                    return Err(error);
+                }
                 tracing::error!(%error, "automatic indexing leadership failed");
             }
         }
@@ -200,7 +203,7 @@ async fn run_index_leader(services: Arc<Services>, cancellation: CancellationTok
         &services.config().root,
         256,
         services.config().watcher_debounce,
-        cancellation.clone(),
+        cancellation.child_token(),
     )
     .await?;
 
@@ -230,26 +233,12 @@ async fn run_index_leader(services: Arc<Services>, cancellation: CancellationTok
             _ = cancellation.cancelled() => break,
             message = changes.recv() => {
                 let Some(message) = message else { break };
-                let result = match message {
-                    WatcherMessage::Changed { paths } => {
-                        let paths = paths
-                            .into_iter()
-                            .filter(|path| !services.config().is_database_artifact(path))
-                            .collect::<Vec<_>>();
-                        if paths.is_empty() {
-                            continue;
-                        }
-                        tracing::debug!(changed_paths = paths.len(), "repository change detected");
-                        services
-                            .index_paths_cancellable(paths, cancellation.clone())
-                            .await
-                    }
-                    WatcherMessage::ReconcileRequired => {
-                        tracing::warn!("watcher requested full reconciliation");
-                        services
-                            .index_cancellable(false, cancellation.clone())
-                            .await
-                    }
+                let Some(result) = reconcile_watcher_message(
+                    Arc::clone(&services),
+                    message,
+                    cancellation.clone(),
+                ).await else {
+                    continue;
                 };
                 match result {
                     Ok(indexed) => {
@@ -258,6 +247,12 @@ async fn run_index_leader(services: Arc<Services>, cancellation: CancellationTok
                         }
                     }
                     Err(leantoken::Error::Cancelled) if cancellation.is_cancelled() => break,
+                    Err(error) if is_terminal_index_error(&error) => {
+                        if let Err(shutdown_error) = watcher.shutdown().await {
+                            tracing::warn!(%shutdown_error, "watcher shutdown failed after terminal index error");
+                        }
+                        return Err(error);
+                    }
                     Err(error) => {
                         tracing::error!(%error, "background reconciliation failed");
                     }
@@ -267,6 +262,34 @@ async fn run_index_leader(services: Arc<Services>, cancellation: CancellationTok
     }
 
     watcher.shutdown().await
+}
+
+fn is_terminal_index_error(error: &leantoken::Error) -> bool {
+    matches!(error, leantoken::Error::IndexLimitExceeded { .. })
+}
+
+async fn reconcile_watcher_message(
+    services: Arc<Services>,
+    message: WatcherMessage,
+    cancellation: CancellationToken,
+) -> Option<Result<leantoken::model::IndexResponse>> {
+    match message {
+        WatcherMessage::Changed { paths } => {
+            let paths = paths
+                .into_iter()
+                .filter(|path| !services.config().is_database_artifact(path))
+                .collect::<Vec<_>>();
+            if paths.is_empty() {
+                return None;
+            }
+            tracing::debug!(changed_paths = paths.len(), "repository change detected");
+            Some(services.index_paths_cancellable(paths, cancellation).await)
+        }
+        WatcherMessage::ReconcileRequired => {
+            tracing::warn!("watcher requested full reconciliation");
+            Some(services.index_cancellable(false, cancellation).await)
+        }
+    }
 }
 
 fn print<T: Serialize>(value: &T, compact: bool) -> Result<()> {
