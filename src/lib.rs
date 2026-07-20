@@ -43,3 +43,4 @@ pub mod watcher;
 pub use config::{Config, DiscoveryLimits};
 pub use error::{Error, IndexLimitKind, Result};
 pub use model::*;
+pub use repository::DiscoveryPolicy;

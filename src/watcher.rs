@@ -17,7 +17,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::repository::slash_path;
+use crate::repository::{DiscoveryPolicy, slash_path};
 use crate::{Error, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +47,17 @@ impl RepositoryWatcher {
         debounce: Duration,
         token: CancellationToken,
     ) -> Result<(Self, mpsc::Receiver<WatcherMessage>)> {
+        Self::start_with_policy(root, capacity, debounce, DiscoveryPolicy::default(), token).await
+    }
+
+    /// Start watching with the same visibility policy used by discovery.
+    pub async fn start_with_policy(
+        root: impl AsRef<Path>,
+        capacity: usize,
+        debounce: Duration,
+        policy: DiscoveryPolicy,
+        token: CancellationToken,
+    ) -> Result<(Self, mpsc::Receiver<WatcherMessage>)> {
         let root = root.as_ref().canonicalize().map_err(Error::Io)?;
         if !root.is_dir() {
             return Err(Error::InvalidConfiguration(format!(
@@ -65,11 +76,15 @@ impl RepositoryWatcher {
             let (raw_tx, mut raw_rx) = mpsc::channel::<notify::Result<Event>>(raw_capacity);
             let overflowed = Arc::new(AtomicBool::new(false));
             let config = Config::default().with_follow_symlinks(false);
+            let callback_root = watched_root.clone();
 
             let mut watcher = match RecommendedWatcher::new(
                 {
                     let overflowed = Arc::clone(&overflowed);
                     move |event: notify::Result<Event>| {
+                        if !raw_event_is_relevant(&event, &callback_root, policy) {
+                            return;
+                        }
                         if let Err(TrySendError::Full(_)) = raw_tx.try_send(event) {
                             overflowed.store(true, Ordering::Release);
                         }
@@ -113,6 +128,7 @@ impl RepositoryWatcher {
                             process_raw_event(
                                 raw,
                                 &watched_root,
+                                policy,
                                 &mut pending,
                                 &mut rename_from,
                                 &mut rename_to,
@@ -198,13 +214,17 @@ fn into_error(err: notify::Error) -> Error {
     Error::Io(std::io::Error::other(err.to_string()))
 }
 
-fn relative_path(root: &Path, path: &Path) -> Option<String> {
+fn relative_path(root: &Path, path: &Path, policy: DiscoveryPolicy) -> Option<String> {
     if !path.starts_with(root) {
         return None;
     }
     let rel = path.strip_prefix(root).ok()?;
     let s = slash_path(rel);
-    if s.is_empty() || s.starts_with(".git/") || s == ".git" {
+    if s.is_empty()
+        || s.starts_with(".git/")
+        || s == ".git"
+        || !policy.includes_path(&s, path.is_dir())
+    {
         None
     } else {
         Some(s)
@@ -214,6 +234,7 @@ fn relative_path(root: &Path, path: &Path) -> Option<String> {
 fn process_raw_event(
     raw: notify::Result<Event>,
     root: &Path,
+    policy: DiscoveryPolicy,
     pending: &mut BTreeSet<String>,
     rename_from: &mut HashMap<usize, String>,
     rename_to: &mut HashMap<usize, String>,
@@ -239,7 +260,7 @@ fn process_raw_event(
     let mut inside = Vec::with_capacity(event.paths.len());
     let mut outside = false;
     for path in &event.paths {
-        match relative_path(root, path) {
+        match relative_path(root, path, policy) {
             Some(rel) => inside.push(rel),
             None => {
                 outside = true;
@@ -265,6 +286,21 @@ fn process_raw_event(
         for rel in inside {
             pending.insert(rel);
         }
+    }
+}
+
+fn raw_event_is_relevant(
+    event: &notify::Result<Event>,
+    root: &Path,
+    policy: DiscoveryPolicy,
+) -> bool {
+    match event {
+        Ok(event) if event.need_rescan() => true,
+        Ok(event) if !event.paths.is_empty() => event
+            .paths
+            .iter()
+            .any(|path| relative_path(root, path, policy).is_some()),
+        Ok(_) | Err(_) => true,
     }
 }
 
@@ -441,7 +477,12 @@ mod tests {
         }
 
         assert_eq!(
-            relative_path(root.path(), &root.path().join("nested/b.txt")).as_deref(),
+            relative_path(
+                root.path(),
+                &root.path().join("nested/b.txt"),
+                DiscoveryPolicy::default(),
+            )
+            .as_deref(),
             Some("nested/b.txt")
         );
 
@@ -551,6 +592,7 @@ mod tests {
         process_raw_event(
             Ok(event),
             root.path(),
+            DiscoveryPolicy::default(),
             &mut pending,
             &mut rename_from,
             &mut rename_to,
@@ -562,6 +604,44 @@ mod tests {
             pending,
             BTreeSet::from(["a.txt".to_string(), "b.txt".to_string()])
         );
+    }
+
+    #[test]
+    fn generated_events_are_filtered_before_the_raw_queue() {
+        let root = tempfile::tempdir().unwrap();
+        let generated = root.path().join("node_modules/pkg/index.js");
+        std::fs::create_dir_all(generated.parent().unwrap()).unwrap();
+        std::fs::write(&generated, "generated").unwrap();
+        let generated_event = Event::new(EventKind::Any).add_path(generated);
+
+        assert!(!raw_event_is_relevant(
+            &Ok(generated_event.clone()),
+            root.path(),
+            DiscoveryPolicy::default(),
+        ));
+        assert!(raw_event_is_relevant(
+            &Ok(generated_event),
+            root.path(),
+            DiscoveryPolicy::new(true),
+        ));
+
+        let visible = root.path().join(".github/workflows/ci.yml");
+        std::fs::create_dir_all(visible.parent().unwrap()).unwrap();
+        std::fs::write(&visible, "name: ci\n").unwrap();
+        assert!(raw_event_is_relevant(
+            &Ok(Event::new(EventKind::Any).add_path(visible)),
+            root.path(),
+            DiscoveryPolicy::default(),
+        ));
+
+        let rescan = Event::new(EventKind::Other)
+            .add_path(root.path().join("node_modules"))
+            .set_flag(notify::event::Flag::Rescan);
+        assert!(raw_event_is_relevant(
+            &Ok(rescan),
+            root.path(),
+            DiscoveryPolicy::default(),
+        ));
     }
 
     #[test]

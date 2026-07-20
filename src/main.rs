@@ -199,10 +199,11 @@ async fn run_mcp_runtime(
 }
 
 async fn run_index_leader(services: Arc<Services>, cancellation: CancellationToken) -> Result<()> {
-    let (watcher, mut changes) = RepositoryWatcher::start(
+    let (watcher, mut changes) = RepositoryWatcher::start_with_policy(
         &services.config().root,
         256,
         services.config().watcher_debounce,
+        services.config().discovery_policy(),
         cancellation.child_token(),
     )
     .await?;

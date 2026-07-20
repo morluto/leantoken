@@ -3,6 +3,7 @@ use std::{
     time::Duration,
 };
 
+use crate::repository::DiscoveryPolicy;
 use crate::tokens::Tokenizer;
 use crate::{Error, Result};
 
@@ -107,6 +108,8 @@ pub struct Config {
     pub max_prepare_batch_files: usize,
     /// Maximum discovered source bytes scheduled in one preparation batch.
     pub max_prepare_batch_bytes: u64,
+    /// Whether known generated and package-cache trees are indexed.
+    pub include_generated: bool,
     /// Default number of returned results.
     pub default_results: usize,
     /// Maximum number of returned results.
@@ -181,6 +184,7 @@ impl Config {
             max_file_bytes: DiscoveryLimits::DEFAULT_MAX_FILE_BYTES,
             max_prepare_batch_files: DiscoveryLimits::DEFAULT_MAX_PREPARE_BATCH_FILES,
             max_prepare_batch_bytes: DiscoveryLimits::DEFAULT_MAX_PREPARE_BATCH_BYTES,
+            include_generated: false,
             default_results: DEFAULT_RESULTS,
             max_results: MAX_RESULTS,
             default_read_tokens: DEFAULT_READ_TOKENS,
@@ -215,6 +219,12 @@ impl Config {
             max_prepare_batch_files: self.max_prepare_batch_files,
             max_prepare_batch_bytes: self.max_prepare_batch_bytes,
         }
+    }
+
+    /// Return one immutable repository visibility policy.
+    #[must_use]
+    pub fn discovery_policy(&self) -> DiscoveryPolicy {
+        DiscoveryPolicy::new(self.include_generated)
     }
 
     #[must_use]

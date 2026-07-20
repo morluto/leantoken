@@ -144,6 +144,15 @@ bounded by file and byte batch limits. All discovery limits participate in the
 index configuration hash, so changing them forces a complete atomic
 reconciliation before the new policy is recorded.
 
+One repository-owned discovery policy configures full walks, visibility
+fallbacks, and watcher intake. It retains hidden source/configuration paths,
+loads nested `.leantokenignore` files above `.gitignore` and `.ignore` in rule
+precedence, and prunes a conservative set of generated and package-cache
+directories before descending. The explicit include-generated setting disables
+only that built-in pruning and participates in the index configuration hash.
+Watcher callbacks apply the same built-in policy before enqueueing raw events,
+while ignore-control changes remain visible and trigger bounded full discovery.
+
 Canonical filesystem roots, the current user's home directory, and ancestors of
 that home directory are rejected before cache or watcher initialization unless
 the caller explicitly opts into broad-root indexing. MCP performs this check
