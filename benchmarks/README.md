@@ -522,6 +522,12 @@ records the exact pre-change revision, same-host RSS comparison, batch
 high-water, near-per-file-limit corpus, and pinned Tokio validation used for the
 bounded-publication change. It likewise does not replace cross-platform runs.
 
+The [OOM release gate](reports/oom-release-gate-linux-x86_64-2026-07-20.md)
+maps the umbrella incident scenarios to executable tests and records final-stack
+RSS, SQLite/WAL growth, abrupt leader termination, and same-root multi-process
+evidence. Its incident memory figures and controlled synthetic profile are
+reported separately because they are not comparable corpora.
+
 A five-sample schema-version 3 development run on the same pinned Tokio tree
 initially measured median create, rename, and ignore-change rebuilds at 21.1 s,
 13.5 s, and 29.9 s because each reparsed all 865 indexed files. After replacing
