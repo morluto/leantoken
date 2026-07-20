@@ -707,6 +707,97 @@ fn setup_requires_yes_before_non_interactive_mutation() {
 }
 
 #[test]
+fn cache_list_and_prune_do_not_require_a_repository() {
+    let temp = tempfile::tempdir().expect("temporary home");
+    let command = || {
+        let mut command = Command::cargo_bin("leantoken").expect("binary");
+        command
+            .env("HOME", temp.path())
+            .env("USERPROFILE", temp.path())
+            .env("XDG_CACHE_HOME", temp.path().join("xdg-cache"))
+            .env("LOCALAPPDATA", temp.path().join("local-app-data"));
+        command
+    };
+    let listed = command()
+        .args(["--json", "cache", "list"])
+        .output()
+        .expect("list caches");
+    assert!(
+        listed.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    let list: serde_json::Value =
+        serde_json::from_slice(&listed.stdout).expect("cache list JSON");
+    let cache_root = std::path::PathBuf::from(list["cache_root"].as_str().expect("cache root"));
+    let cache = cache_root.join("0000000000000001");
+    std::fs::create_dir_all(&cache).expect("cache directory");
+    let database = cache.join("index.sqlite");
+    std::fs::write(&database, b"corrupt managed cache").expect("cache fixture");
+
+    let human_list = command()
+        .args(["cache", "list"])
+        .output()
+        .expect("human cache list");
+    assert!(human_list.status.success());
+    let human_list = String::from_utf8_lossy(&human_list.stdout);
+    assert!(human_list.contains("corrupt"));
+    assert!(human_list.contains("last_access="));
+    assert!(human_list.contains("root_available="));
+
+    let dry_run = command()
+        .args([
+            "--json",
+            "cache",
+            "prune",
+            "--max-total-bytes",
+            "1",
+            "--dry-run",
+        ])
+        .output()
+        .expect("dry-run prune");
+    assert!(dry_run.status.success());
+    let dry_run: serde_json::Value =
+        serde_json::from_slice(&dry_run.stdout).expect("prune JSON");
+    assert_eq!(dry_run["results"][0]["action"], "would_delete");
+    assert!(database.exists());
+
+    let human_prune = command()
+        .args([
+            "cache",
+            "prune",
+            "--max-total-bytes",
+            "1",
+            "--dry-run",
+        ])
+        .output()
+        .expect("human prune plan");
+    assert!(human_prune.status.success());
+    assert!(String::from_utf8_lossy(&human_prune.stdout).contains("would_delete"));
+
+    let prune = command()
+        .args([
+            "--json",
+            "cache",
+            "prune",
+            "--max-total-bytes",
+            "1",
+            "--yes",
+        ])
+        .output()
+        .expect("prune cache");
+    assert!(
+        prune.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&prune.stderr)
+    );
+    let prune: serde_json::Value =
+        serde_json::from_slice(&prune.stdout).expect("prune JSON");
+    assert_eq!(prune["results"][0]["action"], "deleted");
+    assert!(!database.exists());
+}
+
+#[test]
 fn setup_dry_run_reports_exact_plan_without_mutation() {
     let temp = tempfile::tempdir().expect("temporary home");
     let output = Command::cargo_bin("leantoken")

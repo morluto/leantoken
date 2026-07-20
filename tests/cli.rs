@@ -312,6 +312,42 @@ fn cli_update_and_upgrade_are_aliases() {
 }
 
 #[test]
+fn cli_cache_commands_resolve_without_repository_configuration() {
+    assert!(matches!(
+        parse(&["cache", "list"]).app_request(),
+        AppRequest::CacheList
+    ));
+
+    let request = parse(&[
+        "cache",
+        "prune",
+        "--older-than",
+        "30",
+        "--max-total-bytes",
+        "1048576",
+        "--remove-missing-roots",
+        "--dry-run",
+    ])
+    .app_request();
+    let AppRequest::CachePrune(request) = request else {
+        panic!("expected cache prune request");
+    };
+    assert_eq!(request.older_than_days, Some(30));
+    assert_eq!(request.max_total_bytes, Some(1_048_576));
+    assert!(request.remove_missing_roots);
+    assert!(request.dry_run);
+    assert!(!request.yes);
+
+    let AppRequest::CachePrune(zero_budget) =
+        parse(&["cache", "prune", "--max-total-bytes", "0", "--dry-run"])
+            .app_request()
+    else {
+        panic!("expected zero-budget cache prune request");
+    };
+    assert_eq!(zero_budget.max_total_bytes, Some(0));
+}
+
+#[test]
 fn cli_global_root_and_database_options() {
     let root = tempfile::tempdir().unwrap();
     let db = root.path().join("custom.sqlite");

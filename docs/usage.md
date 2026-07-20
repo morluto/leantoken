@@ -36,6 +36,9 @@ leantoken context --task <text> --budget <tokens>
 leantoken mcp [--result-mode dual|text|structured]
 leantoken setup [CLIENT...] [--all] [--refresh] [--yes] [--dry-run]
 leantoken remove [CLIENT...] [--all] [--yes] [--dry-run]
+leantoken cache list
+leantoken cache prune [--older-than DAYS] [--max-total-bytes BYTES]
+                      [--remove-missing-roots] [--dry-run] [--yes]
 ```
 
 Use `leantoken <command> --help` for the complete argument list.
@@ -68,6 +71,39 @@ CLI, and Antigravity use the working directory their host assigns to the MCP
 process, which must be the active workspace. Broad home and filesystem roots
 still fail closed before cache creation or indexing. `--root` remains available
 for deliberate manual or project-scoped configurations.
+
+## Managed cache lifecycle
+
+`cache list` reports every recognized per-repository cache in the platform
+`ProjectDirs` cache directory, including its recorded root, schema, last access,
+direct SQLite/sidecar bytes, metadata state, and active lease status. It does
+not open repository services and therefore works from any directory. JSON output
+contains Unix timestamps for automation.
+
+`cache prune` requires at least one explicit selection policy:
+
+- `--older-than DAYS` selects caches whose last repository bind is at least that
+  old;
+- `--max-total-bytes BYTES` selects least-recently-used caches until the managed
+  total reaches the requested bound;
+- `--remove-missing-roots` explicitly selects a cache when its recorded root is
+  currently absent.
+
+Use `--dry-run` to inspect every keep/delete/skip decision. Actual deletion
+requires `--yes`. Missing roots are not an implicit deletion criterion because
+offline mounts and removable volumes can return later. Corrupt, incomplete, and
+older-schema caches remain listable and can be selected by age or size. A cache
+with a newer schema, mismatched root identity, or unexpected directory content
+is always skipped.
+
+Every `Services` instance holds a shared lease from before SQLite initialization
+until its final clone drops. Prune must acquire the exclusive form and therefore
+skips active MCP leaders, followers, and CLI services. It deletes the database,
+WAL, SHM, journal, and coordination sidecars but retains the zero-byte lease
+identity so a returning repository cannot race a new process through a replaced
+lock file. Explicit `--database` files outside the managed directory are never
+enumerated. Stop older LeanToken versions that predate cache leases before
+pruning during a mixed-version rollout.
 
 ## First-run doctor
 

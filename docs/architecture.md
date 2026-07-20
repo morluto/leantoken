@@ -181,6 +181,21 @@ down its watcher, releases leadership, and moves MCP tools to unavailable
 without periodic retries. A restart with a narrower root or adjusted limits is
 required.
 
+Schema v5 records a Unix last-access timestamp when a repository is bound during
+service startup; retrieval calls do not turn every read into a metadata write.
+Central cache inspection opens SQLite read-only and falls back to direct artifact
+mtime for corrupt, incomplete, or older-schema entries.
+
+Every service instance acquires a shared cache lease before initialization and
+keeps it through all clones. Explicit pruning requires the exclusive lease, so
+active leaders and read-only followers are both protected rather than relying on
+the shorter leadership or operation locks. The lease identity remains after
+large cache artifacts and coordination sidecars are removed; replacing or
+unlinking the lock itself would let a returning process lock a different inode.
+Only strict hash directories under the platform-managed cache root participate;
+unexpected directory content and explicit databases outside that root fail
+closed from automatic deletion.
+
 MCP processes sharing one cache compete for a repository-scoped leadership
 lock. The leader alone owns automatic indexing and one filesystem watcher;
 followers normally read the same committed SQLite generations without scanning

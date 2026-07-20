@@ -82,6 +82,7 @@ fn config_canonicalizes_missing_database_descendants_below_symlink() {
     assert!(config.is_database_artifact("missing/cache/index.sqlite"));
     assert!(config.is_database_artifact("missing/cache/index.sqlite-wal"));
     assert!(config.is_database_artifact("missing/cache/index.sqlite-shm"));
+    assert!(config.is_database_artifact("missing/cache/index.sqlite.lease.lock"));
     assert!(config.is_database_artifact("missing/cache/index.sqlite.leader.lock"));
     assert!(config.is_database_artifact("missing/cache/index.sqlite.index.lock"));
     assert!(config.is_database_artifact("missing/cache/index.sqlite.init.lock"));
@@ -166,6 +167,7 @@ fn config_identifies_database_and_wal_artifacts_inside_the_root() {
     assert!(config.is_database_artifact(".cache/index.sqlite"));
     assert!(config.is_database_artifact(".cache/index.sqlite-wal"));
     assert!(config.is_database_artifact(".cache/index.sqlite-shm"));
+    assert!(config.is_database_artifact(".cache/index.sqlite.lease.lock"));
     assert!(config.is_database_artifact(".cache/index.sqlite.leader.lock"));
     assert!(config.is_database_artifact(".cache/index.sqlite.index.lock"));
     assert!(config.is_database_artifact(".cache/index.sqlite.init.lock"));

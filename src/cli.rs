@@ -8,6 +8,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::Config;
 use crate::Result;
+use crate::cache::CachePruneRequest;
 use crate::mcp::McpResultMode;
 use crate::model::{
     ContextRequest, FileOperation, FilesRequest, OutlineRequest, ReadRequest, SearchMode,
@@ -136,6 +137,10 @@ impl Cli {
             },
             Commands::Setup(args) => AppRequest::Setup(args.into()),
             Commands::Remove(args) => AppRequest::Remove(args.into()),
+            Commands::Cache(args) => match args.command {
+                CacheCommand::List => AppRequest::CacheList,
+                CacheCommand::Prune(args) => AppRequest::CachePrune(args.into()),
+            },
             Commands::Update(args) | Commands::Upgrade(args) => AppRequest::Upgrade {
                 check: args.check,
                 yes: args.yes,
@@ -158,6 +163,8 @@ pub enum AppRequest {
     Mcp { result_mode: McpResultMode },
     Setup(SetupRequest),
     Remove(SetupRequest),
+    CacheList,
+    CachePrune(CachePruneRequest),
     Upgrade { check: bool, yes: bool },
 }
 
@@ -199,6 +206,9 @@ pub enum Commands {
 
     /// Remove LeanToken's global MCP server entries.
     Remove(IntegrationArgs),
+
+    /// Inspect or prune centrally managed repository caches.
+    Cache(CacheArgs),
 
     /// Update LeanToken to the latest release.
     Update(UpgradeArgs),
@@ -261,6 +271,55 @@ pub struct IntegrationArgs {
     /// Show the exact configuration plan without making changes.
     #[arg(long)]
     pub dry_run: bool,
+}
+
+/// Managed cache operation.
+#[derive(Debug, Clone, Args)]
+pub struct CacheArgs {
+    /// Cache subcommand.
+    #[command(subcommand)]
+    pub command: CacheCommand,
+}
+
+/// Commands for centrally managed repository caches.
+#[derive(Debug, Clone, Subcommand)]
+pub enum CacheCommand {
+    /// List managed caches, sizes, roots, access times, and active leases.
+    List,
+    /// Remove inactive managed caches selected by explicit criteria.
+    Prune(CachePruneArgs),
+}
+
+/// Selection and consent for `cache prune`.
+#[derive(Debug, Clone, Args)]
+pub struct CachePruneArgs {
+    /// Remove caches not accessed for at least this many days.
+    #[arg(long, value_name = "DAYS")]
+    pub older_than: Option<NonZeroU64>,
+    /// Reduce managed cache storage to at most this many bytes using LRU order.
+    #[arg(long, value_name = "BYTES")]
+    pub max_total_bytes: Option<u64>,
+    /// Remove caches whose recorded repository roots are currently missing.
+    #[arg(long)]
+    pub remove_missing_roots: bool,
+    /// Show the exact prune plan without deleting files.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Apply the prune plan without prompting.
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+}
+
+impl From<CachePruneArgs> for CachePruneRequest {
+    fn from(args: CachePruneArgs) -> Self {
+        Self {
+            older_than_days: args.older_than.map(NonZeroU64::get),
+            max_total_bytes: args.max_total_bytes,
+            remove_missing_roots: args.remove_missing_roots,
+            dry_run: args.dry_run,
+            yes: args.yes,
+        }
+    }
 }
 
 impl From<IntegrationArgs> for SetupRequest {
