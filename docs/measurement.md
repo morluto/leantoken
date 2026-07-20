@@ -352,6 +352,77 @@ artifact preflight, isolated task worktrees, adapter invocation, and validation
 plumbing; it is not task-success, quality, or cost evidence. Do not use the
 example manifest as a formal experiment set.
 
+## Multi-agent context pilot
+
+`multi_agent_context_pilot.json` freezes a small read-only Codex experiment for
+one repository-owner tracing task. It measures a root plus exactly one child,
+separates full-history and context-free child forks, and compares native reads
+with LeanToken dual and structured MCP results. Exact path-and-symbol evidence
+is validated from the root's final JSON; the publishable receipt retains only
+match counts, topology, provider usage, result sizes, and hashes. Prompts,
+answers, tool arguments, tool outputs, credentials, absolute paths, and thread
+IDs remain in private local rollouts.
+
+Build the frozen runtime and receipt analyzer, prepare a clean checkout at the
+manifest revision, then run one arm. `--execute` is required because the script
+performs real model calls. Proxy configuration is inherited from the caller.
+
+```bash
+cargo build --release --bin leantoken --example codex_multi_agent_receipt
+source ~/clash.sh
+benchmarks/run_multi_agent_context_pilot.sh --execute \
+  thin-leantoken-structured-owner \
+  /path/to/clean/leantoken-checkout \
+  target/multi-agent-context-pilot
+```
+
+The output directory contains a private Codex stdout/stderr directory, a
+redacted JSON receipt, and an SVG with per-thread cached and uncached input.
+Never publish the private directory. The runner is intentionally frozen to
+Codex CLI 0.144.1; collect a new manifest and compatibility receipt rather than
+silently comparing different host versions.
+
+The 2026-07-20 exploratory run produced the following single samples. Exact is
+the number of four expected path-and-symbol pairs. MCP bytes are complete
+successful/error result JSON measured in the private rollout and retained only
+as an aggregate.
+
+| Arm | Exact | Family input | Uncached | Cache read | Output | Child requests | Repository calls | MCP bytes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| full native | 4/4 | 153,811 | 29,907 | 123,904 | 1,226 | 5 | 4 native | 0 |
+| thin native | 4/4 | 141,232 | 23,728 | 117,504 | 1,219 | 6 | 5 native | 0 |
+| thin LeanToken dual | 3/4 | 245,668 | 70,052 | 175,616 | 1,292 | 8 | 6 MCP, 1 failed | 72,694 |
+| thin LeanToken structured | 2/4 | 147,145 | 38,857 | 108,288 | 1,273 | 6 | 6 MCP | 22,564 |
+| thin structured + enclosing owner | 4/4 | 132,624 | 27,152 | 105,472 | 1,042 | 5 | 6 MCP | 38,127 |
+
+The corresponding redacted receipts are archived for
+[full native](../benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-full-native.json),
+[thin native](../benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-thin-native.json),
+[dual LeanToken](../benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-thin-leantoken-dual.json),
+[structured LeanToken](../benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-thin-leantoken-structured.json),
+and the
+[enclosing-owner candidate](../benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-thin-leantoken-structured-owner.json).
+
+The full native child inherited 85,738 serialized bytes of parent records. A
+context-free fork removed those records and reduced family input by 8.2% and
+uncached input by 20.7% despite one additional child request. Codex consumed
+structured-only LeanToken results successfully. In the dual run, text and
+structured representations contributed 34,656 and 34,564 bytes respectively;
+structured mode removed the text copy. This establishes host compatibility and
+a serialization mechanism, not a provider-cost reduction.
+
+The first structured run still selected wrapper symbols. Its text search hits
+contained the relevant lines but omitted their already-indexed structural
+owners. The candidate therefore enriches every lexical text or regex hit with
+the narrowest `enclosing_symbol` when one exists. The implementation is shared
+across languages; a Rust, Python, and JavaScript fixture verifies the contract.
+With that candidate the pilot recovered 4/4 exact evidence, used 6.1% less
+family input and 9.4% less child input than thin native, but used 14.4% more
+uncached family input. One visible task and one sample cannot establish a
+quality, latency, cost, or cross-language win. Repeat randomized arms and add
+frozen tasks from several language families before changing Codex setup or the
+global `dual` compatibility default.
+
 ## Ranked-region interchange
 
 `ranked_region_benchmark` separates retriever output from evaluator labels with

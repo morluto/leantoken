@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "experiment_id": "multi-agent-context-pilot",
+  "task_id": "known-hashes-owner-trace",
+  "repository_revision": "4876946d9c412ae5f699f6ba485f776a784816c4",
+  "task_prompt": "Audit the known_hashes incremental-context contract. Identify the request-model field where callers declare evidence already held, the service owner that validates that input, the ranking owner that omits matching candidates and reports them as omitted, and the behavioral test proving the contract.",
+  "expected_evidence": [
+    {
+      "path": "src/model.rs",
+      "symbol": "ContextRequest::known_hashes"
+    },
+    {
+      "path": "src/services/context.rs",
+      "symbol": "Services::context_sync"
+    },
+    {
+      "path": "src/ranking.rs",
+      "symbol": "select_with_options"
+    },
+    {
+      "path": "tests/ranking.rs",
+      "symbol": "select_omits_known_hashes_and_reports_them"
+    }
+  ],
+  "controls": {
+    "host": "codex-cli",
+    "host_version": "0.144.1",
+    "host_binary_blake3": "b7d5bb5ddc8880fe8da4e26b9b95e7af36dc567fe0e5c7828111d028e48c9327",
+    "model_selection": "cli_default",
+    "reasoning_effort": "low",
+    "sandbox": "read-only",
+    "max_threads": 2,
+    "max_depth": 1,
+    "expected_children": 1,
+    "web_search": false,
+    "parent_history": {
+      "path": "docs/measurement.md",
+      "end_line": 420,
+      "source_file_blake3": "663e2486280de62c124339a1c931b8359fbc2103ebec54aad2cd08d91587f497"
+    },
+    "leantoken_call_limit": 6,
+    "leantoken_per_call_source_token_limit": 1800
+  },
+  "arms": [
+    {
+      "name": "full-native",
+      "fork_turns": "all",
+      "repository_reads": "native"
+    },
+    {
+      "name": "thin-native",
+      "fork_turns": "none",
+      "repository_reads": "native"
+    },
+    {
+      "name": "thin-leantoken-dual",
+      "fork_turns": "none",
+      "repository_reads": "leantoken",
+      "mcp_result_mode": "dual"
+    },
+    {
+      "name": "thin-leantoken-structured",
+      "fork_turns": "none",
+      "repository_reads": "leantoken",
+      "mcp_result_mode": "structured"
+    },
+    {
+      "name": "thin-leantoken-structured-owner",
+      "fork_turns": "none",
+      "repository_reads": "leantoken",
+      "mcp_result_mode": "structured",
+      "candidate": "lexical hits expose indexed enclosing_symbol"
+    }
+  ],
+  "interpretation": "This is a visible, single-task pilot used for mechanism discovery. It is not a blind benchmark or a generalization claim."
+}

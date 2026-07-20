@@ -395,6 +395,18 @@ The wire report measures catalog and dual-result serialization, but no provider
 request frame was available. Neither artifact proves that removing local wire
 duplication would reduce provider input.
 
+The separate
+[`multi_agent_context_pilot.json`](multi_agent_context_pilot.json) manifest and
+[`run_multi_agent_context_pilot.sh`](run_multi_agent_context_pilot.sh) runner
+exercise one root plus one child under full/native, thin/native, and thin
+LeanToken retrieval arms. The redacted family receipt analyzer is
+`codex_multi_agent_receipt`; it discovers child rollouts, separates inherited
+history from live turns, validates an exact path-and-symbol answer, and reports
+provider-native cached/uncached usage plus MCP representation bytes. The pilot
+is a visible single-task mechanism check, not a general model benchmark. Its
+commands, exploratory results, privacy boundary, and interpretation limits are
+documented in [`../docs/measurement.md`](../docs/measurement.md).
+
 ## Interpretation limits
 
 - Eight hand-selected fixes are too few for a general performance or quality claim.

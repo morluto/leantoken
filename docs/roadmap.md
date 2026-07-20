@@ -54,6 +54,13 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
   exact dual-result duplication, but no provider request frame was exported.
   Treat Phase 3A as measured but provider-framing-inconclusive; do not start
   Phase 3B or claim provider savings from the local duplication count.
+- A separate Codex CLI 0.144.1 root-plus-child pilot consumed structured-only
+  results successfully. On its visible owner-tracing task, dual results copied
+  34,656 text bytes beside 34,564 structured bytes; structured mode removed the
+  text copy. A general lexical-owner candidate then recovered all four exact
+  path/symbol labels. This proves structured consumption for that frozen host
+  path, not compatibility for other clients or a provider-cost win; keep dual
+  as the global default until the compatibility matrix is broader.
 - Representation tests compare context fragments, search excerpts, outlines,
   full reads, and a compact repository tree under visible source and complete
   JSON token counts.
