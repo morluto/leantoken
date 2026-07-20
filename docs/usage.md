@@ -8,6 +8,7 @@ responses are bounded.
 
 ```text
 --root <PATH>      Repository root (default: current directory)
+--allow-broad-root Allow a filesystem root, home directory, or parent of home
 --database <PATH>  Override the per-repository SQLite cache path
 --tokenizer <ENCODING>  Source and protocol accounting tokenizer
 --json             Emit JSON from CLI commands
@@ -46,6 +47,12 @@ reuse its committed SQLite generations. Retrieval calls made before the first
 generation commits return successful structured retry guidance with a reason
 and `retry_after_ms`. Later calls report whether they use a current or
 reconciling index generation.
+
+LeanToken refuses to index a filesystem root, the current user's home directory,
+or a parent of that home directory by default. This prevents an MCP host launched
+from a broad working directory from recursively watching and indexing unrelated
+projects and package caches. Select the workspace with `--root`; use
+`--allow-broad-root` only for a deliberate broad index.
 
 Logs go to stderr. Stdout is reserved for MCP protocol messages.
 

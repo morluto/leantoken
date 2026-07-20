@@ -135,6 +135,12 @@ Discovery follows Git-compatible ignore rules, skips symlinks and oversized or
 binary files, and normalizes indexed paths to forward slashes. Text files are
 hashed, chunked on UTF-8 boundaries, and parsed in a bounded Rayon pool.
 
+Canonical filesystem roots, the current user's home directory, and ancestors of
+that home directory are rejected before cache or watcher initialization unless
+the caller explicitly opts into broad-root indexing. MCP performs this check
+after the protocol initialize exchange so a bad host working directory fails
+closed without recreating the startup handshake timeout.
+
 MCP starts the stdio protocol before opening SQLite or indexing. It answers the
 mandatory initialize exchange first, then starts repository services after the
 client's initialized notification. A generation-zero tool call returns a

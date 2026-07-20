@@ -2,7 +2,7 @@ use std::{io::Write, sync::Arc};
 
 use clap::Parser;
 use leantoken::{
-    Config, Result,
+    Result,
     cli::{AppRequest, Cli},
     doctor, mcp,
     services::Services,
@@ -60,6 +60,11 @@ async fn run() -> Result<()> {
         return Ok(());
     }
 
+    if let leantoken::cli::Commands::Mcp(args) = &cli.command {
+        let result_mode = args.result_mode;
+        return run_mcp(cli, result_mode).await;
+    }
+
     let config = cli.config()?;
     let request = cli.app_request();
 
@@ -70,10 +75,6 @@ async fn run() -> Result<()> {
         let report = doctor::run(&config)?;
         doctor::print_report(&report, json)?;
         return Ok(());
-    }
-
-    if let AppRequest::Mcp { result_mode } = request {
-        return run_mcp(config, result_mode).await;
     }
 
     let services = Arc::new(Services::open(config)?);
@@ -95,7 +96,7 @@ async fn run() -> Result<()> {
     }
 }
 
-async fn run_mcp(config: Config, result_mode: mcp::McpResultMode) -> Result<()> {
+async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result<()> {
     let (server, service_state) = mcp::LeanTokenMcp::pending();
     let server = server.with_result_mode(result_mode);
     let mut server_task = tokio::spawn(mcp::serve_stdio_server(server));
@@ -110,7 +111,7 @@ async fn run_mcp(config: Config, result_mode: mcp::McpResultMode) -> Result<()> 
     let runtime_state = service_state.clone();
     let mut runtime_task =
         tokio::spawn(
-            async move { run_mcp_runtime(config, runtime_state, runtime_cancellation).await },
+            async move { run_mcp_runtime(cli, runtime_state, runtime_cancellation).await },
         );
     let failure_state = service_state;
 
@@ -149,13 +150,14 @@ async fn run_mcp(config: Config, result_mode: mcp::McpResultMode) -> Result<()> 
 }
 
 async fn run_mcp_runtime(
-    config: Config,
+    cli: Cli,
     service_state: mcp::McpServices,
     cancellation: CancellationToken,
 ) -> Result<()> {
     let startup_cancellation = cancellation.clone();
     let services = Arc::new(
         tokio::task::spawn_blocking(move || {
+            let config = cli.config()?;
             Services::open_cancellable(config, &startup_cancellation)
         })
         .await??,

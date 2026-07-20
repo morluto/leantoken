@@ -381,6 +381,55 @@ fn mcp_runtime_failure_transitions_tools_out_of_starting_state() {
 }
 
 #[test]
+fn mcp_rejects_home_root_after_initialize_without_opening_storage() {
+    let home = directories::BaseDirs::new()
+        .expect("home directories")
+        .home_dir()
+        .canonicalize()
+        .expect("canonical home");
+    let cache = tempfile::tempdir().expect("cache");
+    let database = cache.path().join("index.sqlite");
+    let mut process = McpProcess::spawn(&home, &database);
+
+    process.initialize();
+    assert!(
+        !database.exists(),
+        "repository configuration ran before MCP initialization"
+    );
+    process.send_initialized();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut id = 2;
+    loop {
+        process.send(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {
+                "name": "leantoken_files",
+                "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
+            }
+        }));
+        let response = process.response(deadline.saturating_duration_since(Instant::now()));
+        let message = response["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
+        if message.contains("unavailable") {
+            assert_eq!(response["result"]["isError"], true);
+            assert!(!database.exists(), "unsafe root opened its SQLite cache");
+            assert!(process.child.try_wait().expect("poll process").is_none());
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "unsafe root remained hidden behind startup state: {response}"
+        );
+        id += 1;
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
 fn concurrent_mcp_startup_initializes_once_and_followers_read() {
     let root = tempfile::tempdir().expect("temporary repository");
     for file in 0..60 {

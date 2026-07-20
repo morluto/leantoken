@@ -317,4 +317,23 @@ fn cli_global_root_and_database_options() {
         config.database_path,
         root.path().canonicalize().unwrap().join("custom.sqlite")
     );
+    assert!(!cli.allow_broad_root);
+}
+
+#[test]
+fn cli_broad_root_override_is_explicit_and_global() {
+    let home = directories::BaseDirs::new()
+        .expect("home directories")
+        .home_dir()
+        .canonicalize()
+        .expect("canonical home");
+    let cli = parse(&[
+        "status",
+        "--root",
+        home.to_str().expect("home UTF-8"),
+        "--allow-broad-root",
+    ]);
+
+    assert!(cli.allow_broad_root);
+    assert_eq!(cli.config().expect("explicit override").root, home);
 }
