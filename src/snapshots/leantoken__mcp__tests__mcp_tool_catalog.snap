@@ -284,7 +284,7 @@ expression: tools
   },
   {
     "name": "leantoken_read",
-    "description": "Preferred exact source reader instead of cat, head, or sed. Read one indexed symbol or inclusive line range; reuse content_hash as expected_hash to suppress unchanged source. Example: {\"path\":\"src/mcp.rs\",\"target\":{\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}}.",
+    "description": "Preferred exact source reader instead of cat, head, or sed. Keep path as a file path; put the owner separately in target. Exact target shapes are {\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"} and {\"kind\":\"lines\",\"start\":120,\"end\":160}. Reuse content_hash as expected_hash to suppress unchanged source. Example: {\"path\":\"src/mcp.rs\",\"target\":{\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}}.",
     "inputSchema": {
       "$defs": {
         "ReadMcpTarget": {
