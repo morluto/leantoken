@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "experiment": "monorepo-reconciliation-v1",
+  "profile": {
+    "iterations": 10,
+    "read_samples": 1,
+    "hot_set": 1,
+    "watcher_debounce_ms": 50
+  },
+  "adoption_threshold": {
+    "full_fallback_p95_ms": 250,
+    "discovery_and_hash_plan_share_percent": 50,
+    "minimum_material_corpus_platform_pairs": 2,
+    "rule": "Prototype changed-path journal or directory invalidation only when every threshold is met; otherwise publish a no-go decision."
+  },
+  "corpora": [
+    {
+      "id": "tokio",
+      "repository": "https://github.com/tokio-rs/tokio.git",
+      "revision": "9cae638de6dc8dd9779c450201df8c102247a242"
+    },
+    {
+      "id": "vue-core",
+      "repository": "https://github.com/vuejs/core.git",
+      "revision": "31d0f23757afb410c638a9c29d44d76d0944e18f"
+    }
+  ]
+}
