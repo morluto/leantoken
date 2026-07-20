@@ -61,6 +61,16 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
   path/symbol labels. This proves structured consumption for that frozen host
   path, not compatibility for other clients or a provider-cost win; keep dual
   as the global default until the compatibility matrix is broader.
+- Two 60-run Codex CLI 0.144.1 suites now cover four pinned Python, Go,
+  JavaScript, and Rust validation tasks. Full-history to context-free native
+  forks saved 21.6% and 21.9% total input in the two runs. An iterative
+  structured LeanToken profile was negative, using 50.9% more input than thin
+  native because its child averaged 8.2 provider requests. A frozen
+  one-context-plus-optional-one-search profile instead saved 20.1% versus fresh
+  thin native and 37.6% versus full native, with bootstrap lower bounds of
+  13.4% and 32.3%, 15/20 path-set successes, and no contract violation. Treat
+  this as evidence for a bounded triage subagent profile, not permission to
+  restrict implementation agents or change the cross-host `dual` default.
 - Representation tests compare context fragments, search excerpts, outlines,
   full reads, and a compact repository tree under visible source and complete
   JSON token counts.
