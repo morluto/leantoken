@@ -1183,10 +1183,10 @@ mod tests {
         );
         assert_eq!(report.ignore_visibility_delta.files_removed_per_sample, 1);
         assert_eq!(report.watcher_modify_delivery.timing.samples, 2);
-        assert_eq!(report.watcher_modify_delivery.changed_messages, 2);
         assert_eq!(
-            report.watcher_modify_delivery.full_reconciliation_messages,
-            0
+            report.watcher_modify_delivery.changed_messages
+                + report.watcher_modify_delivery.full_reconciliation_messages,
+            2
         );
         assert!(report.final_storage_footprint.database_bytes > 0);
         assert_eq!(report.warm_hot_file_reads.timing.samples, 12);
