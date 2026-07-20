@@ -195,13 +195,24 @@ struct GoldManifest {
     experiment_id: String,
     task_id: String,
     repository_revision: String,
+    #[serde(default)]
+    evaluation_mode: EvaluationMode,
     expected_evidence: Vec<GoldEvidence>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum EvaluationMode {
+    #[default]
+    Exact,
+    Path,
 }
 
 #[derive(Debug, Deserialize)]
 struct GoldEvidence {
     path: String,
-    symbol: String,
+    #[serde(default)]
+    symbol: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -214,9 +225,11 @@ struct TaskEvaluation {
     task_id: String,
     repository_revision: String,
     gold_manifest_blake3: String,
+    evaluation_mode: EvaluationMode,
     answer_json_valid: bool,
     expected_evidence_count: usize,
     reported_evidence_count: usize,
+    reported_path_count: usize,
     matched_path_count: usize,
     matched_exact_evidence_count: usize,
     unexpected_evidence_count: usize,
@@ -462,17 +475,34 @@ fn evaluate_task(
     if manifest.expected_evidence.is_empty() || manifest.expected_evidence.len() > 256 {
         return Err("gold manifest must contain 1-256 evidence entries".into());
     }
-    let expected = manifest
+    let expected_paths = manifest
         .expected_evidence
         .iter()
         .map(|evidence| {
-            if evidence.path.trim().is_empty() || evidence.symbol.trim().is_empty() {
-                return Err("gold evidence path and symbol must be non-empty".into());
+            if evidence.path.trim().is_empty() {
+                return Err("gold evidence path must be non-empty".into());
             }
-            Ok((evidence.path.clone(), evidence.symbol.clone()))
+            Ok(evidence.path.clone())
         })
         .collect::<Result<HashSet<_>, DynError>>()?;
-    if expected.len() != manifest.expected_evidence.len() {
+    if matches!(manifest.evaluation_mode, EvaluationMode::Path)
+        && expected_paths.len() != manifest.expected_evidence.len()
+    {
+        return Err("gold manifest contains duplicate evidence paths".into());
+    }
+    let expected_exact = manifest
+        .expected_evidence
+        .iter()
+        .map(|evidence| {
+            let symbol = evidence.symbol.as_deref().unwrap_or_default();
+            if matches!(manifest.evaluation_mode, EvaluationMode::Exact) && symbol.trim().is_empty()
+            {
+                return Err("exact gold evidence symbols must be non-empty".into());
+            }
+            Ok((evidence.path.clone(), symbol.to_owned()))
+        })
+        .collect::<Result<HashSet<_>, DynError>>()?;
+    if expected_exact.len() != manifest.expected_evidence.len() {
         return Err("gold manifest contains duplicate evidence".into());
     }
     let answer = final_answer.and_then(|answer| serde_json::from_str::<AgentAnswer>(answer).ok());
@@ -484,33 +514,44 @@ fn evaluate_task(
             answer
                 .evidence
                 .iter()
-                .map(|evidence| (evidence.path.clone(), evidence.symbol.clone()))
+                .map(|evidence| {
+                    (
+                        evidence.path.clone(),
+                        evidence.symbol.clone().unwrap_or_default(),
+                    )
+                })
                 .collect::<HashSet<_>>()
         })
         .unwrap_or_default();
     let reported_paths = reported
         .iter()
-        .map(|(path, _)| path.as_str())
+        .map(|(path, _)| path.clone())
         .collect::<HashSet<_>>();
-    let matched_path_count = expected
-        .iter()
-        .map(|(path, _)| path.as_str())
-        .collect::<HashSet<_>>()
-        .intersection(&reported_paths)
-        .count();
-    let matched_exact_evidence_count = expected.intersection(&reported).count();
-    let unexpected_evidence_count =
-        reported_evidence_count.saturating_sub(matched_exact_evidence_count);
+    let matched_path_count = expected_paths.intersection(&reported_paths).count();
+    let matched_exact_evidence_count = expected_exact.intersection(&reported).count();
+    let unexpected_evidence_count = match manifest.evaluation_mode {
+        EvaluationMode::Exact => {
+            reported_evidence_count.saturating_sub(matched_exact_evidence_count)
+        }
+        EvaluationMode::Path => reported_paths.difference(&expected_paths).count(),
+    };
     let task_success = answer_json_valid
-        && matched_exact_evidence_count == expected.len()
-        && reported_evidence_count == expected.len();
+        && match manifest.evaluation_mode {
+            EvaluationMode::Exact => {
+                matched_exact_evidence_count == manifest.expected_evidence.len()
+                    && reported_evidence_count == manifest.expected_evidence.len()
+            }
+            EvaluationMode::Path => reported_paths == expected_paths,
+        };
     Ok(TaskEvaluation {
         task_id: manifest.task_id,
         repository_revision: manifest.repository_revision,
         gold_manifest_blake3: blake3::hash(&bytes).to_hex().to_string(),
+        evaluation_mode: manifest.evaluation_mode,
         answer_json_valid,
-        expected_evidence_count: expected.len(),
+        expected_evidence_count: manifest.expected_evidence.len(),
         reported_evidence_count,
+        reported_path_count: reported_paths.len(),
         matched_path_count,
         matched_exact_evidence_count,
         unexpected_evidence_count,
@@ -1217,6 +1258,7 @@ mod tests {
                 "repository_revision":"a".repeat(40),
                 "expected_evidence":[
                     {"path":"src/owner.rs","symbol":"owner"},
+                    {"path":"src/owner.rs","symbol":"helper"},
                     {"path":"tests/owner.rs","symbol":"test_owner"}
                 ]
             }))
@@ -1226,6 +1268,7 @@ mod tests {
         let answer = serde_json::json!({
             "evidence":[
                 {"path":"src/owner.rs","symbol":"owner"},
+                {"path":"src/owner.rs","symbol":"helper"},
                 {"path":"tests/owner.rs","symbol":"test_owner"}
             ]
         })
@@ -1234,7 +1277,7 @@ mod tests {
         let success = evaluate_task(&path, "fixture", Some(&answer)).expect("evaluation");
         assert!(success.task_success);
         assert_eq!(success.matched_path_count, 2);
-        assert_eq!(success.matched_exact_evidence_count, 2);
+        assert_eq!(success.matched_exact_evidence_count, 3);
         assert!(
             !serde_json::to_string(&success)
                 .expect("evaluation JSON")
@@ -1245,8 +1288,55 @@ mod tests {
         let failure = evaluate_task(&path, "fixture", Some(&wrong)).expect("failed evaluation");
         assert!(!failure.task_success);
         assert_eq!(failure.matched_path_count, 2);
-        assert_eq!(failure.matched_exact_evidence_count, 1);
+        assert_eq!(failure.matched_exact_evidence_count, 2);
         assert_eq!(failure.unexpected_evidence_count, 1);
+    }
+
+    #[test]
+    fn test_gold_evaluation_path_mode_requires_complete_non_duplicate_file_set() {
+        let directory = tempfile::tempdir().expect("temporary manifest directory");
+        let path = directory.path().join("gold.json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version":1,
+                "experiment_id":"fixture",
+                "task_id":"file-trace",
+                "repository_revision":"b".repeat(40),
+                "evaluation_mode":"path",
+                "expected_evidence":[
+                    {"path":"src/owner.py"},
+                    {"path":"tests/test_owner.py"}
+                ]
+            }))
+            .expect("manifest JSON"),
+        )
+        .expect("manifest fixture");
+        let answer = serde_json::json!({
+            "evidence":[
+                {"path":"src/owner.py","symbol":"Owner.run"},
+                {"path":"tests/test_owner.py","symbol":"test_owner"}
+            ]
+        })
+        .to_string();
+
+        let success = evaluate_task(&path, "fixture", Some(&answer)).expect("evaluation");
+        assert!(success.task_success);
+        assert_eq!(success.matched_path_count, 2);
+        assert_eq!(success.matched_exact_evidence_count, 0);
+
+        let duplicate = serde_json::json!({
+            "evidence":[
+                {"path":"src/owner.py","symbol":"Owner.run"},
+                {"path":"src/owner.py","symbol":"run"}
+            ]
+        })
+        .to_string();
+        let failure = evaluate_task(&path, "fixture", Some(&duplicate)).expect("evaluation");
+        assert!(!failure.task_success);
+        assert_eq!(failure.reported_path_count, 1);
+        assert_eq!(failure.matched_path_count, 1);
+        assert_eq!(failure.unexpected_evidence_count, 0);
     }
 
     #[test]
