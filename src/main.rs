@@ -2,7 +2,7 @@ use std::{io::Write, sync::Arc, time::Duration};
 
 use clap::Parser;
 use leantoken::{
-    Result,
+    Result, cache,
     cli::{AppRequest, Cli},
     doctor, mcp,
     services::Services,
@@ -74,6 +74,26 @@ async fn run() -> Result<()> {
         return Ok(());
     }
 
+    if matches!(&cli.command, leantoken::cli::Commands::Cache(_)) {
+        match cli.app_request() {
+            AppRequest::CacheList => {
+                let report = cache::list()?;
+                cache::print_list(&report, json)?;
+            }
+            AppRequest::CachePrune(request) => {
+                let report = cache::prune(&request)?;
+                cache::print_prune(&report, json)?;
+                if report.has_failures() {
+                    return Err(leantoken::Error::InvalidRequest(
+                        "one or more managed caches could not be pruned".into(),
+                    ));
+                }
+            }
+            _ => unreachable!("cache command checked above"),
+        }
+        return Ok(());
+    }
+
     if matches!(
         &cli.command,
         leantoken::cli::Commands::Setup(_) | leantoken::cli::Commands::Remove(_)
@@ -124,6 +144,9 @@ async fn run() -> Result<()> {
         AppRequest::Mcp { .. } => unreachable!("handled before service setup"),
         AppRequest::Setup(_) | AppRequest::Remove(_) => {
             unreachable!("handled before service setup")
+        }
+        AppRequest::CacheList | AppRequest::CachePrune(_) => {
+            unreachable!("handled before repository setup")
         }
         AppRequest::Upgrade { .. } => unreachable!("handled before repository setup"),
     }

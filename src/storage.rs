@@ -3,7 +3,7 @@ use std::{
     fmt, fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use r2d2_sqlite::SqliteConnectionManager;
@@ -14,6 +14,8 @@ use rusqlite_migration::{M, Migrations};
 
 use crate::model::ReferenceRole;
 use crate::{Error, Result};
+
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 5;
 
 /// Default row limit used by callers that do not provide a tighter bound.
 pub const DEFAULT_MAX_RESULTS: usize = 100;
@@ -195,13 +197,24 @@ CREATE INDEX path_entries_depth_path_idx ON path_entries(depth, path);
 UPDATE meta SET schema_version = 4 WHERE id = 1;
 "#;
 
+const CACHE_ACCESS_SQL: &str = r#"
+ALTER TABLE meta ADD COLUMN last_access_unix_seconds INTEGER NOT NULL DEFAULT 0;
+UPDATE meta
+SET last_access_unix_seconds = CAST(strftime('%s', 'now') AS INTEGER),
+    schema_version = 5
+WHERE id = 1;
+"#;
+
 const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(SCHEMA_SQL).foreign_key_check(),
     M::up(LOOKUP_INDEXES_SQL),
     M::up(REPOSITORY_OWNERSHIP_SQL),
     M::up(IMPORT_CANDIDATES_SQL),
     M::up(PATH_PROJECTION_SQL),
+    M::up(CACHE_ACCESS_SQL),
 ];
+pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 6;
+const _: () = assert!(MIGRATIONS_SLICE.len() == CURRENT_MIGRATION_VERSION as usize);
 const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
 
 #[derive(Debug, Clone)]
@@ -554,6 +567,10 @@ impl Storage {
     }
 
     fn bind_repository(&self, repository_root: &Path) -> Result<()> {
+        self.bind_repository_at(repository_root, unix_seconds(SystemTime::now()))
+    }
+
+    fn bind_repository_at(&self, repository_root: &Path, accessed_at: i64) -> Result<()> {
         let actual_repository = repository_root.to_path_buf();
         let actual_display = repository_root.to_string_lossy();
         let actual_identity = repository_identity(repository_root);
@@ -570,8 +587,8 @@ impl Storage {
 
         if expected_identity.is_empty() {
             tx.execute(
-                "UPDATE meta SET repository_root = ?1, repository_identity = ?2 WHERE id = 1",
-                params![actual_display.as_ref(), actual_identity],
+                "UPDATE meta SET repository_root = ?1, repository_identity = ?2, last_access_unix_seconds = ?3 WHERE id = 1",
+                params![actual_display.as_ref(), actual_identity, accessed_at],
             )?;
             tx.commit()?;
             return Ok(());
@@ -584,6 +601,10 @@ impl Storage {
             });
         }
 
+        tx.execute(
+            "UPDATE meta SET last_access_unix_seconds = ?1 WHERE id = 1",
+            params![accessed_at],
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -1080,6 +1101,13 @@ impl Storage {
             score: row.get::<_, f64>(10)?,
         })
     }
+}
+
+fn unix_seconds(time: SystemTime) -> i64 {
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+        .unwrap_or(0)
 }
 
 impl ReadSession {
@@ -1952,5 +1980,43 @@ mod tests {
 
         assert!(matches!(error, Error::StaleReconciliation { .. }));
         assert!(!invoked);
+    }
+
+    #[test]
+    fn repository_binding_updates_last_access_once_per_open() {
+        let directory = tempfile::tempdir().expect("directory");
+        let repository = directory.path().join("repository");
+        fs::create_dir(&repository).expect("repository");
+        let database = directory.path().join("index.sqlite");
+        let storage = Storage::open(&database).expect("storage");
+
+        storage
+            .bind_repository_at(&repository, 1_234)
+            .expect("initial binding");
+        let connection = Connection::open(&database).expect("inspect binding");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT last_access_unix_seconds FROM meta WHERE id = 1",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .expect("first access"),
+            1_234
+        );
+
+        storage
+            .bind_repository_at(&repository, 5_678)
+            .expect("repeat binding");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT last_access_unix_seconds FROM meta WHERE id = 1",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .expect("second access"),
+            5_678
+        );
     }
 }

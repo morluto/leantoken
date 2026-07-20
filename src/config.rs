@@ -232,13 +232,20 @@ impl Config {
         if candidate == self.database_path {
             return true;
         }
-        ["-wal", "-shm", ".leader.lock", ".index.lock", ".init.lock"]
-            .into_iter()
-            .any(|suffix| {
-                let mut sidecar = self.database_path.as_os_str().to_os_string();
-                sidecar.push(suffix);
-                candidate.as_os_str() == sidecar
-            })
+        [
+            "-wal",
+            "-shm",
+            ".lease.lock",
+            ".leader.lock",
+            ".index.lock",
+            ".init.lock",
+        ]
+        .into_iter()
+        .any(|suffix| {
+            let mut sidecar = self.database_path.as_os_str().to_os_string();
+            sidecar.push(suffix);
+            candidate.as_os_str() == sidecar
+        })
     }
 }
 
@@ -281,13 +288,18 @@ fn canonicalize_database_path(path: PathBuf) -> PathBuf {
     }
 }
 
+pub(crate) fn managed_cache_root() -> Option<PathBuf> {
+    directories::ProjectDirs::from("dev", "LeanToken", "leantoken")
+        .map(|project_dirs| project_dirs.cache_dir().to_path_buf())
+}
+
+pub(crate) fn managed_cache_id(root: &Path) -> String {
+    blake3::hash(root.to_string_lossy().as_bytes()).to_hex()[..16].to_string()
+}
+
 fn default_database_path(root: &Path) -> PathBuf {
-    let root_hash = blake3::hash(root.to_string_lossy().as_bytes()).to_hex();
-    if let Some(project_dirs) = directories::ProjectDirs::from("dev", "LeanToken", "leantoken") {
-        return project_dirs
-            .cache_dir()
-            .join(&root_hash.as_str()[..16])
-            .join("index.sqlite");
+    if let Some(cache_root) = managed_cache_root() {
+        return cache_root.join(managed_cache_id(root)).join("index.sqlite");
     }
     root.join(".leantoken").join("index.sqlite")
 }

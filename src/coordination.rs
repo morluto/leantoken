@@ -1,6 +1,7 @@
 use std::{
     fs::{File, OpenOptions, TryLockError},
     path::{Path, PathBuf},
+    sync::Arc,
     thread,
     time::Duration,
 };
@@ -19,6 +20,7 @@ const LOCK_RETRY_DELAY: Duration = Duration::from_millis(25);
 /// parallel across processes.
 #[derive(Debug, Clone)]
 pub struct IndexCoordination {
+    lease_path: PathBuf,
     initialization_path: PathBuf,
     leadership_path: PathBuf,
     operation_path: PathBuf,
@@ -29,9 +31,36 @@ impl IndexCoordination {
     #[must_use]
     pub fn for_database(database_path: &Path) -> Self {
         Self {
+            lease_path: with_suffix(database_path, ".lease.lock"),
             initialization_path: with_suffix(database_path, ".init.lock"),
             leadership_path: with_suffix(database_path, ".leader.lock"),
             operation_path: with_suffix(database_path, ".index.lock"),
+        }
+    }
+
+    /// Wait for shared lifetime ownership that prevents active-cache pruning.
+    pub fn acquire_cache_lease(&self, cancellation: &CancellationToken) -> Result<CacheLease> {
+        let file = open_lock_file(&self.lease_path)?;
+        loop {
+            if cancellation.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            if try_lock_shared_file(&file)? {
+                return Ok(CacheLease {
+                    _file: Arc::new(file),
+                });
+            }
+            thread::sleep(LOCK_RETRY_DELAY);
+        }
+    }
+
+    /// Try to obtain exclusive ownership for one managed-cache deletion.
+    pub(crate) fn try_acquire_prune_lease(&self) -> Result<Option<CachePruneLease>> {
+        let file = open_lock_file(&self.lease_path)?;
+        if try_lock_file(&file)? {
+            Ok(Some(CachePruneLease { _file: file }))
+        } else {
+            Ok(None)
         }
     }
 
@@ -72,6 +101,18 @@ pub struct CacheInitialization {
     _file: File,
 }
 
+/// Shared lifetime proof that a cache is in use by application services.
+#[derive(Debug, Clone)]
+pub struct CacheLease {
+    _file: Arc<File>,
+}
+
+/// Exclusive proof that no lease-aware process is using a cache.
+#[derive(Debug)]
+pub(crate) struct CachePruneLease {
+    _file: File,
+}
+
 /// Lifetime proof that this process owns automatic indexing for one cache.
 #[derive(Debug)]
 pub struct IndexLeadership {
@@ -106,6 +147,10 @@ fn acquire(path: &Path, cancellation: &CancellationToken) -> Result<File> {
 
 fn try_lock_file(file: &File) -> Result<bool> {
     try_lock_with(|| file.try_lock())
+}
+
+fn try_lock_shared_file(file: &File) -> Result<bool> {
+    try_lock_with(|| file.try_lock_shared())
 }
 
 fn unlock_file(file: &File) -> Result<()> {
@@ -181,6 +226,40 @@ mod tests {
             coordination
                 .try_acquire_leadership()
                 .expect("released attempt")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn cache_prune_lease_waits_for_every_shared_lifetime_lease() {
+        let directory = tempfile::tempdir().expect("directory");
+        let coordination = IndexCoordination::for_database(&directory.path().join("index.sqlite"));
+        let cancellation = CancellationToken::new();
+        let first = coordination
+            .acquire_cache_lease(&cancellation)
+            .expect("first lease");
+        let second = coordination
+            .acquire_cache_lease(&cancellation)
+            .expect("second lease");
+
+        assert!(
+            coordination
+                .try_acquire_prune_lease()
+                .expect("active probe")
+                .is_none()
+        );
+        drop(first);
+        assert!(
+            coordination
+                .try_acquire_prune_lease()
+                .expect("one lease remains")
+                .is_none()
+        );
+        drop(second);
+        assert!(
+            coordination
+                .try_acquire_prune_lease()
+                .expect("leases released")
                 .is_some()
         );
     }

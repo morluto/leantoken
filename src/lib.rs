@@ -3,6 +3,8 @@
 //! [`services::Services`] is the main application API. The CLI and MCP
 //! adapters use the same service methods and response models.
 
+/// Explicit listing and pruning of centrally managed repository caches.
+pub mod cache;
 /// Command-line parsing and application requests.
 pub mod cli;
 /// Repository configuration and cache-path discovery.

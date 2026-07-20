@@ -226,6 +226,24 @@ update the dependency with npm:
 npm install leantoken@latest
 ```
 
+## Cache management
+
+LeanToken keeps one SQLite cache per canonical repository in the platform cache
+directory. Inspect usage and preview an age- or size-based cleanup before
+applying it:
+
+```bash
+leantoken cache list
+leantoken cache prune --older-than 30 --dry-run
+leantoken cache prune --max-total-bytes 1073741824 --yes
+```
+
+Active MCP leaders and followers hold a lifetime lease and are skipped. A
+missing repository is retained unless it also meets another criterion or
+`--remove-missing-roots` is passed explicitly, because removable and offline
+volumes can be temporarily unavailable. Cache commands never inspect or delete
+an explicit `--database` outside the managed cache directory.
+
 ## How it works
 
 ```text

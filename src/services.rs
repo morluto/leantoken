@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
 
-use crate::coordination::{IndexCoordination, IndexLeadership};
+use crate::coordination::{CacheLease, IndexCoordination, IndexLeadership};
 use crate::error::RetryableOperation;
 use crate::indexer::Indexer;
 use crate::model::*;
@@ -37,6 +37,7 @@ pub struct Services {
     storage: Storage,
     indexer: Indexer,
     coordination: IndexCoordination,
+    _cache_lease: CacheLease,
     active_reconciliations: Arc<AtomicUsize>,
 }
 
@@ -45,21 +46,23 @@ impl Services {
     pub fn open(config: Config) -> Result<Self> {
         let coordination = IndexCoordination::for_database(&config.database_path);
         let cancellation = CancellationToken::new();
+        let cache_lease = coordination.acquire_cache_lease(&cancellation)?;
         let _initialization = coordination.acquire_initialization(&cancellation)?;
-        Self::open_once(&config, None)
+        Self::open_once(&config, None, cache_lease)
     }
 
     /// Open services under exclusive cache initialization ownership, retrying
     /// transient SQLite contention until the caller cancels.
     pub fn open_cancellable(config: Config, cancellation: &CancellationToken) -> Result<Self> {
         let coordination = IndexCoordination::for_database(&config.database_path);
+        let cache_lease = coordination.acquire_cache_lease(cancellation)?;
         let _initialization = coordination.acquire_initialization(cancellation)?;
         let mut delay = STARTUP_RETRY_INITIAL_DELAY;
         let mut attempt = 0u32;
 
         loop {
             validation::check_cancelled(cancellation)?;
-            match Self::open_once(&config, Some(STARTUP_BUSY_TIMEOUT)) {
+            match Self::open_once(&config, Some(STARTUP_BUSY_TIMEOUT), cache_lease.clone()) {
                 Ok(services) => return Ok(services),
                 Err(error) if is_database_contention(&error) => {
                     attempt = attempt.saturating_add(1);
@@ -80,7 +83,11 @@ impl Services {
         }
     }
 
-    fn open_once(config: &Config, startup_timeout: Option<Duration>) -> Result<Self> {
+    fn open_once(
+        config: &Config,
+        startup_timeout: Option<Duration>,
+        cache_lease: CacheLease,
+    ) -> Result<Self> {
         let open_storage = || match startup_timeout {
             Some(timeout) => Storage::open_for_repository_with_startup_timeout(
                 &config.database_path,
@@ -98,10 +105,10 @@ impl Services {
             }
             Err(error) => return Err(error),
         };
-        Self::from_parts(Arc::new(config.clone()), storage)
+        Self::from_parts(Arc::new(config.clone()), storage, cache_lease)
     }
 
-    fn from_parts(config: Arc<Config>, storage: Storage) -> Result<Self> {
+    fn from_parts(config: Arc<Config>, storage: Storage, cache_lease: CacheLease) -> Result<Self> {
         let indexer = Indexer::new(Arc::clone(&config), storage.clone())?;
         let coordination = IndexCoordination::for_database(&config.database_path);
         Ok(Self {
@@ -109,6 +116,7 @@ impl Services {
             storage,
             indexer,
             coordination,
+            _cache_lease: cache_lease,
             active_reconciliations: Arc::new(AtomicUsize::new(0)),
         })
     }
