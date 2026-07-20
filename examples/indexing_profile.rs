@@ -95,6 +95,15 @@ struct IndexSample {
     elapsed_ms: f64,
     response: IndexResponse,
     diagnostics: IndexingDiagnostics,
+    storage_footprint: StorageFootprint,
+}
+
+#[derive(Debug, Serialize)]
+struct StorageFootprint {
+    database_bytes: u64,
+    wal_bytes: u64,
+    shm_bytes: u64,
+    total_bytes: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -222,6 +231,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
         elapsed_ms: milliseconds(start.elapsed()),
         response: initial_profile.response,
         diagnostics: initial_profile.diagnostics,
+        storage_footprint: storage_footprint(&config.database_path)?,
     };
 
     let mut full_noop_durations = Vec::with_capacity(args.iterations);
@@ -384,7 +394,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
 
     let (leantoken_git_revision, leantoken_worktree_dirty) = leantoken_source_identity();
     Ok(Report {
-        schema_version: 5,
+        schema_version: 6,
         leantoken_version: env!("CARGO_PKG_VERSION"),
         leantoken_git_revision,
         leantoken_worktree_dirty,
@@ -425,6 +435,32 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
             "Timing is machine-specific. Compare runs only on the same host and build profile, and use release builds for decisions.".into(),
         ],
     })
+}
+
+fn storage_footprint(database_path: &Path) -> io::Result<StorageFootprint> {
+    let database_bytes = logical_file_bytes(database_path)?;
+    let wal_bytes = logical_file_bytes(&path_with_suffix(database_path, "-wal"))?;
+    let shm_bytes = logical_file_bytes(&path_with_suffix(database_path, "-shm"))?;
+    Ok(StorageFootprint {
+        database_bytes,
+        wal_bytes,
+        shm_bytes,
+        total_bytes: database_bytes + wal_bytes + shm_bytes,
+    })
+}
+
+fn logical_file_bytes(path: &Path) -> io::Result<u64> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.len()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(0),
+        Err(error) => Err(error),
+    }
+}
+
+fn path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut value = path.as_os_str().to_os_string();
+    value.push(suffix);
+    PathBuf::from(value)
 }
 
 struct PreparedCorpus {
@@ -755,7 +791,15 @@ mod tests {
 
         let report = run_profile(&args).expect("profile");
 
+        assert_eq!(report.schema_version, 6);
         assert_eq!(report.initial_index.response.files_indexed, 7);
+        assert!(report.initial_index.storage_footprint.database_bytes > 0);
+        assert_eq!(
+            report.initial_index.storage_footprint.total_bytes,
+            report.initial_index.storage_footprint.database_bytes
+                + report.initial_index.storage_footprint.wal_bytes
+                + report.initial_index.storage_footprint.shm_bytes
+        );
         assert_eq!(report.full_noop.timing.samples, 2);
         assert_eq!(report.full_changed.files_indexed_per_sample, 1);
         assert_eq!(report.targeted_changed.files_seen_per_sample, 1);

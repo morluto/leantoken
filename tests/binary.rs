@@ -637,6 +637,64 @@ fn mcp_follower_takes_over_after_leader_exit() {
 }
 
 #[test]
+fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("old.rs"), "fn committed_before_crash() {}\n")
+        .expect("old fixture");
+    let database = root.path().join("index.sqlite");
+    let initial = run(root.path(), &database, &["index"]);
+    assert_eq!(initial["repository_generation"], 1);
+    assert_eq!(database_state(&database).map(|state| state.1), Some(1));
+
+    for file in 0..120 {
+        let content = (0..300)
+            .map(|function| format!("fn item_{file}_{function}() -> usize {{ {function} }}\n"))
+            .collect::<String>();
+        std::fs::write(root.path().join(format!("new_{file}.rs")), content)
+            .expect("write replacement fixture");
+    }
+
+    let coordination =
+        leantoken::coordination::IndexCoordination::for_database(&database);
+    let operation_blocker = coordination
+        .acquire_operation(&tokio_util::sync::CancellationToken::new())
+        .expect("block reconciliation");
+
+    let mut leader = McpProcess::spawn(root.path(), &database);
+    leader.initialize();
+    leader.send_initialized();
+    wait_until(Duration::from_secs(5), || {
+        coordination
+            .try_acquire_leadership()
+            .expect("probe leadership")
+            .is_none()
+    });
+
+    let mut follower = McpProcess::spawn(root.path(), &database);
+    follower.initialize();
+    follower.send_initialized();
+    follower.wait_until_ready(Duration::from_secs(5));
+
+    drop(operation_blocker);
+    wait_until(Duration::from_secs(5), || {
+        coordination.is_reconciling().expect("probe reconciliation")
+    });
+    leader.kill_now();
+
+    wait_until(Duration::from_secs(5), || {
+        database_state(&database).is_some_and(|(generation, files, _)| {
+            generation == 1 && files == 1
+        })
+    });
+    wait_until(Duration::from_secs(20), || {
+        database_state(&database).is_some_and(|(generation, files, _)| {
+            generation == 2 && files == 121
+        })
+    });
+    follower.wait_until_ready(Duration::from_secs(5));
+}
+
+#[test]
 fn setup_and_remove_do_not_require_a_repository() {
     let temp = tempfile::tempdir().expect("temporary home");
     let missing_root = temp.path().join("not-a-repository");
@@ -1136,6 +1194,12 @@ impl McpProcess {
             self.child.kill().expect("kill MCP child");
         }
         self.child.wait().expect("join MCP child");
+    }
+
+    fn kill_now(&mut self) {
+        self.child.kill().expect("kill MCP child");
+        self.child.wait().expect("join killed MCP child");
+        self.stdin.take();
     }
 }
 

@@ -496,17 +496,18 @@ cargo run --release --example indexing_profile -- \
   --output target/indexing_profile_tokio_linux.json
 ```
 
-The schema-version 5 report records the caller-supplied corpus label, exact
+The schema-version 6 report records the caller-supplied corpus label, exact
 revision, ignore-visible file count, total and mean bytes, maximum directory
 depth, extension mix, initial discovery/hash-plan/prepare/insert/publication
-timings, and actual preparation batch file/byte high-water. The label is
+timings, actual preparation batch file/byte high-water, and the SQLite, WAL, and
+SHM logical file sizes immediately after the initial commit. The label is
 explicit so the profiler never copies a possibly credential-bearing Git remote
-into a report. Run the command under `/usr/bin/time -v` (or the platform
-equivalent) to capture process peak RSS beside the JSON. Run the same pinned
-checkout and command on Linux, macOS, and Windows before making a cross-platform
-indexing decision. Keep negative results: if full discovery is not a material
-p50 or p95 cost, do not add an incremental journal or directory invalidation
-layer.
+into a report. Logical file size is not allocated disk usage. Run the command
+under `/usr/bin/time -v` (or the platform equivalent) to capture process peak
+RSS beside the JSON. Run the same pinned checkout and command on Linux, macOS,
+and Windows before making a cross-platform indexing decision. Keep negative
+results: if full discovery is not a material p50 or p95 cost, do not add an
+incremental journal or directory invalidation layer.
 
 The repository includes one transparent [Tokio Linux x86-64 profile](reports/indexing-tokio-linux-x86_64-2026-07-16.json).
 It is a single-host measurement, not a cross-platform conclusion. On that run,
