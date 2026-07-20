@@ -150,7 +150,7 @@ struct WatcherDeliveryMeasurement {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ExpectedIndexCounts {
+struct MinimumIndexCounts {
     seen: usize,
     indexed: usize,
     removed: usize,
@@ -313,7 +313,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
             indexer.reconcile_paths(std::slice::from_ref(&create_relative))?;
             Ok(())
         },
-        ExpectedIndexCounts {
+        MinimumIndexCounts {
             seen: 1,
             indexed: 1,
             removed: 0,
@@ -333,7 +333,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
             indexer.reconcile(false)?;
             Ok(())
         },
-        ExpectedIndexCounts {
+        MinimumIndexCounts {
             seen: 1,
             indexed: 0,
             removed: 1,
@@ -363,7 +363,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
             indexer.reconcile(false)?;
             Ok(())
         },
-        ExpectedIndexCounts {
+        MinimumIndexCounts {
             seen: 2,
             indexed: 1,
             removed: 1,
@@ -384,7 +384,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
         },
         || indexer.reconcile_paths(std::slice::from_ref(&ignore_relative)),
         || Ok(()),
-        ExpectedIndexCounts {
+        MinimumIndexCounts {
             seen: 1,
             indexed: 1,
             removed: 0,
@@ -671,11 +671,11 @@ fn measure_ignore_visibility(
 }
 
 fn require_stable_counts(
-    expected: &mut Option<ExpectedIndexCounts>,
+    expected: &mut Option<MinimumIndexCounts>,
     response: &IndexResponse,
     measurement: &str,
 ) -> AnyResult<()> {
-    let observed = ExpectedIndexCounts {
+    let observed = MinimumIndexCounts {
         seen: response.files_seen,
         indexed: response.files_indexed,
         removed: response.files_removed,
@@ -915,7 +915,7 @@ fn measure_lifecycle_indexing<S, C, R>(
     mut setup: S,
     mut reconcile: C,
     mut restore: R,
-    expected: ExpectedIndexCounts,
+    minimum: MinimumIndexCounts,
     measurement: &str,
 ) -> AnyResult<IndexMeasurement>
 where
@@ -924,20 +924,25 @@ where
     R: FnMut() -> AnyResult<()>,
 {
     let mut durations = Vec::with_capacity(iterations);
+    let mut expected = None;
     for iteration in 0..iterations {
         setup(iteration)?;
         let start = Instant::now();
         let response = reconcile()?;
         durations.push(start.elapsed());
-        require_index_counts(&response, expected.seen, expected.indexed, measurement)?;
-        if response.files_removed != expected.removed {
+        if response.files_seen < minimum.seen
+            || response.files_indexed < minimum.indexed
+            || response.files_removed < minimum.removed
+        {
             return Err(Box::new(io::Error::other(format!(
-                "{measurement} expected files_removed={}; got files_removed={}",
-                expected.removed, response.files_removed
+                "{measurement} expected at least {minimum:?}; got seen={}, indexed={}, removed={}",
+                response.files_seen, response.files_indexed, response.files_removed
             ))));
         }
+        require_stable_counts(&mut expected, &response, measurement)?;
         restore()?;
     }
+    let expected = expected.expect("positive iteration count is validated");
     Ok(IndexMeasurement {
         timing: TimingStats::from_durations(durations),
         files_seen_per_sample: expected.seen,
@@ -1103,6 +1108,36 @@ mod tests {
         let samples = [1.0, 2.0, 3.0, 4.0, 5.0];
         assert_eq!(percentile(&samples, 0.50), 3.0);
         assert_eq!(percentile(&samples, 0.95), 5.0);
+    }
+
+    #[test]
+    fn lifecycle_measurement_retains_stable_additional_importer_work() {
+        let measurement = measure_lifecycle_indexing(
+            2,
+            |_| Ok(()),
+            || {
+                Ok(IndexResponse {
+                    repository_generation: 1,
+                    files_seen: 3,
+                    files_indexed: 2,
+                    files_unchanged: 1,
+                    files_removed: 0,
+                    files_skipped: 0,
+                    warnings: Vec::new(),
+                })
+            },
+            || Ok(()),
+            MinimumIndexCounts {
+                seen: 1,
+                indexed: 1,
+                removed: 0,
+            },
+            "create with affected importers",
+        )
+        .expect("measurement");
+
+        assert_eq!(measurement.files_seen_per_sample, 3);
+        assert_eq!(measurement.files_indexed_per_sample, 2);
     }
 
     #[test]
