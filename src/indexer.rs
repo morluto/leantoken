@@ -4,7 +4,7 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use rayon::ThreadPool;
 use rayon::prelude::*;
@@ -31,6 +31,53 @@ pub struct Indexer {
     config: Arc<Config>,
     storage: Storage,
     pool: Arc<LazyWorkerPool>,
+}
+
+/// Phase and batch high-water diagnostics for one full reconciliation.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct IndexingDiagnostics {
+    /// End-to-end reconciliation time, including storage commit.
+    pub total_ms: f64,
+    /// Ignore-aware repository discovery time.
+    pub discovery_ms: f64,
+    /// Existing-state load, hashing, and reconciliation planning time.
+    pub hash_and_plan_ms: f64,
+    /// Parallel file read, chunk, tokenize, and parse time.
+    pub preparation_ms: f64,
+    /// Import resolution and SQLite insertion time inside batch callbacks.
+    pub insertion_ms: f64,
+    /// Total lifetime of the generation publication transaction.
+    pub publication_ms: f64,
+    /// Number of bounded preparation batches consumed.
+    pub preparation_batches: usize,
+    /// Largest number of files held in one prepared batch.
+    pub max_batch_files: usize,
+    /// Largest aggregate discovered source bytes in one prepared batch.
+    pub max_batch_source_bytes: u64,
+    /// Filesystem entries yielded during discovery.
+    pub walk_entries: u64,
+    /// Files admitted by discovery.
+    pub discovered_files: u64,
+    /// Aggregate metadata bytes admitted by discovery.
+    pub discovered_source_bytes: u64,
+}
+
+/// Full reconciliation response paired with diagnostics excluded from MCP output.
+#[derive(Debug, Clone)]
+pub struct ProfiledIndexResponse {
+    /// Ordinary index response returned by adapters and services.
+    pub response: IndexResponse,
+    /// Internal phase and batch measurements for profiling.
+    pub diagnostics: IndexingDiagnostics,
+}
+
+#[derive(Debug, Default)]
+struct PreparationMetrics {
+    preparation: Duration,
+    insertion: Duration,
+    batches: usize,
+    max_batch_files: usize,
+    max_batch_source_bytes: u64,
 }
 
 struct LazyWorkerPool {
@@ -147,7 +194,13 @@ impl Indexer {
 
     /// Reconcile filesystem state into one committed repository generation.
     pub fn reconcile(&self, rebuild: bool) -> Result<IndexResponse> {
-        self.reconcile_cancellable(rebuild, &CancellationToken::new())
+        self.reconcile_profiled(rebuild)
+            .map(|profiled| profiled.response)
+    }
+
+    /// Reconcile a full repository and return phase diagnostics for benchmarks.
+    pub fn reconcile_profiled(&self, rebuild: bool) -> Result<ProfiledIndexResponse> {
+        self.reconcile_cancellable_profiled(rebuild, &CancellationToken::new())
     }
 
     /// Reconcile the repository with cooperative cancellation and stale-plan retry.
@@ -156,6 +209,16 @@ impl Indexer {
         rebuild: bool,
         cancellation: &CancellationToken,
     ) -> Result<IndexResponse> {
+        self.reconcile_cancellable_profiled(rebuild, cancellation)
+            .map(|profiled| profiled.response)
+    }
+
+    /// Reconcile a full repository with cancellation and phase diagnostics.
+    pub fn reconcile_cancellable_profiled(
+        &self,
+        rebuild: bool,
+        cancellation: &CancellationToken,
+    ) -> Result<ProfiledIndexResponse> {
         for _ in 0..3 {
             match self.reconcile_once(rebuild, cancellation) {
                 Err(Error::StaleReconciliation { .. }) => continue,
@@ -169,10 +232,12 @@ impl Indexer {
         &self,
         rebuild: bool,
         cancellation: &CancellationToken,
-    ) -> Result<IndexResponse> {
+    ) -> Result<ProfiledIndexResponse> {
+        let total_started = Instant::now();
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
 
+        let discovery_started = Instant::now();
         let discovery = discover_files_with_limits_policy_and_filter(
             &self.config.root,
             self.config.discovery_limits(),
@@ -180,6 +245,8 @@ impl Indexer {
             cancellation,
             |path| !self.config.is_database_artifact_path(path),
         )?;
+        let discovery_elapsed = discovery_started.elapsed();
+        let discovery_stats = discovery.stats;
         tracing::debug!(
             walk_entries = discovery.stats.walk_entries,
             files = discovery.stats.files,
@@ -188,6 +255,7 @@ impl Indexer {
             "repository discovery completed"
         );
         let discovered = discovery.files;
+        let planning_started = Instant::now();
         check_cancelled(cancellation)?;
         let existing = self.existing_files(cancellation)?;
         let config_hash = self.config_hash();
@@ -228,51 +296,60 @@ impl Indexer {
             }
             candidates.push(file);
         }
+        let planning_elapsed = planning_started.elapsed();
 
-        let prepared = self.prepare_candidates(&candidates, cancellation)?;
-
-        let mut replacements = Vec::new();
+        let mut removed_paths = deletions.into_iter().collect::<HashSet<_>>();
         let mut warnings = Vec::new();
         let mut skipped = 0usize;
-        for result in prepared {
-            check_cancelled(cancellation)?;
-            match result {
-                PreparedFile::Indexed(file, warning) => {
-                    replacements.push(file);
-                    if let Some(warning) = warning {
-                        push_warning(&mut warnings, warning);
+        let mut files_indexed = 0usize;
+        let publication_started = Instant::now();
+        let (generation, preparation) =
+            self.storage
+                .publish_reconciliation_at(&baseline, &config_hash, rebuild, |writer| {
+                    for path in &removed_paths {
+                        writer.delete(path)?;
                     }
-                }
-                PreparedFile::Binary(path) | PreparedFile::Oversized(path) => {
-                    skipped += 1;
-                    if existing.contains_key(&path) {
-                        deletions.push(path);
-                    }
-                }
-                PreparedFile::Failed(path, error) => {
-                    skipped += 1;
-                    push_warning(&mut warnings, format!("{path}: {error}"));
-                }
-            }
-        }
-        resolve_imports(&mut replacements, &repository_paths, cancellation)?;
+                    self.prepare_candidate_batches(&candidates, cancellation, |prepared| {
+                        let mut indexed = Vec::with_capacity(prepared.len());
+                        for result in prepared {
+                            check_cancelled(cancellation)?;
+                            match result {
+                                PreparedFile::Indexed(file, warning) => {
+                                    indexed.push(file);
+                                    if let Some(warning) = warning {
+                                        push_warning(&mut warnings, warning);
+                                    }
+                                }
+                                PreparedFile::Binary(path) | PreparedFile::Oversized(path) => {
+                                    skipped += 1;
+                                    if existing.contains_key(&path)
+                                        && removed_paths.insert(path.clone())
+                                    {
+                                        writer.delete(&path)?;
+                                    }
+                                }
+                                PreparedFile::Failed(path, error) => {
+                                    skipped += 1;
+                                    push_warning(&mut warnings, format!("{path}: {error}"));
+                                }
+                            }
+                        }
+                        resolve_imports(&mut indexed, &repository_paths, cancellation)?;
+                        files_indexed = files_indexed.saturating_add(indexed.len());
+                        for file in indexed {
+                            check_cancelled(cancellation)?;
+                            writer.replace(file)?;
+                        }
+                        Ok(())
+                    })
+                })?;
+        let publication_elapsed = publication_started.elapsed();
 
-        check_cancelled(cancellation)?;
-        deletions.sort_unstable();
-        deletions.dedup();
         check_cancelled(cancellation)?;
         let files_seen = unchanged + candidates.len();
-        let files_indexed = replacements.len();
-        let files_removed = deletions.len();
-        let generation = if rebuild {
-            self.storage
-                .full_reconcile_at(&baseline, &config_hash, replacements)?
-        } else {
-            self.storage
-                .reconcile_files_at(&baseline, &config_hash, replacements, &deletions)?
-        };
+        let files_removed = removed_paths.len();
 
-        Ok(IndexResponse {
+        let response = IndexResponse {
             repository_generation: generation,
             files_seen,
             files_indexed,
@@ -280,6 +357,36 @@ impl Indexer {
             files_removed,
             files_skipped: skipped,
             warnings,
+        };
+        let diagnostics = IndexingDiagnostics {
+            total_ms: duration_ms(total_started.elapsed()),
+            discovery_ms: duration_ms(discovery_elapsed),
+            hash_and_plan_ms: duration_ms(planning_elapsed),
+            preparation_ms: duration_ms(preparation.preparation),
+            insertion_ms: duration_ms(preparation.insertion),
+            publication_ms: duration_ms(publication_elapsed),
+            preparation_batches: preparation.batches,
+            max_batch_files: preparation.max_batch_files,
+            max_batch_source_bytes: preparation.max_batch_source_bytes,
+            walk_entries: discovery_stats.walk_entries,
+            discovered_files: discovery_stats.files,
+            discovered_source_bytes: discovery_stats.total_source_bytes,
+        };
+        tracing::debug!(
+            total_ms = diagnostics.total_ms,
+            discovery_ms = diagnostics.discovery_ms,
+            hash_and_plan_ms = diagnostics.hash_and_plan_ms,
+            preparation_ms = diagnostics.preparation_ms,
+            insertion_ms = diagnostics.insertion_ms,
+            publication_ms = diagnostics.publication_ms,
+            preparation_batches = diagnostics.preparation_batches,
+            max_batch_files = diagnostics.max_batch_files,
+            max_batch_source_bytes = diagnostics.max_batch_source_bytes,
+            "repository reconciliation profile"
+        );
+        Ok(ProfiledIndexResponse {
+            response,
+            diagnostics,
         })
     }
 
@@ -455,49 +562,60 @@ impl Indexer {
 
         let files_seen = candidates.len() + deletions.len();
         let candidates = candidates.into_values().collect::<Vec<_>>();
-        let prepared = self.prepare_candidates(&candidates, cancellation)?;
-        let mut replacements = Vec::new();
         let mut warnings = Vec::new();
         let mut skipped = 0usize;
-        for result in prepared {
-            check_cancelled(cancellation)?;
-            match result {
-                PreparedFile::Indexed(file, warning) => {
-                    let same = existing.get(&file.path).is_some_and(|record| {
-                        record.content_hash == file.content_hash
-                            && record.size_bytes == file.size_bytes
-                            && record.modified_ns == file.modified_ns
-                    });
-                    if same && !forced_importers.contains(&file.path) {
-                        unchanged += 1;
-                        continue;
-                    }
-                    replacements.push(file);
-                    if let Some(warning) = warning {
-                        push_warning(&mut warnings, warning);
-                    }
-                }
-                PreparedFile::Binary(path) | PreparedFile::Oversized(path) => {
-                    skipped += 1;
-                    if existing.contains_key(&path) {
-                        deletions.insert(path);
-                    }
-                }
-                PreparedFile::Failed(path, error) => {
-                    skipped += 1;
-                    push_warning(&mut warnings, format!("{path}: {error}"));
-                }
-            }
-        }
-        check_cancelled(cancellation)?;
-        let mut deletions = deletions.into_iter().collect::<Vec<_>>();
-        deletions.sort_unstable();
-        resolve_imports(&mut replacements, &repository_paths, cancellation)?;
-        let files_indexed = replacements.len();
-        let files_removed = deletions.len();
-        let generation =
+        let mut files_indexed = 0usize;
+        let (generation, _preparation) =
             self.storage
-                .reconcile_files_at(&baseline, &config_hash, replacements, &deletions)?;
+                .publish_reconciliation_at(&baseline, &config_hash, false, |writer| {
+                    for path in &deletions {
+                        writer.delete(path)?;
+                    }
+                    self.prepare_candidate_batches(&candidates, cancellation, |prepared| {
+                        let mut indexed = Vec::with_capacity(prepared.len());
+                        for result in prepared {
+                            check_cancelled(cancellation)?;
+                            match result {
+                                PreparedFile::Indexed(file, warning) => {
+                                    let same = existing.get(&file.path).is_some_and(|record| {
+                                        record.content_hash == file.content_hash
+                                            && record.size_bytes == file.size_bytes
+                                            && record.modified_ns == file.modified_ns
+                                    });
+                                    if same && !forced_importers.contains(&file.path) {
+                                        unchanged += 1;
+                                        continue;
+                                    }
+                                    indexed.push(file);
+                                    if let Some(warning) = warning {
+                                        push_warning(&mut warnings, warning);
+                                    }
+                                }
+                                PreparedFile::Binary(path) | PreparedFile::Oversized(path) => {
+                                    skipped += 1;
+                                    if existing.contains_key(&path)
+                                        && deletions.insert(path.clone())
+                                    {
+                                        writer.delete(&path)?;
+                                    }
+                                }
+                                PreparedFile::Failed(path, error) => {
+                                    skipped += 1;
+                                    push_warning(&mut warnings, format!("{path}: {error}"));
+                                }
+                            }
+                        }
+                        resolve_imports(&mut indexed, &repository_paths, cancellation)?;
+                        files_indexed = files_indexed.saturating_add(indexed.len());
+                        for file in indexed {
+                            check_cancelled(cancellation)?;
+                            writer.replace(file)?;
+                        }
+                        Ok(())
+                    })
+                })?;
+        check_cancelled(cancellation)?;
+        let files_removed = deletions.len();
 
         Ok(IndexResponse {
             repository_generation: generation,
@@ -520,14 +638,15 @@ impl Indexer {
         Ok(())
     }
 
-    fn prepare_candidates(
+    fn prepare_candidate_batches(
         &self,
         candidates: &[DiscoveredFile],
         cancellation: &CancellationToken,
-    ) -> Result<Vec<PreparedFile>> {
+        mut consume: impl FnMut(Vec<PreparedFile>) -> Result<()>,
+    ) -> Result<PreparationMetrics> {
         check_cancelled(cancellation)?;
         if candidates.is_empty() {
-            return Ok(Vec::new());
+            return Ok(PreparationMetrics::default());
         }
 
         // One lazy pool per Services/cache preserves that instance's
@@ -539,13 +658,20 @@ impl Indexer {
         let chunk_bytes = self.config.chunk_bytes;
         let tokenizer = self.config.tokenizer;
         let limits = self.config.discovery_limits();
-        let mut prepared = Vec::with_capacity(candidates.len());
+        let mut metrics = PreparationMetrics::default();
         let mut start = 0usize;
         while start < candidates.len() {
             check_cancelled(cancellation)?;
             let end = prepare_batch_end(candidates, start, limits);
             debug_assert!(end > start, "validated limits admit at least one file");
-            let mut batch = pool.install(|| {
+            let batch_source_bytes = candidates[start..end]
+                .iter()
+                .fold(0u64, |total, file| total.saturating_add(file.size_bytes));
+            metrics.batches = metrics.batches.saturating_add(1);
+            metrics.max_batch_files = metrics.max_batch_files.max(end - start);
+            metrics.max_batch_source_bytes = metrics.max_batch_source_bytes.max(batch_source_bytes);
+            let preparation_started = Instant::now();
+            let batch = pool.install(|| {
                 candidates[start..end]
                     .par_iter()
                     .map(|file| {
@@ -563,10 +689,13 @@ impl Indexer {
                     })
                     .collect::<Result<Vec<_>>>()
             })?;
-            prepared.append(&mut batch);
+            metrics.preparation += preparation_started.elapsed();
+            let insertion_started = Instant::now();
+            consume(batch)?;
+            metrics.insertion += insertion_started.elapsed();
             start = end;
         }
-        Ok(prepared)
+        Ok(metrics)
     }
 
     fn add_affected_importers(
@@ -701,6 +830,10 @@ fn prepare_batch_end(
         end += 1;
     }
     end
+}
+
+fn duration_ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1_000.0
 }
 
 fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
@@ -1130,12 +1263,14 @@ mod tests {
 
         assert!(indexer_a.pool.pool.get().is_none());
         assert!(indexer_b.pool.pool.get().is_none());
-        assert!(
-            indexer_a
-                .prepare_candidates(&[], &CancellationToken::new())
-                .expect("empty prepare")
-                .is_empty()
-        );
+        let mut consumed = false;
+        indexer_a
+            .prepare_candidate_batches(&[], &CancellationToken::new(), |_| {
+                consumed = true;
+                Ok(())
+            })
+            .expect("empty prepare");
+        assert!(!consumed);
         assert!(indexer_a.pool.pool.get().is_none());
 
         assert_eq!(
@@ -1154,5 +1289,48 @@ mod tests {
                 .current_num_threads(),
             3
         );
+    }
+
+    #[test]
+    fn cancellation_between_preparation_batches_stops_before_the_next_batch() {
+        let root = tempfile::tempdir().expect("root");
+        let paths = [root.path().join("a.rs"), root.path().join("b.rs")];
+        for path in &paths {
+            fs::write(path, "fn item() {}\n").expect("fixture");
+        }
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.max_prepare_batch_files = 1;
+        let storage = Storage::open(&config.database_path).expect("storage");
+        let indexer = Indexer::new(Arc::new(config), storage).expect("indexer");
+        let candidates = paths
+            .iter()
+            .map(|path| {
+                let metadata = fs::metadata(path).expect("metadata");
+                DiscoveredFile {
+                    absolute_path: path.clone(),
+                    relative_path: path
+                        .file_name()
+                        .expect("file name")
+                        .to_string_lossy()
+                        .into_owned(),
+                    size_bytes: metadata.len(),
+                    modified_ns: None,
+                }
+            })
+            .collect::<Vec<_>>();
+        let cancellation = CancellationToken::new();
+        let mut batches = 0usize;
+
+        let error = indexer
+            .prepare_candidate_batches(&candidates, &cancellation, |_| {
+                batches += 1;
+                cancellation.cancel();
+                Ok(())
+            })
+            .expect_err("second batch must observe cancellation");
+
+        assert!(matches!(error, Error::Cancelled));
+        assert_eq!(batches, 1);
     }
 }

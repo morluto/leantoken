@@ -9,6 +9,7 @@ responses are bounded.
 ```text
 --root <PATH>      Repository root (default: current directory)
 --allow-broad-root Allow a filesystem root, home directory, or parent of home
+--include-generated Include known generated and package-cache directories
 --max-walk-entries <COUNT>       Walker entries per discovery (default: 500000)
 --max-files <COUNT>              Admitted source files (default: 150000)
 --max-total-source-bytes <BYTES> Aggregate source bytes (default: 2147483648)

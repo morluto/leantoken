@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use leantoken::Config;
-use leantoken::indexer::Indexer;
+use leantoken::indexer::{Indexer, IndexingDiagnostics};
 use leantoken::model::IndexResponse;
 use leantoken::repository::{DiscoveredFile, discover_files};
 use leantoken::storage::Storage;
@@ -94,6 +94,7 @@ struct CorpusReport {
 struct IndexSample {
     elapsed_ms: f64,
     response: IndexResponse,
+    diagnostics: IndexingDiagnostics,
 }
 
 #[derive(Debug, Serialize)]
@@ -216,10 +217,11 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
     let indexer = Indexer::new(Arc::clone(&config), storage.clone())?;
 
     let start = Instant::now();
-    let initial_response = indexer.reconcile(false)?;
+    let initial_profile = indexer.reconcile_profiled(false)?;
     let initial_index = IndexSample {
         elapsed_ms: milliseconds(start.elapsed()),
-        response: initial_response,
+        response: initial_profile.response,
+        diagnostics: initial_profile.diagnostics,
     };
 
     let mut full_noop_durations = Vec::with_capacity(args.iterations);
@@ -382,7 +384,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
 
     let (leantoken_git_revision, leantoken_worktree_dirty) = leantoken_source_identity();
     Ok(Report {
-        schema_version: 4,
+        schema_version: 5,
         leantoken_version: env!("CARGO_PKG_VERSION"),
         leantoken_git_revision,
         leantoken_worktree_dirty,

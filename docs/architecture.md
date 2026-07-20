@@ -72,10 +72,14 @@ database, lock, watcher, worker, and failure domains. Multiple agents on one
 repository intentionally share the same cache and committed generations.
 
 One repository-scoped operation lock serializes reconciliation across processes.
-File preparation happens outside SQLite, then an immediate write transaction
-verifies that the generation and config used to build the plan are still
-current. A stale plan is discarded and recomputed. Replacements, deletions, and
-generation advancement then commit together.
+Discovery, hashing, and membership planning happen before publication. An
+immediate write transaction then verifies that the generation and config used
+to build the plan are still current. A stale plan is discarded and recomputed.
+Each file- and byte-bounded Rayon batch is prepared, resolved, and inserted into
+that one uncommitted transaction before its memory is released. A later parse,
+storage, or cancellation error rolls back every earlier batch. Replacements,
+deletions, and generation advancement become visible together at the final
+commit.
 
 Each multi-step retrieval (search, context, outline, files, read) opens one
 checked-out read-only connection from an established, bounded `r2d2_sqlite`
