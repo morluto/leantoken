@@ -540,6 +540,12 @@ invalidation prototype is eligible only if full fallback reaches 250 ms p95,
 discovery plus hash/planning accounts for at least 50% of that work, and the
 result repeats in at least two corpus/platform pairs.
 
+The completed [cross-platform decision report](reports/monorepo-reconciliation-v1-2026-07-20.md)
+records the six-pair matrix and its frozen no-go result. No pair reached the
+absolute full-fallback threshold, so targeted reconciliation with bounded full
+fallback remains the selected design. The expensive workflow is manual after
+publishing that result.
+
 Run one frozen pair locally with the already-built release binary:
 
 ```bash
