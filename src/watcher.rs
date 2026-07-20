@@ -20,6 +20,13 @@ use tokio_util::sync::CancellationToken;
 use crate::repository::{DiscoveryPolicy, slash_path};
 use crate::{Error, Result};
 
+const MAX_SCHEDULED_PATHS: usize = 4_096;
+const RECONCILE_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(500);
+const RECONCILE_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
+const FULL_RECONCILE_INITIAL_DELAY: Duration = Duration::from_secs(1);
+const FULL_RECONCILE_MAX_DELAY: Duration = Duration::from_secs(30);
+const FULL_RECONCILE_RESET_AFTER: Duration = Duration::from_secs(60);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Debounced repository change delivered to the reconciliation loop.
 pub enum WatcherMessage {
@@ -27,6 +34,187 @@ pub enum WatcherMessage {
     Changed { paths: Vec<String> },
     /// Event loss or ambiguity requires repository-wide reconciliation.
     ReconcileRequired,
+}
+
+/// One coalesced watcher reconciliation selected after quiet-time and backoff.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WatcherAction {
+    /// Reconcile the sorted set of changed repository-relative paths.
+    Paths(Vec<String>),
+    /// Reconcile full repository visibility and contents.
+    Full,
+}
+
+#[derive(Debug)]
+enum PendingReconciliation {
+    Paths(BTreeSet<String>),
+    Full,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ReconciliationSchedulePolicy {
+    quiet_period: Duration,
+    max_pending_paths: usize,
+    retry_initial_delay: Duration,
+    retry_max_delay: Duration,
+    full_initial_delay: Duration,
+    full_max_delay: Duration,
+    full_reset_after: Duration,
+}
+
+impl ReconciliationSchedulePolicy {
+    fn runtime(quiet_period: Duration) -> Self {
+        Self {
+            quiet_period,
+            max_pending_paths: MAX_SCHEDULED_PATHS,
+            retry_initial_delay: RECONCILE_RETRY_INITIAL_DELAY,
+            retry_max_delay: RECONCILE_RETRY_MAX_DELAY,
+            full_initial_delay: FULL_RECONCILE_INITIAL_DELAY,
+            full_max_delay: FULL_RECONCILE_MAX_DELAY,
+            full_reset_after: FULL_RECONCILE_RESET_AFTER,
+        }
+    }
+}
+
+/// Sticky, bounded scheduler for filesystem-driven repository reconciliation.
+///
+/// Path events coalesce until the configured quiet period. Ambiguity or path
+/// overflow becomes one full reconciliation. Failed actions remain pending
+/// under capped exponential retry, while consecutive successful full scans
+/// receive a separate capped cooldown to prevent rescan loops.
+#[derive(Debug)]
+pub struct WatcherReconciliationScheduler {
+    policy: ReconciliationSchedulePolicy,
+    pending: Option<PendingReconciliation>,
+    quiet_until: Option<Instant>,
+    retry_not_before: Option<Instant>,
+    next_full_not_before: Option<Instant>,
+    last_full_completed: Option<Instant>,
+    retry_delay: Duration,
+    full_delay: Duration,
+}
+
+impl WatcherReconciliationScheduler {
+    /// Create a scheduler using runtime path and retry bounds.
+    #[must_use]
+    pub fn new(quiet_period: Duration) -> Self {
+        Self::with_policy(ReconciliationSchedulePolicy::runtime(quiet_period))
+    }
+
+    fn with_policy(policy: ReconciliationSchedulePolicy) -> Self {
+        Self {
+            retry_delay: policy.retry_initial_delay,
+            full_delay: policy.full_initial_delay,
+            policy,
+            pending: None,
+            quiet_until: None,
+            retry_not_before: None,
+            next_full_not_before: None,
+            last_full_completed: None,
+        }
+    }
+
+    /// Merge one watcher message into the sticky pending state.
+    pub fn enqueue(&mut self, message: WatcherMessage, now: Instant) {
+        self.reset_full_backoff_after_stability(now);
+        match message {
+            WatcherMessage::Changed { paths } if paths.is_empty() => return,
+            WatcherMessage::Changed { paths } => {
+                self.merge_paths(paths);
+            }
+            WatcherMessage::ReconcileRequired => {
+                self.pending = Some(PendingReconciliation::Full);
+            }
+        }
+        self.quiet_until = Some(now + self.policy.quiet_period);
+    }
+
+    /// Return the earliest time at which pending work may run.
+    #[must_use]
+    pub fn next_deadline(&self) -> Option<Instant> {
+        let mut deadline = self.quiet_until?;
+        if let Some(retry_not_before) = self.retry_not_before {
+            deadline = deadline.max(retry_not_before);
+        }
+        if matches!(self.pending, Some(PendingReconciliation::Full))
+            && let Some(next_full_not_before) = self.next_full_not_before
+        {
+            deadline = deadline.max(next_full_not_before);
+        }
+        Some(deadline)
+    }
+
+    /// Take the coalesced action when every scheduling deadline has elapsed.
+    pub fn take_ready(&mut self, now: Instant) -> Option<WatcherAction> {
+        if self.next_deadline().is_none_or(|deadline| now < deadline) {
+            return None;
+        }
+        self.quiet_until = None;
+        self.retry_not_before = None;
+        match self.pending.take()? {
+            PendingReconciliation::Paths(paths) => {
+                Some(WatcherAction::Paths(paths.into_iter().collect()))
+            }
+            PendingReconciliation::Full => Some(WatcherAction::Full),
+        }
+    }
+
+    /// Record a successful action and apply full-rescan cooldown when needed.
+    pub fn finish_success(&mut self, action: &WatcherAction, now: Instant) {
+        self.retry_delay = self.policy.retry_initial_delay;
+        self.retry_not_before = None;
+        if matches!(action, WatcherAction::Full) {
+            self.last_full_completed = Some(now);
+            self.next_full_not_before = Some(now + self.full_delay);
+            self.full_delay = self
+                .full_delay
+                .saturating_mul(2)
+                .min(self.policy.full_max_delay);
+        }
+    }
+
+    /// Retain a failed action and schedule it under capped exponential retry.
+    pub fn finish_failure(&mut self, action: WatcherAction, now: Instant) {
+        match action {
+            WatcherAction::Paths(paths) => self.merge_paths(paths),
+            WatcherAction::Full => self.pending = Some(PendingReconciliation::Full),
+        }
+        self.quiet_until = Some(now);
+        self.retry_not_before = Some(now + self.retry_delay);
+        self.retry_delay = self
+            .retry_delay
+            .saturating_mul(2)
+            .min(self.policy.retry_max_delay);
+    }
+
+    fn merge_paths(&mut self, paths: impl IntoIterator<Item = String>) {
+        if matches!(self.pending, Some(PendingReconciliation::Full)) {
+            return;
+        }
+        let mut pending = match self.pending.take() {
+            Some(PendingReconciliation::Paths(pending)) => pending,
+            Some(PendingReconciliation::Full) => unreachable!("full handled above"),
+            None => BTreeSet::new(),
+        };
+        pending.extend(paths);
+        self.pending = if pending.len() > self.policy.max_pending_paths {
+            Some(PendingReconciliation::Full)
+        } else {
+            Some(PendingReconciliation::Paths(pending))
+        };
+    }
+
+    fn reset_full_backoff_after_stability(&mut self, now: Instant) {
+        let stable = self.last_full_completed.is_some_and(|completed| {
+            now.checked_duration_since(completed)
+                .is_some_and(|elapsed| elapsed >= self.policy.full_reset_after)
+        });
+        if stable {
+            self.last_full_completed = None;
+            self.next_full_not_before = None;
+            self.full_delay = self.policy.full_initial_delay;
+        }
+    }
 }
 
 /// Joined filesystem watcher for one repository root.
@@ -40,7 +228,9 @@ impl RepositoryWatcher {
     /// Start watching a canonical repository root.
     ///
     /// `capacity` bounds both the public message queue and the internal raw
-    /// event queue. Queue overflow degrades to [`WatcherMessage::ReconcileRequired`].
+    /// event queue. It also derives the bound for retained paths and incomplete
+    /// rename cookies. Queue or retained-state overflow degrades to
+    /// [`WatcherMessage::ReconcileRequired`].
     pub async fn start(
         root: impl AsRef<Path>,
         capacity: usize,
@@ -115,6 +305,9 @@ impl RepositoryWatcher {
             loop {
                 if overflowed.swap(false, Ordering::Acquire) {
                     reconcile = true;
+                    pending.clear();
+                    rename_from.clear();
+                    rename_to.clear();
                 }
                 if reconcile {
                     sleep.as_mut().reset(Instant::now());
@@ -133,6 +326,13 @@ impl RepositoryWatcher {
                                 &mut rename_from,
                                 &mut rename_to,
                                 &mut reconcile,
+                            );
+                            bound_pending_state(
+                                &mut pending,
+                                &mut rename_from,
+                                &mut rename_to,
+                                &mut reconcile,
+                                raw_capacity,
                             );
                         } else {
                             if let Err(err) = raw {
@@ -289,6 +489,25 @@ fn process_raw_event(
     }
 }
 
+fn bound_pending_state(
+    pending: &mut BTreeSet<String>,
+    rename_from: &mut HashMap<usize, String>,
+    rename_to: &mut HashMap<usize, String>,
+    reconcile: &mut bool,
+    limit: usize,
+) {
+    let retained = pending
+        .len()
+        .saturating_add(rename_from.len())
+        .saturating_add(rename_to.len());
+    if *reconcile || retained > limit {
+        *reconcile = true;
+        pending.clear();
+        rename_from.clear();
+        rename_to.clear();
+    }
+}
+
 fn raw_event_is_relevant(
     event: &notify::Result<Event>,
     root: &Path,
@@ -418,10 +637,176 @@ fn flush(
 mod tests {
     use std::time::Duration;
 
-    use tokio::time::timeout;
+    use tokio::time::{advance, timeout};
     use tokio_util::sync::CancellationToken;
 
     use super::*;
+
+    fn test_schedule_policy() -> ReconciliationSchedulePolicy {
+        ReconciliationSchedulePolicy {
+            quiet_period: Duration::from_millis(100),
+            max_pending_paths: 2,
+            retry_initial_delay: Duration::from_millis(50),
+            retry_max_delay: Duration::from_millis(200),
+            full_initial_delay: Duration::from_secs(1),
+            full_max_delay: Duration::from_secs(4),
+            full_reset_after: Duration::from_secs(10),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn initial_burst_collapses_to_one_quiet_full_reconciliation() {
+        let mut scheduler = WatcherReconciliationScheduler::with_policy(test_schedule_policy());
+        scheduler.enqueue(
+            WatcherMessage::Changed {
+                paths: vec!["a.rs".into(), "b.rs".into()],
+            },
+            Instant::now(),
+        );
+        scheduler.enqueue(
+            WatcherMessage::Changed {
+                paths: vec!["c.rs".into()],
+            },
+            Instant::now(),
+        );
+        for _ in 0..10 {
+            scheduler.enqueue(WatcherMessage::ReconcileRequired, Instant::now());
+        }
+
+        advance(Duration::from_millis(99)).await;
+        assert!(scheduler.take_ready(Instant::now()).is_none());
+        advance(Duration::from_millis(1)).await;
+        assert_eq!(
+            scheduler.take_ready(Instant::now()),
+            Some(WatcherAction::Full)
+        );
+        assert!(scheduler.take_ready(Instant::now()).is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn new_activity_extends_quiet_period_and_coalesces_paths() {
+        let mut scheduler = WatcherReconciliationScheduler::with_policy(test_schedule_policy());
+        scheduler.enqueue(
+            WatcherMessage::Changed {
+                paths: vec!["b.rs".into()],
+            },
+            Instant::now(),
+        );
+        advance(Duration::from_millis(75)).await;
+        scheduler.enqueue(
+            WatcherMessage::Changed {
+                paths: vec!["a.rs".into(), "b.rs".into()],
+            },
+            Instant::now(),
+        );
+
+        advance(Duration::from_millis(99)).await;
+        assert!(scheduler.take_ready(Instant::now()).is_none());
+        advance(Duration::from_millis(1)).await;
+        assert_eq!(
+            scheduler.take_ready(Instant::now()),
+            Some(WatcherAction::Paths(vec!["a.rs".into(), "b.rs".into()]))
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn consecutive_full_reconciliations_observe_capped_cooldown() {
+        let mut scheduler = WatcherReconciliationScheduler::with_policy(test_schedule_policy());
+        scheduler.enqueue(WatcherMessage::ReconcileRequired, Instant::now());
+        advance(Duration::from_millis(100)).await;
+        let first = scheduler.take_ready(Instant::now()).expect("first full");
+        scheduler.finish_success(&first, Instant::now());
+
+        for expected_delay in [1_000, 2_000, 4_000, 4_000] {
+            scheduler.enqueue(WatcherMessage::ReconcileRequired, Instant::now());
+            advance(Duration::from_millis(expected_delay - 1)).await;
+            assert!(scheduler.take_ready(Instant::now()).is_none());
+            advance(Duration::from_millis(1)).await;
+            let action = scheduler.take_ready(Instant::now()).expect("next full");
+            assert_eq!(action, WatcherAction::Full);
+            scheduler.finish_success(&action, Instant::now());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stable_period_resets_full_reconciliation_cooldown() {
+        let mut scheduler = WatcherReconciliationScheduler::with_policy(test_schedule_policy());
+        scheduler.enqueue(WatcherMessage::ReconcileRequired, Instant::now());
+        advance(Duration::from_millis(100)).await;
+        let first = scheduler.take_ready(Instant::now()).expect("first full");
+        scheduler.finish_success(&first, Instant::now());
+
+        advance(Duration::from_secs(10)).await;
+        scheduler.enqueue(WatcherMessage::ReconcileRequired, Instant::now());
+        advance(Duration::from_millis(99)).await;
+        assert!(scheduler.take_ready(Instant::now()).is_none());
+        advance(Duration::from_millis(1)).await;
+        assert_eq!(
+            scheduler.take_ready(Instant::now()),
+            Some(WatcherAction::Full)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn transient_failure_retains_work_and_backs_off_before_retry() {
+        let mut scheduler = WatcherReconciliationScheduler::with_policy(test_schedule_policy());
+        scheduler.enqueue(
+            WatcherMessage::Changed {
+                paths: vec!["a.rs".into()],
+            },
+            Instant::now(),
+        );
+        advance(Duration::from_millis(100)).await;
+        let action = scheduler
+            .take_ready(Instant::now())
+            .expect("initial action");
+        scheduler.finish_failure(action, Instant::now());
+        scheduler.enqueue(
+            WatcherMessage::Changed {
+                paths: vec!["b.rs".into()],
+            },
+            Instant::now(),
+        );
+
+        advance(Duration::from_millis(99)).await;
+        assert!(scheduler.take_ready(Instant::now()).is_none());
+        advance(Duration::from_millis(1)).await;
+        let retry = scheduler
+            .take_ready(Instant::now())
+            .expect("retained retry");
+        assert_eq!(
+            retry,
+            WatcherAction::Paths(vec!["a.rs".into(), "b.rs".into()])
+        );
+        scheduler.finish_failure(retry, Instant::now());
+
+        advance(Duration::from_millis(99)).await;
+        assert!(scheduler.take_ready(Instant::now()).is_none());
+        advance(Duration::from_millis(1)).await;
+        assert!(scheduler.take_ready(Instant::now()).is_some());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failed_action_does_not_replace_a_later_full_request() {
+        let mut scheduler = WatcherReconciliationScheduler::with_policy(test_schedule_policy());
+        scheduler.enqueue(
+            WatcherMessage::Changed {
+                paths: vec!["a.rs".into()],
+            },
+            Instant::now(),
+        );
+        advance(Duration::from_millis(100)).await;
+        let action = scheduler.take_ready(Instant::now()).expect("path action");
+
+        scheduler.enqueue(WatcherMessage::ReconcileRequired, Instant::now());
+        scheduler.finish_failure(action, Instant::now());
+        advance(Duration::from_secs(1)).await;
+
+        assert_eq!(
+            scheduler.take_ready(Instant::now()),
+            Some(WatcherAction::Full)
+        );
+    }
 
     #[tokio::test]
     async fn lifecycle_shutdown_joins() {
@@ -682,5 +1067,37 @@ mod tests {
             rx.try_recv(),
             Ok(WatcherMessage::ReconcileRequired)
         ));
+    }
+
+    #[test]
+    fn retained_path_state_overflow_becomes_one_sticky_reconciliation() {
+        let mut pending =
+            BTreeSet::from(["a.rs".to_string(), "b.rs".to_string(), "c.rs".to_string()]);
+        let mut rename_from = HashMap::from([(1, "old.rs".to_string())]);
+        let mut rename_to = HashMap::new();
+        let mut reconcile = false;
+
+        bound_pending_state(
+            &mut pending,
+            &mut rename_from,
+            &mut rename_to,
+            &mut reconcile,
+            3,
+        );
+
+        assert!(reconcile);
+        assert!(pending.is_empty());
+        assert!(rename_from.is_empty());
+        assert!(rename_to.is_empty());
+
+        pending.insert("later.rs".into());
+        bound_pending_state(
+            &mut pending,
+            &mut rename_from,
+            &mut rename_to,
+            &mut reconcile,
+            3,
+        );
+        assert!(pending.is_empty());
     }
 }

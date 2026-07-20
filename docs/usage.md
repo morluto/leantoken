@@ -84,6 +84,14 @@ Built-in generated-tree exclusions run before ignore matching, so restoring
 those requires `--include-generated`. Changes to any ignore control file cause
 one bounded visibility reconciliation.
 
+The indexing leader registers its watcher before the initial scan so changes
+during startup are not lost. Watcher queues and retained path state are bounded;
+bursts collapse to one pending reconciliation. Automatic reconciliation waits
+for a quiet period, and repeated full rescans or transient failures use capped
+backoff. Terminal root, discovery-limit, configuration, and cache-binding
+errors stop the indexing runtime and require a corrected configuration or
+restart.
+
 Logs go to stderr. Stdout is reserved for MCP protocol messages. LeanToken
 service errors exposed through MCP use fixed, allowlisted messages and a stable
 `data.category` for client handling. Repository, database, and external
