@@ -706,6 +706,10 @@ fn setup_requires_yes_before_non_interactive_mutation() {
     );
 }
 
+// Windows ProjectDirs uses the Known Folder API and cannot be redirected to a
+// disposable cache root through per-process environment variables. The cache
+// module tests cover Windows lease and deletion semantics without user data.
+#[cfg(not(windows))]
 #[test]
 fn cache_list_and_prune_do_not_require_a_repository() {
     let temp = tempfile::tempdir().expect("temporary home");
