@@ -39,13 +39,20 @@ enum InstallContext {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CommandSpec {
     program: &'static str,
-    arguments: Vec<&'static str>,
+    arguments: Vec<String>,
 }
 
 impl CommandSpec {
+    fn new(program: &'static str, arguments: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            program,
+            arguments: arguments.into_iter().map(Into::into).collect(),
+        }
+    }
+
     fn display(&self) -> String {
         std::iter::once(self.program)
-            .chain(self.arguments.iter().copied())
+            .chain(self.arguments.iter().map(String::as_str))
             .collect::<Vec<_>>()
             .join(" ")
     }
@@ -83,8 +90,8 @@ enum UpgradeStatus {
 pub fn run(options: UpgradeOptions) -> Result<()> {
     let executable = env::current_exe()?.canonicalize()?;
     let context = detect_current_context(&executable);
-    let command = upgrade_command(context);
     let latest = latest_version(context);
+    let command = upgrade_command(context, latest.as_deref());
 
     let Some(latest) = latest else {
         return print_report(
@@ -222,16 +229,20 @@ fn path_contains(path: &Path, component: &str) -> bool {
         .any(|part| part.as_os_str() == std::ffi::OsStr::new(component))
 }
 
-fn upgrade_command(context: InstallContext) -> Option<CommandSpec> {
+fn upgrade_command(context: InstallContext, latest_version: Option<&str>) -> Option<CommandSpec> {
     match context {
-        InstallContext::GlobalNpm => Some(CommandSpec {
-            program: "npm",
-            arguments: vec!["install", "--global", NPM_PACKAGE],
-        }),
-        InstallContext::Cargo => Some(CommandSpec {
-            program: "cargo",
-            arguments: vec!["install", "--git", GIT_REPOSITORY, "--force"],
-        }),
+        InstallContext::GlobalNpm => Some(CommandSpec::new(
+            "npm",
+            ["install", "--global", NPM_PACKAGE],
+        )),
+        InstallContext::Cargo => {
+            let mut arguments = vec!["install".into(), "--git".into(), GIT_REPOSITORY.into()];
+            if let Some(version) = latest_version {
+                arguments.extend(["--tag".into(), format!("v{version}")]);
+            }
+            arguments.push("--force".into());
+            Some(CommandSpec::new("cargo", arguments))
+        }
         InstallContext::Npx | InstallContext::Unknown => None,
     }
 }
@@ -389,17 +400,19 @@ mod tests {
     }
 
     #[test]
-    fn ephemeral_upgrade_never_has_a_mutating_command() {
-        assert_eq!(upgrade_command(InstallContext::Npx), None);
+    fn upgrade_commands_target_the_selected_release() {
+        assert_eq!(upgrade_command(InstallContext::Npx, Some("1.2.3")), None);
         assert_eq!(
-            upgrade_command(InstallContext::GlobalNpm)
+            upgrade_command(InstallContext::GlobalNpm, Some("1.2.3"))
                 .unwrap()
                 .display(),
             "npm install --global leantoken@latest"
         );
         assert_eq!(
-            upgrade_command(InstallContext::Cargo).unwrap().display(),
-            "cargo install --git https://github.com/morluto/leantoken --force"
+            upgrade_command(InstallContext::Cargo, Some("1.2.3"))
+                .unwrap()
+                .display(),
+            "cargo install --git https://github.com/morluto/leantoken --tag v1.2.3 --force"
         );
     }
 }
