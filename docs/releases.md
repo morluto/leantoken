@@ -9,6 +9,13 @@ job also assembles the five native binaries into one script-free npm tarball.
 npm publication is a separate manual step documented in the [development
 guide](development.md#release-artifacts).
 
+The Cargo package, git tag, GitHub release, and npm package must use the same
+exact version. MCP setup embeds `CARGO_PKG_VERSION` in npx launchers, so a
+release with mismatched package metadata would create a launcher for a package
+that does not exist. After publishing, users opt into that release with
+`npx --yes leantoken@VERSION setup --refresh --yes`; existing entries never
+advance automatically.
+
 ## Release Cadence
 
 - **On every push to `main`**: the [Release Please] workflow determines the

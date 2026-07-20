@@ -252,7 +252,10 @@ pub struct IntegrationArgs {
     /// Select every supported client.
     #[arg(long)]
     pub all: bool,
-    /// Apply without prompting; requires explicit client flags or --all.
+    /// Refresh existing LeanToken MCP entries without selecting new clients.
+    #[arg(long)]
+    pub refresh: bool,
+    /// Apply without prompting; requires explicit clients, --all, or --refresh.
     #[arg(short = 'y', long)]
     pub yes: bool,
     /// Show the exact configuration plan without making changes.
@@ -284,6 +287,7 @@ impl From<IntegrationArgs> for SetupRequest {
         Self {
             clients,
             all: args.all,
+            refresh: args.refresh,
             yes: args.yes,
             dry_run: args.dry_run,
         }

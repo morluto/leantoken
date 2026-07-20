@@ -34,9 +34,40 @@ leantoken outline <path>...
 leantoken read <path> [--lines START:END] [--symbol NAME]
 leantoken context --task <text> --budget <tokens>
 leantoken mcp [--result-mode dual|text|structured]
+leantoken setup [CLIENT...] [--all] [--refresh] [--yes] [--dry-run]
+leantoken remove [CLIENT...] [--all] [--yes] [--dry-run]
 ```
 
 Use `leantoken <command> --help` for the complete argument list.
+
+## MCP setup and version lifecycle
+
+Setup writes only the `leantoken` entry in each selected global client config.
+When setup runs through npx, the stored command pins
+`leantoken@<exact current version>` and retains `--yes` so background MCP
+startup cannot block on an install prompt. The launcher may contact npm to
+resolve or download that exact package, but it cannot switch to a newer version
+between restarts.
+
+Choose upgrades and rollbacks explicitly by running the desired version, then
+refresh only entries that already exist:
+
+```bash
+npx --yes leantoken@latest setup --refresh --yes
+npx --yes leantoken@0.1.8 setup --refresh --yes
+```
+
+`setup --refresh --dry-run` audits the same plan without writing. Refresh does
+not infer consent from installed clients and does not create new entries. If an
+exact package is neither cached nor reachable while offline, startup fails; it
+does not fall forward to `@latest`.
+
+Global setup does not bind the repository where setup was run. OpenCode's
+entry uses workspace-relative `cwd: "."`. Claude Code, Cursor, Codex, Gemini
+CLI, and Antigravity use the working directory their host assigns to the MCP
+process, which must be the active workspace. Broad home and filesystem roots
+still fail closed before cache creation or indexing. `--root` remains available
+for deliberate manual or project-scoped configurations.
 
 ## First-run doctor
 

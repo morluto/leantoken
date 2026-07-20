@@ -31,8 +31,14 @@ npx leantoken setup
 The setup wizard labels supported clients it detects, but leaves every client
 unselected so you choose exactly which coding agents receive LeanToken. Before
 writing anything, it shows the exact configuration paths and MCP launcher and
-asks for confirmation. Each configured client launches LeanToken in its active
-workspace.
+asks for confirmation. An npx-based setup pins the exact LeanToken version
+that ran setup, so restarting a client cannot silently move to a newer release.
+
+Global setup never stores the repository where setup happened. OpenCode gets a
+workspace-relative working directory; other supported clients launch LeanToken
+from the workspace cwd selected by the host. If a host instead starts it from
+the home directory or a filesystem root, LeanToken refuses to index that broad
+root by default.
 
 Restart or reload the configured clients, then verify the complete MCP
 handshake and first retrieval from a repository:
@@ -75,7 +81,8 @@ npx leantoken setup --all --yes
 ```
 
 Automation never treats detection as consent: `--yes` requires explicit client
-flags or `--all`. Preview the same resolved plan without changing files:
+flags, `--all`, or `--refresh` for entries already managed by LeanToken. Preview
+the same resolved plan without changing files:
 
 ```bash
 npx leantoken setup --codex --cursor --dry-run
@@ -86,6 +93,14 @@ shell hooks. Remove the entry with:
 
 ```bash
 npx leantoken remove
+```
+
+Refresh only existing LeanToken MCP entries after explicitly choosing a new
+version, or use an older version to roll back:
+
+```bash
+npx --yes leantoken@latest setup --refresh --yes
+npx --yes leantoken@0.1.8 setup --refresh --yes
 ```
 
 ## Why LeanToken
@@ -190,8 +205,12 @@ cargo install --git https://github.com/morluto/leantoken
 
 ## Updating
 
-MCP entries created by setup follow current npm releases automatically. No
-manual MCP update is required.
+MCP entries created through npx are pinned to the exact version that ran setup.
+They change only when setup is run again for selected clients or with
+`setup --refresh`. The configured launcher may contact npm to obtain that exact
+package, but it never falls forward to `@latest`. Removing the npm cache while
+offline can therefore make startup fail rather than execute an unapproved
+version.
 
 For a globally installed CLI or a CLI installed with Cargo:
 
