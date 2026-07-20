@@ -557,7 +557,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "leantoken_search",
-        description = "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches; then use leantoken_read on the best exact ranges. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
+        description = "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken_read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
     )]
     async fn leantoken_search(
         &self,

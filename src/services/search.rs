@@ -91,6 +91,22 @@ pub(super) fn matching_line(hit: &ChunkHit, query: &str, case_sensitive: bool) -
         .map(|offset| hit.start_line + offset)
 }
 
+fn matching_line_for_search(
+    hit: &ChunkHit,
+    query: &str,
+    case_sensitive: bool,
+    compiled_regex: Option<&regex::Regex>,
+) -> Option<usize> {
+    if let Some(regex) = compiled_regex {
+        return regex.find(&hit.content).map(|matched| {
+            let (local_start, _) =
+                byte_range_to_line_range(&hit.content, matched.start(), matched.end());
+            hit.start_line + local_start - 1
+        });
+    }
+    matching_line(hit, query, case_sensitive)
+}
+
 fn apply_focus(hits: &mut [SearchHit], focus_paths: &[String]) -> Result<()> {
     for hit in hits {
         let mut focused = false;
@@ -257,19 +273,35 @@ impl Services {
                 }
                 SearchMode::Symbol | SearchMode::Reference => Vec::new(),
             };
+            let mut lexical_hits = Vec::new();
             for hit in lexical {
                 check_cancelled(cancellation)?;
                 if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)?
+                    && let Some(matched_line) = matching_line_for_search(
+                        &hit,
+                        &request.query,
+                        request.case_sensitive,
+                        regex.as_ref(),
+                    )
                     && let Some(search_hit) = chunk_search_hit(
-                        hit,
+                        hit.clone(),
                         &request.query,
                         request.case_sensitive,
                         context_lines,
                         regex.as_ref(),
                     )?
                 {
-                    hits.push(search_hit);
+                    lexical_hits.push((hit, search_hit, matched_line));
                 }
+            }
+            let lexical_locations = lexical_hits
+                .iter()
+                .map(|(hit, _, matched_line)| (hit.file_id, *matched_line))
+                .collect::<Vec<_>>();
+            let enclosing = session.find_enclosing_symbols_batch(&lexical_locations)?;
+            for ((_, mut hit, _), symbol) in lexical_hits.into_iter().zip(enclosing) {
+                hit.enclosing_symbol = symbol.map(|symbol| symbol.name);
+                hits.push(hit);
             }
 
             apply_focus(&mut hits, &request.focus_paths)?;
