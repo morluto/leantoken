@@ -134,6 +134,13 @@ generation. Changes written concurrently may require a later request.
 Discovery follows Git-compatible ignore rules, skips symlinks and oversized or
 binary files, and normalizes indexed paths to forward slashes. Text files are
 hashed, chunked on UTF-8 boundaries, and parsed in a bounded Rayon pool.
+The ignore-aware walker counts every yielded file, directory, and error entry,
+then separately counts admitted files and their aggregate metadata bytes. It
+fails on the first configured entry, file, byte, or depth limit violation rather
+than returning partial membership. Preparation scheduling is additionally
+bounded by file and byte batch limits. All discovery limits participate in the
+index configuration hash, so changing them forces a complete atomic
+reconciliation before the new policy is recorded.
 
 Canonical filesystem roots, the current user's home directory, and ancestors of
 that home directory are rejected before cache or watcher initialization unless
@@ -154,6 +161,10 @@ locked results are retried with bounded backoff and caller-owned cancellation;
 terminal startup failures move MCP tools to an unavailable state. The stdio
 adapter supervises the indexing runtime for the lifetime of the connection, so
 an unexpected runtime exit cannot leave tools permanently reporting startup.
+Index limit violations are terminal configuration failures: the leader shuts
+down its watcher, releases leadership, and moves MCP tools to unavailable
+without periodic retries. A restart with a narrower root or adjusted limits is
+required.
 
 MCP processes sharing one cache compete for a repository-scoped leadership
 lock. The leader alone owns automatic indexing and one filesystem watcher;

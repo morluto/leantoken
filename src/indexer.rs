@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
@@ -13,7 +14,8 @@ use crate::error::RetryableOperation;
 use crate::model::IndexResponse;
 use crate::parser::{self, ParseOutput};
 use crate::repository::{
-    DiscoveredFile, discover_files_cancellable, slash_path, validate_relative,
+    DiscoveredFile, discover_files_with_limits_and_filter, enforce_limit, slash_path,
+    validate_relative,
 };
 use crate::storage::{ChunkInput, ImportInput, IndexedFile, ReferenceInput, Storage, SymbolInput};
 use crate::text::{PreparedText, TextKind, hash_bytes};
@@ -171,12 +173,20 @@ impl Indexer {
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
 
-        let mut discovered = discover_files_cancellable(
+        let discovery = discover_files_with_limits_and_filter(
             &self.config.root,
-            self.config.max_file_bytes,
+            self.config.discovery_limits(),
             cancellation,
+            |path| !self.config.is_database_artifact_path(path),
         )?;
-        discovered.retain(|file| !self.config.is_database_artifact_path(&file.absolute_path));
+        tracing::debug!(
+            walk_entries = discovery.stats.walk_entries,
+            files = discovery.stats.files,
+            total_source_bytes = discovery.stats.total_source_bytes,
+            max_depth = discovery.stats.max_depth,
+            "repository discovery completed"
+        );
+        let discovered = discovery.files;
         check_cancelled(cancellation)?;
         let existing = self.existing_files(cancellation)?;
         let config_hash = self.config_hash();
@@ -206,7 +216,11 @@ impl Indexer {
                 && let Some(record) = existing.get(&file.relative_path)
                 && record.size_bytes == file.size_bytes
                 && record.modified_ns == file.modified_ns
-                && content_unchanged(&file.absolute_path, &record.content_hash)
+                && content_unchanged(
+                    &file.absolute_path,
+                    &record.content_hash,
+                    self.config.max_file_bytes,
+                )
             {
                 unchanged += 1;
                 continue;
@@ -228,7 +242,7 @@ impl Indexer {
                         push_warning(&mut warnings, warning);
                     }
                 }
-                PreparedFile::Binary(path) => {
+                PreparedFile::Binary(path) | PreparedFile::Oversized(path) => {
                     skipped += 1;
                     if existing.contains_key(&path) {
                         deletions.push(path);
@@ -340,16 +354,13 @@ impl Indexer {
         });
         let discovered = visibility_delta
             .then(|| {
-                discover_files_cancellable(
+                discover_files_with_limits_and_filter(
                     &self.config.root,
-                    self.config.max_file_bytes,
+                    self.config.discovery_limits(),
                     cancellation,
+                    |path| !self.config.is_database_artifact_path(path),
                 )
-                .map(|mut files| {
-                    files
-                        .retain(|file| !self.config.is_database_artifact_path(&file.absolute_path));
-                    files
-                })
+                .map(|discovery| discovery.files)
             })
             .transpose()?;
         let discovered_by_path = discovered.as_ref().map(|files| {
@@ -381,6 +392,11 @@ impl Indexer {
                 check_cancelled(cancellation)?;
                 let relative = validate_relative(requested)?;
                 let relative_path = slash_path(&relative);
+                enforce_limit(
+                    crate::IndexLimitKind::Depth,
+                    u64::try_from(relative.components().count()).unwrap_or(u64::MAX),
+                    u64::try_from(self.config.max_depth).unwrap_or(u64::MAX),
+                )?;
                 let absolute_path = self.config.root.join(&relative);
                 if self.config.is_database_artifact_path(&absolute_path) {
                     continue;
@@ -429,6 +445,7 @@ impl Indexer {
         repository_paths.extend(candidates.keys().cloned());
         let forced_importers =
             self.add_affected_importers(&mut candidates, &deletions, &change_set, cancellation)?;
+        self.validate_membership_limits(&existing, &candidates, &deletions, cancellation)?;
 
         let files_seen = candidates.len() + deletions.len();
         let candidates = candidates.into_values().collect::<Vec<_>>();
@@ -454,7 +471,7 @@ impl Indexer {
                         push_warning(&mut warnings, warning);
                     }
                 }
-                PreparedFile::Binary(path) => {
+                PreparedFile::Binary(path) | PreparedFile::Oversized(path) => {
                     skipped += 1;
                     if existing.contains_key(&path) {
                         deletions.insert(path);
@@ -488,6 +505,7 @@ impl Indexer {
     }
 
     fn validate_config(config: &Config) -> Result<()> {
+        config.discovery_limits().validate()?;
         if config.chunk_lines == 0 || config.chunk_bytes == 0 {
             return Err(Error::InvalidConfiguration(
                 "chunk_lines and chunk_bytes must be positive".into(),
@@ -514,18 +532,35 @@ impl Indexer {
         let chunk_lines = self.config.chunk_lines;
         let chunk_bytes = self.config.chunk_bytes;
         let tokenizer = self.config.tokenizer;
-        pool.install(|| {
-            candidates
-                .par_iter()
-                .map(|file| {
-                    check_cancelled(cancellation)?;
-                    let prepared =
-                        prepare_file(file, chunk_lines, chunk_bytes, tokenizer, cancellation)?;
-                    check_cancelled(cancellation)?;
-                    Ok(prepared)
-                })
-                .collect()
-        })
+        let limits = self.config.discovery_limits();
+        let mut prepared = Vec::with_capacity(candidates.len());
+        let mut start = 0usize;
+        while start < candidates.len() {
+            check_cancelled(cancellation)?;
+            let end = prepare_batch_end(candidates, start, limits);
+            debug_assert!(end > start, "validated limits admit at least one file");
+            let mut batch = pool.install(|| {
+                candidates[start..end]
+                    .par_iter()
+                    .map(|file| {
+                        check_cancelled(cancellation)?;
+                        let prepared = prepare_file(
+                            file,
+                            chunk_lines,
+                            chunk_bytes,
+                            tokenizer,
+                            limits.max_file_bytes,
+                            cancellation,
+                        )?;
+                        check_cancelled(cancellation)?;
+                        Ok(prepared)
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })?;
+            prepared.append(&mut batch);
+            start = end;
+        }
+        Ok(prepared)
     }
 
     fn add_affected_importers(
@@ -569,6 +604,40 @@ impl Indexer {
         Ok(forced_importers)
     }
 
+    fn validate_membership_limits(
+        &self,
+        existing: &HashMap<String, crate::storage::FileRecord>,
+        candidates: &HashMap<String, DiscoveredFile>,
+        deletions: &HashSet<String>,
+        cancellation: &CancellationToken,
+    ) -> Result<()> {
+        let limits = self.config.discovery_limits();
+        let mut files = 0u64;
+        let mut total_source_bytes = 0u64;
+        let mut admit = |size_bytes: u64| -> Result<()> {
+            files = files.saturating_add(1);
+            enforce_limit(crate::IndexLimitKind::Files, files, limits.max_files)?;
+            total_source_bytes = total_source_bytes.saturating_add(size_bytes);
+            enforce_limit(
+                crate::IndexLimitKind::TotalSourceBytes,
+                total_source_bytes,
+                limits.max_total_source_bytes,
+            )
+        };
+
+        for (path, record) in existing {
+            check_cancelled(cancellation)?;
+            if !deletions.contains(path) && !candidates.contains_key(path) {
+                admit(record.size_bytes)?;
+            }
+        }
+        for candidate in candidates.values() {
+            check_cancelled(cancellation)?;
+            admit(candidate.size_bytes)?;
+        }
+        Ok(())
+    }
+
     fn existing_files(
         &self,
         cancellation: &CancellationToken,
@@ -592,15 +661,39 @@ impl Indexer {
 
     fn config_hash(&self) -> String {
         let input = format!(
-            "leantoken-index-v4-9-language\0{}\0{}\0{}\0{}\0{}",
+            "leantoken-index-v5-9-language\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
             env!("CARGO_PKG_VERSION"),
+            self.config.max_walk_entries,
+            self.config.max_files,
+            self.config.max_total_source_bytes,
+            self.config.max_depth,
             self.config.max_file_bytes,
+            self.config.max_prepare_batch_files,
+            self.config.max_prepare_batch_bytes,
             self.config.chunk_lines,
             self.config.chunk_bytes,
             self.config.tokenizer.name()
         );
         blake3::hash(input.as_bytes()).to_hex().to_string()
     }
+}
+
+fn prepare_batch_end(
+    candidates: &[DiscoveredFile],
+    start: usize,
+    limits: crate::DiscoveryLimits,
+) -> usize {
+    let mut end = start;
+    let mut batch_bytes = 0u64;
+    while end < candidates.len() && end - start < limits.max_prepare_batch_files {
+        let observed = batch_bytes.saturating_add(candidates[end].size_bytes);
+        if observed > limits.max_prepare_batch_bytes {
+            break;
+        }
+        batch_bytes = observed;
+        end += 1;
+    }
+    end
 }
 
 fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
@@ -614,6 +707,7 @@ fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
 enum PreparedFile {
     Indexed(IndexedFile, Option<String>),
     Binary(String),
+    Oversized(String),
     Failed(String, String),
 }
 
@@ -622,10 +716,12 @@ fn prepare_file(
     chunk_lines: usize,
     chunk_bytes: usize,
     tokenizer: crate::tokens::Tokenizer,
+    max_file_bytes: u64,
     cancellation: &CancellationToken,
 ) -> Result<PreparedFile> {
-    let bytes = match fs::read(&file.absolute_path) {
-        Ok(bytes) => bytes,
+    let bytes = match read_bounded(&file.absolute_path, max_file_bytes) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return Ok(PreparedFile::Oversized(file.relative_path.clone())),
         Err(error) => {
             return Ok(PreparedFile::Failed(
                 file.relative_path.clone(),
@@ -726,6 +822,19 @@ fn prepare_file(
     ))
 }
 
+fn read_bounded(path: &Path, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
+    let file = fs::File::open(path)?;
+    let mut bytes =
+        Vec::with_capacity(usize::try_from(max_bytes.min(64 * 1024)).unwrap_or(64 * 1024));
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > max_bytes {
+        Ok(None)
+    } else {
+        Ok(Some(bytes))
+    }
+}
+
 fn push_warning(warnings: &mut Vec<String>, warning: String) {
     const MAX_WARNINGS: usize = 100;
     if warnings.len() < MAX_WARNINGS {
@@ -737,10 +846,11 @@ fn push_warning(warnings: &mut Vec<String>, warning: String) {
 ///
 /// Used when size and mtime look unchanged so full reconcile cannot skip a
 /// content rewrite that preserved those metadata fields.
-fn content_unchanged(path: &Path, expected_hash: &str) -> bool {
-    match fs::read(path) {
-        Ok(bytes) => hash_bytes(&bytes) == expected_hash,
+fn content_unchanged(path: &Path, expected_hash: &str, max_file_bytes: u64) -> bool {
+    match read_bounded(path, max_file_bytes) {
+        Ok(Some(bytes)) => hash_bytes(&bytes) == expected_hash,
         Err(_) => false,
+        Ok(None) => false,
     }
 }
 
@@ -954,10 +1064,53 @@ mod tests {
                 80,
                 32 * 1024,
                 crate::tokens::Tokenizer::default(),
+                2 * 1024 * 1024,
                 &cancellation,
             ),
             Err(Error::Cancelled)
         ));
+    }
+
+    #[test]
+    fn bounded_read_stops_at_limit_plus_one() {
+        let root = tempfile::tempdir().expect("root");
+        let path = root.path().join("growing.rs");
+        std::fs::write(&path, "12345").expect("source");
+
+        assert_eq!(
+            read_bounded(&path, 5).expect("boundary"),
+            Some(b"12345".to_vec())
+        );
+        assert_eq!(read_bounded(&path, 4).expect("limit plus one"), None);
+    }
+
+    #[test]
+    fn preparation_batches_honor_file_and_byte_boundaries() {
+        let candidates = (0..3)
+            .map(|index| DiscoveredFile {
+                absolute_path: format!("{index}.rs").into(),
+                relative_path: format!("{index}.rs"),
+                size_bytes: 2,
+                modified_ns: None,
+            })
+            .collect::<Vec<_>>();
+        let file_limited = crate::DiscoveryLimits {
+            max_file_bytes: 2,
+            max_prepare_batch_files: 2,
+            max_prepare_batch_bytes: 10,
+            ..crate::DiscoveryLimits::default()
+        };
+        let byte_limited = crate::DiscoveryLimits {
+            max_file_bytes: 2,
+            max_prepare_batch_files: 3,
+            max_prepare_batch_bytes: 3,
+            ..crate::DiscoveryLimits::default()
+        };
+
+        assert_eq!(prepare_batch_end(&candidates, 0, file_limited), 2);
+        assert_eq!(prepare_batch_end(&candidates, 2, file_limited), 3);
+        assert_eq!(prepare_batch_end(&candidates, 0, byte_limited), 1);
+        assert_eq!(prepare_batch_end(&candidates, 1, byte_limited), 2);
     }
 
     #[test]

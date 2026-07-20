@@ -11,6 +11,8 @@ use ignore::WalkBuilder;
 use tokio_util::sync::CancellationToken;
 use wait_timeout::ChildExt;
 
+use crate::config::DiscoveryLimits;
+use crate::error::IndexLimitKind;
 use crate::{Error, Result};
 
 #[derive(Debug, Clone)]
@@ -19,6 +21,28 @@ pub struct DiscoveredFile {
     pub relative_path: String,
     pub size_bytes: u64,
     pub modified_ns: Option<u128>,
+}
+
+/// Counters collected while walking one repository snapshot.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DiscoveryStats {
+    /// Filesystem entries yielded by the ignore-aware walker, including the root.
+    pub walk_entries: u64,
+    /// Files admitted after ignore, metadata, size, and owner filters.
+    pub files: u64,
+    /// Aggregate metadata bytes of admitted files.
+    pub total_source_bytes: u64,
+    /// Deepest yielded entry relative to the repository root.
+    pub max_depth: usize,
+}
+
+/// Complete bounded result of one repository discovery pass.
+#[derive(Debug, Clone)]
+pub struct DiscoveryResult {
+    /// Admitted repository files sorted by relative path.
+    pub files: Vec<DiscoveredFile>,
+    /// Traversal and admission counters for the completed pass.
+    pub stats: DiscoveryStats,
 }
 
 pub fn discover_files(root: &Path, max_file_bytes: u64) -> Result<Vec<DiscoveredFile>> {
@@ -31,7 +55,48 @@ pub fn discover_files_cancellable(
     max_file_bytes: u64,
     cancellation: &CancellationToken,
 ) -> Result<Vec<DiscoveredFile>> {
+    let limits = DiscoveryLimits {
+        max_file_bytes,
+        max_prepare_batch_bytes: DiscoveryLimits::DEFAULT_MAX_PREPARE_BATCH_BYTES
+            .max(max_file_bytes),
+        ..DiscoveryLimits::default()
+    };
+    Ok(discover_files_with_limits_cancellable(root, limits, cancellation)?.files)
+}
+
+/// Discover repository files under explicit hard resource limits.
+///
+/// # Errors
+///
+/// Returns a typed limit error at the first value outside an inclusive bound;
+/// partial discovery results are never returned.
+pub fn discover_files_with_limits(root: &Path, limits: DiscoveryLimits) -> Result<DiscoveryResult> {
+    discover_files_with_limits_cancellable(root, limits, &CancellationToken::new())
+}
+
+/// Discover repository files under explicit limits and caller-owned cancellation.
+///
+/// # Errors
+///
+/// Returns a typed limit error, cancellation, or path error without returning a
+/// truncated repository result.
+pub fn discover_files_with_limits_cancellable(
+    root: &Path,
+    limits: DiscoveryLimits,
+    cancellation: &CancellationToken,
+) -> Result<DiscoveryResult> {
+    discover_files_with_limits_and_filter(root, limits, cancellation, |_| true)
+}
+
+pub(crate) fn discover_files_with_limits_and_filter(
+    root: &Path,
+    limits: DiscoveryLimits,
+    cancellation: &CancellationToken,
+    include: impl Fn(&Path) -> bool,
+) -> Result<DiscoveryResult> {
+    limits.validate()?;
     let mut files = Vec::new();
+    let mut stats = DiscoveryStats::default();
     let walker = WalkBuilder::new(root)
         .hidden(false)
         .follow_links(false)
@@ -45,6 +110,11 @@ pub fn discover_files_cancellable(
         if cancellation.is_cancelled() {
             return Err(Error::Cancelled);
         }
+        increment_limit(
+            &mut stats.walk_entries,
+            limits.max_walk_entries,
+            IndexLimitKind::WalkEntries,
+        )?;
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
@@ -52,6 +122,12 @@ pub fn discover_files_cancellable(
                 continue;
             }
         };
+        stats.max_depth = stats.max_depth.max(entry.depth());
+        enforce_limit(
+            IndexLimitKind::Depth,
+            u64::try_from(entry.depth()).unwrap_or(u64::MAX),
+            u64::try_from(limits.max_depth).unwrap_or(u64::MAX),
+        )?;
         let Some(file_type) = entry.file_type() else {
             continue;
         };
@@ -65,7 +141,10 @@ pub fn discover_files_cancellable(
                 continue;
             }
         };
-        if metadata.len() > max_file_bytes {
+        if metadata.len() > limits.max_file_bytes {
+            continue;
+        }
+        if !include(entry.path()) {
             continue;
         }
         let relative = entry
@@ -76,6 +155,13 @@ pub fn discover_files_cancellable(
         if relative_path.is_empty() || is_git_metadata_path(&relative_path) {
             continue;
         }
+        increment_limit(&mut stats.files, limits.max_files, IndexLimitKind::Files)?;
+        stats.total_source_bytes = stats.total_source_bytes.saturating_add(metadata.len());
+        enforce_limit(
+            IndexLimitKind::TotalSourceBytes,
+            stats.total_source_bytes,
+            limits.max_total_source_bytes,
+        )?;
         let modified_ns = metadata
             .modified()
             .ok()
@@ -89,7 +175,24 @@ pub fn discover_files_cancellable(
         });
     }
     files.sort_unstable_by(|left, right| left.relative_path.cmp(&right.relative_path));
-    Ok(files)
+    Ok(DiscoveryResult { files, stats })
+}
+
+fn increment_limit(current: &mut u64, limit: u64, kind: IndexLimitKind) -> Result<()> {
+    *current = current.saturating_add(1);
+    enforce_limit(kind, *current, limit)
+}
+
+pub(crate) fn enforce_limit(kind: IndexLimitKind, observed: u64, limit: u64) -> Result<()> {
+    if observed > limit {
+        Err(Error::IndexLimitExceeded {
+            kind,
+            observed,
+            limit,
+        })
+    } else {
+        Ok(())
+    }
 }
 
 fn is_git_metadata_path(path: &str) -> bool {

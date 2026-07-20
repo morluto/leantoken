@@ -9,6 +9,13 @@ responses are bounded.
 ```text
 --root <PATH>      Repository root (default: current directory)
 --allow-broad-root Allow a filesystem root, home directory, or parent of home
+--max-walk-entries <COUNT>       Walker entries per discovery (default: 500000)
+--max-files <COUNT>              Admitted source files (default: 150000)
+--max-total-source-bytes <BYTES> Aggregate source bytes (default: 2147483648)
+--max-depth <DEPTH>              Repository-relative depth (default: 64)
+--max-file-bytes <BYTES>         Bytes admitted from one file (default: 2097152)
+--max-prepare-batch-files <COUNT>  Files per preparation batch (default: 256)
+--max-prepare-batch-bytes <BYTES>  Bytes per preparation batch (default: 67108864)
 --database <PATH>  Override the per-repository SQLite cache path
 --tokenizer <ENCODING>  Source and protocol accounting tokenizer
 --json             Emit JSON from CLI commands
@@ -53,6 +60,14 @@ or a parent of that home directory by default. This prevents an MCP host launche
 from a broad working directory from recursively watching and indexing unrelated
 projects and package caches. Select the workspace with `--root`; use
 `--allow-broad-root` only for a deliberate broad index.
+
+Repository discovery also fails closed when any configured walk-entry, file,
+aggregate-byte, or depth limit is crossed. LeanToken returns a typed error and
+keeps the previously committed generation intact; it never publishes a
+truncated repository. Every numeric limit must be positive, and the preparation
+batch byte limit must be at least the per-file byte limit. Limit failures stop
+automatic MCP indexing until the process is restarted with a narrower root or
+adjusted limits, preventing a fixed tree from being rescanned every 500 ms.
 
 Logs go to stderr. Stdout is reserved for MCP protocol messages.
 

@@ -337,3 +337,63 @@ fn cli_broad_root_override_is_explicit_and_global() {
     assert!(cli.allow_broad_root);
     assert_eq!(cli.config().expect("explicit override").root, home);
 }
+
+#[test]
+fn cli_discovery_limits_are_explicit_positive_global_options() {
+    let root = tempfile::tempdir().expect("root");
+    let cli = parse(&[
+        "status",
+        "--root",
+        root.path().to_str().expect("root UTF-8"),
+        "--max-walk-entries",
+        "101",
+        "--max-files",
+        "102",
+        "--max-total-source-bytes",
+        "103",
+        "--max-depth",
+        "4",
+        "--max-file-bytes",
+        "5",
+        "--max-prepare-batch-files",
+        "6",
+        "--max-prepare-batch-bytes",
+        "7",
+    ]);
+
+    let limits = cli.config().expect("configured limits").discovery_limits();
+    assert_eq!(limits.max_walk_entries, 101);
+    assert_eq!(limits.max_files, 102);
+    assert_eq!(limits.max_total_source_bytes, 103);
+    assert_eq!(limits.max_depth, 4);
+    assert_eq!(limits.max_file_bytes, 5);
+    assert_eq!(limits.max_prepare_batch_files, 6);
+    assert_eq!(limits.max_prepare_batch_bytes, 7);
+}
+
+#[test]
+fn cli_discovery_limits_reject_zero_and_inconsistent_batches() {
+    for flag in [
+        "--max-walk-entries",
+        "--max-files",
+        "--max-total-source-bytes",
+        "--max-depth",
+        "--max-file-bytes",
+        "--max-prepare-batch-files",
+        "--max-prepare-batch-bytes",
+    ] {
+        assert!(
+            Cli::try_parse_from(["leantoken", "status", flag, "0"]).is_err(),
+            "{flag} accepted zero"
+        );
+    }
+
+    let cli = parse(&[
+        "status",
+        "--max-file-bytes",
+        "8",
+        "--max-prepare-batch-bytes",
+        "7",
+    ]);
+    assert!(cli.config().is_err());
+}

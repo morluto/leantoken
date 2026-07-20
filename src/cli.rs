@@ -1,4 +1,8 @@
-use std::{path::PathBuf, str::FromStr};
+use std::{
+    num::{NonZeroU64, NonZeroUsize},
+    path::PathBuf,
+    str::FromStr,
+};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
@@ -27,6 +31,34 @@ pub struct Cli {
     /// Allow indexing a filesystem root, home directory, or parent of home.
     #[arg(long, global = true)]
     pub allow_broad_root: bool,
+
+    /// Maximum filesystem entries yielded by repository discovery.
+    #[arg(long, value_name = "COUNT", global = true)]
+    pub max_walk_entries: Option<NonZeroU64>,
+
+    /// Maximum files admitted to the repository index.
+    #[arg(long, value_name = "COUNT", global = true)]
+    pub max_files: Option<NonZeroU64>,
+
+    /// Maximum aggregate bytes admitted to the repository index.
+    #[arg(long, value_name = "BYTES", global = true)]
+    pub max_total_source_bytes: Option<NonZeroU64>,
+
+    /// Maximum repository-relative traversal depth.
+    #[arg(long, value_name = "DEPTH", global = true)]
+    pub max_depth: Option<NonZeroUsize>,
+
+    /// Maximum bytes admitted from one file.
+    #[arg(long, value_name = "BYTES", global = true)]
+    pub max_file_bytes: Option<NonZeroU64>,
+
+    /// Maximum files scheduled in one preparation batch.
+    #[arg(long, value_name = "COUNT", global = true)]
+    pub max_prepare_batch_files: Option<NonZeroUsize>,
+
+    /// Maximum source bytes scheduled in one preparation batch.
+    #[arg(long, value_name = "BYTES", global = true)]
+    pub max_prepare_batch_bytes: Option<NonZeroU64>,
 
     /// SQLite database path.
     #[arg(long, value_name = "PATH", global = true)]
@@ -57,7 +89,29 @@ impl Cli {
             self.database.clone(),
             self.allow_broad_root,
         )?;
+        if let Some(value) = self.max_walk_entries {
+            config.max_walk_entries = value.get();
+        }
+        if let Some(value) = self.max_files {
+            config.max_files = value.get();
+        }
+        if let Some(value) = self.max_total_source_bytes {
+            config.max_total_source_bytes = value.get();
+        }
+        if let Some(value) = self.max_depth {
+            config.max_depth = value.get();
+        }
+        if let Some(value) = self.max_file_bytes {
+            config.max_file_bytes = value.get();
+        }
+        if let Some(value) = self.max_prepare_batch_files {
+            config.max_prepare_batch_files = value.get();
+        }
+        if let Some(value) = self.max_prepare_batch_bytes {
+            config.max_prepare_batch_bytes = value.get();
+        }
         config.tokenizer = self.tokenizer;
+        config.discovery_limits().validate()?;
         Ok(config)
     }
 
