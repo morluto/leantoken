@@ -652,6 +652,102 @@ async fn search_range_covers_the_returned_context_lines() {
     let hit = response.hits.first().expect("text hit");
     assert_eq!((hit.start_line, hit.end_line), (5, 7));
     assert_eq!(hit.excerpt.lines().count(), 3);
+    assert_eq!(hit.enclosing_symbol.as_deref(), Some("caller"));
+}
+
+#[tokio::test]
+async fn text_search_reports_enclosing_symbols_across_languages() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(
+        root.path().join("owner.rs"),
+        "fn rust_owner() {\n    let known_hashes: Vec<String> = Vec::new();\n}\n",
+    )
+    .expect("Rust source");
+    std::fs::write(
+        root.path().join("owner.py"),
+        "def python_owner():\n    known_hashes = []\n    return known_hashes\n",
+    )
+    .expect("Python source");
+    std::fs::write(
+        root.path().join("owner.js"),
+        "function javascriptOwner() {\n  const known_hashes = [];\n  return known_hashes;\n}\n",
+    )
+    .expect("JavaScript source");
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index");
+
+    let response = services
+        .search(SearchRequest {
+            query: "known_hashes".into(),
+            mode: SearchMode::Text,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(10),
+            max_tokens: Some(1_000),
+            context_lines: Some(1),
+            case_sensitive: true,
+            cursor: None,
+        })
+        .await
+        .expect("search");
+    let owners = response
+        .hits
+        .into_iter()
+        .map(|hit| (hit.path, hit.enclosing_symbol))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    assert_eq!(
+        owners.get("owner.rs").and_then(Option::as_deref),
+        Some("rust_owner")
+    );
+    assert_eq!(
+        owners.get("owner.py").and_then(Option::as_deref),
+        Some("python_owner")
+    );
+    assert_eq!(
+        owners.get("owner.js").and_then(Option::as_deref),
+        Some("javascriptOwner")
+    );
+}
+
+#[tokio::test]
+async fn text_search_preserves_multiline_matches_without_a_single_matching_line() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(
+        root.path().join("owner.rs"),
+        "fn multiline_owner() {\n    first_line();\n    second_line();\n}\n",
+    )
+    .expect("Rust source");
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index");
+
+    let response = services
+        .search(SearchRequest {
+            query: "first_line();\n    second_line();".into(),
+            mode: SearchMode::Text,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(10),
+            max_tokens: Some(1_000),
+            context_lines: Some(1),
+            case_sensitive: true,
+            cursor: None,
+        })
+        .await
+        .expect("search");
+
+    let hit = response.hits.first().expect("multiline text hit");
+    assert_eq!(hit.path, "owner.rs");
+    assert!(hit.excerpt.contains("first_line();\n    second_line();"));
+    assert_eq!(hit.enclosing_symbol.as_deref(), Some("multiline_owner"));
 }
 
 #[tokio::test]

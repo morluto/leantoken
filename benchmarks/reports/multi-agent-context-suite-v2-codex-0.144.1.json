@@ -1,0 +1,2283 @@
+{
+  "schema_version": 1,
+  "experiment_id": "multi-agent-context-suite-v2",
+  "suite_manifest_blake3": "b185224aeb073f345fbc8ad10b2bef190c1c5d7331b9c24d79600e079d708d9f",
+  "aggregate_binary_blake3": "5ef072ce2b21f3f6e3213aa411d3ec73ed9f177e4610ba927f4dd40ba0107d69",
+  "receipt_set_blake3": "a8986ae0521c0b199ade878453466ed3531aca94d056d9afa1432348a1a00a81",
+  "run_count": 60,
+  "task_count": 4,
+  "repetitions": 5,
+  "arms": [
+    "full-native",
+    "thin-native",
+    "thin-leantoken-context-bundle"
+  ],
+  "languages": [
+    "go",
+    "javascript",
+    "python",
+    "rust"
+  ],
+  "consistency": {
+    "complete_schedule": true,
+    "host_versions": [
+      "0.144.1"
+    ],
+    "models": [
+      "gpt-5.6-sol"
+    ],
+    "reasoning_efforts": [
+      "low"
+    ],
+    "receipt_binary_blake3": [
+      "ef0ddf53e73bdf5826ce04e90021ec85ca6541f729cb6bcd829b885bcbdae5d7"
+    ],
+    "contract_violation_count": 0
+  },
+  "arm_summaries": [
+    {
+      "arm": "full-native",
+      "runs": 20,
+      "successes": 13,
+      "success_rate": 0.65,
+      "success_rate_wilson_95": {
+        "lower": 0.4328542766852363,
+        "upper": 0.8188081758989179
+      },
+      "family_total_input": {
+        "count": 20,
+        "sum": 3107550,
+        "mean": 155377.5,
+        "median": 144225.5,
+        "minimum": 95638,
+        "maximum": 323168,
+        "sample_standard_deviation": 52331.340453227254,
+        "coefficient_of_variation": 0.33680127723272196
+      },
+      "family_uncached_input": {
+        "count": 20,
+        "sum": 665054,
+        "mean": 33252.7,
+        "median": 33597.5,
+        "minimum": 20242,
+        "maximum": 46953,
+        "sample_standard_deviation": 7076.209787583657,
+        "coefficient_of_variation": 0.21280105939017457
+      },
+      "family_cache_read_input": {
+        "count": 20,
+        "sum": 2442496,
+        "mean": 122124.8,
+        "median": 111232.0,
+        "minimum": 62208,
+        "maximum": 277760,
+        "sample_standard_deviation": 48760.650806934376,
+        "coefficient_of_variation": 0.39926903304598554
+      },
+      "family_output": {
+        "count": 20,
+        "sum": 30919,
+        "mean": 1545.95,
+        "median": 1590.0,
+        "minimum": 748,
+        "maximum": 2567,
+        "sample_standard_deviation": 522.933172242476,
+        "coefficient_of_variation": 0.33826008101327726
+      },
+      "child_total_input": {
+        "count": 20,
+        "sum": 2177560,
+        "mean": 108878.0,
+        "median": 97683.0,
+        "minimum": 49182,
+        "maximum": 276613,
+        "sample_standard_deviation": 52301.942826951316,
+        "coefficient_of_variation": 0.48037200193750174
+      },
+      "child_provider_requests": {
+        "count": 20,
+        "sum": 103,
+        "mean": 5.15,
+        "median": 5.0,
+        "minimum": 3,
+        "maximum": 12,
+        "sample_standard_deviation": 2.0332758116683998,
+        "coefficient_of_variation": 0.394810837217165
+      },
+      "child_mcp_result_bytes": {
+        "count": 20,
+        "sum": 0,
+        "mean": 0.0,
+        "median": 0.0,
+        "minimum": 0,
+        "maximum": 0,
+        "sample_standard_deviation": 0.0,
+        "coefficient_of_variation": 0.0
+      },
+      "child_mcp_source_tokens": {
+        "count": 20,
+        "sum": 0,
+        "mean": 0.0,
+        "median": 0.0,
+        "minimum": 0,
+        "maximum": 0,
+        "sample_standard_deviation": 0.0,
+        "coefficient_of_variation": 0.0
+      },
+      "contract_violations": 0
+    },
+    {
+      "arm": "thin-native",
+      "runs": 20,
+      "successes": 12,
+      "success_rate": 0.6,
+      "success_rate_wilson_95": {
+        "lower": 0.38658150076225317,
+        "upper": 0.7811934676271829
+      },
+      "family_total_input": {
+        "count": 20,
+        "sum": 2427935,
+        "mean": 121396.75,
+        "median": 116841.5,
+        "minimum": 80792,
+        "maximum": 194749,
+        "sample_standard_deviation": 31148.329494575333,
+        "coefficient_of_variation": 0.2565828944726719
+      },
+      "family_uncached_input": {
+        "count": 20,
+        "sum": 576799,
+        "mean": 28839.95,
+        "median": 28271.0,
+        "minimum": 15768,
+        "maximum": 44809,
+        "sample_standard_deviation": 8708.657286528764,
+        "coefficient_of_variation": 0.30196506188564
+      },
+      "family_cache_read_input": {
+        "count": 20,
+        "sum": 1851136,
+        "mean": 92556.8,
+        "median": 85248.0,
+        "minimum": 65024,
+        "maximum": 162048,
+        "sample_standard_deviation": 26462.144452226963,
+        "coefficient_of_variation": 0.2859016782367904
+      },
+      "family_output": {
+        "count": 20,
+        "sum": 26247,
+        "mean": 1312.35,
+        "median": 1319.0,
+        "minimum": 772,
+        "maximum": 2203,
+        "sample_standard_deviation": 340.0297626292208,
+        "coefficient_of_variation": 0.259099906754464
+      },
+      "child_total_input": {
+        "count": 20,
+        "sum": 1497499,
+        "mean": 74874.95,
+        "median": 70311.5,
+        "minimum": 34369,
+        "maximum": 148196,
+        "sample_standard_deviation": 31125.3517984346,
+        "coefficient_of_variation": 0.41569779744005975
+      },
+      "child_provider_requests": {
+        "count": 20,
+        "sum": 98,
+        "mean": 4.9,
+        "median": 5.0,
+        "minimum": 3,
+        "maximum": 8,
+        "sample_standard_deviation": 1.2523661815266247,
+        "coefficient_of_variation": 0.2555849350054336
+      },
+      "child_mcp_result_bytes": {
+        "count": 20,
+        "sum": 0,
+        "mean": 0.0,
+        "median": 0.0,
+        "minimum": 0,
+        "maximum": 0,
+        "sample_standard_deviation": 0.0,
+        "coefficient_of_variation": 0.0
+      },
+      "child_mcp_source_tokens": {
+        "count": 20,
+        "sum": 0,
+        "mean": 0.0,
+        "median": 0.0,
+        "minimum": 0,
+        "maximum": 0,
+        "sample_standard_deviation": 0.0,
+        "coefficient_of_variation": 0.0
+      },
+      "contract_violations": 0
+    },
+    {
+      "arm": "thin-leantoken-context-bundle",
+      "runs": 20,
+      "successes": 15,
+      "success_rate": 0.75,
+      "success_rate_wilson_95": {
+        "lower": 0.531299122381256,
+        "upper": 0.8881382985923343
+      },
+      "family_total_input": {
+        "count": 20,
+        "sum": 1939338,
+        "mean": 96966.9,
+        "median": 100457.0,
+        "minimum": 84364,
+        "maximum": 104059,
+        "sample_standard_deviation": 7586.597066017495,
+        "coefficient_of_variation": 0.07823903895058515
+      },
+      "family_uncached_input": {
+        "count": 20,
+        "sum": 484234,
+        "mean": 24211.7,
+        "median": 22950.0,
+        "minimum": 16276,
+        "maximum": 35890,
+        "sample_standard_deviation": 6232.46892111237,
+        "coefficient_of_variation": 0.25741558507301715
+      },
+      "family_cache_read_input": {
+        "count": 20,
+        "sum": 1455104,
+        "mean": 72755.2,
+        "median": 71552.0,
+        "minimum": 64000,
+        "maximum": 83200,
+        "sample_standard_deviation": 6581.79199402652,
+        "coefficient_of_variation": 0.0904649013957287
+      },
+      "family_output": {
+        "count": 20,
+        "sum": 22001,
+        "mean": 1100.05,
+        "median": 1086.0,
+        "minimum": 777,
+        "maximum": 1510,
+        "sample_standard_deviation": 210.97554734837723,
+        "coefficient_of_variation": 0.1917872345333187
+      },
+      "child_total_input": {
+        "count": 20,
+        "sum": 1000966,
+        "mean": 50048.3,
+        "median": 53532.5,
+        "minimum": 37490,
+        "maximum": 57096,
+        "sample_standard_deviation": 7564.564189624367,
+        "coefficient_of_variation": 0.15114527745446632
+      },
+      "child_provider_requests": {
+        "count": 20,
+        "sum": 75,
+        "mean": 3.75,
+        "median": 4.0,
+        "minimum": 3,
+        "maximum": 4,
+        "sample_standard_deviation": 0.4442616583193193,
+        "coefficient_of_variation": 0.11846977555181848
+      },
+      "child_mcp_result_bytes": {
+        "count": 20,
+        "sum": 196695,
+        "mean": 9834.75,
+        "median": 9172.0,
+        "minimum": 4102,
+        "maximum": 18573,
+        "sample_standard_deviation": 4898.188987295524,
+        "coefficient_of_variation": 0.49804916111701103
+      },
+      "child_mcp_source_tokens": {
+        "count": 20,
+        "sum": 30521,
+        "mean": 1526.05,
+        "median": 1418.0,
+        "minimum": 625,
+        "maximum": 2604,
+        "sample_standard_deviation": 767.5640535589129,
+        "coefficient_of_variation": 0.502974380629018
+      },
+      "contract_violations": 0
+    }
+  ],
+  "task_arm_summaries": [
+    {
+      "task_id": "flask-ipv6-address-partition",
+      "language": "python",
+      "arm": "full-native",
+      "runs": 5,
+      "successes": 5,
+      "success_rate": 1.0,
+      "family_total_input": {
+        "count": 5,
+        "sum": 766730,
+        "mean": 153346.0,
+        "median": 143953.0,
+        "minimum": 139334,
+        "maximum": 195263,
+        "sample_standard_deviation": 23522.752188041264,
+        "coefficient_of_variation": 0.15339658150875318
+      }
+    },
+    {
+      "task_id": "flask-ipv6-address-partition",
+      "language": "python",
+      "arm": "thin-native",
+      "runs": 5,
+      "successes": 5,
+      "success_rate": 1.0,
+      "family_total_input": {
+        "count": 5,
+        "sum": 551132,
+        "mean": 110226.4,
+        "median": 117432.0,
+        "minimum": 83444,
+        "maximum": 119640,
+        "sample_standard_deviation": 15195.55333971093,
+        "coefficient_of_variation": 0.13785765787244192
+      }
+    },
+    {
+      "task_id": "flask-ipv6-address-partition",
+      "language": "python",
+      "arm": "thin-leantoken-context-bundle",
+      "runs": 5,
+      "successes": 5,
+      "success_rate": 1.0,
+      "family_total_input": {
+        "count": 5,
+        "sum": 512751,
+        "mean": 102550.2,
+        "median": 102549.0,
+        "minimum": 102439,
+        "maximum": 102759,
+        "sample_standard_deviation": 129.7486030753318,
+        "coefficient_of_variation": 0.0012652203806070763
+      }
+    },
+    {
+      "task_id": "gin-ascii-json-non-bmp",
+      "language": "go",
+      "arm": "full-native",
+      "runs": 5,
+      "successes": 5,
+      "success_rate": 1.0,
+      "family_total_input": {
+        "count": 5,
+        "sum": 503924,
+        "mean": 100784.8,
+        "median": 97554.0,
+        "minimum": 95638,
+        "maximum": 116687,
+        "sample_standard_deviation": 8944.125150063588,
+        "coefficient_of_variation": 0.0887447824479841
+      }
+    },
+    {
+      "task_id": "gin-ascii-json-non-bmp",
+      "language": "go",
+      "arm": "thin-native",
+      "runs": 5,
+      "successes": 3,
+      "success_rate": 0.6,
+      "family_total_input": {
+        "count": 5,
+        "sum": 464763,
+        "mean": 92952.6,
+        "median": 92606.0,
+        "minimum": 80792,
+        "maximum": 102671,
+        "sample_standard_deviation": 7987.59659096527,
+        "coefficient_of_variation": 0.08593193295255075
+      }
+    },
+    {
+      "task_id": "gin-ascii-json-non-bmp",
+      "language": "go",
+      "arm": "thin-leantoken-context-bundle",
+      "runs": 5,
+      "successes": 5,
+      "success_rate": 1.0,
+      "family_total_input": {
+        "count": 5,
+        "sum": 422199,
+        "mean": 84439.8,
+        "median": 84401.0,
+        "minimum": 84364,
+        "maximum": 84590,
+        "sample_standard_deviation": 94.13394711792341,
+        "coefficient_of_variation": 0.0011148054249053576
+      }
+    },
+    {
+      "task_id": "express-trailing-dot-view",
+      "language": "javascript",
+      "arm": "full-native",
+      "runs": 5,
+      "successes": 0,
+      "success_rate": 0.0,
+      "family_total_input": {
+        "count": 5,
+        "sum": 776399,
+        "mean": 155279.8,
+        "median": 162131.0,
+        "minimum": 137145,
+        "maximum": 170937,
+        "sample_standard_deviation": 16356.516780781903,
+        "coefficient_of_variation": 0.1053357666662496
+      }
+    },
+    {
+      "task_id": "express-trailing-dot-view",
+      "language": "javascript",
+      "arm": "thin-native",
+      "runs": 5,
+      "successes": 0,
+      "success_rate": 0.0,
+      "family_total_input": {
+        "count": 5,
+        "sum": 690116,
+        "mean": 138023.2,
+        "median": 136968.0,
+        "minimum": 115645,
+        "maximum": 183114,
+        "sample_standard_deviation": 27427.7204612414,
+        "coefficient_of_variation": 0.19871818984954265
+      }
+    },
+    {
+      "task_id": "express-trailing-dot-view",
+      "language": "javascript",
+      "arm": "thin-leantoken-context-bundle",
+      "runs": 5,
+      "successes": 0,
+      "success_rate": 0.0,
+      "family_total_input": {
+        "count": 5,
+        "sum": 500094,
+        "mean": 100018.8,
+        "median": 99769.0,
+        "minimum": 99652,
+        "maximum": 100914,
+        "sample_standard_deviation": 523.1144234295208,
+        "coefficient_of_variation": 0.005230160964033969
+      }
+    },
+    {
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "language": "rust",
+      "arm": "full-native",
+      "runs": 5,
+      "successes": 3,
+      "success_rate": 0.6,
+      "family_total_input": {
+        "count": 5,
+        "sum": 1060497,
+        "mean": 212099.4,
+        "median": 192992.0,
+        "minimum": 158825,
+        "maximum": 323168,
+        "sample_standard_deviation": 65992.49252983251,
+        "coefficient_of_variation": 0.31113945880956057
+      }
+    },
+    {
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "language": "rust",
+      "arm": "thin-native",
+      "runs": 5,
+      "successes": 4,
+      "success_rate": 0.8,
+      "family_total_input": {
+        "count": 5,
+        "sum": 721924,
+        "mean": 144384.8,
+        "median": 127818.0,
+        "minimum": 109141,
+        "maximum": 194749,
+        "sample_standard_deviation": 37257.63767605241,
+        "coefficient_of_variation": 0.2580440439440468
+      }
+    },
+    {
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "language": "rust",
+      "arm": "thin-leantoken-context-bundle",
+      "runs": 5,
+      "successes": 5,
+      "success_rate": 1.0,
+      "family_total_input": {
+        "count": 5,
+        "sum": 504294,
+        "mean": 100858.8,
+        "median": 101272.0,
+        "minimum": 96539,
+        "maximum": 104059,
+        "sample_standard_deviation": 2718.593606996088,
+        "coefficient_of_variation": 0.02695445124268867
+      }
+    }
+  ],
+  "comparisons": [
+    {
+      "baseline": "full-native",
+      "candidate": "thin-native",
+      "paired_runs": 20,
+      "both_successful_runs": 11,
+      "candidate_wins": 16,
+      "equal_token_runs": 0,
+      "weighted_total_input_savings_fraction": 0.2186980096860871,
+      "paired_savings_median": 0.16208624409918854,
+      "paired_savings_mean": 0.17349844552305022,
+      "stratified_bootstrap_weighted_savings_95": {
+        "lower": 0.10062236287287639,
+        "upper": 0.32263563004233436
+      },
+      "weighted_uncached_input_savings_fraction": 0.13270350979018244,
+      "weighted_child_input_savings_fraction": 0.312304138577123,
+      "baseline_success_rate": 0.65,
+      "candidate_success_rate": 0.6,
+      "success_rate_difference": -0.050000000000000044,
+      "per_task": [
+        {
+          "task_id": "express-trailing-dot-view",
+          "paired_runs": 5,
+          "weighted_total_input_savings_fraction": 0.11113229151505863,
+          "median_paired_savings_fraction": 0.152349702869226
+        },
+        {
+          "task_id": "flask-ipv6-address-partition",
+          "paired_runs": 5,
+          "weighted_total_input_savings_fraction": 0.2811915537412127,
+          "median_paired_savings_fraction": 0.18423374295777095
+        },
+        {
+          "task_id": "gin-ascii-json-non-bmp",
+          "paired_runs": 5,
+          "weighted_total_input_savings_fraction": 0.07771211531897668,
+          "median_paired_savings_fraction": 0.05866925196448617
+        },
+        {
+          "task_id": "tokio-file-write-after-spawn-failure",
+          "paired_runs": 5,
+          "weighted_total_input_savings_fraction": 0.31925880035492793,
+          "median_paired_savings_fraction": 0.43447914939479354
+        }
+      ]
+    },
+    {
+      "baseline": "thin-native",
+      "candidate": "thin-leantoken-context-bundle",
+      "paired_runs": 20,
+      "both_successful_runs": 12,
+      "candidate_wins": 18,
+      "equal_token_runs": 0,
+      "weighted_total_input_savings_fraction": 0.2012397366486335,
+      "paired_savings_median": 0.13883238042484417,
+      "paired_savings_mean": 0.1643293158824531,
+      "stratified_bootstrap_weighted_savings_95": {
+        "lower": 0.13404896844946915,
+        "upper": 0.26271058713199585
+      },
+      "weighted_uncached_input_savings_fraction": 0.16048051400921293,
+      "weighted_child_input_savings_fraction": 0.3315748457928853,
+      "baseline_success_rate": 0.6,
+      "candidate_success_rate": 0.75,
+      "success_rate_difference": 0.15000000000000002,
+      "per_task": [
+        {
+          "task_id": "express-trailing-dot-view",
+          "paired_runs": 5,
+          "weighted_total_input_savings_fraction": 0.2753479125248509,
+          "median_paired_savings_fraction": 0.2715889842883009
+        },
+        {
+          "task_id": "flask-ipv6-address-partition",
+          "paired_runs": 5,
+          "weighted_total_input_savings_fraction": 0.06964030395622102,
+          "median_paired_savings_fraction": 0.12664350432590776
+        },
+        {
+          "task_id": "gin-ascii-json-non-bmp",
+          "paired_runs": 5,
+          "weighted_total_input_savings_fraction": 0.09158216123056268,
+          "median_paired_savings_fraction": 0.08891432520571022
+        },
+        {
+          "task_id": "tokio-file-write-after-spawn-failure",
+          "paired_runs": 5,
+          "weighted_total_input_savings_fraction": 0.30145832525307376,
+          "median_paired_savings_fraction": 0.18588148774038085
+        }
+      ]
+    },
+    {
+      "baseline": "full-native",
+      "candidate": "thin-leantoken-context-bundle",
+      "paired_runs": 20,
+      "both_successful_runs": 13,
+      "candidate_wins": 20,
+      "equal_token_runs": 0,
+      "weighted_total_input_savings_fraction": 0.37592701645991217,
+      "paired_savings_median": 0.2893075065262181,
+      "paired_savings_mean": 0.33086563787828716,
+      "stratified_bootstrap_weighted_savings_95": {
+        "lower": 0.3234042956618163,
+        "upper": 0.4297560006425733
+      },
+      "weighted_uncached_input_savings_fraction": 0.27188769633744025,
+      "weighted_child_input_savings_fraction": 0.5403267877808189,
+      "baseline_success_rate": 0.65,
+      "candidate_success_rate": 0.75,
+      "success_rate_difference": 0.09999999999999998,
+      "per_task": [
+        {
+          "task_id": "express-trailing-dot-view",
+          "paired_runs": 5,
+          "weighted_total_input_savings_fraction": 0.3558801595571349,
+          "median_paired_savings_fraction": 0.38500348483633606
+        },
+        {
+          "task_id": "flask-ipv6-address-partition",
+          "paired_runs": 5,
+          "weighted_total_input_savings_fraction": 0.3312495924249736,
+          "median_paired_savings_fraction": 0.28754524046042806
+        },
+        {
+          "task_id": "gin-ascii-json-non-bmp",
+          "paired_runs": 5,
+          "weighted_total_input_savings_fraction": 0.16217723307482873,
+          "median_paired_savings_fraction": 0.13410008815630317
+        },
+        {
+          "task_id": "tokio-file-write-after-spawn-failure",
+          "paired_runs": 5,
+          "weighted_total_input_savings_fraction": 0.5244739023306997,
+          "median_paired_savings_fraction": 0.47736175592770685
+        }
+      ]
+    }
+  ],
+  "quality_gate": {
+    "passed": true,
+    "checks": {
+      "candidate_success_rate": {
+        "passed": true,
+        "observed": 0.75,
+        "required": ">= 0.6"
+      },
+      "combined_savings_ci_lower_bound": {
+        "passed": true,
+        "observed": 0.3234042956618163,
+        "required": ">= 0.05"
+      },
+      "combined_total_input_savings": {
+        "passed": true,
+        "observed": 0.37592701645991217,
+        "required": ">= 0.1"
+      },
+      "contract_violations": {
+        "passed": true,
+        "observed": 0.0,
+        "required": "<= 0"
+      },
+      "per_task_success_regression": {
+        "passed": true,
+        "observed": 0.0,
+        "required": "<= 1"
+      },
+      "retrieval_savings_ci_lower_bound": {
+        "passed": true,
+        "observed": 0.13404896844946915,
+        "required": ">= 0"
+      },
+      "retrieval_total_input_savings": {
+        "passed": true,
+        "observed": 0.2012397366486335,
+        "required": ">= 0"
+      },
+      "success_rate_regression": {
+        "passed": true,
+        "observed": 0.0,
+        "required": "<= 0.05"
+      }
+    }
+  },
+  "run_samples": [
+    {
+      "schedule_index": 1,
+      "repetition": 3,
+      "task_id": "gin-ascii-json-non-bmp",
+      "arm": "thin-native",
+      "source_family_blake3": "a786e72383749a30cf83ea2c922d34260add9c8705c56d633336926e8ab22a6f",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 102671,
+        "uncached_input_tokens": 26639,
+        "cache_read_input_tokens": 76032,
+        "output_tokens": 1028
+      },
+      "child_usage": {
+        "total_input_tokens": 56176,
+        "uncached_input_tokens": 10352,
+        "cache_read_input_tokens": 45824,
+        "output_tokens": 611
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    },
+    {
+      "schedule_index": 2,
+      "repetition": 4,
+      "task_id": "gin-ascii-json-non-bmp",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "358b90fd6d18665a1118970e4d5761ad850f73a9b36539ac19ee4e953a65381b",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 84372,
+        "uncached_input_tokens": 16276,
+        "cache_read_input_tokens": 68096,
+        "output_tokens": 841
+      },
+      "child_usage": {
+        "total_input_tokens": 37490,
+        "uncached_input_tokens": 7538,
+        "cache_read_input_tokens": 29952,
+        "output_tokens": 385
+      },
+      "child_provider_requests": 3,
+      "child_mcp_calls": 1,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 4102,
+      "child_mcp_source_tokens": 625,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 3,
+      "repetition": 2,
+      "task_id": "flask-ipv6-address-partition",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "80c8eeb4a634591cc4e173d652af6e8ef2582f17f45f9cd7fda99ecee1347c7f",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 102439,
+        "uncached_input_tokens": 20263,
+        "cache_read_input_tokens": 82176,
+        "output_tokens": 1075
+      },
+      "child_usage": {
+        "total_input_tokens": 55480,
+        "uncached_input_tokens": 11448,
+        "cache_read_input_tokens": 44032,
+        "output_tokens": 553
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 2,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 15264,
+      "child_mcp_source_tokens": 2470,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 4,
+      "repetition": 5,
+      "task_id": "flask-ipv6-address-partition",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "7c299e4494fa8acd74264e6ff3274af391bdc22a9838f6ce5569c15fad90cca9",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 102549,
+        "uncached_input_tokens": 28309,
+        "cache_read_input_tokens": 74240,
+        "output_tokens": 1097
+      },
+      "child_usage": {
+        "total_input_tokens": 55639,
+        "uncached_input_tokens": 19543,
+        "cache_read_input_tokens": 36096,
+        "output_tokens": 619
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 2,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 15199,
+      "child_mcp_source_tokens": 2469,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 5,
+      "repetition": 3,
+      "task_id": "express-trailing-dot-view",
+      "arm": "thin-native",
+      "source_family_blake3": "4162ad2dcf3ecfc4e193e32c07168c4d5a76cf991a0dede45979914c7d757721",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 116251,
+        "uncached_input_tokens": 33051,
+        "cache_read_input_tokens": 83200,
+        "output_tokens": 1240
+      },
+      "child_usage": {
+        "total_input_tokens": 69791,
+        "uncached_input_tokens": 24735,
+        "cache_read_input_tokens": 45056,
+        "output_tokens": 843
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    },
+    {
+      "schedule_index": 6,
+      "repetition": 4,
+      "task_id": "flask-ipv6-address-partition",
+      "arm": "thin-native",
+      "source_family_blake3": "a378397f831b32df22d4e113bf690aac5ff7630b5c93e06d954aff2ae7fa3e58",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 117432,
+        "uncached_input_tokens": 20152,
+        "cache_read_input_tokens": 97280,
+        "output_tokens": 1319
+      },
+      "child_usage": {
+        "total_input_tokens": 70832,
+        "uncached_input_tokens": 11696,
+        "cache_read_input_tokens": 59136,
+        "output_tokens": 830
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    },
+    {
+      "schedule_index": 7,
+      "repetition": 3,
+      "task_id": "flask-ipv6-address-partition",
+      "arm": "thin-native",
+      "source_family_blake3": "0eff7294a41654b5715161eda7e15778d870c0bdede170740c15c9575cb117c5",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 83444,
+        "uncached_input_tokens": 17396,
+        "cache_read_input_tokens": 66048,
+        "output_tokens": 1031
+      },
+      "child_usage": {
+        "total_input_tokens": 36929,
+        "uncached_input_tokens": 9025,
+        "cache_read_input_tokens": 27904,
+        "output_tokens": 579
+      },
+      "child_provider_requests": 3,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 2
+    },
+    {
+      "schedule_index": 8,
+      "repetition": 5,
+      "task_id": "express-trailing-dot-view",
+      "arm": "full-native",
+      "source_family_blake3": "7727f791cc45ee5633cfd04f724a5a43dbadc519142168719e26847d96569aeb",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 170937,
+        "uncached_input_tokens": 36793,
+        "cache_read_input_tokens": 134144,
+        "output_tokens": 2413
+      },
+      "child_usage": {
+        "total_input_tokens": 124474,
+        "uncached_input_tokens": 20538,
+        "cache_read_input_tokens": 103936,
+        "output_tokens": 2010
+      },
+      "child_provider_requests": 6,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 5
+    },
+    {
+      "schedule_index": 9,
+      "repetition": 1,
+      "task_id": "express-trailing-dot-view",
+      "arm": "thin-native",
+      "source_family_blake3": "577047db193517ed0d4a9d5b122ffd07411727bcb4c98b36819814757377ab8e",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 136968,
+        "uncached_input_tokens": 32520,
+        "cache_read_input_tokens": 104448,
+        "output_tokens": 1517
+      },
+      "child_usage": {
+        "total_input_tokens": 90474,
+        "uncached_input_tokens": 24170,
+        "cache_read_input_tokens": 66304,
+        "output_tokens": 1099
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    },
+    {
+      "schedule_index": 10,
+      "repetition": 3,
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "6091e3e611f2a5e12b41b7fde448fca26a372ab8d674390f94afea53a3f63ca3",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 101272,
+        "uncached_input_tokens": 25240,
+        "cache_read_input_tokens": 76032,
+        "output_tokens": 1411
+      },
+      "child_usage": {
+        "total_input_tokens": 54301,
+        "uncached_input_tokens": 9245,
+        "cache_read_input_tokens": 45056,
+        "output_tokens": 938
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 2,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 9641,
+      "child_mcp_source_tokens": 1491,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 11,
+      "repetition": 5,
+      "task_id": "flask-ipv6-address-partition",
+      "arm": "full-native",
+      "source_family_blake3": "53dfaa86d1abfdc32fd05de78962174bc7e4a67d37dba80b63fe12c26585aa69",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 195263,
+        "uncached_input_tokens": 28863,
+        "cache_read_input_tokens": 166400,
+        "output_tokens": 1682
+      },
+      "child_usage": {
+        "total_input_tokens": 148797,
+        "uncached_input_tokens": 20541,
+        "cache_read_input_tokens": 128256,
+        "output_tokens": 1266
+      },
+      "child_provider_requests": 7,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 6
+    },
+    {
+      "schedule_index": 12,
+      "repetition": 2,
+      "task_id": "express-trailing-dot-view",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "5241950f7c4c157e175b664f77ef322ddd83ec3ea13749334ce345c0f3ecdb62",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 99710,
+        "uncached_input_tokens": 29566,
+        "cache_read_input_tokens": 70144,
+        "output_tokens": 1510
+      },
+      "child_usage": {
+        "total_input_tokens": 52785,
+        "uncached_input_tokens": 20785,
+        "cache_read_input_tokens": 32000,
+        "output_tokens": 1044
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 2,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 6356,
+      "child_mcp_source_tokens": 997,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 13,
+      "repetition": 5,
+      "task_id": "gin-ascii-json-non-bmp",
+      "arm": "full-native",
+      "source_family_blake3": "7ef7d8898d0fb6cea4abcf164aabb92ec004e2f7c18941671b51bf20761e3c26",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 97990,
+        "uncached_input_tokens": 20678,
+        "cache_read_input_tokens": 77312,
+        "output_tokens": 870
+      },
+      "child_usage": {
+        "total_input_tokens": 51524,
+        "uncached_input_tokens": 12356,
+        "cache_read_input_tokens": 39168,
+        "output_tokens": 476
+      },
+      "child_provider_requests": 3,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 2
+    },
+    {
+      "schedule_index": 14,
+      "repetition": 2,
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "arm": "full-native",
+      "source_family_blake3": "97a7fe707b8c24b97e8d0766afb043aa9fc4205342cc416c8274ca7aaf799870",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 158825,
+        "uncached_input_tokens": 46953,
+        "cache_read_input_tokens": 111872,
+        "output_tokens": 1639
+      },
+      "child_usage": {
+        "total_input_tokens": 112195,
+        "uncached_input_tokens": 23363,
+        "cache_read_input_tokens": 88832,
+        "output_tokens": 1180
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    },
+    {
+      "schedule_index": 15,
+      "repetition": 2,
+      "task_id": "express-trailing-dot-view",
+      "arm": "thin-native",
+      "source_family_blake3": "19ba094337d3bb5df3f2ccd66042d53dadf00edb3cdfae8a3c9b321af81267a1",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 138138,
+        "uncached_input_tokens": 41626,
+        "cache_read_input_tokens": 96512,
+        "output_tokens": 1624
+      },
+      "child_usage": {
+        "total_input_tokens": 91520,
+        "uncached_input_tokens": 33152,
+        "cache_read_input_tokens": 58368,
+        "output_tokens": 1140
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    },
+    {
+      "schedule_index": 16,
+      "repetition": 3,
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "arm": "thin-native",
+      "source_family_blake3": "ecd384464dc3afb3b6ac624af93c2ecd672054e2db7952abd3a941773a406e72",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 117737,
+        "uncached_input_tokens": 33769,
+        "cache_read_input_tokens": 83968,
+        "output_tokens": 1276
+      },
+      "child_usage": {
+        "total_input_tokens": 71104,
+        "uncached_input_tokens": 18112,
+        "cache_read_input_tokens": 52992,
+        "output_tokens": 812
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    },
+    {
+      "schedule_index": 17,
+      "repetition": 2,
+      "task_id": "gin-ascii-json-non-bmp",
+      "arm": "thin-native",
+      "source_family_blake3": "d82b64eb3dccd4d19742831f45ca9ecca13da059c29d8ebc0f6b4c3da45db5e0",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 80792,
+        "uncached_input_tokens": 15768,
+        "cache_read_input_tokens": 65024,
+        "output_tokens": 772
+      },
+      "child_usage": {
+        "total_input_tokens": 34369,
+        "uncached_input_tokens": 7489,
+        "cache_read_input_tokens": 26880,
+        "output_tokens": 410
+      },
+      "child_provider_requests": 3,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 2
+    },
+    {
+      "schedule_index": 18,
+      "repetition": 2,
+      "task_id": "flask-ipv6-address-partition",
+      "arm": "full-native",
+      "source_family_blake3": "5d9b301519b52ad89fa372d9d6838daab4b925912b79dd05abf8285a539d3f18",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 144498,
+        "uncached_input_tokens": 40050,
+        "cache_read_input_tokens": 104448,
+        "output_tokens": 1513
+      },
+      "child_usage": {
+        "total_input_tokens": 97894,
+        "uncached_input_tokens": 24422,
+        "cache_read_input_tokens": 73472,
+        "output_tokens": 1027
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    },
+    {
+      "schedule_index": 19,
+      "repetition": 5,
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "arm": "full-native",
+      "source_family_blake3": "d9f0b60b5628d18e2337cb7099d00816c2b7c16a693af0dfd403c3712d25b778",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 192992,
+        "uncached_input_tokens": 34528,
+        "cache_read_input_tokens": 158464,
+        "output_tokens": 1613
+      },
+      "child_usage": {
+        "total_input_tokens": 146463,
+        "uncached_input_tokens": 26143,
+        "cache_read_input_tokens": 120320,
+        "output_tokens": 1207
+      },
+      "child_provider_requests": 6,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 5
+    },
+    {
+      "schedule_index": 20,
+      "repetition": 3,
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "arm": "full-native",
+      "source_family_blake3": "755a5df13dd0545e0409b22f5d64bbb3b2081d5490a1b301df9f9943cd211d43",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 216549,
+        "uncached_input_tokens": 33765,
+        "cache_read_input_tokens": 182784,
+        "output_tokens": 1989
+      },
+      "child_usage": {
+        "total_input_tokens": 169966,
+        "uncached_input_tokens": 25326,
+        "cache_read_input_tokens": 144640,
+        "output_tokens": 1560
+      },
+      "child_provider_requests": 7,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 6
+    },
+    {
+      "schedule_index": 21,
+      "repetition": 4,
+      "task_id": "flask-ipv6-address-partition",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "31550d6289a72547737bbd60a34bcf2f935d38638637fba13947af382dde1892",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 102560,
+        "uncached_input_tokens": 30368,
+        "cache_read_input_tokens": 72192,
+        "output_tokens": 1065
+      },
+      "child_usage": {
+        "total_input_tokens": 55616,
+        "uncached_input_tokens": 21568,
+        "cache_read_input_tokens": 34048,
+        "output_tokens": 555
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 2,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 15626,
+      "child_mcp_source_tokens": 2438,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 22,
+      "repetition": 5,
+      "task_id": "gin-ascii-json-non-bmp",
+      "arm": "thin-native",
+      "source_family_blake3": "486d3e59c625a6250feed3b486ac0ab1aa0baf2f7eead8b4a2739d1fc9b83a94",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 92241,
+        "uncached_input_tokens": 17233,
+        "cache_read_input_tokens": 75008,
+        "output_tokens": 883
+      },
+      "child_usage": {
+        "total_input_tokens": 45827,
+        "uncached_input_tokens": 8963,
+        "cache_read_input_tokens": 36864,
+        "output_tokens": 526
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 3
+    },
+    {
+      "schedule_index": 23,
+      "repetition": 5,
+      "task_id": "express-trailing-dot-view",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "c0b73773d677ecbb13cab5ee8ae991e4e2d7792de6a048cb507342bf8c0d8cfc",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 99652,
+        "uncached_input_tokens": 27460,
+        "cache_read_input_tokens": 72192,
+        "output_tokens": 984
+      },
+      "child_usage": {
+        "total_input_tokens": 52830,
+        "uncached_input_tokens": 18782,
+        "cache_read_input_tokens": 34048,
+        "output_tokens": 584
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 2,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 6673,
+      "child_mcp_source_tokens": 1052,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 24,
+      "repetition": 5,
+      "task_id": "flask-ipv6-address-partition",
+      "arm": "thin-native",
+      "source_family_blake3": "03d642842d5139661304f37cce64ed19332308023ffc7b519bbed9f5d10ac07e",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 112649,
+        "uncached_input_tokens": 44809,
+        "cache_read_input_tokens": 67840,
+        "output_tokens": 1319
+      },
+      "child_usage": {
+        "total_input_tokens": 66127,
+        "uncached_input_tokens": 29263,
+        "cache_read_input_tokens": 36864,
+        "output_tokens": 855
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    },
+    {
+      "schedule_index": 25,
+      "repetition": 1,
+      "task_id": "gin-ascii-json-non-bmp",
+      "arm": "full-native",
+      "source_family_blake3": "ead6086ffc2b9e4d66bdbc34b0ec0745a740bb9ac7be9ae28cd02030746e6cee",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 95638,
+        "uncached_input_tokens": 33430,
+        "cache_read_input_tokens": 62208,
+        "output_tokens": 773
+      },
+      "child_usage": {
+        "total_input_tokens": 49182,
+        "uncached_input_tokens": 17950,
+        "cache_read_input_tokens": 31232,
+        "output_tokens": 390
+      },
+      "child_provider_requests": 3,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 2
+    },
+    {
+      "schedule_index": 26,
+      "repetition": 2,
+      "task_id": "gin-ascii-json-non-bmp",
+      "arm": "full-native",
+      "source_family_blake3": "808515810863e67adb5473f973ae9a63eb831da28ca2a4c404897c00f5d13583",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 97554,
+        "uncached_input_tokens": 20242,
+        "cache_read_input_tokens": 77312,
+        "output_tokens": 748
+      },
+      "child_usage": {
+        "total_input_tokens": 51158,
+        "uncached_input_tokens": 11990,
+        "cache_read_input_tokens": 39168,
+        "output_tokens": 403
+      },
+      "child_provider_requests": 3,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 2
+    },
+    {
+      "schedule_index": 27,
+      "repetition": 1,
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "arm": "full-native",
+      "source_family_blake3": "1929ca5d986ae4c6abcaba3ff7d09e0fbbf4cdba3ef18e0a6cd754d3047abf78",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 168963,
+        "uncached_input_tokens": 38147,
+        "cache_read_input_tokens": 130816,
+        "output_tokens": 1760
+      },
+      "child_usage": {
+        "total_input_tokens": 122435,
+        "uncached_input_tokens": 29763,
+        "cache_read_input_tokens": 92672,
+        "output_tokens": 1341
+      },
+      "child_provider_requests": 6,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 5
+    },
+    {
+      "schedule_index": 28,
+      "repetition": 3,
+      "task_id": "express-trailing-dot-view",
+      "arm": "full-native",
+      "source_family_blake3": "31558372fcae92953215d1cbb2f7144b7b53fb1649d03e96f41e51bd3671be35",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 137145,
+        "uncached_input_tokens": 28345,
+        "cache_read_input_tokens": 108800,
+        "output_tokens": 1851
+      },
+      "child_usage": {
+        "total_input_tokens": 90655,
+        "uncached_input_tokens": 19999,
+        "cache_read_input_tokens": 70656,
+        "output_tokens": 1434
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 3
+    },
+    {
+      "schedule_index": 29,
+      "repetition": 1,
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "22e4e5fff43085144a48c3cb0618b83fb8a6ed352014b0464b88edc3fc986fb0",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 101559,
+        "uncached_input_tokens": 18359,
+        "cache_read_input_tokens": 83200,
+        "output_tokens": 1238
+      },
+      "child_usage": {
+        "total_input_tokens": 54614,
+        "uncached_input_tokens": 9558,
+        "cache_read_input_tokens": 45056,
+        "output_tokens": 780
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 2,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 11045,
+      "child_mcp_source_tokens": 1736,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 30,
+      "repetition": 4,
+      "task_id": "express-trailing-dot-view",
+      "arm": "thin-native",
+      "source_family_blake3": "0581128991e93dcd7933a720094978d63b4dc02bb52a657f7a98329df17d1386",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 183114,
+        "uncached_input_tokens": 37194,
+        "cache_read_input_tokens": 145920,
+        "output_tokens": 2203
+      },
+      "child_usage": {
+        "total_input_tokens": 136641,
+        "uncached_input_tokens": 28865,
+        "cache_read_input_tokens": 107776,
+        "output_tokens": 1800
+      },
+      "child_provider_requests": 7,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 6
+    },
+    {
+      "schedule_index": 31,
+      "repetition": 3,
+      "task_id": "gin-ascii-json-non-bmp",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "b0598c566a4d03560e8941dccf484cb3cbdeae96849c18638a7e3e2d1c35ebe7",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 84401,
+        "uncached_input_tokens": 16305,
+        "cache_read_input_tokens": 68096,
+        "output_tokens": 786
+      },
+      "child_usage": {
+        "total_input_tokens": 37512,
+        "uncached_input_tokens": 7560,
+        "cache_read_input_tokens": 29952,
+        "output_tokens": 334
+      },
+      "child_provider_requests": 3,
+      "child_mcp_calls": 1,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 4116,
+      "child_mcp_source_tokens": 625,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 32,
+      "repetition": 5,
+      "task_id": "gin-ascii-json-non-bmp",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "10caf92649f43d0c7999cc7a4521fedf553b52ad4bad412103389589f067c845",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 84364,
+        "uncached_input_tokens": 20364,
+        "cache_read_input_tokens": 64000,
+        "output_tokens": 777
+      },
+      "child_usage": {
+        "total_input_tokens": 37500,
+        "uncached_input_tokens": 11644,
+        "cache_read_input_tokens": 25856,
+        "output_tokens": 341
+      },
+      "child_provider_requests": 3,
+      "child_mcp_calls": 1,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 4116,
+      "child_mcp_source_tokens": 625,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 33,
+      "repetition": 2,
+      "task_id": "flask-ipv6-address-partition",
+      "arm": "thin-native",
+      "source_family_blake3": "ef1c6e53b889318d7f6c0f2b329aa8ab996ab3824dc3e3b2bd724de4ab6a4790",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 117967,
+        "uncached_input_tokens": 29903,
+        "cache_read_input_tokens": 88064,
+        "output_tokens": 1331
+      },
+      "child_usage": {
+        "total_input_tokens": 71479,
+        "uncached_input_tokens": 21559,
+        "cache_read_input_tokens": 49920,
+        "output_tokens": 909
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    },
+    {
+      "schedule_index": 34,
+      "repetition": 3,
+      "task_id": "gin-ascii-json-non-bmp",
+      "arm": "full-native",
+      "source_family_blake3": "65a8c74a270e156470343e10a1ac752848e0a439444d14d73581625c470cd845",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 116687,
+        "uncached_input_tokens": 38607,
+        "cache_read_input_tokens": 78080,
+        "output_tokens": 948
+      },
+      "child_usage": {
+        "total_input_tokens": 70221,
+        "uncached_input_tokens": 23117,
+        "cache_read_input_tokens": 47104,
+        "output_tokens": 546
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 3
+    },
+    {
+      "schedule_index": 35,
+      "repetition": 5,
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "arm": "thin-native",
+      "source_family_blake3": "2af2c4c13cbc43a04dec451b025976def9d72a781c024b071add317a059090b2",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 109141,
+        "uncached_input_tokens": 23893,
+        "cache_read_input_tokens": 85248,
+        "output_tokens": 1128
+      },
+      "child_usage": {
+        "total_input_tokens": 62609,
+        "uncached_input_tokens": 15505,
+        "cache_read_input_tokens": 47104,
+        "output_tokens": 721
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 3
+    },
+    {
+      "schedule_index": 36,
+      "repetition": 1,
+      "task_id": "express-trailing-dot-view",
+      "arm": "full-native",
+      "source_family_blake3": "3c4e82f154afb075790594001ea3c3b0b176da5564fb2729974a51aabf89b15e",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 167919,
+        "uncached_input_tokens": 31727,
+        "cache_read_input_tokens": 136192,
+        "output_tokens": 1620
+      },
+      "child_usage": {
+        "total_input_tokens": 121484,
+        "uncached_input_tokens": 23436,
+        "cache_read_input_tokens": 98048,
+        "output_tokens": 1239
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    },
+    {
+      "schedule_index": 37,
+      "repetition": 2,
+      "task_id": "gin-ascii-json-non-bmp",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "22165107411734609de795a82166ee8cc2217fddba08b413d757cfb935e73012",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 84472,
+        "uncached_input_tokens": 16376,
+        "cache_read_input_tokens": 68096,
+        "output_tokens": 824
+      },
+      "child_usage": {
+        "total_input_tokens": 37593,
+        "uncached_input_tokens": 7641,
+        "cache_read_input_tokens": 29952,
+        "output_tokens": 380
+      },
+      "child_provider_requests": 3,
+      "child_mcp_calls": 1,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 4116,
+      "child_mcp_source_tokens": 625,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 38,
+      "repetition": 2,
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "5802a28e4cfd4af062a24895dafdafef50e04f52c41c8f2821df39d1b4362cb8",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 96539,
+        "uncached_input_tokens": 31515,
+        "cache_read_input_tokens": 65024,
+        "output_tokens": 1051
+      },
+      "child_usage": {
+        "total_input_tokens": 49621,
+        "uncached_input_tokens": 7637,
+        "cache_read_input_tokens": 41984,
+        "output_tokens": 616
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 2,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 14556,
+      "child_mcp_source_tokens": 2269,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 39,
+      "repetition": 3,
+      "task_id": "express-trailing-dot-view",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "cb37a1a7ad03f36527ac8d3024e5be42adf837eae86ef64be0f21de541f515df",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 100049,
+        "uncached_input_tokens": 25041,
+        "cache_read_input_tokens": 75008,
+        "output_tokens": 1201
+      },
+      "child_usage": {
+        "total_input_tokens": 53127,
+        "uncached_input_tokens": 9095,
+        "cache_read_input_tokens": 44032,
+        "output_tokens": 728
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 2,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 7177,
+      "child_mcp_source_tokens": 1044,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 40,
+      "repetition": 1,
+      "task_id": "flask-ipv6-address-partition",
+      "arm": "full-native",
+      "source_family_blake3": "beb1d0d93f11b1e42730b196617405c6308eebb4d8149660fa6c6f849bc489b7",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 139334,
+        "uncached_input_tokens": 34886,
+        "cache_read_input_tokens": 104448,
+        "output_tokens": 1461
+      },
+      "child_usage": {
+        "total_input_tokens": 92850,
+        "uncached_input_tokens": 26546,
+        "cache_read_input_tokens": 66304,
+        "output_tokens": 1033
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    },
+    {
+      "schedule_index": 41,
+      "repetition": 3,
+      "task_id": "flask-ipv6-address-partition",
+      "arm": "full-native",
+      "source_family_blake3": "cbebfa6a7444a58a710538b21eae59ffdc7a4798f9cce38ff9ca13938ca8af8f",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 143682,
+        "uncached_input_tokens": 25922,
+        "cache_read_input_tokens": 117760,
+        "output_tokens": 1496
+      },
+      "child_usage": {
+        "total_input_tokens": 97259,
+        "uncached_input_tokens": 17643,
+        "cache_read_input_tokens": 79616,
+        "output_tokens": 1118
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    },
+    {
+      "schedule_index": 42,
+      "repetition": 4,
+      "task_id": "flask-ipv6-address-partition",
+      "arm": "full-native",
+      "source_family_blake3": "b81b8b5942b19efda9c0080be4014ff2346d8ad6270bc80f2e5db6f473017662",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 143953,
+        "uncached_input_tokens": 33361,
+        "cache_read_input_tokens": 110592,
+        "output_tokens": 1567
+      },
+      "child_usage": {
+        "total_input_tokens": 97472,
+        "uncached_input_tokens": 25024,
+        "cache_read_input_tokens": 72448,
+        "output_tokens": 1145
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    },
+    {
+      "schedule_index": 43,
+      "repetition": 4,
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "arm": "full-native",
+      "source_family_blake3": "6c47e73be331687fbc25493e5481bea30e906b2cd09d4e971af4583972c4fcee",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 323168,
+        "uncached_input_tokens": 45408,
+        "cache_read_input_tokens": 277760,
+        "output_tokens": 2567
+      },
+      "child_usage": {
+        "total_input_tokens": 276613,
+        "uncached_input_tokens": 29829,
+        "cache_read_input_tokens": 246784,
+        "output_tokens": 2144
+      },
+      "child_provider_requests": 12,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 11
+    },
+    {
+      "schedule_index": 44,
+      "repetition": 1,
+      "task_id": "flask-ipv6-address-partition",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "c15566304bbd1bbef49985f2d3df2b65aba43e75929486d6266d304efc4656ab",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 102444,
+        "uncached_input_tokens": 34348,
+        "cache_read_input_tokens": 68096,
+        "output_tokens": 1064
+      },
+      "child_usage": {
+        "total_input_tokens": 55517,
+        "uncached_input_tokens": 25565,
+        "cache_read_input_tokens": 29952,
+        "output_tokens": 569
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 2,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 15225,
+      "child_mcp_source_tokens": 2469,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 45,
+      "repetition": 4,
+      "task_id": "gin-ascii-json-non-bmp",
+      "arm": "thin-native",
+      "source_family_blake3": "827ce272580f3c9a6a1cb0a2bce0835fec25ed101bc1f7e42d0cd3d14aab9e3f",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 92606,
+        "uncached_input_tokens": 23742,
+        "cache_read_input_tokens": 68864,
+        "output_tokens": 959
+      },
+      "child_usage": {
+        "total_input_tokens": 46128,
+        "uncached_input_tokens": 8240,
+        "cache_read_input_tokens": 37888,
+        "output_tokens": 555
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 3
+    },
+    {
+      "schedule_index": 46,
+      "repetition": 1,
+      "task_id": "gin-ascii-json-non-bmp",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "469be3207bd09835d657fbd9e9005a7cc9a2b690d377156fc6f2f0dd89b96be9",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 84590,
+        "uncached_input_tokens": 18542,
+        "cache_read_input_tokens": 66048,
+        "output_tokens": 918
+      },
+      "child_usage": {
+        "total_input_tokens": 37663,
+        "uncached_input_tokens": 9759,
+        "cache_read_input_tokens": 27904,
+        "output_tokens": 439
+      },
+      "child_provider_requests": 3,
+      "child_mcp_calls": 1,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 4116,
+      "child_mcp_source_tokens": 625,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 47,
+      "repetition": 4,
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "655e4a0c37181df158584cbd77eb801f7758c35b56f42cfe869e0c4f4b03ba4f",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 104059,
+        "uncached_input_tokens": 20859,
+        "cache_read_input_tokens": 83200,
+        "output_tokens": 1097
+      },
+      "child_usage": {
+        "total_input_tokens": 57096,
+        "uncached_input_tokens": 12040,
+        "cache_read_input_tokens": 45056,
+        "output_tokens": 631
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 2,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 18573,
+      "child_mcp_source_tokens": 2604,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 48,
+      "repetition": 4,
+      "task_id": "gin-ascii-json-non-bmp",
+      "arm": "full-native",
+      "source_family_blake3": "27115d9eb14e9fd9d4f119cfabca219d1755c9d9035b743d8ecf2f84abc3f032",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 96055,
+        "uncached_input_tokens": 26679,
+        "cache_read_input_tokens": 69376,
+        "output_tokens": 806
+      },
+      "child_usage": {
+        "total_input_tokens": 49591,
+        "uncached_input_tokens": 10423,
+        "cache_read_input_tokens": 39168,
+        "output_tokens": 416
+      },
+      "child_provider_requests": 3,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 2
+    },
+    {
+      "schedule_index": 49,
+      "repetition": 1,
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "arm": "thin-native",
+      "source_family_blake3": "1f8b0622394d1569fb91b5574fbf5f3fe1e7f463dae8e29f5f4d975a104aa84f",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 194749,
+        "uncached_input_tokens": 32701,
+        "cache_read_input_tokens": 162048,
+        "output_tokens": 1811
+      },
+      "child_usage": {
+        "total_input_tokens": 148196,
+        "uncached_input_tokens": 24292,
+        "cache_read_input_tokens": 123904,
+        "output_tokens": 1390
+      },
+      "child_provider_requests": 8,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 7
+    },
+    {
+      "schedule_index": 50,
+      "repetition": 4,
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "arm": "thin-native",
+      "source_family_blake3": "63644391611ce75ded82b9748f1bea71c2d3fd5df9ed5b5bc3fed92323776fec",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 127818,
+        "uncached_input_tokens": 24394,
+        "cache_read_input_tokens": 103424,
+        "output_tokens": 1470
+      },
+      "child_usage": {
+        "total_input_tokens": 81086,
+        "uncached_input_tokens": 15806,
+        "cache_read_input_tokens": 65280,
+        "output_tokens": 946
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    },
+    {
+      "schedule_index": 51,
+      "repetition": 1,
+      "task_id": "flask-ipv6-address-partition",
+      "arm": "thin-native",
+      "source_family_blake3": "d72ee83c6787865d3c65928563d06238d9c437ca6371ad7f14c068f4dc068505",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 119640,
+        "uncached_input_tokens": 21336,
+        "cache_read_input_tokens": 98304,
+        "output_tokens": 1384
+      },
+      "child_usage": {
+        "total_input_tokens": 73130,
+        "uncached_input_tokens": 12970,
+        "cache_read_input_tokens": 60160,
+        "output_tokens": 941
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    },
+    {
+      "schedule_index": 52,
+      "repetition": 2,
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "arm": "thin-native",
+      "source_family_blake3": "3584150167cf10a00749bef08c0efa684c6a7754de71721e29d980d078c9acda",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 172479,
+        "uncached_input_tokens": 43967,
+        "cache_read_input_tokens": 128512,
+        "output_tokens": 1605
+      },
+      "child_usage": {
+        "total_input_tokens": 125914,
+        "uncached_input_tokens": 35546,
+        "cache_read_input_tokens": 90368,
+        "output_tokens": 1191
+      },
+      "child_provider_requests": 7,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 6
+    },
+    {
+      "schedule_index": 53,
+      "repetition": 4,
+      "task_id": "express-trailing-dot-view",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "571677c2b0e912dec80ab29f9070222ac69d828f1760bea69af25af253ae7232",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 100914,
+        "uncached_input_tokens": 35890,
+        "cache_read_input_tokens": 65024,
+        "output_tokens": 1358
+      },
+      "child_usage": {
+        "total_input_tokens": 54007,
+        "uncached_input_tokens": 19959,
+        "cache_read_input_tokens": 34048,
+        "output_tokens": 888
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 2,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 10043,
+      "child_mcp_source_tokens": 1417,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 54,
+      "repetition": 5,
+      "task_id": "express-trailing-dot-view",
+      "arm": "thin-native",
+      "source_family_blake3": "4d69e26eea298e3a5176858c34e4ffb9249d3dad783965f42100826d4552e1b0",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 115645,
+        "uncached_input_tokens": 30397,
+        "cache_read_input_tokens": 85248,
+        "output_tokens": 1346
+      },
+      "child_usage": {
+        "total_input_tokens": 69225,
+        "uncached_input_tokens": 14953,
+        "cache_read_input_tokens": 54272,
+        "output_tokens": 984
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 3
+    },
+    {
+      "schedule_index": 55,
+      "repetition": 4,
+      "task_id": "express-trailing-dot-view",
+      "arm": "full-native",
+      "source_family_blake3": "1e3af55d1fa2ef69a11b1d5b07c23bcbdd660ba7b3c25a1681bac8c30c6a36cc",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 138267,
+        "uncached_input_tokens": 29467,
+        "cache_read_input_tokens": 108800,
+        "output_tokens": 1420
+      },
+      "child_usage": {
+        "total_input_tokens": 91802,
+        "uncached_input_tokens": 21146,
+        "cache_read_input_tokens": 70656,
+        "output_tokens": 1014
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 3
+    },
+    {
+      "schedule_index": 56,
+      "repetition": 3,
+      "task_id": "flask-ipv6-address-partition",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "ac55b20be573713bd559b81f22e508161a180712be1e31e4c18ab7f6d85ac809",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 102759,
+        "uncached_input_tokens": 20583,
+        "cache_read_input_tokens": 82176,
+        "output_tokens": 1211
+      },
+      "child_usage": {
+        "total_input_tokens": 55723,
+        "uncached_input_tokens": 11691,
+        "cache_read_input_tokens": 44032,
+        "output_tokens": 648
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 2,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 15375,
+      "child_mcp_source_tokens": 2469,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 57,
+      "repetition": 1,
+      "task_id": "express-trailing-dot-view",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "42ee5431d3bb0c6bd807af2f7eceff5d6a9dc85cea66279b8c7d7f60e395f6d5",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 99769,
+        "uncached_input_tokens": 28857,
+        "cache_read_input_tokens": 70912,
+        "output_tokens": 1372
+      },
+      "child_usage": {
+        "total_input_tokens": 52914,
+        "uncached_input_tokens": 12978,
+        "cache_read_input_tokens": 39936,
+        "output_tokens": 942
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 2,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 6673,
+      "child_mcp_source_tokens": 1052,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 58,
+      "repetition": 1,
+      "task_id": "gin-ascii-json-non-bmp",
+      "arm": "thin-native",
+      "source_family_blake3": "7706ee003aded834b6234778d612daef4f679f5423b0243a12e4da0c72fae397",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 96453,
+        "uncached_input_tokens": 26309,
+        "cache_read_input_tokens": 70144,
+        "output_tokens": 1001
+      },
+      "child_usage": {
+        "total_input_tokens": 49942,
+        "uncached_input_tokens": 17942,
+        "cache_read_input_tokens": 32000,
+        "output_tokens": 582
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 3
+    },
+    {
+      "schedule_index": 59,
+      "repetition": 5,
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "arm": "thin-leantoken-context-bundle",
+      "source_family_blake3": "0d70010b72e0f3d8f97b64fceaeb933b1e5f66fc79339a5190cbd0f1135a0f42",
+      "success": true,
+      "family_usage": {
+        "total_input_tokens": 100865,
+        "uncached_input_tokens": 19713,
+        "cache_read_input_tokens": 81152,
+        "output_tokens": 1121
+      },
+      "child_usage": {
+        "total_input_tokens": 53938,
+        "uncached_input_tokens": 10930,
+        "cache_read_input_tokens": 43008,
+        "output_tokens": 679
+      },
+      "child_provider_requests": 4,
+      "child_mcp_calls": 2,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 8703,
+      "child_mcp_source_tokens": 1419,
+      "child_shell_calls": 0
+    },
+    {
+      "schedule_index": 60,
+      "repetition": 2,
+      "task_id": "express-trailing-dot-view",
+      "arm": "full-native",
+      "source_family_blake3": "cf1006547a4071bc7d91ffda86e2f90aba21d1fb8f9cd232e4254484f3ae230c",
+      "success": false,
+      "family_usage": {
+        "total_input_tokens": 162131,
+        "uncached_input_tokens": 37203,
+        "cache_read_input_tokens": 124928,
+        "output_tokens": 2183
+      },
+      "child_usage": {
+        "total_input_tokens": 115525,
+        "uncached_input_tokens": 21573,
+        "cache_read_input_tokens": 93952,
+        "output_tokens": 1701
+      },
+      "child_provider_requests": 5,
+      "child_mcp_calls": 0,
+      "child_failed_mcp_calls": 0,
+      "child_mcp_result_bytes": 0,
+      "child_mcp_source_tokens": 0,
+      "child_shell_calls": 4
+    }
+  ],
+  "limitations": [
+    "The confidence interval resamples repetitions within the four fixed tasks; it does not generalize to unseen tasks.",
+    "Total input measures context volume. Uncached input is reported separately and depends on provider cache state.",
+    "Path-set success follows the pre-existing validation labels and does not establish patch correctness.",
+    "The suite uses one Codex CLI version, its account-selected default model, one reasoning effort, and one root-plus-child topology."
+  ]
+}

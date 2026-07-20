@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "experiment_id": "multi-agent-context-suite-v1",
+  "dataset": {
+    "source_manifest": "benchmarks/validation.json",
+    "dataset_kind": "prospective_validation",
+    "frozen_at": "2026-07-15",
+    "note": "These labels predate this multi-agent suite. The consumed blind holdout is not reused."
+  },
+  "controls": {
+    "host": "codex-cli",
+    "host_version": "0.144.1",
+    "host_binary_sha256": "134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477",
+    "candidate_runtime": {
+      "git_revision": "eff0b979fbb0cc71adae7052c975f816bc3916ca",
+      "binary_sha256": "bea7a9480bdd7f0861e2de172c960604e2c0a8da088ea096ea9cfda8d6ab2327"
+    },
+    "model_selection": "cli_default",
+    "reasoning_effort": "low",
+    "sandbox": "read-only",
+    "max_threads": 2,
+    "max_depth": 1,
+    "expected_children": 1,
+    "web_search": false,
+    "repetitions": 5,
+    "parent_history": {
+      "path": "docs/measurement.md",
+      "end_line": 420,
+      "sha256": "52e003d03393e0d13101cb6fc15018b0b08177748fb9cf72e0f4d680e393d172"
+    },
+    "leantoken_call_limit": 8,
+    "leantoken_per_call_source_token_limit": 1600,
+    "randomization": {
+      "seed": "leantoken-multi-agent-suite-v1-2026-07-20",
+      "algorithm": "ascending sha256(seed|repetition|task_id|arm)"
+    }
+  },
+  "arms": [
+    {
+      "name": "full-native",
+      "fork_turns": "all",
+      "repository_reads": "native"
+    },
+    {
+      "name": "thin-native",
+      "fork_turns": "none",
+      "repository_reads": "native"
+    },
+    {
+      "name": "thin-leantoken-structured-owner",
+      "fork_turns": "none",
+      "repository_reads": "leantoken",
+      "mcp_result_mode": "structured",
+      "maximum_mcp_calls": 8,
+      "candidate": "lexical hits expose indexed enclosing_symbol"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "flask-ipv6-address-partition",
+      "corpus": "flask",
+      "language": "python",
+      "repository_revision": "36e4a824f340fdee7ed50937ba8e7f6bc7d17f81",
+      "prompt": "Fix IPv6 address handling in Flask. session_transaction loses the IPv6 host when saving cookies, and Flask.run parses SERVER_NAME=[::1]:8080 incorrectly. Add regression coverage for both behaviors without changing IPv4 host:port behavior.",
+      "expected_evidence": [
+        { "path": "src/flask/app.py" },
+        { "path": "src/flask/testing.py" },
+        { "path": "tests/test_basic.py" },
+        { "path": "tests/test_testing.py" }
+      ]
+    },
+    {
+      "id": "gin-ascii-json-non-bmp",
+      "corpus": "gin",
+      "language": "go",
+      "repository_revision": "34dac209ffb6ef85cc78c5d217bbb7ad001d68fd",
+      "prompt": "Fix render.AsciiJSON so non-BMP Unicode such as emoji round-trips through JSON. JSON unicode escapes must use a UTF-16 surrogate pair instead of a five-digit escape. Preserve current BMP and ASCII behavior and add a regression test.",
+      "expected_evidence": [
+        { "path": "render/json.go" },
+        { "path": "render/render_test.go" }
+      ]
+    },
+    {
+      "id": "express-trailing-dot-view",
+      "corpus": "express",
+      "language": "javascript",
+      "repository_revision": "ae6dd37680e3a00618d6c8a3e522f0ee4eeba1a4",
+      "prompt": "Fix app.render and res.render for a view name ending in a dot. app.render('index.', callback) must report the normal failed-to-lookup-view error through the callback instead of throwing because require receives an empty module name. Add regression coverage.",
+      "expected_evidence": [
+        { "path": "lib/view.js" },
+        { "path": "lib/application.js" },
+        { "path": "test/app.render.js" }
+      ]
+    },
+    {
+      "id": "tokio-file-write-after-spawn-failure",
+      "corpus": "tokio",
+      "language": "rust",
+      "repository_revision": "9cae638de6dc8dd9779c450201df8c102247a242",
+      "prompt": "Fix tokio::fs::File so a second poll_write does not panic after spawn_mandatory_blocking failed on the previous write. The failed spawn currently leaves State::Idle without its buffer. Cover poll_write and poll_write_vectored and add a regression test for a shut-down blocking pool.",
+      "expected_evidence": [
+        { "path": "tokio/src/fs/file.rs" },
+        { "path": "tokio/tests/fs_file.rs" }
+      ]
+    }
+  ],
+  "analysis": {
+    "full_baseline_arm": "full-native",
+    "retrieval_baseline_arm": "thin-native",
+    "candidate_arm": "thin-leantoken-structured-owner"
+  },
+  "quality_gates": {
+    "minimum_candidate_success_rate": 0.95,
+    "minimum_candidate_successes_per_task": 4,
+    "minimum_combined_total_input_savings_fraction": 0.10,
+    "minimum_combined_savings_ci_lower_bound": 0.05,
+    "minimum_retrieval_total_input_savings_fraction": 0.00,
+    "minimum_retrieval_savings_ci_lower_bound": 0.00,
+    "maximum_success_rate_regression": 0.05
+  },
+  "interpretation": "Four previously frozen real-repository tasks times three randomized arms times five repetitions. File-set success is primary because that is the source dataset's label contract. Total input is primary for context volume; uncached input is reported separately and is cache-state sensitive."
+}

@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "experiment_id": "multi-agent-context-pilot",
+  "arm": "thin-leantoken-structured",
+  "source_root_rollout_blake3": "02538b7abbedc86d381a5f1da57457336bef0cd54c7b5d9c7657a868ddb408f6",
+  "source_family_blake3": "8e7eb8fc6ecd2b1bf027717c28868386f9a3acc4751335085a22024b644e9011",
+  "receipt_binary_blake3": "84c24b8dd69acfe5d4ce9f595613ce2eee9750e6ebbfee22e620501c821bfdd6",
+  "host": "codex-cli",
+  "topology": {
+    "thread_count": 2,
+    "child_thread_count": 1,
+    "maximum_depth": 1,
+    "spawn_calls": 1,
+    "matched_spawn_calls": 1,
+    "collaboration_calls": {
+      "spawn_agent": 1,
+      "wait_agent": 1
+    },
+    "fork_turns": {
+      "none": 1
+    }
+  },
+  "provider_usage": {
+    "total_input_tokens": 147145,
+    "uncached_input_tokens": 38857,
+    "cache_read_input_tokens": 108288,
+    "output_tokens": 1273,
+    "reasoning_output_tokens": 266,
+    "non_reasoning_output_tokens": 1007
+  },
+  "first_request_usage": {
+    "total_input_tokens": 27281,
+    "uncached_input_tokens": 11409,
+    "cache_read_input_tokens": 15872,
+    "output_tokens": 328,
+    "reasoning_output_tokens": 62,
+    "non_reasoning_output_tokens": 266
+  },
+  "task_evaluation": {
+    "task_id": "known-hashes-owner-trace",
+    "repository_revision": "4876946d9c412ae5f699f6ba485f776a784816c4",
+    "gold_manifest_blake3": "06d55b01bf7c4f71eeaac7052f599e132773e01a7c69cd90a8d67707b465573e",
+    "answer_json_valid": true,
+    "expected_evidence_count": 4,
+    "reported_evidence_count": 4,
+    "matched_path_count": 4,
+    "matched_exact_evidence_count": 2,
+    "unexpected_evidence_count": 2,
+    "task_success": false
+  },
+  "thread_receipts": [
+    {
+      "thread_index": 0,
+      "parent_thread_index": null,
+      "depth": 0,
+      "role": "root",
+      "source_rollout_blake3": "02538b7abbedc86d381a5f1da57457336bef0cd54c7b5d9c7657a868ddb408f6",
+      "host_version": "0.144.1",
+      "model": "gpt-5.6-sol",
+      "provider": "openai",
+      "reasoning_effort": "low",
+      "multi_agent_version": null,
+      "rollout_record_count": 25,
+      "inherited_history_record_count": 0,
+      "inherited_history_bytes": 0,
+      "turn_count": 1,
+      "completed_turns": 1,
+      "aborted_turns": 0,
+      "provider_request_count": 3,
+      "compaction_count": 0,
+      "task_duration_ms": 40094,
+      "first_request_usage": {
+        "total_input_tokens": 15996,
+        "uncached_input_tokens": 8060,
+        "cache_read_input_tokens": 7936,
+        "output_tokens": 230,
+        "reasoning_output_tokens": 0,
+        "non_reasoning_output_tokens": 230
+      },
+      "provider_usage": {
+        "total_input_tokens": 48721,
+        "uncached_input_tokens": 17745,
+        "cache_read_input_tokens": 30976,
+        "output_tokens": 398,
+        "reasoning_output_tokens": 0,
+        "non_reasoning_output_tokens": 398
+      },
+      "tool_calls": {
+        "collaboration": 2,
+        "mcp": 0,
+        "failed_mcp": 0,
+        "mcp_result_json_bytes": 0,
+        "mcp_text_content_bytes": 0,
+        "mcp_structured_content_bytes": 0,
+        "mcp_emitted_source_tokens": 0,
+        "shell": 0,
+        "other": 0
+      }
+    },
+    {
+      "thread_index": 1,
+      "parent_thread_index": 0,
+      "depth": 1,
+      "role": "subagent",
+      "source_rollout_blake3": "ecdf181798b0e247cf50420db7058b43b8100a64f649e3c2e3a78261752824f9",
+      "host_version": "0.144.1",
+      "model": "gpt-5.6-sol",
+      "provider": "openai",
+      "reasoning_effort": "low",
+      "multi_agent_version": "v2",
+      "rollout_record_count": 41,
+      "inherited_history_record_count": 0,
+      "inherited_history_bytes": 0,
+      "turn_count": 1,
+      "completed_turns": 1,
+      "aborted_turns": 0,
+      "provider_request_count": 6,
+      "compaction_count": 0,
+      "task_duration_ms": 26951,
+      "first_request_usage": {
+        "total_input_tokens": 11285,
+        "uncached_input_tokens": 3349,
+        "cache_read_input_tokens": 7936,
+        "output_tokens": 98,
+        "reasoning_output_tokens": 62,
+        "non_reasoning_output_tokens": 36
+      },
+      "provider_usage": {
+        "total_input_tokens": 98424,
+        "uncached_input_tokens": 21112,
+        "cache_read_input_tokens": 77312,
+        "output_tokens": 875,
+        "reasoning_output_tokens": 266,
+        "non_reasoning_output_tokens": 609
+      },
+      "tool_calls": {
+        "collaboration": 0,
+        "mcp": 6,
+        "failed_mcp": 0,
+        "mcp_result_json_bytes": 22564,
+        "mcp_text_content_bytes": 0,
+        "mcp_structured_content_bytes": 22258,
+        "mcp_emitted_source_tokens": 3050,
+        "shell": 0,
+        "other": 1
+      }
+    }
+  ],
+  "privacy": {
+    "raw_rollouts_retained": false,
+    "prompts_retained": false,
+    "tool_arguments_retained": false,
+    "tool_outputs_retained": false,
+    "credentials_retained": false,
+    "absolute_paths_retained": false,
+    "session_call_and_agent_ids_hashed_or_omitted": true
+  },
+  "limitations": [
+    "Provider usage is session-native accounting; provider request framing is unavailable.",
+    "Cached input is reported, but cache-creation input is unavailable.",
+    "Tool-call counts identify categories but do not retain arguments, outputs, or source evidence."
+  ]
+}

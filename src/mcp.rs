@@ -239,11 +239,14 @@ enum ReadMcpTarget {
         name: String,
     },
     /// Read one inclusive one-based line range.
+    #[serde(alias = "range", alias = "line_range")]
     Lines {
         /// First one-based line.
+        #[serde(alias = "start_line")]
         #[schemars(range(min = 1))]
         start: usize,
         /// Last one-based line; must be at least `start`.
+        #[serde(alias = "end_line")]
         #[schemars(range(min = 1))]
         end: usize,
     },
@@ -557,7 +560,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "leantoken_search",
-        description = "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches; then use leantoken_read on the best exact ranges. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
+        description = "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken_read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
     )]
     async fn leantoken_search(
         &self,
@@ -597,7 +600,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "leantoken_read",
-        description = "Preferred exact source reader instead of cat, head, or sed. Read one indexed symbol or inclusive line range; reuse content_hash as expected_hash to suppress unchanged source. Example: {\"path\":\"src/mcp.rs\",\"target\":{\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}}."
+        description = "Preferred exact source reader instead of cat, head, or sed. Keep path as a file path; put the owner separately in target. Exact target shapes are {\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"} and {\"kind\":\"lines\",\"start\":120,\"end\":160}. Reuse content_hash as expected_hash to suppress unchanged source. Example: {\"path\":\"src/mcp.rs\",\"target\":{\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}}."
     )]
     async fn leantoken_read(
         &self,
@@ -1016,6 +1019,19 @@ mod tests {
             }))
             .is_err()
         );
+        for target in [
+            serde_json::json!({"kind": "range", "start": 10, "end": 20}),
+            serde_json::json!({"kind": "line_range", "start_line": 10, "end_line": 20}),
+        ] {
+            let request = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+                "path": "src/mcp.rs",
+                "target": target
+            }))
+            .expect("common line-range aliases should remain readable");
+            let (request, _) = request.into_parts();
+            assert_eq!(request.start_line, Some(10));
+            assert_eq!(request.end_line, Some(20));
+        }
     }
 
     #[test]

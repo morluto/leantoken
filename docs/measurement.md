@@ -352,6 +352,168 @@ artifact preflight, isolated task worktrees, adapter invocation, and validation
 plumbing; it is not task-success, quality, or cost evidence. Do not use the
 example manifest as a formal experiment set.
 
+## Multi-agent context pilot
+
+`multi_agent_context_pilot.json` freezes a small read-only Codex experiment for
+one repository-owner tracing task. It measures a root plus exactly one child,
+separates full-history and context-free child forks, and compares native reads
+with LeanToken dual and structured MCP results. Exact path-and-symbol evidence
+is validated from the root's final JSON; the publishable receipt retains only
+match counts, topology, provider usage, result sizes, and hashes. Prompts,
+answers, tool arguments, tool outputs, credentials, absolute paths, and thread
+IDs remain in private local rollouts.
+
+Build the frozen runtime and receipt analyzer, prepare a clean checkout at the
+manifest revision, then run one arm. `--execute` is required because the script
+performs real model calls. Proxy configuration is inherited from the caller.
+
+```bash
+cargo build --release --bin leantoken --example codex_multi_agent_receipt
+source ~/clash.sh
+benchmarks/run_multi_agent_context_pilot.sh --execute \
+  thin-leantoken-structured-owner \
+  /path/to/clean/leantoken-checkout \
+  target/multi-agent-context-pilot
+```
+
+The output directory contains a private Codex stdout/stderr directory, a
+redacted JSON receipt, and an SVG with per-thread cached and uncached input.
+Never publish the private directory. The runner is intentionally frozen to
+Codex CLI 0.144.1; collect a new manifest and compatibility receipt rather than
+silently comparing different host versions.
+
+The 2026-07-20 exploratory run produced the following single samples. Exact is
+the number of four expected path-and-symbol pairs. MCP bytes are complete
+successful/error result JSON measured in the private rollout and retained only
+as an aggregate.
+
+| Arm | Exact | Family input | Uncached | Cache read | Output | Child requests | Repository calls | MCP bytes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| full native | 4/4 | 153,811 | 29,907 | 123,904 | 1,226 | 5 | 4 native | 0 |
+| thin native | 4/4 | 141,232 | 23,728 | 117,504 | 1,219 | 6 | 5 native | 0 |
+| thin LeanToken dual | 3/4 | 245,668 | 70,052 | 175,616 | 1,292 | 8 | 6 MCP, 1 failed | 72,694 |
+| thin LeanToken structured | 2/4 | 147,145 | 38,857 | 108,288 | 1,273 | 6 | 6 MCP | 22,564 |
+| thin structured + enclosing owner | 4/4 | 132,624 | 27,152 | 105,472 | 1,042 | 5 | 6 MCP | 38,127 |
+
+The corresponding redacted receipts are archived for
+[full native](../benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-full-native.json),
+[thin native](../benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-thin-native.json),
+[dual LeanToken](../benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-thin-leantoken-dual.json),
+[structured LeanToken](../benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-thin-leantoken-structured.json),
+and the
+[enclosing-owner candidate](../benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-thin-leantoken-structured-owner.json).
+
+The full native child inherited 85,738 serialized bytes of parent records. A
+context-free fork removed those records and reduced family input by 8.2% and
+uncached input by 20.7% despite one additional child request. Codex consumed
+structured-only LeanToken results successfully. In the dual run, text and
+structured representations contributed 34,656 and 34,564 bytes respectively;
+structured mode removed the text copy. This establishes host compatibility and
+a serialization mechanism, not a provider-cost reduction.
+
+The first structured run still selected wrapper symbols. Its text search hits
+contained the relevant lines but omitted their already-indexed structural
+owners. The candidate therefore enriches every lexical text or regex hit with
+the narrowest `enclosing_symbol` when one exists. The implementation is shared
+across languages; a Rust, Python, and JavaScript fixture verifies the contract.
+With that candidate the pilot recovered 4/4 exact evidence, used 6.1% less
+family input and 9.4% less child input than thin native, but used 14.4% more
+uncached family input. One visible task and one sample cannot establish a
+quality, latency, cost, or cross-language win. Repeat randomized arms and add
+frozen tasks from several language families before changing Codex setup or the
+global `dual` compatibility default.
+
+## Repeated multi-agent context suite
+
+The repeated suite follows up that pilot with four pre-existing prospective
+validation tasks from Flask, Gin, Express, and Tokio. The Python, Go,
+JavaScript, and Rust repositories are pinned to the revisions already frozen in
+`validation.json`; the multi-agent experiment did not create new answer labels.
+Path-set success requires the complete labeled file set with no extra path.
+This is stricter than file recall but does not require one evidence item per
+symbol in a file. It still measures repository triage, not patch correctness.
+
+Each suite runs three arms five times per task, for 60 model runs. A fixed seed
+orders the task/arm/repetition Cartesian product by SHA-256 so provider drift
+does not systematically favor one arm. Every run uses Codex CLI 0.144.1,
+account-selected `gpt-5.6-sol`, low reasoning, read-only sandboxing, one root,
+one depth-one child, and the same parent-history calibration. Total input is the
+primary context-volume metric. Uncached input is secondary because provider
+cache state is not controlled. The deterministic bootstrap resamples the five
+repetitions within each fixed task; its interval describes run variability for
+these tasks, not generalization to unseen repositories.
+
+Build the runtime and both redaction/aggregation examples, verify the pinned
+validation repositories, then run a suite. `--resume` reconstructs a missing
+receipt from an existing Codex stdout and skips complete calls instead of
+silently rerunning samples. The private directory contains prompts, answers,
+tool arguments, and tool outputs and must never be published.
+
+```bash
+cargo build --release --bin leantoken \
+  --example codex_multi_agent_receipt \
+  --example codex_multi_agent_suite
+source ~/clash.sh
+CODEX_SUITE_MANIFEST=benchmarks/multi_agent_context_suite_v2.json \
+  benchmarks/run_multi_agent_context_suite.sh --execute \
+  target/validation-repos target/multi-agent-context-suite-v2
+```
+
+The first 60-run suite deliberately allowed the structured LeanToken child up
+to eight retrieval calls. It rejected the single-sample pilot conclusion:
+iterative LeanToken used 50.9% more total input than thin native, lost two path
+successes, and was worse in all 20 pairs. The source payload itself was small;
+the child averaged 8.2 provider requests versus 4.7 for thin native, so repeated
+agent-context framing dominated. Traces also exposed common `range`,
+`line_range`, `start_line`, and `end_line` guesses. `leantoken_read` now accepts
+those aliases while retaining `lines`, `start`, and `end` as its canonical MCP
+schema.
+
+The v2 profile was frozen after inspecting v1. It permits exactly one context
+bundle and, only when a required implementation or test file is missing, one
+focused search. It forbids iterative file, outline, and read verification for
+this file-ownership triage task. Fresh full-native and thin-native controls were
+rerun alongside it. The project-scoped
+`.codex/agents/leantoken-context-bundle.toml` agent encodes that tested retrieval
+contract as an opt-in triage role; implementation agents remain unrestricted.
+
+| Suite arm | Path-set successes | Family input sum | Mean family input | Mean child requests | Contract-violating runs |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| v1 full native | 13/20 | 3,058,682 | 152,934 | 5.05 | 0 |
+| v1 thin native | 13/20 | 2,398,194 | 119,910 | 4.70 | 0 |
+| v1 iterative structured LeanToken | 11/20 | 3,619,594 | 180,980 | 8.20 | 13 |
+| v2 full native | 13/20 | 3,107,550 | 155,378 | 5.15 | 0 |
+| v2 thin native | 12/20 | 2,427,935 | 121,397 | 4.90 | 0 |
+| v2 context-bundle LeanToken | 15/20 | 1,939,338 | 96,967 | 3.75 | 0 |
+
+| Paired comparison | Total-input savings | Stratified bootstrap 95% interval | Wins |
+| --- | ---: | ---: | ---: |
+| v1 thin native vs full native | 21.6% | 15.3% to 27.4% | 18/20 |
+| v2 thin native vs full native | 21.9% | 10.1% to 32.3% | 16/20 |
+| v2 context bundle vs thin native | 20.1% | 13.4% to 26.3% | 18/20 |
+| v2 context bundle vs full native | 37.6% | 32.3% to 43.0% | 20/20 |
+
+The v2 context bundle also reduced uncached input by 16.0% versus thin native
+and 27.2% versus full native. Its total-input coefficient of variation was
+7.8%, compared with 25.7% and 33.7% for the fresh native controls. All
+predeclared v2 gates passed: 75% path-set success versus 60% thin native and
+65% full native, positive savings and confidence lower bounds, no per-task
+success regression, and no MCP or tool-contract violation. Relative to the v1
+LeanToken arm, v2 cut provider requests from 164 to 75 and family input by
+46.4%, while increasing successes from 11 to 15.
+
+The two aggregate reports retain all 60 redacted run samples and a hash of the
+receipt set, so the summaries can be recomputed without private rollouts:
+[v1 iterative baseline](../benchmarks/reports/multi-agent-context-suite-v1-codex-0.144.1.json)
+and
+[v2 context bundle](../benchmarks/reports/multi-agent-context-suite-v2-codex-0.144.1.json).
+The Express path label remained 0/5 for every arm in both suites; the result is
+kept as negative dataset evidence rather than relabeled after inspection. Four
+fixed development tasks and one host/model/topology are enough to establish a
+repeatable mechanism here, not a universal multi-agent or billing claim. Keep
+the global MCP result mode at `dual`; the structured-only result path is proven
+for this Codex version, not every MCP host.
+
 ## Ranked-region interchange
 
 `ranked_region_benchmark` separates retriever output from evaluator labels with
