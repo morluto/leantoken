@@ -136,6 +136,7 @@ struct StorageFootprint {
 #[derive(Debug, Deserialize)]
 struct TimingStats {
     samples: usize,
+    mean_us: f64,
     p50_us: f64,
     p95_us: f64,
 }
@@ -188,7 +189,7 @@ struct PairResult {
     insertion_p95_ms: f64,
     publication_p95_ms: f64,
     dominant_full_noop_phase: &'static str,
-    discovery_and_hash_plan_share_percent: f64,
+    discovery_and_hash_plan_mean_share_percent: f64,
     targeted_modify_p50_ms: f64,
     targeted_modify_p95_ms: f64,
     create_p50_ms: f64,
@@ -366,8 +367,8 @@ fn pair_result(
         .directory_rename_delta
         .ok_or_else(|| invalid_data("monorepo profile omitted directory rename"))?;
     let scan_share = percent(
-        profile.full_noop_phases.discovery.p95_us + profile.full_noop_phases.hash_and_plan.p95_us,
-        profile.full_noop_phases.total.p95_us,
+        profile.full_noop_phases.discovery.mean_us + profile.full_noop_phases.hash_and_plan.mean_us,
+        profile.full_noop_phases.total.mean_us,
     );
     let full_noop_p95_ms = milliseconds(profile.full_noop.timing.p95_us);
     let material_full_scan = full_noop_p95_ms >= manifest.adoption_threshold.full_fallback_p95_ms
@@ -400,7 +401,7 @@ fn pair_result(
         insertion_p95_ms: milliseconds(profile.full_noop_phases.insertion.p95_us),
         publication_p95_ms: milliseconds(profile.full_noop_phases.publication.p95_us),
         dominant_full_noop_phase: dominant_phase(&profile.full_noop_phases),
-        discovery_and_hash_plan_share_percent: scan_share,
+        discovery_and_hash_plan_mean_share_percent: scan_share,
         targeted_modify_p50_ms: milliseconds(profile.targeted_changed.timing.p50_us),
         targeted_modify_p95_ms: milliseconds(profile.targeted_changed.timing.p95_us),
         create_p50_ms: milliseconds(profile.create_delta.timing.p50_us),
@@ -482,6 +483,7 @@ mod tests {
     fn dominant_phase_uses_p95_work_excluding_overlapping_publication() {
         let timing = |p95_us| TimingStats {
             samples: 10,
+            mean_us: p95_us,
             p50_us: p95_us,
             p95_us,
         };
