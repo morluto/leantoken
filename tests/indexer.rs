@@ -460,6 +460,83 @@ fn changing_generated_policy_invalidates_the_index_configuration_hash() {
 }
 
 #[test]
+fn preparation_batch_size_does_not_change_the_logical_index() {
+    let root = tempfile::tempdir().expect("root");
+    for index in 0..6 {
+        std::fs::write(
+            root.path().join(format!("file_{index}.rs")),
+            format!("pub fn item_{index}() {{ item_{}(); }}\n", (index + 1) % 6),
+        )
+        .expect("fixture");
+    }
+    let databases = tempfile::tempdir().expect("databases");
+    let mut small =
+        Config::discover(root.path(), Some(databases.path().join("small.sqlite"))).expect("small");
+    small.max_prepare_batch_files = 1;
+    let small_storage = Storage::open(&small.database_path).expect("small storage");
+    Indexer::new(Arc::new(small), small_storage.clone())
+        .expect("small indexer")
+        .reconcile(false)
+        .expect("small index");
+
+    let mut large =
+        Config::discover(root.path(), Some(databases.path().join("large.sqlite"))).expect("large");
+    large.max_prepare_batch_files = 64;
+    let large_storage = Storage::open(&large.database_path).expect("large storage");
+    Indexer::new(Arc::new(large), large_storage.clone())
+        .expect("large indexer")
+        .reconcile(false)
+        .expect("large index");
+
+    let project = |storage: &Storage| {
+        storage
+            .list_files(100, None)
+            .expect("files")
+            .into_iter()
+            .map(|file| (file.path, file.content_hash, file.size_bytes))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(project(&small_storage), project(&large_storage));
+    assert_eq!(
+        small_storage.counts().expect("small counts").files,
+        large_storage.counts().expect("large counts").files
+    );
+    assert_eq!(
+        small_storage.search_word("item_3", 100).expect("small search").len(),
+        large_storage.search_word("item_3", 100).expect("large search").len()
+    );
+}
+
+#[test]
+fn profiled_reconcile_reports_bounded_batch_high_water_and_phases() {
+    let root = tempfile::tempdir().expect("root");
+    let mut total_bytes = 0u64;
+    for index in 0..3 {
+        let source = format!("fn item_{index}() {{}}\n");
+        total_bytes += u64::try_from(source.len()).expect("source length");
+        std::fs::write(root.path().join(format!("file_{index}.rs")), source).expect("fixture");
+    }
+    let database = tempfile::tempdir().expect("database");
+    let mut config =
+        Config::discover(root.path(), Some(database.path().join("index.sqlite"))).expect("config");
+    config.max_prepare_batch_files = 2;
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let profiled = Indexer::new(Arc::new(config), storage)
+        .expect("indexer")
+        .reconcile_profiled(false)
+        .expect("profiled reconcile");
+
+    assert_eq!(profiled.response.files_indexed, 3);
+    assert_eq!(profiled.diagnostics.discovered_files, 3);
+    assert_eq!(profiled.diagnostics.discovered_source_bytes, total_bytes);
+    assert_eq!(profiled.diagnostics.preparation_batches, 2);
+    assert_eq!(profiled.diagnostics.max_batch_files, 2);
+    assert!(profiled.diagnostics.max_batch_source_bytes <= total_bytes);
+    assert!(profiled.diagnostics.total_ms >= profiled.diagnostics.discovery_ms);
+    assert!(profiled.diagnostics.publication_ms >= profiled.diagnostics.preparation_ms);
+}
+
+#[test]
 fn new_file_delta_resolves_existing_importers() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(

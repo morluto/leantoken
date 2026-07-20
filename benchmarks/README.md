@@ -496,10 +496,13 @@ cargo run --release --example indexing_profile -- \
   --output target/indexing_profile_tokio_linux.json
 ```
 
-The schema-version 4 report records the caller-supplied corpus label, exact
+The schema-version 5 report records the caller-supplied corpus label, exact
 revision, ignore-visible file count, total and mean bytes, maximum directory
-depth, and extension mix. The label is explicit so the profiler never copies a
-possibly credential-bearing Git remote into a report. Run the same pinned
+depth, extension mix, initial discovery/hash-plan/prepare/insert/publication
+timings, and actual preparation batch file/byte high-water. The label is
+explicit so the profiler never copies a possibly credential-bearing Git remote
+into a report. Run the command under `/usr/bin/time -v` (or the platform
+equivalent) to capture process peak RSS beside the JSON. Run the same pinned
 checkout and command on Linux, macOS, and Windows before making a cross-platform
 indexing decision. Keep negative results: if full discovery is not a material
 p50 or p95 cost, do not add an incremental journal or directory invalidation
@@ -512,6 +515,11 @@ was 9.8 ms p50 / 15.4 ms p95, and warm file reads were 8.7–12.3 µs p50. Those
 absolute read costs do not justify a process-local hot-file cache. That archived
 schema-version 2 report predates lifecycle measurements; other operating
 systems still need measurement before an incremental-index redesign.
+
+The [streaming-publication Linux profile](reports/indexing-stream-publication-linux-x86_64-2026-07-20.md)
+records the exact pre-change revision, same-host RSS comparison, batch
+high-water, near-per-file-limit corpus, and pinned Tokio validation used for the
+bounded-publication change. It likewise does not replace cross-platform runs.
 
 A five-sample schema-version 3 development run on the same pinned Tokio tree
 initially measured median create, rename, and ignore-change rebuilds at 21.1 s,
