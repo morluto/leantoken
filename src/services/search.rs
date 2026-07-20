@@ -277,12 +277,6 @@ impl Services {
             for hit in lexical {
                 check_cancelled(cancellation)?;
                 if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)?
-                    && let Some(matched_line) = matching_line_for_search(
-                        &hit,
-                        &request.query,
-                        request.case_sensitive,
-                        regex.as_ref(),
-                    )
                     && let Some(search_hit) = chunk_search_hit(
                         hit.clone(),
                         &request.query,
@@ -291,6 +285,13 @@ impl Services {
                         regex.as_ref(),
                     )?
                 {
+                    let matched_line = matching_line_for_search(
+                        &hit,
+                        &request.query,
+                        request.case_sensitive,
+                        regex.as_ref(),
+                    )
+                    .unwrap_or(search_hit.start_line);
                     lexical_hits.push((hit, search_hit, matched_line));
                 }
             }
