@@ -602,6 +602,12 @@ direct whole-file reads, in-memory copies, the actual `Services::read` path,
 response serialization, a retained and page-touched 256 MiB pressure condition,
 process peak RSS, and live-change generation correctness.
 
+The completed [decision report](reports/live-read-decision-v1-2026-07-20.md)
+records the six-pair matrix and its frozen no-cache result. No pair met either
+the absolute latency or request-share threshold, so LeanToken retains bounded
+live reads and the operating-system page cache. The expensive workflow is
+manual after publishing that result.
+
 A 64 MiB byte-bounded LRU prototype is eligible only if direct-read p95 reaches
 1 ms, direct live reads consume at least 10% of mean service-plus-serialization
 time, and both conditions repeat in at least two corpus/platform pairs. Direct
