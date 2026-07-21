@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AppRequest","Commands","FileOperationArg","SearchModeArg"],"struct":["Cli","ContextArgs","FilesArgs","IntegrationArgs","LineRange","LineRangeError","McpArgs","OutlineArgs","ReadArgs","SearchArgs","UpgradeArgs"]};
+window.SIDEBAR_ITEMS = {"enum":["AppRequest","CacheCommand","Commands","FileOperationArg","SearchModeArg"],"struct":["CacheArgs","CachePruneArgs","Cli","ContextArgs","FilesArgs","IntegrationArgs","LineRange","LineRangeError","McpArgs","OutlineArgs","ReadArgs","SearchArgs","UpgradeArgs"]};

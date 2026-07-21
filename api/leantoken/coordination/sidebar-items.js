@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["LOCK_RETRY_DELAY"],"fn":["acquire","open_lock_file","try_lock_file","try_lock_with","unlock_file","unlock_with","with_suffix"],"struct":["CacheInitialization","IndexCoordination","IndexLeadership","IndexOperation"]};
+window.SIDEBAR_ITEMS = {"constant":["LOCK_RETRY_DELAY"],"fn":["acquire","open_lock_file","try_lock_file","try_lock_shared_file","try_lock_with","unlock_file","unlock_with","with_suffix"],"struct":["CacheInitialization","CacheLease","CachePruneLease","IndexCoordination","IndexLeadership","IndexOperation"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Error","RetryableOperation"],"type":["Result"]};
+window.SIDEBAR_ITEMS = {"enum":["Error","IndexLimitKind","RetryableOperation"],"type":["Result"]};
