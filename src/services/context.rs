@@ -110,6 +110,46 @@ enum CandidateDiagnostics {
     Collect,
 }
 
+#[derive(Clone, Copy)]
+struct ContextSignals {
+    import_neighbor: bool,
+    reverse_dependency: bool,
+    caller: bool,
+}
+
+impl ContextSignals {
+    const PRODUCTION: Self = Self {
+        import_neighbor: true,
+        reverse_dependency: false,
+        caller: true,
+    };
+
+    const fn evaluation(policy: ContextSignalPolicy) -> Self {
+        match policy {
+            ContextSignalPolicy::LexicalSyntax => Self {
+                import_neighbor: false,
+                reverse_dependency: false,
+                caller: false,
+            },
+            ContextSignalPolicy::ImportNeighbor => Self {
+                import_neighbor: true,
+                reverse_dependency: false,
+                caller: false,
+            },
+            ContextSignalPolicy::ReverseDependency => Self {
+                import_neighbor: false,
+                reverse_dependency: true,
+                caller: false,
+            },
+            ContextSignalPolicy::HighConfidenceCaller => Self {
+                import_neighbor: false,
+                reverse_dependency: false,
+                caller: true,
+            },
+        }
+    }
+}
+
 fn qualified_symbol_match(
     concept: &str,
     name: &str,
@@ -425,6 +465,36 @@ impl Services {
         Ok(())
     }
 
+    fn apply_reverse_dependency_boost(
+        &self,
+        session: &ReadSession,
+        queries: &[ContextQuery],
+        candidates: &mut [Candidate],
+    ) -> Result<()> {
+        let seed_paths = import_seed_paths(candidates, queries, self.config.tokenizer)
+            .into_iter()
+            .take(24)
+            .map(|(path, _)| path)
+            .collect::<Vec<_>>();
+        let importers = session
+            .affected_importers(&seed_paths)?
+            .into_iter()
+            .collect::<HashSet<_>>();
+        for candidate in candidates {
+            if importers.contains(&candidate.path) {
+                if !candidate
+                    .match_kinds
+                    .iter()
+                    .any(|kind| kind == "reverse-import")
+                {
+                    candidate.match_kinds.push("reverse-import".into());
+                }
+                candidate.import_boost = candidate.import_boost.max(1.0);
+            }
+        }
+        Ok(())
+    }
+
     /// Select ranked task evidence within an exact source-token budget.
     pub async fn context(&self, request: ContextRequest) -> Result<ContextResponse> {
         self.context_cancellable(request, CancellationToken::new())
@@ -450,8 +520,13 @@ impl Services {
     ) -> Result<ContextResponse> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || {
-            this.context_sync(request, &cancellation, CandidateDiagnostics::Omit)
-                .map(|evaluation| evaluation.response)
+            this.context_sync(
+                request,
+                &cancellation,
+                CandidateDiagnostics::Omit,
+                ContextSignals::PRODUCTION,
+            )
+            .map(|evaluation| evaluation.response)
         })
         .await?
     }
@@ -464,7 +539,34 @@ impl Services {
         let this = self.clone();
         let cancellation = CancellationToken::new();
         tokio::task::spawn_blocking(move || {
-            this.context_sync(request, &cancellation, CandidateDiagnostics::Collect)
+            this.context_sync(
+                request,
+                &cancellation,
+                CandidateDiagnostics::Collect,
+                ContextSignals::PRODUCTION,
+            )
+        })
+        .await?
+    }
+
+    /// Retrieve context under one evaluation-only dependency or caller policy.
+    ///
+    /// This API is not exposed through CLI or MCP adapters. It exists so frozen
+    /// ablations can compare additive signals without approximating selection.
+    pub async fn context_signal_evaluation(
+        &self,
+        request: ContextRequest,
+        policy: ContextSignalPolicy,
+    ) -> Result<ContextEvaluation> {
+        let this = self.clone();
+        let cancellation = CancellationToken::new();
+        tokio::task::spawn_blocking(move || {
+            this.context_sync(
+                request,
+                &cancellation,
+                CandidateDiagnostics::Collect,
+                ContextSignals::evaluation(policy),
+            )
         })
         .await?
     }
@@ -474,6 +576,7 @@ impl Services {
         request: ContextRequest,
         cancellation: &CancellationToken,
         diagnostics: CandidateDiagnostics,
+        signals: ContextSignals,
     ) -> Result<ContextEvaluation> {
         check_cancelled(cancellation)?;
         if request.task.trim().is_empty() {
@@ -599,12 +702,13 @@ impl Services {
                     .change_boost(change_boost);
                     candidates.push(annotate_candidate(candidate, query, "symbol", rank));
                 }
+                let reference_results = signals
+                    .caller
+                    .then(|| session.search_references(term, false, MAX_CONTEXT_HITS_PER_SOURCE))
+                    .transpose()?
+                    .unwrap_or_default();
                 let mut reference_hits = Vec::new();
-                for (rank, hit) in session
-                    .search_references(term, false, MAX_CONTEXT_HITS_PER_SOURCE)?
-                    .into_iter()
-                    .enumerate()
-                {
+                for (rank, hit) in reference_results.into_iter().enumerate() {
                     check_cancelled(cancellation)?;
                     if path_allowed(&hit.path, &[], &request.exclude_paths)? {
                         reference_hits.push((rank, hit));
@@ -790,17 +894,26 @@ impl Services {
 
             apply_query_fusion(&mut candidates, &query_fusion);
 
-            self.append_import_symbol_candidates(
-                ImportExpansion {
-                    session,
-                    request: &request,
-                    queries: &queries,
-                    terms: &terms,
-                    changed_paths: &changed_paths,
-                    cancellation,
-                },
-                &mut candidates,
-            )?;
+            signals
+                .import_neighbor
+                .then(|| {
+                    self.append_import_symbol_candidates(
+                        ImportExpansion {
+                            session,
+                            request: &request,
+                            queries: &queries,
+                            terms: &terms,
+                            changed_paths: &changed_paths,
+                            cancellation,
+                        },
+                        &mut candidates,
+                    )
+                })
+                .transpose()?;
+            signals
+                .reverse_dependency
+                .then(|| self.apply_reverse_dependency_boost(session, &queries, &mut candidates))
+                .transpose()?;
 
             let generated_candidate_paths = if diagnostics == CandidateDiagnostics::Collect {
                 candidates

@@ -381,6 +381,22 @@ pub struct ContextEvaluation {
     pub generated_candidates: Vec<ContextCandidateEvaluation>,
 }
 
+/// Graph-signal policy used only by frozen context-retrieval evaluations.
+///
+/// Production adapters do not accept this value. Each variant keeps the same
+/// lexical and syntax candidates, then enables at most one additional signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextSignalPolicy {
+    /// Symbol and full-text candidates without dependency or caller signals.
+    LexicalSyntax,
+    /// Add concept-corroborated symbols from files imported by seed candidates.
+    ImportNeighbor,
+    /// Add a ranking boost to existing candidates that import seed files.
+    ReverseDependency,
+    /// Add parsed reference candidates as high-confidence caller evidence.
+    HighConfidenceCaller,
+}
+
 #[derive(Debug, Clone)]
 /// Evaluation-only summary of a generated context candidate.
 pub struct ContextCandidateEvaluation {

@@ -1,6 +1,6 @@
 use leantoken::{
-    Config, ContextRequest, Error, FileOperation, FilesRequest, Freshness, IndexConsistency,
-    OutlineRequest, ReadRequest, ReadStatus, SearchMode, SearchRequest,
+    Config, ContextRequest, ContextSignalPolicy, Error, FileOperation, FilesRequest, Freshness,
+    IndexConsistency, OutlineRequest, ReadRequest, ReadStatus, SearchMode, SearchRequest,
     coordination::IndexCoordination, services::Services,
 };
 use tokio_util::sync::CancellationToken;
@@ -466,6 +466,105 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
             .iter()
             .all(|candidate| candidate.representation != "import_neighbor")
     );
+}
+
+#[tokio::test]
+async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("src")).expect("src");
+    std::fs::write(
+        root.path().join("src/seed.js"),
+        "import { OwnerAlpha } from './target.js';\nexport function useOwner() { return new OwnerAlpha(); }\n",
+    )
+    .expect("seed");
+    std::fs::write(
+        root.path().join("src/target.js"),
+        "export class OwnerAlpha { run(input) { return input + OtherSignal; } }\n",
+    )
+    .expect("target");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+    let request = ContextRequest {
+        task: "Fix OwnerAlpha and OtherSignal".into(),
+        token_budget: 400,
+        focus_paths: Vec::new(),
+        focus_symbols: Vec::new(),
+        exclude_paths: Vec::new(),
+        known_hashes: Vec::new(),
+        prior_repository_generation: None,
+    };
+
+    let baseline = services
+        .context_signal_evaluation(request.clone(), ContextSignalPolicy::LexicalSyntax)
+        .await
+        .expect("baseline");
+    let imports = services
+        .context_signal_evaluation(request.clone(), ContextSignalPolicy::ImportNeighbor)
+        .await
+        .expect("imports");
+    let reverse = services
+        .context_signal_evaluation(request.clone(), ContextSignalPolicy::ReverseDependency)
+        .await
+        .expect("reverse dependency");
+    let callers = services
+        .context_signal_evaluation(request, ContextSignalPolicy::HighConfidenceCaller)
+        .await
+        .expect("callers");
+
+    let candidate_keys = |evaluation: &leantoken::ContextEvaluation| {
+        evaluation
+            .generated_candidates
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.path.clone(),
+                    candidate.start_line,
+                    candidate.end_line,
+                    candidate.representation.clone(),
+                )
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let baseline_keys = candidate_keys(&baseline);
+    for evaluation in [&imports, &reverse, &callers] {
+        assert!(baseline_keys.is_subset(&candidate_keys(evaluation)));
+    }
+    assert!(baseline.generated_candidates.iter().all(|candidate| {
+        candidate.representation != "import_symbol"
+            && !candidate.match_kinds.iter().any(|kind| kind == "reference")
+            && !candidate
+                .match_kinds
+                .iter()
+                .any(|kind| kind == "reverse-import")
+    }));
+    assert!(imports.generated_candidates.iter().any(|candidate| {
+        candidate.representation == "import_symbol"
+            && candidate.match_kinds.iter().any(|kind| kind == "import")
+    }));
+    assert!(callers
+        .generated_candidates
+        .iter()
+        .any(|candidate| candidate.match_kinds.iter().any(|kind| kind == "reference")));
+    assert!(reverse.generated_candidates.iter().any(|candidate| {
+        candidate.path == "src/seed.js"
+            && candidate
+                .match_kinds
+                .iter()
+                .any(|kind| kind == "reverse-import")
+    }));
+    assert!(imports
+        .generated_candidates
+        .iter()
+        .all(|candidate| !candidate.match_kinds.iter().any(|kind| kind == "reference")));
+    assert!(callers.generated_candidates.iter().all(|candidate| {
+        candidate.representation != "import_symbol"
+            && !candidate
+                .match_kinds
+                .iter()
+                .any(|kind| kind == "reverse-import")
+    }));
 }
 
 #[tokio::test]
