@@ -671,19 +671,29 @@
 <a href=#671 id=671 data-nosnippet>671</a>    <span class="doccomment">/// Prior repository generation for delta context.
 <a href=#672 id=672 data-nosnippet>672</a>    </span><span class="attr">#[arg(long = <span class="string">"prior-generation"</span>)]
 <a href=#673 id=673 data-nosnippet>673</a>    </span><span class="kw">pub </span>prior_repository_generation: <span class="prelude-ty">Option</span>&lt;u64&gt;,
-<a href=#674 id=674 data-nosnippet>674</a>}
-<a href=#675 id=675 data-nosnippet>675</a>
-<a href=#676 id=676 data-nosnippet>676</a><span class="kw">impl </span>From&lt;ContextArgs&gt; <span class="kw">for </span>ContextRequest {
-<a href=#677 id=677 data-nosnippet>677</a>    <span class="kw">fn </span>from(args: ContextArgs) -&gt; <span class="self">Self </span>{
-<a href=#678 id=678 data-nosnippet>678</a>        <span class="self">Self </span>{
-<a href=#679 id=679 data-nosnippet>679</a>            task: args.task,
-<a href=#680 id=680 data-nosnippet>680</a>            token_budget: args.budget,
-<a href=#681 id=681 data-nosnippet>681</a>            focus_paths: args.focus_paths,
-<a href=#682 id=682 data-nosnippet>682</a>            focus_symbols: args.focus_symbols,
-<a href=#683 id=683 data-nosnippet>683</a>            exclude_paths: args.exclude_paths,
-<a href=#684 id=684 data-nosnippet>684</a>            known_hashes: args.known_hashes,
-<a href=#685 id=685 data-nosnippet>685</a>            prior_repository_generation: args.prior_repository_generation,
-<a href=#686 id=686 data-nosnippet>686</a>        }
-<a href=#687 id=687 data-nosnippet>687</a>    }
-<a href=#688 id=688 data-nosnippet>688</a>}
+<a href=#674 id=674 data-nosnippet>674</a>
+<a href=#675 id=675 data-nosnippet>675</a>    <span class="doccomment">/// Base revision for diff-scoped context (e.g. "origin/main").
+<a href=#676 id=676 data-nosnippet>676</a>    </span><span class="attr">#[arg(long = <span class="string">"base-revision"</span>)]
+<a href=#677 id=677 data-nosnippet>677</a>    </span><span class="kw">pub </span>base_revision: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#678 id=678 data-nosnippet>678</a>
+<a href=#679 id=679 data-nosnippet>679</a>    <span class="doccomment">/// Changed paths for diff-scoped context (repeatable).
+<a href=#680 id=680 data-nosnippet>680</a>    </span><span class="attr">#[arg(long = <span class="string">"changed-path"</span>)]
+<a href=#681 id=681 data-nosnippet>681</a>    </span><span class="kw">pub </span>changed_paths: Vec&lt;String&gt;,
+<a href=#682 id=682 data-nosnippet>682</a>}
+<a href=#683 id=683 data-nosnippet>683</a>
+<a href=#684 id=684 data-nosnippet>684</a><span class="kw">impl </span>From&lt;ContextArgs&gt; <span class="kw">for </span>ContextRequest {
+<a href=#685 id=685 data-nosnippet>685</a>    <span class="kw">fn </span>from(args: ContextArgs) -&gt; <span class="self">Self </span>{
+<a href=#686 id=686 data-nosnippet>686</a>        <span class="self">Self </span>{
+<a href=#687 id=687 data-nosnippet>687</a>            task: args.task,
+<a href=#688 id=688 data-nosnippet>688</a>            token_budget: args.budget,
+<a href=#689 id=689 data-nosnippet>689</a>            focus_paths: args.focus_paths,
+<a href=#690 id=690 data-nosnippet>690</a>            focus_symbols: args.focus_symbols,
+<a href=#691 id=691 data-nosnippet>691</a>            exclude_paths: args.exclude_paths,
+<a href=#692 id=692 data-nosnippet>692</a>            known_hashes: args.known_hashes,
+<a href=#693 id=693 data-nosnippet>693</a>            prior_repository_generation: args.prior_repository_generation,
+<a href=#694 id=694 data-nosnippet>694</a>            base_revision: args.base_revision,
+<a href=#695 id=695 data-nosnippet>695</a>            changed_paths: args.changed_paths,
+<a href=#696 id=696 data-nosnippet>696</a>        }
+<a href=#697 id=697 data-nosnippet>697</a>    }
+<a href=#698 id=698 data-nosnippet>698</a>}
 </code></pre></div></section></main></body></html>
