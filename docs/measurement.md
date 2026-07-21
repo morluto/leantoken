@@ -511,8 +511,9 @@ Every aggregate and per-task retrieval result repeated exactly three times and
 every arm had zero additive violations. Reverse dependency reduced dead-end
 source by 114 tokens but did not improve file or line recall and failed the 50%
 candidate-precision gate. Parsed callers gained only one line anchor, below the
-frozen two-anchor minimum, while increasing dead-end source by 671 tokens and the complete
-serialized response by 1,068 tokens; it also failed candidate precision. The
+frozen two-anchor minimum, while increasing dead-end source by 671 tokens and
+the complete serialized response by 1,068 tokens; it also failed candidate
+precision. The
 import arm produced no corroborated candidate and therefore no recall or
 precision evidence; all five tasks labeled import-applicable were unresolved.
 Reverse dependency had 15/17 false-positive candidate files and failed to find
