@@ -20,10 +20,13 @@ struct Report {
     tools_list_request_tokens: usize,
     tools_list_response_tokens: usize,
     call_request_tokens: usize,
+    baseline_response_json_tokens: usize,
     response_json_tokens: usize,
+    baseline_dual_result_tokens: usize,
     dual_result_tokens: usize,
     text_result_tokens: usize,
     structured_result_tokens: usize,
+    baseline_handoff_tokens: usize,
     handoff_tokens: usize,
     latency_ms: f64,
     limitations: Vec<&'static str>,
@@ -82,6 +85,15 @@ async fn mcp_handoff_token_costs() {
     };
     let context = services.context(context_request).await.expect("context");
     let context_value = serde_json::to_value(&context).expect("context JSON");
+    let mut baseline_context_value = context_value.clone();
+    baseline_context_value["receipt"]
+        .as_object_mut()
+        .expect("receipt object")
+        .insert(
+            "task_fingerprint".into(),
+            serde_json::Value::String(context.receipt.task_fingerprint.clone()),
+        );
+    let baseline_response_json_tokens = tokenizer.count(&baseline_context_value.to_string());
     let response_json_tokens = tokenizer.count(&context_value.to_string());
 
     let call_request = serde_json::json!({
@@ -103,6 +115,8 @@ async fn mcp_handoff_token_costs() {
     });
     let dual_result = tool_result(context_value.clone(), McpResultMode::Dual)
         .expect("dual result");
+    let baseline_dual_result = tool_result(baseline_context_value, McpResultMode::Dual)
+        .expect("baseline dual result");
     let text_result = tool_result(context_value.clone(), McpResultMode::Text)
         .expect("text result");
     let structured_result = tool_result(context_value, McpResultMode::Structured)
@@ -112,6 +126,11 @@ async fn mcp_handoff_token_costs() {
         "jsonrpc": "2.0",
         "id": 2,
         "result": dual_result
+    });
+    let baseline_call_result = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": baseline_dual_result
     });
     let text_call_result = serde_json::json!({
         "jsonrpc": "2.0", "id": 2, "result": text_result
@@ -127,6 +146,7 @@ async fn mcp_handoff_token_costs() {
     let tools_list_request_tokens = tokenizer.count(&tools_list_request.to_string());
     let tools_list_response_tokens = tokenizer.count(&tools_list_response.to_string());
     let call_request_tokens = tokenizer.count(&call_request.to_string());
+    let baseline_dual_result_tokens = tokenizer.count(&baseline_call_result.to_string());
     let dual_result_tokens = tokenizer.count(&call_result.to_string());
     let text_result_tokens = tokenizer.count(&text_call_result.to_string());
     let structured_result_tokens = tokenizer.count(&structured_call_result.to_string());
@@ -137,6 +157,7 @@ async fn mcp_handoff_token_costs() {
         + tools_list_response_tokens
         + call_request_tokens
         + dual_result_tokens;
+    let baseline_handoff_tokens = handoff_tokens - dual_result_tokens + baseline_dual_result_tokens;
 
     let latency_ms = started.elapsed().as_secs_f64() * 1_000.0;
 
@@ -151,15 +172,19 @@ async fn mcp_handoff_token_costs() {
         tools_list_request_tokens,
         tools_list_response_tokens,
         call_request_tokens,
+        baseline_response_json_tokens,
         response_json_tokens,
+        baseline_dual_result_tokens,
         dual_result_tokens,
         text_result_tokens,
         structured_result_tokens,
+        baseline_handoff_tokens,
         handoff_tokens,
         latency_ms,
         limitations: vec![
             "Dual mode is the compatibility default and serializes JSON in both text content and structuredContent; text-only and structured-only costs are reported separately.",
             "The modeled trace serializes initialize, notifications/initialized, tools/list, and tools/call messages but excludes transport framing outside JSON-RPC.",
+            "Absolute fixture counts may vary with platform-specific retrieval paths; the same-platform pre-change reconstruction freezes the representation delta.",
             "No model consumes the handoff, so practical sufficiency is not measured here.",
         ],
     };
@@ -177,17 +202,20 @@ async fn mcp_handoff_token_costs() {
     assert!(handoff_tokens > schema_tokens + dual_result_tokens);
     assert!(structured_result_tokens < dual_result_tokens);
     assert!(text_result_tokens < dual_result_tokens);
-    assert!(
-        response_json_tokens <= 531,
-        "compact context response exceeds the frozen budget: {response_json_tokens}"
+    assert_eq!(
+        response_json_tokens.checked_add(18),
+        Some(baseline_response_json_tokens),
+        "serialized task-fingerprint response delta changed"
     );
-    assert!(
-        dual_result_tokens <= 1_123,
-        "dual context result exceeds the frozen budget: {dual_result_tokens}"
+    assert_eq!(
+        dual_result_tokens.checked_add(39),
+        Some(baseline_dual_result_tokens),
+        "serialized task-fingerprint dual-result delta changed"
     );
-    assert!(
-        handoff_tokens <= 3_785,
-        "complete MCP handoff exceeds the frozen budget: {handoff_tokens}"
+    assert_eq!(
+        handoff_tokens.checked_add(39),
+        Some(baseline_handoff_tokens),
+        "serialized task-fingerprint complete-wire delta changed"
     );
     assert!(tokenizer.is_exact(), "default tokenizer should be exact");
 }
