@@ -104,6 +104,8 @@ async fn benchmark_token_economy() {
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
+        base_revision: None,
+        changed_paths: Vec::new(),
         };
         let warm_start = Instant::now();
         let response = services.context(request.clone()).await.expect("context");

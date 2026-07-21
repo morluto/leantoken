@@ -599,6 +599,8 @@ async fn run_task(
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
         prior_repository_generation: None,
+        base_revision: None,
+        changed_paths: Vec::new(),
     };
     let started = Instant::now();
     let evaluation = services.context_evaluation(request.clone()).await?;

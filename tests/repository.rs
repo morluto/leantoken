@@ -3,7 +3,7 @@ use std::fs;
 use leantoken::repository::{
     DiscoveryPolicy, discover_files, discover_files_with_limits,
     discover_files_with_limits_and_policy, discover_files_with_limits_cancellable,
-    git_changed_paths, resolve_existing, slash_path, validate_relative,
+    git_changed_paths, git_diff_paths, resolve_existing, slash_path, validate_relative,
 };
 use leantoken::{DiscoveryLimits, Error, IndexLimitKind};
 use tokio_util::sync::CancellationToken;
@@ -578,4 +578,100 @@ fn git_changed_paths_does_not_run_repository_fsmonitor() {
     let _ = git_changed_paths(root.path(), 64).expect("changed paths");
 
     assert!(!marker.exists(), "repository fsmonitor hook was executed");
+}
+
+#[test]
+fn git_diff_paths_rejects_empty_base_revision() {
+    let root = tempfile::tempdir().expect("root");
+    let error = git_diff_paths(root.path(), "", 64).expect_err("empty base rejected");
+    assert!(matches!(error, Error::InvalidInput { field, .. } if field == "base revision"));
+}
+
+#[test]
+fn git_diff_paths_returns_error_for_unresolvable_revision() {
+    if !git_available() {
+        return;
+    }
+    let root = tempfile::tempdir().expect("root");
+    init_git_repo(root.path());
+    let error = git_diff_paths(root.path(), "nonexistent-branch", 64)
+        .expect_err("unresolvable revision rejected");
+    assert!(
+        matches!(error, Error::InvalidInput { field, .. } if field == "base revision"),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn git_diff_paths_detects_committed_changes_relative_to_base() {
+    if !git_available() {
+        return;
+    }
+    let root = tempfile::tempdir().expect("root");
+    init_git_repo(root.path());
+    fs::write(root.path().join("base.rs"), "fn base() {}
+").expect("write base");
+    run_git(root.path(), &["add", "."]);
+    run_git(root.path(), &["commit", "-m", "base commit"]);
+
+    let base_sha = std::process::Command::new("git")
+        .args(["rev-parse", "--short=12", "HEAD"])
+        .current_dir(root.path())
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        .expect("resolve base sha");
+
+    fs::write(root.path().join("changed.rs"), "fn changed() {}
+").expect("write changed");
+    run_git(root.path(), &["add", "."]);
+    run_git(root.path(), &["commit", "-m", "changed commit"]);
+
+    let result = git_diff_paths(root.path(), &base_sha, 64).expect("diff paths");
+    assert_eq!(result.base_revision, base_sha);
+    assert!(!result.head_revision.is_empty());
+    assert!(result.changed_paths.contains(&"changed.rs".to_owned()));
+    assert!(!result.changed_paths.contains(&"base.rs".to_owned()));
+}
+
+#[test]
+fn git_diff_paths_includes_working_tree_changes() {
+    if !git_available() {
+        return;
+    }
+    let root = tempfile::tempdir().expect("root");
+    init_git_repo(root.path());
+    fs::write(root.path().join("committed.rs"), "fn committed() {}
+").expect("write");
+    run_git(root.path(), &["add", "."]);
+    run_git(root.path(), &["commit", "-m", "initial"]);
+
+    let base_sha = std::process::Command::new("git")
+        .args(["rev-parse", "--short=12", "HEAD"])
+        .current_dir(root.path())
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        .expect("resolve base sha");
+
+    fs::write(root.path().join("uncommitted.rs"), "fn uncommitted() {}
+").expect("write");
+    let result = git_diff_paths(root.path(), &base_sha, 64).expect("diff paths");
+    assert!(result.changed_paths.contains(&"uncommitted.rs".to_owned()));
+}
+
+#[test]
+fn git_diff_paths_resolves_origin_main_ref_name() {
+    if !git_available() {
+        return;
+    }
+    let root = tempfile::tempdir().expect("root");
+    init_git_repo(root.path());
+    fs::write(root.path().join("base.rs"), "fn base() {}
+").expect("write");
+    run_git(root.path(), &["add", "."]);
+    run_git(root.path(), &["commit", "-m", "base"]);
+
+    let result = git_diff_paths(root.path(), "HEAD", 64).expect("HEAD as base");
+    assert!(!result.base_revision.is_empty());
+    assert_eq!(result.base_revision, result.head_revision);
+    assert!(result.changed_paths.is_empty());
 }

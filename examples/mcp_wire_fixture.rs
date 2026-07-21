@@ -43,6 +43,8 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
         prior_repository_generation: None,
+        base_revision: None,
+        changed_paths: Vec::new(),
     };
     let response = ContextResponse {
         fragments: vec![ContextFragment {
@@ -62,6 +64,7 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
             task_fingerprint: "fixture-task-fingerprint".into(),
             fragment_hashes: vec!["fixture-fragment-hash".into()],
         },
+        diff_scope: None,
         omitted: Vec::new(),
         warnings: Vec::new(),
         meta: ResponseMeta {
