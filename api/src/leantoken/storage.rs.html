@@ -1202,7 +1202,7 @@
 <a href=#1202 id=1202 data-nosnippet>1202</a>    }
 <a href=#1203 id=1203 data-nosnippet>1203</a>
 <a href=#1204 id=1204 data-nosnippet>1204</a>    <span class="doccomment">/// Find importers whose persisted candidate set intersects changed repository paths.
-<a href=#1205 id=1205 data-nosnippet>1205</a>    </span><span class="kw">fn </span>affected_importers(<span class="kw-2">&amp;</span><span class="self">self</span>, candidate_paths: <span class="kw-2">&amp;</span>[String]) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;String&gt;&gt; {
+<a href=#1205 id=1205 data-nosnippet>1205</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>affected_importers(<span class="kw-2">&amp;</span><span class="self">self</span>, candidate_paths: <span class="kw-2">&amp;</span>[String]) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;String&gt;&gt; {
 <a href=#1206 id=1206 data-nosnippet>1206</a>        <span class="kw">if </span>candidate_paths.is_empty() {
 <a href=#1207 id=1207 data-nosnippet>1207</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(Vec::new());
 <a href=#1208 id=1208 data-nosnippet>1208</a>        }
