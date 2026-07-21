@@ -8,7 +8,7 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -22,8 +22,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wait_timeout::ChildExt;
 
-const MAX_CODEX_STDOUT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_CODEX_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
 const CODEX_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+#[derive(Debug)]
+struct ObservedEventLine {
+    ordinal: usize,
+    bytes: Vec<u8>,
+}
 
 #[derive(Debug, Deserialize)]
 struct AdapterRequest {
@@ -752,7 +758,7 @@ fn run_codex(
         .arg("-")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
+        .stderr(Stdio::piped());
     let mut child = command.spawn()?;
     child
         .stdin
@@ -760,31 +766,81 @@ fn run_codex(
         .ok_or("Codex stdin unavailable")?
         .write_all(invocation.prompt.as_bytes())?;
     let stdout = child.stdout.take().ok_or("Codex stdout unavailable")?;
+    let stderr = child.stderr.take().ok_or("Codex stderr unavailable")?;
     let tool_limit_exceeded = Arc::new(AtomicBool::new(false));
     let output_limit_exceeded = Arc::new(AtomicBool::new(false));
-    let reader_tool_limit_exceeded = Arc::clone(&tool_limit_exceeded);
-    let reader_output_limit_exceeded = Arc::clone(&output_limit_exceeded);
-    let reader = thread::spawn(move || -> io::Result<Vec<u8>> {
-        let mut stdout = BufReader::new(stdout.take(MAX_CODEX_STDOUT_BYTES + 1));
+    let observed_tool_calls = Arc::new(AtomicUsize::new(0));
+    let observed_bytes = Arc::new(AtomicU64::new(0));
+    let observation_ordinal = Arc::new(AtomicUsize::new(0));
+    let tool_call_limit = invocation.tool_call_limit;
+
+    let stdout_tool_limit_exceeded = Arc::clone(&tool_limit_exceeded);
+    let stdout_output_limit_exceeded = Arc::clone(&output_limit_exceeded);
+    let stdout_observed_tool_calls = Arc::clone(&observed_tool_calls);
+    let stdout_observed_bytes = Arc::clone(&observed_bytes);
+    let stdout_observation_ordinal = Arc::clone(&observation_ordinal);
+    let stdout_reader = thread::spawn(move || -> io::Result<Vec<ObservedEventLine>> {
+        let mut stdout = BufReader::new(stdout.take(MAX_CODEX_OUTPUT_BYTES + 1));
         let mut output = Vec::new();
         let mut line = Vec::new();
-        let mut tool_starts = 0usize;
         loop {
             line.clear();
             if stdout.read_until(b'\n', &mut line)? == 0 {
                 break;
             }
-            output.extend_from_slice(&line);
-            if output.len() as u64 > MAX_CODEX_STDOUT_BYTES {
-                reader_output_limit_exceeded.store(true, Ordering::Release);
+            let ordinal = stdout_observation_ordinal.fetch_add(1, Ordering::AcqRel);
+            if output_limit_reached(&stdout_observed_bytes, line.len()) {
+                stdout_output_limit_exceeded.store(true, Ordering::Release);
                 break;
             }
-            if is_tool_start_record(&line) {
-                tool_starts = tool_starts.saturating_add(1);
-                if tool_starts > invocation.tool_call_limit {
-                    reader_tool_limit_exceeded.store(true, Ordering::Release);
+            if is_tool_start_record(&line)
+                && live_tool_limit_reached(&stdout_observed_tool_calls, tool_call_limit)
+            {
+                stdout_tool_limit_exceeded.store(true, Ordering::Release);
+                break;
+            }
+            output.push(ObservedEventLine {
+                ordinal,
+                bytes: line.clone(),
+            });
+        }
+        Ok(output)
+    });
+
+    let stderr_tool_limit_exceeded = Arc::clone(&tool_limit_exceeded);
+    let stderr_output_limit_exceeded = Arc::clone(&output_limit_exceeded);
+    let stderr_observed_tool_calls = Arc::clone(&observed_tool_calls);
+    let stderr_observed_bytes = Arc::clone(&observed_bytes);
+    let stderr_observation_ordinal = Arc::clone(&observation_ordinal);
+    let stderr_reader = thread::spawn(move || -> io::Result<Vec<ObservedEventLine>> {
+        let mut stderr = BufReader::new(stderr.take(MAX_CODEX_OUTPUT_BYTES + 1));
+        let mut diagnostic = io::stderr().lock();
+        let mut output = Vec::new();
+        let mut line = Vec::new();
+        let mut hidden_edit_index = 0usize;
+        loop {
+            line.clear();
+            if stderr.read_until(b'\n', &mut line)? == 0 {
+                break;
+            }
+            diagnostic.write_all(&line)?;
+            let ordinal = stderr_observation_ordinal.fetch_add(1, Ordering::AcqRel);
+            if output_limit_reached(&stderr_observed_bytes, line.len()) {
+                stderr_output_limit_exceeded.store(true, Ordering::Release);
+                break;
+            }
+            if is_hidden_edit_failure_line(&line) {
+                hidden_edit_index = hidden_edit_index.saturating_add(1);
+                if live_tool_limit_reached(&stderr_observed_tool_calls, tool_call_limit) {
+                    stderr_tool_limit_exceeded.store(true, Ordering::Release);
                     break;
                 }
+                let mut bytes = serde_json::to_vec(&hidden_edit_failure_event(
+                    hidden_edit_index,
+                    String::from_utf8_lossy(&line).trim(),
+                ))?;
+                bytes.push(b'\n');
+                output.push(ObservedEventLine { ordinal, bytes });
             }
         }
         Ok(output)
@@ -794,7 +850,8 @@ fn run_codex(
         if tool_limit_exceeded.load(Ordering::Acquire) {
             let _ = child.kill();
             let _ = child.wait();
-            let _ = reader.join();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
             return Err(format!(
                 "Codex exceeded the live tool-call limit of {}",
                 invocation.tool_call_limit
@@ -804,22 +861,29 @@ fn run_codex(
         if output_limit_exceeded.load(Ordering::Acquire) {
             let _ = child.kill();
             let _ = child.wait();
-            let _ = reader.join();
-            return Err("Codex JSONL output exceeded 64 MiB".into());
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            return Err("Codex combined stdout/stderr exceeded 64 MiB".into());
         }
         let Some(remaining) = invocation.timeout.checked_sub(started.elapsed()) else {
             let _ = child.kill();
             let _ = child.wait();
-            let _ = reader.join();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
             return Err("Codex CLI timed out".into());
         };
         if let Some(status) = child.wait_timeout(remaining.min(CODEX_POLL_INTERVAL))? {
             break status;
         }
     };
-    let output = reader
+    let mut output = stdout_reader
         .join()
         .map_err(|_| "Codex stdout reader panicked")??;
+    output.extend(
+        stderr_reader
+            .join()
+            .map_err(|_| "Codex stderr reader panicked")??,
+    );
     if tool_limit_exceeded.load(Ordering::Acquire) {
         return Err(format!(
             "Codex exceeded the live tool-call limit of {}",
@@ -827,13 +891,14 @@ fn run_codex(
         )
         .into());
     }
-    if output.len() as u64 > MAX_CODEX_STDOUT_BYTES {
-        return Err("Codex JSONL output exceeded 64 MiB".into());
+    if output_limit_exceeded.load(Ordering::Acquire) {
+        return Err("Codex combined stdout/stderr exceeded 64 MiB".into());
     }
     if !status.success() {
         return Err(format!("Codex CLI exited with {status}").into());
     }
-    Ok(output)
+    output.sort_by_key(|line| line.ordinal);
+    Ok(output.into_iter().flat_map(|line| line.bytes).collect())
 }
 
 fn prewalk_output_schema() -> Value {
@@ -873,6 +938,37 @@ fn is_tool_start_record(line: &[u8]) -> bool {
             event.pointer("/item/type").and_then(Value::as_str),
             Some("command_execution" | "file_change" | "mcp_tool_call")
         )
+}
+
+fn is_hidden_edit_failure_line(line: &[u8]) -> bool {
+    String::from_utf8_lossy(line).contains("codex_core::tools::router: error=apply_patch")
+}
+
+fn hidden_edit_failure_event(index: usize, stderr_line: &str) -> Value {
+    serde_json::json!({
+        "type": "item.completed",
+        "item": {
+            "id": format!("stderr-hidden-edit-{index}"),
+            "type": "file_change",
+            "status": "failed",
+            "provenance": "codex_stderr_router",
+            "message": stderr_line
+        }
+    })
+}
+
+fn live_tool_limit_reached(observed: &AtomicUsize, limit: usize) -> bool {
+    observed.fetch_add(1, Ordering::AcqRel).saturating_add(1) > limit
+}
+
+fn output_limit_reached(observed: &AtomicU64, bytes: usize) -> bool {
+    let Ok(bytes) = u64::try_from(bytes) else {
+        return true;
+    };
+    observed
+        .fetch_add(bytes, Ordering::AcqRel)
+        .saturating_add(bytes)
+        > MAX_CODEX_OUTPUT_BYTES
 }
 
 fn analyze_events(output: &[u8], tokenizer: Tokenizer) -> Result<Analysis, Box<dyn Error>> {
@@ -1586,6 +1682,27 @@ mod tests {
             assert!(!is_tool_start_record(event.to_string().as_bytes()));
         }
         assert!(!is_tool_start_record(b"not-json\n"));
+
+        let observed = AtomicUsize::new(0);
+        assert!(!live_tool_limit_reached(&observed, 1));
+        assert!(live_tool_limit_reached(&observed, 1));
+    }
+
+    #[test]
+    fn hidden_apply_patch_failure_becomes_a_bounded_failed_edit() {
+        let line = b"2026-07-21T00:00:00Z ERROR codex_core::tools::router: error=apply_patch verification failed: missing context\n";
+        assert!(is_hidden_edit_failure_line(line));
+        assert!(!is_hidden_edit_failure_line(b"ordinary diagnostic\n"));
+
+        let event = hidden_edit_failure_event(1, String::from_utf8_lossy(line).trim());
+        let analysis = analyze(&[event.clone()]);
+        assert_eq!(analysis.calls.len(), 1);
+        assert_eq!(analysis.calls[0].tool_name, "edit");
+        assert_eq!(analysis.calls[0].outcome, ToolOutcome::Error);
+        assert_eq!(
+            event.pointer("/item/provenance").and_then(Value::as_str),
+            Some("codex_stderr_router")
+        );
     }
 
     #[test]

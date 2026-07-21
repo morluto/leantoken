@@ -314,15 +314,21 @@ status/revision preflight is allowed before LeanToken, and build, test, lint,
 and patch-verification commands remain allowed afterward.
 
 The Codex adapter requires sequential tool calls in every prompt and counts
-`item.started` tool events while streaming JSONL. It terminates the child as
-soon as a run exceeds its frozen live limit; prewalk and executor phases each
-receive their own limit within the common total budget. Completed traces are
-checked again before publication. The adapter explicitly approves the frozen
-local MCP server's tools because noninteractive `codex exec` otherwise cancels
-MCP approval prompts under a workspace-write sandbox. A prompt-only distinction
-or budget is not sufficient evidence for an arm. Its `task_success` diagnostic
-is conservative: at least one edit must complete and no recorded tool call may
-fail. The official task validator still determines report success.
+`item.started` tool events while streaming JSONL. Codex CLI 0.144.1 reports
+failed code-mode `apply_patch` attempts only on stderr, so the adapter also
+streams that channel and normalizes every router failure into a failed
+`file_change` event with `provenance: codex_stderr_router`. The stdout and
+stderr readers share a monotonic observation order, byte limit, and live tool
+counter. This makes hidden edit failures part of both the trace summary and the
+limit; it terminates the child as soon as a run exceeds its frozen live limit.
+Prewalk and executor phases each receive their own limit within the common total
+budget. Completed traces are checked again before publication. The adapter
+explicitly approves the frozen local MCP server's tools because noninteractive
+`codex exec` otherwise cancels MCP approval prompts under a workspace-write
+sandbox. A prompt-only distinction or budget is not sufficient evidence for an
+arm. Its `task_success` diagnostic is conservative: at least one edit must
+complete and no recorded tool call may fail. The official task validator still
+determines report success.
 
 `swe_bench_validator` captures the complete Git patch, runs the pinned official
 SWE-bench Docker harness for one instance, and preserves aggregate, instance,
