@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "experiment_id": "swe-bench-multilingual-four-arm-v2",
+  "raw_report": "../target/model-ab-groundwork/swe-bench-multilingual-four-arm-v2-report.json",
+  "raw_report_blake3": "ba623b8e88dc9ef58ed5e5d2d22b8af8aeb07c398f0afc886244fb4813ad810f",
+  "artifacts_root": "../target/model-ab-groundwork/swe-bench-multilingual-four-arm-v2-artifacts",
+  "dataset": "../target/external/swe-bench-multilingual/test.jsonl",
+  "dataset_blake3": "8037e63f2fbddb906a6957895449d73eff31dace973a0bf48e93a7a3606ee4b7",
+  "repositories": {
+    "babel__babel-15445": "../target/model-ab-groundwork/formal-task-repositories/babel",
+    "caddyserver__caddy-6051": "../target/model-ab-groundwork/formal-task-repositories/caddy",
+    "jqlang__jq-2750": "../target/model-ab-groundwork/formal-task-repositories/jq"
+  },
+  "tokenizer": "o200k_base",
+  "broad_read_min_lines": 400,
+  "broad_read_min_fraction": 0.5,
+  "baseline_arm": "filesystem",
+  "candidate_arm": "lean_token_progressive",
+  "handoff_arm": "prewalk"
+}
