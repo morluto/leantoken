@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "experiment_id": "graph-signal-ablation-v1",
+  "description": "Frozen additive ablation of dependency and parsed-reference signals on the retrospective representative retrieval set.",
+  "source_manifest": "benchmarks/representative.json",
+  "source_manifest_blake3": "13d6c5918ceea781c85aa866dabad9cf7500841b0d8b9e572841cfb889ff8986",
+  "repetitions": 3,
+  "arms": [
+    "lexical_syntax",
+    "import_neighbor",
+    "reverse_dependency",
+    "high_confidence_caller"
+  ],
+  "thresholds": {
+    "minimum_signal_candidate_precision": 0.5,
+    "minimum_relevant_file_gain": 1,
+    "minimum_line_anchor_gain": 2,
+    "maximum_dead_end_source_token_increase": 0,
+    "maximum_complete_response_token_increase": 256
+  },
+  "task_labels": [
+    {
+      "task_id": "globset-matches-all-false-positive",
+      "applicable_signals": ["high_confidence_caller"],
+      "rationale": "The implementation and regression-test neighborhood are colocated; parsed calls may locate the matching-strategy dispatch, while no cross-file dependency edge is required."
+    },
+    {
+      "task_id": "request-context-copy-per-call",
+      "applicable_signals": ["import_neighbor", "reverse_dependency", "high_confidence_caller"],
+      "rationale": "The labeled test imports Flask APIs and calls the decorator whose implementation is in the labeled context module."
+    },
+    {
+      "task_id": "send-transfer-encoding-content-length-conflict",
+      "applicable_signals": ["import_neighbor", "reverse_dependency", "high_confidence_caller"],
+      "rationale": "The labeled response tests load Express and call res.send, while the implementation is in the labeled response module."
+    },
+    {
+      "task_id": "recovery-records-panic-error",
+      "applicable_signals": ["high_confidence_caller"],
+      "rationale": "Go package-local implementation and tests do not require an import edge, but parsed calls can connect recovery helpers and tests."
+    },
+    {
+      "task_id": "streammap-size-hint-overflow",
+      "applicable_signals": ["import_neighbor", "reverse_dependency", "high_confidence_caller"],
+      "rationale": "The integration test imports StreamMap from tokio_stream and invokes the labeled implementation behavior."
+    },
+    {
+      "task_id": "non-isomorphic-block-update",
+      "applicable_signals": ["import_neighbor", "reverse_dependency", "high_confidence_caller"],
+      "rationale": "The renderer test imports runtime APIs backed by the labeled renderer implementation and exercises its call path."
+    },
+    {
+      "task_id": "completions-osargs-mutation",
+      "applicable_signals": ["high_confidence_caller"],
+      "rationale": "Go package-local implementation and tests share a package; caller references matter but an import edge is not required."
+    },
+    {
+      "task_id": "encode-files-read-attr",
+      "applicable_signals": ["import_neighbor", "reverse_dependency", "high_confidence_caller"],
+      "rationale": "The labeled test imports requests.models symbols and exercises the labeled multipart encoding implementation."
+    }
+  ]
+}
