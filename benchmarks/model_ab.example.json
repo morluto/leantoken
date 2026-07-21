@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "experiment_id": "replace-with-a-frozen-experiment-id",
   "random_seed": 20260717,
   "primary_model": "provider/frontier-model-version",
@@ -19,44 +19,48 @@
       "budget": { "tool_call_limit": 40, "context_token_limit": 8000 },
       "retrieval_contract": "Use the frozen native filesystem tool catalog without LeanToken."
     },
-    "lean_token_baseline": {
-      "runtime_repository": "/absolute/path/to/baseline-leantoken-worktree",
+    "lean_token_progressive": {
+      "runtime_repository": "/absolute/path/to/frozen-leantoken-worktree",
       "runtime_revision": "0000000000000000000000000000000000000000",
       "runtime_binary": "/absolute/path/to/baseline-leantoken-binary",
       "runtime_binary_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
       "adapter_repository": "/absolute/path/to/provider-adapter-worktree",
       "adapter_revision": "0000000000000000000000000000000000000000",
       "adapter_binary_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
-      "configuration": { "retrieval": "baseline" },
+      "configuration": { "retrieval": "progressive" },
       "tool_catalog": ["leantoken", "edit", "shell"],
       "budget": { "tool_call_limit": 40, "context_token_limit": 8000 },
-      "retrieval_contract": "Use the frozen baseline LeanToken runtime for repository discovery and source reads; reserve native shell commands for Git preflight and post-retrieval verification."
+      "retrieval_contract": "Use only the narrow LeanToken files, outline, search, and read services progressively; do not call context or use native repository retrieval."
     },
-    "lean_token_adaptive": {
-      "runtime_repository": "/absolute/path/to/adaptive-leantoken-worktree",
+    "lean_token_one_shot": {
+      "runtime_repository": "/absolute/path/to/frozen-leantoken-worktree",
       "runtime_revision": "0000000000000000000000000000000000000000",
       "runtime_binary": "/absolute/path/to/adaptive-leantoken-binary",
       "runtime_binary_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
       "adapter_repository": "/absolute/path/to/provider-adapter-worktree",
       "adapter_revision": "0000000000000000000000000000000000000000",
       "adapter_binary_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
-      "configuration": { "retrieval": "adaptive" },
+      "configuration": { "retrieval": "one_shot_context" },
       "tool_catalog": ["leantoken", "edit", "shell"],
       "budget": { "tool_call_limit": 40, "context_token_limit": 8000 },
-      "retrieval_contract": "Use the frozen adaptive LeanToken runtime for repository discovery and source reads; reserve native shell commands for Git preflight and post-retrieval verification."
+      "retrieval_contract": "Make exactly one evidence-bearing leantoken_context call and do not perform any later repository retrieval."
     },
-    "lean_token_adaptive_recovery": {
-      "runtime_repository": "/absolute/path/to/adaptive-leantoken-worktree",
+    "prewalk": {
+      "runtime_repository": "/absolute/path/to/frozen-leantoken-worktree",
       "runtime_revision": "0000000000000000000000000000000000000000",
       "runtime_binary": "/absolute/path/to/adaptive-leantoken-binary",
       "runtime_binary_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
       "adapter_repository": "/absolute/path/to/provider-adapter-worktree",
       "adapter_revision": "0000000000000000000000000000000000000000",
       "adapter_binary_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
-      "configuration": { "retrieval": "adaptive_discovery_native_recovery" },
-      "tool_catalog": ["path_list", "text_search", "file_read", "leantoken", "edit", "shell"],
+      "configuration": {
+        "retrieval": "frontier_prewalk_executor",
+        "prewalk_tool_call_limit": 20,
+        "executor_tool_call_limit": 20
+      },
+      "tool_catalog": ["leantoken", "edit", "shell"],
       "budget": { "tool_call_limit": 40, "context_token_limit": 8000 },
-      "retrieval_contract": "Use adaptive LeanToken for discovery and native tools for recovery and verification."
+      "retrieval_contract": "A frontier prewalk must transfer its raw trajectory, bounded todo state, evidence receipt, exact worktree patch, and first validated edit to the frozen cheaper executor; neither phase may use native repository retrieval."
     }
   },
   "tasks": [

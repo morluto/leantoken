@@ -1,5 +1,6 @@
 //! Plumbing-only adapter for validating the model A/B harness without credentials.
 
+#[allow(dead_code)]
 #[path = "support/model_ab_artifacts.rs"]
 mod model_ab_artifacts;
 
@@ -49,7 +50,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
     let request: AdapterRequest = serde_json::from_str(&input)?;
-    if request.schema_version != 3 {
+    if request.schema_version != 4 {
         return Err("unsupported model A/B adapter request schema".into());
     }
     let binding = RunBinding {
@@ -97,7 +98,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         },
     )?;
     let result = AdapterResult {
-        schema_version: 3,
+        schema_version: 4,
         task_success: false,
         total_input_tokens: Some(0),
         total_output_tokens: Some(0),

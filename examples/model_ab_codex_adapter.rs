@@ -8,12 +8,13 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use leantoken::tokens::Tokenizer;
 use model_ab_artifacts::{
-    ARTIFACT_SCHEMA_V1, PROVIDER_USAGE_FILE, ProviderUsage, ProviderUsageReceipt, RangeIdentity,
-    RunBinding, TOOL_TRACE_FILE, TRAJECTORY_FILE, ToolCall, ToolOutcome, ToolTrace, Trajectory,
+    ARTIFACT_SCHEMA_V1, PREWALK_HANDOFF_FILE, PROVIDER_USAGE_FILE, PrewalkHandoff, ProviderUsage,
+    ProviderUsageReceipt, RangeIdentity, RunBinding, TOOL_TRACE_FILE, TRAJECTORY_FILE, ToolCall,
+    ToolOutcome, ToolTrace, Trajectory, ValidatedEdit,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -31,6 +32,7 @@ struct AdapterRequest {
     arm_order_index: usize,
     arm: String,
     primary_model: String,
+    executor_model: Option<String>,
     arm_definition: ArmDefinition,
     repository: PathBuf,
     revision: String,
@@ -68,14 +70,19 @@ struct CodexConfiguration {
     tokenizer: Tokenizer,
     mcp_enabled: bool,
     mcp_result_mode: String,
+    #[serde(default)]
+    prewalk_tool_call_limit: Option<usize>,
+    #[serde(default)]
+    executor_tool_call_limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum RetrievalPolicy {
     NativeOnly,
-    LeanTokenOnly,
-    LeanTokenThenNativeRecovery,
+    LeanTokenProgressive,
+    LeanTokenOneShot,
+    Prewalk,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,8 +91,11 @@ struct RetrievalContractEvidence {
     leantoken_calls: usize,
     successful_leantoken_calls: usize,
     leantoken_evidence_calls: usize,
+    leantoken_tools: Vec<String>,
+    phase_boundary: Option<usize>,
     native_retrieval_calls: usize,
     pre_leantoken_substantive_calls: usize,
+    first_validated_edit: Option<ValidatedEdit>,
 }
 
 #[derive(Debug, Serialize)]
@@ -119,6 +129,9 @@ struct Analysis {
     seen_ranges: HashSet<RangeKey>,
     native_retrieval_sequences: Vec<usize>,
     pre_leantoken_substantive_sequences: Vec<usize>,
+    leantoken_tools: Vec<String>,
+    verification_sequences: Vec<usize>,
+    phase_boundary: Option<usize>,
     tokenizer: Tokenizer,
 }
 
@@ -133,7 +146,7 @@ struct RangeKey {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let request: AdapterRequest = serde_json::from_reader(io::stdin())?;
-    if request.schema_version != 3 {
+    if request.schema_version != 4 {
         return Err("unsupported model A/B request schema".into());
     }
     let configuration: CodexConfiguration =
@@ -152,15 +165,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("Codex CLI version mismatch".into());
     }
 
-    let prompt = build_prompt(&request, retrieval_policy);
-    let output = run_codex(&request, &configuration, &prompt)?;
-    let mut analysis = analyze_events(&output, configuration.tokenizer)?;
     let binding = RunBinding {
         experiment_id: request.experiment_id.clone(),
         manifest_blake3: request.manifest_blake3.clone(),
         task_id: request.task_id.clone(),
         repetition: request.repetition,
         arm: request.arm.clone(),
+    };
+    let mut analysis = if retrieval_policy == RetrievalPolicy::Prewalk {
+        execute_prewalk(&request, &configuration, &binding)?
+    } else {
+        let prompt = build_prompt(&request, retrieval_policy);
+        let output = run_codex(
+            &request,
+            &configuration,
+            &prompt,
+            &request.primary_model,
+            configuration.mcp_enabled,
+            Duration::from_secs(request.timeout_seconds.saturating_sub(5)),
+        )?;
+        analyze_events(&output, configuration.tokenizer)?
     };
     let provider_usage = analysis
         .usage
@@ -229,7 +253,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .filter(|call| call.tool_name == "edit" && call.outcome == ToolOutcome::Success)
         .count();
     let result = AdapterResult {
-        schema_version: 3,
+        schema_version: 4,
         task_success: successful_edits > 0 && failed_tool_calls == 0,
         total_input_tokens: analysis.total_input_tokens,
         total_output_tokens: analysis.total_output_tokens,
@@ -274,12 +298,9 @@ fn validate_request(
     }
     let retrieval_policy = match (request.arm.as_str(), configuration.retrieval.as_str()) {
         ("filesystem", "native") => RetrievalPolicy::NativeOnly,
-        ("lean_token_baseline", "baseline") | ("lean_token_adaptive", "adaptive") => {
-            RetrievalPolicy::LeanTokenOnly
-        }
-        ("lean_token_adaptive_recovery", "adaptive_discovery_native_recovery") => {
-            RetrievalPolicy::LeanTokenThenNativeRecovery
-        }
+        ("lean_token_progressive", "progressive") => RetrievalPolicy::LeanTokenProgressive,
+        ("lean_token_one_shot", "one_shot_context") => RetrievalPolicy::LeanTokenOneShot,
+        ("prewalk", "frontier_prewalk_executor") => RetrievalPolicy::Prewalk,
         _ => return Err("arm and retrieval configuration do not match".into()),
     };
     if configuration.mcp_enabled != (retrieval_policy != RetrievalPolicy::NativeOnly) {
@@ -298,21 +319,43 @@ fn validate_request(
                 && !has("leantoken")
                 && native_catalog.iter().all(|tool| has(tool))
         }
-        RetrievalPolicy::LeanTokenOnly => {
+        RetrievalPolicy::LeanTokenProgressive
+        | RetrievalPolicy::LeanTokenOneShot
+        | RetrievalPolicy::Prewalk => {
             has("shell")
                 && has("edit")
                 && has("leantoken")
                 && native_catalog.iter().all(|tool| !has(tool))
         }
-        RetrievalPolicy::LeanTokenThenNativeRecovery => {
-            has("shell")
-                && has("edit")
-                && has("leantoken")
-                && native_catalog.iter().all(|tool| has(tool))
-        }
     };
     if !catalog_matches {
         return Err("arm tool catalog does not match the Codex adapter".into());
+    }
+    if retrieval_policy == RetrievalPolicy::Prewalk {
+        let prewalk_limit = configuration
+            .prewalk_tool_call_limit
+            .ok_or("prewalk arm is missing its phase tool limit")?;
+        let executor_limit = configuration
+            .executor_tool_call_limit
+            .ok_or("prewalk arm is missing its executor tool limit")?;
+        let executor_model = request
+            .executor_model
+            .as_deref()
+            .filter(|model| !model.trim().is_empty())
+            .ok_or("prewalk arm is missing executor_model")?;
+        if prewalk_limit == 0
+            || executor_limit == 0
+            || prewalk_limit.saturating_add(executor_limit)
+                > request.arm_definition.budget.tool_call_limit
+            || executor_model == request.primary_model
+        {
+            return Err("prewalk phase limits or model separation are invalid".into());
+        }
+    } else if request.executor_model.is_some()
+        || configuration.prewalk_tool_call_limit.is_some()
+        || configuration.executor_tool_call_limit.is_some()
+    {
+        return Err("non-prewalk arm contains prewalk-only configuration".into());
     }
     let repository = request.repository.canonicalize()?;
     let head = command_stdout(
@@ -332,12 +375,13 @@ fn build_prompt(request: &AdapterRequest, retrieval_policy: RetrievalPolicy) -> 
         RetrievalPolicy::NativeOnly => {
             "LeanToken is unavailable in this arm. Use only native repository tools."
         }
-        RetrievalPolicy::LeanTokenOnly => {
-            "LeanToken is available as the `leantoken` MCP server and is the only permitted repository discovery and source-reading tool. Call LeanToken before any substantive shell command or edit. Native shell commands remain available only for Git preflight and post-retrieval build, test, lint, and patch verification."
+        RetrievalPolicy::LeanTokenProgressive => {
+            "LeanToken is the only permitted repository discovery and source-reading tool. Do not call leantoken_context. Progress from the narrow files, outline, search, and read tools as evidence warrants. Call LeanToken before any substantive shell command or edit. Native shell commands remain available only for Git preflight and post-retrieval build, test, lint, and patch verification."
         }
-        RetrievalPolicy::LeanTokenThenNativeRecovery => {
-            "LeanToken is available as the `leantoken` MCP server. Call LeanToken before any substantive shell command or edit. Native repository discovery and source reads are permitted only after that initial LeanToken call."
+        RetrievalPolicy::LeanTokenOneShot => {
+            "LeanToken is the only permitted repository discovery and source-reading tool. Make exactly one leantoken_context call before any substantive shell command or edit, then implement from that fixed bundle without further repository retrieval. Native shell commands remain available only for build, test, lint, and patch verification."
         }
+        RetrievalPolicy::Prewalk => unreachable!("prewalk uses phase-specific prompts"),
     };
     format!(
         "Solve the repository task below by inspecting and editing the current worktree. Run relevant tests before finishing. Do not use web search or network access, do not inspect benchmark gold patches, and do not merely describe a solution.\n\nFrozen retrieval contract: {}\n{}\nPer-call retrieval source budget: {} tokens. Total tool-call limit: {}.\n\nTask:\n{}",
@@ -349,10 +393,259 @@ fn build_prompt(request: &AdapterRequest, retrieval_policy: RetrievalPolicy) -> 
     )
 }
 
+fn execute_prewalk(
+    request: &AdapterRequest,
+    configuration: &CodexConfiguration,
+    binding: &RunBinding,
+) -> Result<Analysis, Box<dyn Error>> {
+    let started = Instant::now();
+    let total_timeout = Duration::from_secs(request.timeout_seconds.saturating_sub(5));
+    let prewalk_timeout = total_timeout / 2;
+    let prewalk_prompt = format!(
+        "Explore and begin the repository task below as the frontier prewalk. Use LeanToken as the only repository discovery and source-reading mechanism; native shell commands are allowed only for Git preflight and validation. Maintain a bounded todo list, gather grounded path/range evidence, make the first evidence-grounded edit, run a focused validation for that edit, then stop. Return a compact handoff summary, but do not finish the entire task when a validated first edit is available.\n\nFrozen retrieval contract: {}\nPer-call retrieval source budget: {} tokens. Prewalk tool-call limit: {}.\n\nTask:\n{}",
+        request.arm_definition.retrieval_contract,
+        request.arm_definition.budget.context_token_limit,
+        configuration
+            .prewalk_tool_call_limit
+            .expect("validated prewalk limit"),
+        request.prompt
+    );
+    let prewalk_output = run_codex(
+        request,
+        configuration,
+        &prewalk_prompt,
+        &request.primary_model,
+        true,
+        prewalk_timeout,
+    )?;
+    let mut prewalk = analyze_events(&prewalk_output, configuration.tokenizer)?;
+    if prewalk.calls.len()
+        > configuration
+            .prewalk_tool_call_limit
+            .expect("validated prewalk limit")
+    {
+        return Err("frontier prewalk exceeded its frozen phase tool limit".into());
+    }
+    let first_validated_edit = first_validated_edit(&prewalk)
+        .ok_or("frontier prewalk did not transfer a first validated edit")?;
+    let todo_events = prewalk
+        .events
+        .iter()
+        .filter(|event| event.pointer("/item/type").and_then(Value::as_str) == Some("todo_list"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut evidence_calls = prewalk
+        .calls
+        .iter()
+        .filter(|call| {
+            call.tool_name == "leantoken"
+                && call.outcome == ToolOutcome::Success
+                && (call.result_source_tokens > 0 || !call.ranges.is_empty())
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    for call in &mut evidence_calls {
+        call.call_id = format!("prewalk:{}", call.call_id);
+        call.result_id = format!("prewalk:{}", call.result_id);
+    }
+    let patch = git_stdout(
+        &request.repository,
+        &["diff", "--binary", "--full-index", "HEAD", "--"],
+    )?;
+    let executor_model = request
+        .executor_model
+        .clone()
+        .expect("validated executor model");
+    let handoff = PrewalkHandoff {
+        schema_version: ARTIFACT_SCHEMA_V1,
+        binding: binding.clone(),
+        primary_model: request.primary_model.clone(),
+        executor_model: executor_model.clone(),
+        trajectory_events: prewalk.events.clone(),
+        todo_events,
+        evidence_calls,
+        worktree_patch: patch,
+        first_validated_edit,
+    };
+    write_json(
+        request.artifacts_directory.join(PREWALK_HANDOFF_FILE),
+        &handoff,
+    )?;
+    let serialized_handoff = serde_json::to_string(&handoff)?;
+    let executor_prompt = format!(
+        "Continue the same repository task as the cheaper executor. The frontier prewalk already changed this worktree. The complete machine-readable handoff below contains its raw trajectory events, bounded todo state, grounded evidence calls with range identities, exact worktree patch, and first validated edit. Use that state directly; do not repeat repository discovery or source reads, and do not use web search. Finish the implementation, run relevant validation, and leave the worktree ready for the independent validator. Executor tool-call limit: {}.\n\nPREWALK_HANDOFF_JSON\n{}\nEND_PREWALK_HANDOFF_JSON\n\nTask:\n{}",
+        configuration
+            .executor_tool_call_limit
+            .expect("validated executor limit"),
+        serialized_handoff,
+        request.prompt
+    );
+    let elapsed = started.elapsed();
+    let remaining = total_timeout
+        .checked_sub(elapsed)
+        .filter(|duration| *duration > Duration::from_secs(10))
+        .ok_or("frontier prewalk left no executor time budget")?;
+    let executor_output = run_codex(
+        request,
+        configuration,
+        &executor_prompt,
+        &executor_model,
+        false,
+        remaining,
+    )?;
+    let executor = analyze_events(&executor_output, configuration.tokenizer)?;
+    if executor.calls.len()
+        > configuration
+            .executor_tool_call_limit
+            .expect("validated executor limit")
+    {
+        return Err("cheaper executor exceeded its frozen phase tool limit".into());
+    }
+    merge_phase_analyses(&mut prewalk, executor)?;
+    Ok(prewalk)
+}
+
+fn first_validated_edit(analysis: &Analysis) -> Option<ValidatedEdit> {
+    let edit_sequence = analysis
+        .calls
+        .iter()
+        .find(|call| call.tool_name == "edit" && call.outcome == ToolOutcome::Success)?
+        .sequence;
+    let validation_sequence = analysis
+        .verification_sequences
+        .iter()
+        .copied()
+        .find(|sequence| *sequence > edit_sequence)?;
+    Some(ValidatedEdit {
+        edit_sequence,
+        validation_sequence,
+    })
+}
+
+fn merge_phase_analyses(
+    prewalk: &mut Analysis,
+    mut executor: Analysis,
+) -> Result<(), Box<dyn Error>> {
+    let boundary = prewalk.calls.len();
+    for call in &mut prewalk.calls {
+        call.call_id = format!("prewalk:{}", call.call_id);
+        call.result_id = format!("prewalk:{}", call.result_id);
+    }
+    for call in &mut executor.calls {
+        call.sequence += boundary;
+        call.call_id = format!("executor:{}", call.call_id);
+        call.result_id = format!("executor:{}", call.result_id);
+    }
+    prewalk.native_retrieval_sequences.extend(
+        executor
+            .native_retrieval_sequences
+            .iter()
+            .map(|value| value + boundary),
+    );
+    prewalk.pre_leantoken_substantive_sequences.extend(
+        executor
+            .pre_leantoken_substantive_sequences
+            .iter()
+            .map(|value| value + boundary),
+    );
+    prewalk.verification_sequences.extend(
+        executor
+            .verification_sequences
+            .iter()
+            .map(|value| value + boundary),
+    );
+    prewalk.leantoken_tools.extend(executor.leantoken_tools);
+    prewalk.calls.extend(executor.calls);
+    prewalk.events.push(serde_json::json!({
+        "type": "leantoken.phase_boundary",
+        "phase": "executor",
+        "tool_sequence": boundary
+    }));
+    prewalk.events.extend(executor.events);
+    prewalk.total_input_tokens = sum_optional_u64(
+        prewalk.total_input_tokens,
+        executor.total_input_tokens,
+        "provider input token total",
+    )?;
+    prewalk.total_output_tokens = sum_optional_u64(
+        prewalk.total_output_tokens,
+        executor.total_output_tokens,
+        "provider output token total",
+    )?;
+    prewalk.usage = match (prewalk.usage.take(), executor.usage) {
+        (Some(left), Some(right)) => Some(sum_provider_usage(left, right)?),
+        _ => None,
+    };
+    prewalk.usage_event = Some(serde_json::json!({
+        "prewalk": prewalk.usage_event.take(),
+        "executor": executor.usage_event
+    }));
+    prewalk.thread_id_hash = Some(
+        blake3::hash(
+            format!(
+                "{}:{}",
+                prewalk.thread_id_hash.as_deref().unwrap_or_default(),
+                executor.thread_id_hash.as_deref().unwrap_or_default()
+            )
+            .as_bytes(),
+        )
+        .to_hex()
+        .to_string(),
+    );
+    prewalk.phase_boundary = Some(boundary);
+    Ok(())
+}
+
+fn sum_provider_usage(
+    left: ProviderUsage,
+    right: ProviderUsage,
+) -> Result<ProviderUsage, Box<dyn Error>> {
+    Ok(ProviderUsage {
+        uncached_input_tokens: sum_optional_u64(
+            left.uncached_input_tokens,
+            right.uncached_input_tokens,
+            "uncached input tokens",
+        )?,
+        cache_creation_input_tokens: sum_optional_u64(
+            left.cache_creation_input_tokens,
+            right.cache_creation_input_tokens,
+            "cache creation input tokens",
+        )?,
+        cache_read_input_tokens: sum_optional_u64(
+            left.cache_read_input_tokens,
+            right.cache_read_input_tokens,
+            "cache read input tokens",
+        )?,
+        output_tokens: sum_optional_u64(left.output_tokens, right.output_tokens, "output tokens")?,
+        reasoning_tokens: sum_optional_u64(
+            left.reasoning_tokens,
+            right.reasoning_tokens,
+            "reasoning tokens",
+        )?,
+    })
+}
+
+fn sum_optional_u64(
+    left: Option<u64>,
+    right: Option<u64>,
+    label: &str,
+) -> Result<Option<u64>, Box<dyn Error>> {
+    match (left, right) {
+        (Some(left), Some(right)) => left
+            .checked_add(right)
+            .map(Some)
+            .ok_or_else(|| format!("{label} overflow").into()),
+        _ => Ok(None),
+    }
+}
+
 fn run_codex(
     request: &AdapterRequest,
     configuration: &CodexConfiguration,
     prompt: &str,
+    model: &str,
+    mcp_enabled: bool,
+    timeout: Duration,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
     let repository = request.repository.canonicalize()?;
     let mut command = Command::new(&configuration.codex_executable);
@@ -370,7 +663,7 @@ fn run_codex(
             "workspace-write",
             "--model",
         ])
-        .arg(&request.primary_model)
+        .arg(model)
         .arg("--cd")
         .arg(&repository)
         .args(["--config", "approval_policy=\"never\""])
@@ -386,7 +679,7 @@ fn run_codex(
             "service_tier={}",
             toml_string(&configuration.service_tier)
         ));
-    if configuration.mcp_enabled {
+    if mcp_enabled {
         command
             .arg("--config")
             .arg(format!(
@@ -440,7 +733,6 @@ fn run_codex(
             .read_to_end(&mut output)?;
         Ok(output)
     });
-    let timeout = Duration::from_secs(request.timeout_seconds.saturating_sub(5));
     let status = match child.wait_timeout(timeout)? {
         Some(status) => status,
         None => {
@@ -475,6 +767,9 @@ fn analyze_events(output: &[u8], tokenizer: Tokenizer) -> Result<Analysis, Box<d
         seen_ranges: HashSet::new(),
         native_retrieval_sequences: Vec::new(),
         pre_leantoken_substantive_sequences: Vec::new(),
+        leantoken_tools: Vec::new(),
+        verification_sequences: Vec::new(),
+        phase_boundary: None,
         tokenizer,
     };
     for (index, line) in text.lines().enumerate() {
@@ -569,6 +864,9 @@ impl Analysis {
         } else {
             ToolOutcome::Error
         };
+        if outcome == ToolOutcome::Success && is_validation_command(command) {
+            self.verification_sequences.push(sequence);
+        }
         self.push_call(
             item,
             "shell",
@@ -596,6 +894,7 @@ impl Analysis {
             return Err("Codex called an unexpected MCP server".into());
         }
         let tool = required_str(item, "/tool")?;
+        self.leantoken_tools.push(tool.to_owned());
         let status = required_str(item, "/status")?;
         let outcome = if status == "completed" {
             ToolOutcome::Success
@@ -743,8 +1042,10 @@ fn persist_artifacts(
             raw_receipt: serde_json::json!({
                 "host": "codex-cli",
                 "host_version": configuration.codex_version,
-                "model": request.primary_model,
+                "primary_model": request.primary_model,
+                "executor_model": request.executor_model,
                 "turn_completed_event": analysis.usage_event,
+                "phase_boundary": analysis.phase_boundary,
                 "cache_creation_input_tokens_exposed": false,
             }),
         },
@@ -775,6 +1076,10 @@ fn command_stdout(command: &mut Command) -> Result<String, Box<dyn Error>> {
         .into());
     }
     Ok(String::from_utf8(output.stdout)?)
+}
+
+fn git_stdout(repository: &Path, args: &[&str]) -> Result<String, Box<dyn Error>> {
+    command_stdout(Command::new("git").arg("-C").arg(repository).args(args))
 }
 
 fn toml_string(value: &str) -> String {
@@ -823,40 +1128,87 @@ fn validate_retrieval_execution(
                 && (call.result_source_tokens > 0 || !call.ranges.is_empty())
         })
         .count();
-    if policy == RetrievalPolicy::NativeOnly {
-        if leantoken_calls != 0 {
-            return Err("native-only arm called LeanToken".into());
+    match policy {
+        RetrievalPolicy::NativeOnly => {
+            if leantoken_calls != 0 {
+                return Err("native-only arm called LeanToken".into());
+            }
         }
-    } else {
-        if leantoken_calls == 0 {
-            return Err("LeanToken arm completed without a LeanToken call".into());
+        RetrievalPolicy::LeanTokenProgressive => {
+            validate_leantoken_first_and_no_native(analysis, None)?;
+            if leantoken_evidence_calls == 0 {
+                return Err("progressive arm received no successful LeanToken evidence".into());
+            }
+            if analysis
+                .leantoken_tools
+                .iter()
+                .any(|tool| tool == "leantoken_context")
+            {
+                return Err("progressive arm called leantoken_context".into());
+            }
         }
-        if let Some(sequence) = analysis.pre_leantoken_substantive_sequences.first() {
-            return Err(format!(
-                "LeanToken arm made substantive tool call {sequence} before its first LeanToken call"
-            )
-            .into());
+        RetrievalPolicy::LeanTokenOneShot => {
+            validate_leantoken_first_and_no_native(analysis, None)?;
+            if leantoken_calls != 1
+                || leantoken_evidence_calls != 1
+                || analysis.leantoken_tools.as_slice() != ["leantoken_context"]
+            {
+                return Err(
+                    "one-shot arm must make one successful evidence-bearing context call".into(),
+                );
+            }
         }
-    }
-    if policy == RetrievalPolicy::LeanTokenOnly
-        && let Some(sequence) = analysis.native_retrieval_sequences.first()
-    {
-        return Err(format!(
-            "LeanToken-only arm used native repository retrieval at tool call {sequence}"
-        )
-        .into());
-    }
-    if policy == RetrievalPolicy::LeanTokenOnly && leantoken_evidence_calls == 0 {
-        return Err("LeanToken-only arm received no successful LeanToken evidence".into());
+        RetrievalPolicy::Prewalk => {
+            let boundary = analysis
+                .phase_boundary
+                .ok_or("prewalk result has no executor phase boundary")?;
+            validate_leantoken_first_and_no_native(analysis, Some(boundary))?;
+            if boundary == 0 || boundary >= analysis.calls.len() || leantoken_evidence_calls == 0 {
+                return Err("prewalk did not transfer evidence to an active executor phase".into());
+            }
+            if first_validated_edit(analysis).is_none() {
+                return Err("prewalk result has no first validated edit".into());
+            }
+        }
     }
     Ok(RetrievalContractEvidence {
         policy,
         leantoken_calls,
         successful_leantoken_calls,
         leantoken_evidence_calls,
+        leantoken_tools: analysis.leantoken_tools.clone(),
+        phase_boundary: analysis.phase_boundary,
         native_retrieval_calls: analysis.native_retrieval_sequences.len(),
         pre_leantoken_substantive_calls: analysis.pre_leantoken_substantive_sequences.len(),
+        first_validated_edit: first_validated_edit(analysis),
     })
+}
+
+fn validate_leantoken_first_and_no_native(
+    analysis: &Analysis,
+    prewalk_boundary: Option<usize>,
+) -> Result<(), Box<dyn Error>> {
+    if analysis.leantoken_tools.is_empty() {
+        return Err("LeanToken arm completed without a LeanToken call".into());
+    }
+    if let Some(sequence) = analysis
+        .pre_leantoken_substantive_sequences
+        .iter()
+        .copied()
+        .find(|sequence| prewalk_boundary.is_none_or(|boundary| *sequence < boundary))
+    {
+        return Err(format!(
+            "LeanToken arm made substantive tool call {sequence} before its first LeanToken call"
+        )
+        .into());
+    }
+    if let Some(sequence) = analysis.native_retrieval_sequences.first() {
+        return Err(format!(
+            "LeanToken arm used native repository retrieval at tool call {sequence}"
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn is_search_command(command: &str) -> bool {
@@ -917,6 +1269,36 @@ fn is_preflight_command(command: &str) -> bool {
         }
         _ => false,
     }
+}
+
+fn is_validation_command(command: &str) -> bool {
+    let words = command_words(command);
+    if has_word_pair(&words, "git", "diff") && words.iter().any(|word| word == "--check") {
+        return true;
+    }
+    command_executables(&words).iter().any(|executable| {
+        matches!(
+            executable.as_str(),
+            "cargo"
+                | "go"
+                | "make"
+                | "cmake"
+                | "ctest"
+                | "npm"
+                | "npx"
+                | "yarn"
+                | "pnpm"
+                | "bun"
+                | "pytest"
+                | "tox"
+                | "mvn"
+                | "mvnw"
+                | "gradle"
+                | "gradlew"
+                | "bundle"
+                | "rspec"
+        )
+    })
 }
 
 fn command_words(command: &str) -> Vec<String> {
@@ -1005,16 +1387,48 @@ mod tests {
         })
     }
 
-    fn leantoken_event(id: &str) -> Value {
+    fn edit_event(id: &str) -> Value {
+        serde_json::json!({
+            "type":"item.completed",
+            "item": {"id":id, "type":"file_change", "status":"completed"}
+        })
+    }
+
+    fn usage_event(input: u64, cached: u64, output: u64) -> Value {
+        serde_json::json!({
+            "type":"turn.completed",
+            "usage": {
+                "input_tokens": input,
+                "cached_input_tokens": cached,
+                "output_tokens": output,
+                "reasoning_output_tokens": 2
+            }
+        })
+    }
+
+    fn leantoken_event(id: &str, tool: &str, evidence: bool) -> Value {
+        let result = if evidence {
+            serde_json::json!({"structured_content": {
+                "hits": [{
+                    "path": "src/lib.rs",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "excerpt": "fn answer() {}"
+                }],
+                "meta": {"repository_generation": 1, "emitted_tokens": 4}
+            }})
+        } else {
+            serde_json::json!({})
+        };
         serde_json::json!({
             "type":"item.completed",
             "item": {
                 "id":id,
                 "type":"mcp_tool_call",
                 "server":"leantoken",
-                "tool":"leantoken_context",
+                "tool":tool,
                 "status":"completed",
-                "result":{}
+                "result":result
             }
         })
     }
@@ -1103,14 +1517,14 @@ mod tests {
     }
 
     #[test]
-    fn leantoken_only_contract_rejects_native_source_reads() {
+    fn progressive_contract_rejects_native_source_reads() {
         let analysis = analyze(&[
             command_event("preflight", "/bin/bash -lc 'git status --short'"),
-            leantoken_event("context"),
+            leantoken_event("search", "leantoken_search", true),
             command_event("read", "/bin/bash -lc \"sed -n '1,80p' src/lib.rs\""),
         ]);
 
-        let error = validate_retrieval_execution(RetrievalPolicy::LeanTokenOnly, &analysis)
+        let error = validate_retrieval_execution(RetrievalPolicy::LeanTokenProgressive, &analysis)
             .unwrap_err()
             .to_string();
         assert!(error.contains("native repository retrieval"));
@@ -1119,33 +1533,36 @@ mod tests {
     }
 
     #[test]
-    fn recovery_contract_requires_leantoken_before_substantive_tools() {
+    fn one_shot_contract_requires_one_context_call_before_substantive_tools() {
         let invalid = analyze(&[
             command_event("search", "/bin/bash -lc 'rg --files'"),
-            leantoken_event("context"),
+            leantoken_event("context", "leantoken_context", true),
         ]);
-        let error =
-            validate_retrieval_execution(RetrievalPolicy::LeanTokenThenNativeRecovery, &invalid)
-                .unwrap_err()
-                .to_string();
+        let error = validate_retrieval_execution(RetrievalPolicy::LeanTokenOneShot, &invalid)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("before its first LeanToken call"));
 
         let valid = analyze(&[
-            leantoken_event("context"),
-            command_event("search", "/bin/bash -lc 'rg --files'"),
+            leantoken_event("context", "leantoken_context", true),
             command_event("test", "/bin/bash -lc 'cargo test'"),
         ]);
-        let evidence =
-            validate_retrieval_execution(RetrievalPolicy::LeanTokenThenNativeRecovery, &valid)
-                .unwrap();
+        let evidence = validate_retrieval_execution(RetrievalPolicy::LeanTokenOneShot, &valid)
+            .expect("valid one-shot trace");
         assert_eq!(evidence.leantoken_calls, 1);
-        assert_eq!(evidence.native_retrieval_calls, 1);
+        assert_eq!(evidence.native_retrieval_calls, 0);
     }
 
     #[test]
-    fn leantoken_only_contract_requires_successful_evidence() {
-        let analysis = analyze(&[leantoken_event("empty")]);
-        let error = validate_retrieval_execution(RetrievalPolicy::LeanTokenOnly, &analysis)
+    fn progressive_contract_rejects_context_and_requires_successful_evidence() {
+        let context = analyze(&[leantoken_event("context", "leantoken_context", true)]);
+        let error = validate_retrieval_execution(RetrievalPolicy::LeanTokenProgressive, &context)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("leantoken_context"));
+
+        let empty = analyze(&[leantoken_event("empty", "leantoken_search", false)]);
+        let error = validate_retrieval_execution(RetrievalPolicy::LeanTokenProgressive, &empty)
             .unwrap_err()
             .to_string();
         assert!(error.contains("no successful LeanToken evidence"));
@@ -1162,9 +1579,46 @@ mod tests {
         assert!(!is_native_retrieval_command(
             "/bin/bash -lc 'cargo test --test head'"
         ));
+        assert!(is_validation_command(
+            "/bin/bash -lc 'cargo test --test head'"
+        ));
         assert!(is_preflight_command("/bin/bash -lc 'git rev-parse HEAD'"));
         assert!(!is_preflight_command(
             "/bin/bash -lc 'git status --short && cargo test'"
         ));
+    }
+
+    #[test]
+    fn prewalk_merge_retains_phase_boundary_usage_and_validated_edit() {
+        let mut prewalk = analyze(&[
+            leantoken_event("search", "leantoken_search", true),
+            serde_json::json!({
+                "type":"item.completed",
+                "item": {"id":"todo", "type":"todo_list", "items":[]}
+            }),
+            edit_event("first-edit"),
+            command_event("focused-test", "/bin/bash -lc 'cargo test --test focused'"),
+            usage_event(100, 30, 10),
+        ]);
+        let executor = analyze(&[
+            edit_event("executor-edit"),
+            command_event("full-test", "/bin/bash -lc 'cargo test'"),
+            usage_event(120, 40, 12),
+        ]);
+
+        merge_phase_analyses(&mut prewalk, executor).expect("merge phases");
+        let evidence = validate_retrieval_execution(RetrievalPolicy::Prewalk, &prewalk)
+            .expect("valid prewalk trace");
+
+        assert_eq!(evidence.phase_boundary, Some(3));
+        assert_eq!(evidence.first_validated_edit.unwrap().edit_sequence, 1);
+        assert_eq!(prewalk.total_input_tokens, Some(220));
+        assert_eq!(prewalk.total_output_tokens, Some(22));
+        assert_eq!(
+            prewalk.usage.as_ref().unwrap().uncached_input_tokens,
+            Some(150)
+        );
+        assert!(prewalk.calls[0].call_id.starts_with("prewalk:"));
+        assert!(prewalk.calls[3].call_id.starts_with("executor:"));
     }
 }

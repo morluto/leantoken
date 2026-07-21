@@ -4,6 +4,7 @@ pub const ARTIFACT_SCHEMA_V1: u32 = 1;
 pub const TOOL_TRACE_FILE: &str = "tool-trace.json";
 pub const TRAJECTORY_FILE: &str = "trajectory.json";
 pub const PROVIDER_USAGE_FILE: &str = "provider-usage.json";
+pub const PREWALK_HANDOFF_FILE: &str = "prewalk-handoff.json";
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct RunBinding {
@@ -82,4 +83,23 @@ pub struct ProviderUsageReceipt {
     pub binding: RunBinding,
     pub usage: ProviderUsage,
     pub raw_receipt: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PrewalkHandoff {
+    pub schema_version: u32,
+    pub binding: RunBinding,
+    pub primary_model: String,
+    pub executor_model: String,
+    pub trajectory_events: Vec<serde_json::Value>,
+    pub todo_events: Vec<serde_json::Value>,
+    pub evidence_calls: Vec<ToolCall>,
+    pub worktree_patch: String,
+    pub first_validated_edit: ValidatedEdit,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ValidatedEdit {
+    pub edit_sequence: usize,
+    pub validation_sequence: usize,
 }
