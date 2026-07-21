@@ -10,12 +10,12 @@ use super::Services;
 use super::read::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
 use super::search::{chunk_search_hit, fts_quote, matching_line};
 use super::validation::{
-    MAX_INPUT_ITEMS, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, check_cancelled, path_allowed,
-    validate_input, validate_patterns,
+    MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, check_cancelled,
+    path_allowed, validate_input, validate_patterns,
 };
 use crate::model::*;
 use crate::ranking::{self, Candidate};
-use crate::repository::git_changed_paths;
+use crate::repository::{git_changed_paths, git_diff_paths, validate_relative};
 use crate::storage::{ReadSession, SymbolRecord};
 use crate::text::{expand_terms, identifier_words};
 use crate::{Error, Result};
@@ -23,6 +23,10 @@ use facets::{ContextQuery, FacetKind};
 use regex;
 
 const GIT_CHANGED_PATHS_MAX: usize = 512;
+/// Maximum explicit changed paths accepted from a diff-scoped request.
+const MAX_DIFF_CHANGED_PATHS: usize = 512;
+/// Maximum bytes for a base revision string.
+const MAX_BASE_REVISION_BYTES: usize = 256;
 /// Maximum context query terms (symbols/refs/FTS fan-out budget).
 const MAX_CONTEXT_QUERIES: usize = 12;
 /// Per-term symbol/reference candidate cap for context assembly.
@@ -496,6 +500,48 @@ impl Services {
         Ok(())
     }
 
+    /// Resolve a diff scope from the request into a receipt, if one is supplied.
+    ///
+    /// When `base_revision` is set, changed paths are resolved from the
+    /// repository. When `changed_paths` is set explicitly, they are used
+    /// directly. When both are supplied, the explicit paths are merged with
+    /// the resolved diff. When neither is supplied, `None` is returned and
+    /// task-only behavior is preserved.
+    fn resolve_diff_scope(&self, request: &ContextRequest) -> Result<Option<DiffScopeReceipt>> {
+        let has_base = request
+            .base_revision
+            .as_deref()
+            .is_some_and(|rev| !rev.trim().is_empty());
+        let has_paths = !request.changed_paths.is_empty();
+        if !has_base && !has_paths {
+            return Ok(None);
+        }
+        if let Some(ref revision) = request.base_revision
+            && !revision.trim().is_empty()
+        {
+            validate_input(revision, "base revision", MAX_BASE_REVISION_BYTES)?;
+            let git_result = git_diff_paths(&self.config.root, revision, MAX_DIFF_CHANGED_PATHS)?;
+            let mut changed_paths = git_result.changed_paths;
+            for path in &request.changed_paths {
+                if !changed_paths.contains(path) {
+                    changed_paths.push(path.clone());
+                }
+            }
+            return Ok(Some(DiffScopeReceipt {
+                base_revision: Some(git_result.base_revision),
+                head_revision: Some(git_result.head_revision),
+                changed_paths,
+                indexed_changed_paths: 0,
+            }));
+        }
+        Ok(Some(DiffScopeReceipt {
+            base_revision: None,
+            head_revision: None,
+            changed_paths: request.changed_paths.clone(),
+            indexed_changed_paths: 0,
+        }))
+    }
+
     /// Select ranked task evidence within an exact source-token budget.
     pub async fn context(&self, request: ContextRequest) -> Result<ContextResponse> {
         self.context_cancellable(request, CancellationToken::new())
@@ -572,6 +618,7 @@ impl Services {
         .await?
     }
 
+    #[allow(clippy::cognitive_complexity)]
     fn context_sync(
         &self,
         request: ContextRequest,
@@ -610,11 +657,24 @@ impl Services {
         for hash in &request.known_hashes {
             validate_input(hash, "known hash", 128)?;
         }
-        let changed_paths = git_changed_paths(&self.config.root, GIT_CHANGED_PATHS_MAX)
+        validate_patterns(&request.changed_paths)?;
+        if request.changed_paths.len() > MAX_DIFF_CHANGED_PATHS {
+            return Err(Error::LimitExceeded);
+        }
+        for path in &request.changed_paths {
+            validate_input(path, "changed path", MAX_PATH_BYTES)?;
+            validate_relative(path)?;
+        }
+        let diff_scope = self.resolve_diff_scope(&request)?;
+
+        let mut changed_paths = git_changed_paths(&self.config.root, GIT_CHANGED_PATHS_MAX)
             .unwrap_or_else(|error| {
                 tracing::debug!(%error, "working-tree signal unavailable");
                 HashSet::new()
             });
+        if let Some(ref scope) = diff_scope {
+            changed_paths.extend(scope.changed_paths.iter().cloned());
+        }
         self.consistent(|session, generation| {
             let facet_plan = facets::plan(&request.task, MAX_CONTEXT_QUERIES);
             let queries = facet_plan.queries;
@@ -961,6 +1021,16 @@ impl Services {
                 self.config.tokenizer,
             );
             response.meta.freshness = self.freshness();
+            if let Some(mut scope) = diff_scope.clone() {
+                let mut indexed = 0usize;
+                for path in &scope.changed_paths {
+                    if session.find_file(path)?.is_some() {
+                        indexed += 1;
+                    }
+                }
+                scope.indexed_changed_paths = indexed;
+                response.diff_scope = Some(scope);
+            }
             if response.fragments.is_empty() {
                 response
                     .warnings
