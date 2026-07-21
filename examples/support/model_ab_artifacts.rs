@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 pub const ARTIFACT_SCHEMA_V1: u32 = 1;
 pub const TOOL_TRACE_FILE: &str = "tool-trace.json";
@@ -102,4 +103,47 @@ pub struct PrewalkHandoff {
 pub struct ValidatedEdit {
     pub edit_sequence: usize,
     pub validation_sequence: usize,
+}
+
+pub fn is_bounded_prewalk_todo_event(event: &Value) -> bool {
+    if event["type"].as_str() != Some("item.completed")
+        || event.pointer("/item/type").and_then(Value::as_str) != Some("agent_message")
+    {
+        return false;
+    }
+    let Some(text) = event.pointer("/item/text").and_then(Value::as_str) else {
+        return false;
+    };
+    let Ok(response) = serde_json::from_str::<Value>(text) else {
+        return false;
+    };
+    let Some(response) = response.as_object() else {
+        return false;
+    };
+    if response.len() != 2
+        || response
+            .get("summary")
+            .and_then(Value::as_str)
+            .is_none_or(|summary| summary.trim().is_empty())
+    {
+        return false;
+    }
+    let Some(todo) = response.get("todo").and_then(Value::as_array) else {
+        return false;
+    };
+    !todo.is_empty()
+        && todo.len() <= 8
+        && todo.iter().all(|item| {
+            item.as_object().is_some_and(|item| {
+                item.len() == 2
+                    && item
+                        .get("step")
+                        .and_then(Value::as_str)
+                        .is_some_and(|step| !step.trim().is_empty())
+                    && matches!(
+                        item.get("status").and_then(Value::as_str),
+                        Some("pending" | "in_progress" | "completed")
+                    )
+            })
+        })
 }

@@ -236,7 +236,11 @@ not expose; do not infer or replace them with zero.
 The prewalk arm must additionally write `prewalk-handoff.json`. The harness
 binds its evidence calls and first validated edit back to the exact tool trace,
 requires nonempty trajectory and todo state, and rejects a handoff from any
-ordinary arm.
+ordinary arm. The Codex adapter constrains the frontier model's final response
+with `--output-schema` to a summary plus one to eight structured todo entries.
+It copies the resulting raw `item.completed` agent-message event into the
+handoff; the harness rejects rewritten or synthesized todo state unless that
+exact bounded event is also present in the transferred trajectory.
 
 The harness rejects missing files, binding mismatches, unavailable tools,
 invalid ranges, duplicate IDs, and summary counts that cannot be recomputed

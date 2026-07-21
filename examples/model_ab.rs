@@ -13,7 +13,7 @@ use clap::Parser;
 use model_ab_artifacts::{
     ARTIFACT_SCHEMA_V1, PREWALK_HANDOFF_FILE, PROVIDER_USAGE_FILE, PrewalkHandoff, ProviderUsage,
     ProviderUsageReceipt, RunBinding, TOOL_TRACE_FILE, TRAJECTORY_FILE, ToolOutcome, ToolTrace,
-    Trajectory,
+    Trajectory, is_bounded_prewalk_todo_event,
 };
 use serde::{Deserialize, Serialize};
 use statrs::statistics::Statistics;
@@ -1034,6 +1034,14 @@ fn validate_run_artifacts(
                 "prewalk handoff is missing trajectory, todo, evidence, or a validated edit".into(),
             );
         }
+        if handoff.todo_events.iter().any(|todo| {
+            !is_bounded_prewalk_todo_event(todo)
+                || !handoff.trajectory_events.iter().any(|event| event == todo)
+        }) {
+            return Err(
+                "prewalk handoff todo is not a bounded event from its exact trajectory".into(),
+            );
+        }
         artifacts.prewalk_handoff = Some(artifact_identity(&directory.join(PREWALK_HANDOFF_FILE))?);
         Some(handoff)
     } else if artifacts.prewalk_handoff.is_some() {
@@ -1905,7 +1913,17 @@ mod tests {
                 calls: calls.clone(),
             },
         );
-        let todo = serde_json::json!({"item":{"type":"todo_list","items":[]}});
+        let todo = serde_json::json!({
+            "type": "item.completed",
+            "item": {
+                "id": "prewalk-todo",
+                "type": "agent_message",
+                "text": serde_json::json!({
+                    "summary": "validated first edit",
+                    "todo": [{"step": "finish task", "status": "pending"}]
+                }).to_string()
+            }
+        });
         write_json_fixture(
             directory.path().join(TRAJECTORY_FILE),
             &Trajectory {
@@ -1950,6 +1968,16 @@ mod tests {
             .expect("valid prewalk artifact chain");
 
         assert!(artifacts.prewalk_handoff.is_some());
+
+        let mut handoff: PrewalkHandoff =
+            read_artifact_json(directory.path(), PREWALK_HANDOFF_FILE).unwrap();
+        handoff.todo_events[0]["item"]["id"] = serde_json::json!("not-in-trajectory");
+        write_json_fixture(directory.path().join(PREWALK_HANDOFF_FILE), &handoff);
+        let mut artifacts = artifact_identities(directory.path());
+        let error =
+            validate_run_artifacts(directory.path(), &binding, &arm, &result, &mut artifacts)
+                .expect_err("todo must be copied from the exact trajectory");
+        assert!(error.to_string().contains("bounded event"));
     }
 
     #[test]

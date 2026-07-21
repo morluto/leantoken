@@ -169,9 +169,14 @@ fn dry_run_trace(
         },
     ];
     let todo = serde_json::json!({
+        "type": "item.completed",
         "item": {
-            "type": "todo_list",
-            "items": [{"text": "synthetic dry-run plumbing", "completed": false}]
+            "id": "prewalk:dry-todo",
+            "type": "agent_message",
+            "text": serde_json::json!({
+                "summary": "synthetic dry-run plumbing",
+                "todo": [{"step": "finish synthetic task", "status": "pending"}]
+            }).to_string()
         }
     });
     write_json(
