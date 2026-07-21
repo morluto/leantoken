@@ -2385,6 +2385,11 @@ mod tests {
     fn valid_manifest() -> Manifest {
         let revision = "0".repeat(40);
         let binary_blake3 = "0".repeat(64);
+        let success_command = if cfg!(windows) {
+            r"C:\test-command.exe"
+        } else {
+            "/test-command"
+        };
         let mut arms = BTreeMap::new();
         for arm in Arm::REQUIRED {
             arms.insert(
@@ -2412,7 +2417,7 @@ mod tests {
                 repository: PathBuf::from("task-repository"),
                 revision,
                 prompt: "fix the task".to_owned(),
-                success_command: vec!["/test-command".to_owned()],
+                success_command: vec![success_command.to_owned()],
                 success_command_executable_blake3: Some(binary_blake3),
             }],
         }
