@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_CONTEXT_RANGE_LINES","MIN_CONTEXT_RANGE_LINES"],"fn":["assemble_stored_excerpt","storage_symbol"],"struct":["AdaptiveExcerptRequest","StoredExcerpt","StoredExcerptRequest"]};
+window.SIDEBAR_ITEMS = {"constant":["MAX_CONTEXT_RANGE_LINES","MIN_CONTEXT_RANGE_LINES"],"fn":["assemble_stored_excerpt","read_bounded_range","read_range","storage_symbol","stream_hash"],"struct":["AdaptiveExcerptRequest","StoredExcerpt","StoredExcerptRequest"]};

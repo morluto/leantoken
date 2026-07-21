@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_REGEX_CANDIDATES","MAX_REGEX_CHUNKS_PER_FILE","MAX_REGEX_FILES_SCANNED"],"fn":["apply_focus","chunk_search_hit","compile_regex","fts_quote","matching_line","matching_line_for_search"]};
+window.SIDEBAR_ITEMS = {"constant":["MAX_REGEX_CANDIDATES","MAX_REGEX_CHUNKS_PER_FILE","MAX_REGEX_FILES_SCANNED"],"fn":["apply_focus","chunk_search_hit","compile_literal_regex","compile_regex","fts_quote","matching_line","matching_line_for_search"]};
