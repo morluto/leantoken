@@ -137,6 +137,7 @@ struct Methodology {
     signal_precision: &'static str,
     dead_end_source: &'static str,
     complete_response_tokens: &'static str,
+    index_size: &'static str,
     timing: &'static str,
 }
 
@@ -149,7 +150,7 @@ struct GraphIndexAggregate {
     resolved_existing_import_edges: usize,
     unresolved_import_edges: usize,
     false_resolved_import_edges: usize,
-    import_edge_precision: Option<f64>,
+    import_edge_resolution_precision: Option<f64>,
     unresolved_import_rate: Option<f64>,
     parsed_reference_edges: usize,
     corpora: Vec<CorpusIndexReport>,
@@ -175,7 +176,7 @@ struct ImportStats {
     resolved_existing: usize,
     unresolved: usize,
     false_resolved: usize,
-    precision: Option<f64>,
+    resolution_precision: Option<f64>,
     unresolved_rate: Option<f64>,
 }
 
@@ -192,8 +193,11 @@ struct RetrievalTotals {
     complete_response_tokens: usize,
     signal_candidate_files: usize,
     relevant_signal_candidate_files: usize,
+    false_positive_signal_candidate_files: usize,
     signal_selected_files: usize,
     relevant_signal_selected_files: usize,
+    applicable_signal_tasks: usize,
+    applicable_signal_tasks_without_relevant_candidate: usize,
     additive_violations: usize,
 }
 
@@ -203,15 +207,18 @@ struct ArmAggregate {
     repetitions: usize,
     per_repetition: Vec<RetrievalTotals>,
     deterministic_metrics_repeat: bool,
+    deterministic_task_results_repeat: bool,
     relevant_file_recall: f64,
     line_anchor_recall: f64,
     signal_candidate_precision: Option<f64>,
+    signal_candidate_false_positive_rate: Option<f64>,
     signal_selected_precision: Option<f64>,
+    applicable_signal_unresolved_rate: Option<f64>,
     mean_dead_end_source_tokens: f64,
     mean_complete_response_tokens: f64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct RunReport {
     corpus: String,
     task_id: String,
@@ -232,8 +239,10 @@ struct RunReport {
     complete_response_tokens: usize,
     signal_candidate_files: Vec<String>,
     relevant_signal_candidate_files: usize,
+    false_positive_signal_candidate_files: usize,
     signal_selected_files: Vec<String>,
     relevant_signal_selected_files: usize,
+    applicable_signal_unresolved: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -378,7 +387,7 @@ async fn main() -> Result<(), DynError> {
         }
         let imports = import_stats(&database)?;
         let parsed_reference_edges = scalar_usize(&database, "SELECT COUNT(*) FROM symbol_refs")?;
-        let database_bytes = database_footprint(&database)?;
+        let database_bytes = logical_database_bytes(&database)?;
         accumulate_graph_index(
             &mut graph_index,
             database_bytes,
@@ -453,6 +462,7 @@ async fn main() -> Result<(), DynError> {
             signal_precision: "Unique signal-bearing candidate or selected paths are relevant only when they match the frozen relevant-file labels.",
             dead_end_source: "Selected source tokens in files outside the frozen relevant-file labels.",
             complete_response_tokens: "Exact tokenizer count of the complete serialized ContextResponse; no evaluation diagnostics are included in that payload.",
+            index_size: "Logical SQLite page_count times page_size after indexing and no-op reconciliation; WAL and SHM sidecars are excluded.",
             timing: "Cold index and three no-op reconciliations run in release mode on one host. Arms share the same graph-enabled index, so timing is a cost envelope, not a causal graph-disabled comparison.",
         },
         thresholds: manifest.thresholds,
@@ -619,6 +629,9 @@ fn run_report(
         .iter()
         .filter(|path| relevant.contains(path.as_str()))
         .count();
+    let false_positive_signal_candidate_files = signal_candidate_files
+        .len()
+        .saturating_sub(relevant_signal_candidate_files);
     let line_anchors = task
         .relevant_files
         .iter()
@@ -649,6 +662,7 @@ fn run_report(
         .applicable_signals
         .iter()
         .any(|name| name == arm.name());
+    let applicable_signal_unresolved = signal_applicable && relevant_signal_candidate_files == 0;
     Ok(RunReport {
         corpus: corpus.to_owned(),
         task_id: task.id.clone(),
@@ -669,8 +683,10 @@ fn run_report(
         complete_response_tokens,
         signal_candidate_files: signal_candidate_files.into_iter().collect(),
         relevant_signal_candidate_files,
+        false_positive_signal_candidate_files,
         signal_selected_files: signal_selected_files.into_iter().collect(),
         relevant_signal_selected_files,
+        applicable_signal_unresolved,
     })
 }
 
@@ -736,14 +752,22 @@ fn aggregate_arms(runs: &[RunReport], repetitions: usize) -> Vec<ArmAggregate> {
                     totals.complete_response_tokens += run.complete_response_tokens;
                     totals.signal_candidate_files += run.signal_candidate_files.len();
                     totals.relevant_signal_candidate_files += run.relevant_signal_candidate_files;
+                    totals.false_positive_signal_candidate_files +=
+                        run.false_positive_signal_candidate_files;
                     totals.signal_selected_files += run.signal_selected_files.len();
                     totals.relevant_signal_selected_files += run.relevant_signal_selected_files;
+                    totals.applicable_signal_tasks += usize::from(run.signal_applicable);
+                    totals.applicable_signal_tasks_without_relevant_candidate +=
+                        usize::from(run.applicable_signal_unresolved);
                     totals.additive_violations += run.missing_baseline_candidates;
                 }
                 per_repetition.push(totals);
             }
             let first = per_repetition.first().cloned().unwrap_or_default();
             let deterministic_metrics_repeat = per_repetition.iter().all(|totals| totals == &first);
+            let reference_runs = normalized_task_runs(runs, arm, 1);
+            let deterministic_task_results_repeat = (2..=repetitions)
+                .all(|repetition| normalized_task_runs(runs, arm, repetition) == reference_runs);
             ArmAggregate {
                 arm: arm.name().to_owned(),
                 repetitions,
@@ -753,9 +777,17 @@ fn aggregate_arms(runs: &[RunReport], repetitions: usize) -> Vec<ArmAggregate> {
                     first.relevant_signal_candidate_files,
                     first.signal_candidate_files,
                 ),
+                signal_candidate_false_positive_rate: optional_ratio(
+                    first.false_positive_signal_candidate_files,
+                    first.signal_candidate_files,
+                ),
                 signal_selected_precision: optional_ratio(
                     first.relevant_signal_selected_files,
                     first.signal_selected_files,
+                ),
+                applicable_signal_unresolved_rate: optional_ratio(
+                    first.applicable_signal_tasks_without_relevant_candidate,
+                    first.applicable_signal_tasks,
                 ),
                 mean_dead_end_source_tokens: mean(
                     &per_repetition
@@ -771,7 +803,19 @@ fn aggregate_arms(runs: &[RunReport], repetitions: usize) -> Vec<ArmAggregate> {
                 ),
                 per_repetition,
                 deterministic_metrics_repeat,
+                deterministic_task_results_repeat,
             }
+        })
+        .collect()
+}
+
+fn normalized_task_runs(runs: &[RunReport], arm: Arm, repetition: usize) -> Vec<RunReport> {
+    runs.iter()
+        .filter(|run| run.arm == arm.name() && run.repetition == repetition)
+        .cloned()
+        .map(|mut run| {
+            run.repetition = 0;
+            run
         })
         .collect()
 }
@@ -816,7 +860,8 @@ fn decide(arms: &[ArmAggregate], thresholds: Thresholds) -> Decision {
         let precision_gate_passed = arm
             .signal_candidate_precision
             .is_some_and(|precision| precision >= thresholds.minimum_signal_candidate_precision);
-        let retain = arm.deterministic_metrics_repeat
+        let repeatable = arm.deterministic_metrics_repeat && arm.deterministic_task_results_repeat;
+        let retain = repeatable
             && additive
             && recall_gate_passed_every_repetition
             && dead_end_gate_passed_every_repetition
@@ -827,7 +872,7 @@ fn decide(arms: &[ArmAggregate], thresholds: Thresholds) -> Decision {
         }
         ranking_signal_decisions.push(SignalDecision {
             arm: arm.arm.clone(),
-            repeatable: arm.deterministic_metrics_repeat,
+            repeatable,
             additive,
             recall_gate_passed_every_repetition,
             dead_end_gate_passed_every_repetition,
@@ -858,8 +903,8 @@ fn import_stats(database: &Path) -> Result<ImportStats, DynError> {
     let conn = Connection::open(database)?;
     let (total, resolved, resolved_existing): (i64, i64, i64) = conn.query_row(
         "SELECT COUNT(*),
-                SUM(CASE WHEN imports.resolved_path IS NOT NULL THEN 1 ELSE 0 END),
-                SUM(CASE WHEN files.id IS NOT NULL THEN 1 ELSE 0 END)
+                COALESCE(SUM(CASE WHEN imports.resolved_path IS NOT NULL THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN files.id IS NOT NULL THEN 1 ELSE 0 END), 0)
          FROM imports
          LEFT JOIN files ON files.path = imports.resolved_path",
         [],
@@ -876,7 +921,7 @@ fn import_stats(database: &Path) -> Result<ImportStats, DynError> {
         resolved_existing,
         unresolved,
         false_resolved,
-        precision: optional_ratio(resolved_existing, resolved),
+        resolution_precision: optional_ratio(resolved_existing, resolved),
         unresolved_rate: optional_ratio(unresolved, total),
     })
 }
@@ -904,7 +949,7 @@ fn accumulate_graph_index(
 }
 
 fn finish_graph_index(aggregate: &mut GraphIndexAggregate) {
-    aggregate.import_edge_precision = optional_ratio(
+    aggregate.import_edge_resolution_precision = optional_ratio(
         aggregate.resolved_existing_import_edges,
         aggregate.resolved_import_edges,
     );
@@ -914,15 +959,15 @@ fn finish_graph_index(aggregate: &mut GraphIndexAggregate) {
     );
 }
 
-fn database_footprint(database: &Path) -> Result<u64, DynError> {
-    let mut total = fs::metadata(database)?.len();
-    for suffix in ["-wal", "-shm"] {
-        let sidecar = PathBuf::from(format!("{}{suffix}", database.display()));
-        if let Ok(metadata) = fs::metadata(sidecar) {
-            total += metadata.len();
-        }
-    }
-    Ok(total)
+fn logical_database_bytes(database: &Path) -> Result<u64, DynError> {
+    let conn = Connection::open(database)?;
+    let page_count =
+        u64::try_from(conn.pragma_query_value::<i64, _>(None, "page_count", |row| row.get(0))?)?;
+    let page_size =
+        u64::try_from(conn.pragma_query_value::<i64, _>(None, "page_size", |row| row.get(0))?)?;
+    page_count
+        .checked_mul(page_size)
+        .ok_or_else(|| "logical SQLite size overflow".into())
 }
 
 fn git_output(root: &Path, args: &[&str]) -> Result<String, DynError> {
