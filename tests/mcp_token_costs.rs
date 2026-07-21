@@ -20,6 +20,7 @@ struct Report {
     tools_list_request_tokens: usize,
     tools_list_response_tokens: usize,
     call_request_tokens: usize,
+    response_json_tokens: usize,
     dual_result_tokens: usize,
     text_result_tokens: usize,
     structured_result_tokens: usize,
@@ -81,6 +82,7 @@ async fn mcp_handoff_token_costs() {
     };
     let context = services.context(context_request).await.expect("context");
     let context_value = serde_json::to_value(&context).expect("context JSON");
+    let response_json_tokens = tokenizer.count(&context_value.to_string());
 
     let call_request = serde_json::json!({
         "jsonrpc": "2.0",
@@ -149,6 +151,7 @@ async fn mcp_handoff_token_costs() {
         tools_list_request_tokens,
         tools_list_response_tokens,
         call_request_tokens,
+        response_json_tokens,
         dual_result_tokens,
         text_result_tokens,
         structured_result_tokens,
@@ -174,6 +177,18 @@ async fn mcp_handoff_token_costs() {
     assert!(handoff_tokens > schema_tokens + dual_result_tokens);
     assert!(structured_result_tokens < dual_result_tokens);
     assert!(text_result_tokens < dual_result_tokens);
+    assert!(
+        response_json_tokens <= 531,
+        "compact context response exceeds the frozen budget: {response_json_tokens}"
+    );
+    assert!(
+        dual_result_tokens <= 1_123,
+        "dual context result exceeds the frozen budget: {dual_result_tokens}"
+    );
+    assert!(
+        handoff_tokens <= 3_785,
+        "complete MCP handoff exceeds the frozen budget: {handoff_tokens}"
+    );
     assert!(tokenizer.is_exact(), "default tokenizer should be exact");
 }
 

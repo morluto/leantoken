@@ -340,6 +340,8 @@ pub struct ContextFragment {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceReceipt {
+    /// Internal task identity used by evaluation; the originating request already carries the task.
+    #[serde(default, skip_serializing)]
     pub task_fingerprint: String,
     /// Content hashes aligned by index with `ContextResponse.fragments`.
     pub fragment_hashes: Vec<String>,
@@ -476,6 +478,7 @@ mod tests {
         let value = serde_json::to_value(&response).expect("serialize response");
         assert!(value["fragments"][0].get("representation").is_none());
         assert!(value["fragments"][0].get("content_hash").is_none());
+        assert!(value["receipt"].get("task_fingerprint").is_none());
         assert_eq!(value["meta"]["freshness"], "current");
         assert_eq!(value["meta"]["token_count_exact"], true);
         assert!(value.get("omitted").is_none());
@@ -485,8 +488,46 @@ mod tests {
             serde_json::from_value(value).expect("deserialize compact response");
         assert_eq!(round_trip.fragments[0].representation, "source");
         assert_eq!(round_trip.fragments[0].content_hash, "");
+        assert!(round_trip.receipt.task_fingerprint.is_empty());
         assert_eq!(round_trip.meta.freshness, Freshness::Current);
         assert!(round_trip.meta.token_count_exact);
+    }
+
+    #[test]
+    fn compact_context_response_snapshot() {
+        let response = ContextResponse {
+            fragments: vec![ContextFragment {
+                path: "src/lib.rs".into(),
+                start_line: 4,
+                end_line: 6,
+                representation: "source".into(),
+                content: "pub fn answer() -> u8 { 42 }".into(),
+                content_hash: "fragment-hash".into(),
+                score: 1.25,
+                reason: "symbol; focus".into(),
+                token_count: 9,
+            }],
+            receipt: EvidenceReceipt {
+                task_fingerprint: "internal-task-fingerprint".into(),
+                fragment_hashes: vec!["fragment-hash".into()],
+            },
+            omitted: vec![OmittedCandidate {
+                path: "src/other.rs".into(),
+                start_line: 10,
+                end_line: 12,
+                reason: "budget or result limit".into(),
+            }],
+            warnings: vec!["1 omitted".into()],
+            meta: ResponseMeta {
+                repository_generation: 7,
+                freshness: Freshness::Reconciling,
+                emitted_tokens: 9,
+                token_count_exact: true,
+                next_cursor: None,
+            },
+        };
+
+        insta::assert_json_snapshot!(response);
     }
 
     #[test]
