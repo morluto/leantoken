@@ -1,0 +1,3180 @@
+{
+  "schema_version": 1,
+  "report_kind": "four_arm_model_evaluation",
+  "status": "completed_negative_primary",
+  "evaluated_on": "2026-07-21",
+  "experiment_id": "swe-bench-multilingual-four-arm-v2",
+  "scope": {
+    "evidence_class": "exploratory_mechanism_evaluation",
+    "confirmation_or_gate_b": false,
+    "product_promotion_allowed": false,
+    "tasks_public_and_consumed": true,
+    "statistical_claim": "Descriptive only. Nine runs per arm and three public tasks are insufficient for an inferential population claim."
+  },
+  "execution_integrity": {
+    "commitment_blake3": "ea9206f452d8993cf68315848f3deaf91a3fbe686b0a31aa97886ad6808e1c07",
+    "raw_report_blake3": "ba623b8e88dc9ef58ed5e5d2d22b8af8aeb07c398f0afc886244fb4813ad810f",
+    "stderr_blake3": "f4a959e2dd7f01706990181d4a4716af9ce2c9f17e3500e6c509f71571312254",
+    "stdout_blake3": "0d8005e54f43648927d95bc992d21e674f6e98de2d2156ab34f674026e6d43e3",
+    "manifest_blake3": "fc5aa9c000b96c13bcac9a2847413dee99c0eb9906e0d262fcabf4fa8ef5a52a",
+    "harness_revision": "752216525ee842f8d4cd3df65769c54b7d127c05",
+    "harness_worktree_dirty": false,
+    "harness_binary_blake3": "e761672f8d891f5f3a4a94b4493bbbb62df443bf5d48a8abaf9d61a459c5e51e",
+    "adapter_binary_blake3": "ee79abe2da040de1f689f460b75974232a00e7fade32aa7cb98f99b474a115c2",
+    "runtime_binary_blake3": "62cc0758d42629648a14294c49f1e370f93844f87b529fe30aba7298e7777c7c",
+    "validator_binary_blake3": "914917202dd1a8bfa7042a897ba53a9d4f1f75dd2fd1bd37dbfd8d632183f5a5",
+    "primary_model": "gpt-5.6-sol",
+    "executor_model": "gpt-5.6-luna",
+    "codex_cli_version": "codex-cli 0.144.1",
+    "random_seed": 2026072101,
+    "repetitions": 3,
+    "scheduled_runs": 36,
+    "schedules": 9,
+    "unique_task_repetition_arm_cells": 36,
+    "verified_artifact_hashes": 137,
+    "normalized_hidden_apply_patch_failures": 187,
+    "adapter_error_records": 14,
+    "residual_model_or_validator_processes": 0
+  },
+  "pre_registered_decision": {
+    "result": "negative_primary",
+    "rule": "progressive has fewer officially validated successes than filesystem",
+    "filesystem_successes": 6,
+    "progressive_successes": 4,
+    "filesystem_success_rate": 0.6666666666666666,
+    "progressive_success_rate": 0.4444444444444444,
+    "median_complete_input_tokens": {
+      "filesystem": 858739,
+      "lean_token_progressive": 1129265.5
+    },
+    "median_duration_ms": {
+      "filesystem": 309990,
+      "lean_token_progressive": 353925
+    },
+    "interpretation": "Progressive retrieval did not meet the frozen primary rule. This exploratory result does not establish population performance or authorize product promotion."
+  },
+  "secondary_mechanism_findings": {
+    "lean_token_one_shot": {
+      "successes": 0,
+      "scheduled_runs": 9,
+      "adapter_failures": 7,
+      "interpretation": "The one-shot arm was brittle under the frozen contract and live budget; seven runs failed before authoritative validation."
+    },
+    "prewalk": {
+      "successes": 3,
+      "scheduled_runs": 9,
+      "adapter_failures": 6,
+      "interpretation": "All three completed prewalk runs resolved Caddy, but six runs failed the frontier/executor budget or LeanToken-first contract. This is mechanism-only evidence."
+    }
+  },
+  "arm_aggregates": {
+    "filesystem": {
+      "runs": 9,
+      "adapter_completed": 9,
+      "run_errors": 0,
+      "successes": 6,
+      "success_rate": 0.6666666666666666,
+      "total_input_tokens": 7554148,
+      "total_output_tokens": 55210,
+      "provider_reported_cost_usd": null,
+      "input_tokens_per_success": 1259024.6666666667,
+      "provider_reported_cost_per_success_usd": null,
+      "total_duration_ms": 2542673,
+      "tool_calls": 187,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 15,
+      "failed_searches": 2,
+      "dead_end_reads": 0,
+      "input_tokens": {
+        "samples": 9,
+        "minimum": 235574,
+        "median": 858739,
+        "mean": 839349.7777777778,
+        "maximum": 1906801,
+        "sample_variance": 342805951695.69446
+      },
+      "output_tokens": {
+        "samples": 9,
+        "minimum": 3239,
+        "median": 6032,
+        "mean": 6134.444444444444,
+        "maximum": 10483,
+        "sample_variance": 7087619.277777778
+      },
+      "provider_cost_usd": {
+        "samples": 0,
+        "minimum": null,
+        "median": null,
+        "mean": null,
+        "maximum": null,
+        "sample_variance": null
+      },
+      "duration_ms": {
+        "samples": 9,
+        "minimum": 128066,
+        "median": 309990,
+        "mean": 282519.22222222225,
+        "maximum": 451664,
+        "sample_variance": 14962456212.694445
+      },
+      "successful_input_tokens": {
+        "samples": 6,
+        "minimum": 270098,
+        "median": 653303.5,
+        "mean": 867182,
+        "maximum": 1906801,
+        "sample_variance": 439732316855.2
+      },
+      "successful_duration_ms": {
+        "samples": 6,
+        "minimum": 128066,
+        "median": 245253,
+        "mean": 267432,
+        "maximum": 451664,
+        "sample_variance": 19637678566.8
+      }
+    },
+    "lean_token_progressive": {
+      "runs": 9,
+      "adapter_completed": 8,
+      "run_errors": 1,
+      "successes": 4,
+      "success_rate": 0.4444444444444444,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "provider_reported_cost_usd": null,
+      "input_tokens_per_success": null,
+      "provider_reported_cost_per_success_usd": null,
+      "total_duration_ms": 2917683,
+      "tool_calls": 220,
+      "rereads": 1,
+      "reread_tokens": 1092,
+      "failed_tool_calls": 18,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "input_tokens": {
+        "samples": 8,
+        "minimum": 488133,
+        "median": 1129265.5,
+        "mean": 1376919.2499999998,
+        "maximum": 2977865,
+        "sample_variance": 916848615287.0714
+      },
+      "output_tokens": {
+        "samples": 8,
+        "minimum": 3892,
+        "median": 5008.5,
+        "mean": 5825.125000000001,
+        "maximum": 9770,
+        "sample_variance": 4576492.982142857
+      },
+      "provider_cost_usd": {
+        "samples": 0,
+        "minimum": null,
+        "median": null,
+        "mean": null,
+        "maximum": null,
+        "sample_variance": null
+      },
+      "duration_ms": {
+        "samples": 9,
+        "minimum": 153831,
+        "median": 353925,
+        "mean": 324187,
+        "maximum": 456217,
+        "sample_variance": 13642853610.25
+      },
+      "successful_input_tokens": {
+        "samples": 4,
+        "minimum": 488133,
+        "median": 1714277.5,
+        "mean": 1723638.25,
+        "maximum": 2977865,
+        "sample_variance": 1710969216384.9167
+      },
+      "successful_duration_ms": {
+        "samples": 4,
+        "minimum": 153831,
+        "median": 315789,
+        "mean": 310406.5,
+        "maximum": 456217,
+        "sample_variance": 24349658907.666668
+      }
+    },
+    "lean_token_one_shot": {
+      "runs": 9,
+      "adapter_completed": 2,
+      "run_errors": 7,
+      "successes": 0,
+      "success_rate": 0,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "provider_reported_cost_usd": null,
+      "input_tokens_per_success": null,
+      "provider_reported_cost_per_success_usd": null,
+      "total_duration_ms": 3121519,
+      "tool_calls": 22,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 9,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "input_tokens": {
+        "samples": 2,
+        "minimum": 203290,
+        "median": 264669.5,
+        "mean": 264669.5,
+        "maximum": 326049,
+        "sample_variance": 7534886040.5
+      },
+      "output_tokens": {
+        "samples": 2,
+        "minimum": 2646,
+        "median": 4671.5,
+        "mean": 4671.5,
+        "maximum": 6697,
+        "sample_variance": 8205300.5
+      },
+      "provider_cost_usd": {
+        "samples": 0,
+        "minimum": null,
+        "median": null,
+        "mean": null,
+        "maximum": null,
+        "sample_variance": null
+      },
+      "duration_ms": {
+        "samples": 9,
+        "minimum": 105794,
+        "median": 334312,
+        "mean": 346835.44444444444,
+        "maximum": 563971,
+        "sample_variance": 28310634668.77778
+      },
+      "successful_input_tokens": {
+        "samples": 0,
+        "minimum": null,
+        "median": null,
+        "mean": null,
+        "maximum": null,
+        "sample_variance": null
+      },
+      "successful_duration_ms": {
+        "samples": 0,
+        "minimum": null,
+        "median": null,
+        "mean": null,
+        "maximum": null,
+        "sample_variance": null
+      }
+    },
+    "prewalk": {
+      "runs": 9,
+      "adapter_completed": 3,
+      "run_errors": 6,
+      "successes": 3,
+      "success_rate": 0.3333333333333333,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "provider_reported_cost_usd": null,
+      "input_tokens_per_success": null,
+      "provider_reported_cost_per_success_usd": null,
+      "total_duration_ms": 2244141,
+      "tool_calls": 45,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 4,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "input_tokens": {
+        "samples": 3,
+        "minimum": 419296,
+        "median": 432567,
+        "mean": 436783.3333333333,
+        "maximum": 458487,
+        "sample_variance": 397316720.3333333
+      },
+      "output_tokens": {
+        "samples": 3,
+        "minimum": 4580,
+        "median": 5026,
+        "mean": 4921.333333333333,
+        "maximum": 5158,
+        "sample_variance": 91737.33333333334
+      },
+      "provider_cost_usd": {
+        "samples": 0,
+        "minimum": null,
+        "median": null,
+        "mean": null,
+        "maximum": null,
+        "sample_variance": null
+      },
+      "duration_ms": {
+        "samples": 9,
+        "minimum": 164997,
+        "median": 261119,
+        "mean": 249349,
+        "maximum": 343195,
+        "sample_variance": 4680731322.5
+      },
+      "successful_input_tokens": {
+        "samples": 3,
+        "minimum": 419296,
+        "median": 432567,
+        "mean": 436783.3333333333,
+        "maximum": 458487,
+        "sample_variance": 397316720.3333333
+      },
+      "successful_duration_ms": {
+        "samples": 3,
+        "minimum": 164997,
+        "median": 167824,
+        "mean": 176516.66666666666,
+        "maximum": 196729,
+        "sample_variance": 308401796.3333333
+      }
+    }
+  },
+  "task_arm_aggregates": {
+    "babel__babel-15445": {
+      "filesystem": {
+        "runs": 3,
+        "adapter_completed": 3,
+        "run_errors": 0,
+        "successes": 0,
+        "success_rate": 0,
+        "total_input_tokens": 2351056,
+        "total_output_tokens": 17757,
+        "provider_reported_cost_usd": null,
+        "input_tokens_per_success": null,
+        "provider_reported_cost_per_success_usd": null,
+        "total_duration_ms": 938081,
+        "tool_calls": 62,
+        "rereads": 0,
+        "reread_tokens": 0,
+        "failed_tool_calls": 7,
+        "failed_searches": 1,
+        "dead_end_reads": 0,
+        "input_tokens": {
+          "samples": 3,
+          "minimum": 235574,
+          "median": 858739,
+          "mean": 783685.3333333334,
+          "maximum": 1256743,
+          "sample_variance": 264921321300.33334
+        },
+        "output_tokens": {
+          "samples": 3,
+          "minimum": 3299,
+          "median": 6032,
+          "mean": 5919,
+          "maximum": 8426,
+          "sample_variance": 6581109
+        },
+        "provider_cost_usd": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "duration_ms": {
+          "samples": 3,
+          "minimum": 208633,
+          "median": 340526,
+          "mean": 312693.6666666667,
+          "maximum": 388922,
+          "sample_variance": 8707009964.333332
+        },
+        "successful_input_tokens": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "successful_duration_ms": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        }
+      },
+      "lean_token_progressive": {
+        "runs": 3,
+        "adapter_completed": 3,
+        "run_errors": 0,
+        "successes": 0,
+        "success_rate": 0,
+        "total_input_tokens": 3564700,
+        "total_output_tokens": 14902,
+        "provider_reported_cost_usd": null,
+        "input_tokens_per_success": null,
+        "provider_reported_cost_per_success_usd": null,
+        "total_duration_ms": 1153039,
+        "tool_calls": 89,
+        "rereads": 0,
+        "reread_tokens": 0,
+        "failed_tool_calls": 7,
+        "failed_searches": 0,
+        "dead_end_reads": 0,
+        "input_tokens": {
+          "samples": 3,
+          "minimum": 1092094,
+          "median": 1166437,
+          "mean": 1188233.3333333333,
+          "maximum": 1306169,
+          "sample_variance": 11813336516.333334
+        },
+        "output_tokens": {
+          "samples": 3,
+          "minimum": 4688,
+          "median": 4974,
+          "mean": 4967.333333333333,
+          "maximum": 5240,
+          "sample_variance": 76209.33333333334
+        },
+        "provider_cost_usd": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "duration_ms": {
+          "samples": 3,
+          "minimum": 353925,
+          "median": 369375,
+          "mean": 384346.3333333333,
+          "maximum": 429739,
+          "sample_variance": 1605046265.3333333
+        },
+        "successful_input_tokens": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "successful_duration_ms": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        }
+      },
+      "lean_token_one_shot": {
+        "runs": 3,
+        "adapter_completed": 2,
+        "run_errors": 1,
+        "successes": 0,
+        "success_rate": 0,
+        "total_input_tokens": null,
+        "total_output_tokens": null,
+        "provider_reported_cost_usd": null,
+        "input_tokens_per_success": null,
+        "provider_reported_cost_per_success_usd": null,
+        "total_duration_ms": 989481,
+        "tool_calls": 22,
+        "rereads": 0,
+        "reread_tokens": 0,
+        "failed_tool_calls": 9,
+        "failed_searches": 0,
+        "dead_end_reads": 0,
+        "input_tokens": {
+          "samples": 2,
+          "minimum": 203290,
+          "median": 264669.5,
+          "mean": 264669.5,
+          "maximum": 326049,
+          "sample_variance": 7534886040.5
+        },
+        "output_tokens": {
+          "samples": 2,
+          "minimum": 2646,
+          "median": 4671.5,
+          "mean": 4671.5,
+          "maximum": 6697,
+          "sample_variance": 8205300.5
+        },
+        "provider_cost_usd": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "duration_ms": {
+          "samples": 3,
+          "minimum": 271594,
+          "median": 300677,
+          "mean": 329827,
+          "maximum": 417210,
+          "sample_variance": 5938296739
+        },
+        "successful_input_tokens": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "successful_duration_ms": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        }
+      },
+      "prewalk": {
+        "runs": 3,
+        "adapter_completed": 0,
+        "run_errors": 3,
+        "successes": 0,
+        "success_rate": 0,
+        "total_input_tokens": null,
+        "total_output_tokens": null,
+        "provider_reported_cost_usd": null,
+        "input_tokens_per_success": null,
+        "provider_reported_cost_per_success_usd": null,
+        "total_duration_ms": 742877,
+        "tool_calls": 0,
+        "rereads": 0,
+        "reread_tokens": 0,
+        "failed_tool_calls": 0,
+        "failed_searches": 0,
+        "dead_end_reads": 0,
+        "input_tokens": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "output_tokens": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "provider_cost_usd": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "duration_ms": {
+          "samples": 3,
+          "minimum": 208328,
+          "median": 261119,
+          "mean": 247625.66666666666,
+          "maximum": 273430,
+          "sample_variance": 1196120134.3333333
+        },
+        "successful_input_tokens": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "successful_duration_ms": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        }
+      }
+    },
+    "caddyserver__caddy-6051": {
+      "filesystem": {
+        "runs": 3,
+        "adapter_completed": 3,
+        "run_errors": 0,
+        "successes": 3,
+        "success_rate": 1,
+        "total_input_tokens": 1023991,
+        "total_output_tokens": 11276,
+        "provider_reported_cost_usd": null,
+        "input_tokens_per_success": 341330.3333333333,
+        "provider_reported_cost_per_success_usd": null,
+        "total_duration_ms": 442609,
+        "tool_calls": 35,
+        "rereads": 0,
+        "reread_tokens": 0,
+        "failed_tool_calls": 2,
+        "failed_searches": 0,
+        "dead_end_reads": 0,
+        "input_tokens": {
+          "samples": 3,
+          "minimum": 270098,
+          "median": 327419,
+          "mean": 341330.3333333333,
+          "maximum": 426474,
+          "sample_variance": 6258507240.333333
+        },
+        "output_tokens": {
+          "samples": 3,
+          "minimum": 3239,
+          "median": 3743,
+          "mean": 3758.6666666666665,
+          "maximum": 4294,
+          "sample_variance": 278440.3333333334
+        },
+        "provider_cost_usd": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "duration_ms": {
+          "samples": 3,
+          "minimum": 128066,
+          "median": 134027,
+          "mean": 147536.33333333334,
+          "maximum": 180516,
+          "sample_variance": 824627190.3333334
+        },
+        "successful_input_tokens": {
+          "samples": 3,
+          "minimum": 270098,
+          "median": 327419,
+          "mean": 341330.3333333333,
+          "maximum": 426474,
+          "sample_variance": 6258507240.333333
+        },
+        "successful_duration_ms": {
+          "samples": 3,
+          "minimum": 128066,
+          "median": 134027,
+          "mean": 147536.33333333334,
+          "maximum": 180516,
+          "sample_variance": 824627190.3333334
+        }
+      },
+      "lean_token_progressive": {
+        "runs": 3,
+        "adapter_completed": 3,
+        "run_errors": 0,
+        "successes": 2,
+        "success_rate": 0.6666666666666666,
+        "total_input_tokens": 1750252,
+        "total_output_tokens": 13327,
+        "provider_reported_cost_usd": null,
+        "input_tokens_per_success": 875126,
+        "provider_reported_cost_per_success_usd": null,
+        "total_duration_ms": 532596,
+        "tool_calls": 57,
+        "rereads": 0,
+        "reread_tokens": 0,
+        "failed_tool_calls": 4,
+        "failed_searches": 0,
+        "dead_end_reads": 0,
+        "input_tokens": {
+          "samples": 3,
+          "minimum": 488133,
+          "median": 556101,
+          "mean": 583417.3333333334,
+          "maximum": 706018,
+          "sample_variance": 12428104856.333334
+        },
+        "output_tokens": {
+          "samples": 3,
+          "minimum": 3892,
+          "median": 4392,
+          "mean": 4442.333333333333,
+          "maximum": 5043,
+          "sample_variance": 333100.3333333333
+        },
+        "provider_cost_usd": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "duration_ms": {
+          "samples": 3,
+          "minimum": 153831,
+          "median": 179626,
+          "mean": 177532,
+          "maximum": 199139,
+          "sample_variance": 516492343
+        },
+        "successful_input_tokens": {
+          "samples": 2,
+          "minimum": 488133,
+          "median": 597075.5,
+          "mean": 597075.5,
+          "maximum": 706018,
+          "sample_variance": 23736936612.5
+        },
+        "successful_duration_ms": {
+          "samples": 2,
+          "minimum": 153831,
+          "median": 176485,
+          "mean": 176485,
+          "maximum": 199139,
+          "sample_variance": 1026407432
+        }
+      },
+      "lean_token_one_shot": {
+        "runs": 3,
+        "adapter_completed": 0,
+        "run_errors": 3,
+        "successes": 0,
+        "success_rate": 0,
+        "total_input_tokens": null,
+        "total_output_tokens": null,
+        "provider_reported_cost_usd": null,
+        "input_tokens_per_success": null,
+        "provider_reported_cost_per_success_usd": null,
+        "total_duration_ms": 551875,
+        "tool_calls": 0,
+        "rereads": 0,
+        "reread_tokens": 0,
+        "failed_tool_calls": 0,
+        "failed_searches": 0,
+        "dead_end_reads": 0,
+        "input_tokens": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "output_tokens": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "provider_cost_usd": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "duration_ms": {
+          "samples": 3,
+          "minimum": 105794,
+          "median": 111769,
+          "mean": 183958.3333333333,
+          "maximum": 334312,
+          "sample_variance": 16963593966.333334
+        },
+        "successful_input_tokens": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "successful_duration_ms": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        }
+      },
+      "prewalk": {
+        "runs": 3,
+        "adapter_completed": 3,
+        "run_errors": 0,
+        "successes": 3,
+        "success_rate": 1,
+        "total_input_tokens": 1310350,
+        "total_output_tokens": 14764,
+        "provider_reported_cost_usd": null,
+        "input_tokens_per_success": 436783.3333333333,
+        "provider_reported_cost_per_success_usd": null,
+        "total_duration_ms": 529550,
+        "tool_calls": 45,
+        "rereads": 0,
+        "reread_tokens": 0,
+        "failed_tool_calls": 4,
+        "failed_searches": 0,
+        "dead_end_reads": 0,
+        "input_tokens": {
+          "samples": 3,
+          "minimum": 419296,
+          "median": 432567,
+          "mean": 436783.3333333333,
+          "maximum": 458487,
+          "sample_variance": 397316720.3333333
+        },
+        "output_tokens": {
+          "samples": 3,
+          "minimum": 4580,
+          "median": 5026,
+          "mean": 4921.333333333333,
+          "maximum": 5158,
+          "sample_variance": 91737.33333333334
+        },
+        "provider_cost_usd": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "duration_ms": {
+          "samples": 3,
+          "minimum": 164997,
+          "median": 167824,
+          "mean": 176516.66666666666,
+          "maximum": 196729,
+          "sample_variance": 308401796.3333333
+        },
+        "successful_input_tokens": {
+          "samples": 3,
+          "minimum": 419296,
+          "median": 432567,
+          "mean": 436783.3333333333,
+          "maximum": 458487,
+          "sample_variance": 397316720.3333333
+        },
+        "successful_duration_ms": {
+          "samples": 3,
+          "minimum": 164997,
+          "median": 167824,
+          "mean": 176516.66666666666,
+          "maximum": 196729,
+          "sample_variance": 308401796.3333333
+        }
+      }
+    },
+    "jqlang__jq-2750": {
+      "filesystem": {
+        "runs": 3,
+        "adapter_completed": 3,
+        "run_errors": 0,
+        "successes": 3,
+        "success_rate": 1,
+        "total_input_tokens": 4179101,
+        "total_output_tokens": 26177,
+        "provider_reported_cost_usd": null,
+        "input_tokens_per_success": 1393033.6666666667,
+        "provider_reported_cost_per_success_usd": null,
+        "total_duration_ms": 1161983,
+        "tool_calls": 90,
+        "rereads": 0,
+        "reread_tokens": 0,
+        "failed_tool_calls": 6,
+        "failed_searches": 1,
+        "dead_end_reads": 0,
+        "input_tokens": {
+          "samples": 3,
+          "minimum": 880133,
+          "median": 1392167,
+          "mean": 1393033.6666666667,
+          "maximum": 1906801,
+          "sample_variance": 263512358889.33334
+        },
+        "output_tokens": {
+          "samples": 3,
+          "minimum": 7094,
+          "median": 8600,
+          "mean": 8725.666666666666,
+          "maximum": 10483,
+          "sample_variance": 2883174.3333333335
+        },
+        "provider_cost_usd": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "duration_ms": {
+          "samples": 3,
+          "minimum": 309990,
+          "median": 400329,
+          "mean": 387327.6666666667,
+          "maximum": 451664,
+          "sample_variance": 5144656570.333334
+        },
+        "successful_input_tokens": {
+          "samples": 3,
+          "minimum": 880133,
+          "median": 1392167,
+          "mean": 1393033.6666666667,
+          "maximum": 1906801,
+          "sample_variance": 263512358889.33334
+        },
+        "successful_duration_ms": {
+          "samples": 3,
+          "minimum": 309990,
+          "median": 400329,
+          "mean": 387327.6666666667,
+          "maximum": 451664,
+          "sample_variance": 5144656570.333334
+        }
+      },
+      "lean_token_progressive": {
+        "runs": 3,
+        "adapter_completed": 2,
+        "run_errors": 1,
+        "successes": 2,
+        "success_rate": 0.6666666666666666,
+        "total_input_tokens": null,
+        "total_output_tokens": null,
+        "provider_reported_cost_usd": null,
+        "input_tokens_per_success": null,
+        "provider_reported_cost_per_success_usd": null,
+        "total_duration_ms": 1232048,
+        "tool_calls": 74,
+        "rereads": 1,
+        "reread_tokens": 1092,
+        "failed_tool_calls": 7,
+        "failed_searches": 0,
+        "dead_end_reads": 0,
+        "input_tokens": {
+          "samples": 2,
+          "minimum": 2722537,
+          "median": 2850201,
+          "mean": 2850201,
+          "maximum": 2977865,
+          "sample_variance": 32596193792
+        },
+        "output_tokens": {
+          "samples": 2,
+          "minimum": 8602,
+          "median": 9186,
+          "mean": 9186,
+          "maximum": 9770,
+          "sample_variance": 682112
+        },
+        "provider_cost_usd": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "duration_ms": {
+          "samples": 3,
+          "minimum": 343392,
+          "median": 432439,
+          "mean": 410682.6666666667,
+          "maximum": 456217,
+          "sample_variance": 3537373686.333333
+        },
+        "successful_input_tokens": {
+          "samples": 2,
+          "minimum": 2722537,
+          "median": 2850201,
+          "mean": 2850201,
+          "maximum": 2977865,
+          "sample_variance": 32596193792
+        },
+        "successful_duration_ms": {
+          "samples": 2,
+          "minimum": 432439,
+          "median": 444328,
+          "mean": 444328,
+          "maximum": 456217,
+          "sample_variance": 282696642
+        }
+      },
+      "lean_token_one_shot": {
+        "runs": 3,
+        "adapter_completed": 0,
+        "run_errors": 3,
+        "successes": 0,
+        "success_rate": 0,
+        "total_input_tokens": null,
+        "total_output_tokens": null,
+        "provider_reported_cost_usd": null,
+        "input_tokens_per_success": null,
+        "provider_reported_cost_per_success_usd": null,
+        "total_duration_ms": 1580163,
+        "tool_calls": 0,
+        "rereads": 0,
+        "reread_tokens": 0,
+        "failed_tool_calls": 0,
+        "failed_searches": 0,
+        "dead_end_reads": 0,
+        "input_tokens": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "output_tokens": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "provider_cost_usd": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "duration_ms": {
+          "samples": 3,
+          "minimum": 484979,
+          "median": 531213,
+          "mean": 526721,
+          "maximum": 563971,
+          "sample_variance": 1575067564
+        },
+        "successful_input_tokens": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "successful_duration_ms": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        }
+      },
+      "prewalk": {
+        "runs": 3,
+        "adapter_completed": 0,
+        "run_errors": 3,
+        "successes": 0,
+        "success_rate": 0,
+        "total_input_tokens": null,
+        "total_output_tokens": null,
+        "provider_reported_cost_usd": null,
+        "input_tokens_per_success": null,
+        "provider_reported_cost_per_success_usd": null,
+        "total_duration_ms": 971714,
+        "tool_calls": 0,
+        "rereads": 0,
+        "reread_tokens": 0,
+        "failed_tool_calls": 0,
+        "failed_searches": 0,
+        "dead_end_reads": 0,
+        "input_tokens": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "output_tokens": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "provider_cost_usd": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "duration_ms": {
+          "samples": 3,
+          "minimum": 288957,
+          "median": 339562,
+          "mean": 323904.6666666667,
+          "maximum": 343195,
+          "sample_variance": 919304226.3333333
+        },
+        "successful_input_tokens": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        },
+        "successful_duration_ms": {
+          "samples": 0,
+          "minimum": null,
+          "median": null,
+          "mean": null,
+          "maximum": null,
+          "sample_variance": null
+        }
+      }
+    }
+  },
+  "metric_distributions": {
+    "by_arm": [
+      {
+        "arm": "filesystem",
+        "scheduled_runs": 9,
+        "distributions": {
+          "duration_ms": {
+            "samples": 9,
+            "minimum": 128066,
+            "median": 309990,
+            "mean": 282519.22222222225,
+            "maximum": 451664,
+            "sample_variance": 14962456212.694445
+          },
+          "total_input_tokens": {
+            "samples": 9,
+            "minimum": 235574,
+            "median": 858739,
+            "mean": 839349.7777777778,
+            "maximum": 1906801,
+            "sample_variance": 342805951695.69446
+          },
+          "total_output_tokens": {
+            "samples": 9,
+            "minimum": 3239,
+            "median": 6032,
+            "mean": 6134.444444444444,
+            "maximum": 10483,
+            "sample_variance": 7087619.277777778
+          },
+          "tool_calls": {
+            "samples": 9,
+            "minimum": 10,
+            "median": 23,
+            "mean": 20.77777777777778,
+            "maximum": 35,
+            "sample_variance": 96.19444444444444
+          },
+          "rereads": {
+            "samples": 9,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "reread_tokens": {
+            "samples": 9,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "failed_tool_calls": {
+            "samples": 9,
+            "minimum": 0,
+            "median": 1,
+            "mean": 1.6666666666666667,
+            "maximum": 4,
+            "sample_variance": 1.5
+          },
+          "failed_searches": {
+            "samples": 9,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0.2222222222222222,
+            "maximum": 1,
+            "sample_variance": 0.19444444444444445
+          },
+          "dead_end_reads": {
+            "samples": 9,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          }
+        }
+      },
+      {
+        "arm": "lean_token_one_shot",
+        "scheduled_runs": 9,
+        "distributions": {
+          "duration_ms": {
+            "samples": 9,
+            "minimum": 105794,
+            "median": 334312,
+            "mean": 346835.44444444444,
+            "maximum": 563971,
+            "sample_variance": 28310634668.777775
+          },
+          "total_input_tokens": {
+            "samples": 2,
+            "minimum": 203290,
+            "median": 264669.5,
+            "mean": 264669.5,
+            "maximum": 326049,
+            "sample_variance": 7534886040.5
+          },
+          "total_output_tokens": {
+            "samples": 2,
+            "minimum": 2646,
+            "median": 4671.5,
+            "mean": 4671.5,
+            "maximum": 6697,
+            "sample_variance": 8205300.5
+          },
+          "tool_calls": {
+            "samples": 2,
+            "minimum": 7,
+            "median": 11,
+            "mean": 11,
+            "maximum": 15,
+            "sample_variance": 32
+          },
+          "rereads": {
+            "samples": 2,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "reread_tokens": {
+            "samples": 2,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "failed_tool_calls": {
+            "samples": 2,
+            "minimum": 2,
+            "median": 4.5,
+            "mean": 4.5,
+            "maximum": 7,
+            "sample_variance": 12.5
+          },
+          "failed_searches": {
+            "samples": 2,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "dead_end_reads": {
+            "samples": 2,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          }
+        }
+      },
+      {
+        "arm": "lean_token_progressive",
+        "scheduled_runs": 9,
+        "distributions": {
+          "duration_ms": {
+            "samples": 9,
+            "minimum": 153831,
+            "median": 353925,
+            "mean": 324187,
+            "maximum": 456217,
+            "sample_variance": 13642853610.25
+          },
+          "total_input_tokens": {
+            "samples": 8,
+            "minimum": 488133,
+            "median": 1129265.5,
+            "mean": 1376919.25,
+            "maximum": 2977865,
+            "sample_variance": 916848615287.0714
+          },
+          "total_output_tokens": {
+            "samples": 8,
+            "minimum": 3892,
+            "median": 5008.5,
+            "mean": 5825.125,
+            "maximum": 9770,
+            "sample_variance": 4576492.982142857
+          },
+          "tool_calls": {
+            "samples": 8,
+            "minimum": 15,
+            "median": 29,
+            "mean": 27.5,
+            "maximum": 38,
+            "sample_variance": 63.42857142857143
+          },
+          "rereads": {
+            "samples": 8,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0.125,
+            "maximum": 1,
+            "sample_variance": 0.125
+          },
+          "reread_tokens": {
+            "samples": 8,
+            "minimum": 0,
+            "median": 0,
+            "mean": 136.5,
+            "maximum": 1092,
+            "sample_variance": 149058
+          },
+          "failed_tool_calls": {
+            "samples": 8,
+            "minimum": 0,
+            "median": 2,
+            "mean": 2.25,
+            "maximum": 4,
+            "sample_variance": 1.3571428571428572
+          },
+          "failed_searches": {
+            "samples": 8,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "dead_end_reads": {
+            "samples": 8,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          }
+        }
+      },
+      {
+        "arm": "prewalk",
+        "scheduled_runs": 9,
+        "distributions": {
+          "duration_ms": {
+            "samples": 9,
+            "minimum": 164997,
+            "median": 261119,
+            "mean": 249349,
+            "maximum": 343195,
+            "sample_variance": 4680731322.5
+          },
+          "total_input_tokens": {
+            "samples": 3,
+            "minimum": 419296,
+            "median": 432567,
+            "mean": 436783.3333333333,
+            "maximum": 458487,
+            "sample_variance": 397316720.3333334
+          },
+          "total_output_tokens": {
+            "samples": 3,
+            "minimum": 4580,
+            "median": 5026,
+            "mean": 4921.333333333333,
+            "maximum": 5158,
+            "sample_variance": 91737.33333333334
+          },
+          "tool_calls": {
+            "samples": 3,
+            "minimum": 14,
+            "median": 15,
+            "mean": 15,
+            "maximum": 16,
+            "sample_variance": 1
+          },
+          "rereads": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "reread_tokens": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "failed_tool_calls": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 2,
+            "mean": 1.3333333333333333,
+            "maximum": 2,
+            "sample_variance": 1.3333333333333335
+          },
+          "failed_searches": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "dead_end_reads": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          }
+        }
+      }
+    ],
+    "by_task_arm": [
+      {
+        "task_id": "babel__babel-15445",
+        "arm": "filesystem",
+        "scheduled_runs": 3,
+        "distributions": {
+          "duration_ms": {
+            "samples": 3,
+            "minimum": 208633,
+            "median": 340526,
+            "mean": 312693.6666666667,
+            "maximum": 388922,
+            "sample_variance": 8707009964.333332
+          },
+          "total_input_tokens": {
+            "samples": 3,
+            "minimum": 235574,
+            "median": 858739,
+            "mean": 783685.3333333334,
+            "maximum": 1256743,
+            "sample_variance": 264921321300.3333
+          },
+          "total_output_tokens": {
+            "samples": 3,
+            "minimum": 3299,
+            "median": 6032,
+            "mean": 5919,
+            "maximum": 8426,
+            "sample_variance": 6581109
+          },
+          "tool_calls": {
+            "samples": 3,
+            "minimum": 10,
+            "median": 24,
+            "mean": 20.666666666666668,
+            "maximum": 28,
+            "sample_variance": 89.33333333333333
+          },
+          "rereads": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "reread_tokens": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "failed_tool_calls": {
+            "samples": 3,
+            "minimum": 2,
+            "median": 2,
+            "mean": 2.3333333333333335,
+            "maximum": 3,
+            "sample_variance": 0.33333333333333337
+          },
+          "failed_searches": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0.3333333333333333,
+            "maximum": 1,
+            "sample_variance": 0.33333333333333337
+          },
+          "dead_end_reads": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          }
+        }
+      },
+      {
+        "task_id": "babel__babel-15445",
+        "arm": "lean_token_one_shot",
+        "scheduled_runs": 3,
+        "distributions": {
+          "duration_ms": {
+            "samples": 3,
+            "minimum": 271594,
+            "median": 300677,
+            "mean": 329827,
+            "maximum": 417210,
+            "sample_variance": 5938296739
+          },
+          "total_input_tokens": {
+            "samples": 2,
+            "minimum": 203290,
+            "median": 264669.5,
+            "mean": 264669.5,
+            "maximum": 326049,
+            "sample_variance": 7534886040.5
+          },
+          "total_output_tokens": {
+            "samples": 2,
+            "minimum": 2646,
+            "median": 4671.5,
+            "mean": 4671.5,
+            "maximum": 6697,
+            "sample_variance": 8205300.5
+          },
+          "tool_calls": {
+            "samples": 2,
+            "minimum": 7,
+            "median": 11,
+            "mean": 11,
+            "maximum": 15,
+            "sample_variance": 32
+          },
+          "rereads": {
+            "samples": 2,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "reread_tokens": {
+            "samples": 2,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "failed_tool_calls": {
+            "samples": 2,
+            "minimum": 2,
+            "median": 4.5,
+            "mean": 4.5,
+            "maximum": 7,
+            "sample_variance": 12.5
+          },
+          "failed_searches": {
+            "samples": 2,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "dead_end_reads": {
+            "samples": 2,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          }
+        }
+      },
+      {
+        "task_id": "babel__babel-15445",
+        "arm": "lean_token_progressive",
+        "scheduled_runs": 3,
+        "distributions": {
+          "duration_ms": {
+            "samples": 3,
+            "minimum": 353925,
+            "median": 369375,
+            "mean": 384346.3333333333,
+            "maximum": 429739,
+            "sample_variance": 1605046265.3333335
+          },
+          "total_input_tokens": {
+            "samples": 3,
+            "minimum": 1092094,
+            "median": 1166437,
+            "mean": 1188233.3333333333,
+            "maximum": 1306169,
+            "sample_variance": 11813336516.333334
+          },
+          "total_output_tokens": {
+            "samples": 3,
+            "minimum": 4688,
+            "median": 4974,
+            "mean": 4967.333333333333,
+            "maximum": 5240,
+            "sample_variance": 76209.33333333331
+          },
+          "tool_calls": {
+            "samples": 3,
+            "minimum": 28,
+            "median": 30,
+            "mean": 29.666666666666668,
+            "maximum": 31,
+            "sample_variance": 2.333333333333333
+          },
+          "rereads": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "reread_tokens": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "failed_tool_calls": {
+            "samples": 3,
+            "minimum": 2,
+            "median": 2,
+            "mean": 2.3333333333333335,
+            "maximum": 3,
+            "sample_variance": 0.33333333333333337
+          },
+          "failed_searches": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "dead_end_reads": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          }
+        }
+      },
+      {
+        "task_id": "babel__babel-15445",
+        "arm": "prewalk",
+        "scheduled_runs": 3,
+        "distributions": {
+          "duration_ms": {
+            "samples": 3,
+            "minimum": 208328,
+            "median": 261119,
+            "mean": 247625.66666666666,
+            "maximum": 273430,
+            "sample_variance": 1196120134.3333333
+          },
+          "total_input_tokens": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "total_output_tokens": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "tool_calls": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "rereads": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "reread_tokens": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "failed_tool_calls": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "failed_searches": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "dead_end_reads": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          }
+        }
+      },
+      {
+        "task_id": "caddyserver__caddy-6051",
+        "arm": "filesystem",
+        "scheduled_runs": 3,
+        "distributions": {
+          "duration_ms": {
+            "samples": 3,
+            "minimum": 128066,
+            "median": 134027,
+            "mean": 147536.33333333334,
+            "maximum": 180516,
+            "sample_variance": 824627190.3333333
+          },
+          "total_input_tokens": {
+            "samples": 3,
+            "minimum": 270098,
+            "median": 327419,
+            "mean": 341330.3333333333,
+            "maximum": 426474,
+            "sample_variance": 6258507240.333334
+          },
+          "total_output_tokens": {
+            "samples": 3,
+            "minimum": 3239,
+            "median": 3743,
+            "mean": 3758.6666666666665,
+            "maximum": 4294,
+            "sample_variance": 278440.3333333333
+          },
+          "tool_calls": {
+            "samples": 3,
+            "minimum": 10,
+            "median": 11,
+            "mean": 11.666666666666666,
+            "maximum": 14,
+            "sample_variance": 4.333333333333334
+          },
+          "rereads": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "reread_tokens": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "failed_tool_calls": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 1,
+            "mean": 0.6666666666666666,
+            "maximum": 1,
+            "sample_variance": 0.33333333333333337
+          },
+          "failed_searches": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "dead_end_reads": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          }
+        }
+      },
+      {
+        "task_id": "caddyserver__caddy-6051",
+        "arm": "lean_token_one_shot",
+        "scheduled_runs": 3,
+        "distributions": {
+          "duration_ms": {
+            "samples": 3,
+            "minimum": 105794,
+            "median": 111769,
+            "mean": 183958.33333333334,
+            "maximum": 334312,
+            "sample_variance": 16963593966.333332
+          },
+          "total_input_tokens": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "total_output_tokens": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "tool_calls": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "rereads": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "reread_tokens": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "failed_tool_calls": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "failed_searches": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "dead_end_reads": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          }
+        }
+      },
+      {
+        "task_id": "caddyserver__caddy-6051",
+        "arm": "lean_token_progressive",
+        "scheduled_runs": 3,
+        "distributions": {
+          "duration_ms": {
+            "samples": 3,
+            "minimum": 153831,
+            "median": 179626,
+            "mean": 177532,
+            "maximum": 199139,
+            "sample_variance": 516492343
+          },
+          "total_input_tokens": {
+            "samples": 3,
+            "minimum": 488133,
+            "median": 556101,
+            "mean": 583417.3333333334,
+            "maximum": 706018,
+            "sample_variance": 12428104856.333332
+          },
+          "total_output_tokens": {
+            "samples": 3,
+            "minimum": 3892,
+            "median": 4392,
+            "mean": 4442.333333333333,
+            "maximum": 5043,
+            "sample_variance": 333100.3333333334
+          },
+          "tool_calls": {
+            "samples": 3,
+            "minimum": 15,
+            "median": 20,
+            "mean": 19,
+            "maximum": 22,
+            "sample_variance": 13
+          },
+          "rereads": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "reread_tokens": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "failed_tool_calls": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 2,
+            "mean": 1.3333333333333333,
+            "maximum": 2,
+            "sample_variance": 1.3333333333333335
+          },
+          "failed_searches": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "dead_end_reads": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          }
+        }
+      },
+      {
+        "task_id": "caddyserver__caddy-6051",
+        "arm": "prewalk",
+        "scheduled_runs": 3,
+        "distributions": {
+          "duration_ms": {
+            "samples": 3,
+            "minimum": 164997,
+            "median": 167824,
+            "mean": 176516.66666666666,
+            "maximum": 196729,
+            "sample_variance": 308401796.3333333
+          },
+          "total_input_tokens": {
+            "samples": 3,
+            "minimum": 419296,
+            "median": 432567,
+            "mean": 436783.3333333333,
+            "maximum": 458487,
+            "sample_variance": 397316720.3333334
+          },
+          "total_output_tokens": {
+            "samples": 3,
+            "minimum": 4580,
+            "median": 5026,
+            "mean": 4921.333333333333,
+            "maximum": 5158,
+            "sample_variance": 91737.33333333334
+          },
+          "tool_calls": {
+            "samples": 3,
+            "minimum": 14,
+            "median": 15,
+            "mean": 15,
+            "maximum": 16,
+            "sample_variance": 1
+          },
+          "rereads": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "reread_tokens": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "failed_tool_calls": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 2,
+            "mean": 1.3333333333333333,
+            "maximum": 2,
+            "sample_variance": 1.3333333333333335
+          },
+          "failed_searches": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "dead_end_reads": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          }
+        }
+      },
+      {
+        "task_id": "jqlang__jq-2750",
+        "arm": "filesystem",
+        "scheduled_runs": 3,
+        "distributions": {
+          "duration_ms": {
+            "samples": 3,
+            "minimum": 309990,
+            "median": 400329,
+            "mean": 387327.6666666667,
+            "maximum": 451664,
+            "sample_variance": 5144656570.333333
+          },
+          "total_input_tokens": {
+            "samples": 3,
+            "minimum": 880133,
+            "median": 1392167,
+            "mean": 1393033.6666666667,
+            "maximum": 1906801,
+            "sample_variance": 263512358889.3333
+          },
+          "total_output_tokens": {
+            "samples": 3,
+            "minimum": 7094,
+            "median": 8600,
+            "mean": 8725.666666666666,
+            "maximum": 10483,
+            "sample_variance": 2883174.333333333
+          },
+          "tool_calls": {
+            "samples": 3,
+            "minimum": 23,
+            "median": 32,
+            "mean": 30,
+            "maximum": 35,
+            "sample_variance": 39
+          },
+          "rereads": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "reread_tokens": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "failed_tool_calls": {
+            "samples": 3,
+            "minimum": 1,
+            "median": 1,
+            "mean": 2,
+            "maximum": 4,
+            "sample_variance": 3
+          },
+          "failed_searches": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0.3333333333333333,
+            "maximum": 1,
+            "sample_variance": 0.33333333333333337
+          },
+          "dead_end_reads": {
+            "samples": 3,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          }
+        }
+      },
+      {
+        "task_id": "jqlang__jq-2750",
+        "arm": "lean_token_one_shot",
+        "scheduled_runs": 3,
+        "distributions": {
+          "duration_ms": {
+            "samples": 3,
+            "minimum": 484979,
+            "median": 531213,
+            "mean": 526721,
+            "maximum": 563971,
+            "sample_variance": 1575067564
+          },
+          "total_input_tokens": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "total_output_tokens": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "tool_calls": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "rereads": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "reread_tokens": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "failed_tool_calls": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "failed_searches": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "dead_end_reads": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          }
+        }
+      },
+      {
+        "task_id": "jqlang__jq-2750",
+        "arm": "lean_token_progressive",
+        "scheduled_runs": 3,
+        "distributions": {
+          "duration_ms": {
+            "samples": 3,
+            "minimum": 343392,
+            "median": 432439,
+            "mean": 410682.6666666667,
+            "maximum": 456217,
+            "sample_variance": 3537373686.3333335
+          },
+          "total_input_tokens": {
+            "samples": 2,
+            "minimum": 2722537,
+            "median": 2850201,
+            "mean": 2850201,
+            "maximum": 2977865,
+            "sample_variance": 32596193792
+          },
+          "total_output_tokens": {
+            "samples": 2,
+            "minimum": 8602,
+            "median": 9186,
+            "mean": 9186,
+            "maximum": 9770,
+            "sample_variance": 682112
+          },
+          "tool_calls": {
+            "samples": 2,
+            "minimum": 36,
+            "median": 37,
+            "mean": 37,
+            "maximum": 38,
+            "sample_variance": 2
+          },
+          "rereads": {
+            "samples": 2,
+            "minimum": 0,
+            "median": 0.5,
+            "mean": 0.5,
+            "maximum": 1,
+            "sample_variance": 0.5
+          },
+          "reread_tokens": {
+            "samples": 2,
+            "minimum": 0,
+            "median": 546,
+            "mean": 546,
+            "maximum": 1092,
+            "sample_variance": 596232
+          },
+          "failed_tool_calls": {
+            "samples": 2,
+            "minimum": 3,
+            "median": 3.5,
+            "mean": 3.5,
+            "maximum": 4,
+            "sample_variance": 0.5
+          },
+          "failed_searches": {
+            "samples": 2,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          },
+          "dead_end_reads": {
+            "samples": 2,
+            "minimum": 0,
+            "median": 0,
+            "mean": 0,
+            "maximum": 0,
+            "sample_variance": 0
+          }
+        }
+      },
+      {
+        "task_id": "jqlang__jq-2750",
+        "arm": "prewalk",
+        "scheduled_runs": 3,
+        "distributions": {
+          "duration_ms": {
+            "samples": 3,
+            "minimum": 288957,
+            "median": 339562,
+            "mean": 323904.6666666667,
+            "maximum": 343195,
+            "sample_variance": 919304226.3333334
+          },
+          "total_input_tokens": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "total_output_tokens": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "tool_calls": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "rereads": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "reread_tokens": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "failed_tool_calls": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "failed_searches": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          },
+          "dead_end_reads": {
+            "samples": 0,
+            "minimum": null,
+            "median": null,
+            "mean": null,
+            "maximum": null,
+            "sample_variance": null
+          }
+        }
+      }
+    ]
+  },
+  "failure_inventory": {
+    "adapter_failed": 14,
+    "adapter_timed_out": 0,
+    "validation_infrastructure_failed": 0,
+    "validation_timed_out": 0,
+    "official_unresolved_after_completed_validation": 9,
+    "reasons": [
+      {
+        "reason": "executor_phase_live_tool_limit_20",
+        "runs": 3
+      },
+      {
+        "reason": "frontier_substantive_call_before_first_leantoken",
+        "runs": 1
+      },
+      {
+        "reason": "forbidden_native_retrieval_at_tool_call_16",
+        "runs": 1
+      },
+      {
+        "reason": "frontier_phase_live_tool_limit_20",
+        "runs": 2
+      },
+      {
+        "reason": "live_tool_limit_40",
+        "runs": 7
+      }
+    ]
+  },
+  "runs": [
+    {
+      "task_id": "babel__babel-15445",
+      "repetition": 1,
+      "arm_order_index": 0,
+      "arm": "filesystem",
+      "status": "completed",
+      "official_success": false,
+      "duration_ms": 340526,
+      "validation_duration_ms": 97349,
+      "validation_exit_code": 1,
+      "total_input_tokens": 1256743,
+      "total_output_tokens": 8426,
+      "tool_calls": 28,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 2,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "babel__babel-15445",
+      "repetition": 1,
+      "arm_order_index": 1,
+      "arm": "lean_token_progressive",
+      "status": "completed",
+      "official_success": false,
+      "duration_ms": 353925,
+      "validation_duration_ms": 88800,
+      "validation_exit_code": 1,
+      "total_input_tokens": 1306169,
+      "total_output_tokens": 4688,
+      "tool_calls": 30,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 2,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "babel__babel-15445",
+      "repetition": 1,
+      "arm_order_index": 2,
+      "arm": "lean_token_one_shot",
+      "status": "completed",
+      "official_success": false,
+      "duration_ms": 271594,
+      "validation_duration_ms": 87722,
+      "validation_exit_code": 1,
+      "total_input_tokens": 203290,
+      "total_output_tokens": 2646,
+      "tool_calls": 7,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 2,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "babel__babel-15445",
+      "repetition": 1,
+      "arm_order_index": 3,
+      "arm": "prewalk",
+      "status": "adapter_failed",
+      "official_success": false,
+      "duration_ms": 208328,
+      "validation_duration_ms": null,
+      "validation_exit_code": null,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "tool_calls": null,
+      "rereads": null,
+      "reread_tokens": null,
+      "failed_tool_calls": null,
+      "failed_searches": null,
+      "dead_end_reads": null,
+      "failure_reason": "frontier_phase_live_tool_limit_20"
+    },
+    {
+      "task_id": "caddyserver__caddy-6051",
+      "repetition": 1,
+      "arm_order_index": 0,
+      "arm": "filesystem",
+      "status": "completed",
+      "official_success": true,
+      "duration_ms": 134027,
+      "validation_duration_ms": 23824,
+      "validation_exit_code": 0,
+      "total_input_tokens": 327419,
+      "total_output_tokens": 3743,
+      "tool_calls": 11,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 0,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "caddyserver__caddy-6051",
+      "repetition": 1,
+      "arm_order_index": 1,
+      "arm": "lean_token_progressive",
+      "status": "completed",
+      "official_success": true,
+      "duration_ms": 153831,
+      "validation_duration_ms": 23109,
+      "validation_exit_code": 0,
+      "total_input_tokens": 488133,
+      "total_output_tokens": 3892,
+      "tool_calls": 15,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 0,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "caddyserver__caddy-6051",
+      "repetition": 1,
+      "arm_order_index": 2,
+      "arm": "lean_token_one_shot",
+      "status": "adapter_failed",
+      "official_success": false,
+      "duration_ms": 111769,
+      "validation_duration_ms": null,
+      "validation_exit_code": null,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "tool_calls": null,
+      "rereads": null,
+      "reread_tokens": null,
+      "failed_tool_calls": null,
+      "failed_searches": null,
+      "dead_end_reads": null,
+      "failure_reason": "live_tool_limit_40"
+    },
+    {
+      "task_id": "caddyserver__caddy-6051",
+      "repetition": 1,
+      "arm_order_index": 3,
+      "arm": "prewalk",
+      "status": "completed",
+      "official_success": true,
+      "duration_ms": 167824,
+      "validation_duration_ms": 25610,
+      "validation_exit_code": 0,
+      "total_input_tokens": 432567,
+      "total_output_tokens": 5026,
+      "tool_calls": 15,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 2,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "jqlang__jq-2750",
+      "repetition": 1,
+      "arm_order_index": 0,
+      "arm": "prewalk",
+      "status": "adapter_failed",
+      "official_success": false,
+      "duration_ms": 343195,
+      "validation_duration_ms": null,
+      "validation_exit_code": null,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "tool_calls": null,
+      "rereads": null,
+      "reread_tokens": null,
+      "failed_tool_calls": null,
+      "failed_searches": null,
+      "dead_end_reads": null,
+      "failure_reason": "executor_phase_live_tool_limit_20"
+    },
+    {
+      "task_id": "jqlang__jq-2750",
+      "repetition": 1,
+      "arm_order_index": 1,
+      "arm": "lean_token_one_shot",
+      "status": "adapter_failed",
+      "official_success": false,
+      "duration_ms": 484979,
+      "validation_duration_ms": null,
+      "validation_exit_code": null,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "tool_calls": null,
+      "rereads": null,
+      "reread_tokens": null,
+      "failed_tool_calls": null,
+      "failed_searches": null,
+      "dead_end_reads": null,
+      "failure_reason": "live_tool_limit_40"
+    },
+    {
+      "task_id": "jqlang__jq-2750",
+      "repetition": 1,
+      "arm_order_index": 2,
+      "arm": "lean_token_progressive",
+      "status": "completed",
+      "official_success": true,
+      "duration_ms": 432439,
+      "validation_duration_ms": 66096,
+      "validation_exit_code": 0,
+      "total_input_tokens": 2722537,
+      "total_output_tokens": 9770,
+      "tool_calls": 38,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 4,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "jqlang__jq-2750",
+      "repetition": 1,
+      "arm_order_index": 3,
+      "arm": "filesystem",
+      "status": "completed",
+      "official_success": true,
+      "duration_ms": 309990,
+      "validation_duration_ms": 64413,
+      "validation_exit_code": 0,
+      "total_input_tokens": 880133,
+      "total_output_tokens": 7094,
+      "tool_calls": 23,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 1,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "babel__babel-15445",
+      "repetition": 2,
+      "arm_order_index": 0,
+      "arm": "filesystem",
+      "status": "completed",
+      "official_success": false,
+      "duration_ms": 208633,
+      "validation_duration_ms": 91004,
+      "validation_exit_code": 1,
+      "total_input_tokens": 235574,
+      "total_output_tokens": 3299,
+      "tool_calls": 10,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 2,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "babel__babel-15445",
+      "repetition": 2,
+      "arm_order_index": 1,
+      "arm": "lean_token_progressive",
+      "status": "completed",
+      "official_success": false,
+      "duration_ms": 369375,
+      "validation_duration_ms": 91068,
+      "validation_exit_code": 1,
+      "total_input_tokens": 1166437,
+      "total_output_tokens": 5240,
+      "tool_calls": 31,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 2,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "babel__babel-15445",
+      "repetition": 2,
+      "arm_order_index": 2,
+      "arm": "lean_token_one_shot",
+      "status": "adapter_failed",
+      "official_success": false,
+      "duration_ms": 300677,
+      "validation_duration_ms": null,
+      "validation_exit_code": null,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "tool_calls": null,
+      "rereads": null,
+      "reread_tokens": null,
+      "failed_tool_calls": null,
+      "failed_searches": null,
+      "dead_end_reads": null,
+      "failure_reason": "forbidden_native_retrieval_at_tool_call_16"
+    },
+    {
+      "task_id": "babel__babel-15445",
+      "repetition": 2,
+      "arm_order_index": 3,
+      "arm": "prewalk",
+      "status": "adapter_failed",
+      "official_success": false,
+      "duration_ms": 261119,
+      "validation_duration_ms": null,
+      "validation_exit_code": null,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "tool_calls": null,
+      "rereads": null,
+      "reread_tokens": null,
+      "failed_tool_calls": null,
+      "failed_searches": null,
+      "dead_end_reads": null,
+      "failure_reason": "frontier_phase_live_tool_limit_20"
+    },
+    {
+      "task_id": "caddyserver__caddy-6051",
+      "repetition": 2,
+      "arm_order_index": 0,
+      "arm": "lean_token_progressive",
+      "status": "completed",
+      "official_success": false,
+      "duration_ms": 179626,
+      "validation_duration_ms": 23231,
+      "validation_exit_code": 1,
+      "total_input_tokens": 556101,
+      "total_output_tokens": 4392,
+      "tool_calls": 20,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 2,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "caddyserver__caddy-6051",
+      "repetition": 2,
+      "arm_order_index": 1,
+      "arm": "prewalk",
+      "status": "completed",
+      "official_success": true,
+      "duration_ms": 164997,
+      "validation_duration_ms": 22981,
+      "validation_exit_code": 0,
+      "total_input_tokens": 419296,
+      "total_output_tokens": 4580,
+      "tool_calls": 14,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 0,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "caddyserver__caddy-6051",
+      "repetition": 2,
+      "arm_order_index": 2,
+      "arm": "filesystem",
+      "status": "completed",
+      "official_success": true,
+      "duration_ms": 180516,
+      "validation_duration_ms": 27192,
+      "validation_exit_code": 0,
+      "total_input_tokens": 426474,
+      "total_output_tokens": 4294,
+      "tool_calls": 14,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 1,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "caddyserver__caddy-6051",
+      "repetition": 2,
+      "arm_order_index": 3,
+      "arm": "lean_token_one_shot",
+      "status": "adapter_failed",
+      "official_success": false,
+      "duration_ms": 105794,
+      "validation_duration_ms": null,
+      "validation_exit_code": null,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "tool_calls": null,
+      "rereads": null,
+      "reread_tokens": null,
+      "failed_tool_calls": null,
+      "failed_searches": null,
+      "dead_end_reads": null,
+      "failure_reason": "live_tool_limit_40"
+    },
+    {
+      "task_id": "jqlang__jq-2750",
+      "repetition": 2,
+      "arm_order_index": 0,
+      "arm": "lean_token_progressive",
+      "status": "completed",
+      "official_success": true,
+      "duration_ms": 456217,
+      "validation_duration_ms": 66068,
+      "validation_exit_code": 0,
+      "total_input_tokens": 2977865,
+      "total_output_tokens": 8602,
+      "tool_calls": 36,
+      "rereads": 1,
+      "reread_tokens": 1092,
+      "failed_tool_calls": 3,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "jqlang__jq-2750",
+      "repetition": 2,
+      "arm_order_index": 1,
+      "arm": "filesystem",
+      "status": "completed",
+      "official_success": true,
+      "duration_ms": 400329,
+      "validation_duration_ms": 64420,
+      "validation_exit_code": 0,
+      "total_input_tokens": 1392167,
+      "total_output_tokens": 8600,
+      "tool_calls": 35,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 1,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "jqlang__jq-2750",
+      "repetition": 2,
+      "arm_order_index": 2,
+      "arm": "lean_token_one_shot",
+      "status": "adapter_failed",
+      "official_success": false,
+      "duration_ms": 563971,
+      "validation_duration_ms": null,
+      "validation_exit_code": null,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "tool_calls": null,
+      "rereads": null,
+      "reread_tokens": null,
+      "failed_tool_calls": null,
+      "failed_searches": null,
+      "dead_end_reads": null,
+      "failure_reason": "live_tool_limit_40"
+    },
+    {
+      "task_id": "jqlang__jq-2750",
+      "repetition": 2,
+      "arm_order_index": 3,
+      "arm": "prewalk",
+      "status": "adapter_failed",
+      "official_success": false,
+      "duration_ms": 288957,
+      "validation_duration_ms": null,
+      "validation_exit_code": null,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "tool_calls": null,
+      "rereads": null,
+      "reread_tokens": null,
+      "failed_tool_calls": null,
+      "failed_searches": null,
+      "dead_end_reads": null,
+      "failure_reason": "executor_phase_live_tool_limit_20"
+    },
+    {
+      "task_id": "babel__babel-15445",
+      "repetition": 3,
+      "arm_order_index": 0,
+      "arm": "prewalk",
+      "status": "adapter_failed",
+      "official_success": false,
+      "duration_ms": 273430,
+      "validation_duration_ms": null,
+      "validation_exit_code": null,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "tool_calls": null,
+      "rereads": null,
+      "reread_tokens": null,
+      "failed_tool_calls": null,
+      "failed_searches": null,
+      "dead_end_reads": null,
+      "failure_reason": "frontier_substantive_call_before_first_leantoken"
+    },
+    {
+      "task_id": "babel__babel-15445",
+      "repetition": 3,
+      "arm_order_index": 1,
+      "arm": "filesystem",
+      "status": "completed",
+      "official_success": false,
+      "duration_ms": 388922,
+      "validation_duration_ms": 94119,
+      "validation_exit_code": 1,
+      "total_input_tokens": 858739,
+      "total_output_tokens": 6032,
+      "tool_calls": 24,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 3,
+      "failed_searches": 1,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "babel__babel-15445",
+      "repetition": 3,
+      "arm_order_index": 2,
+      "arm": "lean_token_one_shot",
+      "status": "completed",
+      "official_success": false,
+      "duration_ms": 417210,
+      "validation_duration_ms": 89304,
+      "validation_exit_code": 1,
+      "total_input_tokens": 326049,
+      "total_output_tokens": 6697,
+      "tool_calls": 15,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 7,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "babel__babel-15445",
+      "repetition": 3,
+      "arm_order_index": 3,
+      "arm": "lean_token_progressive",
+      "status": "completed",
+      "official_success": false,
+      "duration_ms": 429739,
+      "validation_duration_ms": 89804,
+      "validation_exit_code": 1,
+      "total_input_tokens": 1092094,
+      "total_output_tokens": 4974,
+      "tool_calls": 28,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 3,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "caddyserver__caddy-6051",
+      "repetition": 3,
+      "arm_order_index": 0,
+      "arm": "lean_token_one_shot",
+      "status": "adapter_failed",
+      "official_success": false,
+      "duration_ms": 334312,
+      "validation_duration_ms": null,
+      "validation_exit_code": null,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "tool_calls": null,
+      "rereads": null,
+      "reread_tokens": null,
+      "failed_tool_calls": null,
+      "failed_searches": null,
+      "dead_end_reads": null,
+      "failure_reason": "live_tool_limit_40"
+    },
+    {
+      "task_id": "caddyserver__caddy-6051",
+      "repetition": 3,
+      "arm_order_index": 1,
+      "arm": "prewalk",
+      "status": "completed",
+      "official_success": true,
+      "duration_ms": 196729,
+      "validation_duration_ms": 25627,
+      "validation_exit_code": 0,
+      "total_input_tokens": 458487,
+      "total_output_tokens": 5158,
+      "tool_calls": 16,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 2,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "caddyserver__caddy-6051",
+      "repetition": 3,
+      "arm_order_index": 2,
+      "arm": "lean_token_progressive",
+      "status": "completed",
+      "official_success": true,
+      "duration_ms": 199139,
+      "validation_duration_ms": 23791,
+      "validation_exit_code": 0,
+      "total_input_tokens": 706018,
+      "total_output_tokens": 5043,
+      "tool_calls": 22,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 2,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "caddyserver__caddy-6051",
+      "repetition": 3,
+      "arm_order_index": 3,
+      "arm": "filesystem",
+      "status": "completed",
+      "official_success": true,
+      "duration_ms": 128066,
+      "validation_duration_ms": 23666,
+      "validation_exit_code": 0,
+      "total_input_tokens": 270098,
+      "total_output_tokens": 3239,
+      "tool_calls": 10,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 1,
+      "failed_searches": 0,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "jqlang__jq-2750",
+      "repetition": 3,
+      "arm_order_index": 0,
+      "arm": "filesystem",
+      "status": "completed",
+      "official_success": true,
+      "duration_ms": 451664,
+      "validation_duration_ms": 65530,
+      "validation_exit_code": 0,
+      "total_input_tokens": 1906801,
+      "total_output_tokens": 10483,
+      "tool_calls": 32,
+      "rereads": 0,
+      "reread_tokens": 0,
+      "failed_tool_calls": 4,
+      "failed_searches": 1,
+      "dead_end_reads": 0,
+      "failure_reason": null
+    },
+    {
+      "task_id": "jqlang__jq-2750",
+      "repetition": 3,
+      "arm_order_index": 1,
+      "arm": "lean_token_one_shot",
+      "status": "adapter_failed",
+      "official_success": false,
+      "duration_ms": 531213,
+      "validation_duration_ms": null,
+      "validation_exit_code": null,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "tool_calls": null,
+      "rereads": null,
+      "reread_tokens": null,
+      "failed_tool_calls": null,
+      "failed_searches": null,
+      "dead_end_reads": null,
+      "failure_reason": "live_tool_limit_40"
+    },
+    {
+      "task_id": "jqlang__jq-2750",
+      "repetition": 3,
+      "arm_order_index": 2,
+      "arm": "prewalk",
+      "status": "adapter_failed",
+      "official_success": false,
+      "duration_ms": 339562,
+      "validation_duration_ms": null,
+      "validation_exit_code": null,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "tool_calls": null,
+      "rereads": null,
+      "reread_tokens": null,
+      "failed_tool_calls": null,
+      "failed_searches": null,
+      "dead_end_reads": null,
+      "failure_reason": "executor_phase_live_tool_limit_20"
+    },
+    {
+      "task_id": "jqlang__jq-2750",
+      "repetition": 3,
+      "arm_order_index": 3,
+      "arm": "lean_token_progressive",
+      "status": "adapter_failed",
+      "official_success": false,
+      "duration_ms": 343392,
+      "validation_duration_ms": null,
+      "validation_exit_code": null,
+      "total_input_tokens": null,
+      "total_output_tokens": null,
+      "tool_calls": null,
+      "rereads": null,
+      "reread_tokens": null,
+      "failed_tool_calls": null,
+      "failed_searches": null,
+      "dead_end_reads": null,
+      "failure_reason": "live_tool_limit_40"
+    }
+  ],
+  "limitations": [
+    "The three public SWE-bench Multilingual tasks may be present in model training data.",
+    "Caddy model behavior was observed during harness development before this commitment.",
+    "Seven v1 formal outcomes were observed before its telemetry defect was discovered; v2 keeps the original tasks, seed, and decision rules but is not blinded.",
+    "Provider request framing, monetary cost, and cache-creation tokens are unavailable.",
+    "Native filesystem reread and dead-end attribution is a lower bound.",
+    "The prewalk arm changes both model composition and handoff structure, so it does not isolate a model-price effect.",
+    "Local execution and validation are Linux-only; cross-platform CI covers repository code, not these Docker model runs.",
+    "Failed runs do not expose complete provider usage; complete totals remain null rather than silently excluding them.",
+    "The raw trajectories and absolute artifact paths remain local because they may contain repository content and host layout. Their identities are bound by the raw report hash."
+  ]
+}

@@ -372,6 +372,52 @@ artifact preflight, isolated task worktrees, adapter invocation, and validation
 plumbing; it is not task-success, quality, or cost evidence. Do not use the
 example manifest as a formal experiment set.
 
+### Published four-arm evaluation
+
+The first committed run was aborted after seven completed cells because Codex
+CLI 0.144.1 omitted failed code-mode `apply_patch` attempts from JSONL while
+still writing them to stderr. None of those runs were reused. The successor
+commitment changed only telemetry: the adapter streams both channels, assigns a
+shared observation order, normalizes every hidden patch failure, and charges it
+to the frozen live tool budget.
+
+The corrected v2 experiment completed all 36 scheduled cells on 2026-07-21:
+three public SWE-bench Multilingual tasks, four arms, and three repetitions.
+The publishable report is
+[`../benchmarks/reports/swe-bench-multilingual-four-arm-v2.json`](../benchmarks/reports/swe-bench-multilingual-four-arm-v2.json).
+It binds the pre-run commitment, manifest, clean harness, adapter, runtime,
+validator, raw report, and stderr identities. The raw trajectories remain local
+because they may contain repository content and absolute host paths; the raw
+report binds 137 artifact identities, all of which were rehashed after the run.
+
+| Arm | Official successes | Adapter failures | Median complete input | Complete input samples | Median duration |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Filesystem | 6/9 | 0 | 858,739 | 9 | 309,990 ms |
+| LeanToken progressive | 4/9 | 1 | 1,129,265.5 | 8 | 353,925 ms |
+| LeanToken one-shot | 0/9 | 7 | 264,669.5 | 2 | 334,312 ms |
+| Prewalk + executor | 3/9 | 6 | 432,567 | 3 | 261,119 ms |
+
+The frozen primary rule is negative because progressive retrieval produced
+fewer officially validated successes than filesystem retrieval, 4 versus 6.
+The token and duration medians point in the same direction but are not needed
+to select the decision. By task, all arms were 0/3 on Babel; filesystem,
+progressive, one-shot, and prewalk were 3/3, 2/3, 0/3, and 3/3 on Caddy; and
+3/3, 2/3, 0/3, and 0/3 on jq.
+
+All 14 adapter failures are retained: seven 40-call live-budget failures, five
+20-call prewalk phase-budget failures, one forbidden one-shot native retrieval,
+and one frontier substantive call before its first LeanToken call. There were
+no adapter timeouts, validator
+infrastructure failures, or validator timeouts. The stderr observer normalized
+187 hidden failed patch attempts. Missing provider usage on failed runs remains
+`null`; low medians for one-shot and prewalk therefore describe only their two
+and three completed samples and are not cost wins.
+
+This is exploratory mechanism evidence on three public, consumed tasks. It is
+not Gate B, does not establish population performance, and does not authorize a
+ranking, default-mode, or product-promotion change. The one-shot and prewalk
+results are secondary mechanism diagnostics only.
+
 ## Multi-agent context pilot
 
 `multi_agent_context_pilot.json` freezes a small read-only Codex experiment for

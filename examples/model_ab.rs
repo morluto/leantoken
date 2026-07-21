@@ -1625,6 +1625,56 @@ mod tests {
     }
 
     #[test]
+    fn checked_four_arm_report_preserves_decision_and_redaction_contract() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("benchmarks/reports/swe-bench-multilingual-four-arm-v2.json");
+        let bytes = fs::read(path).expect("checked four-arm report");
+        let report: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("valid checked four-arm report");
+        let runs = report["runs"].as_array().expect("run summaries");
+        let unique_cells = runs
+            .iter()
+            .map(|run| {
+                (
+                    run["task_id"].as_str().expect("task ID"),
+                    run["repetition"].as_u64().expect("repetition"),
+                    run["arm"].as_str().expect("arm"),
+                )
+            })
+            .collect::<HashSet<_>>();
+
+        assert_eq!(report["status"], "completed_negative_primary");
+        assert_eq!(
+            report["pre_registered_decision"]["result"],
+            "negative_primary"
+        );
+        assert_eq!(report["pre_registered_decision"]["filesystem_successes"], 6);
+        assert_eq!(
+            report["pre_registered_decision"]["progressive_successes"],
+            4
+        );
+        assert_eq!(
+            report["execution_integrity"]["verified_artifact_hashes"],
+            137
+        );
+        assert_eq!(report["failure_inventory"]["adapter_failed"], 14);
+        assert_eq!(runs.len(), 36);
+        assert_eq!(unique_cells.len(), 36);
+        assert_eq!(
+            report["metric_distributions"]["by_task_arm"]
+                .as_array()
+                .expect("task-arm distributions")
+                .len(),
+            12
+        );
+        assert!(
+            !String::from_utf8(bytes)
+                .expect("UTF-8 report")
+                .contains("/home/")
+        );
+    }
+
+    #[test]
     fn failed_attempts_remain_in_aggregates_without_inventing_usage() {
         let run = RunReport {
             task_id: "task".to_owned(),
