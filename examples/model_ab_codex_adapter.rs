@@ -406,7 +406,7 @@ fn execute_prewalk(
     let total_timeout = Duration::from_secs(request.timeout_seconds.saturating_sub(5));
     let prewalk_timeout = total_timeout / 2;
     let prewalk_prompt = format!(
-        "Explore and begin the repository task below as the frontier prewalk. Use LeanToken as the only repository discovery and source-reading mechanism; native shell commands are allowed only for Git preflight and validation. Do not issue tool calls in parallel. Maintain a bounded todo list, gather grounded path/range evidence, make the first evidence-grounded edit, run a focused validation for that edit, then stop. Return a compact handoff summary, but do not finish the entire task when a validated first edit is available.\n\nFrozen retrieval contract: {}\nPer-call retrieval source budget: {} tokens. Prewalk tool-call limit: {}.\n\nTask:\n{}",
+        "Explore and begin the repository task below as the frontier prewalk. Use LeanToken as the only repository discovery and source-reading mechanism; native shell commands are allowed only for Git preflight and validation. Do not issue tool calls in parallel. Maintain a bounded todo list, gather grounded path/range evidence, and make the first evidence-grounded edit. After that edit, you must run a successful build, test, lint, or `git diff --check` shell command; the handoff is rejected without a successful post-edit validation. Then stop and return a compact handoff summary, but do not finish the entire task when a validated first edit is available.\n\nFrozen retrieval contract: {}\nPer-call retrieval source budget: {} tokens. Prewalk tool-call limit: {}.\n\nTask:\n{}",
         request.arm_definition.retrieval_contract,
         request.arm_definition.budget.context_token_limit,
         configuration
