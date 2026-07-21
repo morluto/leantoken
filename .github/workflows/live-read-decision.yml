@@ -1,0 +1,215 @@
+name: Live-read cache decision
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    name: Freeze live-read matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.value }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Build matrix from the frozen manifest
+        id: matrix
+        run: |
+          value=$(jq -c '{include: [.profile as $profile | .corpora[] as $corpus | ["ubuntu-latest", "macos-latest", "windows-latest"][] as $os | {os: $os, corpus: $corpus.id, repository: $corpus.repository, revision: $corpus.revision, iterations: $profile.iterations, hot_set: $profile.hot_set, max_tokens: $profile.max_tokens, pressure_bytes: $profile.pressure_bytes}]}' benchmarks/live_read_decision.json)
+          echo "value=$value" >> "$GITHUB_OUTPUT"
+
+  profile:
+    name: ${{ matrix.os }} / ${{ matrix.corpus }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: live-read-profile-${{ matrix.os }}
+
+      - name: Fetch pinned corpus
+        run: |
+          repository="$RUNNER_TEMP/live-read-profile/${{ matrix.corpus }}"
+          mkdir -p "$repository"
+          git -C "$repository" init --quiet
+          git -C "$repository" remote add origin "${{ matrix.repository }}"
+          git -C "$repository" fetch --quiet --depth=1 origin "${{ matrix.revision }}"
+          git -C "$repository" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "$repository" rev-parse HEAD)" = "${{ matrix.revision }}"
+
+      - name: Build release profiler
+        run: cargo build --release --example live_read_profile
+
+      - name: Profile on Linux
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p target/live-read-profile
+          /usr/bin/time -v -o target/live-read-profile/process.txt \
+            target/release/examples/live_read_profile \
+              --repository "$RUNNER_TEMP/live-read-profile/${{ matrix.corpus }}" \
+              --repository-label "${{ matrix.repository }}" \
+              --iterations "${{ matrix.iterations }}" \
+              --hot-set "${{ matrix.hot_set }}" \
+              --max-tokens "${{ matrix.max_tokens }}" \
+              --pressure-bytes "${{ matrix.pressure_bytes }}" \
+              --output target/live-read-profile/profile.json \
+            > target/live-read-profile/stdout.json
+          peak_kib=$(awk -F: '/Maximum resident set size/ {gsub(/^[[:space:]]+/, "", $2); print $2}' target/live-read-profile/process.txt)
+          jq -n --argjson bytes "$((peak_kib * 1024))" \
+            '{peak_rss_bytes: $bytes, source: "gnu-time-maximum-resident-set-size"}' \
+            > target/live-read-profile/peak-rss.json
+
+      - name: Profile on macOS
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p target/live-read-profile
+          /usr/bin/time -l \
+            target/release/examples/live_read_profile \
+              --repository "$RUNNER_TEMP/live-read-profile/${{ matrix.corpus }}" \
+              --repository-label "${{ matrix.repository }}" \
+              --iterations "${{ matrix.iterations }}" \
+              --hot-set "${{ matrix.hot_set }}" \
+              --max-tokens "${{ matrix.max_tokens }}" \
+              --pressure-bytes "${{ matrix.pressure_bytes }}" \
+              --output target/live-read-profile/profile.json \
+            > target/live-read-profile/stdout.json \
+            2> target/live-read-profile/process.txt
+          peak_bytes=$(awk '/maximum resident set size/ {print $1}' target/live-read-profile/process.txt)
+          jq -n --argjson bytes "$peak_bytes" \
+            '{peak_rss_bytes: $bytes, source: "bsd-time-maximum-resident-set-size"}' \
+            > target/live-read-profile/peak-rss.json
+
+      - name: Profile on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path target/live-read-profile | Out-Null
+          $arguments = @(
+            '--repository', "$env:RUNNER_TEMP/live-read-profile/${{ matrix.corpus }}",
+            '--repository-label', '${{ matrix.repository }}',
+            '--iterations', '${{ matrix.iterations }}',
+            '--hot-set', '${{ matrix.hot_set }}',
+            '--max-tokens', '${{ matrix.max_tokens }}',
+            '--pressure-bytes', '${{ matrix.pressure_bytes }}',
+            '--output', 'target/live-read-profile/profile.json'
+          )
+          $start = @{
+            FilePath = 'target/release/examples/live_read_profile.exe'
+            ArgumentList = $arguments
+            NoNewWindow = $true
+            PassThru = $true
+            RedirectStandardOutput = 'target/live-read-profile/stdout.json'
+            RedirectStandardError = 'target/live-read-profile/process.txt'
+          }
+          $process = Start-Process @start
+          $sampledPeak = 0L
+          while (-not $process.HasExited) {
+            $process.Refresh()
+            $sampledPeak = [Math]::Max($sampledPeak, $process.WorkingSet64)
+            Start-Sleep -Milliseconds 20
+          }
+          $process.WaitForExit()
+          if ($process.ExitCode -ne 0) {
+            Get-Content target/live-read-profile/process.txt
+            exit $process.ExitCode
+          }
+          @{ peak_rss_bytes = $sampledPeak; source = 'powershell-working-set-20ms-sampler' } |
+            ConvertTo-Json |
+            Set-Content target/live-read-profile/peak-rss.json
+
+      - name: Verify artifact identity
+        run: |
+          test "$(jq -r '.schema_version' target/live-read-profile/profile.json)" = 1
+          test "$(jq -r '.corpus.revision' target/live-read-profile/profile.json)" = "${{ matrix.revision }}"
+          test "$(jq -r '.release_build' target/live-read-profile/profile.json)" = true
+          test "$(jq -r '.leantoken_worktree_dirty' target/live-read-profile/profile.json)" = false
+          test "$(jq -r '.live_change.stale_before_reconciliation' target/live-read-profile/profile.json)" = true
+          test "$(jq -r '.live_change.current_after_reconciliation' target/live-read-profile/profile.json)" = true
+
+      - name: Publish job summary
+        run: |
+          echo "## ${{ matrix.corpus }} / ${{ matrix.os }}" >> "$GITHUB_STEP_SUMMARY"
+          jq -r '"- Corpus: \(.corpus.files) files / \(.corpus.total_bytes) bytes\n- Direct warm p50/p95: \(.warm_hot_direct.timing.p50_us / 1000) / \(.warm_hot_direct.timing.p95_us / 1000) ms\n- Complete service p50/p95: \(.warm_hot_service.complete.p50_us / 1000) / \(.warm_hot_service.complete.p95_us / 1000) ms\n- Pressure direct p50/p95: \(.pressure.direct_hot.timing.p50_us / 1000) / \(.pressure.direct_hot.timing.p95_us / 1000) ms"' target/live-read-profile/profile.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload profile artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-read-profile-${{ matrix.os }}-${{ matrix.corpus }}
+          path: target/live-read-profile/
+          retention-days: 14
+
+  aggregate:
+    name: Validate live-read matrix and decide
+    needs: profile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: live-read-profile-aggregate
+
+      - name: Download raw profiles
+        uses: actions/download-artifact@v8
+        with:
+          pattern: live-read-profile-*
+          path: target/live-read-profile-artifacts
+
+      - name: Aggregate frozen matrix
+        run: |
+          cargo run --release --example live_read_decision_report -- \
+            --manifest benchmarks/live_read_decision.json \
+            --artifacts target/live-read-profile-artifacts \
+            --output target/live-read-decision-report.json \
+            > target/live-read-decision-stdout.json
+
+      - name: Publish decision summary
+        run: |
+          echo "## Live-read cache decision" >> "$GITHUB_STEP_SUMMARY"
+          jq -r '"- Decision: \(.decision)\n- Material pairs: \(.material_pairs) / \(.expected_pairs)\n- Runtime revision: `\(.leantoken_git_revision)`"' target/live-read-decision-report.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload aggregate report
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-read-decision-report
+          path: |
+            target/live-read-decision-report.json
+            target/live-read-decision-stdout.json
+          retention-days: 14

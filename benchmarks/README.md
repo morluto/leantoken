@@ -591,3 +591,60 @@ file cache is justified only when live reads are a material share of measured
 end-to-end latency on target repositories and filesystems. The in-memory number
 is an upper bound on avoidable read work: it excludes lookup, eviction,
 invalidation, synchronization, and memory-pressure costs.
+
+## Cross-platform live-read decision
+
+[`live_read_decision.json`](live_read_decision.json) freezes the Flask and Vue
+core revisions, sample policy, and hot-cache adoption threshold before the
+cross-platform matrix runs. The experiment profiles a deliberately cache-friendly
+repeated eight-file working set plus reads spread across each corpus. It records
+direct whole-file reads, in-memory copies, the actual `Services::read` path,
+response serialization, a retained and page-touched 256 MiB pressure condition,
+process peak RSS, and live-change generation correctness.
+
+The completed [decision report](reports/live-read-decision-v1-2026-07-20.md)
+records the six-pair matrix and its frozen no-cache result. No pair met either
+the absolute latency or request-share threshold, so LeanToken retains bounded
+live reads and the operating-system page cache. The expensive workflow is
+manual after publishing that result.
+
+A 64 MiB byte-bounded LRU prototype is eligible only if direct-read p95 reaches
+1 ms, direct live reads consume at least 10% of mean service-plus-serialization
+time, and both conditions repeat in at least two corpus/platform pairs. Direct
+read time is treated as fully avoidable even though a real cache would retain
+lookup, cloning, synchronization, eviction, and invalidation costs. This makes
+the decision conservative in favor of a cache.
+
+Run one pair from a clean pinned checkout with a release binary:
+
+```bash
+cargo build --release --example live_read_profile
+target/release/examples/live_read_profile \
+  --repository target/live-read-repos/flask \
+  --repository-label https://github.com/pallets/flask.git \
+  --iterations 200 \
+  --hot-set 8 \
+  --max-tokens 512 \
+  --pressure-bytes 268435456 \
+  --output target/live-read-profile/profile.json
+```
+
+The `Live-read cache decision` workflow runs the two corpora on Linux, macOS,
+and Windows and retains one profile, process-memory receipt, and stdout artifact
+per pair. Reproduce its strict aggregate decision after downloading the six
+artifact directories without merging them:
+
+```bash
+cargo run --release --example live_read_decision_report -- \
+  --manifest benchmarks/live_read_decision.json \
+  --artifacts target/live-read-profile-artifacts \
+  --output target/live-read-decision-report.json
+```
+
+The checkout copy and initial index touch every corpus file, so the first
+profile pass is not called a cold-cache measurement. The pressure buffer proves
+that process memory is retained and touched, not that every operating system
+evicted the same page-cache entries. No model runs in this profiler; direct-read
+share is compared only with local service and serialization time, making it an
+upper bound for an agent request. Remote, encrypted, antivirus-heavy, and
+contended filesystems need an in-situ frozen run before a scoped cache decision.
