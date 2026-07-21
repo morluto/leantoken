@@ -4,9 +4,11 @@ mod model_ab_artifacts;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -21,6 +23,7 @@ use serde_json::Value;
 use wait_timeout::ChildExt;
 
 const MAX_CODEX_STDOUT_BYTES: u64 = 64 * 1024 * 1024;
+const CODEX_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Deserialize)]
 struct AdapterRequest {
@@ -182,6 +185,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             &prompt,
             &request.primary_model,
             configuration.mcp_enabled,
+            request.arm_definition.budget.tool_call_limit,
             Duration::from_secs(request.timeout_seconds.saturating_sub(5)),
         )?;
         analyze_events(&output, configuration.tokenizer)?
@@ -384,7 +388,7 @@ fn build_prompt(request: &AdapterRequest, retrieval_policy: RetrievalPolicy) -> 
         RetrievalPolicy::Prewalk => unreachable!("prewalk uses phase-specific prompts"),
     };
     format!(
-        "Solve the repository task below by inspecting and editing the current worktree. Run relevant tests before finishing. Do not use web search or network access, do not inspect benchmark gold patches, and do not merely describe a solution.\n\nFrozen retrieval contract: {}\n{}\nPer-call retrieval source budget: {} tokens. Total tool-call limit: {}.\n\nTask:\n{}",
+        "Solve the repository task below by inspecting and editing the current worktree. Run relevant tests before finishing. Do not use web search or network access, do not inspect benchmark gold patches, do not issue tool calls in parallel, and do not merely describe a solution.\n\nFrozen retrieval contract: {}\n{}\nPer-call retrieval source budget: {} tokens. Total tool-call limit: {}.\n\nTask:\n{}",
         request.arm_definition.retrieval_contract,
         tools,
         request.arm_definition.budget.context_token_limit,
@@ -402,7 +406,7 @@ fn execute_prewalk(
     let total_timeout = Duration::from_secs(request.timeout_seconds.saturating_sub(5));
     let prewalk_timeout = total_timeout / 2;
     let prewalk_prompt = format!(
-        "Explore and begin the repository task below as the frontier prewalk. Use LeanToken as the only repository discovery and source-reading mechanism; native shell commands are allowed only for Git preflight and validation. Maintain a bounded todo list, gather grounded path/range evidence, make the first evidence-grounded edit, run a focused validation for that edit, then stop. Return a compact handoff summary, but do not finish the entire task when a validated first edit is available.\n\nFrozen retrieval contract: {}\nPer-call retrieval source budget: {} tokens. Prewalk tool-call limit: {}.\n\nTask:\n{}",
+        "Explore and begin the repository task below as the frontier prewalk. Use LeanToken as the only repository discovery and source-reading mechanism; native shell commands are allowed only for Git preflight and validation. Do not issue tool calls in parallel. Maintain a bounded todo list, gather grounded path/range evidence, make the first evidence-grounded edit, run a focused validation for that edit, then stop. Return a compact handoff summary, but do not finish the entire task when a validated first edit is available.\n\nFrozen retrieval contract: {}\nPer-call retrieval source budget: {} tokens. Prewalk tool-call limit: {}.\n\nTask:\n{}",
         request.arm_definition.retrieval_contract,
         request.arm_definition.budget.context_token_limit,
         configuration
@@ -416,6 +420,9 @@ fn execute_prewalk(
         &prewalk_prompt,
         &request.primary_model,
         true,
+        configuration
+            .prewalk_tool_call_limit
+            .expect("validated prewalk limit"),
         prewalk_timeout,
     )?;
     let mut prewalk = analyze_events(&prewalk_output, configuration.tokenizer)?;
@@ -473,7 +480,7 @@ fn execute_prewalk(
     )?;
     let serialized_handoff = serde_json::to_string(&handoff)?;
     let executor_prompt = format!(
-        "Continue the same repository task as the cheaper executor. The frontier prewalk already changed this worktree. The complete machine-readable handoff below contains its raw trajectory events, bounded todo state, grounded evidence calls with range identities, exact worktree patch, and first validated edit. Use that state directly; do not repeat repository discovery or source reads, and do not use web search. Finish the implementation, run relevant validation, and leave the worktree ready for the independent validator. Executor tool-call limit: {}.\n\nPREWALK_HANDOFF_JSON\n{}\nEND_PREWALK_HANDOFF_JSON\n\nTask:\n{}",
+        "Continue the same repository task as the cheaper executor. The frontier prewalk already changed this worktree. The complete machine-readable handoff below contains its raw trajectory events, bounded todo state, grounded evidence calls with range identities, exact worktree patch, and first validated edit. Use that state directly; do not repeat repository discovery or source reads, do not use web search, and do not issue tool calls in parallel. Finish the implementation, run relevant validation, and leave the worktree ready for the independent validator. Executor tool-call limit: {}.\n\nPREWALK_HANDOFF_JSON\n{}\nEND_PREWALK_HANDOFF_JSON\n\nTask:\n{}",
         configuration
             .executor_tool_call_limit
             .expect("validated executor limit"),
@@ -491,6 +498,9 @@ fn execute_prewalk(
         &executor_prompt,
         &executor_model,
         false,
+        configuration
+            .executor_tool_call_limit
+            .expect("validated executor limit"),
         remaining,
     )?;
     let executor = analyze_events(&executor_output, configuration.tokenizer)?;
@@ -645,6 +655,7 @@ fn run_codex(
     prompt: &str,
     model: &str,
     mcp_enabled: bool,
+    tool_call_limit: usize,
     timeout: Duration,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
     let repository = request.repository.canonicalize()?;
@@ -678,7 +689,8 @@ fn run_codex(
         .arg(format!(
             "service_tier={}",
             toml_string(&configuration.service_tier)
-        ));
+        ))
+        .args(["--config", "model_supports_parallel_tool_calls=false"]);
     if mcp_enabled {
         command
             .arg("--config")
@@ -726,24 +738,67 @@ fn run_codex(
         .ok_or("Codex stdin unavailable")?
         .write_all(prompt.as_bytes())?;
     let stdout = child.stdout.take().ok_or("Codex stdout unavailable")?;
+    let tool_limit_exceeded = Arc::new(AtomicBool::new(false));
+    let output_limit_exceeded = Arc::new(AtomicBool::new(false));
+    let reader_tool_limit_exceeded = Arc::clone(&tool_limit_exceeded);
+    let reader_output_limit_exceeded = Arc::clone(&output_limit_exceeded);
     let reader = thread::spawn(move || -> io::Result<Vec<u8>> {
+        let mut stdout = BufReader::new(stdout.take(MAX_CODEX_STDOUT_BYTES + 1));
         let mut output = Vec::new();
-        stdout
-            .take(MAX_CODEX_STDOUT_BYTES + 1)
-            .read_to_end(&mut output)?;
+        let mut line = Vec::new();
+        let mut tool_starts = 0usize;
+        loop {
+            line.clear();
+            if stdout.read_until(b'\n', &mut line)? == 0 {
+                break;
+            }
+            output.extend_from_slice(&line);
+            if output.len() as u64 > MAX_CODEX_STDOUT_BYTES {
+                reader_output_limit_exceeded.store(true, Ordering::Release);
+                break;
+            }
+            if is_tool_start_record(&line) {
+                tool_starts = tool_starts.saturating_add(1);
+                if tool_starts > tool_call_limit {
+                    reader_tool_limit_exceeded.store(true, Ordering::Release);
+                    break;
+                }
+            }
+        }
         Ok(output)
     });
-    let status = match child.wait_timeout(timeout)? {
-        Some(status) => status,
-        None => {
-            child.kill()?;
+    let started = Instant::now();
+    let status = loop {
+        if tool_limit_exceeded.load(Ordering::Acquire) {
+            let _ = child.kill();
             let _ = child.wait();
+            let _ = reader.join();
+            return Err(
+                format!("Codex exceeded the live tool-call limit of {tool_call_limit}").into(),
+            );
+        }
+        if output_limit_exceeded.load(Ordering::Acquire) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader.join();
+            return Err("Codex JSONL output exceeded 64 MiB".into());
+        }
+        let Some(remaining) = timeout.checked_sub(started.elapsed()) else {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader.join();
             return Err("Codex CLI timed out".into());
+        };
+        if let Some(status) = child.wait_timeout(remaining.min(CODEX_POLL_INTERVAL))? {
+            break status;
         }
     };
     let output = reader
         .join()
         .map_err(|_| "Codex stdout reader panicked")??;
+    if tool_limit_exceeded.load(Ordering::Acquire) {
+        return Err(format!("Codex exceeded the live tool-call limit of {tool_call_limit}").into());
+    }
     if output.len() as u64 > MAX_CODEX_STDOUT_BYTES {
         return Err("Codex JSONL output exceeded 64 MiB".into());
     }
@@ -751,6 +806,17 @@ fn run_codex(
         return Err(format!("Codex CLI exited with {status}").into());
     }
     Ok(output)
+}
+
+fn is_tool_start_record(line: &[u8]) -> bool {
+    let Ok(event) = serde_json::from_slice::<Value>(line) else {
+        return false;
+    };
+    event["type"].as_str() == Some("item.started")
+        && matches!(
+            event.pointer("/item/type").and_then(Value::as_str),
+            Some("command_execution" | "file_change" | "mcp_tool_call")
+        )
 }
 
 fn analyze_events(output: &[u8], tokenizer: Tokenizer) -> Result<Analysis, Box<dyn Error>> {
@@ -1440,6 +1506,30 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         analyze_events(jsonl.as_bytes(), Tokenizer::O200kBase).unwrap()
+    }
+
+    #[test]
+    fn live_budget_counts_only_started_tool_items() {
+        for item_type in ["command_execution", "file_change", "mcp_tool_call"] {
+            let event = serde_json::json!({
+                "type": "item.started",
+                "item": {"id": "item-1", "type": item_type}
+            });
+            assert!(is_tool_start_record(event.to_string().as_bytes()));
+        }
+        for event in [
+            serde_json::json!({
+                "type": "item.completed",
+                "item": {"id": "item-1", "type": "command_execution"}
+            }),
+            serde_json::json!({
+                "type": "item.started",
+                "item": {"id": "item-1", "type": "agent_message"}
+            }),
+        ] {
+            assert!(!is_tool_start_record(event.to_string().as_bytes()));
+        }
+        assert!(!is_tool_start_record(b"not-json\n"));
     }
 
     #[test]

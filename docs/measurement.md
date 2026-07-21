@@ -159,13 +159,10 @@ used to alter ranking, prompts, labels, queries, ranges, or budgets.
 `model_ab` executes the same frozen task across four required arms:
 
 - ordinary filesystem tools;
-- a frozen baseline LeanToken runtime as the only repository discovery and
-  source-reading tool;
-- a frozen adaptive LeanToken runtime under the same retrieval restriction;
-- adaptive LeanToken first, followed by native-tool recovery when needed.
-
-A frontier prewalk followed by a cheaper executor is an optional fifth arm. It
-does not replace any required comparison.
+- progressive narrow LeanToken retrieval with no native repository reads;
+- exactly one LeanToken context bundle with no later repository retrieval;
+- a frontier LeanToken prewalk followed by a frozen cheaper executor using the
+  transferred trajectory, todo state, evidence, patch, and validated first edit.
 
 Each run receives a fresh detached Git worktree at the same revision. The
 external adapter receives one JSON request on stdin and must return one JSON
@@ -198,7 +195,7 @@ The adapter result contract is provider-neutral:
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "task_success": false,
   "total_input_tokens": 12345,
   "total_output_tokens": 678,
@@ -225,7 +222,7 @@ The adapter result contract is provider-neutral:
 replaced with the frozen success-command result.
 
 The adapter owns provider authentication and the actual model/tool harness.
-For request schema v3 it must write `tool-trace.json`, `trajectory.json`, and
+For request schema v4 it must write `tool-trace.json`, `trajectory.json`, and
 `provider-usage.json` into the supplied `artifacts_directory` before returning.
 All three use artifact schema v1 and repeat the experiment ID, manifest BLAKE3,
 task ID, repetition, and arm supplied by the harness. Tool-trace records have
@@ -235,6 +232,11 @@ generation, line bounds, and content BLAKE3. The usage artifact retains the raw
 provider receipt beside typed uncached-input, cache-creation, cache-read,
 output, and reasoning categories. Use `null` for categories the provider does
 not expose; do not infer or replace them with zero.
+
+The prewalk arm must additionally write `prewalk-handoff.json`. The harness
+binds its evidence calls and first validated edit back to the exact tool trace,
+requires nonempty trajectory and todo state, and rejects a handoff from any
+ordinary arm.
 
 The harness rejects missing files, binding mismatches, unavailable tools,
 invalid ranges, duplicate IDs, and summary counts that cannot be recomputed
@@ -251,30 +253,29 @@ observed repository generation. For prewalk, it must transfer the complete
 exploration trajectory, todo state, evidence receipt, and first edit—not only a
 prose plan.
 
-Manifest schema v3 requires each arm to freeze its clean runtime source
+Manifest schema v4 requires each arm to freeze its clean runtime source
 worktree and full revision, runtime binary BLAKE3, adapter source worktree and
 revision, adapter binary BLAKE3, configuration, tool catalog, and budget. The
 harness verifies every revision and binary digest before the first run and
-again before writing the report. The baseline and adaptive runtime sources
-must be separate Git worktrees, even when
-a dry-run uses the same plumbing binary for both. Prepare and hash frozen
-artifacts before writing the final manifest, for example:
+again before writing the report. All four arms must use the same runtime source,
+binary identity, tool-call budget, and retrieval context budget; only their
+frozen retrieval configuration, tool catalog, and the prewalk executor model
+differ. Prepare and hash frozen artifacts before writing the final manifest,
+for example:
 
 ```bash
-git worktree add --detach target/model-ab-baseline BASELINE_REVISION
-git worktree add --detach target/model-ab-adaptive ADAPTIVE_REVISION
+git worktree add --detach target/model-ab-runtime RUNTIME_REVISION
 cargo run --release --example artifact_blake3 -- \
-  /path/to/baseline/leantoken /path/to/adaptive/leantoken \
-  /path/to/provider-adapter
+  /path/to/leantoken /path/to/provider-adapter /path/to/validator
 ```
 
-The harness itself must also run from a clean worktree. Report schema v5 records
+The harness itself must also run from a clean worktree. Report schema v6 records
 its exact revision and executable BLAKE3, the verified arm and task definitions,
 random seed, schedules, per-run artifact identities, and validation-receipt
 identities. A hash records artifact identity; it does not establish that two
 builds used equivalent compilers, dependencies, or host environments.
 
-Schema v3 tasks also require `success_command_executable_blake3` and an absolute
+Schema v4 tasks also require `success_command_executable_blake3` and an absolute
 success-command executable. The harness verifies that digest before every run
 and before report publication. It supplies the run binding and artifact path in
 `LEANTOKEN_MODEL_AB_*` environment variables. The validator must write
@@ -299,19 +300,25 @@ reliable repository range identities, so native reread and dead-end metrics are
 lower bounds.
 
 The adapter also enforces the retrieval arm from the completed tool trajectory.
-Baseline and adaptive-only runs must call LeanToken before any substantive
-command or edit and reject native repository listing, search, and source-read
-commands. They must receive at least one successful, nonempty LeanToken evidence
-result. The recovery arm has the same LeanToken-first requirement but permits
-native retrieval afterward, including recovery from an empty or failed initial
-call. Git status/revision preflight is allowed before LeanToken, and build,
-test, lint, and patch-verification commands remain allowed afterward. The
-adapter explicitly approves the frozen local MCP server's tools because
-noninteractive `codex exec` otherwise cancels MCP approval prompts under a
-workspace-write sandbox. A prompt-only distinction is not sufficient evidence
-for an arm. Its `task_success` diagnostic is conservative: at least one edit
-must complete and no recorded tool call may fail. The official task validator
-still determines report success.
+Progressive runs must call LeanToken before any substantive command or edit,
+receive nonempty narrow-tool evidence, never call `leantoken_context`, and reject
+native repository listing, search, and source-read commands. One-shot runs must
+make exactly one evidence-bearing `leantoken_context` call before substantive
+work and cannot retrieve again. Prewalk applies the progressive restriction to
+the frontier phase and forbids repository rediscovery by the executor. Git
+status/revision preflight is allowed before LeanToken, and build, test, lint,
+and patch-verification commands remain allowed afterward.
+
+The Codex adapter disables parallel tool calls and counts `item.started` tool
+events while streaming JSONL. It terminates the child as soon as a run exceeds
+its frozen live limit; prewalk and executor phases each receive their own limit
+within the common total budget. Completed traces are checked again before
+publication. The adapter explicitly approves the frozen local MCP server's
+tools because noninteractive `codex exec` otherwise cancels MCP approval prompts
+under a workspace-write sandbox. A prompt-only distinction is not sufficient
+evidence for an arm. Its `task_success` diagnostic is conservative: at least
+one edit must complete and no recorded tool call may fail. The official task
+validator still determines report success.
 
 `swe_bench_validator` captures the complete Git patch, runs the pinned official
 SWE-bench Docker harness for one instance, and preserves aggregate, instance,
