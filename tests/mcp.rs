@@ -230,6 +230,8 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
         prior_repository_generation: None,
+    base_revision: None,
+    changed_paths: Vec::new(),
     };
     let context_arguments = serde_json::to_value(context)
         .expect("serialize context request")

@@ -257,6 +257,8 @@ async fn five_services_return_bounded_grounded_responses() {
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
+        base_revision: None,
+        changed_paths: Vec::new(),
         })
         .await
         .expect("context");
@@ -275,6 +277,8 @@ async fn five_services_return_bounded_grounded_responses() {
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
+        base_revision: None,
+        changed_paths: Vec::new(),
         })
         .await
         .expect("repeated context");
@@ -294,6 +298,8 @@ async fn five_services_return_bounded_grounded_responses() {
             exclude_paths: Vec::new(),
             known_hashes: vec![known.clone()],
             prior_repository_generation: Some(context.meta.repository_generation),
+        base_revision: None,
+        changed_paths: Vec::new(),
         })
         .await
         .expect("context delta");
@@ -372,6 +378,8 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
                 exclude_paths: Vec::new(),
                 known_hashes: Vec::new(),
                 prior_repository_generation: None,
+            base_revision: None,
+            changed_paths: Vec::new(),
             })
             .await
             .expect("context");
@@ -419,6 +427,8 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
+        base_revision: None,
+        changed_paths: Vec::new(),
         })
         .await
         .expect("exact evaluation");
@@ -438,6 +448,8 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
+        base_revision: None,
+        changed_paths: Vec::new(),
         })
         .await
         .expect("multi-concept evaluation");
@@ -494,6 +506,8 @@ async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
         prior_repository_generation: None,
+    base_revision: None,
+    changed_paths: Vec::new(),
     };
 
     let baseline = services
@@ -1025,6 +1039,8 @@ async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_service
                 exclude_paths: Vec::new(),
                 known_hashes: Vec::new(),
                 prior_repository_generation: None,
+            base_revision: None,
+            changed_paths: Vec::new(),
             },
             cancellation,
         )
@@ -1200,6 +1216,8 @@ async fn working_tree_diff_boosts_changed_files() {
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
+        base_revision: None,
+        changed_paths: Vec::new(),
         })
         .await
         .unwrap();
@@ -1240,6 +1258,8 @@ async fn tokenizer_configuration_is_scoped_to_each_service() {
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
         prior_repository_generation: None,
+    base_revision: None,
+    changed_paths: Vec::new(),
     };
 
     let (exact_response, estimate_response) =
@@ -1285,6 +1305,8 @@ async fn context_declaration_excerpt_retains_long_body_across_chunks() {
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
+        base_revision: None,
+        changed_paths: Vec::new(),
         })
         .await
         .expect("context");
@@ -1325,6 +1347,8 @@ async fn context_text_hits_use_bounded_declaration_excerpts() {
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
+        base_revision: None,
+        changed_paths: Vec::new(),
         })
         .await
         .expect("context");
@@ -1552,6 +1576,8 @@ async fn working_tree_consistency_applies_to_each_retrieval_service() {
                 exclude_paths: Vec::new(),
                 known_hashes: Vec::new(),
                 prior_repository_generation: None,
+            base_revision: None,
+            changed_paths: Vec::new(),
             },
             IndexConsistency::WorkingTree,
             CancellationToken::new(),
@@ -1667,4 +1693,133 @@ async fn status_reports_reconciling_when_shared_operation_lock_is_held() {
         "followers must see reconciling via the shared operation lock"
     );
     assert_eq!(during.repository_generation, before.repository_generation);
+}
+
+#[tokio::test]
+async fn diff_scoped_context_with_explicit_changed_paths_reports_receipt() {
+    let (_root, services) = fixture().await;
+
+    let response = services
+        .context(ContextRequest {
+            task: "change greet caller".into(),
+            token_budget: 200,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+            base_revision: None,
+            changed_paths: vec!["src/lib.rs".into()],
+        })
+        .await
+        .expect("diff-scoped context");
+
+    let scope = response
+        .diff_scope
+        .as_ref()
+        .expect("diff scope receipt present");
+    assert_eq!(scope.changed_paths, vec!["src/lib.rs".to_owned()]);
+    assert!(scope.base_revision.is_none());
+    assert!(scope.head_revision.is_none());
+    assert_eq!(scope.indexed_changed_paths, 1);
+}
+
+#[tokio::test]
+async fn diff_scoped_context_preserves_task_only_behavior_without_scope() {
+    let (_root, services) = fixture().await;
+
+    let response = services
+        .context(ContextRequest {
+            task: "change greet caller".into(),
+            token_budget: 200,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+            base_revision: None,
+            changed_paths: Vec::new(),
+        })
+        .await
+        .expect("task-only context");
+
+    assert!(
+        response.diff_scope.is_none(),
+        "no diff scope must not produce a receipt"
+    );
+    assert!(!response.fragments.is_empty());
+}
+
+#[tokio::test]
+async fn diff_scoped_context_rejects_path_outside_repository() {
+    let (_root, services) = fixture().await;
+
+    let error = services
+        .context(ContextRequest {
+            task: "change greet caller".into(),
+            token_budget: 200,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+            base_revision: None,
+            changed_paths: vec!["../escape.rs".into()],
+        })
+        .await
+        .expect_err("path traversal rejected");
+
+    assert!(
+        matches!(error, Error::PathOutsideRoot { .. }),
+        "got {error:?}"
+    );
+}
+
+#[tokio::test]
+async fn diff_scoped_context_rejects_excessive_changed_path_count() {
+    let (_root, services) = fixture().await;
+
+    let too_many = (0..600).map(|i| format!("src/file{i}.rs")).collect::<Vec<_>>();
+    let error = services
+        .context(ContextRequest {
+            task: "change greet caller".into(),
+            token_budget: 200,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+            base_revision: None,
+            changed_paths: too_many,
+        })
+        .await
+        .expect_err("too many changed paths rejected");
+
+    assert!(matches!(error, Error::LimitExceeded), "got {error:?}");
+}
+
+#[tokio::test]
+async fn diff_scoped_context_counts_zero_for_nonexistent_changed_path() {
+    let (_root, services) = fixture().await;
+
+    let response = services
+        .context(ContextRequest {
+            task: "change greet caller".into(),
+            token_budget: 200,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+            base_revision: None,
+            changed_paths: vec!["src/nonexistent.rs".into()],
+        })
+        .await
+        .expect("context with unindexed changed path");
+
+    let scope = response
+        .diff_scope
+        .as_ref()
+        .expect("diff scope receipt present");
+    assert_eq!(scope.indexed_changed_paths, 0);
 }

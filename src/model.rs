@@ -316,6 +316,12 @@ pub struct ContextRequest {
     /// Earlier generation used to boost files indexed since that response.
     #[serde(default)]
     pub prior_repository_generation: Option<u64>,
+    /// Base revision for diff-scoped context; resolved against the repository.
+    #[serde(default)]
+    pub base_revision: Option<String>,
+    /// Explicit changed paths for diff-scoped context; bounded and validated.
+    #[serde(default)]
+    pub changed_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -355,10 +361,31 @@ pub struct OmittedCandidate {
     pub reason: String,
 }
 
+/// Receipt describing the resolved diff scope, if one was supplied.
+///
+/// When the caller provides a `base_revision` or `changed_paths`, this
+/// records the resolved base and head identities, the changed paths used
+/// as ranking seeds, and how many of those paths were found in the index.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DiffScopeReceipt {
+    /// Resolved base revision short SHA, or `None` when paths were explicit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_revision: Option<String>,
+    /// Resolved head revision short SHA, or `None` for the working tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_revision: Option<String>,
+    /// Changed paths used as ranking seeds.
+    pub changed_paths: Vec<String>,
+    /// Number of changed paths found in the committed index.
+    pub indexed_changed_paths: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ContextResponse {
     pub fragments: Vec<ContextFragment>,
     pub receipt: EvidenceReceipt,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_scope: Option<DiffScopeReceipt>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub omitted: Vec<OmittedCandidate>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -480,6 +507,7 @@ mod tests {
                 task_fingerprint: "task".into(),
                 fragment_hashes: vec!["receipt-hash".into()],
             },
+            diff_scope: None,
             omitted: Vec::new(),
             warnings: Vec::new(),
             meta: ResponseMeta {
@@ -527,6 +555,7 @@ mod tests {
                 task_fingerprint: "internal-task-fingerprint".into(),
                 fragment_hashes: vec!["fragment-hash".into()],
             },
+            diff_scope: None,
             omitted: vec![OmittedCandidate {
                 path: "src/other.rs".into(),
                 start_line: 10,

@@ -671,6 +671,14 @@ pub struct ContextArgs {
     /// Prior repository generation for delta context.
     #[arg(long = "prior-generation")]
     pub prior_repository_generation: Option<u64>,
+
+    /// Base revision for diff-scoped context (e.g. "origin/main").
+    #[arg(long = "base-revision")]
+    pub base_revision: Option<String>,
+
+    /// Changed paths for diff-scoped context (repeatable).
+    #[arg(long = "changed-path")]
+    pub changed_paths: Vec<String>,
 }
 
 impl From<ContextArgs> for ContextRequest {
@@ -683,6 +691,8 @@ impl From<ContextArgs> for ContextRequest {
             exclude_paths: args.exclude_paths,
             known_hashes: args.known_hashes,
             prior_repository_generation: args.prior_repository_generation,
+            base_revision: args.base_revision,
+            changed_paths: args.changed_paths,
         }
     }
 }

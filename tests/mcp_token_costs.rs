@@ -82,6 +82,8 @@ async fn mcp_handoff_token_costs() {
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
         prior_repository_generation: None,
+    base_revision: None,
+    changed_paths: Vec::new(),
     };
     let context = services.context(context_request).await.expect("context");
     let context_value = serde_json::to_value(&context).expect("context JSON");
@@ -195,7 +197,7 @@ async fn mcp_handoff_token_costs() {
     println!("{pretty}");
 
     assert!(
-        schema_tokens <= 2_250,
+        schema_tokens <= 2_400,
         "five-tool schema exceeds allowed budget: {}",
         schema_tokens
     );
