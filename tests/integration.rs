@@ -32,6 +32,7 @@ integration_modules!(
     binary,
     cli,
     config,
+    graph_signal_ablation_report,
     indexer,
     mcp,
     mcp_token_costs,

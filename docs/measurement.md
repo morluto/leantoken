@@ -484,6 +484,66 @@ target/release/examples/model_ab_trajectory \
   --output target/model-ab-trajectory-v1.json
 ```
 
+### Published dependency and caller ablation
+
+`examples/graph_signal_ablation.rs` runs the preregistered controls in
+[`../benchmarks/graph_signal_ablation_v1.json`](../benchmarks/graph_signal_ablation_v1.json)
+against the eight clean revisions in `benchmarks/representative.json`. The
+[published report](../benchmarks/reports/graph-signal-ablation-v1.json) binds
+the clean harness revision and source, both manifests, exact tokenizer, task
+labels, three repetitions, graph index statistics, and all 96 task-arm runs.
+
+The baseline contains symbol and full-text evidence. Each other arm enables
+only forward import expansion, a reverse-import boost on existing candidates,
+or parsed reference candidates. Candidate identity is path, inclusive range,
+and representation; every signal arm must contain the full baseline identity
+set. This is checked before comparing ranking output, so incomplete graph
+extraction cannot silently filter lexical evidence.
+
+| Arm | Files | Line anchors | Signal candidate precision | Selected signal precision | Dead-end source | Complete response |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Lexical/syntax | 14/15 | 9/41 | n/a | n/a | 3,141 | 10,825 |
+| Import neighbor | 14/15 | 9/41 | n/a (0 candidates) | n/a | 3,141 | 10,825 |
+| Reverse dependency | 14/15 | 9/41 | 2/17 (11.8%) | 2/5 (40.0%) | 3,027 | 10,765 |
+| High-confidence caller | 14/15 | 10/41 | 8/135 (5.9%) | 5/21 (23.8%) | 3,812 | 11,893 |
+
+Every aggregate and per-task retrieval result repeated exactly three times and
+every arm had zero additive violations. Reverse dependency reduced dead-end
+source by 114 tokens but did not improve file or line recall and failed the 50%
+candidate-precision gate. Parsed callers gained only one line anchor, below the
+frozen two-anchor minimum, while increasing dead-end source by 671 tokens and
+the complete serialized response by 1,068 tokens; it also failed candidate
+precision. The
+import arm produced no corroborated candidate and therefore no recall or
+precision evidence; all five tasks labeled import-applicable were unresolved.
+Reverse dependency had 15/17 false-positive candidate files and failed to find
+a relevant signal candidate for 4/5 applicable tasks. Parsed callers had
+127/135 false-positive candidate files and left 2/8 applicable tasks unresolved.
+
+The shared indexes contained 9,808 parsed imports and 145,021 parsed
+references. All 1,796 resolved import paths joined an indexed file, but 8,012
+imports remained unresolved, an 81.7% unresolved rate. Logical SQLite size was
+113,127,424 bytes, excluding WAL and SHM sidecars; aggregate cold indexing was
+20.2 seconds and the sum of per-corpus median no-op reconciliations was 86.3 ms
+on this Linux x86-64 host. Because every arm uses the same current index, these
+timings and sizes are a cost envelope rather than a graph-disabled causal delta.
+
+The decision is `no_go`. No new ranking signal is retained, production keeps
+its existing behavior, and no call-path or dependency metadata is exposed.
+This retrieval-only experiment runs no model, edit, or validator, so it cannot
+establish model-visible metadata value. A future proposal needs a newly frozen
+task set and must pass the same additive, repeatability, recall, dead-end,
+response-cost, and precision gates before any production or protocol change.
+
+```bash
+cargo build --release --example graph_signal_ablation
+
+target/release/examples/graph_signal_ablation \
+  --manifest benchmarks/graph_signal_ablation_v1.json \
+  --repos-root target/representative-repos \
+  --output target/graph-signal-ablation-v1.json
+```
+
 ## Multi-agent context pilot
 
 `multi_agent_context_pilot.json` freezes a small read-only Codex experiment for

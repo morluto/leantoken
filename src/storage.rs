@@ -1202,7 +1202,7 @@ impl ReadSession {
     }
 
     /// Find importers whose persisted candidate set intersects changed repository paths.
-    fn affected_importers(&self, candidate_paths: &[String]) -> Result<Vec<String>> {
+    pub(crate) fn affected_importers(&self, candidate_paths: &[String]) -> Result<Vec<String>> {
         if candidate_paths.is_empty() {
             return Ok(Vec::new());
         }
