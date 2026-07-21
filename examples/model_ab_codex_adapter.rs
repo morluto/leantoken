@@ -689,8 +689,7 @@ fn run_codex(
         .arg(format!(
             "service_tier={}",
             toml_string(&configuration.service_tier)
-        ))
-        .args(["--config", "model_supports_parallel_tool_calls=false"]);
+        ));
     if mcp_enabled {
         command
             .arg("--config")

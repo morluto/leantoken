@@ -309,16 +309,16 @@ the frontier phase and forbids repository rediscovery by the executor. Git
 status/revision preflight is allowed before LeanToken, and build, test, lint,
 and patch-verification commands remain allowed afterward.
 
-The Codex adapter disables parallel tool calls and counts `item.started` tool
-events while streaming JSONL. It terminates the child as soon as a run exceeds
-its frozen live limit; prewalk and executor phases each receive their own limit
-within the common total budget. Completed traces are checked again before
-publication. The adapter explicitly approves the frozen local MCP server's
-tools because noninteractive `codex exec` otherwise cancels MCP approval prompts
-under a workspace-write sandbox. A prompt-only distinction is not sufficient
-evidence for an arm. Its `task_success` diagnostic is conservative: at least
-one edit must complete and no recorded tool call may fail. The official task
-validator still determines report success.
+The Codex adapter requires sequential tool calls in every prompt and counts
+`item.started` tool events while streaming JSONL. It terminates the child as
+soon as a run exceeds its frozen live limit; prewalk and executor phases each
+receive their own limit within the common total budget. Completed traces are
+checked again before publication. The adapter explicitly approves the frozen
+local MCP server's tools because noninteractive `codex exec` otherwise cancels
+MCP approval prompts under a workspace-write sandbox. A prompt-only distinction
+or budget is not sufficient evidence for an arm. Its `task_success` diagnostic
+is conservative: at least one edit must complete and no recorded tool call may
+fail. The official task validator still determines report success.
 
 `swe_bench_validator` captures the complete Git patch, runs the pinned official
 SWE-bench Docker harness for one instance, and preserves aggregate, instance,
