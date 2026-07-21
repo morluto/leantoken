@@ -345,7 +345,10 @@ cargo run --release --example model_ab -- \
 ```
 
 The dry-run adapter does not call a model or edit the worktree. It writes the
-required empty trace and trajectory plus an explicit zero-usage dry-run receipt.
+required empty trace and trajectory plus an explicit zero-usage dry-run receipt
+for ordinary arms. For the two-phase prewalk arm it writes an explicitly
+synthetic, contract-valid trace and handoff so the stricter transfer validation
+also runs without claiming a real edit or provider result.
 Use its binary and source identity in every dry-run arm definition. A
 passing success command therefore validates only deterministic scheduling,
 artifact preflight, isolated task worktrees, adapter invocation, and validation

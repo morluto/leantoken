@@ -10,8 +10,9 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 
 use model_ab_artifacts::{
-    ARTIFACT_SCHEMA_V1, PROVIDER_USAGE_FILE, ProviderUsage, ProviderUsageReceipt, RunBinding,
-    TOOL_TRACE_FILE, TRAJECTORY_FILE, ToolTrace, Trajectory,
+    ARTIFACT_SCHEMA_V1, PREWALK_HANDOFF_FILE, PROVIDER_USAGE_FILE, PrewalkHandoff, ProviderUsage,
+    ProviderUsageReceipt, RunBinding, TOOL_TRACE_FILE, TRAJECTORY_FILE, ToolCall, ToolOutcome,
+    ToolTrace, Trajectory, ValidatedEdit,
 };
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +25,8 @@ struct AdapterRequest {
     repetition: usize,
     arm_order_index: usize,
     arm: String,
+    primary_model: String,
+    executor_model: Option<String>,
     task_id: String,
     artifacts_directory: PathBuf,
 }
@@ -67,12 +70,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         output_tokens: Some(0),
         reasoning_tokens: Some(0),
     };
+    let (calls, events) = dry_run_trace(&request, &binding)?;
     write_json(
         request.artifacts_directory.join(TOOL_TRACE_FILE),
         &ToolTrace {
             schema_version: ARTIFACT_SCHEMA_V1,
             binding: binding.clone(),
-            calls: Vec::new(),
+            calls: calls.clone(),
         },
     )?;
     write_json(
@@ -80,7 +84,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         &Trajectory {
             schema_version: ARTIFACT_SCHEMA_V1,
             binding: binding.clone(),
-            events: Vec::new(),
+            events,
         },
     )?;
     write_json(
@@ -103,7 +107,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         total_input_tokens: Some(0),
         total_output_tokens: Some(0),
         provider_reported_cost_usd: None,
-        tool_calls: 0,
+        tool_calls: calls.len(),
         rereads: 0,
         reread_tokens: 0,
         failed_tool_calls: 0,
@@ -115,6 +119,79 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     serde_json::to_writer(io::stdout(), &result)?;
     Ok(())
+}
+
+fn dry_run_trace(
+    request: &AdapterRequest,
+    binding: &RunBinding,
+) -> Result<(Vec<ToolCall>, Vec<serde_json::Value>), Box<dyn Error>> {
+    if request.arm != "prewalk" {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let executor_model = request
+        .executor_model
+        .clone()
+        .filter(|model| !model.trim().is_empty())
+        .ok_or("prewalk dry run is missing executor_model")?;
+    if request.primary_model.trim().is_empty() || request.primary_model == executor_model {
+        return Err("prewalk dry run has invalid model separation".into());
+    }
+    let calls = vec![
+        ToolCall {
+            sequence: 0,
+            tool_name: "leantoken".to_owned(),
+            call_id: "prewalk:dry-evidence".to_owned(),
+            result_id: "prewalk:dry-evidence-result".to_owned(),
+            outcome: ToolOutcome::Success,
+            result_source_tokens: 1,
+            reread: false,
+            ranges: Vec::new(),
+        },
+        ToolCall {
+            sequence: 1,
+            tool_name: "edit".to_owned(),
+            call_id: "prewalk:dry-edit".to_owned(),
+            result_id: "prewalk:dry-edit-result".to_owned(),
+            outcome: ToolOutcome::Success,
+            result_source_tokens: 0,
+            reread: false,
+            ranges: Vec::new(),
+        },
+        ToolCall {
+            sequence: 2,
+            tool_name: "shell".to_owned(),
+            call_id: "prewalk:dry-validation".to_owned(),
+            result_id: "prewalk:dry-validation-result".to_owned(),
+            outcome: ToolOutcome::Success,
+            result_source_tokens: 0,
+            reread: false,
+            ranges: Vec::new(),
+        },
+    ];
+    let todo = serde_json::json!({
+        "item": {
+            "type": "todo_list",
+            "items": [{"text": "synthetic dry-run plumbing", "completed": false}]
+        }
+    });
+    write_json(
+        request.artifacts_directory.join(PREWALK_HANDOFF_FILE),
+        &PrewalkHandoff {
+            schema_version: ARTIFACT_SCHEMA_V1,
+            binding: binding.clone(),
+            primary_model: request.primary_model.clone(),
+            executor_model,
+            trajectory_events: vec![todo.clone()],
+            todo_events: vec![todo.clone()],
+            evidence_calls: vec![calls[0].clone()],
+            worktree_patch: "synthetic dry-run patch; no worktree mutation".to_owned(),
+            first_validated_edit: ValidatedEdit {
+                edit_sequence: 1,
+                validation_sequence: 2,
+            },
+        },
+    )?;
+    Ok((calls, vec![todo]))
 }
 
 fn write_json(path: PathBuf, value: &impl Serialize) -> Result<(), Box<dyn Error>> {
