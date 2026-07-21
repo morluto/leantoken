@@ -35,6 +35,7 @@ integration_modules!(
     indexer,
     mcp,
     mcp_token_costs,
+    model_ab_trajectory_report,
     ranking,
     repository,
     representation_comparison,
