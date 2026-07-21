@@ -1,5 +1,6 @@
 ---
 source: src/mcp.rs
+assertion_line: 1196
 expression: tools
 ---
 [
@@ -10,6 +11,25 @@ expression: tools
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
+        "base_revision": {
+          "default": null,
+          "description": "Base revision for diff-scoped context.",
+          "maxLength": 256,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "changed_paths": {
+          "default": [],
+          "description": "Changed paths for diff-scoped context.",
+          "items": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "maxItems": 512,
+          "type": "array"
+        },
         "consistency": {
           "default": "committed",
           "description": "Use `working_tree` after edits; otherwise `committed`.",

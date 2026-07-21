@@ -301,6 +301,14 @@ struct ContextMcpRequest {
     /// Earlier generation used to boost files indexed since that response.
     #[serde(default)]
     prior_repository_generation: Option<u64>,
+    /// Base revision for diff-scoped context.
+    #[serde(default)]
+    #[schemars(length(max = 256))]
+    base_revision: Option<String>,
+    /// Changed paths for diff-scoped context.
+    #[serde(default)]
+    #[schemars(length(max = 512), inner(length(max = 4096)))]
+    changed_paths: Vec<String>,
     /// Use `working_tree` after edits; otherwise `committed`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
@@ -318,6 +326,8 @@ impl ContextMcpRequest {
                 exclude_paths: self.exclude_paths,
                 known_hashes: self.known_hashes,
                 prior_repository_generation: self.prior_repository_generation,
+                base_revision: self.base_revision,
+                changed_paths: self.changed_paths,
             },
             self.consistency,
         )
@@ -1175,7 +1185,7 @@ mod tests {
         let json = serde_json::to_string(&tools).expect("tool catalog JSON");
         let token_count = crate::tokens::count(&json);
         assert!(
-            token_count <= 2_250,
+            token_count <= 2_400,
             "five-tool catalog grew to {token_count} cl100k tokens"
         );
     }
