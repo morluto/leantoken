@@ -75,6 +75,30 @@ fn graph_signal_report_binds_frozen_inputs_and_no_go_decision() {
             .iter()
             .all(|decision| decision["retain_ranking_signal"] == false)
     );
+
+    let reverse = arms
+        .iter()
+        .find(|arm| arm["arm"] == "reverse_dependency")
+        .expect("reverse arm");
+    assert_eq!(
+        reverse["per_repetition"][0]["false_positive_signal_candidate_files"],
+        15
+    );
+    assert_eq!(
+        reverse["per_repetition"][0]
+            ["applicable_signal_tasks_without_relevant_candidate"],
+        4
+    );
+    let caller = arms
+        .iter()
+        .find(|arm| arm["arm"] == "high_confidence_caller")
+        .expect("caller arm");
+    assert_eq!(
+        caller["per_repetition"][0]["false_positive_signal_candidate_files"],
+        127
+    );
+    assert_eq!(report["graph_index"]["unresolved_import_edges"], 8012);
+    assert_eq!(report["graph_index"]["total_database_bytes"], 113127424);
 }
 
 #[test]

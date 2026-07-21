@@ -507,11 +507,11 @@ extraction cannot silently filter lexical evidence.
 | Reverse dependency | 14/15 | 9/41 | 2/17 (11.8%) | 2/5 (40.0%) | 3,027 | 10,765 |
 | High-confidence caller | 14/15 | 10/41 | 8/135 (5.9%) | 5/21 (23.8%) | 3,812 | 11,893 |
 
-Every retrieval metric repeated exactly three times and every arm had zero
-additive violations. Reverse dependency reduced dead-end source by 114 tokens
-but did not improve file or line recall and failed the 50% candidate-precision
-gate. Parsed callers gained only one line anchor, below the frozen two-anchor
-minimum, while increasing dead-end source by 671 tokens and the complete
+Every aggregate and per-task retrieval result repeated exactly three times and
+every arm had zero additive violations. Reverse dependency reduced dead-end
+source by 114 tokens but did not improve file or line recall and failed the 50%
+candidate-precision gate. Parsed callers gained only one line anchor, below the
+frozen two-anchor minimum, while increasing dead-end source by 671 tokens and the complete
 serialized response by 1,068 tokens; it also failed candidate precision. The
 import arm produced no corroborated candidate and therefore no recall or
 precision evidence; all five tasks labeled import-applicable were unresolved.

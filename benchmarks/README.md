@@ -280,15 +280,16 @@ references. The run uses the eight pinned retrospective tasks above, three
 deterministic repetitions, and the exact normal `ContextResponse` selection
 path. Evaluation diagnostics never enter the MCP schema or measured response.
 
-All four arms repeated exactly and preserved every baseline candidate. The
-lexical/syntax baseline found 14/15 labeled files and 9/41 line anchors. Import
-expansion generated no corroborated candidates. Reverse dependency left recall
-unchanged; 2/17 signal candidate files and 2/5 selected signal files were
-labeled relevant, and 4/5 applicable tasks had no relevant signal candidate.
-Parsed callers found one additional line anchor, but only
-8/135 signal candidate files and 5/21 selected signal files were relevant; it
-also increased dead-end source from 3,141 to 3,812 tokens and complete response
-cost from 10,825 to 11,893 tokens.
+All four arms repeated exactly at aggregate and task level and preserved every
+baseline candidate. The lexical/syntax baseline found 14/15 labeled files and
+9/41 line anchors. Import expansion generated no corroborated candidates on all
+five applicable tasks. Reverse dependency left recall unchanged; 15/17 signal
+candidate files were false positives, 2/5 selected signal files were labeled
+relevant, and 4/5 applicable tasks had no relevant signal candidate. Parsed
+callers found one additional line anchor, but 127/135 signal candidate files
+were false positives and only 5/21 selected signal files were relevant; it also
+increased dead-end source from 3,141 to 3,812 tokens and complete response cost
+from 10,825 to 11,893 tokens.
 
 Across the shared graph-enabled indexes, 1,796/9,808 parsed imports resolved to
 an indexed file, no resolved path was dangling, and 8,012 imports (81.7%) were
