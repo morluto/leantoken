@@ -1,0 +1,37 @@
+---
+source: src/model.rs
+expression: response
+---
+{
+  "fragments": [
+    {
+      "path": "src/lib.rs",
+      "start_line": 4,
+      "end_line": 6,
+      "content": "pub fn answer() -> u8 { 42 }",
+      "reason": "symbol; focus"
+    }
+  ],
+  "receipt": {
+    "fragment_hashes": [
+      "fragment-hash"
+    ]
+  },
+  "omitted": [
+    {
+      "path": "src/other.rs",
+      "start_line": 10,
+      "end_line": 12,
+      "reason": "budget or result limit"
+    }
+  ],
+  "warnings": [
+    "1 omitted"
+  ],
+  "meta": {
+    "repository_generation": 7,
+    "freshness": "reconciling",
+    "emitted_tokens": 9,
+    "token_count_exact": true
+  }
+}

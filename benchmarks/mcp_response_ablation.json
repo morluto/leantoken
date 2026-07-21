@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "experiment": "mcp-response-ablation-v1",
+  "fixture": {
+    "root": "fixtures/sample_repo",
+    "tree_blake3": "ca7d364bbeed76efdc34ac8646d44da96580322e351f531b22106b25ff310131",
+    "task": "change the Rust Point distance calculation and its caller",
+    "token_budget": 500,
+    "tokenizer": "cl100k_base",
+    "canonicalize_line_endings": true
+  },
+  "host_compatibility_evidence": {
+    "path": "benchmarks/reports/host-wire-compatibility-v1.json",
+    "blake3": "ed5834a883174ae3dda9604ae634cc8a8e0d04941a511c268060db04f45ff012",
+    "global_default": "dual"
+  },
+  "candidates": [
+    "structured_mode",
+    "text_mode",
+    "omit_task_fingerprint",
+    "aligned_receipt_hash_table",
+    "compact_fragment_metadata",
+    "omit_empty_and_default_fields",
+    "short_reason_codes",
+    "omit_omission_details",
+    "omit_default_meta",
+    "compact_outline_tuples",
+    "compact_tree_paths",
+    "remove_tool_examples"
+  ],
+  "acceptance": {
+    "require_exact_local_token_count": true,
+    "require_negative_complete_wire_token_delta": true,
+    "require_round_trip": true,
+    "require_freshness_semantics": true,
+    "require_range_identity": true,
+    "require_known_hash_deduplication": true,
+    "maximum_additional_exact_resend_source_tokens": 0,
+    "maximum_additional_overlapping_source_tokens": 0,
+    "non_dual_mode_requires_exact_host_version_evidence": true,
+    "provider_values_must_remain_null_when_unavailable": true
+  }
+}

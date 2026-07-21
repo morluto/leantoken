@@ -1,0 +1,571 @@
+{
+  "schema_version": 1,
+  "experiment": "mcp-response-ablation-v1",
+  "report_date": "2026-07-21",
+  "fixture": {
+    "root": "fixtures/sample_repo",
+    "tree_blake3": "ca7d364bbeed76efdc34ac8646d44da96580322e351f531b22106b25ff310131",
+    "task": "change the Rust Point distance calculation and its caller",
+    "token_budget": 500,
+    "tokenizer": "cl100k_base",
+    "token_count_exact": true,
+    "host_compatibility_path": "benchmarks/reports/host-wire-compatibility-v1.json",
+    "host_compatibility_blake3": "ed5834a883174ae3dda9604ae634cc8a8e0d04941a511c268060db04f45ff012"
+  },
+  "acceptance": {
+    "require_exact_local_token_count": true,
+    "require_negative_complete_wire_token_delta": true,
+    "require_round_trip": true,
+    "require_freshness_semantics": true,
+    "require_range_identity": true,
+    "require_known_hash_deduplication": true,
+    "maximum_additional_exact_resend_source_tokens": 0,
+    "maximum_additional_overlapping_source_tokens": 0,
+    "non_dual_mode_requires_exact_host_version_evidence": true,
+    "provider_values_must_remain_null_when_unavailable": true
+  },
+  "baseline": {
+    "source_tokens": 195,
+    "response_json_tokens": 549,
+    "catalog_tokens": 2242,
+    "dual_result_tokens": 1162,
+    "text_result_tokens": 610,
+    "structured_result_tokens": 574,
+    "complete_dual_wire_tokens": 3824,
+    "fragment_count": 5,
+    "receipt_hash_count": 5,
+    "omitted_detail_count": 1,
+    "warning_count": 1
+  },
+  "follow_up": {
+    "exact_resend_source_tokens": 0,
+    "overlapping_source_tokens": 14,
+    "known_hash_omission_count": 1
+  },
+  "candidates": [
+    {
+      "id": "structured_mode",
+      "change": "send the unchanged response as structuredContent only",
+      "measurements": [
+        {
+          "surface": "context_response",
+          "mode": "structured",
+          "baseline": {
+            "source_tokens": 195,
+            "response_json_tokens": 549,
+            "serialized_result_tokens": 1162,
+            "complete_wire_tokens": 3824,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "candidate": {
+            "source_tokens": 195,
+            "response_json_tokens": 549,
+            "serialized_result_tokens": 574,
+            "complete_wire_tokens": 3236,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "response_json_token_delta": 0,
+          "serialized_result_token_delta": -588,
+          "complete_wire_token_delta": -588
+        }
+      ],
+      "round_trip": true,
+      "freshness_semantics": true,
+      "range_identity": true,
+      "known_hash_deduplication": true,
+      "model_behavior_evidence": "one frozen Codex task",
+      "host_compatibility": "Codex CLI 0.144.1 only",
+      "decision": "host_scoped_opt_in",
+      "rationale": "Codex CLI 0.144.1 consumed structured-only results in one frozen task; the global matrix remains incomplete."
+    },
+    {
+      "id": "text_mode",
+      "change": "send the unchanged response as text content only",
+      "measurements": [
+        {
+          "surface": "context_response",
+          "mode": "text",
+          "baseline": {
+            "source_tokens": 195,
+            "response_json_tokens": 549,
+            "serialized_result_tokens": 1162,
+            "complete_wire_tokens": 3824,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "candidate": {
+            "source_tokens": 195,
+            "response_json_tokens": 549,
+            "serialized_result_tokens": 610,
+            "complete_wire_tokens": 3272,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "response_json_token_delta": 0,
+          "serialized_result_token_delta": -552,
+          "complete_wire_token_delta": -552
+        }
+      ],
+      "round_trip": true,
+      "freshness_semantics": true,
+      "range_identity": true,
+      "known_hash_deduplication": true,
+      "model_behavior_evidence": "none",
+      "host_compatibility": "no real-host text-only model-consumption proof",
+      "decision": "rejected",
+      "rationale": "Local serialization savings cannot substitute for host compatibility evidence."
+    },
+    {
+      "id": "omit_task_fingerprint",
+      "change": "omit the internal task hash from the serialized receipt",
+      "measurements": [
+        {
+          "surface": "context_response",
+          "mode": "dual",
+          "baseline": {
+            "source_tokens": 195,
+            "response_json_tokens": 549,
+            "serialized_result_tokens": 1162,
+            "complete_wire_tokens": 3824,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "candidate": {
+            "source_tokens": 195,
+            "response_json_tokens": 531,
+            "serialized_result_tokens": 1123,
+            "complete_wire_tokens": 3785,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "response_json_token_delta": -18,
+          "serialized_result_token_delta": -39,
+          "complete_wire_token_delta": -39
+        }
+      ],
+      "round_trip": true,
+      "freshness_semantics": true,
+      "range_identity": true,
+      "known_hash_deduplication": true,
+      "model_behavior_evidence": "not required: source and retrieval are unchanged",
+      "host_compatibility": "representation-neutral",
+      "decision": "accepted",
+      "rationale": "The request already carries the task, no follow-up accepts the fingerprint, and aligned fragment hashes retain deduplication identity."
+    },
+    {
+      "id": "aligned_receipt_hash_table",
+      "change": "retain one hash array aligned with fragments instead of repeated identity objects",
+      "measurements": [
+        {
+          "surface": "context_response",
+          "mode": "dual",
+          "baseline": {
+            "source_tokens": 195,
+            "response_json_tokens": 654,
+            "serialized_result_tokens": 1374,
+            "complete_wire_tokens": 4036,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "candidate": {
+            "source_tokens": 195,
+            "response_json_tokens": 549,
+            "serialized_result_tokens": 1162,
+            "complete_wire_tokens": 3824,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "response_json_token_delta": -105,
+          "serialized_result_token_delta": -212,
+          "complete_wire_token_delta": -212
+        }
+      ],
+      "round_trip": true,
+      "freshness_semantics": true,
+      "range_identity": true,
+      "known_hash_deduplication": true,
+      "model_behavior_evidence": "not required: source and retrieval are unchanged",
+      "host_compatibility": "representation-neutral",
+      "decision": "retained_existing",
+      "rationale": "The checked response keeps every path/range in fragments and every aligned content hash in the receipt."
+    },
+    {
+      "id": "compact_fragment_metadata",
+      "change": "omit repeated hash, score, and token-count diagnostics from serialized fragments",
+      "measurements": [
+        {
+          "surface": "context_response",
+          "mode": "dual",
+          "baseline": {
+            "source_tokens": 195,
+            "response_json_tokens": 717,
+            "serialized_result_tokens": 1498,
+            "complete_wire_tokens": 4160,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "candidate": {
+            "source_tokens": 195,
+            "response_json_tokens": 549,
+            "serialized_result_tokens": 1162,
+            "complete_wire_tokens": 3824,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "response_json_token_delta": -168,
+          "serialized_result_token_delta": -336,
+          "complete_wire_token_delta": -336
+        }
+      ],
+      "round_trip": true,
+      "freshness_semantics": true,
+      "range_identity": true,
+      "known_hash_deduplication": true,
+      "model_behavior_evidence": "not required: source and retrieval are unchanged",
+      "host_compatibility": "representation-neutral",
+      "decision": "retained_existing",
+      "rationale": "Receipt hashes, range fields, selection reasons, and aggregate emitted tokens preserve the required semantics."
+    },
+    {
+      "id": "omit_empty_and_default_fields",
+      "change": "omit default source representation, null cursor, and empty outline collections",
+      "measurements": [
+        {
+          "surface": "context_response",
+          "mode": "dual",
+          "baseline": {
+            "source_tokens": 195,
+            "response_json_tokens": 562,
+            "serialized_result_tokens": 1188,
+            "complete_wire_tokens": 3850,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "candidate": {
+            "source_tokens": 195,
+            "response_json_tokens": 549,
+            "serialized_result_tokens": 1162,
+            "complete_wire_tokens": 3824,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "response_json_token_delta": -13,
+          "serialized_result_token_delta": -26,
+          "complete_wire_token_delta": -26
+        },
+        {
+          "surface": "empty_outline_response",
+          "mode": "dual",
+          "baseline": {
+            "source_tokens": 0,
+            "response_json_tokens": 50,
+            "serialized_result_tokens": 137,
+            "complete_wire_tokens": 2766,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 0
+          },
+          "candidate": {
+            "source_tokens": 0,
+            "response_json_tokens": 39,
+            "serialized_result_tokens": 112,
+            "complete_wire_tokens": 2741,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 0
+          },
+          "response_json_token_delta": -11,
+          "serialized_result_token_delta": -25,
+          "complete_wire_token_delta": -25
+        }
+      ],
+      "round_trip": true,
+      "freshness_semantics": true,
+      "range_identity": true,
+      "known_hash_deduplication": true,
+      "model_behavior_evidence": "not required: source and retrieval are unchanged",
+      "host_compatibility": "representation-neutral",
+      "decision": "retained_existing",
+      "rationale": "Serde defaults round-trip each omitted value without hiding freshness or token-count exactness."
+    },
+    {
+      "id": "short_reason_codes",
+      "change": "replace readable selection reasons with one-letter codes",
+      "measurements": [
+        {
+          "surface": "context_response",
+          "mode": "dual",
+          "baseline": {
+            "source_tokens": 195,
+            "response_json_tokens": 549,
+            "serialized_result_tokens": 1162,
+            "complete_wire_tokens": 3824,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "candidate": {
+            "source_tokens": 195,
+            "response_json_tokens": 544,
+            "serialized_result_tokens": 1152,
+            "complete_wire_tokens": 3814,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "response_json_token_delta": -5,
+          "serialized_result_token_delta": -10,
+          "complete_wire_token_delta": -10
+        }
+      ],
+      "round_trip": true,
+      "freshness_semantics": true,
+      "range_identity": true,
+      "known_hash_deduplication": true,
+      "model_behavior_evidence": "none",
+      "host_compatibility": "representation-neutral but model interpretation untested",
+      "decision": "rejected",
+      "rationale": "The small local delta does not justify making grounded selection reasons opaque without controlled model evidence."
+    },
+    {
+      "id": "omit_omission_details",
+      "change": "remove bounded paths and ranges for omitted candidates",
+      "measurements": [
+        {
+          "surface": "context_response",
+          "mode": "dual",
+          "baseline": {
+            "source_tokens": 195,
+            "response_json_tokens": 549,
+            "serialized_result_tokens": 1162,
+            "complete_wire_tokens": 3824,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "candidate": {
+            "source_tokens": 195,
+            "response_json_tokens": 520,
+            "serialized_result_tokens": 1102,
+            "complete_wire_tokens": 3764,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "response_json_token_delta": -29,
+          "serialized_result_token_delta": -60,
+          "complete_wire_token_delta": -60
+        }
+      ],
+      "round_trip": true,
+      "freshness_semantics": true,
+      "range_identity": true,
+      "known_hash_deduplication": false,
+      "model_behavior_evidence": "not applicable",
+      "host_compatibility": "representation-neutral",
+      "decision": "rejected",
+      "rationale": "The token saving removes explicit known-content and budget omission accounting required to diagnose resends."
+    },
+    {
+      "id": "omit_default_meta",
+      "change": "omit current freshness and exact-token flags",
+      "measurements": [
+        {
+          "surface": "context_response",
+          "mode": "dual",
+          "baseline": {
+            "source_tokens": 195,
+            "response_json_tokens": 549,
+            "serialized_result_tokens": 1162,
+            "complete_wire_tokens": 3824,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "candidate": {
+            "source_tokens": 195,
+            "response_json_tokens": 538,
+            "serialized_result_tokens": 1140,
+            "complete_wire_tokens": 3802,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "response_json_token_delta": -11,
+          "serialized_result_token_delta": -22,
+          "complete_wire_token_delta": -22
+        }
+      ],
+      "round_trip": false,
+      "freshness_semantics": false,
+      "range_identity": true,
+      "known_hash_deduplication": true,
+      "model_behavior_evidence": "not applicable",
+      "host_compatibility": "representation-neutral",
+      "decision": "rejected",
+      "rationale": "Freshness and tokenizer exactness are explicit correctness boundaries, not optional diagnostics."
+    },
+    {
+      "id": "compact_outline_tuples",
+      "change": "replace named outline objects with positional arrays",
+      "measurements": [
+        {
+          "surface": "outline_response",
+          "mode": "dual",
+          "baseline": {
+            "source_tokens": 47,
+            "response_json_tokens": 224,
+            "serialized_result_tokens": 488,
+            "complete_wire_tokens": 3120,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 0
+          },
+          "candidate": {
+            "source_tokens": 47,
+            "response_json_tokens": 160,
+            "serialized_result_tokens": 356,
+            "complete_wire_tokens": 2988,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 0
+          },
+          "response_json_token_delta": -64,
+          "serialized_result_token_delta": -132,
+          "complete_wire_token_delta": -132
+        }
+      ],
+      "round_trip": false,
+      "freshness_semantics": true,
+      "range_identity": false,
+      "known_hash_deduplication": true,
+      "model_behavior_evidence": "none",
+      "host_compatibility": "representation-neutral",
+      "decision": "rejected",
+      "rationale": "Positional encoding breaks the current typed response and makes line and byte range fields ambiguous to generic clients."
+    },
+    {
+      "id": "compact_tree_paths",
+      "change": "replace tree entry objects with path strings",
+      "measurements": [
+        {
+          "surface": "files_tree_response",
+          "mode": "dual",
+          "baseline": {
+            "source_tokens": 0,
+            "response_json_tokens": 111,
+            "serialized_result_tokens": 269,
+            "complete_wire_tokens": 2908,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 0
+          },
+          "candidate": {
+            "source_tokens": 0,
+            "response_json_tokens": 52,
+            "serialized_result_tokens": 140,
+            "complete_wire_tokens": 2779,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 0
+          },
+          "response_json_token_delta": -59,
+          "serialized_result_token_delta": -129,
+          "complete_wire_token_delta": -129
+        }
+      ],
+      "round_trip": false,
+      "freshness_semantics": true,
+      "range_identity": false,
+      "known_hash_deduplication": true,
+      "model_behavior_evidence": "none",
+      "host_compatibility": "representation-neutral",
+      "decision": "rejected",
+      "rationale": "Path strings lose file/directory kind and available language and size metadata."
+    },
+    {
+      "id": "remove_tool_examples",
+      "change": "remove examples from every tool description",
+      "measurements": [
+        {
+          "surface": "tool_catalog",
+          "mode": "dual",
+          "baseline": {
+            "source_tokens": 195,
+            "response_json_tokens": 549,
+            "serialized_result_tokens": 1162,
+            "complete_wire_tokens": 3824,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "candidate": {
+            "source_tokens": 195,
+            "response_json_tokens": 549,
+            "serialized_result_tokens": 1162,
+            "complete_wire_tokens": 3737,
+            "provider_native_input_tokens": null,
+            "exact_resend_source_tokens": 0,
+            "overlapping_source_tokens": 14
+          },
+          "response_json_token_delta": 0,
+          "serialized_result_token_delta": 0,
+          "complete_wire_token_delta": -87
+        }
+      ],
+      "round_trip": true,
+      "freshness_semantics": true,
+      "range_identity": true,
+      "known_hash_deduplication": true,
+      "model_behavior_evidence": "none",
+      "host_compatibility": "catalog behavior requires a model call-quality evaluation",
+      "decision": "rejected",
+      "rationale": "Catalog savings are local-only; removing examples without measuring malformed or extra calls could increase end-to-end cost."
+    }
+  ],
+  "decision": {
+    "accepted_new_runtime_change": [
+      "omit_task_fingerprint"
+    ],
+    "retained_existing_compactions": [
+      "aligned_receipt_hash_table",
+      "compact_fragment_metadata",
+      "omit_empty_and_default_fields"
+    ],
+    "host_scoped_opt_in": [
+      "structured_mode on Codex CLI 0.144.1"
+    ],
+    "rejected_candidates": [
+      "text_mode",
+      "short_reason_codes",
+      "omit_omission_details",
+      "omit_default_meta",
+      "compact_outline_tuples",
+      "compact_tree_paths",
+      "remove_tool_examples"
+    ],
+    "global_result_mode": "dual",
+    "provider_input_conclusion": "unknown: no captured provider request frame permits attribution of a representation delta"
+  },
+  "limitations": [
+    "Local cl100k_base counts cover complete modeled JSON-RPC messages but are not provider billing counts.",
+    "The fixture is deterministic and small; absolute deltas vary with result size, path lengths, and the selected evidence.",
+    "Only one Codex CLI 0.144.1 task proves structured-only model consumption; no text-only real-host proof exists.",
+    "Serialization-only candidates leave the frozen retrieval trajectory unchanged, but tool-description changes need controlled model evaluation.",
+    "The follow-up detects exact content resends and overlapping ranges for this task; it does not establish behavior for every repository or task."
+  ]
+}

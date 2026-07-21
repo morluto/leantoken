@@ -773,3 +773,39 @@ Unit tests still verify all three serialized shapes, and the Rust MCP SDK
 integration test covers the default dual mode. Fixture serialization is not
 real-host evidence. Keep `dual` globally until captured compatibility is broad
 enough to justify a smaller mode per host/version.
+
+## Frozen MCP response ablation
+
+The checked
+[`mcp-response-ablation-v1`](../benchmarks/mcp_response_ablation.json) manifest
+binds the canonical `fixtures/sample_repo` tree, one 500-source-token task,
+exact `cl100k_base` counting, the host compatibility matrix above, 12
+candidates, and zero-additional-reread acceptance gates. Regenerate the
+[machine-readable result](../benchmarks/reports/mcp-response-ablation-v1-2026-07-21.json)
+with:
+
+```bash
+cargo run --release --example mcp_response_ablation -- \
+  --manifest benchmarks/mcp_response_ablation.json \
+  --repository-root . \
+  --output target/mcp-response-ablation.json
+```
+
+The accepted change omits the internal task fingerprint from serialized
+context receipts. It leaves the in-memory evaluation value, five selected
+fragments, 195 source tokens, aligned content hashes, freshness, ranges, and
+known-hash behavior unchanged. Exact local response JSON falls from 549 to 531
+tokens; the dual result falls from 1,162 to 1,123 and the complete modeled wire
+from 3,824 to 3,785. The follow-up exactly resends zero source tokens and its 14
+overlapping source tokens are unchanged, so the candidate adds neither exact
+resends nor overlapping reads.
+
+Aligned receipt hashes, compact fragment metadata, and omission of empty or
+default fields are retained existing compactions. Candidates that remove
+freshness, omission accounting, named range fields, tree metadata, readable
+reasons, or tool examples fail a correctness or evidence gate. Structured-only
+saves 588 local complete-wire tokens but remains scoped to the one proven
+Codex CLI 0.144.1 host/task; no global mode changes. Provider-native values are
+null because no captured provider request frame supports attribution. See the
+[decision report](../benchmarks/reports/mcp-response-ablation-v1-2026-07-21.md)
+for the full candidate table and snapshot review.

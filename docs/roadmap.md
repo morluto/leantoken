@@ -67,6 +67,13 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
   OpenCode were unavailable in the audit environment, so their fields remain
   null and unknown. The matrix therefore retains `dual` globally; extend it
   only with sanitized real-host evidence from an available exact version.
+- The frozen 2026-07-21 MCP response ablation accepts one representation-
+  neutral change: omit the internal task fingerprint from serialized context
+  receipts. It reduces the fixed response JSON by 18 exact local tokens and
+  the complete dual wire by 39 without adding exact resends or overlapping
+  source. Freshness, ranges, omission details, readable reasons, and aligned
+  hashes remain; structured-only stays scoped to Codex CLI 0.144.1 and
+  provider-input savings remain unknown.
 - Two 60-run Codex CLI 0.144.1 suites now cover four pinned Python, Go,
   JavaScript, and Rust validation tasks. Full-history to context-free native
   forks saved 21.6% and 21.9% total input in the two runs. An iterative
