@@ -472,7 +472,7 @@ fn validate_evidence(
 ) -> AnyResult<BTreeMap<String, Vec<u8>>> {
     let mut loaded = BTreeMap::new();
     for evidence in &matrix.evidence {
-        let bytes = fs::read(repository_root.join(&evidence.path))?;
+        let bytes = canonical_json_artifact(fs::read(repository_root.join(&evidence.path))?)?;
         let actual = blake3::hash(&bytes).to_hex().to_string();
         if actual != evidence.blake3 {
             return Err(invalid_data(&format!(
@@ -483,6 +483,17 @@ fn validate_evidence(
         loaded.insert(evidence.id.clone(), bytes);
     }
     Ok(loaded)
+}
+
+fn canonical_json_artifact(bytes: Vec<u8>) -> AnyResult<Vec<u8>> {
+    let text = String::from_utf8(bytes)?;
+    let normalized = text.replace("\r\n", "\n");
+    if normalized.contains('\r') {
+        return Err(invalid_data(
+            "evidence JSON contains a lone carriage return",
+        ));
+    }
+    Ok(normalized.into_bytes())
 }
 
 fn validate_codex_01441(matrix: &Matrix, evidence: &BTreeMap<String, Vec<u8>>) -> AnyResult<()> {
@@ -867,5 +878,21 @@ mod tests {
 
         let error = validate_matrix(&matrix).expect_err("missing mode must fail");
         assert!(error.to_string().contains("each result mode once"));
+    }
+
+    #[test]
+    fn artifact_identity_normalizes_windows_checkout_line_endings() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let bytes = fs::read(root.join("benchmarks/reports/wire-trace-codex-cli-0.144.1.json"))
+            .expect("wire evidence");
+        let canonical = canonical_json_artifact(bytes.clone()).expect("canonical evidence");
+        let crlf = String::from_utf8(bytes)
+            .expect("UTF-8 evidence")
+            .replace('\n', "\r\n")
+            .into_bytes();
+        let normalized = canonical_json_artifact(crlf).expect("normalized evidence");
+
+        assert_eq!(normalized, canonical);
+        assert_eq!(blake3::hash(&normalized), blake3::hash(&canonical));
     }
 }

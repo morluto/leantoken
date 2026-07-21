@@ -766,7 +766,8 @@ The four non-Codex hosts were not installed in the 2026-07-20 audit
 environment. This is an access limitation, not an incompatibility result, so
 their versions and measurements remain null. The validator rejects substituting
 zero for an unavailable measurement and verifies every committed source
-artifact by BLAKE3 plus its decisive semantic fields.
+artifact by repository-canonical LF JSON BLAKE3 plus its decisive semantic
+fields, independent of Windows checkout line-ending conversion.
 
 Unit tests still verify all three serialized shapes, and the Rust MCP SDK
 integration test covers the default dual mode. Fixture serialization is not

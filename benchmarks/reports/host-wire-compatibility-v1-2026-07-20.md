@@ -26,11 +26,12 @@ A lower boundary does not imply a higher one. In particular, local JSON-RPC
 duplication is not a provider-input savings claim. Synthetic fixtures and SDK
 integration tests are excluded from real-host compatibility classifications.
 
-The validator checks each source artifact's BLAKE3 identity, complete lifecycle
-categories, mode counts, local token fields, host/result correlations, task
-success, provider totals, and privacy assertions. It also rejects missing modes,
-unknown evidence references, and any zero substituted for an unavailable
-measurement.
+The validator checks each source artifact's repository-canonical LF JSON BLAKE3
+identity, complete lifecycle categories, mode counts, local token fields,
+host/result correlations, task success, provider totals, and privacy
+assertions. CRLF checkout conversion is normalized, while lone carriage returns
+are rejected. The validator also rejects missing modes, unknown evidence
+references, and any zero substituted for an unavailable measurement.
 
 ## Availability
 
