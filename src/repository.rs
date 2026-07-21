@@ -502,6 +502,197 @@ pub fn slash_path(path: &Path) -> String {
         .join("/")
 }
 
+/// Resolved diff scope: base/head short SHAs and the changed paths between them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitDiffResult {
+    /// Short (12-char) SHA of the resolved base revision.
+    pub base_revision: String,
+    /// Short (12-char) SHA of the resolved head revision (HEAD).
+    pub head_revision: String,
+    /// Repository-relative changed paths between base and the working tree.
+    pub changed_paths: Vec<String>,
+}
+
+/// Resolve changed paths between a base revision and the working tree.
+///
+/// Runs `git diff --name-only -z --no-renames <base> -- .` to capture both
+/// committed and uncommitted changes relative to the base. The call is
+/// bounded by `max` paths and a timeout. If git is unavailable or the
+/// revision cannot be resolved, an error is returned so the caller can
+/// surface an actionable message.
+pub fn git_diff_paths(root: &Path, base_revision: &str, max: usize) -> Result<GitDiffResult> {
+    git_diff_paths_with(
+        root,
+        base_revision,
+        max,
+        Path::new("git"),
+        Duration::from_millis(1_000),
+    )
+}
+
+fn git_diff_paths_with(
+    root: &Path,
+    base_revision: &str,
+    max: usize,
+    program: &Path,
+    timeout: Duration,
+) -> Result<GitDiffResult> {
+    if base_revision.trim().is_empty() {
+        return Err(Error::InvalidInput {
+            field: "base revision",
+            reason: "must not be empty",
+        });
+    }
+    if max == 0 {
+        return Ok(GitDiffResult {
+            base_revision: String::new(),
+            head_revision: String::new(),
+            changed_paths: Vec::new(),
+        });
+    }
+    let prefix = git_worktree_prefix(root);
+    let base_sha = resolve_revision_sha(root, program, base_revision, timeout)?;
+    let head_sha = resolve_revision_sha(root, program, "HEAD", timeout)?;
+    let changed = diff_name_only(root, program, &base_sha, max, timeout, &prefix)?;
+    Ok(GitDiffResult {
+        base_revision: base_sha,
+        head_revision: head_sha,
+        changed_paths: changed,
+    })
+}
+
+fn resolve_revision_sha(
+    root: &Path,
+    program: &Path,
+    revision: &str,
+    timeout: Duration,
+) -> Result<String> {
+    let mut child = match Command::new(program)
+        .args(["rev-parse", "--verify", "--short=12", revision])
+        .current_dir(root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => {
+            return Err(Error::InvalidInput {
+                field: "base revision",
+                reason: "git is unavailable",
+            });
+        }
+    };
+    let status = match child.wait_timeout(timeout) {
+        Ok(Some(status)) => status,
+        Ok(None) | Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Error::InvalidInput {
+                field: "base revision",
+                reason: "git rev-parse timed out",
+            });
+        }
+    };
+    if !status.success() {
+        return Err(Error::InvalidInput {
+            field: "base revision",
+            reason: "could not resolve revision",
+        });
+    }
+    let output = child.stdout.take().map_or(Vec::new(), |mut s| {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        let _ = s.read_to_end(&mut buf);
+        buf
+    });
+    let sha = String::from_utf8_lossy(&output).trim().to_owned();
+    if sha.is_empty() {
+        return Err(Error::InvalidInput {
+            field: "base revision",
+            reason: "resolved to an empty SHA",
+        });
+    }
+    Ok(sha)
+}
+
+fn diff_name_only(
+    root: &Path,
+    program: &Path,
+    base_sha: &str,
+    max: usize,
+    timeout: Duration,
+    prefix: &str,
+) -> Result<Vec<String>> {
+    let mut output = match tempfile::tempfile() {
+        Ok(output) => output,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let child_output = match output.try_clone() {
+        Ok(output) => output,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut child = match Command::new(program)
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "diff",
+            "--name-only",
+            "-z",
+            "--no-renames",
+            base_sha,
+            "--",
+            ".",
+        ])
+        .current_dir(root)
+        .stdout(Stdio::from(child_output))
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let status = match child.wait_timeout(timeout) {
+        Ok(Some(status)) => status,
+        Ok(None) | Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(Vec::new());
+        }
+    };
+    if !status.success() || output.rewind().is_err() {
+        return Ok(Vec::new());
+    }
+    Ok(parse_diff_names(output, max, prefix))
+}
+
+fn parse_diff_names(output: File, max: usize, prefix: &str) -> Vec<String> {
+    let mut reader = BufReader::new(output);
+    let mut changed = Vec::new();
+    let mut record = Vec::new();
+    loop {
+        record.clear();
+        match reader.read_until(0, &mut record) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+        if record.last() == Some(&0) {
+            record.pop();
+        }
+        if record.is_empty() {
+            continue;
+        }
+        let path = String::from_utf8_lossy(&record);
+        let Some(path) = path.strip_prefix(prefix) else {
+            continue;
+        };
+        if changed.len() < max {
+            changed.push(slash_path(Path::new(path)));
+        }
+    }
+    changed
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use std::fs;
