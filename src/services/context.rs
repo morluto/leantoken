@@ -20,6 +20,7 @@ use crate::storage::{ReadSession, SymbolRecord};
 use crate::text::{expand_terms, identifier_words};
 use crate::{Error, Result};
 use facets::{ContextQuery, FacetKind};
+use regex;
 
 const GIT_CHANGED_PATHS_MAX: usize = 512;
 /// Maximum context query terms (symbols/refs/FTS fan-out budget).
@@ -794,6 +795,12 @@ impl Services {
                     .change_boost(change_boost);
                     candidates.push(annotate_candidate(candidate, query, "reference", rank));
                 }
+                let term_regex = regex::RegexBuilder::new(&regex::escape(term))
+                    .case_insensitive(true)
+                    .size_limit(1 << 20)
+                    .dfa_size_limit(1 << 20)
+                    .build()
+                    .ok();
                 let lexical = if term.chars().count() >= 3 {
                     session.search_trigram(term, MAX_CONTEXT_LEXICAL_HITS)?
                 } else {
@@ -805,7 +812,8 @@ impl Services {
                     if !path_allowed(&hit.path, &[], &request.exclude_paths)? {
                         continue;
                     }
-                    let Some(search_hit) = chunk_search_hit(hit.clone(), term, false, 2, None)?
+                    let Some(search_hit) =
+                        chunk_search_hit(hit.clone(), term, false, 2, term_regex.as_ref())?
                     else {
                         continue;
                     };

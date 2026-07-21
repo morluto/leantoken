@@ -133,6 +133,25 @@ fn compile_regex(request: &SearchRequest) -> Result<regex::Regex> {
         .build()?)
 }
 
+/// Compile a case-insensitive literal matcher for non-regex search modes.
+///
+/// In Auto/Text/Identifier modes the query is a literal string, not a regex
+/// pattern. Without this,  would rebuild an identical regex
+/// for every lexical hit. Returns  when the search is case-sensitive
+/// (the fast  path handles that without any compilation).
+fn compile_literal_regex(query: &str, case_sensitive: bool) -> Result<Option<regex::Regex>> {
+    if case_sensitive {
+        return Ok(None);
+    }
+    Ok(Some(
+        regex::RegexBuilder::new(&regex::escape(query))
+            .case_insensitive(true)
+            .size_limit(1 << 20)
+            .dfa_size_limit(1 << 20)
+            .build()?,
+    ))
+}
+
 impl Services {
     /// Search indexed lexical and structural evidence.
     pub async fn search(&self, request: SearchRequest) -> Result<SearchResponse> {
@@ -180,6 +199,11 @@ impl Services {
         let regex = matches!(request.mode, SearchMode::Regex)
             .then(|| compile_regex(&request))
             .transpose()?;
+        let literal_regex = if !matches!(request.mode, SearchMode::Regex) {
+            compile_literal_regex(&request.query, request.case_sensitive)?.map(Some)
+        } else {
+            None
+        };
         self.consistent(|session, generation| {
             let limit = self.result_limit(request.max_results);
             let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens);
@@ -283,14 +307,18 @@ impl Services {
                         &request.query,
                         request.case_sensitive,
                         context_lines,
-                        regex.as_ref(),
+                        regex
+                            .as_ref()
+                            .or(literal_regex.as_ref().and_then(|r| r.as_ref())),
                     )?
                 {
                     let matched_line = matching_line_for_search(
                         &hit,
                         &request.query,
                         request.case_sensitive,
-                        regex.as_ref(),
+                        regex
+                            .as_ref()
+                            .or(literal_regex.as_ref().and_then(|r| r.as_ref())),
                     )
                     .unwrap_or(search_hit.start_line);
                     lexical_hits.push((hit, search_hit, matched_line));

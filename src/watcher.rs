@@ -21,6 +21,7 @@ use crate::repository::{DiscoveryPolicy, slash_path};
 use crate::{Error, Result};
 
 const MAX_SCHEDULED_PATHS: usize = 4_096;
+const MAX_WATCHED_DIRECTORIES: usize = 50_000;
 const RECONCILE_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(500);
 const RECONCILE_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 const FULL_RECONCILE_INITIAL_DELAY: Duration = Duration::from_secs(1);
@@ -289,9 +290,19 @@ impl RepositoryWatcher {
                 }
             };
 
-            if let Err(err) = watcher.watch(&watched_root, RecursiveMode::Recursive) {
-                let _ = ready_tx.send(Err(into_error(err)));
-                return;
+            let directory_count = count_visible_directories(&watched_root, policy);
+            let watch_enabled = directory_count <= MAX_WATCHED_DIRECTORIES;
+            if watch_enabled {
+                if let Err(err) = watcher.watch(&watched_root, RecursiveMode::Recursive) {
+                    let _ = ready_tx.send(Err(into_error(err)));
+                    return;
+                }
+            } else {
+                tracing::warn!(
+                    directories = directory_count,
+                    cap = MAX_WATCHED_DIRECTORIES,
+                    "root has too many directories for recursive inotify;                      falling back to periodic full reconciliation"
+                );
             }
             let _ = ready_tx.send(Ok(()));
 
@@ -301,6 +312,13 @@ impl RepositoryWatcher {
             let mut rename_from = HashMap::<usize, String>::new();
             let mut rename_to = HashMap::<usize, String>::new();
             let mut reconcile = false;
+            let poll_interval = Duration::from_secs(30);
+            let mut poll_timer = if !watch_enabled {
+                tokio::time::interval(poll_interval)
+            } else {
+                tokio::time::interval(Duration::from_secs(60 * 60 * 24 * 365 * 10))
+            };
+            poll_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
                 if overflowed.swap(false, Ordering::Acquire) {
@@ -345,6 +363,11 @@ impl RepositoryWatcher {
                             sleep.as_mut().reset(Instant::now() + debounce);
                         } else {
                             sleep.as_mut().reset(Instant::now() + long_sleep);
+                        }
+                    }
+                    _ = poll_timer.tick() => {
+                        if !watch_enabled {
+                            reconcile = true;
                         }
                     }
                     _ = sleep.as_mut() => {
@@ -412,6 +435,47 @@ impl RepositoryWatcher {
 
 fn into_error(err: notify::Error) -> Error {
     Error::Io(std::io::Error::other(err.to_string()))
+}
+
+/// Count visible directories under `root` using the same discovery policy as
+/// file discovery. This bounds the inotify watch set before registration.
+fn count_visible_directories(root: &Path, policy: DiscoveryPolicy) -> usize {
+    use ignore::WalkBuilder;
+    let mut builder = WalkBuilder::new(root);
+    builder.hidden(false);
+    builder.git_ignore(true);
+    builder.git_exclude(true);
+    builder.git_global(true);
+    builder.follow_links(false);
+    let walker = builder.build();
+    let mut count = 0usize;
+    for entry in walker {
+        match entry {
+            Ok(entry) => {
+                if !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                    continue;
+                }
+                let relative = entry
+                    .path()
+                    .strip_prefix(root)
+                    .ok()
+                    .and_then(|p| p.to_str())
+                    .map(|s| s.replace('\\', "/"));
+                if let Some(rel) = relative {
+                    if policy.includes_path(&rel, true) {
+                        count += 1;
+                        if count > MAX_WATCHED_DIRECTORIES {
+                            return count;
+                        }
+                    }
+                } else if entry.path() == root {
+                    count += 1;
+                }
+            }
+            Err(_) => continue,
+        }
+    }
+    count
 }
 
 fn relative_path(root: &Path, path: &Path, policy: DiscoveryPolicy) -> Option<String> {

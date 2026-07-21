@@ -101,23 +101,65 @@ impl Tokenizer {
             return (text, total);
         }
 
-        let mut boundaries: Vec<usize> = text.char_indices().map(|(index, _)| index).collect();
-        boundaries.push(text.len());
+        // Tokenize once and find the byte offset of the token boundary at
+        // `max_tokens`. This avoids the O(N log N) binary search that
+        // re-tokenizes the same prefixes repeatedly.
+        let prefix_end = self.token_boundary_byte_offset(text, max_tokens);
+        let prefix = &text[..prefix_end];
+        (prefix, self.count(prefix))
+    }
 
-        let mut low = 0;
-        let mut high = boundaries.len() - 1;
-        while low < high {
-            let midpoint = low + (high - low).div_ceil(2);
-            let boundary = boundaries[midpoint];
-            if self.count(&text[..boundary]) <= max_tokens {
-                low = midpoint;
-            } else {
-                high = midpoint - 1;
+    /// Find the byte offset in `text` where the first `max_tokens` tokens end.
+    ///
+    /// Uses `split_by_token_ordinary_iter` to decode and split the text into
+    /// token-sized substrings in a single pass, then sums their byte lengths
+    /// until the budget is exhausted.
+    fn token_boundary_byte_offset(&self, text: &str, max_tokens: usize) -> usize {
+        match self {
+            Self::Cl100kBase => {
+                self.bpe_boundary(tiktoken_rs::cl100k_base_singleton(), text, max_tokens)
+            }
+            Self::O200kBase => {
+                self.bpe_boundary(tiktoken_rs::o200k_base_singleton(), text, max_tokens)
+            }
+            Self::O200kHarmony => {
+                self.bpe_boundary(tiktoken_rs::o200k_harmony_singleton(), text, max_tokens)
+            }
+            Self::P50kBase => {
+                self.bpe_boundary(tiktoken_rs::p50k_base_singleton(), text, max_tokens)
+            }
+            Self::P50kEdit => {
+                self.bpe_boundary(tiktoken_rs::p50k_edit_singleton(), text, max_tokens)
+            }
+            Self::R50kBase | Self::Gpt2 => {
+                self.bpe_boundary(tiktoken_rs::r50k_base_singleton(), text, max_tokens)
+            }
+            Self::Estimate => {
+                // Estimate is not BPE-backed; fall back to character boundaries.
+                let mut offset = 0;
+                for (_tokens, chunk) in text.split_whitespace().enumerate().take(max_tokens) {
+                    offset = text
+                        .find(chunk)
+                        .map(|start| start + chunk.len())
+                        .unwrap_or(offset);
+                }
+                offset.min(text.len())
             }
         }
-        let boundary = boundaries[low];
-        let prefix = &text[..boundary];
-        (prefix, self.count(prefix))
+    }
+
+    fn bpe_boundary(&self, bpe: &tiktoken_rs::CoreBPE, text: &str, max_tokens: usize) -> usize {
+        let mut offset = 0usize;
+        for (_, token) in bpe
+            .split_by_token_ordinary_iter(text)
+            .enumerate()
+            .take(max_tokens)
+        {
+            if let Ok(token) = token {
+                offset += token.len();
+            }
+        }
+        offset.min(text.len())
     }
 }
 

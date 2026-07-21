@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::ops::ControlFlow;
 use std::path::Path;
 
@@ -125,6 +126,22 @@ pub fn parse_language(language: &str, source: &str) -> Result<ParseOutput> {
     parse_language_with_cancellation(language, source, || false)
 }
 
+// Per-thread cache of a configured tree-sitter `Parser` and compiled query
+// objects, keyed by language name. `Parser` and `Query` are not `Send`, so
+// they cannot be shared across the rayon worker pool. A thread-local avoids
+// recreating and recompiling them for every source file parsed on the same
+// thread.
+thread_local! {
+    static PARSER_CACHE: RefCell<Option<ParserCache>> = const { RefCell::new(None) };
+}
+
+struct ParserCache {
+    language: String,
+    parser: Parser,
+    tags_query: Query,
+    import_query: Option<Query>,
+}
+
 fn parse_language_with_cancellation(
     language: &str,
     source: &str,
@@ -133,43 +150,59 @@ fn parse_language_with_cancellation(
     let lang = language_object(language)
         .ok_or_else(|| Error::UnsupportedLanguage(language.to_string()))?;
 
-    let mut parser = Parser::new();
-    parser
-        .set_language(&lang)
-        .map_err(Error::TreeSitterLanguage)?;
-    let tree = parse_tree(&mut parser, source, &mut is_cancelled)?;
-    let root = tree.root_node();
-    let structurally_complete = !root.has_error();
+    PARSER_CACHE.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        let needs_init = match &*cache {
+            Some(c) => c.language != language,
+            None => true,
+        };
+        if needs_init {
+            let mut parser = Parser::new();
+            parser
+                .set_language(&lang)
+                .map_err(Error::TreeSitterLanguage)?;
+            let tags_query = build_tags_query(language, &lang)?;
+            let import_query = build_import_query(language, &lang)?;
+            *cache = Some(ParserCache {
+                language: language.to_string(),
+                parser,
+                tags_query,
+                import_query,
+            });
+        }
+        let cache = cache.as_mut().expect("cache was just initialized");
 
-    let tags_query = build_tags_query(language, &lang)?;
-    let import_query = build_import_query(language, &lang)?;
+        let tree = parse_tree(&mut cache.parser, source, &mut is_cancelled)?;
+        let root = tree.root_node();
+        let structurally_complete = !root.has_error();
 
-    let mut symbols = Vec::new();
-    let mut references = Vec::new();
-    let mut imports = Vec::new();
+        let mut symbols = Vec::new();
+        let mut references = Vec::new();
+        let mut imports = Vec::new();
 
-    run_query(source, &tags_query, root, &mut is_cancelled, |qm| {
-        process_tags_match(source, &tags_query, qm, &mut symbols, &mut references);
-    })?;
-    if let Some(import_query) = import_query {
-        run_query(source, &import_query, root, &mut is_cancelled, |qm| {
-            process_imports_match(source, &import_query, qm, &mut imports);
+        run_query(source, &cache.tags_query, root, &mut is_cancelled, |qm| {
+            process_tags_match(source, &cache.tags_query, qm, &mut symbols, &mut references);
         })?;
-    }
+        if let Some(import_query) = &cache.import_query {
+            run_query(source, import_query, root, &mut is_cancelled, |qm| {
+                process_imports_match(source, import_query, qm, &mut imports);
+            })?;
+        }
 
-    if is_cancelled() {
-        return Err(Error::Cancelled);
-    }
+        if is_cancelled() {
+            return Err(Error::Cancelled);
+        }
 
-    compute_symbol_parents(&mut symbols);
-    compute_reference_enclosing(&symbols, &mut references);
+        compute_symbol_parents(&mut symbols);
+        compute_reference_enclosing(&symbols, &mut references);
 
-    Ok(ParseOutput {
-        language: Some(language.to_string()),
-        structurally_complete,
-        symbols,
-        references,
-        imports,
+        Ok(ParseOutput {
+            language: Some(language.to_string()),
+            structurally_complete,
+            symbols,
+            references,
+            imports,
+        })
     })
 }
 

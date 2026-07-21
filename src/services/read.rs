@@ -1,6 +1,7 @@
 //! Bounded live reads, outlines, and index-backed excerpts.
 
-use std::fs;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
 use tokio_util::sync::CancellationToken;
 
@@ -273,12 +274,18 @@ impl Services {
             .find_file(&request.path)?
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
         let path = resolve_existing(&self.config.root, &request.path)?;
-        let bytes = fs::read(path)?;
-        let source = std::str::from_utf8(&bytes).map_err(|_| Error::InvalidInput {
-            field: "path",
-            reason: "must identify UTF-8 text",
-        })?;
-        let line_count = source.lines().count().max(1);
+
+        // Stream the file through a BufReader for the full-file hash so the
+        // entire file does not need to be held in memory simultaneously. The
+        // content range is extracted by a bounded line-oriented reader.
+        let file = fs::File::open(&path)?;
+        let full_hash = stream_hash(&file)?;
+
+        // For the content range, read only the needed lines. When the symbol or
+        // line range is bounded, a line-oriented reader avoids loading the
+        // whole file into a String.
+        let (content, line_count) = read_range(&file, request, session, &indexed)?;
+        let line_count = line_count.max(1);
 
         let (start_line, requested_end) = if let Some(symbol_name) = &request.symbol {
             let symbol = session
@@ -298,7 +305,7 @@ impl Services {
             });
         }
         let requested_end = requested_end.min(line_count);
-        let content = crate::text::excerpt(source, start_line, requested_end);
+        let content = crate::text::excerpt(&content, start_line, requested_end);
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens);
         let (content, emitted_tokens) = self.config.tokenizer.truncate(&content, max_tokens);
         let returned_lines = content
@@ -311,7 +318,6 @@ impl Services {
             start_line + returned_lines - 1
         };
         let content_hash = hash(content);
-        let full_hash = crate::text::hash_bytes(&bytes);
         let index_stale = indexed.content_hash != full_hash;
         let indexed_hash = Some(indexed.content_hash);
         let not_modified = request.expected_hash.as_deref() == Some(content_hash.as_str());
@@ -336,8 +342,92 @@ impl Services {
             ),
         })
     }
+}
 
-    #[cfg(test)]
+/// Stream a file through a BufReader and compute the content hash without
+/// loading the entire file into memory.
+fn stream_hash(file: &File) -> Result<String> {
+    let mut reader = BufReader::new(file.try_clone()?);
+    let mut hasher = blake3::Hasher::new();
+    let mut buf = [0u8; 65_536];
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().to_hex()[..crate::text::CONTENT_FINGERPRINT_HEX_LEN].to_string())
+}
+
+/// Read the file content needed to satisfy a read request. When a bounded line
+/// range is requested, only lines up to `end_line` are read. When no end is
+/// specified, the whole file is read as a String. Returns the content and the
+/// total line count.
+fn read_range(
+    file: &File,
+    request: &ReadRequest,
+    session: &ReadSession,
+    indexed: &crate::storage::FileRecord,
+) -> Result<(String, usize)> {
+    let mut file = file.try_clone()?;
+    // If a symbol is requested, we need the symbol's line range first.
+    if let Some(symbol_name) = &request.symbol {
+        let symbol = session
+            .find_symbol(indexed.id, symbol_name)?
+            .ok_or_else(|| Error::NotIndexed(format!("{}::{symbol_name}", request.path)))?;
+        return read_bounded_range(&mut file, symbol.start_line, symbol.end_line);
+    }
+
+    // If both start and end are specified, read only the needed range.
+    if let (Some(start), Some(end)) = (request.start_line, request.end_line) {
+        return read_bounded_range(&mut file, start, end);
+    }
+
+    // Otherwise, read the whole file (needed for line_count or default range).
+    file.seek(SeekFrom::Start(0))?;
+    let mut reader = BufReader::new(file);
+    let mut content = String::new();
+    reader.read_to_string(&mut content)?;
+    let line_count = content.lines().count();
+    Ok((content, line_count))
+}
+
+/// Read lines `start_line` through `end_line` (1-based, inclusive) from the
+/// file without loading the entire file into memory.
+fn read_bounded_range(
+    file: &mut File,
+    start_line: usize,
+    end_line: usize,
+) -> Result<(String, usize)> {
+    file.seek(SeekFrom::Start(0))?;
+    let reader = BufReader::new(file);
+    let mut content = String::new();
+    let mut line_count = 0usize;
+    let mut current_line = 0usize;
+    let effective_end = if end_line == 0 { usize::MAX } else { end_line };
+
+    for line_result in reader.lines() {
+        current_line += 1;
+        let line = line_result?;
+        if current_line >= start_line && current_line <= effective_end {
+            content.push_str(&line);
+            content.push('\n');
+        }
+        if current_line > effective_end {
+            break;
+        }
+    }
+    line_count = current_line.max(line_count);
+
+    // We need the total line count for validation, but we stopped early.
+    // For bounded reads, the count we have is at least the end line.
+    // The caller clamps to line_count, so returning current_line is safe.
+    Ok((content, line_count))
+}
+
+#[cfg(test)]
+impl Services {
     pub(super) fn stored_excerpt(
         &self,
         session: &ReadSession,
@@ -362,7 +452,9 @@ impl Services {
         let selected = session.get_chunks_overlapping(file_id, first, last)?;
         Ok(assemble_stored_excerpt(&request, &selected))
     }
+}
 
+impl Services {
     pub(super) fn stored_excerpts(
         &self,
         session: &ReadSession,
