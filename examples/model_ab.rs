@@ -11,8 +11,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
 use model_ab_artifacts::{
-    ARTIFACT_SCHEMA_V1, PROVIDER_USAGE_FILE, ProviderUsage, ProviderUsageReceipt, RunBinding,
-    TOOL_TRACE_FILE, TRAJECTORY_FILE, ToolOutcome, ToolTrace, Trajectory,
+    ARTIFACT_SCHEMA_V1, PREWALK_HANDOFF_FILE, PROVIDER_USAGE_FILE, PrewalkHandoff, ProviderUsage,
+    ProviderUsageReceipt, RunBinding, TOOL_TRACE_FILE, TRAJECTORY_FILE, ToolOutcome, ToolTrace,
+    Trajectory, is_bounded_prewalk_todo_event,
 };
 use serde::{Deserialize, Serialize};
 use statrs::statistics::Statistics;
@@ -74,26 +75,24 @@ struct Task {
 #[serde(rename_all = "snake_case")]
 enum Arm {
     Filesystem,
-    LeanTokenBaseline,
-    LeanTokenAdaptive,
-    LeanTokenAdaptiveRecovery,
+    LeanTokenProgressive,
+    LeanTokenOneShot,
     Prewalk,
 }
 
 impl Arm {
     const REQUIRED: [Self; 4] = [
         Self::Filesystem,
-        Self::LeanTokenBaseline,
-        Self::LeanTokenAdaptive,
-        Self::LeanTokenAdaptiveRecovery,
+        Self::LeanTokenProgressive,
+        Self::LeanTokenOneShot,
+        Self::Prewalk,
     ];
 
     fn as_str(self) -> &'static str {
         match self {
             Self::Filesystem => "filesystem",
-            Self::LeanTokenBaseline => "lean_token_baseline",
-            Self::LeanTokenAdaptive => "lean_token_adaptive",
-            Self::LeanTokenAdaptiveRecovery => "lean_token_adaptive_recovery",
+            Self::LeanTokenProgressive => "lean_token_progressive",
+            Self::LeanTokenOneShot => "lean_token_one_shot",
             Self::Prewalk => "prewalk",
         }
     }
@@ -267,6 +266,7 @@ struct RunArtifacts {
     tool_trace: Option<ArtifactIdentity>,
     trajectory: Option<ArtifactIdentity>,
     provider_usage: Option<ArtifactIdentity>,
+    prewalk_handoff: Option<ArtifactIdentity>,
     validation_receipt: Option<ArtifactIdentity>,
     patch: ArtifactIdentity,
     patch_valid: bool,
@@ -381,7 +381,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     arm,
                 )?;
                 let request = AdapterRequest {
-                    schema_version: 3,
+                    schema_version: 4,
                     experiment_id: &manifest.experiment_id,
                     manifest_blake3: &manifest_blake3,
                     random_seed: manifest.random_seed,
@@ -550,7 +550,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let report = Report {
-        schema_version: 5,
+        schema_version: 6,
         experiment_id: manifest.experiment_id,
         manifest_blake3,
         random_seed: manifest.random_seed,
@@ -650,7 +650,7 @@ impl Drop for IsolatedWorkspace {
 }
 
 fn validate_manifest(manifest: &Manifest) -> Result<(), Box<dyn Error>> {
-    if !matches!(manifest.schema_version, 2 | 3) {
+    if manifest.schema_version != 4 {
         return Err("unsupported model A/B manifest schema".into());
     }
     if manifest.experiment_id.trim().is_empty()
@@ -670,7 +670,7 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Box<dyn Error>> {
             .into());
         }
     }
-    if manifest.arms.contains_key(&Arm::Prewalk) && manifest.executor_model.trim().is_empty() {
+    if manifest.executor_model.trim().is_empty() {
         return Err("prewalk arm requires executor_model".into());
     }
     for (arm, definition) in &manifest.arms {
@@ -706,15 +706,13 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Box<dyn Error>> {
         }
         validate_revision(&task.revision, "task revision")?;
         validate_artifact_path_segment(&task.id, "task id")?;
-        if manifest.schema_version >= 3 {
-            let digest = task
-                .success_command_executable_blake3
-                .as_deref()
-                .ok_or("schema v3 task is missing success_command_executable_blake3")?;
-            validate_blake3(digest, "success_command_executable_blake3")?;
-            if !Path::new(&task.success_command[0]).is_absolute() {
-                return Err("schema v3 success command executable must be absolute".into());
-            }
+        let digest = task
+            .success_command_executable_blake3
+            .as_deref()
+            .ok_or("schema v4 task is missing success_command_executable_blake3")?;
+        validate_blake3(digest, "success_command_executable_blake3")?;
+        if !Path::new(&task.success_command[0]).is_absolute() {
+            return Err("schema v4 success command executable must be absolute".into());
         }
         if !task_ids.insert(task.id.as_str()) {
             return Err(format!("duplicate task id: {}", task.id).into());
@@ -727,14 +725,12 @@ fn verify_success_command_identity(
     task: &Task,
     manifest_schema_version: u32,
 ) -> Result<(), Box<dyn Error>> {
-    if manifest_schema_version < 3 {
-        return Ok(());
-    }
+    debug_assert_eq!(manifest_schema_version, 4);
     let executable = Path::new(&task.success_command[0]).canonicalize()?;
     let expected = task
         .success_command_executable_blake3
         .as_deref()
-        .ok_or("schema v3 task is missing success command identity")?;
+        .ok_or("schema v4 task is missing success command identity")?;
     if hash_file(&executable)? != expected {
         return Err(format!("task {} success command hash mismatch", task.id).into());
     }
@@ -827,12 +823,21 @@ fn prepare_arm_definitions(
         }
         prepared.insert(*arm, definition);
     }
-    let baseline = &prepared[&Arm::LeanTokenBaseline].runtime_repository;
-    let adaptive = &prepared[&Arm::LeanTokenAdaptive].runtime_repository;
-    if baseline == adaptive {
-        return Err(
-            "baseline and adaptive runtime repositories must be independent worktrees".into(),
-        );
+    let progressive = &prepared[&Arm::LeanTokenProgressive];
+    for candidate in prepared.values() {
+        if candidate.budget.tool_call_limit != progressive.budget.tool_call_limit
+            || candidate.budget.context_token_limit != progressive.budget.context_token_limit
+        {
+            return Err("all arms must use identical tool and context budgets".into());
+        }
+    }
+    for arm in [Arm::LeanTokenOneShot, Arm::Prewalk] {
+        let candidate = &prepared[&arm];
+        if candidate.runtime_revision != progressive.runtime_revision
+            || candidate.runtime_binary_blake3 != progressive.runtime_binary_blake3
+        {
+            return Err("LeanToken arms must use one frozen runtime revision and binary".into());
+        }
     }
     Ok(prepared)
 }
@@ -938,6 +943,7 @@ fn capture_run_artifacts(
         tool_trace: artifact_identity_if_present(directory, TOOL_TRACE_FILE)?,
         trajectory: artifact_identity_if_present(directory, TRAJECTORY_FILE)?,
         provider_usage: artifact_identity_if_present(directory, PROVIDER_USAGE_FILE)?,
+        prewalk_handoff: artifact_identity_if_present(directory, PREWALK_HANDOFF_FILE)?,
         validation_receipt: None,
         patch: artifact_identity(&patch_path)?,
         patch_valid: diff_check.status.success() && reverse_apply_valid,
@@ -991,7 +997,7 @@ fn validate_run_artifacts(
         )
         .into());
     }
-    if result.schema_version != 3 {
+    if result.schema_version != 4 {
         return Err("unsupported model A/B adapter result schema".into());
     }
     if !artifacts.patch_valid {
@@ -1006,6 +1012,43 @@ fn validate_run_artifacts(
             return Err(format!("adapter did not persist required artifact {name}").into());
         }
     }
+    let handoff = if binding.arm == Arm::Prewalk.as_str() {
+        let handoff: PrewalkHandoff = read_artifact_json(directory, PREWALK_HANDOFF_FILE)?;
+        validate_artifact_header(
+            handoff.schema_version,
+            &handoff.binding,
+            binding,
+            PREWALK_HANDOFF_FILE,
+        )?;
+        if handoff.primary_model.trim().is_empty()
+            || handoff.executor_model.trim().is_empty()
+            || handoff.primary_model == handoff.executor_model
+            || handoff.trajectory_events.is_empty()
+            || handoff.todo_events.is_empty()
+            || handoff.evidence_calls.is_empty()
+            || handoff.worktree_patch.is_empty()
+            || handoff.first_validated_edit.validation_sequence
+                <= handoff.first_validated_edit.edit_sequence
+        {
+            return Err(
+                "prewalk handoff is missing trajectory, todo, evidence, or a validated edit".into(),
+            );
+        }
+        if handoff.todo_events.iter().any(|todo| {
+            !is_bounded_prewalk_todo_event(todo)
+                || !handoff.trajectory_events.iter().any(|event| event == todo)
+        }) {
+            return Err(
+                "prewalk handoff todo is not a bounded event from its exact trajectory".into(),
+            );
+        }
+        artifacts.prewalk_handoff = Some(artifact_identity(&directory.join(PREWALK_HANDOFF_FILE))?);
+        Some(handoff)
+    } else if artifacts.prewalk_handoff.is_some() {
+        return Err("non-prewalk arm persisted a prewalk handoff".into());
+    } else {
+        None
+    };
 
     let trace: ToolTrace = read_artifact_json(directory, TOOL_TRACE_FILE)?;
     validate_artifact_header(
@@ -1014,6 +1057,40 @@ fn validate_run_artifacts(
         binding,
         TOOL_TRACE_FILE,
     )?;
+    if let Some(handoff) = &handoff {
+        for evidence in &handoff.evidence_calls {
+            let call = trace
+                .calls
+                .get(evidence.sequence)
+                .ok_or("prewalk handoff evidence sequence is outside the tool trace")?;
+            if call.tool_name != "leantoken"
+                || call.outcome != ToolOutcome::Success
+                || call.call_id != evidence.call_id
+                || call.result_id != evidence.result_id
+                || call.result_source_tokens != evidence.result_source_tokens
+                || call.ranges.len() != evidence.ranges.len()
+            {
+                return Err("prewalk handoff evidence does not match the exact tool trace".into());
+            }
+        }
+        let edit = trace
+            .calls
+            .get(handoff.first_validated_edit.edit_sequence)
+            .ok_or("prewalk handoff edit sequence is outside the tool trace")?;
+        let validation = trace
+            .calls
+            .get(handoff.first_validated_edit.validation_sequence)
+            .ok_or("prewalk handoff validation sequence is outside the tool trace")?;
+        if edit.tool_name != "edit"
+            || edit.outcome != ToolOutcome::Success
+            || validation.tool_name != "shell"
+            || validation.outcome != ToolOutcome::Success
+        {
+            return Err(
+                "prewalk handoff validated edit does not match the exact tool trace".into(),
+            );
+        }
+    }
     let mut call_ids = HashSet::new();
     let mut result_ids = HashSet::new();
     let mut rereads = 0usize;
@@ -1528,7 +1605,7 @@ fn aggregate_by_task(runs: &[RunReport]) -> BTreeMap<String, BTreeMap<Arm, ArmAg
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model_ab_artifacts::{RangeIdentity, ToolCall};
+    use crate::model_ab_artifacts::{RangeIdentity, ToolCall, ValidatedEdit};
 
     #[test]
     fn sample_statistics_reports_distribution_and_sample_variance() {
@@ -1544,6 +1621,56 @@ mod tests {
             sample_statistics(vec![10.0]).sample_variance,
             None,
             "one run cannot establish sample variance"
+        );
+    }
+
+    #[test]
+    fn checked_four_arm_report_preserves_decision_and_redaction_contract() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("benchmarks/reports/swe-bench-multilingual-four-arm-v2.json");
+        let bytes = fs::read(path).expect("checked four-arm report");
+        let report: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("valid checked four-arm report");
+        let runs = report["runs"].as_array().expect("run summaries");
+        let unique_cells = runs
+            .iter()
+            .map(|run| {
+                (
+                    run["task_id"].as_str().expect("task ID"),
+                    run["repetition"].as_u64().expect("repetition"),
+                    run["arm"].as_str().expect("arm"),
+                )
+            })
+            .collect::<HashSet<_>>();
+
+        assert_eq!(report["status"], "completed_negative_primary");
+        assert_eq!(
+            report["pre_registered_decision"]["result"],
+            "negative_primary"
+        );
+        assert_eq!(report["pre_registered_decision"]["filesystem_successes"], 6);
+        assert_eq!(
+            report["pre_registered_decision"]["progressive_successes"],
+            4
+        );
+        assert_eq!(
+            report["execution_integrity"]["verified_artifact_hashes"],
+            137
+        );
+        assert_eq!(report["failure_inventory"]["adapter_failed"], 14);
+        assert_eq!(runs.len(), 36);
+        assert_eq!(unique_cells.len(), 36);
+        assert_eq!(
+            report["metric_distributions"]["by_task_arm"]
+                .as_array()
+                .expect("task-arm distributions")
+                .len(),
+            12
+        );
+        assert!(
+            !String::from_utf8(bytes)
+                .expect("UTF-8 report")
+                .contains("/home/")
         );
     }
 
@@ -1567,6 +1694,7 @@ mod tests {
                 tool_trace: None,
                 trajectory: None,
                 provider_usage: None,
+                prewalk_handoff: None,
                 validation_receipt: None,
                 patch: ArtifactIdentity {
                     path: PathBuf::from("patch.diff"),
@@ -1596,9 +1724,8 @@ mod tests {
     fn seeded_arm_order_is_reproducible_and_seed_sensitive() {
         let arms = [
             Arm::Filesystem,
-            Arm::LeanTokenBaseline,
-            Arm::LeanTokenAdaptive,
-            Arm::LeanTokenAdaptiveRecovery,
+            Arm::LeanTokenProgressive,
+            Arm::LeanTokenOneShot,
             Arm::Prewalk,
         ];
         let first = seeded_arm_order(7, "task-a", 2, arms);
@@ -1618,12 +1745,12 @@ mod tests {
         let mut manifest = valid_manifest();
         validate_manifest(&manifest).expect("valid manifest");
 
-        manifest.arms.remove(&Arm::LeanTokenAdaptiveRecovery);
+        manifest.arms.remove(&Arm::LeanTokenOneShot);
         assert!(
             validate_manifest(&manifest)
                 .expect_err("missing core arm")
                 .to_string()
-                .contains("missing required arm lean_token_adaptive_recovery")
+                .contains("missing required arm lean_token_one_shot")
         );
 
         let mut manifest = valid_manifest();
@@ -1640,27 +1767,26 @@ mod tests {
         );
 
         let mut manifest = valid_manifest();
-        manifest.schema_version = 3;
+        manifest.tasks[0].success_command_executable_blake3 = None;
         assert!(
             validate_manifest(&manifest)
-                .expect_err("schema v3 must bind the validator executable")
+                .expect_err("schema v4 must bind the validator executable")
                 .to_string()
                 .contains("success_command_executable_blake3")
         );
     }
 
     #[test]
-    fn schema_v3_success_command_identity_is_verified() {
+    fn schema_v4_success_command_identity_is_verified() {
         let directory = tempfile::tempdir().expect("validator directory");
         let validator = directory.path().join("validator");
         fs::write(&validator, b"frozen validator").expect("validator fixture");
         let digest = hash_file(&validator).expect("validator hash");
         let mut manifest = valid_manifest();
-        manifest.schema_version = 3;
         manifest.tasks[0].success_command = vec![validator.to_string_lossy().into_owned()];
         manifest.tasks[0].success_command_executable_blake3 = Some(digest);
 
-        validate_manifest(&manifest).expect("valid schema v3 manifest");
+        validate_manifest(&manifest).expect("valid schema v4 manifest");
         verify_success_command_identity(&manifest.tasks[0], manifest.schema_version)
             .expect("matching validator identity");
         fs::write(&validator, b"changed validator").expect("mutate validator");
@@ -1673,47 +1799,46 @@ mod tests {
     }
 
     #[test]
-    fn arm_preflight_verifies_revisions_hashes_and_independent_worktrees() {
-        let (baseline_repository, baseline_revision) = initialized_repository();
-        let (adaptive_repository, adaptive_revision) = initialized_repository();
+    fn arm_preflight_verifies_frozen_identity_and_equal_leantoken_budgets() {
+        let (runtime_repository, runtime_revision) = initialized_repository();
         let artifacts = tempfile::tempdir().expect("artifact directory");
         let binary = artifacts.path().join("runtime-adapter");
         fs::write(&binary, b"frozen artifact").expect("artifact");
         let binary_blake3 = hash_file(&binary).expect("artifact hash");
         let mut definitions = BTreeMap::new();
-        for arm in [Arm::Filesystem, Arm::LeanTokenBaseline] {
+        for arm in Arm::REQUIRED {
             definitions.insert(
                 arm,
                 arm_definition(
-                    baseline_repository.path(),
-                    &baseline_revision,
-                    baseline_repository.path(),
-                    &baseline_revision,
-                    &binary,
-                    &binary_blake3,
-                ),
-            );
-        }
-        for arm in [Arm::LeanTokenAdaptive, Arm::LeanTokenAdaptiveRecovery] {
-            definitions.insert(
-                arm,
-                arm_definition(
-                    adaptive_repository.path(),
-                    &adaptive_revision,
-                    baseline_repository.path(),
-                    &baseline_revision,
+                    runtime_repository.path(),
+                    &runtime_revision,
+                    runtime_repository.path(),
+                    &runtime_revision,
                     &binary,
                     &binary_blake3,
                 ),
             );
         }
 
-        let prepared = prepare_arm_definitions(&definitions, &binary, &binary_blake3)
+        prepare_arm_definitions(&definitions, &binary, &binary_blake3)
             .expect("valid arm definitions");
-        assert_ne!(
-            prepared[&Arm::LeanTokenBaseline].runtime_repository,
-            prepared[&Arm::LeanTokenAdaptive].runtime_repository
+
+        definitions
+            .get_mut(&Arm::Prewalk)
+            .expect("prewalk definition")
+            .budget
+            .tool_call_limit = 2;
+        assert!(
+            prepare_arm_definitions(&definitions, &binary, &binary_blake3)
+                .expect_err("unequal LeanToken budget")
+                .to_string()
+                .contains("all arms must use identical tool and context budgets")
         );
+        definitions
+            .get_mut(&Arm::Prewalk)
+            .expect("prewalk definition")
+            .budget
+            .tool_call_limit = 1;
 
         fs::write(&binary, b"changed artifact").expect("mutate artifact");
         let changed_blake3 = hash_file(&binary).expect("changed hash");
@@ -1780,6 +1905,129 @@ mod tests {
         assert_eq!(artifacts.tool_call_records, Some(2));
         assert_eq!(artifacts.range_identities, Some(2));
         assert_eq!(artifacts.trajectory_events, Some(1));
+    }
+
+    #[test]
+    fn prewalk_artifacts_bind_evidence_todo_and_first_validated_edit() {
+        let directory = tempfile::tempdir().expect("artifact directory");
+        let mut binding = artifact_binding();
+        binding.arm = Arm::Prewalk.as_str().to_owned();
+        persist_valid_adapter_artifacts(directory.path(), &binding);
+        let calls = vec![
+            ToolCall {
+                sequence: 0,
+                tool_name: "leantoken".to_owned(),
+                call_id: "prewalk:evidence".to_owned(),
+                result_id: "prewalk:evidence-result".to_owned(),
+                outcome: ToolOutcome::Success,
+                result_source_tokens: 4,
+                reread: false,
+                ranges: Vec::new(),
+            },
+            ToolCall {
+                sequence: 1,
+                tool_name: "edit".to_owned(),
+                call_id: "prewalk:edit".to_owned(),
+                result_id: "prewalk:edit-result".to_owned(),
+                outcome: ToolOutcome::Success,
+                result_source_tokens: 0,
+                reread: false,
+                ranges: Vec::new(),
+            },
+            ToolCall {
+                sequence: 2,
+                tool_name: "shell".to_owned(),
+                call_id: "prewalk:test".to_owned(),
+                result_id: "prewalk:test-result".to_owned(),
+                outcome: ToolOutcome::Success,
+                result_source_tokens: 0,
+                reread: false,
+                ranges: Vec::new(),
+            },
+            ToolCall {
+                sequence: 3,
+                tool_name: "edit".to_owned(),
+                call_id: "executor:edit".to_owned(),
+                result_id: "executor:edit-result".to_owned(),
+                outcome: ToolOutcome::Success,
+                result_source_tokens: 0,
+                reread: false,
+                ranges: Vec::new(),
+            },
+        ];
+        write_json_fixture(
+            directory.path().join(TOOL_TRACE_FILE),
+            &ToolTrace {
+                schema_version: ARTIFACT_SCHEMA_V1,
+                binding: binding.clone(),
+                calls: calls.clone(),
+            },
+        );
+        let todo = serde_json::json!({
+            "type": "item.completed",
+            "item": {
+                "id": "prewalk-todo",
+                "type": "agent_message",
+                "text": serde_json::json!({
+                    "summary": "validated first edit",
+                    "todo": [{"step": "finish task", "status": "pending"}]
+                }).to_string()
+            }
+        });
+        write_json_fixture(
+            directory.path().join(TRAJECTORY_FILE),
+            &Trajectory {
+                schema_version: ARTIFACT_SCHEMA_V1,
+                binding: binding.clone(),
+                events: vec![todo.clone()],
+            },
+        );
+        write_json_fixture(
+            directory.path().join(PREWALK_HANDOFF_FILE),
+            &PrewalkHandoff {
+                schema_version: ARTIFACT_SCHEMA_V1,
+                binding: binding.clone(),
+                primary_model: "provider/frontier".to_owned(),
+                executor_model: "provider/executor".to_owned(),
+                trajectory_events: vec![todo.clone()],
+                todo_events: vec![todo],
+                evidence_calls: vec![calls[0].clone()],
+                worktree_patch: "diff --git a/src/lib.rs b/src/lib.rs".to_owned(),
+                first_validated_edit: ValidatedEdit {
+                    edit_sequence: 1,
+                    validation_sequence: 2,
+                },
+            },
+        );
+        let mut result = valid_adapter_result();
+        result.tool_calls = calls.len();
+        result.rereads = 0;
+        result.reread_tokens = 0;
+        result.failed_tool_calls = 0;
+        result.failed_searches = 0;
+        result.dead_end_reads = 0;
+        let mut arm = artifact_arm_definition();
+        arm.tool_catalog = vec![
+            "leantoken".to_owned(),
+            "edit".to_owned(),
+            "shell".to_owned(),
+        ];
+        let mut artifacts = artifact_identities(directory.path());
+
+        validate_run_artifacts(directory.path(), &binding, &arm, &result, &mut artifacts)
+            .expect("valid prewalk artifact chain");
+
+        assert!(artifacts.prewalk_handoff.is_some());
+
+        let mut handoff: PrewalkHandoff =
+            read_artifact_json(directory.path(), PREWALK_HANDOFF_FILE).unwrap();
+        handoff.todo_events[0]["item"]["id"] = serde_json::json!("not-in-trajectory");
+        write_json_fixture(directory.path().join(PREWALK_HANDOFF_FILE), &handoff);
+        let mut artifacts = artifact_identities(directory.path());
+        let error =
+            validate_run_artifacts(directory.path(), &binding, &arm, &result, &mut artifacts)
+                .expect_err("todo must be copied from the exact trajectory");
+        assert!(error.to_string().contains("bounded event"));
     }
 
     #[test]
@@ -1876,7 +2124,7 @@ mod tests {
             manifest_blake3: &manifest_blake3,
             task_id: "task",
             repetition: 2,
-            arm: Arm::LeanTokenAdaptive,
+            arm: Arm::LeanTokenProgressive,
         };
         let mut receipt = serde_json::json!({
             "schema_version": 1,
@@ -1968,7 +2216,7 @@ mod tests {
 
     fn valid_adapter_result() -> AdapterResult {
         AdapterResult {
-            schema_version: 3,
+            schema_version: 4,
             task_success: false,
             total_input_tokens: Some(6),
             total_output_tokens: Some(4),
@@ -2072,6 +2320,7 @@ mod tests {
             tool_trace: artifact_identity_if_present(directory, TOOL_TRACE_FILE).unwrap(),
             trajectory: artifact_identity_if_present(directory, TRAJECTORY_FILE).unwrap(),
             provider_usage: artifact_identity_if_present(directory, PROVIDER_USAGE_FILE).unwrap(),
+            prewalk_handoff: artifact_identity_if_present(directory, PREWALK_HANDOFF_FILE).unwrap(),
             validation_receipt: None,
             patch: artifact_identity(&directory.join(PATCH_FILE)).unwrap(),
             patch_valid: true,
@@ -2136,6 +2385,11 @@ mod tests {
     fn valid_manifest() -> Manifest {
         let revision = "0".repeat(40);
         let binary_blake3 = "0".repeat(64);
+        let success_command = if cfg!(windows) {
+            r"C:\test-command.exe"
+        } else {
+            "/test-command"
+        };
         let mut arms = BTreeMap::new();
         for arm in Arm::REQUIRED {
             arms.insert(
@@ -2151,11 +2405,11 @@ mod tests {
             );
         }
         Manifest {
-            schema_version: 2,
+            schema_version: 4,
             experiment_id: "experiment".to_owned(),
             random_seed: 7,
             primary_model: "provider/model".to_owned(),
-            executor_model: String::new(),
+            executor_model: "provider/executor".to_owned(),
             timeout_seconds: 30,
             arms,
             tasks: vec![Task {
@@ -2163,8 +2417,8 @@ mod tests {
                 repository: PathBuf::from("task-repository"),
                 revision,
                 prompt: "fix the task".to_owned(),
-                success_command: vec!["test-command".to_owned()],
-                success_command_executable_blake3: None,
+                success_command: vec![success_command.to_owned()],
+                success_command_executable_blake3: Some(binary_blake3),
             }],
         }
     }

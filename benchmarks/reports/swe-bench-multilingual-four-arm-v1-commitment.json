@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "report_kind": "four_arm_model_evaluation_commitment",
+  "status": "committed_not_started",
+  "committed_on": "2026-07-21",
+  "experiment_id": "swe-bench-multilingual-four-arm-v1",
+  "scope": {
+    "evidence_class": "exploratory_mechanism_evaluation",
+    "confirmation_or_gate_b": false,
+    "formal_model_runs_started": false,
+    "product_promotion_allowed": false,
+    "reason": "All tasks are public and consumed. Caddy was also used for pre-registration contract smoke, so this experiment can compare frozen mechanisms descriptively but cannot establish blind generalization."
+  },
+  "prior_observation_disclosure": {
+    "public_task_contract_smoke_completed": true,
+    "public_task": "caddyserver__caddy-6051",
+    "contract_smoke_report_blake3": "9acdfba130dfc744c752047237c3b4dedd2ceff9059756fe1bac8b588bad08bd",
+    "observed_before_commitment": [
+      "One earlier run in each arm was used to expose adapter and contract failures.",
+      "The earlier prewalk run failed the required post-edit validation contract and did not launch the executor.",
+      "The earlier results are excluded from the formal schedule and prevent a blinded Caddy claim."
+    ],
+    "synthetic_prewalk_smoke": {
+      "task": "Change a tiny Rust answer function and its test from 1 to 2.",
+      "result_blake3": "e378e6f1ba1b685e0f15c40e71a06ad11de75e218346c6ca4d9d0ca4b254afc0",
+      "handoff_blake3": "e38505f6ed7160e8e6fe07f7cb9e977cac26d62eaf980d530bc7f00d4e881d1f",
+      "models": [
+        "gpt-5.6-sol",
+        "gpt-5.6-luna"
+      ],
+      "purpose": "Validate the real structured handoff and phase boundary, not estimate task quality."
+    },
+    "dry_harness_report_blake3": "32f14dd150797c2c8a2af4862ba705bafccfe57f73300ec296d79702e0916588",
+    "adaptation_cutoff": "No harness, adapter, arm, task, budget, model, or interpretation change is allowed after this commitment without a new experiment ID."
+  },
+  "protocol": {
+    "manifest_schema_version": 4,
+    "manifest_blake3": "6d9dd03122e766b9fdf8d1eebdd50d28eac4b7dcca681cc25d7f3efe33f8e659",
+    "preflight_receipt_blake3": "544674cb2f6faf9afed5fe61d7107a0156c91195a1728f302990158fb12943dc",
+    "preflight_status": "preflight_passed",
+    "arm_order_seed": 2026072101,
+    "arm_order_derivation": "leantoken.model-ab.arm-order.v1 from the frozen harness revision, task ID, repetition, and arm",
+    "tasks": 3,
+    "required_arms": 4,
+    "repetitions_per_task_arm": 3,
+    "planned_model_runs": 36,
+    "model_timeout_seconds": 1800,
+    "validator_timeout_seconds": 1500,
+    "total_tool_call_limit": 40,
+    "prewalk_tool_call_limit": 20,
+    "executor_tool_call_limit": 20,
+    "per_call_retrieval_source_token_limit": 8000,
+    "fresh_detached_worktree_per_run": true,
+    "provider_seed_exposed": false,
+    "provider_seed_note": "The random seed fixes arm order only; it does not claim provider determinism."
+  },
+  "tasks": [
+    {
+      "task_id": "babel__babel-15445",
+      "language": "typescript",
+      "repository": "https://github.com/babel/babel.git",
+      "revision": "49e4855c10d8f76faf477f2ceb5ecbdbe2c849a3"
+    },
+    {
+      "task_id": "caddyserver__caddy-6051",
+      "language": "go",
+      "repository": "https://github.com/caddyserver/caddy.git",
+      "revision": "4181c79a8130a59c40c76437e15265452422ccb1"
+    },
+    {
+      "task_id": "jqlang__jq-2750",
+      "language": "c",
+      "repository": "https://github.com/jqlang/jq.git",
+      "revision": "98f709d0c1fd87a8b6a3e10c679442667712b264"
+    }
+  ],
+  "models": {
+    "provider": "openai",
+    "frontier_model": "gpt-5.6-sol",
+    "executor_model": "gpt-5.6-luna",
+    "executor_used_only_by": "prewalk",
+    "model_assignment": "gpt-5.6-sol runs filesystem, progressive, one-shot, and the frontier prewalk; gpt-5.6-luna runs only the post-handoff executor.",
+    "codex_cli_version": "codex-cli 0.144.1",
+    "codex_executable_blake3": "1c7eb9960cc658bc06cee4ee06f1be2a545551c0cef64f928f5a7f58ac427457",
+    "models_cache_observation": {
+      "path": "/home/yann/.codex/models_cache.json",
+      "blake3": "adce9858b64b280832ee14c03f90d545a52f1fb0a8ef0b59cfcea75132362bba",
+      "fetched_at": "2026-07-21T03:18:37.172381287Z",
+      "etag": "W/\"f3f1e074b699257cf13b2735b78c5492\"",
+      "frontier_description": "Latest frontier agentic coding model.",
+      "executor_description": "Fast and affordable agentic coding model."
+    },
+    "reasoning_effort": "medium",
+    "service_tier": "default",
+    "tokenizer": "o200k_base",
+    "web_search": "disabled",
+    "user_config_and_rules": "ignored",
+    "sandbox": "workspace-write",
+    "provider_cost_exposed": false,
+    "cache_creation_tokens_exposed": false
+  },
+  "identities": {
+    "harness_revision": "14dcc0507699b58a40a6d2eef883b02e3c644272",
+    "harness_binary_blake3": "e761672f8d891f5f3a4a94b4493bbbb62df443bf5d48a8abaf9d61a459c5e51e",
+    "adapter_revision": "14dcc0507699b58a40a6d2eef883b02e3c644272",
+    "adapter_binary_blake3": "a8ead28eb9260c48c1baa7a207d1ce5acbb8943656cf170d7ade23858761a0a9",
+    "runtime_revision": "14dcc0507699b58a40a6d2eef883b02e3c644272",
+    "runtime_binary_blake3": "62cc0758d42629648a14294c49f1e370f93844f87b529fe30aba7298e7777c7c",
+    "validator_revision": "14dcc0507699b58a40a6d2eef883b02e3c644272",
+    "validator_binary_blake3": "914917202dd1a8bfa7042a897ba53a9d4f1f75dd2fd1bd37dbfd8d632183f5a5",
+    "tracked_harness_worktree_clean": true
+  },
+  "arms": {
+    "filesystem": "Frontier model uses native repository discovery and source reads; LeanToken is unavailable.",
+    "lean_token_progressive": "Frontier model must call LeanToken first, use only narrow LeanToken retrieval, and cannot use native repository retrieval or context.",
+    "lean_token_one_shot": "Frontier model must make exactly one evidence-bearing LeanToken context call before substantive work and cannot retrieve again.",
+    "prewalk": "Frontier model uses progressive LeanToken retrieval, makes and validates the first grounded edit, and transfers raw trajectory, schema-constrained todo events, evidence, patch, and edit identity to the cheaper executor without executor rediscovery."
+  },
+  "official_validation": {
+    "dataset_blake3": "8037e63f2fbddb906a6957895449d73eff31dace973a0bf48e93a7a3606ee4b7",
+    "swe_bench_harness_revision": "f7bbbb2ccdf479001d6467c9e34af59e44a840f9",
+    "python_blake3": "94312fe0aeb17a2acd4127eea7bbeac71e802d1005af55a81b3d5e6c66a5bebb",
+    "uv_blake3": "b2bbb305f8baa1fca49d4d4a2cd440f24d75d914841aabc1feb0401eb486c716",
+    "python_environment_blake3": "d34e4cfb10b3439dba40ea207ece0f084a3b70fdc050d25f8c3defe74e69e6ee",
+    "docker_images": {
+      "babel__babel-15445": "sha256:3693179953a675cf963ae49d5da3d2dca76115d5e09574b741af1c99514e4031",
+      "caddyserver__caddy-6051": "sha256:dd5fd18efcfeead659b035c32461ac5abad7223c4ec08b5702c0d91f5ec653d1",
+      "jqlang__jq-2750": "sha256:0b0d10daa1a8916bf6d7304d41f7508d28e0442e8e84d3c319c6e6438efe1eee"
+    },
+    "authoritative_success": "Only the frozen official validator receipt determines task success; agent-reported success remains diagnostic."
+  },
+  "reporting": {
+    "include_every_scheduled_run": true,
+    "exclude_failed_runs": false,
+    "aggregate_per_arm_samples": 9,
+    "required_metrics": [
+      "official successes and success rate",
+      "provider input and output tokens",
+      "duration",
+      "tool calls and rereads",
+      "failed tool calls and searches",
+      "dead-end reads",
+      "adapter and validator failures and timeouts"
+    ],
+    "distributions": "Report minimum, median, arithmetic mean, maximum, and sample variance overall and per task where available.",
+    "missing_usage": "Aggregate totals remain null if any run lacks the corresponding provider category; unavailable cost and cache-creation input remain null.",
+    "statistical_claim": "Descriptive only. Nine runs per arm and three public tasks are insufficient for an inferential population claim."
+  },
+  "pre_registered_interpretation": {
+    "primary_comparison": "lean_token_progressive versus filesystem",
+    "secondary_mechanism_comparisons": [
+      "lean_token_one_shot versus lean_token_progressive",
+      "prewalk versus lean_token_progressive"
+    ],
+    "positive_primary_requires": [
+      "lean_token_progressive has no fewer officially validated successes than filesystem",
+      "and either has more validated successes or at least 5% lower median complete provider input among all attempts",
+      "and does not have both at least 5% worse median duration and more failed searches or dead ends"
+    ],
+    "negative_primary_if": [
+      "lean_token_progressive has fewer officially validated successes than filesystem",
+      "or success counts tie and progressive median complete provider input is at least 5% worse without a pre-registered success or failure-count benefit"
+    ],
+    "inconclusive_if": [
+      "infrastructure or provider failures prevent a complete three-repetition task-arm cell",
+      "both primary arms have zero validated successes and neither complete-attempt efficiency rule resolves direction",
+      "or results satisfy neither the positive nor negative rule"
+    ],
+    "secondary_rule": "One-shot and prewalk results are mechanism diagnostics only; report them without turning a favorable result into a product or model-cost claim.",
+    "promotion_rule": "No result from this exploratory experiment can satisfy Gate B, authorize ranking changes, or support product promotion."
+  },
+  "limitations": [
+    "The three public SWE-bench Multilingual tasks may be present in model training data.",
+    "Caddy model behavior was observed during harness development before this commitment.",
+    "Provider request framing, monetary cost, and cache-creation tokens are unavailable.",
+    "Native filesystem reread and dead-end attribution is a lower bound.",
+    "The prewalk arm changes both model composition and handoff structure, so it does not isolate a model-price effect.",
+    "Local execution and validation are Linux-only; cross-platform CI covers repository code, not these Docker model runs."
+  ]
+}

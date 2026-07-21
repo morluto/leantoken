@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "report_kind": "four_arm_model_evaluation_abort",
+  "status": "aborted_invalid_telemetry",
+  "aborted_on": "2026-07-21",
+  "experiment_id": "swe-bench-multilingual-four-arm-v1",
+  "commitment": "swe-bench-multilingual-four-arm-v1-commitment.json",
+  "frozen_manifest_blake3": "6d9dd03122e766b9fdf8d1eebdd50d28eac4b7dcca681cc25d7f3efe33f8e659",
+  "frozen_harness_revision": "14dcc0507699b58a40a6d2eef883b02e3c644272",
+  "termination": {
+    "method": "SIGINT after the telemetry defect was reproduced from persisted artifacts",
+    "harness_exit_code": 130,
+    "completed_runs": 7,
+    "interrupted_runs": 1,
+    "planned_runs": 36,
+    "provider_usage_receipts": 6,
+    "validation_receipts": 6,
+    "formal_report_written": false,
+    "remaining_runs_started": false
+  },
+  "defect": {
+    "task_id": "caddyserver__caddy-6051",
+    "repetition": 1,
+    "arm": "lean_token_one_shot",
+    "observed_stderr_apply_patch_failures": 35,
+    "reported_tool_calls": 3,
+    "reported_failed_tool_calls": 1,
+    "reported_edit_calls": 0,
+    "cause": "Codex CLI 0.144.1 emitted failed code-mode apply_patch attempts on stderr without corresponding JSONL item.started or item.completed file_change events.",
+    "contract_violation": "The adapter could neither enforce the frozen total tool-call limit against those attempts nor report complete failed-tool counts.",
+    "stderr_blake3": "26ab3b6cb9c81daf106ee4bb7edcefb4e66e5805aeee394ba1a9a18e569147f0",
+    "affected_tool_trace_blake3": "48c90f578dbbb60f7034e62342bc08a8210be059545378fe08350eb625b4c0a1",
+    "affected_trajectory_blake3": "810672f7449c138000a9d259f06f9ad936d0a78656c156d965c13f44e81901ee"
+  },
+  "partial_outcomes": {
+    "babel__babel-15445": {
+      "filesystem": "completed_not_resolved",
+      "lean_token_progressive": "completed_not_resolved",
+      "lean_token_one_shot": "completed_not_resolved",
+      "prewalk": "adapter_failed_live_prewalk_limit"
+    },
+    "caddyserver__caddy-6051": {
+      "filesystem": "completed_resolved",
+      "lean_token_progressive": "completed_resolved",
+      "lean_token_one_shot": "validation_not_completed",
+      "prewalk": "interrupted"
+    },
+    "jqlang__jq-2750": "not_started"
+  },
+  "interpretation": {
+    "decision": "invalid_no_comparison",
+    "reason": "The missing failed-edit telemetry breaks equal-budget and complete-failure accounting before the schedule is complete.",
+    "reuse_policy": "Do not merge these runs into a successor experiment, compute arm aggregates from them, or use their outcomes for a product claim.",
+    "successor_requirement": "Fix and verify stderr-bound failed-edit accounting, freeze new identities, use a new experiment ID, and preregister again before new formal calls."
+  },
+  "corrective_smokes": {
+    "single_hidden_failure": {
+      "expected": "one failed edit is retained without exceeding a limit of one",
+      "result_blake3": "3639050dad4315d22223eb05bf09e9a8dedd4f642451b7bab1986850fd3417f7",
+      "tool_trace_blake3": "35dcf9270eb8c2790a92af73ad728155dfa4ddd077b737c5eae31103fc3aa090",
+      "trajectory_blake3": "a9ee1b0e1edd06271f9e2c897c14b1311e37b52752108e4acfbe24a0e7fa6791",
+      "stderr_blake3": "a76091a80407673b5fbfa5278163803a2634bd367a40ba2f03c3d3b0d8a33efa",
+      "observed": "tool_calls=1, failed_tool_calls=1, task_success=false, clean worktree"
+    },
+    "second_hidden_failure_exceeds_limit": {
+      "expected": "the second failed edit immediately exceeds a limit of one",
+      "stderr_blake3": "d3bde85ee32dabf3b434ac9e47e8358b7213e387e0d1f06f8161b1c0338bcd66",
+      "adapter_exit_code": 1,
+      "observed": "Codex exceeded the live tool-call limit of 1; clean worktree"
+    }
+  }
+}

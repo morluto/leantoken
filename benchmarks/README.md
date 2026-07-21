@@ -239,6 +239,25 @@ the report also identifies custom repository license references. No upstream
 source or patch is vendored. This accepts the data boundary only; it is not a
 Gate A retrieval result.
 
+### Four-arm model evaluation
+
+The corrected 2026-07-21 four-arm experiment completed 36 scheduled runs across
+Babel, Caddy, and jq. Its
+[pre-run commitment](reports/swe-bench-multilingual-four-arm-v2-commitment.json)
+and [publishable result](reports/swe-bench-multilingual-four-arm-v2.json) bind
+the frozen tasks, models, tool budgets, binaries, official validator, run order,
+raw report, and artifact identities. The prior v1 run is separately recorded as
+[aborted](reports/swe-bench-multilingual-four-arm-v1-aborted.json); none of its
+seven completed cells were reused after a failed-edit telemetry defect was
+found.
+
+Filesystem resolved 6/9 runs and progressive LeanToken resolved 4/9, which
+meets the pre-registered negative-primary rule. One-shot resolved 0/9 with seven
+adapter failures; prewalk resolved 3/9 with six. These are exploratory results
+on public, consumed tasks, not Gate B or evidence for a product change. See
+[`../docs/measurement.md`](../docs/measurement.md) for the complete metric and
+failure interpretation.
+
 ### Frozen multilingual Gate A runner
 
 `swe_bench_multilingual_gate` is the one-shot bridge from the sealed
