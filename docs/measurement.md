@@ -741,14 +741,35 @@ relabelled as uncached input.
 
 ## Result compatibility matrix
 
-| Mode | Text content | Structured content | Status |
-| --- | --- | --- | --- |
-| `dual` | yes | yes | Compatibility default; contains both representations, highest token cost |
-| `text` | yes | no | Use only after the host trace proves text consumption |
-| `structured` | no | yes | Use only after the host trace proves structured consumption |
+The checked
+[machine-readable matrix](../benchmarks/reports/host-wire-compatibility-v1.json)
+and [decision report](../benchmarks/reports/host-wire-compatibility-v1-2026-07-20.md)
+separate complete JSON-RPC transport, later model activity, provider-native
+usage, and provider request framing. Regenerate its validation summary with:
 
-Unit tests verify all three serialized shapes; the Rust MCP SDK integration test
-covers the default dual mode. This does not prove that every supported host
-inserts structured-only results into its model conversation. Capture each
-host/version before changing its configured mode, and keep a token-cost snapshot
-with the compatibility result.
+```bash
+cargo run --release --example host_wire_compatibility -- \
+  --matrix benchmarks/reports/host-wire-compatibility-v1.json \
+  --repository-root .
+```
+
+| Host/version | Mode | Complete wire | Model consumption | Provider usage | Provider frame |
+| --- | --- | --- | --- | --- | --- |
+| Codex CLI 0.144.1 | `dual` | proven | proven | partial | unknown |
+| Codex CLI 0.144.1 | `structured` | tool results only | one frozen task proven | partial | unknown |
+| Codex CLI 0.144.1 | `text` | unknown | unknown | unknown | unknown |
+| Codex CLI 0.144.5 | `dual` | proven | unknown | unknown | unknown |
+| Codex CLI 0.144.5 | `text`, `structured` | unknown | unknown | unknown | unknown |
+| Claude Code, Cursor, Gemini CLI, OpenCode | all | unknown | unknown | unknown | unknown |
+
+The four non-Codex hosts were not installed in the 2026-07-20 audit
+environment. This is an access limitation, not an incompatibility result, so
+their versions and measurements remain null. The validator rejects substituting
+zero for an unavailable measurement and verifies every committed source
+artifact by repository-canonical LF JSON BLAKE3 plus its decisive semantic
+fields, independent of Windows checkout line-ending conversion.
+
+Unit tests still verify all three serialized shapes, and the Rust MCP SDK
+integration test covers the default dual mode. Fixture serialization is not
+real-host evidence. Keep `dual` globally until captured compatibility is broad
+enough to justify a smaller mode per host/version.

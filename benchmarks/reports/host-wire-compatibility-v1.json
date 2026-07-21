@@ -1,0 +1,439 @@
+{
+  "schema_version": 1,
+  "experiment": "host-wire-compatibility-v1",
+  "audit_date": "2026-07-20",
+  "policy": {
+    "global_default": "dual",
+    "unknown_values_are_null": true,
+    "eligible_smaller_mode_host_versions": [],
+    "decision": "retain dual globally: structured model consumption is proven only for one frozen Codex CLI 0.144.1 task, text-only model consumption is unproven, and four requested hosts were unavailable in the audit environment"
+  },
+  "evidence": [
+    {
+      "id": "codex-0.144.1-dual-wire",
+      "kind": "complete_wire_analysis",
+      "path": "benchmarks/reports/wire-trace-codex-cli-0.144.1.json",
+      "blake3": "d3a937952a457cd3886cb278933273ac36ad086f659e1387143173241f454a91"
+    },
+    {
+      "id": "codex-0.144.1-host-receipt",
+      "kind": "model_lifecycle_receipt",
+      "path": "benchmarks/reports/codex-host-receipt-0.144.1.json",
+      "blake3": "1a399ae934a2a3542dab79b22d5a4594caf5da2c158036a4844ed7ce9a2167aa"
+    },
+    {
+      "id": "codex-0.144.1-structured-owner",
+      "kind": "structured_model_consumption_receipt",
+      "path": "benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-thin-leantoken-structured-owner.json",
+      "blake3": "37f18e8f28565320e91d72c6454b814d6ab14f2d56b0e69880ecfffa925119fd"
+    },
+    {
+      "id": "codex-0.144.5-dual-wire",
+      "kind": "complete_wire_analysis",
+      "path": "benchmarks/reports/wire-trace-codex-cli-0.144.5.json",
+      "blake3": "d1098e553310a785c80c6dc574de505c577c190c312d9f546f78459ce9ab2a8c"
+    }
+  ],
+  "host_observations": [
+    {
+      "host": "codex-cli",
+      "version": "0.144.1",
+      "availability": "captured",
+      "availability_note": "A compatible Codex executable was present during the audit; checked evidence comes from sanitized frozen captures.",
+      "modes": [
+        {
+          "mode": "dual",
+          "wire_transport": "complete",
+          "model_consumption": "proven",
+          "provider_usage": "partial",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": 4483,
+          "result_text_tokens": 854,
+          "structured_content_tokens": 776,
+          "duplicated_result_tokens": 776,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": {
+            "total_input": 70904,
+            "uncached_input": 7672,
+            "cache_creation_input": null,
+            "cache_read_input": 63232,
+            "output": 282,
+            "reasoning": 87
+          },
+          "evidence_ids": [
+            "codex-0.144.1-dual-wire",
+            "codex-0.144.1-host-receipt"
+          ],
+          "conclusion": "Complete dual transport and subsequent model activity are proven; provider request framing and per-result provider attribution remain unknown."
+        },
+        {
+          "mode": "text",
+          "wire_transport": "unknown",
+          "model_consumption": "unknown",
+          "provider_usage": "unknown",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": null,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": null,
+          "evidence_ids": [],
+          "conclusion": "No real-host text-only capture was available."
+        },
+        {
+          "mode": "structured",
+          "wire_transport": "tool_results_only",
+          "model_consumption": "proven",
+          "provider_usage": "partial",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": null,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": 38127,
+          "result_text_bytes": 0,
+          "structured_content_bytes": 37821,
+          "emitted_source_tokens": 5265,
+          "provider_tokens": {
+            "total_input": 83923,
+            "uncached_input": 17619,
+            "cache_creation_input": null,
+            "cache_read_input": 66304,
+            "output": 658,
+            "reasoning": 217
+          },
+          "evidence_ids": [
+            "codex-0.144.1-structured-owner"
+          ],
+          "conclusion": "A frozen owner-tracing task consumed six structured-only results and returned all four exact labels; full wire lifecycle categories and provider request framing were not captured."
+        }
+      ]
+    },
+    {
+      "host": "codex-cli",
+      "version": "0.144.5",
+      "availability": "historical_capture",
+      "availability_note": "The checked artifact is a historical sanitized wire capture; model rollout and provider usage were not captured.",
+      "modes": [
+        {
+          "mode": "dual",
+          "wire_transport": "complete",
+          "model_consumption": "unknown",
+          "provider_usage": "unknown",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": 2896,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": null,
+          "evidence_ids": [
+            "codex-0.144.5-dual-wire"
+          ],
+          "conclusion": "Complete dual JSON-RPC transport is proven; model consumption and provider-native counts are unknown."
+        },
+        {
+          "mode": "text",
+          "wire_transport": "unknown",
+          "model_consumption": "unknown",
+          "provider_usage": "unknown",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": null,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": null,
+          "evidence_ids": [],
+          "conclusion": "No real-host text-only capture was available."
+        },
+        {
+          "mode": "structured",
+          "wire_transport": "unknown",
+          "model_consumption": "unknown",
+          "provider_usage": "unknown",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": null,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": null,
+          "evidence_ids": [],
+          "conclusion": "No real-host structured-only capture was available for this version."
+        }
+      ]
+    },
+    {
+      "host": "claude-code",
+      "version": null,
+      "availability": "unavailable",
+      "availability_note": "The claude executable was not installed in the audit environment.",
+      "modes": [
+        {
+          "mode": "dual",
+          "wire_transport": "unknown",
+          "model_consumption": "unknown",
+          "provider_usage": "unknown",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": null,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": null,
+          "evidence_ids": [],
+          "conclusion": "Unavailable host; no values were imputed."
+        },
+        {
+          "mode": "text",
+          "wire_transport": "unknown",
+          "model_consumption": "unknown",
+          "provider_usage": "unknown",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": null,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": null,
+          "evidence_ids": [],
+          "conclusion": "Unavailable host; no values were imputed."
+        },
+        {
+          "mode": "structured",
+          "wire_transport": "unknown",
+          "model_consumption": "unknown",
+          "provider_usage": "unknown",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": null,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": null,
+          "evidence_ids": [],
+          "conclusion": "Unavailable host; no values were imputed."
+        }
+      ]
+    },
+    {
+      "host": "cursor",
+      "version": null,
+      "availability": "unavailable",
+      "availability_note": "The cursor executable was not installed in the audit environment.",
+      "modes": [
+        {
+          "mode": "dual",
+          "wire_transport": "unknown",
+          "model_consumption": "unknown",
+          "provider_usage": "unknown",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": null,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": null,
+          "evidence_ids": [],
+          "conclusion": "Unavailable host; no values were imputed."
+        },
+        {
+          "mode": "text",
+          "wire_transport": "unknown",
+          "model_consumption": "unknown",
+          "provider_usage": "unknown",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": null,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": null,
+          "evidence_ids": [],
+          "conclusion": "Unavailable host; no values were imputed."
+        },
+        {
+          "mode": "structured",
+          "wire_transport": "unknown",
+          "model_consumption": "unknown",
+          "provider_usage": "unknown",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": null,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": null,
+          "evidence_ids": [],
+          "conclusion": "Unavailable host; no values were imputed."
+        }
+      ]
+    },
+    {
+      "host": "gemini-cli",
+      "version": null,
+      "availability": "unavailable",
+      "availability_note": "The gemini executable was not installed in the audit environment.",
+      "modes": [
+        {
+          "mode": "dual",
+          "wire_transport": "unknown",
+          "model_consumption": "unknown",
+          "provider_usage": "unknown",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": null,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": null,
+          "evidence_ids": [],
+          "conclusion": "Unavailable host; no values were imputed."
+        },
+        {
+          "mode": "text",
+          "wire_transport": "unknown",
+          "model_consumption": "unknown",
+          "provider_usage": "unknown",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": null,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": null,
+          "evidence_ids": [],
+          "conclusion": "Unavailable host; no values were imputed."
+        },
+        {
+          "mode": "structured",
+          "wire_transport": "unknown",
+          "model_consumption": "unknown",
+          "provider_usage": "unknown",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": null,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": null,
+          "evidence_ids": [],
+          "conclusion": "Unavailable host; no values were imputed."
+        }
+      ]
+    },
+    {
+      "host": "opencode",
+      "version": null,
+      "availability": "unavailable",
+      "availability_note": "The opencode executable was not installed in the audit environment.",
+      "modes": [
+        {
+          "mode": "dual",
+          "wire_transport": "unknown",
+          "model_consumption": "unknown",
+          "provider_usage": "unknown",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": null,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": null,
+          "evidence_ids": [],
+          "conclusion": "Unavailable host; no values were imputed."
+        },
+        {
+          "mode": "text",
+          "wire_transport": "unknown",
+          "model_consumption": "unknown",
+          "provider_usage": "unknown",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": null,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": null,
+          "evidence_ids": [],
+          "conclusion": "Unavailable host; no values were imputed."
+        },
+        {
+          "mode": "structured",
+          "wire_transport": "unknown",
+          "model_consumption": "unknown",
+          "provider_usage": "unknown",
+          "provider_framing": "unknown",
+          "complete_wire_tokens": null,
+          "result_text_tokens": null,
+          "structured_content_tokens": null,
+          "duplicated_result_tokens": null,
+          "result_json_bytes": null,
+          "result_text_bytes": null,
+          "structured_content_bytes": null,
+          "emitted_source_tokens": null,
+          "provider_tokens": null,
+          "evidence_ids": [],
+          "conclusion": "Unavailable host; no values were imputed."
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Executable availability is specific to the 2026-07-20 audit environment; unavailable does not mean incompatible.",
+    "Provider request framing was unavailable for every capture, so local wire duplication is not a provider-input savings claim.",
+    "The Codex structured-only receipt proves one frozen task and host version, not every task, host, or version.",
+    "Provider usage is cumulative at the observed session or thread boundary and cannot be attributed to one representation field.",
+    "No SDK or synthetic fixture result is classified as real-host compatibility evidence."
+  ]
+}

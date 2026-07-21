@@ -61,6 +61,12 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
   path/symbol labels. This proves structured consumption for that frozen host
   path, not compatibility for other clients or a provider-cost win; keep dual
   as the global default until the compatibility matrix is broader.
+- The checked 2026-07-20 compatibility matrix now binds both Codex captures to
+  their artifact identities and records every requested host across dual,
+  text-only, and structured-only modes. Claude Code, Cursor, Gemini CLI, and
+  OpenCode were unavailable in the audit environment, so their fields remain
+  null and unknown. The matrix therefore retains `dual` globally; extend it
+  only with sanitized real-host evidence from an available exact version.
 - Two 60-run Codex CLI 0.144.1 suites now cover four pinned Python, Go,
   JavaScript, and Rust validation tasks. Full-history to context-free native
   forks saved 21.6% and 21.9% total input in the two runs. An iterative

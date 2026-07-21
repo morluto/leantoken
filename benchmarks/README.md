@@ -395,6 +395,16 @@ The wire report measures catalog and dual-result serialization, but no provider
 request frame was available. Neither artifact proves that removing local wire
 duplication would reduce provider input.
 
+The checked
+[real-host compatibility matrix](reports/host-wire-compatibility-v1.json), its
+[decision report](reports/host-wire-compatibility-v1-2026-07-20.md), and the
+`host_wire_compatibility` validator bind those Codex artifacts to explicit
+`dual`, `text`, and `structured` classifications. Codex CLI 0.144.1 proves
+structured-only model consumption for one frozen task, while Claude Code,
+Cursor, Gemini CLI, and OpenCode were unavailable in the audit environment and
+therefore remain unknown rather than zero. The evidence is not broad enough to
+change the global `dual` default.
+
 The separate
 [`multi_agent_context_pilot.json`](multi_agent_context_pilot.json) manifest and
 [`run_multi_agent_context_pilot.sh`](run_multi_agent_context_pilot.sh) runner
