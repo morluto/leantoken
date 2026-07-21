@@ -270,6 +270,44 @@ while three executor failures remain unknown. The post-hoc decision is
 `no_go`: no tool-description, receipt, next-action, or session-state change is
 authorized.
 
+### Dependency and caller signal ablation
+
+The frozen [graph-signal controls](graph_signal_ablation_v1.json) and
+[release report](reports/graph-signal-ablation-v1.json) compare the same
+lexical/syntax candidate set with exactly one additive signal at a time:
+concept-corroborated import neighbors, reverse-dependency boosts, or parsed
+references. The run uses the eight pinned retrospective tasks above, three
+deterministic repetitions, and the exact normal `ContextResponse` selection
+path. Evaluation diagnostics never enter the MCP schema or measured response.
+
+All four arms repeated exactly and preserved every baseline candidate. The
+lexical/syntax baseline found 14/15 labeled files and 9/41 line anchors. Import
+expansion generated no corroborated candidates. Reverse dependency left recall
+unchanged; 2/17 signal candidate files and 2/5 selected signal files were
+labeled relevant, and 4/5 applicable tasks had no relevant signal candidate.
+Parsed callers found one additional line anchor, but only
+8/135 signal candidate files and 5/21 selected signal files were relevant; it
+also increased dead-end source from 3,141 to 3,812 tokens and complete response
+cost from 10,825 to 11,893 tokens.
+
+Across the shared graph-enabled indexes, 1,796/9,808 parsed imports resolved to
+an indexed file, no resolved path was dangling, and 8,012 imports (81.7%) were
+unresolved. The logical SQLite size was 113,127,424 bytes; WAL and SHM sidecars
+are excluded. This is a current index cost envelope, not a causal
+graph-disabled comparison. No signal passed the preregistered recall and
+precision gates, so the result is `no_go`: retain no new ranking boost and
+expose no graph metadata.
+
+Reproduce it from a clean checkout and the pinned repositories with a release
+binary:
+
+```bash
+cargo run --release --example graph_signal_ablation -- \
+  --manifest benchmarks/graph_signal_ablation_v1.json \
+  --repos-root target/representative-repos \
+  --output target/graph-signal-ablation-v1.json
+```
+
 ### Frozen multilingual Gate A runner
 
 `swe_bench_multilingual_gate` is the one-shot bridge from the sealed
