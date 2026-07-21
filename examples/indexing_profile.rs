@@ -14,7 +14,10 @@ use leantoken::indexer::{Indexer, IndexingDiagnostics};
 use leantoken::model::IndexResponse;
 use leantoken::repository::{DiscoveredFile, discover_files};
 use leantoken::storage::Storage;
+use leantoken::watcher::{RepositoryWatcher, WatcherMessage};
 use serde::Serialize;
+use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
 type AnyResult<T> = Result<T, Box<dyn Error>>;
 
@@ -42,6 +45,9 @@ struct Args {
     /// Number of files in the repeated-read working set.
     #[arg(long, default_value_t = 8)]
     hot_set: usize,
+    /// Quiet time included in watcher delivery measurements.
+    #[arg(long, default_value_t = 50)]
+    watcher_debounce_ms: u64,
     /// JSON report destination.
     #[arg(long, default_value = "target/indexing_profile_report.json")]
     output: PathBuf,
@@ -59,18 +65,23 @@ struct Report {
     corpus: CorpusReport,
     initial_index: IndexSample,
     full_noop: IndexMeasurement,
+    full_noop_phases: IndexingPhaseMeasurement,
     full_changed: IndexMeasurement,
     targeted_changed: IndexMeasurement,
     create_delta: IndexMeasurement,
     delete_targeted: IndexMeasurement,
     rename_delta: IndexMeasurement,
+    directory_rename_delta: Option<DirectoryRenameMeasurement>,
     ignore_change_delta: IndexMeasurement,
+    ignore_visibility_delta: IndexMeasurement,
+    watcher_modify_delivery: WatcherDeliveryMeasurement,
     warm_hot_file_reads: ReadMeasurement,
     warm_spread_file_reads: ReadMeasurement,
     memory_hot_file_copies: ReadMeasurement,
     unpooled_read_session_open_and_generation: TimingStats,
     pooled_read_session_checkout_and_generation: TimingStats,
     pinned_generation_query: TimingStats,
+    final_storage_footprint: StorageFootprint,
     limitations: Vec<String>,
 }
 
@@ -114,8 +125,32 @@ struct IndexMeasurement {
     files_removed_per_sample: usize,
 }
 
+#[derive(Debug, Serialize)]
+struct IndexingPhaseMeasurement {
+    total: TimingStats,
+    discovery: TimingStats,
+    hash_and_plan: TimingStats,
+    preparation: TimingStats,
+    insertion: TimingStats,
+    publication: TimingStats,
+}
+
+#[derive(Debug, Serialize)]
+struct DirectoryRenameMeasurement {
+    affected_files: usize,
+    indexing: IndexMeasurement,
+}
+
+#[derive(Debug, Serialize)]
+struct WatcherDeliveryMeasurement {
+    configured_debounce_ms: u64,
+    timing: TimingStats,
+    changed_messages: usize,
+    full_reconciliation_messages: usize,
+}
+
 #[derive(Debug, Clone, Copy)]
-struct ExpectedIndexCounts {
+struct MinimumIndexCounts {
     seen: usize,
     indexed: usize,
     removed: usize,
@@ -174,6 +209,9 @@ fn validate_args(args: &Args) -> AnyResult<()> {
     }
     if args.hot_set == 0 {
         return Err(invalid_input("--hot-set must be positive"));
+    }
+    if args.watcher_debounce_ms == 0 {
+        return Err(invalid_input("--watcher-debounce-ms must be positive"));
     }
     Ok(())
 }
@@ -235,12 +273,15 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
     };
 
     let mut full_noop_durations = Vec::with_capacity(args.iterations);
+    let mut full_noop_diagnostics = Vec::with_capacity(args.iterations);
     for _ in 0..args.iterations {
         let start = Instant::now();
-        let response = indexer.reconcile(false)?;
+        let profiled = indexer.reconcile_profiled(false)?;
         full_noop_durations.push(start.elapsed());
-        require_index_counts(&response, discovered.len(), 0, "full no-op")?;
+        require_index_counts(&profiled.response, discovered.len(), 0, "full no-op")?;
+        full_noop_diagnostics.push(profiled.diagnostics);
     }
+    let full_noop_phases = IndexingPhaseMeasurement::from_diagnostics(&full_noop_diagnostics);
 
     let full_changed = measure_changed_indexing(
         args.iterations,
@@ -272,7 +313,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
             indexer.reconcile_paths(std::slice::from_ref(&create_relative))?;
             Ok(())
         },
-        ExpectedIndexCounts {
+        MinimumIndexCounts {
             seen: 1,
             indexed: 1,
             removed: 0,
@@ -292,7 +333,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
             indexer.reconcile(false)?;
             Ok(())
         },
-        ExpectedIndexCounts {
+        MinimumIndexCounts {
             seen: 1,
             indexed: 0,
             removed: 1,
@@ -322,13 +363,17 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
             indexer.reconcile(false)?;
             Ok(())
         },
-        ExpectedIndexCounts {
+        MinimumIndexCounts {
             seen: 2,
             indexed: 1,
             removed: 1,
         },
         "rename delta",
     )?;
+
+    let directory_rename_delta = select_directory_mutation(&corpus.root, &discovered)
+        .map(|mutation| measure_directory_rename(args.iterations, &indexer, mutation))
+        .transpose()?;
 
     let ignore_relative = ".gitignore".to_string();
     let ignore_change_delta = measure_lifecycle_indexing(
@@ -339,12 +384,27 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
         },
         || indexer.reconcile_paths(std::slice::from_ref(&ignore_relative)),
         || Ok(()),
-        ExpectedIndexCounts {
+        MinimumIndexCounts {
             seen: 1,
             indexed: 1,
             removed: 0,
         },
         "ignore-change delta",
+    )?;
+
+    let ignore_visibility_delta = measure_ignore_visibility(
+        args.iterations,
+        &indexer,
+        &corpus.root,
+        &mutation_files[0].relative_path,
+    )?;
+    let watcher_modify_delivery = measure_watcher_delivery(
+        args.iterations,
+        &indexer,
+        &config,
+        &mutation_files[1].absolute_path,
+        &mutation_files[1].relative_path,
+        Duration::from_millis(args.watcher_debounce_ms),
     )?;
 
     let hot_set = args.hot_set.min(paths.len());
@@ -394,7 +454,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
 
     let (leantoken_git_revision, leantoken_worktree_dirty) = leantoken_source_identity();
     Ok(Report {
-        schema_version: 6,
+        schema_version: 7,
         leantoken_version: env!("CARGO_PKG_VERSION"),
         leantoken_git_revision,
         leantoken_worktree_dirty,
@@ -409,12 +469,16 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
             files_indexed_per_sample: 0,
             files_removed_per_sample: 0,
         },
+        full_noop_phases,
         full_changed,
         targeted_changed,
         create_delta,
         delete_targeted,
         rename_delta,
+        directory_rename_delta,
         ignore_change_delta,
+        ignore_visibility_delta,
+        watcher_modify_delivery,
         warm_hot_file_reads,
         warm_spread_file_reads,
         memory_hot_file_copies,
@@ -425,13 +489,14 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
             pooled_session_durations,
         ),
         pinned_generation_query: TimingStats::from_durations(pinned_query_durations),
+        final_storage_footprint: storage_footprint(&config.database_path)?,
         limitations: vec![
             corpus.limitation.to_string(),
             "File-read measurements use the operating system's warm page cache; they do not represent cold, remote, encrypted, or heavily contended filesystems.".into(),
             "The in-memory comparison copies bytes but excludes cache lookup, eviction, synchronization, invalidation, and memory-pressure costs.".into(),
             "Read-session measurements compare opening a read-only SQLite connection, checking out an established per-service pool connection, and a generation query on one already pinned session; they do not simulate concurrent process contention.".into(),
-            "Lifecycle measurements invoke the paths emitted by the watcher directly; they do not include notify backend or debounce latency.".into(),
-            "Watcher-overflow and interrupted reconciliation still require separate stress measurements.".into(),
+            "Lifecycle reconciliation measurements invoke changed paths directly. watcher_modify_delivery separately includes the configured debounce and the host notify backend, but excludes reconciliation work.".into(),
+            "Watcher-overflow and interrupted reconciliation use deterministic integration tests because operating-system overflow cannot be triggered portably on demand.".into(),
             "Timing is machine-specific. Compare runs only on the same host and build profile, and use release builds for decisions.".into(),
         ],
     })
@@ -461,6 +526,235 @@ fn path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut value = path.as_os_str().to_os_string();
     value.push(suffix);
     PathBuf::from(value)
+}
+
+struct DirectoryMutation {
+    source: PathBuf,
+    source_relative: String,
+    destination: PathBuf,
+    destination_relative: String,
+    affected_files: usize,
+}
+
+fn select_directory_mutation(root: &Path, files: &[DiscoveredFile]) -> Option<DirectoryMutation> {
+    const TARGET_FILES: usize = 32;
+
+    let mut counts = BTreeMap::<String, usize>::new();
+    for file in files {
+        let mut parent = Path::new(&file.relative_path).parent();
+        while let Some(directory) = parent.filter(|directory| !directory.as_os_str().is_empty()) {
+            let relative = directory.to_string_lossy().replace('\\', "/");
+            *counts.entry(relative).or_default() += 1;
+            parent = directory.parent();
+        }
+    }
+    let (source_relative, affected_files) = counts
+        .into_iter()
+        .filter(|(_, count)| *count >= 2)
+        .min_by(|left, right| {
+            left.1
+                .abs_diff(TARGET_FILES)
+                .cmp(&right.1.abs_diff(TARGET_FILES))
+                .then_with(|| left.0.cmp(&right.0))
+        })?;
+    let source = root.join(Path::new(&source_relative));
+    let file_name = source.file_name()?.to_string_lossy();
+    let destination = source.with_file_name(format!("{file_name}_leantoken_profile_renamed"));
+    let destination_relative = destination
+        .strip_prefix(root)
+        .ok()?
+        .to_string_lossy()
+        .replace('\\', "/");
+    Some(DirectoryMutation {
+        source,
+        source_relative,
+        destination,
+        destination_relative,
+        affected_files,
+    })
+}
+
+fn measure_directory_rename(
+    iterations: usize,
+    indexer: &Indexer,
+    mutation: DirectoryMutation,
+) -> AnyResult<DirectoryRenameMeasurement> {
+    if mutation.destination.exists() {
+        return Err(invalid_input(
+            "profile corpus already contains the directory rename destination",
+        ));
+    }
+    let paths = vec![
+        mutation.source_relative.clone(),
+        mutation.destination_relative.clone(),
+    ];
+    let mut durations = Vec::with_capacity(iterations);
+    let mut expected = None;
+    for _ in 0..iterations {
+        fs::rename(&mutation.source, &mutation.destination)?;
+        let start = Instant::now();
+        let response = indexer.reconcile_paths(&paths)?;
+        durations.push(start.elapsed());
+        if response.files_indexed < mutation.affected_files
+            || response.files_removed < mutation.affected_files
+        {
+            return Err(Box::new(io::Error::other(format!(
+                "directory rename expected at least {} indexed and removed files; got indexed={}, removed={}",
+                mutation.affected_files, response.files_indexed, response.files_removed
+            ))));
+        }
+        require_stable_counts(&mut expected, &response, "directory rename")?;
+
+        fs::rename(&mutation.destination, &mutation.source)?;
+        indexer.reconcile_paths(&paths)?;
+    }
+    let expected = expected.expect("positive iteration count is validated");
+    Ok(DirectoryRenameMeasurement {
+        affected_files: mutation.affected_files,
+        indexing: IndexMeasurement {
+            timing: TimingStats::from_durations(durations),
+            files_seen_per_sample: expected.seen,
+            files_indexed_per_sample: expected.indexed,
+            files_removed_per_sample: expected.removed,
+        },
+    })
+}
+
+fn measure_ignore_visibility(
+    iterations: usize,
+    indexer: &Indexer,
+    root: &Path,
+    target_relative: &str,
+) -> AnyResult<IndexMeasurement> {
+    let ignore_path = root.join(".leantokenignore");
+    let original = match fs::read(&ignore_path) {
+        Ok(contents) => Some(contents),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let ignore_relative = ".leantokenignore".to_string();
+    let mut durations = Vec::with_capacity(iterations);
+    let mut expected = None;
+    for iteration in 0..iterations {
+        let mut contents = original.clone().unwrap_or_default();
+        if !contents.is_empty() && !contents.ends_with(b"\n") {
+            contents.push(b'\n');
+        }
+        contents.extend_from_slice(
+            format!("# profile visibility mutation {iteration}\n/{target_relative}\n").as_bytes(),
+        );
+        fs::write(&ignore_path, contents)?;
+
+        let start = Instant::now();
+        let response = indexer.reconcile_paths(std::slice::from_ref(&ignore_relative))?;
+        durations.push(start.elapsed());
+        if response.files_removed == 0 {
+            return Err(Box::new(io::Error::other(
+                "semantic ignore change did not remove its target",
+            )));
+        }
+        require_stable_counts(&mut expected, &response, "semantic ignore change")?;
+
+        match &original {
+            Some(contents) => fs::write(&ignore_path, contents)?,
+            None => fs::remove_file(&ignore_path)?,
+        }
+        indexer.reconcile_paths(std::slice::from_ref(&ignore_relative))?;
+    }
+    let expected = expected.expect("positive iteration count is validated");
+    Ok(IndexMeasurement {
+        timing: TimingStats::from_durations(durations),
+        files_seen_per_sample: expected.seen,
+        files_indexed_per_sample: expected.indexed,
+        files_removed_per_sample: expected.removed,
+    })
+}
+
+fn require_stable_counts(
+    expected: &mut Option<MinimumIndexCounts>,
+    response: &IndexResponse,
+    measurement: &str,
+) -> AnyResult<()> {
+    let observed = MinimumIndexCounts {
+        seen: response.files_seen,
+        indexed: response.files_indexed,
+        removed: response.files_removed,
+    };
+    if let Some(expected) = expected {
+        if expected.seen != observed.seen
+            || expected.indexed != observed.indexed
+            || expected.removed != observed.removed
+        {
+            return Err(Box::new(io::Error::other(format!(
+                "{measurement} counts changed across samples: expected {expected:?}, got {observed:?}"
+            ))));
+        }
+    } else {
+        *expected = Some(observed);
+    }
+    Ok(())
+}
+
+fn measure_watcher_delivery(
+    iterations: usize,
+    indexer: &Indexer,
+    config: &Config,
+    path: &Path,
+    relative_path: &str,
+    debounce: Duration,
+) -> AnyResult<WatcherDeliveryMeasurement> {
+    const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
+
+    let runtime = tokio::runtime::Runtime::new()?;
+    runtime.block_on(async {
+        let cancellation = CancellationToken::new();
+        let (watcher, mut receiver) = RepositoryWatcher::start_with_policy(
+            &config.root,
+            256,
+            debounce,
+            config.discovery_policy(),
+            cancellation,
+        )
+        .await?;
+        let mut durations = Vec::with_capacity(iterations);
+        let mut changed_messages = 0usize;
+        let mut full_reconciliation_messages = 0usize;
+        for iteration in 0..iterations {
+            let start = Instant::now();
+            let mut file = OpenOptions::new().append(true).open(path)?;
+            writeln!(file, "// watcher delivery mutation {iteration}")?;
+            drop(file);
+
+            loop {
+                let message = timeout(EVENT_TIMEOUT, receiver.recv())
+                    .await
+                    .map_err(|_| io::Error::other("watcher delivery timed out"))?
+                    .ok_or_else(|| io::Error::other("watcher closed before delivery"))?;
+                match message {
+                    WatcherMessage::Changed { paths }
+                        if paths.iter().any(|candidate| candidate == relative_path) =>
+                    {
+                        changed_messages += 1;
+                        break;
+                    }
+                    WatcherMessage::ReconcileRequired => {
+                        full_reconciliation_messages += 1;
+                        break;
+                    }
+                    WatcherMessage::Changed { .. } => {}
+                }
+            }
+            durations.push(start.elapsed());
+            indexer.reconcile_paths(&[relative_path.to_string()])?;
+        }
+        watcher.shutdown().await?;
+        Ok(WatcherDeliveryMeasurement {
+            configured_debounce_ms: u64::try_from(debounce.as_millis()).unwrap_or(u64::MAX),
+            timing: TimingStats::from_durations(durations),
+            changed_messages,
+            full_reconciliation_messages,
+        })
+    })
 }
 
 struct PreparedCorpus {
@@ -621,7 +915,7 @@ fn measure_lifecycle_indexing<S, C, R>(
     mut setup: S,
     mut reconcile: C,
     mut restore: R,
-    expected: ExpectedIndexCounts,
+    minimum: MinimumIndexCounts,
     measurement: &str,
 ) -> AnyResult<IndexMeasurement>
 where
@@ -630,20 +924,25 @@ where
     R: FnMut() -> AnyResult<()>,
 {
     let mut durations = Vec::with_capacity(iterations);
+    let mut expected = None;
     for iteration in 0..iterations {
         setup(iteration)?;
         let start = Instant::now();
         let response = reconcile()?;
         durations.push(start.elapsed());
-        require_index_counts(&response, expected.seen, expected.indexed, measurement)?;
-        if response.files_removed != expected.removed {
+        if response.files_seen < minimum.seen
+            || response.files_indexed < minimum.indexed
+            || response.files_removed < minimum.removed
+        {
             return Err(Box::new(io::Error::other(format!(
-                "{measurement} expected files_removed={}; got files_removed={}",
-                expected.removed, response.files_removed
+                "{measurement} expected at least {minimum:?}; got seen={}, indexed={}, removed={}",
+                response.files_seen, response.files_indexed, response.files_removed
             ))));
         }
+        require_stable_counts(&mut expected, &response, measurement)?;
         restore()?;
     }
+    let expected = expected.expect("positive iteration count is validated");
     Ok(IndexMeasurement {
         timing: TimingStats::from_durations(durations),
         files_seen_per_sample: expected.seen,
@@ -703,10 +1002,16 @@ fn measure_memory_copies(contents: &[Vec<u8>], samples: usize) -> ReadMeasuremen
 
 fn create_corpus(root: &Path, files: usize, file_bytes: usize) -> AnyResult<Vec<PathBuf>> {
     let source = root.join("src");
-    fs::create_dir_all(&source)?;
+    let rename_fixture = source.join("rename_fixture");
+    fs::create_dir_all(&rename_fixture)?;
     let mut paths = Vec::with_capacity(files);
     for index in 0..files {
-        let path = source.join(format!("file_{index:05}.rs"));
+        let directory = if index < files.min(32) {
+            &rename_fixture
+        } else {
+            &source
+        };
+        let path = directory.join(format!("file_{index:05}.rs"));
         fs::write(&path, synthetic_source(index, file_bytes))?;
         paths.push(path);
     }
@@ -726,11 +1031,25 @@ fn synthetic_source(index: usize, file_bytes: usize) -> String {
 
 impl TimingStats {
     fn from_durations(durations: Vec<Duration>) -> Self {
-        assert!(!durations.is_empty());
-        let mut micros = durations
-            .into_iter()
-            .map(|duration| duration.as_secs_f64() * 1_000_000.0)
-            .collect::<Vec<_>>();
+        Self::from_microseconds(
+            durations
+                .into_iter()
+                .map(|duration| duration.as_secs_f64() * 1_000_000.0)
+                .collect(),
+        )
+    }
+
+    fn from_milliseconds(milliseconds: Vec<f64>) -> Self {
+        Self::from_microseconds(
+            milliseconds
+                .into_iter()
+                .map(|milliseconds| milliseconds * 1_000.0)
+                .collect(),
+        )
+    }
+
+    fn from_microseconds(mut micros: Vec<f64>) -> Self {
+        assert!(!micros.is_empty());
         micros.sort_by(f64::total_cmp);
         let total_us = micros.iter().sum::<f64>();
         Self {
@@ -741,6 +1060,22 @@ impl TimingStats {
             p50_us: percentile(&micros, 0.50),
             p95_us: percentile(&micros, 0.95),
             max_us: micros[micros.len() - 1],
+        }
+    }
+}
+
+impl IndexingPhaseMeasurement {
+    fn from_diagnostics(diagnostics: &[IndexingDiagnostics]) -> Self {
+        let values = |select: fn(&IndexingDiagnostics) -> f64| {
+            diagnostics.iter().map(select).collect::<Vec<_>>()
+        };
+        Self {
+            total: TimingStats::from_milliseconds(values(|sample| sample.total_ms)),
+            discovery: TimingStats::from_milliseconds(values(|sample| sample.discovery_ms)),
+            hash_and_plan: TimingStats::from_milliseconds(values(|sample| sample.hash_and_plan_ms)),
+            preparation: TimingStats::from_milliseconds(values(|sample| sample.preparation_ms)),
+            insertion: TimingStats::from_milliseconds(values(|sample| sample.insertion_ms)),
+            publication: TimingStats::from_milliseconds(values(|sample| sample.publication_ms)),
         }
     }
 }
@@ -776,6 +1111,36 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_measurement_retains_stable_additional_importer_work() {
+        let measurement = measure_lifecycle_indexing(
+            2,
+            |_| Ok(()),
+            || {
+                Ok(IndexResponse {
+                    repository_generation: 1,
+                    files_seen: 3,
+                    files_indexed: 2,
+                    files_unchanged: 1,
+                    files_removed: 0,
+                    files_skipped: 0,
+                    warnings: Vec::new(),
+                })
+            },
+            || Ok(()),
+            MinimumIndexCounts {
+                seen: 1,
+                indexed: 1,
+                removed: 0,
+            },
+            "create with affected importers",
+        )
+        .expect("measurement");
+
+        assert_eq!(measurement.files_seen_per_sample, 3);
+        assert_eq!(measurement.files_indexed_per_sample, 2);
+    }
+
+    #[test]
     fn small_profile_exercises_each_measurement() {
         let output = tempfile::tempdir().expect("output");
         let args = Args {
@@ -786,12 +1151,13 @@ mod tests {
             iterations: 2,
             read_samples: 12,
             hot_set: 2,
+            watcher_debounce_ms: 50,
             output: output.path().join("report.json"),
         };
 
         let report = run_profile(&args).expect("profile");
 
-        assert_eq!(report.schema_version, 6);
+        assert_eq!(report.schema_version, 7);
         assert_eq!(report.initial_index.response.files_indexed, 7);
         assert!(report.initial_index.storage_footprint.database_bytes > 0);
         assert_eq!(
@@ -801,12 +1167,28 @@ mod tests {
                 + report.initial_index.storage_footprint.shm_bytes
         );
         assert_eq!(report.full_noop.timing.samples, 2);
+        assert_eq!(report.full_noop_phases.discovery.samples, 2);
         assert_eq!(report.full_changed.files_indexed_per_sample, 1);
         assert_eq!(report.targeted_changed.files_seen_per_sample, 1);
         assert_eq!(report.create_delta.files_seen_per_sample, 1);
         assert_eq!(report.delete_targeted.files_removed_per_sample, 1);
         assert_eq!(report.rename_delta.files_removed_per_sample, 1);
         assert_eq!(report.ignore_change_delta.files_seen_per_sample, 1);
+        assert_eq!(
+            report
+                .directory_rename_delta
+                .as_ref()
+                .map(|measurement| measurement.affected_files),
+            Some(6)
+        );
+        assert_eq!(report.ignore_visibility_delta.files_removed_per_sample, 1);
+        assert_eq!(report.watcher_modify_delivery.timing.samples, 2);
+        assert_eq!(
+            report.watcher_modify_delivery.changed_messages
+                + report.watcher_modify_delivery.full_reconciliation_messages,
+            2
+        );
+        assert!(report.final_storage_footprint.database_bytes > 0);
         assert_eq!(report.warm_hot_file_reads.timing.samples, 12);
         assert_eq!(report.memory_hot_file_copies.timing.samples, 12);
     }
@@ -843,6 +1225,7 @@ mod tests {
             iterations: 1,
             read_samples: 2,
             hot_set: 1,
+            watcher_debounce_ms: 50,
             output: output.path().join("report.json"),
         };
 
@@ -852,6 +1235,7 @@ mod tests {
         assert_eq!(report.corpus.revision.as_deref(), Some(revision.as_str()));
         assert_eq!(report.corpus.files, 3);
         assert_eq!(report.full_noop.files_seen_per_sample, 3);
+        assert!(report.directory_rename_delta.is_none());
         assert_eq!(report.corpus.extensions.get("rs"), Some(&1));
         assert_eq!(report.corpus.extensions.get("py"), Some(&1));
         assert_eq!(
