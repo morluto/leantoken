@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use leantoken::Config;
+use leantoken::{Config, DiscoveryLimits};
 use leantoken::tokens::Tokenizer;
 
 #[test]
@@ -82,6 +82,7 @@ fn config_canonicalizes_missing_database_descendants_below_symlink() {
     assert!(config.is_database_artifact("missing/cache/index.sqlite"));
     assert!(config.is_database_artifact("missing/cache/index.sqlite-wal"));
     assert!(config.is_database_artifact("missing/cache/index.sqlite-shm"));
+    assert!(config.is_database_artifact("missing/cache/index.sqlite.lease.lock"));
     assert!(config.is_database_artifact("missing/cache/index.sqlite.leader.lock"));
     assert!(config.is_database_artifact("missing/cache/index.sqlite.index.lock"));
     assert!(config.is_database_artifact("missing/cache/index.sqlite.init.lock"));
@@ -145,7 +146,7 @@ fn config_rejects_the_current_home_directory_by_default() {
 fn config_defaults_bound_output_and_timing() {
     let root = tempfile::tempdir().expect("tempdir");
     let config = Config::discover(root.path(), None).expect("discover");
-    assert!(config.max_file_bytes > 0);
+    assert_eq!(config.discovery_limits(), DiscoveryLimits::default());
     assert!(config.max_results > 0);
     assert!(config.max_output_tokens > 0);
     assert!(config.context_lines > 0);
@@ -166,6 +167,7 @@ fn config_identifies_database_and_wal_artifacts_inside_the_root() {
     assert!(config.is_database_artifact(".cache/index.sqlite"));
     assert!(config.is_database_artifact(".cache/index.sqlite-wal"));
     assert!(config.is_database_artifact(".cache/index.sqlite-shm"));
+    assert!(config.is_database_artifact(".cache/index.sqlite.lease.lock"));
     assert!(config.is_database_artifact(".cache/index.sqlite.leader.lock"));
     assert!(config.is_database_artifact(".cache/index.sqlite.index.lock"));
     assert!(config.is_database_artifact(".cache/index.sqlite.init.lock"));

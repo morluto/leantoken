@@ -49,7 +49,7 @@ pub(super) fn validate_patterns(patterns: &[String]) -> Result<()> {
 
 pub(super) fn validate_optional_input(
     value: Option<&str>,
-    name: &str,
+    name: &'static str,
     max_bytes: usize,
 ) -> Result<()> {
     if let Some(value) = value {
@@ -58,11 +58,12 @@ pub(super) fn validate_optional_input(
     Ok(())
 }
 
-pub(super) fn validate_input(value: &str, name: &str, max_bytes: usize) -> Result<()> {
+pub(super) fn validate_input(value: &str, name: &'static str, max_bytes: usize) -> Result<()> {
     if value.len() > max_bytes {
-        return Err(Error::InvalidRequest(format!(
-            "{name} exceeds {max_bytes} bytes"
-        )));
+        return Err(Error::InputTooLong {
+            field: name,
+            max_bytes,
+        });
     }
     Ok(())
 }

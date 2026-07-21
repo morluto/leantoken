@@ -168,6 +168,8 @@ pub struct SetupRequest {
     pub clients: Vec<SetupClient>,
     /// Select every supported client.
     pub all: bool,
+    /// Refresh every existing LeanToken entry without selecting new clients.
+    pub refresh: bool,
     /// Apply an explicitly scoped plan without interactive confirmation.
     pub yes: bool,
     /// Resolve and print the setup plan without changing configuration.
@@ -223,8 +225,13 @@ pub struct LauncherPlan {
     pub command: String,
     /// Arguments written to client configuration.
     pub args: Vec<String>,
-    /// Whether client startup may contact npm and execute the latest release.
-    pub follows_latest_npm_release: bool,
+    /// Exact LeanToken version represented by this launcher.
+    pub version: String,
+    /// Exact npm package specifier, when the launcher uses npm.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+    /// Whether client startup may contact the package registry.
+    pub may_contact_network: bool,
 }
 
 /// Outcome for one client configuration.
@@ -434,12 +441,25 @@ fn run_with(
     environment: &SetupEnvironment,
     prompt: &dyn SetupPrompt,
 ) -> Result<SetupReport> {
+    if request.refresh && operation != SetupOperation::Setup {
+        return Err(Error::InvalidRequest(
+            "--refresh is only valid with the setup command".into(),
+        ));
+    }
+    if request.refresh && (request.all || !request.clients.is_empty()) {
+        return Err(Error::InvalidRequest(
+            "--refresh cannot be combined with client flags or --all".into(),
+        ));
+    }
+
     let detected = SetupClient::ALL
         .into_iter()
         .filter(|client| client.is_detected(&environment.home))
         .collect::<Vec<_>>();
 
-    let clients = if request.all {
+    let clients = if request.refresh {
+        configured_clients(&environment.home, &environment.launcher)?
+    } else if request.all {
         SetupClient::ALL.to_vec()
     } else if !request.clients.is_empty() {
         deduplicate(request.clients)
@@ -465,7 +485,8 @@ fn run_with(
 
     if !environment.interactive && !request.dry_run && !request.yes {
         return Err(Error::InvalidRequest(
-            "non-interactive setup requires explicit client flags or --all with --yes".into(),
+            "non-interactive setup requires explicit client flags, --all, or --refresh with --yes"
+                .into(),
         ));
     }
 
@@ -526,6 +547,20 @@ fn deduplicate(clients: Vec<SetupClient>) -> Vec<SetupClient> {
         .collect()
 }
 
+fn configured_clients(home: &Path, launcher: &McpLauncher) -> Result<Vec<SetupClient>> {
+    SetupClient::ALL
+        .into_iter()
+        .filter_map(|client| {
+            let resolved = resolve_client_edit(SetupOperation::Remove, client, &[], home, launcher);
+            match resolved {
+                Ok(edit) if matches!(edit.status, EditStatus::Removed) => Some(Ok(client)),
+                Ok(_) => None,
+                Err(error) => Some(Err(error)),
+            }
+        })
+        .collect()
+}
+
 #[derive(Debug)]
 struct ResolvedSetupPlan {
     operation: SetupOperation,
@@ -570,7 +605,9 @@ fn launcher_plan(launcher: &McpLauncher) -> Result<LauncherPlan> {
     Ok(LauncherPlan {
         command: launcher.command()?.to_string(),
         args: launcher.args.clone(),
-        follows_latest_npm_release: launcher.uses_npx(),
+        version: launcher.version().into(),
+        package: launcher.npm_package().map(str::to_owned),
+        may_contact_network: launcher.uses_npx(),
     })
 }
 
@@ -774,6 +811,7 @@ fn json_entry(shape: JsonEntryShape, launcher: &McpLauncher) -> Result<Value> {
         JsonEntryShape::OpenCode => json!({
             "type": "local",
             "command": std::iter::once(command).chain(launcher.args.iter().map(String::as_str)).collect::<Vec<_>>(),
+            "cwd": ".",
             "enabled": true
         }),
     })
@@ -973,11 +1011,19 @@ fn print_preflight(plan: &ResolvedSetupPlan) -> Result<()> {
         writeln!(output)?;
         writeln!(output, "  MCP launcher")?;
         writeln!(output, "    command: {}", launcher.command)?;
-        writeln!(output, "    args: {}", launcher.args.join(" "))?;
-        if launcher.follows_latest_npm_release {
+        writeln!(
+            output,
+            "    args: {}",
+            serde_json::to_string(&launcher.args)?
+        )?;
+        writeln!(output, "    version: {}", launcher.version)?;
+        if let Some(package) = &launcher.package {
+            writeln!(output, "    package: {package}")?;
+        }
+        if launcher.may_contact_network {
             writeln!(
                 output,
-                "    Client startup may contact npm and execute the latest LeanToken release."
+                "    Client startup may contact npm, but it can resolve only this exact version."
             )?;
         } else {
             writeln!(output, "    Uses the current LeanToken executable.")?;
@@ -1014,11 +1060,19 @@ fn print_report_plan(output: &mut impl Write, report: &SetupReport) -> Result<()
     if let Some(launcher) = &report.launcher {
         writeln!(output)?;
         writeln!(output, "  Launcher: {}", launcher.command)?;
-        writeln!(output, "  Arguments: {}", launcher.args.join(" "))?;
-        if launcher.follows_latest_npm_release {
+        writeln!(
+            output,
+            "  Arguments: {}",
+            serde_json::to_string(&launcher.args)?
+        )?;
+        writeln!(output, "  Version: {}", launcher.version)?;
+        if let Some(package) = &launcher.package {
+            writeln!(output, "  Package: {package}")?;
+        }
+        if launcher.may_contact_network {
             writeln!(
                 output,
-                "  Client startup may contact npm and execute the latest LeanToken release."
+                "  Client startup may contact npm, but it can resolve only this exact version."
             )?;
         }
     }
@@ -1106,21 +1160,27 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
             writeln!(output, "Verify from a repository: leantoken doctor")?;
             writeln!(output, "Update later with: leantoken upgrade")?;
         } else {
+            let version = report
+                .launcher
+                .as_ref()
+                .map_or(env!("CARGO_PKG_VERSION"), |launcher| {
+                    launcher.version.as_str()
+                });
             writeln!(
                 output,
                 "This was a zero-install npx setup; no global `leantoken` command was installed."
             )?;
             writeln!(
                 output,
-                "Configured MCP clients follow current npm releases automatically."
+                "Configured MCP clients are pinned to LeanToken v{version}."
             )?;
             writeln!(
                 output,
-                "Verify from a repository: npx leantoken@latest doctor"
+                "Refresh existing MCP entries explicitly with: npx --yes leantoken@latest setup --refresh --yes"
             )?;
             writeln!(
                 output,
-                "Run one-off commands with: npx leantoken@latest <command>"
+                "Verify from a repository: npx leantoken@{version} doctor"
             )?;
             writeln!(
                 output,
@@ -1160,6 +1220,21 @@ mod tests {
             launcher: McpLauncher::from_executable(&temp.path().join("bin/lean token")),
             interactive: true,
             persistent_cli: true,
+        }
+    }
+
+    fn npx_environment(temp: &tempfile::TempDir, version: &str) -> SetupEnvironment {
+        let runtime = temp.path().join("node runtime");
+        SetupEnvironment {
+            home: temp.path().join("home"),
+            launcher: McpLauncher::from_npx_paths_with_version(
+                &runtime.join(if cfg!(windows) { "node.exe" } else { "node" }),
+                &runtime.join("npm cli.js"),
+                version,
+            )
+            .unwrap(),
+            interactive: false,
+            persistent_cli: false,
         }
     }
 
@@ -1325,6 +1400,7 @@ mod tests {
             SetupRequest {
                 clients: Vec::new(),
                 all: false,
+                refresh: false,
                 yes: false,
                 dry_run: false,
             },
@@ -1349,6 +1425,7 @@ mod tests {
             SetupRequest {
                 clients: Vec::new(),
                 all: false,
+                refresh: false,
                 yes: true,
                 dry_run: false,
             },
@@ -1370,6 +1447,7 @@ mod tests {
         let request = SetupRequest {
             clients: Vec::new(),
             all: true,
+            refresh: false,
             yes: true,
             dry_run: false,
         };
@@ -1399,6 +1477,7 @@ mod tests {
         }
         let opencode = fs::read_to_string(home.join(".config/opencode/opencode.json")).unwrap();
         assert!(opencode.contains("\"type\": \"local\""));
+        assert!(opencode.contains("\"cwd\": \".\""));
         assert!(opencode.contains("\"enabled\": true"));
 
         let before = first
@@ -1430,6 +1509,30 @@ mod tests {
         for (path, contents) in before {
             assert_eq!(fs::read_to_string(path).unwrap(), contents);
         }
+
+        let refreshed = run_with(
+            SetupOperation::Setup,
+            SetupRequest {
+                clients: Vec::new(),
+                all: false,
+                refresh: true,
+                yes: true,
+                dry_run: false,
+            },
+            &environment,
+            &FixedPrompt {
+                selected: None,
+                confirmed: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(refreshed.results.len(), SetupClient::ALL.len());
+        assert!(
+            refreshed
+                .results
+                .iter()
+                .all(|result| result.status == "already configured")
+        );
     }
 
     #[test]
@@ -1443,6 +1546,7 @@ mod tests {
             SetupRequest {
                 clients: vec![SetupClient::Claude, SetupClient::Cursor],
                 all: false,
+                refresh: false,
                 yes: true,
                 dry_run: false,
             },
@@ -1475,6 +1579,7 @@ mod tests {
             SetupRequest {
                 clients: vec![SetupClient::Codex],
                 all: false,
+                refresh: false,
                 yes: false,
                 dry_run: false,
             },
@@ -1499,6 +1604,7 @@ mod tests {
             SetupRequest {
                 clients: vec![SetupClient::Codex],
                 all: false,
+                refresh: false,
                 yes: false,
                 dry_run: true,
             },
@@ -1524,6 +1630,7 @@ mod tests {
             SetupRequest {
                 clients: vec![SetupClient::Codex],
                 all: false,
+                refresh: false,
                 yes: false,
                 dry_run: false,
             },
@@ -1536,5 +1643,166 @@ mod tests {
         .unwrap();
         assert!(report.cancelled);
         assert!(!environment.home.join(".codex/config.toml").exists());
+    }
+
+    #[test]
+    fn refresh_updates_only_existing_entries_and_supports_rollback() {
+        let temp = tempfile::tempdir().unwrap();
+        let original = npx_environment(&temp, "1.2.3");
+        fs::create_dir_all(original.home.join(".cursor")).unwrap();
+        fs::write(
+            original.home.join(".cursor/mcp.json"),
+            "{\"mcpServers\":{\"other\":{\"command\":\"other\"}}}\n",
+        )
+        .unwrap();
+        run_with(
+            SetupOperation::Setup,
+            SetupRequest {
+                clients: vec![SetupClient::Claude, SetupClient::Codex],
+                all: false,
+                refresh: false,
+                yes: true,
+                dry_run: false,
+            },
+            &original,
+            &FixedPrompt {
+                selected: None,
+                confirmed: true,
+            },
+        )
+        .unwrap();
+
+        let upgraded = npx_environment(&temp, "2.0.0");
+        let refresh = SetupRequest {
+            clients: Vec::new(),
+            all: false,
+            refresh: true,
+            yes: true,
+            dry_run: false,
+        };
+        let report = run_with(
+            SetupOperation::Setup,
+            refresh.clone(),
+            &upgraded,
+            &FixedPrompt {
+                selected: None,
+                confirmed: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(report.results.len(), 2);
+        assert!(
+            report
+                .results
+                .iter()
+                .all(|result| result.status == "updated")
+        );
+        assert_eq!(report.launcher.unwrap().version, "2.0.0");
+        assert!(
+            fs::read_to_string(upgraded.home.join(".claude.json"))
+                .unwrap()
+                .contains("--package=leantoken@2.0.0")
+        );
+        assert!(
+            fs::read_to_string(upgraded.home.join(".codex/config.toml"))
+                .unwrap()
+                .contains("--package=leantoken@2.0.0")
+        );
+        assert!(
+            !fs::read_to_string(upgraded.home.join(".cursor/mcp.json"))
+                .unwrap()
+                .contains("leantoken@")
+        );
+
+        let rollback = run_with(
+            SetupOperation::Setup,
+            refresh,
+            &original,
+            &FixedPrompt {
+                selected: None,
+                confirmed: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(rollback.results.len(), 2);
+        assert!(
+            fs::read_to_string(original.home.join(".claude.json"))
+                .unwrap()
+                .contains("--package=leantoken@1.2.3")
+        );
+    }
+
+    #[test]
+    fn refresh_does_not_create_entries_or_fall_back_to_latest_without_an_npm_cache() {
+        let temp = tempfile::tempdir().unwrap();
+        let environment = npx_environment(&temp, "1.2.3");
+        fs::create_dir_all(&environment.home).unwrap();
+
+        let report = run_with(
+            SetupOperation::Setup,
+            SetupRequest {
+                clients: Vec::new(),
+                all: false,
+                refresh: true,
+                yes: true,
+                dry_run: false,
+            },
+            &environment,
+            &FixedPrompt {
+                selected: None,
+                confirmed: true,
+            },
+        )
+        .unwrap();
+
+        assert!(report.results.is_empty());
+        assert_eq!(
+            report.launcher.unwrap().package.as_deref(),
+            Some("leantoken@1.2.3")
+        );
+        assert!(!environment.home.join(".claude.json").exists());
+        assert!(
+            environment
+                .launcher
+                .args
+                .iter()
+                .all(|argument| !argument.contains("@latest"))
+        );
+    }
+
+    #[test]
+    fn refresh_rejects_ambiguous_selection_and_remove_usage() {
+        let temp = tempfile::tempdir().unwrap();
+        let environment = environment(&temp);
+        let prompt = FixedPrompt {
+            selected: None,
+            confirmed: true,
+        };
+        let ambiguous = SetupRequest {
+            clients: vec![SetupClient::Codex],
+            all: false,
+            refresh: true,
+            yes: true,
+            dry_run: false,
+        };
+        assert!(
+            run_with(SetupOperation::Setup, ambiguous, &environment, &prompt)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot be combined")
+        );
+        let remove = SetupRequest {
+            clients: Vec::new(),
+            all: false,
+            refresh: true,
+            yes: true,
+            dry_run: false,
+        };
+        assert!(
+            run_with(SetupOperation::Remove, remove, &environment, &prompt)
+                .unwrap_err()
+                .to_string()
+                .contains("only valid with the setup command")
+        );
     }
 }

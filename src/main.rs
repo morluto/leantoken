@@ -1,17 +1,50 @@
-use std::{io::Write, sync::Arc};
+use std::{io::Write, sync::Arc, time::Duration};
 
 use clap::Parser;
 use leantoken::{
-    Result,
+    Result, cache,
     cli::{AppRequest, Cli},
     doctor, mcp,
     services::Services,
     setup::{self, SetupOperation},
     upgrade,
-    watcher::{RepositoryWatcher, WatcherMessage},
+    watcher::{RepositoryWatcher, WatcherAction, WatcherMessage, WatcherReconciliationScheduler},
 };
 use serde::Serialize;
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
+
+const WATCHER_QUEUE_CAPACITY: usize = 1;
+const INDEX_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(500);
+const INDEX_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
+const LEADERSHIP_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+#[derive(Debug)]
+struct RetryBackoff {
+    initial: Duration,
+    maximum: Duration,
+    next: Duration,
+}
+
+impl RetryBackoff {
+    fn new(initial: Duration, maximum: Duration) -> Self {
+        Self {
+            initial,
+            maximum,
+            next: initial,
+        }
+    }
+
+    fn failure_delay(&mut self) -> Duration {
+        let delay = self.next;
+        self.next = self.next.saturating_mul(2).min(self.maximum);
+        delay
+    }
+
+    fn reset(&mut self) {
+        self.next = self.initial;
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -38,6 +71,26 @@ async fn run() -> Result<()> {
             unreachable!("upgrade command checked above")
         };
         upgrade::run(upgrade::UpgradeOptions { check, yes, json })?;
+        return Ok(());
+    }
+
+    if matches!(&cli.command, leantoken::cli::Commands::Cache(_)) {
+        match cli.app_request() {
+            AppRequest::CacheList => {
+                let report = cache::list()?;
+                cache::print_list(&report, json)?;
+            }
+            AppRequest::CachePrune(request) => {
+                let report = cache::prune(&request)?;
+                cache::print_prune(&report, json)?;
+                if report.has_failures() {
+                    return Err(leantoken::Error::InvalidRequest(
+                        "one or more managed caches could not be pruned".into(),
+                    ));
+                }
+            }
+            _ => unreachable!("cache command checked above"),
+        }
         return Ok(());
     }
 
@@ -91,6 +144,9 @@ async fn run() -> Result<()> {
         AppRequest::Mcp { .. } => unreachable!("handled before service setup"),
         AppRequest::Setup(_) | AppRequest::Remove(_) => {
             unreachable!("handled before service setup")
+        }
+        AppRequest::CacheList | AppRequest::CachePrune(_) => {
+            unreachable!("handled before repository setup")
         }
         AppRequest::Upgrade { .. } => unreachable!("handled before repository setup"),
     }
@@ -166,6 +222,8 @@ async fn run_mcp_runtime(
         return Err(leantoken::Error::Cancelled);
     }
     service_state.set_ready(Arc::clone(&services));
+    let mut leadership_backoff =
+        RetryBackoff::new(INDEX_RETRY_INITIAL_DELAY, INDEX_RETRY_MAX_DELAY);
 
     loop {
         if cancellation.is_cancelled() {
@@ -177,6 +235,7 @@ async fn run_mcp_runtime(
         })
         .await??;
 
+        let mut retry_delay = LEADERSHIP_POLL_INTERVAL;
         if let Some(leader) = leader {
             let result = run_index_leader(Arc::clone(&services), cancellation.clone()).await;
             drop(leader);
@@ -184,89 +243,213 @@ async fn run_mcp_runtime(
                 return Ok(());
             }
             if let Err(error) = result {
-                tracing::error!(%error, "automatic indexing leadership failed");
+                if is_terminal_index_error(&error) {
+                    return Err(error);
+                }
+                retry_delay = leadership_backoff.failure_delay();
+                tracing::error!(
+                    %error,
+                    retry_delay_ms = retry_delay.as_millis(),
+                    "automatic indexing leadership failed"
+                );
+            } else {
+                leadership_backoff.reset();
             }
         }
 
         tokio::select! {
             _ = cancellation.cancelled() => return Ok(()),
-            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {}
+            _ = tokio::time::sleep(retry_delay) => {}
         }
     }
 }
 
 async fn run_index_leader(services: Arc<Services>, cancellation: CancellationToken) -> Result<()> {
-    let (watcher, mut changes) = RepositoryWatcher::start(
+    let (watcher, changes) = RepositoryWatcher::start_with_policy(
         &services.config().root,
-        256,
+        WATCHER_QUEUE_CAPACITY,
         services.config().watcher_debounce,
-        cancellation.clone(),
+        services.config().discovery_policy(),
+        cancellation.child_token(),
     )
     .await?;
 
+    let result = run_index_leader_until_shutdown(services, changes, cancellation).await;
+    let shutdown = watcher.shutdown().await;
+    match (result, shutdown) {
+        (Err(error), Err(shutdown_error)) => {
+            tracing::warn!(%shutdown_error, "watcher shutdown failed after index error");
+            Err(error)
+        }
+        (Err(error), Ok(())) => Err(error),
+        (Ok(()), shutdown) => shutdown,
+    }
+}
+
+async fn run_index_leader_until_shutdown(
+    services: Arc<Services>,
+    changes: tokio::sync::mpsc::Receiver<WatcherMessage>,
+    cancellation: CancellationToken,
+) -> Result<()> {
     // The watcher is registered before the scan. Events queued during the scan
     // are applied afterward, closing the startup gap without a second walk.
-    let indexed = match services
+    let indexed = services
         .index_cancellable(false, cancellation.clone())
-        .await
-    {
+        .await;
+    let indexed = match indexed {
         Ok(indexed) => indexed,
-        Err(leantoken::Error::Cancelled) if cancellation.is_cancelled() => {
-            return watcher.shutdown().await;
-        }
-        Err(error) => {
-            if let Err(shutdown_error) = watcher.shutdown().await {
-                tracing::warn!(%shutdown_error, "watcher shutdown failed after index error");
-            }
-            return Err(error);
-        }
+        Err(leantoken::Error::Cancelled) if cancellation.is_cancelled() => return Ok(()),
+        Err(error) => return Err(error),
     };
     for warning in &indexed.warnings {
         tracing::warn!(%warning, "index warning");
     }
 
+    run_watcher_reconciliations(services, changes, cancellation).await
+}
+
+async fn run_watcher_reconciliations(
+    services: Arc<Services>,
+    mut changes: tokio::sync::mpsc::Receiver<WatcherMessage>,
+    cancellation: CancellationToken,
+) -> Result<()> {
+    let mut scheduler = WatcherReconciliationScheduler::new(services.config().watcher_debounce);
+
     loop {
+        let changes_open = drain_watcher_messages(&mut scheduler, &services, &mut changes);
+
+        let Some(deadline) = scheduler.next_deadline() else {
+            if !changes_open {
+                break;
+            }
+            tokio::select! {
+                _ = cancellation.cancelled() => break,
+                message = changes.recv() => match message {
+                    Some(message) => schedule_watcher_message(&mut scheduler, &services, message),
+                    None => break,
+                }
+            }
+            continue;
+        };
+
         tokio::select! {
             _ = cancellation.cancelled() => break,
-            message = changes.recv() => {
-                let Some(message) = message else { break };
-                let result = match message {
-                    WatcherMessage::Changed { paths } => {
-                        let paths = paths
-                            .into_iter()
-                            .filter(|path| !services.config().is_database_artifact(path))
-                            .collect::<Vec<_>>();
-                        if paths.is_empty() {
-                            continue;
-                        }
-                        tracing::debug!(changed_paths = paths.len(), "repository change detected");
-                        services
-                            .index_paths_cancellable(paths, cancellation.clone())
-                            .await
-                    }
-                    WatcherMessage::ReconcileRequired => {
-                        tracing::warn!("watcher requested full reconciliation");
-                        services
-                            .index_cancellable(false, cancellation.clone())
-                            .await
-                    }
+            message = changes.recv(), if changes_open => match message {
+                Some(message) => schedule_watcher_message(&mut scheduler, &services, message),
+                None => continue,
+            },
+            _ = tokio::time::sleep_until(deadline) => {
+                let Some(action) = scheduler.take_ready(Instant::now()) else {
+                    continue;
                 };
-                match result {
-                    Ok(indexed) => {
-                        for warning in &indexed.warnings {
-                            tracing::warn!(%warning, "index warning");
-                        }
-                    }
-                    Err(leantoken::Error::Cancelled) if cancellation.is_cancelled() => break,
-                    Err(error) => {
-                        tracing::error!(%error, "background reconciliation failed");
-                    }
+                if !execute_watcher_action(
+                    &mut scheduler,
+                    Arc::clone(&services),
+                    action,
+                    cancellation.clone(),
+                ).await? {
+                    break;
                 }
             }
         }
     }
 
-    watcher.shutdown().await
+    Ok(())
+}
+
+fn drain_watcher_messages(
+    scheduler: &mut WatcherReconciliationScheduler,
+    services: &Services,
+    changes: &mut tokio::sync::mpsc::Receiver<WatcherMessage>,
+) -> bool {
+    loop {
+        match changes.try_recv() {
+            Ok(message) => schedule_watcher_message(scheduler, services, message),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => return true,
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return false,
+        }
+    }
+}
+
+async fn execute_watcher_action(
+    scheduler: &mut WatcherReconciliationScheduler,
+    services: Arc<Services>,
+    action: WatcherAction,
+    cancellation: CancellationToken,
+) -> Result<bool> {
+    match reconcile_watcher_action(services, &action, cancellation.clone()).await {
+        Ok(indexed) => {
+            scheduler.finish_success(&action, Instant::now());
+            for warning in &indexed.warnings {
+                tracing::warn!(%warning, "index warning");
+            }
+            Ok(true)
+        }
+        Err(leantoken::Error::Cancelled) if cancellation.is_cancelled() => Ok(false),
+        Err(error) if is_terminal_index_error(&error) => Err(error),
+        Err(error) => {
+            scheduler.finish_failure(action, Instant::now());
+            let retry_at = scheduler.next_deadline();
+            tracing::error!(
+                %error,
+                retry_delay_ms = retry_at.map_or(0, |at| at.saturating_duration_since(Instant::now()).as_millis()),
+                "background reconciliation failed; retained for retry"
+            );
+            Ok(true)
+        }
+    }
+}
+
+fn is_terminal_index_error(error: &leantoken::Error) -> bool {
+    matches!(
+        error,
+        leantoken::Error::RootNotFound(_)
+            | leantoken::Error::UnsafeRepositoryRoot(_)
+            | leantoken::Error::IndexLimitExceeded { .. }
+            | leantoken::Error::InvalidConfiguration(_)
+            | leantoken::Error::RepositoryMismatch { .. }
+            | leantoken::Error::RuntimeCapabilityUnavailable { .. }
+    )
+}
+
+fn schedule_watcher_message(
+    scheduler: &mut WatcherReconciliationScheduler,
+    services: &Services,
+    message: WatcherMessage,
+) {
+    let message = match message {
+        WatcherMessage::Changed { paths } => {
+            let paths = paths
+                .into_iter()
+                .filter(|path| !services.config().is_database_artifact(path))
+                .collect::<Vec<_>>();
+            if paths.is_empty() {
+                return;
+            }
+            WatcherMessage::Changed { paths }
+        }
+        WatcherMessage::ReconcileRequired => WatcherMessage::ReconcileRequired,
+    };
+    scheduler.enqueue(message, Instant::now());
+}
+
+async fn reconcile_watcher_action(
+    services: Arc<Services>,
+    action: &WatcherAction,
+    cancellation: CancellationToken,
+) -> Result<leantoken::model::IndexResponse> {
+    match action {
+        WatcherAction::Paths(paths) => {
+            tracing::debug!(changed_paths = paths.len(), "repository change detected");
+            services
+                .index_paths_cancellable(paths.clone(), cancellation)
+                .await
+        }
+        WatcherAction::Full => {
+            tracing::warn!("watcher scheduled bounded full reconciliation");
+            services.index_cancellable(false, cancellation).await
+        }
+    }
 }
 
 fn print<T: Serialize>(value: &T, compact: bool) -> Result<()> {
@@ -313,4 +496,46 @@ fn init_tracing() {
                 .with_filter(scrub_fields),
         )
         .init();
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use leantoken::error::IndexLimitKind;
+
+    use super::*;
+
+    #[test]
+    fn retry_backoff_is_exponential_and_capped() {
+        let mut backoff = RetryBackoff::new(Duration::from_millis(10), Duration::from_millis(25));
+        assert_eq!(backoff.failure_delay(), Duration::from_millis(10));
+        assert_eq!(backoff.failure_delay(), Duration::from_millis(20));
+        assert_eq!(backoff.failure_delay(), Duration::from_millis(25));
+        assert_eq!(backoff.failure_delay(), Duration::from_millis(25));
+        backoff.reset();
+        assert_eq!(backoff.failure_delay(), Duration::from_millis(10));
+    }
+
+    #[test]
+    fn configuration_and_safety_errors_are_terminal_but_io_is_retryable() {
+        let terminal = [
+            leantoken::Error::RootNotFound(PathBuf::from("missing")),
+            leantoken::Error::UnsafeRepositoryRoot(PathBuf::from("broad")),
+            leantoken::Error::IndexLimitExceeded {
+                kind: IndexLimitKind::Files,
+                observed: 2,
+                limit: 1,
+            },
+            leantoken::Error::InvalidConfiguration("invalid".into()),
+            leantoken::Error::RuntimeCapabilityUnavailable {
+                capability: "fts5",
+                source: None,
+            },
+        ];
+        assert!(terminal.iter().all(is_terminal_index_error));
+        assert!(!is_terminal_index_error(&leantoken::Error::Io(
+            std::io::Error::other("transient")
+        )));
+    }
 }

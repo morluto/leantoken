@@ -1,8 +1,12 @@
 use std::fs;
 
 use leantoken::repository::{
-    discover_files, git_changed_paths, resolve_existing, slash_path, validate_relative,
+    DiscoveryPolicy, discover_files, discover_files_with_limits,
+    discover_files_with_limits_and_policy, discover_files_with_limits_cancellable,
+    git_changed_paths, resolve_existing, slash_path, validate_relative,
 };
+use leantoken::{DiscoveryLimits, Error, IndexLimitKind};
+use tokio_util::sync::CancellationToken;
 
 #[test]
 fn validate_relative_rejects_parent_traversal() {
@@ -60,6 +64,116 @@ fn discover_files_honors_gitignore() {
 }
 
 #[test]
+fn discover_files_excludes_generated_trees_without_hiding_repository_dotfiles() {
+    let root = tempfile::tempdir().expect("tempdir");
+    for (path, contents) in [
+        ("node_modules/pkg/index.js", "export const generated = true;\n"),
+        ("target/debug/generated.rs", "fn generated() {}\n"),
+        (".venv/lib/site.py", "generated = True\n"),
+        (".tox/py/bin/tool.py", "generated = True\n"),
+        (".cache/tool/data.rs", "fn cached() {}\n"),
+        (".yarn/cache/pkg.zip", "cache\n"),
+        (".github/workflows/ci.yml", "name: ci\n"),
+        (".devcontainer/devcontainer.json", "{}\n"),
+        (".cargo/config.toml", "[build]\n"),
+        (".env.example", "KEY=value\n"),
+        ("src/target", "ordinary file\n"),
+    ] {
+        let absolute = root.path().join(path);
+        fs::create_dir_all(absolute.parent().expect("fixture parent")).expect("fixture directory");
+        fs::write(absolute, contents).expect("fixture file");
+    }
+    let default = discover_files_with_limits(root.path(), DiscoveryLimits::default())
+        .expect("default discovery");
+    let paths = default
+        .files
+        .iter()
+        .map(|file| file.relative_path.as_str())
+        .collect::<Vec<_>>();
+    for included in [
+        ".github/workflows/ci.yml",
+        ".devcontainer/devcontainer.json",
+        ".cargo/config.toml",
+        ".env.example",
+        "src/target",
+    ] {
+        assert!(paths.contains(&included), "default policy omitted {included}");
+    }
+    for excluded in [
+        "node_modules/pkg/index.js",
+        "target/debug/generated.rs",
+        ".venv/lib/site.py",
+        ".tox/py/bin/tool.py",
+        ".cache/tool/data.rs",
+        ".yarn/cache/pkg.zip",
+    ] {
+        assert!(!paths.contains(&excluded), "default policy admitted {excluded}");
+    }
+
+    let inclusive = discover_files_with_limits_and_policy(
+        root.path(),
+        DiscoveryLimits::default(),
+        DiscoveryPolicy::new(true),
+    )
+    .expect("inclusive discovery");
+    let inclusive_paths = inclusive
+        .files
+        .iter()
+        .map(|file| file.relative_path.as_str())
+        .collect::<Vec<_>>();
+    assert!(inclusive_paths.contains(&"node_modules/pkg/index.js"));
+    assert!(inclusive_paths.contains(&"target/debug/generated.rs"));
+    assert!(inclusive_paths.contains(&".venv/lib/site.py"));
+}
+
+#[test]
+fn leantokenignore_has_precedence_over_gitignore_and_applies_when_nested() {
+    let root = tempfile::tempdir().expect("tempdir");
+    fs::create_dir(root.path().join(".git")).expect("git marker");
+    fs::create_dir_all(root.path().join("fixtures/nested")).expect("fixtures");
+    fs::write(root.path().join("fixtures/keep.rs"), "fn keep() {}\n").expect("keep");
+    fs::write(root.path().join("fixtures/drop.rs"), "fn drop() {}\n").expect("drop");
+    fs::write(
+        root.path().join("fixtures/nested/drop.rs"),
+        "fn nested_drop() {}\n",
+    )
+    .expect("nested drop");
+    fs::write(root.path().join(".gitignore"), "fixtures/\n").expect("gitignore");
+    fs::write(
+        root.path().join(".leantokenignore"),
+        "!fixtures/\n!fixtures/**\nfixtures/drop.rs\n",
+    )
+    .expect("leantokenignore");
+    fs::write(
+        root.path().join("fixtures/nested/.leantokenignore"),
+        "drop.rs\n",
+    )
+    .expect("nested leantokenignore");
+
+    let files = discover_files(root.path(), 1024).expect("discovery");
+    let paths = files
+        .iter()
+        .map(|file| file.relative_path.as_str())
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&".leantokenignore"));
+    assert!(paths.contains(&"fixtures/keep.rs"));
+    assert!(paths.contains(&"fixtures/nested/.leantokenignore"));
+    assert!(!paths.contains(&"fixtures/drop.rs"));
+    assert!(!paths.contains(&"fixtures/nested/drop.rs"));
+}
+
+#[test]
+fn discovery_policy_case_behavior_matches_the_host_platform() {
+    let policy = DiscoveryPolicy::default();
+    assert!(!policy.includes_path("node_modules/pkg/index.js", false));
+    assert!(policy.includes_path("target", false));
+    assert_eq!(
+        policy.includes_path("NODE_MODULES/pkg/index.js", false),
+        !cfg!(windows)
+    );
+}
+
+#[test]
 fn discover_files_excludes_git_pointer_file() {
     let root = tempfile::tempdir().expect("tempdir");
     fs::write(
@@ -93,6 +207,233 @@ fn discover_files_skips_oversized_files() {
         .collect::<Vec<_>>();
     assert!(paths.contains(&"small.rs"));
     assert!(!paths.contains(&"big.rs"));
+}
+
+#[test]
+fn discovery_walk_entry_limit_accepts_boundary_and_rejects_limit_plus_one() {
+    let root = tempfile::tempdir().expect("tempdir");
+    fs::write(root.path().join("a.rs"), "a").expect("a");
+    fs::write(root.path().join("b.rs"), "b").expect("b");
+    let limits = DiscoveryLimits {
+        max_walk_entries: 3,
+        ..DiscoveryLimits::default()
+    };
+
+    let result = discover_files_with_limits(root.path(), limits).expect("exact boundary");
+    assert_eq!(result.stats.walk_entries, 3);
+    assert_eq!(result.stats.files, 2);
+
+    let error = discover_files_with_limits(
+        root.path(),
+        DiscoveryLimits {
+            max_walk_entries: 2,
+            ..limits
+        },
+    )
+    .expect_err("limit plus one");
+    assert!(matches!(
+        error,
+        Error::IndexLimitExceeded {
+            kind: IndexLimitKind::WalkEntries,
+            observed: 3,
+            limit: 2
+        }
+    ));
+}
+
+#[test]
+fn discovery_file_limit_accepts_boundary_and_rejects_limit_plus_one() {
+    let root = tempfile::tempdir().expect("tempdir");
+    fs::write(root.path().join("a.rs"), "a").expect("a");
+    fs::write(root.path().join("b.rs"), "b").expect("b");
+    let limits = DiscoveryLimits {
+        max_files: 2,
+        ..DiscoveryLimits::default()
+    };
+
+    assert_eq!(
+        discover_files_with_limits(root.path(), limits)
+            .expect("exact boundary")
+            .stats
+            .files,
+        2
+    );
+    let error = discover_files_with_limits(
+        root.path(),
+        DiscoveryLimits {
+            max_files: 1,
+            ..limits
+        },
+    )
+    .expect_err("limit plus one");
+    assert!(matches!(
+        error,
+        Error::IndexLimitExceeded {
+            kind: IndexLimitKind::Files,
+            observed: 2,
+            limit: 1
+        }
+    ));
+}
+
+#[test]
+fn discovery_source_byte_limit_accepts_boundary_and_rejects_limit_plus_one() {
+    let root = tempfile::tempdir().expect("tempdir");
+    fs::write(root.path().join("a.rs"), "ab").expect("a");
+    fs::write(root.path().join("b.rs"), "cde").expect("b");
+    let limits = DiscoveryLimits {
+        max_total_source_bytes: 5,
+        ..DiscoveryLimits::default()
+    };
+
+    assert_eq!(
+        discover_files_with_limits(root.path(), limits)
+            .expect("exact boundary")
+            .stats
+            .total_source_bytes,
+        5
+    );
+    let error = discover_files_with_limits(
+        root.path(),
+        DiscoveryLimits {
+            max_total_source_bytes: 4,
+            ..limits
+        },
+    )
+    .expect_err("limit plus one");
+    assert!(matches!(
+        error,
+        Error::IndexLimitExceeded {
+            kind: IndexLimitKind::TotalSourceBytes,
+            observed: 5,
+            limit: 4
+        }
+    ));
+}
+
+#[test]
+fn discovery_depth_limit_accepts_boundary_and_rejects_deeper_entry() {
+    let root = tempfile::tempdir().expect("tempdir");
+    fs::create_dir(root.path().join("nested")).expect("nested");
+    fs::write(root.path().join("nested/file.rs"), "a").expect("file");
+    let limits = DiscoveryLimits {
+        max_depth: 2,
+        ..DiscoveryLimits::default()
+    };
+
+    assert_eq!(
+        discover_files_with_limits(root.path(), limits)
+            .expect("exact boundary")
+            .stats
+            .max_depth,
+        2
+    );
+    let error = discover_files_with_limits(
+        root.path(),
+        DiscoveryLimits {
+            max_depth: 1,
+            ..limits
+        },
+    )
+    .expect_err("deeper entry");
+    assert!(matches!(
+        error,
+        Error::IndexLimitExceeded {
+            kind: IndexLimitKind::Depth,
+            observed: 2,
+            limit: 1
+        }
+    ));
+}
+
+#[test]
+fn oversized_files_still_consume_the_walk_entry_budget() {
+    let root = tempfile::tempdir().expect("tempdir");
+    for index in 0..3 {
+        fs::write(root.path().join(format!("{index}.bin")), "oversized").expect("file");
+    }
+    let limits = DiscoveryLimits {
+        max_walk_entries: 3,
+        max_file_bytes: 1,
+        ..DiscoveryLimits::default()
+    };
+
+    let error = discover_files_with_limits(root.path(), limits).expect_err("walk bound");
+    assert!(matches!(
+        error,
+        Error::IndexLimitExceeded {
+            kind: IndexLimitKind::WalkEntries,
+            observed: 4,
+            limit: 3
+        }
+    ));
+}
+
+#[test]
+fn directories_consume_the_walk_entry_budget() {
+    let root = tempfile::tempdir().expect("tempdir");
+    for index in 0..3 {
+        fs::create_dir(root.path().join(format!("dir-{index}"))).expect("directory");
+    }
+    let limits = DiscoveryLimits {
+        max_walk_entries: 3,
+        ..DiscoveryLimits::default()
+    };
+
+    let error = discover_files_with_limits(root.path(), limits).expect_err("walk bound");
+    assert!(matches!(
+        error,
+        Error::IndexLimitExceeded {
+            kind: IndexLimitKind::WalkEntries,
+            observed: 4,
+            limit: 3
+        }
+    ));
+}
+
+#[test]
+fn per_file_limit_admits_the_boundary_and_skips_limit_plus_one() {
+    let root = tempfile::tempdir().expect("tempdir");
+    fs::write(root.path().join("boundary.rs"), "1234").expect("boundary");
+    fs::write(root.path().join("too-large.rs"), "12345").expect("too large");
+
+    let result = discover_files_with_limits(
+        root.path(),
+        DiscoveryLimits {
+            max_file_bytes: 4,
+            ..DiscoveryLimits::default()
+        },
+    )
+    .expect("discovery");
+    let paths = result
+        .files
+        .iter()
+        .map(|file| file.relative_path.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(paths, ["boundary.rs"]);
+    assert_eq!(result.stats.files, 1);
+    assert_eq!(result.stats.total_source_bytes, 4);
+}
+
+#[test]
+fn bounded_discovery_checks_cancellation_before_limits() {
+    let root = tempfile::tempdir().expect("tempdir");
+    fs::write(root.path().join("a.rs"), "a").expect("a");
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+
+    let error = discover_files_with_limits_cancellable(
+        root.path(),
+        DiscoveryLimits {
+            max_walk_entries: 1,
+            ..DiscoveryLimits::default()
+        },
+        &cancellation,
+    )
+    .expect_err("cancelled");
+
+    assert!(matches!(error, Error::Cancelled));
 }
 
 #[test]

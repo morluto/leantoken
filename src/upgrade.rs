@@ -120,13 +120,14 @@ pub fn run(options: UpgradeOptions) -> Result<()> {
     }
 
     if context == InstallContext::Npx {
+        let refresh_command = npx_refresh_command(&latest);
         return print_report(
             UpgradeReport {
                 status: UpgradeStatus::Ephemeral,
                 context,
                 current_version: env!("CARGO_PKG_VERSION"),
                 latest_version: Some(latest),
-                command: Some("npx leantoken@latest <command>".into()),
+                command: Some(refresh_command),
             },
             options.json,
         );
@@ -247,6 +248,10 @@ fn upgrade_command(context: InstallContext, latest_version: Option<&str>) -> Opt
     }
 }
 
+fn npx_refresh_command(version: &str) -> String {
+    format!("npx --yes leantoken@{version} setup --refresh --yes")
+}
+
 fn latest_version(context: InstallContext) -> Option<String> {
     match context {
         InstallContext::Cargo => command_stdout(
@@ -337,7 +342,9 @@ fn print_report(report: UpgradeReport, json: bool) -> Result<()> {
                 report.latest_version.as_deref().unwrap_or("unknown")
             );
             println!("You are running LeanToken through npx; nothing is installed globally.");
-            println!("Run the latest version with: npx leantoken@latest <command>");
+            if let Some(command) = report.command {
+                println!("Refresh existing MCP entries with: {command}");
+            }
             println!("Or install the shell command with: npm install --global leantoken@latest");
         }
         UpgradeStatus::UpdateAvailable => {
@@ -414,5 +421,14 @@ mod tests {
                 .display(),
             "cargo install --git https://github.com/morluto/leantoken --tag v1.2.3 --force"
         );
+    }
+
+    #[test]
+    fn npx_refresh_command_uses_the_resolved_exact_version() {
+        assert_eq!(
+            npx_refresh_command("1.2.3"),
+            "npx --yes leantoken@1.2.3 setup --refresh --yes"
+        );
+        assert!(!npx_refresh_command("1.2.3").contains("@latest"));
     }
 }

@@ -1,9 +1,14 @@
-use std::{path::PathBuf, str::FromStr};
+use std::{
+    num::{NonZeroU64, NonZeroUsize},
+    path::PathBuf,
+    str::FromStr,
+};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::Config;
 use crate::Result;
+use crate::cache::CachePruneRequest;
 use crate::mcp::McpResultMode;
 use crate::model::{
     ContextRequest, FileOperation, FilesRequest, OutlineRequest, ReadRequest, SearchMode,
@@ -27,6 +32,38 @@ pub struct Cli {
     /// Allow indexing a filesystem root, home directory, or parent of home.
     #[arg(long, global = true)]
     pub allow_broad_root: bool,
+
+    /// Include known generated and package-cache directories.
+    #[arg(long, global = true)]
+    pub include_generated: bool,
+
+    /// Maximum filesystem entries yielded by repository discovery.
+    #[arg(long, value_name = "COUNT", global = true)]
+    pub max_walk_entries: Option<NonZeroU64>,
+
+    /// Maximum files admitted to the repository index.
+    #[arg(long, value_name = "COUNT", global = true)]
+    pub max_files: Option<NonZeroU64>,
+
+    /// Maximum aggregate bytes admitted to the repository index.
+    #[arg(long, value_name = "BYTES", global = true)]
+    pub max_total_source_bytes: Option<NonZeroU64>,
+
+    /// Maximum repository-relative traversal depth.
+    #[arg(long, value_name = "DEPTH", global = true)]
+    pub max_depth: Option<NonZeroUsize>,
+
+    /// Maximum bytes admitted from one file.
+    #[arg(long, value_name = "BYTES", global = true)]
+    pub max_file_bytes: Option<NonZeroU64>,
+
+    /// Maximum files scheduled in one preparation batch.
+    #[arg(long, value_name = "COUNT", global = true)]
+    pub max_prepare_batch_files: Option<NonZeroUsize>,
+
+    /// Maximum source bytes scheduled in one preparation batch.
+    #[arg(long, value_name = "BYTES", global = true)]
+    pub max_prepare_batch_bytes: Option<NonZeroU64>,
 
     /// SQLite database path.
     #[arg(long, value_name = "PATH", global = true)]
@@ -57,7 +94,30 @@ impl Cli {
             self.database.clone(),
             self.allow_broad_root,
         )?;
+        if let Some(value) = self.max_walk_entries {
+            config.max_walk_entries = value.get();
+        }
+        if let Some(value) = self.max_files {
+            config.max_files = value.get();
+        }
+        if let Some(value) = self.max_total_source_bytes {
+            config.max_total_source_bytes = value.get();
+        }
+        if let Some(value) = self.max_depth {
+            config.max_depth = value.get();
+        }
+        if let Some(value) = self.max_file_bytes {
+            config.max_file_bytes = value.get();
+        }
+        if let Some(value) = self.max_prepare_batch_files {
+            config.max_prepare_batch_files = value.get();
+        }
+        if let Some(value) = self.max_prepare_batch_bytes {
+            config.max_prepare_batch_bytes = value.get();
+        }
+        config.include_generated = self.include_generated;
         config.tokenizer = self.tokenizer;
+        config.discovery_limits().validate()?;
         Ok(config)
     }
 
@@ -77,6 +137,10 @@ impl Cli {
             },
             Commands::Setup(args) => AppRequest::Setup(args.into()),
             Commands::Remove(args) => AppRequest::Remove(args.into()),
+            Commands::Cache(args) => match args.command {
+                CacheCommand::List => AppRequest::CacheList,
+                CacheCommand::Prune(args) => AppRequest::CachePrune(args.into()),
+            },
             Commands::Update(args) | Commands::Upgrade(args) => AppRequest::Upgrade {
                 check: args.check,
                 yes: args.yes,
@@ -99,6 +163,8 @@ pub enum AppRequest {
     Mcp { result_mode: McpResultMode },
     Setup(SetupRequest),
     Remove(SetupRequest),
+    CacheList,
+    CachePrune(CachePruneRequest),
     Upgrade { check: bool, yes: bool },
 }
 
@@ -140,6 +206,9 @@ pub enum Commands {
 
     /// Remove LeanToken's global MCP server entries.
     Remove(IntegrationArgs),
+
+    /// Inspect or prune centrally managed repository caches.
+    Cache(CacheArgs),
 
     /// Update LeanToken to the latest release.
     Update(UpgradeArgs),
@@ -193,12 +262,64 @@ pub struct IntegrationArgs {
     /// Select every supported client.
     #[arg(long)]
     pub all: bool,
-    /// Apply without prompting; requires explicit client flags or --all.
+    /// Refresh existing LeanToken MCP entries without selecting new clients.
+    #[arg(long)]
+    pub refresh: bool,
+    /// Apply without prompting; requires explicit clients, --all, or --refresh.
     #[arg(short = 'y', long)]
     pub yes: bool,
     /// Show the exact configuration plan without making changes.
     #[arg(long)]
     pub dry_run: bool,
+}
+
+/// Managed cache operation.
+#[derive(Debug, Clone, Args)]
+pub struct CacheArgs {
+    /// Cache subcommand.
+    #[command(subcommand)]
+    pub command: CacheCommand,
+}
+
+/// Commands for centrally managed repository caches.
+#[derive(Debug, Clone, Subcommand)]
+pub enum CacheCommand {
+    /// List managed caches, sizes, roots, access times, and active leases.
+    List,
+    /// Remove inactive managed caches selected by explicit criteria.
+    Prune(CachePruneArgs),
+}
+
+/// Selection and consent for `cache prune`.
+#[derive(Debug, Clone, Args)]
+pub struct CachePruneArgs {
+    /// Remove caches not accessed for at least this many days.
+    #[arg(long, value_name = "DAYS")]
+    pub older_than: Option<NonZeroU64>,
+    /// Reduce managed cache storage to at most this many bytes using LRU order.
+    #[arg(long, value_name = "BYTES")]
+    pub max_total_bytes: Option<u64>,
+    /// Remove caches whose recorded repository roots are currently missing.
+    #[arg(long)]
+    pub remove_missing_roots: bool,
+    /// Show the exact prune plan without deleting files.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Apply the prune plan without prompting.
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+}
+
+impl From<CachePruneArgs> for CachePruneRequest {
+    fn from(args: CachePruneArgs) -> Self {
+        Self {
+            older_than_days: args.older_than.map(NonZeroU64::get),
+            max_total_bytes: args.max_total_bytes,
+            remove_missing_roots: args.remove_missing_roots,
+            dry_run: args.dry_run,
+            yes: args.yes,
+        }
+    }
 }
 
 impl From<IntegrationArgs> for SetupRequest {
@@ -225,6 +346,7 @@ impl From<IntegrationArgs> for SetupRequest {
         Self {
             clients,
             all: args.all,
+            refresh: args.refresh,
             yes: args.yes,
             dry_run: args.dry_run,
         }

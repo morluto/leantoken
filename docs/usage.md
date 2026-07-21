@@ -9,6 +9,14 @@ responses are bounded.
 ```text
 --root <PATH>      Repository root (default: current directory)
 --allow-broad-root Allow a filesystem root, home directory, or parent of home
+--include-generated Include known generated and package-cache directories
+--max-walk-entries <COUNT>       Walker entries per discovery (default: 500000)
+--max-files <COUNT>              Admitted source files (default: 150000)
+--max-total-source-bytes <BYTES> Aggregate source bytes (default: 2147483648)
+--max-depth <DEPTH>              Repository-relative depth (default: 64)
+--max-file-bytes <BYTES>         Bytes admitted from one file (default: 2097152)
+--max-prepare-batch-files <COUNT>  Files per preparation batch (default: 256)
+--max-prepare-batch-bytes <BYTES>  Bytes per preparation batch (default: 67108864)
 --database <PATH>  Override the per-repository SQLite cache path
 --tokenizer <ENCODING>  Source and protocol accounting tokenizer
 --json             Emit JSON from CLI commands
@@ -26,9 +34,76 @@ leantoken outline <path>...
 leantoken read <path> [--lines START:END] [--symbol NAME]
 leantoken context --task <text> --budget <tokens>
 leantoken mcp [--result-mode dual|text|structured]
+leantoken setup [CLIENT...] [--all] [--refresh] [--yes] [--dry-run]
+leantoken remove [CLIENT...] [--all] [--yes] [--dry-run]
+leantoken cache list
+leantoken cache prune [--older-than DAYS] [--max-total-bytes BYTES]
+                      [--remove-missing-roots] [--dry-run] [--yes]
 ```
 
 Use `leantoken <command> --help` for the complete argument list.
+
+## MCP setup and version lifecycle
+
+Setup writes only the `leantoken` entry in each selected global client config.
+When setup runs through npx, the stored command pins
+`leantoken@<exact current version>` and retains `--yes` so background MCP
+startup cannot block on an install prompt. The launcher may contact npm to
+resolve or download that exact package, but it cannot switch to a newer version
+between restarts.
+
+Choose upgrades and rollbacks explicitly by running the desired version, then
+refresh only entries that already exist:
+
+```bash
+npx --yes leantoken@latest setup --refresh --yes
+npx --yes leantoken@0.1.8 setup --refresh --yes
+```
+
+`setup --refresh --dry-run` audits the same plan without writing. Refresh does
+not infer consent from installed clients and does not create new entries. If an
+exact package is neither cached nor reachable while offline, startup fails; it
+does not fall forward to `@latest`.
+
+Global setup does not bind the repository where setup was run. OpenCode's
+entry uses workspace-relative `cwd: "."`. Claude Code, Cursor, Codex, Gemini
+CLI, and Antigravity use the working directory their host assigns to the MCP
+process, which must be the active workspace. Broad home and filesystem roots
+still fail closed before cache creation or indexing. `--root` remains available
+for deliberate manual or project-scoped configurations.
+
+## Managed cache lifecycle
+
+`cache list` reports every recognized per-repository cache in the platform
+`ProjectDirs` cache directory, including its recorded root, schema, last access,
+direct SQLite/sidecar bytes, metadata state, and active lease status. It does
+not open repository services and therefore works from any directory. JSON output
+contains Unix timestamps for automation.
+
+`cache prune` requires at least one explicit selection policy:
+
+- `--older-than DAYS` selects caches whose last repository bind is at least that
+  old;
+- `--max-total-bytes BYTES` selects least-recently-used caches until the managed
+  total reaches the requested bound;
+- `--remove-missing-roots` explicitly selects a cache when its recorded root is
+  currently absent.
+
+Use `--dry-run` to inspect every keep/delete/skip decision. Actual deletion
+requires `--yes`. Missing roots are not an implicit deletion criterion because
+offline mounts and removable volumes can return later. Corrupt, incomplete, and
+older-schema caches remain listable and can be selected by age or size. A cache
+with a newer schema, mismatched root identity, or unexpected directory content
+is always skipped.
+
+Every `Services` instance holds a shared lease from before SQLite initialization
+until its final clone drops. Prune must acquire the exclusive form and therefore
+skips active MCP leaders, followers, and CLI services. It deletes the database,
+WAL, SHM, journal, and coordination sidecars but retains the zero-byte lease
+identity so a returning repository cannot race a new process through a replaced
+lock file. Explicit `--database` files outside the managed directory are never
+enumerated. Stop older LeanToken versions that predate cache leases before
+pruning during a mixed-version rollout.
 
 ## First-run doctor
 
@@ -54,7 +129,41 @@ from a broad working directory from recursively watching and indexing unrelated
 projects and package caches. Select the workspace with `--root`; use
 `--allow-broad-root` only for a deliberate broad index.
 
-Logs go to stderr. Stdout is reserved for MCP protocol messages.
+Repository discovery also fails closed when any configured walk-entry, file,
+aggregate-byte, or depth limit is crossed. LeanToken returns a typed error and
+keeps the previously committed generation intact; it never publishes a
+truncated repository. Every numeric limit must be positive, and the preparation
+batch byte limit must be at least the per-file byte limit. Limit failures stop
+automatic MCP indexing until the process is restarted with a narrower root or
+adjusted limits, preventing a fixed tree from being rescanned every 500 ms.
+
+Discovery keeps useful hidden repository content, including `.github`,
+`.devcontainer`, root dotfiles, and `.cargo/config.toml`. It skips known
+generated and cache trees such as `node_modules`, `target`, `.venv`, `venv`,
+`.tox`, `.cache`, package-manager caches, Python caches, `.gradle`, and
+`.rustup`. Use `--include-generated` only when those trees are intentional
+source inputs.
+
+Place `.leantokenignore` files at the repository root or in nested directories
+to add gitignore-style rules. They have higher precedence than `.gitignore` and
+`.ignore`; negation rules can therefore restore paths hidden by those files.
+Built-in generated-tree exclusions run before ignore matching, so restoring
+those requires `--include-generated`. Changes to any ignore control file cause
+one bounded visibility reconciliation.
+
+The indexing leader registers its watcher before the initial scan so changes
+during startup are not lost. Watcher queues and retained path state are bounded;
+bursts collapse to one pending reconciliation. Automatic reconciliation waits
+for a quiet period, and repeated full rescans or transient failures use capped
+backoff. Terminal root, discovery-limit, configuration, and cache-binding
+errors stop the indexing runtime and require a corrected configuration or
+restart.
+
+Logs go to stderr. Stdout is reserved for MCP protocol messages. LeanToken
+service errors exposed through MCP use fixed, allowlisted messages and a stable
+`data.category` for client handling. Repository, database, and external
+canonical paths, plus underlying I/O and SQLite details, remain in stderr
+diagnostics rather than protocol responses.
 
 The default `dual` mode returns JSON as text and `structuredContent` for broad
 host compatibility. `text` and `structured` remove that duplication, but use
@@ -215,7 +324,9 @@ state.
 
 Oversized inputs, invalid regular expressions or globs, stale cursors,
 unsupported structured reads, and unsafe paths return request errors without
-terminating the server. Internal storage and I/O failures are logged without
+terminating the server. Their MCP `data.category` values are stable enough for
+client branching, while messages never echo caller-supplied or resolved paths.
+Internal repository configuration, storage, and I/O failures are logged without
 including source bodies and are returned as generic MCP internal errors.
 
 Default limits include:

@@ -1,8 +1,9 @@
 use std::{
+    collections::HashSet,
     fmt, fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use r2d2_sqlite::SqliteConnectionManager;
@@ -13,6 +14,8 @@ use rusqlite_migration::{M, Migrations};
 
 use crate::model::ReferenceRole;
 use crate::{Error, Result};
+
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 5;
 
 /// Default row limit used by callers that do not provide a tighter bound.
 pub const DEFAULT_MAX_RESULTS: usize = 100;
@@ -194,13 +197,24 @@ CREATE INDEX path_entries_depth_path_idx ON path_entries(depth, path);
 UPDATE meta SET schema_version = 4 WHERE id = 1;
 "#;
 
+const CACHE_ACCESS_SQL: &str = r#"
+ALTER TABLE meta ADD COLUMN last_access_unix_seconds INTEGER NOT NULL DEFAULT 0;
+UPDATE meta
+SET last_access_unix_seconds = CAST(strftime('%s', 'now') AS INTEGER),
+    schema_version = 5
+WHERE id = 1;
+"#;
+
 const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(SCHEMA_SQL).foreign_key_check(),
     M::up(LOOKUP_INDEXES_SQL),
     M::up(REPOSITORY_OWNERSHIP_SQL),
     M::up(IMPORT_CANDIDATES_SQL),
     M::up(PATH_PROJECTION_SQL),
+    M::up(CACHE_ACCESS_SQL),
 ];
+pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 6;
+const _: () = assert!(MIGRATIONS_SLICE.len() == CURRENT_MIGRATION_VERSION as usize);
 const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
 
 #[derive(Debug, Clone)]
@@ -336,8 +350,9 @@ pub struct ImportRecord {
 #[derive(Debug, Clone)]
 /// Complete derived representation of one file, ready for transactional publication.
 ///
-/// The indexer constructs this value outside SQLite. Storage treats its chunks,
-/// symbols, references, imports, and path projection as one replacement unit.
+/// The indexer constructs these values one bounded batch at a time. Storage
+/// treats each file's chunks, symbols, references, imports, and path projection
+/// as one replacement unit inside the caller's uncommitted generation.
 pub struct IndexedFile {
     pub path: String,
     pub language: Option<String>,
@@ -407,6 +422,42 @@ pub struct Storage {
     writer: Arc<Mutex<Connection>>,
     readers: r2d2::Pool<SqliteConnectionManager>,
     path: PathBuf,
+}
+
+/// Restricted writer for one uncommitted repository generation.
+pub(crate) struct ReconciliationWriter<'transaction, 'connection> {
+    transaction: &'transaction Transaction<'connection>,
+    generation: i64,
+    rebuild: bool,
+    replacements: usize,
+    deletions: HashSet<String>,
+}
+
+impl ReconciliationWriter<'_, '_> {
+    /// Insert one complete file replacement without retaining it in memory.
+    pub(crate) fn replace(&mut self, file: IndexedFile) -> Result<()> {
+        if !self.rebuild {
+            self.transaction
+                .execute("DELETE FROM files WHERE path = ?1", params![&file.path])?;
+        }
+        Storage::insert_file(self.transaction, &file, self.generation)?;
+        self.replacements = self.replacements.saturating_add(1);
+        Ok(())
+    }
+
+    /// Remove one path, deduplicating repeated deletion signals.
+    pub(crate) fn delete(&mut self, path: &str) -> Result<()> {
+        if !self.deletions.insert(path.to_string()) || self.rebuild {
+            return Ok(());
+        }
+        self.transaction
+            .execute("DELETE FROM files WHERE path = ?1", params![path])?;
+        self.transaction.execute(
+            "UPDATE imports SET resolved_path = NULL WHERE resolved_path = ?1",
+            params![path],
+        )?;
+        Ok(())
+    }
 }
 
 impl Clone for Storage {
@@ -516,6 +567,10 @@ impl Storage {
     }
 
     fn bind_repository(&self, repository_root: &Path) -> Result<()> {
+        self.bind_repository_at(repository_root, unix_seconds(SystemTime::now()))
+    }
+
+    fn bind_repository_at(&self, repository_root: &Path, accessed_at: i64) -> Result<()> {
         let actual_repository = repository_root.to_path_buf();
         let actual_display = repository_root.to_string_lossy();
         let actual_identity = repository_identity(repository_root);
@@ -532,8 +587,8 @@ impl Storage {
 
         if expected_identity.is_empty() {
             tx.execute(
-                "UPDATE meta SET repository_root = ?1, repository_identity = ?2 WHERE id = 1",
-                params![actual_display.as_ref(), actual_identity],
+                "UPDATE meta SET repository_root = ?1, repository_identity = ?2, last_access_unix_seconds = ?3 WHERE id = 1",
+                params![actual_display.as_ref(), actual_identity, accessed_at],
             )?;
             tx.commit()?;
             return Ok(());
@@ -546,6 +601,10 @@ impl Storage {
             });
         }
 
+        tx.execute(
+            "UPDATE meta SET last_access_unix_seconds = ?1 WHERE id = 1",
+            params![accessed_at],
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -642,33 +701,13 @@ impl Storage {
         config_hash: &str,
         files: Vec<IndexedFile>,
     ) -> Result<u64> {
-        let mut conn = self
-            .writer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let (current_generation, current_config): (i64, String) = tx.query_row(
-            "SELECT repository_generation, config_hash FROM meta WHERE id = 1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        verify_baseline(baseline, current_generation, &current_config)?;
-
-        tx.execute("DELETE FROM files", [])?;
-        tx.execute("DELETE FROM path_entries", [])?;
-        let next_generation = current_generation.saturating_add(1);
-
-        for file in files {
-            Self::insert_file(&tx, &file, next_generation)?;
-        }
-
-        tx.execute(
-            "UPDATE meta SET config_hash = ?1, repository_generation = ?2, index_version = index_version + 1 WHERE id = 1",
-            params![config_hash, next_generation],
-        )?;
-
-        tx.commit()?;
-        Ok(i64_to_u64(next_generation))
+        self.publish_reconciliation_at(baseline, config_hash, true, move |writer| {
+            for file in files {
+                writer.replace(file)?;
+            }
+            Ok(())
+        })
+        .map(|(generation, ())| generation)
     }
 
     /// Atomically apply one repository reconciliation using an internally captured baseline.
@@ -700,6 +739,26 @@ impl Storage {
         replacements: Vec<IndexedFile>,
         deletions: &[String],
     ) -> Result<u64> {
+        self.publish_reconciliation_at(baseline, config_hash, false, move |writer| {
+            for path in deletions {
+                writer.delete(path)?;
+            }
+            for file in replacements {
+                writer.replace(file)?;
+            }
+            Ok(())
+        })
+        .map(|(generation, ())| generation)
+    }
+
+    /// Build and publish one generation through a bounded caller-owned stream.
+    pub(crate) fn publish_reconciliation_at<T>(
+        &self,
+        baseline: &MetaRecord,
+        config_hash: &str,
+        rebuild: bool,
+        write: impl FnOnce(&mut ReconciliationWriter<'_, '_>) -> Result<T>,
+    ) -> Result<(u64, T)> {
         let mut conn = self
             .writer
             .lock()
@@ -712,32 +771,39 @@ impl Storage {
         )?;
         verify_baseline(baseline, current_generation, &current_config)?;
 
-        if replacements.is_empty() && deletions.is_empty() && current_config == config_hash {
-            tx.commit()?;
-            return Ok(i64_to_u64(current_generation));
+        if rebuild {
+            tx.execute("DELETE FROM files", [])?;
+            tx.execute("DELETE FROM path_entries", [])?;
         }
 
         let next_generation = current_generation.saturating_add(1);
-        for path in deletions {
-            tx.execute("DELETE FROM files WHERE path = ?1", params![path])?;
-            tx.execute(
-                "UPDATE imports SET resolved_path = NULL WHERE resolved_path = ?1",
-                params![path],
-            )?;
-        }
-        for file in replacements {
-            tx.execute("DELETE FROM files WHERE path = ?1", params![&file.path])?;
-            Self::insert_file(&tx, &file, next_generation)?;
-        }
-        if !deletions.is_empty() {
+        let mut writer = ReconciliationWriter {
+            transaction: &tx,
+            generation: next_generation,
+            rebuild,
+            replacements: 0,
+            deletions: HashSet::new(),
+        };
+        let output = write(&mut writer)?;
+        let changed = rebuild
+            || writer.replacements > 0
+            || !writer.deletions.is_empty()
+            || current_config != config_hash;
+        if !rebuild && !writer.deletions.is_empty() {
             Self::remove_orphan_path_entries(&tx)?;
+        }
+        drop(writer);
+
+        if !changed {
+            tx.commit()?;
+            return Ok((i64_to_u64(current_generation), output));
         }
         tx.execute(
             "UPDATE meta SET config_hash = ?1, repository_generation = ?2, index_version = index_version + 1 WHERE id = 1",
             params![config_hash, next_generation],
         )?;
         tx.commit()?;
-        Ok(i64_to_u64(next_generation))
+        Ok((i64_to_u64(next_generation), output))
     }
 
     fn insert_file(tx: &Transaction, file: &IndexedFile, generation: i64) -> Result<()> {
@@ -1035,6 +1101,13 @@ impl Storage {
             score: row.get::<_, f64>(10)?,
         })
     }
+}
+
+fn unix_seconds(time: SystemTime) -> i64 {
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+        .unwrap_or(0)
 }
 
 impl ReadSession {
@@ -1727,5 +1800,223 @@ fn role_from_str(role: &str) -> ReferenceRole {
     match role {
         "definition" => ReferenceRole::Definition,
         _ => ReferenceRole::Reference,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_file(path: &str, content: &str) -> IndexedFile {
+        IndexedFile {
+            path: path.to_string(),
+            language: Some("rust".into()),
+            structurally_complete: true,
+            size_bytes: u64::try_from(content.len()).expect("content length"),
+            modified_ns: None,
+            content_hash: crate::text::hash_bytes(content.as_bytes()),
+            chunks: vec![ChunkInput {
+                content: content.to_string(),
+                start_line: 1,
+                end_line: 1,
+                start_byte: 0,
+                end_byte: content.len(),
+                token_count: 1,
+            }],
+            symbols: Vec::new(),
+            references: Vec::new(),
+            imports: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn streamed_cancellation_rolls_back_every_insert_and_generation() {
+        let directory = tempfile::tempdir().expect("directory");
+        let database = directory.path().join("index.sqlite");
+        let storage = Storage::open(&database).expect("storage");
+        storage
+            .full_reconcile("config", vec![sample_file("old.rs", "fn old() {}\n")])
+            .expect("initial generation");
+        let baseline = storage.meta().expect("baseline");
+
+        let error = storage
+            .publish_reconciliation_at(&baseline, "config", true, |writer| -> Result<()> {
+                writer.replace(sample_file("first.rs", "fn first() {}\n"))?;
+                Err(Error::Cancelled)
+            })
+            .expect_err("later batch failure");
+
+        assert!(matches!(error, Error::Cancelled));
+        drop(storage);
+        let reopened = Storage::open(&database).expect("reopen after rollback");
+        assert_eq!(reopened.repository_generation().expect("generation"), 1);
+        assert!(reopened.find_file("old.rs").expect("old lookup").is_some());
+        assert!(
+            reopened
+                .find_file("first.rs")
+                .expect("first lookup")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn later_streamed_storage_failure_rolls_back_earlier_files() {
+        let directory = tempfile::tempdir().expect("directory");
+        let database = directory.path().join("index.sqlite");
+        let storage = Storage::open(&database).expect("storage");
+        storage
+            .full_reconcile("config", vec![sample_file("old.rs", "fn old() {}\n")])
+            .expect("initial generation");
+        let baseline = storage.meta().expect("baseline");
+        let mut invalid = sample_file("invalid.rs", "fn invalid() {}\n");
+        invalid.chunks[0].end_line = usize::MAX;
+
+        storage
+            .publish_reconciliation_at(&baseline, "config", true, |writer| {
+                writer.replace(sample_file("first.rs", "fn first() {}\n"))?;
+                writer.replace(invalid)
+            })
+            .expect_err("second insert must fail");
+
+        drop(storage);
+        let reopened = Storage::open(&database).expect("reopen after rollback");
+        assert_eq!(reopened.repository_generation().expect("generation"), 1);
+        assert!(reopened.find_file("old.rs").expect("old lookup").is_some());
+        assert!(
+            reopened
+                .find_file("first.rs")
+                .expect("first lookup")
+                .is_none()
+        );
+        assert!(
+            reopened
+                .find_file("invalid.rs")
+                .expect("invalid lookup")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn streamed_panic_rolls_back_and_leaves_storage_reusable() {
+        let directory = tempfile::tempdir().expect("directory");
+        let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+        storage
+            .full_reconcile("config", vec![sample_file("old.rs", "fn old() {}\n")])
+            .expect("initial generation");
+        let baseline = storage.meta().expect("baseline");
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = storage.publish_reconciliation_at(
+                &baseline,
+                "config",
+                true,
+                |writer| -> Result<()> {
+                    writer.replace(sample_file("new.rs", "fn new() {}\n"))?;
+                    panic!("injected batch panic");
+                },
+            );
+        }));
+
+        assert!(panic.is_err());
+        assert_eq!(storage.repository_generation().expect("generation"), 1);
+        assert!(storage.find_file("old.rs").expect("old lookup").is_some());
+        assert!(storage.find_file("new.rs").expect("new lookup").is_none());
+        assert_eq!(
+            storage
+                .reconcile_files(
+                    "config",
+                    vec![sample_file("after.rs", "fn after() {}\n")],
+                    &[],
+                )
+                .expect("writer remains usable"),
+            2
+        );
+    }
+
+    #[test]
+    fn readers_see_old_generation_until_streamed_publication_commits() {
+        let directory = tempfile::tempdir().expect("directory");
+        let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+        storage
+            .full_reconcile("config", vec![sample_file("old.rs", "fn old() {}\n")])
+            .expect("initial generation");
+        let baseline = storage.meta().expect("baseline");
+
+        let (generation, ()) = storage
+            .publish_reconciliation_at(&baseline, "config", true, |writer| {
+                writer.replace(sample_file("new.rs", "fn new() {}\n"))?;
+                let reader = storage.begin_read()?;
+                assert_eq!(reader.repository_generation()?, 1);
+                assert!(reader.find_file("old.rs")?.is_some());
+                assert!(reader.find_file("new.rs")?.is_none());
+                Ok(())
+            })
+            .expect("publish");
+
+        assert_eq!(generation, 2);
+        assert!(storage.find_file("old.rs").expect("old lookup").is_none());
+        assert!(storage.find_file("new.rs").expect("new lookup").is_some());
+    }
+
+    #[test]
+    fn stale_streaming_baseline_fails_before_invoking_the_writer() {
+        let directory = tempfile::tempdir().expect("directory");
+        let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+        let stale = storage.meta().expect("stale baseline");
+        storage
+            .full_reconcile(
+                "config",
+                vec![sample_file("current.rs", "fn current() {}\n")],
+            )
+            .expect("current generation");
+        let mut invoked = false;
+
+        let error = storage
+            .publish_reconciliation_at(&stale, "config", false, |_| {
+                invoked = true;
+                Ok(())
+            })
+            .expect_err("stale publication");
+
+        assert!(matches!(error, Error::StaleReconciliation { .. }));
+        assert!(!invoked);
+    }
+
+    #[test]
+    fn repository_binding_updates_last_access_once_per_open() {
+        let directory = tempfile::tempdir().expect("directory");
+        let repository = directory.path().join("repository");
+        fs::create_dir(&repository).expect("repository");
+        let database = directory.path().join("index.sqlite");
+        let storage = Storage::open(&database).expect("storage");
+
+        storage
+            .bind_repository_at(&repository, 1_234)
+            .expect("initial binding");
+        let connection = Connection::open(&database).expect("inspect binding");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT last_access_unix_seconds FROM meta WHERE id = 1",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .expect("first access"),
+            1_234
+        );
+
+        storage
+            .bind_repository_at(&repository, 5_678)
+            .expect("repeat binding");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT last_access_unix_seconds FROM meta WHERE id = 1",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .expect("second access"),
+            5_678
+        );
     }
 }

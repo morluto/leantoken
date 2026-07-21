@@ -69,7 +69,7 @@ fn storage_opens_and_validates_fts5_support() {
     let db = dir.path().join("index.sqlite");
     let storage = Storage::open(&db).expect("open");
     let meta = storage.meta().expect("meta");
-    assert_eq!(meta.schema_version, 4);
+    assert_eq!(meta.schema_version, 5);
     assert_eq!(meta.repository_generation, 0);
     assert!(db.exists());
 }
@@ -124,6 +124,7 @@ fn storage_applies_lookup_index_migration_to_existing_databases() {
             "DROP INDEX chunks_file_line_idx;
              DROP TABLE path_entries;
              DROP TABLE import_candidates;
+             ALTER TABLE meta DROP COLUMN last_access_unix_seconds;
              ALTER TABLE meta DROP COLUMN repository_identity;
              ALTER TABLE meta DROP COLUMN repository_root;
              UPDATE meta SET schema_version = 1 WHERE id = 1;
@@ -143,6 +144,34 @@ fn storage_applies_lookup_index_migration_to_existing_databases() {
         .expect("index count");
 
     assert_eq!(index_count, 1);
+}
+
+#[test]
+fn storage_migrates_schema_four_with_cache_access_metadata() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("index.sqlite");
+    drop(Storage::open(&db).expect("open first"));
+    let connection = rusqlite::Connection::open(&db).expect("raw connection");
+    connection
+        .execute_batch(
+            "ALTER TABLE meta DROP COLUMN last_access_unix_seconds;
+             UPDATE meta SET schema_version = 4 WHERE id = 1;
+             PRAGMA user_version = 5;",
+        )
+        .expect("simulate schema four database");
+    drop(connection);
+
+    let storage = Storage::open(&db).expect("migrate");
+    assert_eq!(storage.meta().expect("metadata").schema_version, 5);
+    let connection = rusqlite::Connection::open(&db).expect("inspect");
+    let last_access: i64 = connection
+        .query_row(
+            "SELECT last_access_unix_seconds FROM meta WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("last access");
+    assert!(last_access > 0);
 }
 
 #[test]

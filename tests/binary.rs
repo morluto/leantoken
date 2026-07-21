@@ -46,6 +46,39 @@ fn cli_indexes_statuses_and_searches_as_json() {
 }
 
 #[test]
+fn cli_index_limit_error_is_structured_and_does_not_publish_partial_files() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("a.rs"), "fn a() {}\n").expect("a");
+    std::fs::write(root.path().join("b.rs"), "fn b() {}\n").expect("b");
+    let database = root.path().join("index.sqlite");
+
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .args([
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--database",
+            database.to_str().expect("database UTF-8"),
+            "--max-files",
+            "1",
+            "--json",
+            "index",
+        ])
+        .output()
+        .expect("run index");
+
+    assert!(!output.status.success());
+    let error: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("structured error");
+    assert_eq!(
+        error["error"],
+        "index source files limit exceeded: observed 2, limit 1"
+    );
+    assert_eq!(database_state(&database).map(|state| state.0), Some(0));
+    assert_eq!(database_state(&database).map(|state| state.1), Some(0));
+}
+
+#[test]
 fn doctor_verifies_identity_catalog_and_first_retrieval() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
@@ -430,6 +463,70 @@ fn mcp_rejects_home_root_after_initialize_without_opening_storage() {
 }
 
 #[test]
+fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("a.rs"), "fn original() {}\n").expect("fixture");
+    std::fs::write(root.path().join("b.rs"), "fn crosses_limit() {}\n").expect("second file");
+    let database = root.path().join("index.sqlite");
+    let mut process = McpProcess::spawn_with_args(
+        root.path(),
+        &database,
+        &["--max-files", "1"],
+    );
+    process.initialize();
+    process.send_initialized();
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut id = 100;
+    loop {
+        process.send(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {
+                "name": "leantoken_files",
+                "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
+            }
+        }));
+        let response = process.response(deadline.saturating_duration_since(Instant::now()));
+        let message = response["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
+        if message.contains("unavailable") {
+            assert_eq!(response["result"]["isError"], true);
+            break;
+        }
+        assert!(Instant::now() < deadline, "limit remained retryable: {response}");
+        id += 1;
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(database_state(&database).map(|state| state.0), Some(0));
+    assert_eq!(database_state(&database).map(|state| state.1), Some(0));
+
+    std::fs::remove_file(root.path().join("b.rs")).expect("shrink tree");
+    std::thread::sleep(Duration::from_millis(1_250));
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id + 1,
+        "method": "tools/call",
+        "params": {
+            "name": "leantoken_files",
+            "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
+        }
+    }));
+    let response = process.response(Duration::from_secs(5));
+    assert_eq!(response["result"]["isError"], true, "runtime retried: {response}");
+    assert!(
+        response["result"]["content"][0]["text"]
+            .as_str()
+            .is_some_and(|message| message.contains("unavailable"))
+    );
+    assert_eq!(database_state(&database).map(|state| state.0), Some(0));
+    assert_eq!(database_state(&database).map(|state| state.1), Some(0));
+    assert!(process.child.try_wait().expect("poll process").is_none());
+}
+
+#[test]
 fn concurrent_mcp_startup_initializes_once_and_followers_read() {
     let root = tempfile::tempdir().expect("temporary repository");
     for file in 0..60 {
@@ -540,6 +637,64 @@ fn mcp_follower_takes_over_after_leader_exit() {
 }
 
 #[test]
+fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("old.rs"), "fn committed_before_crash() {}\n")
+        .expect("old fixture");
+    let database = root.path().join("index.sqlite");
+    let initial = run(root.path(), &database, &["index"]);
+    assert_eq!(initial["repository_generation"], 1);
+    assert_eq!(database_state(&database).map(|state| state.1), Some(1));
+
+    for file in 0..120 {
+        let content = (0..300)
+            .map(|function| format!("fn item_{file}_{function}() -> usize {{ {function} }}\n"))
+            .collect::<String>();
+        std::fs::write(root.path().join(format!("new_{file}.rs")), content)
+            .expect("write replacement fixture");
+    }
+
+    let coordination =
+        leantoken::coordination::IndexCoordination::for_database(&database);
+    let operation_blocker = coordination
+        .acquire_operation(&tokio_util::sync::CancellationToken::new())
+        .expect("block reconciliation");
+
+    let mut leader = McpProcess::spawn(root.path(), &database);
+    leader.initialize();
+    leader.send_initialized();
+    wait_until(Duration::from_secs(5), || {
+        coordination
+            .try_acquire_leadership()
+            .expect("probe leadership")
+            .is_none()
+    });
+
+    let mut follower = McpProcess::spawn(root.path(), &database);
+    follower.initialize();
+    follower.send_initialized();
+    follower.wait_until_ready(Duration::from_secs(5));
+
+    drop(operation_blocker);
+    wait_until(Duration::from_secs(5), || {
+        coordination.is_reconciling().expect("probe reconciliation")
+    });
+    leader.kill_now();
+
+    wait_until(Duration::from_secs(5), || {
+        database_state(&database).is_some_and(|(generation, files, _)| {
+            generation == 1 && files == 1
+        })
+    });
+    wait_until(Duration::from_secs(20), || {
+        database_state(&database).is_some_and(|(generation, files, _)| {
+            generation == 2 && files == 121
+        })
+    });
+    follower.wait_until_ready(Duration::from_secs(5));
+}
+
+#[test]
 fn setup_and_remove_do_not_require_a_repository() {
     let temp = tempfile::tempdir().expect("temporary home");
     let missing_root = temp.path().join("not-a-repository");
@@ -609,6 +764,101 @@ fn setup_requires_yes_before_non_interactive_mutation() {
     );
 }
 
+// Windows ProjectDirs uses the Known Folder API and cannot be redirected to a
+// disposable cache root through per-process environment variables. The cache
+// module tests cover Windows lease and deletion semantics without user data.
+#[cfg(not(windows))]
+#[test]
+fn cache_list_and_prune_do_not_require_a_repository() {
+    let temp = tempfile::tempdir().expect("temporary home");
+    let command = || {
+        let mut command = Command::cargo_bin("leantoken").expect("binary");
+        command
+            .env("HOME", temp.path())
+            .env("USERPROFILE", temp.path())
+            .env("XDG_CACHE_HOME", temp.path().join("xdg-cache"))
+            .env("LOCALAPPDATA", temp.path().join("local-app-data"));
+        command
+    };
+    let listed = command()
+        .args(["--json", "cache", "list"])
+        .output()
+        .expect("list caches");
+    assert!(
+        listed.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    let list: serde_json::Value =
+        serde_json::from_slice(&listed.stdout).expect("cache list JSON");
+    let cache_root = std::path::PathBuf::from(list["cache_root"].as_str().expect("cache root"));
+    let cache = cache_root.join("0000000000000001");
+    std::fs::create_dir_all(&cache).expect("cache directory");
+    let database = cache.join("index.sqlite");
+    std::fs::write(&database, b"corrupt managed cache").expect("cache fixture");
+
+    let human_list = command()
+        .args(["cache", "list"])
+        .output()
+        .expect("human cache list");
+    assert!(human_list.status.success());
+    let human_list = String::from_utf8_lossy(&human_list.stdout);
+    assert!(human_list.contains("corrupt"));
+    assert!(human_list.contains("last_access="));
+    assert!(human_list.contains("root_available="));
+
+    let dry_run = command()
+        .args([
+            "--json",
+            "cache",
+            "prune",
+            "--max-total-bytes",
+            "1",
+            "--dry-run",
+        ])
+        .output()
+        .expect("dry-run prune");
+    assert!(dry_run.status.success());
+    let dry_run: serde_json::Value =
+        serde_json::from_slice(&dry_run.stdout).expect("prune JSON");
+    assert_eq!(dry_run["results"][0]["action"], "would_delete");
+    assert!(database.exists());
+
+    let human_prune = command()
+        .args([
+            "cache",
+            "prune",
+            "--max-total-bytes",
+            "1",
+            "--dry-run",
+        ])
+        .output()
+        .expect("human prune plan");
+    assert!(human_prune.status.success());
+    assert!(String::from_utf8_lossy(&human_prune.stdout).contains("would_delete"));
+
+    let prune = command()
+        .args([
+            "--json",
+            "cache",
+            "prune",
+            "--max-total-bytes",
+            "1",
+            "--yes",
+        ])
+        .output()
+        .expect("prune cache");
+    assert!(
+        prune.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&prune.stderr)
+    );
+    let prune: serde_json::Value =
+        serde_json::from_slice(&prune.stdout).expect("prune JSON");
+    assert_eq!(prune["results"][0]["action"], "deleted");
+    assert!(!database.exists());
+}
+
 #[test]
 fn setup_dry_run_reports_exact_plan_without_mutation() {
     let temp = tempfile::tempdir().expect("temporary home");
@@ -629,7 +879,9 @@ fn setup_dry_run_reports_exact_plan_without_mutation() {
     assert_eq!(report["dry_run"], true);
     assert_eq!(report["plan"][0]["client"], "codex");
     assert_eq!(report["plan"][0]["action"], "create");
-    assert_eq!(report["launcher"]["follows_latest_npm_release"], false);
+    assert_eq!(report["launcher"]["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(report["launcher"]["package"], serde_json::Value::Null);
+    assert_eq!(report["launcher"]["may_contact_network"], false);
     assert!(!temp.path().join(".codex/config.toml").exists());
 }
 
@@ -650,10 +902,11 @@ fn malformed_selected_config_blocks_all_setup_writes() {
 }
 
 #[test]
-fn npx_setup_registers_latest_release_instead_of_its_cache_path() {
+fn npx_setup_registers_exact_release_instead_of_its_cache_path() {
     let temp = tempfile::tempdir().expect("temporary home");
-    let node = temp.path().join("node");
-    let npm = temp.path().join("npm-cli.js");
+    let runtime = temp.path().join("node runtime");
+    let node = runtime.join(if cfg!(windows) { "node.exe" } else { "node" });
+    let npm = runtime.join("npm cli.js");
     let setup = Command::cargo_bin("leantoken")
         .expect("binary")
         .env("HOME", temp.path())
@@ -671,10 +924,11 @@ fn npx_setup_registers_latest_release_instead_of_its_cache_path() {
     );
     let report: serde_json::Value =
         serde_json::from_slice(&setup.stdout).expect("setup JSON output");
-    assert_eq!(
-        report["launcher"]["follows_latest_npm_release"],
-        true
-    );
+    let package = format!("leantoken@{}", env!("CARGO_PKG_VERSION"));
+    assert_eq!(report["launcher"]["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(report["launcher"]["package"], package);
+    assert_eq!(report["launcher"]["may_contact_network"], true);
+    assert!(!report.to_string().contains("@latest"));
 
     let config: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(temp.path().join(".claude.json"))
@@ -688,12 +942,59 @@ fn npx_setup_registers_latest_release_instead_of_its_cache_path() {
             npm.to_str().unwrap(),
             "exec",
             "--yes",
-            "--package=leantoken@latest",
+            format!("--package=leantoken@{}", env!("CARGO_PKG_VERSION")),
             "--",
             "leantoken",
             "mcp"
         ])
     );
+    assert!(!config.to_string().contains("@latest"));
+}
+
+#[test]
+fn setup_refresh_targets_only_existing_mcp_entries() {
+    let temp = tempfile::tempdir().expect("temporary home");
+    let node = temp.path().join("node");
+    let npm = temp.path().join("npm-cli.js");
+    let command = || {
+        let mut command = Command::cargo_bin("leantoken").expect("binary");
+        command
+            .env("HOME", temp.path())
+            .env("USERPROFILE", temp.path())
+            .env("npm_lifecycle_event", "npx")
+            .env("npm_node_execpath", &node)
+            .env("npm_execpath", &npm);
+        command
+    };
+    let setup = command()
+        .args(["--json", "setup", "--claude", "--yes"])
+        .output()
+        .expect("run initial setup");
+    assert!(setup.status.success());
+    std::fs::create_dir_all(temp.path().join(".cursor")).expect("Cursor directory");
+    std::fs::write(
+        temp.path().join(".cursor/mcp.json"),
+        "{\"mcpServers\":{\"other\":{\"command\":\"other\"}}}\n",
+    )
+    .expect("Cursor config");
+
+    let refresh = command()
+        .args(["--json", "setup", "--refresh", "--yes"])
+        .output()
+        .expect("run setup refresh");
+    assert!(
+        refresh.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&refresh.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&refresh.stdout).expect("refresh JSON output");
+    assert_eq!(report["plan"].as_array().unwrap().len(), 1);
+    assert_eq!(report["plan"][0]["client"], "claude");
+    assert_eq!(report["plan"][0]["action"], "already_current");
+    let cursor = std::fs::read_to_string(temp.path().join(".cursor/mcp.json"))
+        .expect("Cursor config after refresh");
+    assert!(!cursor.contains("\"leantoken\""));
 }
 
 #[test]
@@ -719,9 +1020,16 @@ fn npx_setup_explains_that_it_does_not_install_a_global_cli() {
     assert!(stdout.contains("LeanToken // Context Distillery"));
     assert!(stdout.contains("LeanToken is configured for 1 client."));
     assert!(stdout.contains("Restart or reload"));
-    assert!(stdout.contains("npx leantoken@latest doctor"));
+    assert!(stdout.contains(&format!(
+        "npx leantoken@{} doctor",
+        env!("CARGO_PKG_VERSION")
+    )));
     assert!(stdout.contains("no global `leantoken` command was installed"));
-    assert!(stdout.contains("npx leantoken@latest <command>"));
+    assert!(stdout.contains("npx --yes leantoken@latest setup --refresh --yes"));
+    assert!(stdout.contains(&format!(
+        "pinned to LeanToken v{}",
+        env!("CARGO_PKG_VERSION")
+    )));
     assert!(stdout.contains("npm install --global leantoken@latest"));
 }
 
@@ -758,14 +1066,25 @@ struct McpProcess {
 
 impl McpProcess {
     fn spawn(root: &std::path::Path, database: &std::path::Path) -> Self {
-        let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin!("leantoken"))
+        Self::spawn_with_args(root, database, &[])
+    }
+
+    fn spawn_with_args(
+        root: &std::path::Path,
+        database: &std::path::Path,
+        arguments: &[&str],
+    ) -> Self {
+        let mut command = std::process::Command::new(assert_cmd::cargo::cargo_bin!("leantoken"));
+        command
             .args([
                 "--root",
                 root.to_str().expect("root UTF-8"),
                 "--database",
                 database.to_str().expect("database UTF-8"),
-                "mcp",
             ])
+            .args(arguments)
+            .arg("mcp");
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -875,6 +1194,12 @@ impl McpProcess {
             self.child.kill().expect("kill MCP child");
         }
         self.child.wait().expect("join MCP child");
+    }
+
+    fn kill_now(&mut self) {
+        self.child.kill().expect("kill MCP child");
+        self.child.wait().expect("join killed MCP child");
+        self.stdin.take();
     }
 }
 

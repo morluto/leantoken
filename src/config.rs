@@ -3,6 +3,7 @@ use std::{
     time::Duration,
 };
 
+use crate::repository::DiscoveryPolicy;
 use crate::tokens::Tokenizer;
 use crate::{Error, Result};
 
@@ -11,6 +12,77 @@ pub(crate) const MAX_RESULTS: usize = 100;
 pub(crate) const DEFAULT_READ_TOKENS: usize = 8_000;
 pub(crate) const MAX_OUTPUT_TOKENS: usize = 32_000;
 pub(crate) const DEFAULT_CONTEXT_LINES: usize = 2;
+
+/// Hard repository discovery and preparation limits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiscoveryLimits {
+    /// Maximum filesystem entries yielded by one repository walk.
+    pub max_walk_entries: u64,
+    /// Maximum files admitted to one repository index.
+    pub max_files: u64,
+    /// Maximum aggregate bytes of files admitted to one repository index.
+    pub max_total_source_bytes: u64,
+    /// Maximum repository-relative depth below the root.
+    pub max_depth: usize,
+    /// Maximum bytes admitted from one file.
+    pub max_file_bytes: u64,
+    /// Maximum files scheduled in one preparation batch.
+    pub max_prepare_batch_files: usize,
+    /// Maximum discovered source bytes scheduled in one preparation batch.
+    pub max_prepare_batch_bytes: u64,
+}
+
+impl DiscoveryLimits {
+    /// Default maximum filesystem entries yielded by one walk.
+    pub const DEFAULT_MAX_WALK_ENTRIES: u64 = 500_000;
+    /// Default maximum admitted source files.
+    pub const DEFAULT_MAX_FILES: u64 = 150_000;
+    /// Default maximum aggregate admitted source bytes.
+    pub const DEFAULT_MAX_TOTAL_SOURCE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+    /// Default maximum repository-relative depth.
+    pub const DEFAULT_MAX_DEPTH: usize = 64;
+    /// Default maximum bytes admitted from one file.
+    pub const DEFAULT_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+    /// Default maximum files scheduled in one preparation batch.
+    pub const DEFAULT_MAX_PREPARE_BATCH_FILES: usize = 256;
+    /// Default maximum source bytes scheduled in one preparation batch.
+    pub const DEFAULT_MAX_PREPARE_BATCH_BYTES: u64 = 64 * 1024 * 1024;
+
+    pub(crate) fn validate(self) -> Result<()> {
+        if self.max_walk_entries == 0
+            || self.max_files == 0
+            || self.max_total_source_bytes == 0
+            || self.max_depth == 0
+            || self.max_file_bytes == 0
+            || self.max_prepare_batch_files == 0
+            || self.max_prepare_batch_bytes == 0
+        {
+            return Err(Error::InvalidConfiguration(
+                "repository discovery limits must be positive".into(),
+            ));
+        }
+        if self.max_prepare_batch_bytes < self.max_file_bytes {
+            return Err(Error::InvalidConfiguration(
+                "max_prepare_batch_bytes must be at least max_file_bytes".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for DiscoveryLimits {
+    fn default() -> Self {
+        Self {
+            max_walk_entries: Self::DEFAULT_MAX_WALK_ENTRIES,
+            max_files: Self::DEFAULT_MAX_FILES,
+            max_total_source_bytes: Self::DEFAULT_MAX_TOTAL_SOURCE_BYTES,
+            max_depth: Self::DEFAULT_MAX_DEPTH,
+            max_file_bytes: Self::DEFAULT_MAX_FILE_BYTES,
+            max_prepare_batch_files: Self::DEFAULT_MAX_PREPARE_BATCH_FILES,
+            max_prepare_batch_bytes: Self::DEFAULT_MAX_PREPARE_BATCH_BYTES,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 /// Resolved repository paths and bounded runtime defaults.
@@ -22,8 +94,22 @@ pub struct Config {
     /// Whether LeanToken owns this cache file and may rebuild it after
     /// confirmed SQLite corruption.
     pub(crate) database_is_managed_cache: bool,
+    /// Maximum filesystem entries yielded by one repository walk.
+    pub max_walk_entries: u64,
+    /// Maximum files admitted to one repository index.
+    pub max_files: u64,
+    /// Maximum aggregate bytes admitted to one repository index.
+    pub max_total_source_bytes: u64,
+    /// Maximum repository-relative depth below the root.
+    pub max_depth: usize,
     /// Largest file admitted to the index.
     pub max_file_bytes: u64,
+    /// Maximum files scheduled in one preparation batch.
+    pub max_prepare_batch_files: usize,
+    /// Maximum discovered source bytes scheduled in one preparation batch.
+    pub max_prepare_batch_bytes: u64,
+    /// Whether known generated and package-cache trees are indexed.
+    pub include_generated: bool,
     /// Default number of returned results.
     pub default_results: usize,
     /// Maximum number of returned results.
@@ -91,7 +177,14 @@ impl Config {
             root,
             database_path,
             database_is_managed_cache,
-            max_file_bytes: 2 * 1024 * 1024,
+            max_walk_entries: DiscoveryLimits::DEFAULT_MAX_WALK_ENTRIES,
+            max_files: DiscoveryLimits::DEFAULT_MAX_FILES,
+            max_total_source_bytes: DiscoveryLimits::DEFAULT_MAX_TOTAL_SOURCE_BYTES,
+            max_depth: DiscoveryLimits::DEFAULT_MAX_DEPTH,
+            max_file_bytes: DiscoveryLimits::DEFAULT_MAX_FILE_BYTES,
+            max_prepare_batch_files: DiscoveryLimits::DEFAULT_MAX_PREPARE_BATCH_FILES,
+            max_prepare_batch_bytes: DiscoveryLimits::DEFAULT_MAX_PREPARE_BATCH_BYTES,
+            include_generated: false,
             default_results: DEFAULT_RESULTS,
             max_results: MAX_RESULTS,
             default_read_tokens: DEFAULT_READ_TOKENS,
@@ -114,18 +207,45 @@ impl Config {
         self.is_database_artifact_path(&self.root.join(relative_path))
     }
 
+    /// Return one immutable snapshot of repository discovery limits.
+    #[must_use]
+    pub fn discovery_limits(&self) -> DiscoveryLimits {
+        DiscoveryLimits {
+            max_walk_entries: self.max_walk_entries,
+            max_files: self.max_files,
+            max_total_source_bytes: self.max_total_source_bytes,
+            max_depth: self.max_depth,
+            max_file_bytes: self.max_file_bytes,
+            max_prepare_batch_files: self.max_prepare_batch_files,
+            max_prepare_batch_bytes: self.max_prepare_batch_bytes,
+        }
+    }
+
+    /// Return one immutable repository visibility policy.
+    #[must_use]
+    pub fn discovery_policy(&self) -> DiscoveryPolicy {
+        DiscoveryPolicy::new(self.include_generated)
+    }
+
     #[must_use]
     pub(crate) fn is_database_artifact_path(&self, candidate: &Path) -> bool {
         if candidate == self.database_path {
             return true;
         }
-        ["-wal", "-shm", ".leader.lock", ".index.lock", ".init.lock"]
-            .into_iter()
-            .any(|suffix| {
-                let mut sidecar = self.database_path.as_os_str().to_os_string();
-                sidecar.push(suffix);
-                candidate.as_os_str() == sidecar
-            })
+        [
+            "-wal",
+            "-shm",
+            ".lease.lock",
+            ".leader.lock",
+            ".index.lock",
+            ".init.lock",
+        ]
+        .into_iter()
+        .any(|suffix| {
+            let mut sidecar = self.database_path.as_os_str().to_os_string();
+            sidecar.push(suffix);
+            candidate.as_os_str() == sidecar
+        })
     }
 }
 
@@ -168,13 +288,18 @@ fn canonicalize_database_path(path: PathBuf) -> PathBuf {
     }
 }
 
+pub(crate) fn managed_cache_root() -> Option<PathBuf> {
+    directories::ProjectDirs::from("dev", "LeanToken", "leantoken")
+        .map(|project_dirs| project_dirs.cache_dir().to_path_buf())
+}
+
+pub(crate) fn managed_cache_id(root: &Path) -> String {
+    blake3::hash(root.to_string_lossy().as_bytes()).to_hex()[..16].to_string()
+}
+
 fn default_database_path(root: &Path) -> PathBuf {
-    let root_hash = blake3::hash(root.to_string_lossy().as_bytes()).to_hex();
-    if let Some(project_dirs) = directories::ProjectDirs::from("dev", "LeanToken", "leantoken") {
-        return project_dirs
-            .cache_dir()
-            .join(&root_hash.as_str()[..16])
-            .join("index.sqlite");
+    if let Some(cache_root) = managed_cache_root() {
+        return cache_root.join(managed_cache_id(root)).join("index.sqlite");
     }
     root.join(".leantoken").join("index.sqlite")
 }

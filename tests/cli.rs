@@ -257,6 +257,7 @@ fn cli_setup_and_remove_select_clients() {
         vec![SetupClient::Claude, SetupClient::Codex]
     );
     assert!(!request.all);
+    assert!(!request.refresh);
     assert!(request.yes);
     assert!(!request.dry_run);
 
@@ -266,6 +267,7 @@ fn cli_setup_and_remove_select_clients() {
     };
     assert!(request.clients.is_empty());
     assert!(request.all);
+    assert!(!request.refresh);
     assert!(request.yes);
 
     let cli = parse(&["setup", "--cursor", "--dry-run"]);
@@ -274,6 +276,15 @@ fn cli_setup_and_remove_select_clients() {
     };
     assert_eq!(request.clients, vec![SetupClient::Cursor]);
     assert!(request.dry_run);
+
+    let cli = parse(&["setup", "--refresh", "--yes"]);
+    let AppRequest::Setup(request) = cli.app_request() else {
+        panic!("expected setup request");
+    };
+    assert!(request.clients.is_empty());
+    assert!(!request.all);
+    assert!(request.refresh);
+    assert!(request.yes);
 }
 
 #[test]
@@ -301,6 +312,42 @@ fn cli_update_and_upgrade_are_aliases() {
 }
 
 #[test]
+fn cli_cache_commands_resolve_without_repository_configuration() {
+    assert!(matches!(
+        parse(&["cache", "list"]).app_request(),
+        AppRequest::CacheList
+    ));
+
+    let request = parse(&[
+        "cache",
+        "prune",
+        "--older-than",
+        "30",
+        "--max-total-bytes",
+        "1048576",
+        "--remove-missing-roots",
+        "--dry-run",
+    ])
+    .app_request();
+    let AppRequest::CachePrune(request) = request else {
+        panic!("expected cache prune request");
+    };
+    assert_eq!(request.older_than_days, Some(30));
+    assert_eq!(request.max_total_bytes, Some(1_048_576));
+    assert!(request.remove_missing_roots);
+    assert!(request.dry_run);
+    assert!(!request.yes);
+
+    let AppRequest::CachePrune(zero_budget) =
+        parse(&["cache", "prune", "--max-total-bytes", "0", "--dry-run"])
+            .app_request()
+    else {
+        panic!("expected zero-budget cache prune request");
+    };
+    assert_eq!(zero_budget.max_total_bytes, Some(0));
+}
+
+#[test]
 fn cli_global_root_and_database_options() {
     let root = tempfile::tempdir().unwrap();
     let db = root.path().join("custom.sqlite");
@@ -318,6 +365,21 @@ fn cli_global_root_and_database_options() {
         root.path().canonicalize().unwrap().join("custom.sqlite")
     );
     assert!(!cli.allow_broad_root);
+    assert!(!cli.include_generated);
+}
+
+#[test]
+fn cli_generated_tree_override_is_explicit_and_global() {
+    let root = tempfile::tempdir().expect("root");
+    let cli = parse(&[
+        "status",
+        "--root",
+        root.path().to_str().expect("root UTF-8"),
+        "--include-generated",
+    ]);
+
+    assert!(cli.include_generated);
+    assert!(cli.config().expect("config").include_generated);
 }
 
 #[test]
@@ -336,4 +398,64 @@ fn cli_broad_root_override_is_explicit_and_global() {
 
     assert!(cli.allow_broad_root);
     assert_eq!(cli.config().expect("explicit override").root, home);
+}
+
+#[test]
+fn cli_discovery_limits_are_explicit_positive_global_options() {
+    let root = tempfile::tempdir().expect("root");
+    let cli = parse(&[
+        "status",
+        "--root",
+        root.path().to_str().expect("root UTF-8"),
+        "--max-walk-entries",
+        "101",
+        "--max-files",
+        "102",
+        "--max-total-source-bytes",
+        "103",
+        "--max-depth",
+        "4",
+        "--max-file-bytes",
+        "5",
+        "--max-prepare-batch-files",
+        "6",
+        "--max-prepare-batch-bytes",
+        "7",
+    ]);
+
+    let limits = cli.config().expect("configured limits").discovery_limits();
+    assert_eq!(limits.max_walk_entries, 101);
+    assert_eq!(limits.max_files, 102);
+    assert_eq!(limits.max_total_source_bytes, 103);
+    assert_eq!(limits.max_depth, 4);
+    assert_eq!(limits.max_file_bytes, 5);
+    assert_eq!(limits.max_prepare_batch_files, 6);
+    assert_eq!(limits.max_prepare_batch_bytes, 7);
+}
+
+#[test]
+fn cli_discovery_limits_reject_zero_and_inconsistent_batches() {
+    for flag in [
+        "--max-walk-entries",
+        "--max-files",
+        "--max-total-source-bytes",
+        "--max-depth",
+        "--max-file-bytes",
+        "--max-prepare-batch-files",
+        "--max-prepare-batch-bytes",
+    ] {
+        assert!(
+            Cli::try_parse_from(["leantoken", "status", flag, "0"]).is_err(),
+            "{flag} accepted zero"
+        );
+    }
+
+    let cli = parse(&[
+        "status",
+        "--max-file-bytes",
+        "8",
+        "--max-prepare-batch-bytes",
+        "7",
+    ]);
+    assert!(cli.config().is_err());
 }

@@ -34,7 +34,9 @@ ignore-aware discovery -> chunking -> tree-sitter extraction
 - The MCP adapter owns SDK types, protocol error translation, cancellation, and
   stdio lifecycle. It omits optional output schemas from the catalog and offers
   explicit dual, text-only, and structured-only result modes. Dual remains the
-  compatibility default.
+  compatibility default. Protocol errors cross an explicit allowlist: clients
+  receive fixed safe messages and stable category data, while path-bearing and
+  infrastructure details remain in stderr diagnostics.
 
 LeanToken does not implement JSON-RPC framing or MCP dispatch. Those remain in
 the official Rust MCP SDK.
@@ -70,10 +72,14 @@ database, lock, watcher, worker, and failure domains. Multiple agents on one
 repository intentionally share the same cache and committed generations.
 
 One repository-scoped operation lock serializes reconciliation across processes.
-File preparation happens outside SQLite, then an immediate write transaction
-verifies that the generation and config used to build the plan are still
-current. A stale plan is discarded and recomputed. Replacements, deletions, and
-generation advancement then commit together.
+Discovery, hashing, and membership planning happen before publication. An
+immediate write transaction then verifies that the generation and config used
+to build the plan are still current. A stale plan is discarded and recomputed.
+Each file- and byte-bounded Rayon batch is prepared, resolved, and inserted into
+that one uncommitted transaction before its memory is released. A later parse,
+storage, or cancellation error rolls back every earlier batch. Replacements,
+deletions, and generation advancement become visible together at the final
+commit.
 
 Each multi-step retrieval (search, context, outline, files, read) opens one
 checked-out read-only connection from an established, bounded `r2d2_sqlite`
@@ -134,6 +140,22 @@ generation. Changes written concurrently may require a later request.
 Discovery follows Git-compatible ignore rules, skips symlinks and oversized or
 binary files, and normalizes indexed paths to forward slashes. Text files are
 hashed, chunked on UTF-8 boundaries, and parsed in a bounded Rayon pool.
+The ignore-aware walker counts every yielded file, directory, and error entry,
+then separately counts admitted files and their aggregate metadata bytes. It
+fails on the first configured entry, file, byte, or depth limit violation rather
+than returning partial membership. Preparation scheduling is additionally
+bounded by file and byte batch limits. All discovery limits participate in the
+index configuration hash, so changing them forces a complete atomic
+reconciliation before the new policy is recorded.
+
+One repository-owned discovery policy configures full walks, visibility
+fallbacks, and watcher intake. It retains hidden source/configuration paths,
+loads nested `.leantokenignore` files above `.gitignore` and `.ignore` in rule
+precedence, and prunes a conservative set of generated and package-cache
+directories before descending. The explicit include-generated setting disables
+only that built-in pruning and participates in the index configuration hash.
+Watcher callbacks apply the same built-in policy before enqueueing raw events,
+while ignore-control changes remain visible and trigger bounded full discovery.
 
 Canonical filesystem roots, the current user's home directory, and ancestors of
 that home directory are rejected before cache or watcher initialization unless
@@ -154,6 +176,25 @@ locked results are retried with bounded backoff and caller-owned cancellation;
 terminal startup failures move MCP tools to an unavailable state. The stdio
 adapter supervises the indexing runtime for the lifetime of the connection, so
 an unexpected runtime exit cannot leave tools permanently reporting startup.
+Index limit violations are terminal configuration failures: the leader shuts
+down its watcher, releases leadership, and moves MCP tools to unavailable
+without periodic retries. A restart with a narrower root or adjusted limits is
+required.
+
+Schema v5 records a Unix last-access timestamp when a repository is bound during
+service startup; retrieval calls do not turn every read into a metadata write.
+Central cache inspection opens SQLite read-only and falls back to direct artifact
+mtime for corrupt, incomplete, or older-schema entries.
+
+Every service instance acquires a shared cache lease before initialization and
+keeps it through all clones. Explicit pruning requires the exclusive lease, so
+active leaders and read-only followers are both protected rather than relying on
+the shorter leadership or operation locks. The lease identity remains after
+large cache artifacts and coordination sidecars are removed; replacing or
+unlinking the lock itself would let a returning process lock a different inode.
+Only strict hash directories under the platform-managed cache root participate;
+unexpected directory content and explicit databases outside that root fail
+closed from automatic deletion.
 
 MCP processes sharing one cache compete for a repository-scoped leadership
 lock. The leader alone owns automatic indexing and one filesystem watcher;
@@ -163,11 +204,21 @@ process under the shared operation lock. Followers retry leadership
 periodically, so an operating-system lock release after process exit provides
 failover without a PID lease or stale-lock cleanup.
 
-The leader registers its watcher before the initial reconciliation. Events that
-arrive during discovery or parsing remain queued and are applied after the
-commit, closing the startup event gap without an unconditional second full
-walk. Later events are debounced and coalesced; ambiguous rename sequences,
-backend rescan requests, and queue overflow request a full reconciliation.
+The leader registers its watcher before the initial reconciliation, preserving
+the startup event-gap guarantee. The automatic-indexing runtime uses a
+single-slot public queue; raw events, retained paths, and incomplete rename
+cookies have separate hard bounds. Overflow or ambiguity discards detailed
+path state in favor of one sticky full-reconciliation request, so a long initial
+scan cannot accumulate an unbounded event backlog.
+
+After any scan, queued messages drain into one bounded scheduler state. Path
+changes deduplicate and wait for the configured quiet period. Ambiguous rename
+sequences, backend rescan requests, public queue overflow, or scheduler path
+overflow upgrade that state to one full reconciliation. Consecutive full scans
+use a capped exponential cooldown, while transient reconciliation failures
+retain the same pending work under a separate capped exponential retry. Root,
+limit, repository-binding, and configuration failures are terminal and stop
+the indexing runtime instead of entering either retry loop.
 
 For existing regular files, the watcher reconciles only the reported paths.
 New paths, directory changes, symlinks, ignore-file changes, configuration

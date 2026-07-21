@@ -9,7 +9,8 @@ use crate::{Error, Result};
 pub(super) struct McpLauncher {
     command: PathBuf,
     pub(super) args: Vec<String>,
-    uses_npx: bool,
+    version: String,
+    npm_package: Option<String>,
 }
 
 impl McpLauncher {
@@ -32,12 +33,21 @@ impl McpLauncher {
         Self {
             command: executable.into(),
             args: vec!["mcp".into()],
-            uses_npx: false,
+            version: env!("CARGO_PKG_VERSION").into(),
+            npm_package: None,
         }
     }
 
     pub(super) fn uses_npx(&self) -> bool {
-        self.uses_npx
+        self.npm_package.is_some()
+    }
+
+    pub(super) fn version(&self) -> &str {
+        &self.version
+    }
+
+    pub(super) fn npm_package(&self) -> Option<&str> {
+        self.npm_package.as_deref()
     }
 
     pub(super) fn command(&self) -> Result<&str> {
@@ -47,6 +57,14 @@ impl McpLauncher {
     }
 
     fn from_npx_paths(node: &Path, npm: &Path) -> Result<Self> {
+        Self::from_npx_paths_with_version(node, npm, env!("CARGO_PKG_VERSION"))
+    }
+
+    pub(super) fn from_npx_paths_with_version(
+        node: &Path,
+        npm: &Path,
+        version: &str,
+    ) -> Result<Self> {
         if !node.is_absolute() || !npm.is_absolute() {
             return Err(Error::InvalidRequest(
                 "npx reported a relative Node or npm CLI path".into(),
@@ -55,18 +73,20 @@ impl McpLauncher {
         let npm = npm
             .to_str()
             .ok_or_else(|| Error::InvalidRequest("npm CLI path is not UTF-8".into()))?;
+        let package = format!("leantoken@{version}");
         Ok(Self {
             command: node.into(),
             args: vec![
                 npm.into(),
                 "exec".into(),
                 "--yes".into(),
-                "--package=leantoken@latest".into(),
+                format!("--package={package}"),
                 "--".into(),
                 "leantoken".into(),
                 "mcp".into(),
             ],
-            uses_npx: true,
+            version: version.into(),
+            npm_package: Some(package),
         })
     }
 }
@@ -76,12 +96,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn npx_launcher_requests_latest_release_without_using_cache_path() {
+    fn npx_launcher_pins_exact_release_without_using_cache_path() {
         let root = if cfg!(windows) { r"C:\npm" } else { "/npm" };
+        let version = "1.2.3";
         assert_eq!(
-            McpLauncher::from_npx_paths(
+            McpLauncher::from_npx_paths_with_version(
                 &Path::new(root).join("node"),
                 &Path::new(root).join("npm-cli.js"),
+                version,
             )
             .unwrap(),
             McpLauncher {
@@ -93,13 +115,33 @@ mod tests {
                         .into_owned(),
                     "exec".into(),
                     "--yes".into(),
-                    "--package=leantoken@latest".into(),
+                    "--package=leantoken@1.2.3".into(),
                     "--".into(),
                     "leantoken".into(),
                     "mcp".into(),
                 ],
-                uses_npx: true,
+                version: version.into(),
+                npm_package: Some("leantoken@1.2.3".into()),
             }
         );
+    }
+
+    #[test]
+    fn npx_launcher_preserves_paths_with_spaces_as_distinct_arguments() {
+        let root = if cfg!(windows) {
+            Path::new(r"C:\Program Files\nodejs")
+        } else {
+            Path::new("/opt/node runtime")
+        };
+        let launcher = McpLauncher::from_npx_paths_with_version(
+            &root.join("node"),
+            &root.join("npm cli.js"),
+            "1.2.3",
+        )
+        .unwrap();
+
+        assert_eq!(launcher.command, root.join("node"));
+        assert_eq!(launcher.args[0], root.join("npm cli.js").to_string_lossy());
+        assert_eq!(launcher.args[3], "--package=leantoken@1.2.3");
     }
 }

@@ -476,10 +476,17 @@ impl Services {
         diagnostics: CandidateDiagnostics,
     ) -> Result<ContextEvaluation> {
         check_cancelled(cancellation)?;
-        if request.task.trim().is_empty() || request.token_budget == 0 {
-            return Err(Error::InvalidRequest(
-                "context requires a task and positive token budget".into(),
-            ));
+        if request.task.trim().is_empty() {
+            return Err(Error::InvalidInput {
+                field: "task",
+                reason: "must not be empty",
+            });
+        }
+        if request.token_budget == 0 {
+            return Err(Error::InvalidInput {
+                field: "token budget",
+                reason: "must be positive",
+            });
         }
         validate_input(&request.task, "task", MAX_QUERY_BYTES)?;
         validate_patterns(&request.focus_paths)?;
