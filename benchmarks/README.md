@@ -258,6 +258,18 @@ on public, consumed tasks, not Gate B or evidence for a product change. See
 [`../docs/measurement.md`](../docs/measurement.md) for the complete metric and
 failure interpretation.
 
+The follow-up [trajectory controls](model_ab_trajectory_v1.json) and
+[redacted classification](reports/model-ab-trajectory-v1.json) replay 55
+hash-bound artifacts from that experiment. Progressive retrieval reduced
+median retrieval calls, source tokens, and broad reads, but fell from 6/9 to
+4/9 validated successes and increased median overlapping rereads from 2 to
+5.5. None of the runs used `expected_hash` or `known_hashes`. Seven prewalk
+artifacts transferred grounded evidence and a validated first edit; the four
+with observable executor trajectories made zero post-handoff retrieval calls,
+while three executor failures remain unknown. The post-hoc decision is
+`no_go`: no tool-description, receipt, next-action, or session-state change is
+authorized.
+
 ### Frozen multilingual Gate A runner
 
 `swe_bench_multilingual_gate` is the one-shot bridge from the sealed

@@ -418,6 +418,72 @@ not Gate B, does not establish population performance, and does not authorize a
 ranking, default-mode, or product-promotion change. The one-shot and prewalk
 results are secondary mechanism diagnostics only.
 
+### Published trajectory classification
+
+The post-hoc classifier in `examples/model_ab_trajectory.rs` replays the v2 raw
+report and its hash-bound artifacts without contacting a model. Its portable
+controls are in
+[`../benchmarks/model_ab_trajectory_v1.json`](../benchmarks/model_ab_trajectory_v1.json),
+and the redacted result is
+[`../benchmarks/reports/model-ab-trajectory-v1.json`](../benchmarks/reports/model-ab-trajectory-v1.json).
+The report binds the release classifier binary and source, classifier manifest,
+raw report, model experiment manifest, dataset, and 55 trajectory artifacts.
+Two release executions from the committed classifier produced identical report
+bytes.
+
+The classifier records discovery order, retrieval tokens, broad and whole-file
+reads, exact and overlapping ranges, failed-discovery episodes and recovery,
+gold-patch-path dead ends and recovery, hash reuse, repository-generation
+changes, first edits, and handoff reuse. A broad read is at least 400 lines, or
+at least 200 lines covering half of a file. Whole/broad counts apply only to
+native reads and LeanToken `read`/`context`, not `files`, `search`, or `outline`.
+A dead-end recovery requires a later retrieval call to touch a path changed by
+the official patch or test patch after a call whose ranges were all outside
+that set.
+
+| Arm | Classified | Success | Median retrieval calls | Median source tokens | Median whole / broad | Median exact / overlap rereads | Median failed discovery | Median dead-end tokens |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Filesystem | 9/9 | 6/9 | 26 | 23,696 | 2 / 1 | 0 / 2 | 0 | 0 |
+| LeanToken progressive | 8/9 | 4/9 | 20.5 | 8,067.5 | 0 / 0 | 0 / 5.5 | 2 | 2,488 |
+| LeanToken one-shot | 3/9 | 0/9 | 1 | 871 | 1 / 0 | 0 / 0 | 0 | 206 |
+| Prewalk + executor | 7/9 | 3/9 | 8 | 4,593 | 0 / 0 | 0 / 4 | 0 | 1,222 |
+
+Progressive retrieval used fewer median retrieval/source tokens and avoided
+broad reads, but it also produced fewer officially validated successes than
+filesystem, 4 versus 6, and more overlapping rereads. Its eight classified
+runs contained 35 failed discovery calls, including 23 retryable results,
+versus five and zero for filesystem. No arm supplied `expected_hash` or
+`known_hashes`, so the experiment contains no evidence that hash reuse changes
+behavior. Progressive and prewalk observed 11 and five repository-generation
+changes respectively, with no stale-index result.
+
+Seven prewalk artifacts contain a bounded todo and first validated edit. Four
+also retain the executor trajectory, and all four show zero executor retrieval
+calls after the phase boundary. Three jq executor adapter failures retain only
+the primary handoff, so their executor behavior is `null`, not zero. This is
+mechanism evidence that the observed executors consumed transferred state, but
+the prewalk arm also changes executor model and cannot establish a controlled
+quality gain.
+
+The decision is therefore `no_go`: do not change tool descriptions, add receipt
+fields, add a runtime next-action field, or introduce server-side session state
+from these traces. The analysis was defined after the underlying runs, uses
+public consumed tasks, and labels dead ends by official changed paths. Native
+mixed-command token and range attribution is a lower bound. A future positive
+claim requires a preregistered comparison that holds model, tasks, revisions,
+and tool limits fixed while varying only the proposed description or receipt.
+
+With the private hash-bound inputs in the paths declared by the manifest,
+reproduce the classification with:
+
+```bash
+cargo build --release --example model_ab_trajectory
+
+target/release/examples/model_ab_trajectory \
+  --manifest benchmarks/model_ab_trajectory_v1.json \
+  --output target/model-ab-trajectory-v1.json
+```
+
 ## Multi-agent context pilot
 
 `multi_agent_context_pilot.json` freezes a small read-only Codex experiment for
