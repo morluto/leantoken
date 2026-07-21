@@ -885,8 +885,8 @@ mod tests {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let bytes = fs::read(root.join("benchmarks/reports/wire-trace-codex-cli-0.144.1.json"))
             .expect("wire evidence");
-        let canonical = canonical_json_artifact(bytes.clone()).expect("canonical evidence");
-        let crlf = String::from_utf8(bytes)
+        let canonical = canonical_json_artifact(bytes).expect("canonical evidence");
+        let crlf = String::from_utf8(canonical.clone())
             .expect("UTF-8 evidence")
             .replace('\n', "\r\n")
             .into_bytes();
