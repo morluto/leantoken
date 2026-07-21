@@ -405,6 +405,19 @@ Cursor, Gemini CLI, and OpenCode were unavailable in the audit environment and
 therefore remain unknown rather than zero. The evidence is not broad enough to
 change the global `dual` default.
 
+The frozen
+[`mcp-response-ablation-v1`](mcp_response_ablation.json) experiment and its
+[2026-07-21 report](reports/mcp-response-ablation-v1-2026-07-21.md) then compare
+12 response and catalog representations against that compatibility matrix.
+The one new runtime change omits the internal task fingerprint from the
+serialized receipt: response JSON falls from 549 to 531 exact local tokens and
+the complete modeled dual handoff from 3,824 to 3,785. The fixed follow-up adds
+no exact resend or overlapping source relative to baseline. Larger candidates
+that remove freshness, range, deduplication, or model-readable metadata are
+rejected; structured-only remains a Codex CLI 0.144.1 opt-in and `dual` remains
+the global default. Provider-native values remain null because the available
+receipts do not expose an attributable provider request frame.
+
 The separate
 [`multi_agent_context_pilot.json`](multi_agent_context_pilot.json) manifest and
 [`run_multi_agent_context_pilot.sh`](run_multi_agent_context_pilot.sh) runner

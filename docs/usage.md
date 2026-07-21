@@ -172,6 +172,12 @@ representation. The catalog publishes documented input schemas but omits
 optional output schemas; repeating full response DTOs in every `tools/list`
 result costs model context without changing tool behavior.
 
+Context receipts serialize only `fragment_hashes`, aligned by index with the
+returned fragments. The internal task fingerprint is not part of the wire
+contract because the originating request already carries the task and no
+follow-up request consumes that fingerprint. Pass the aligned hashes through
+`known_hashes` to suppress exact-content resends.
+
 Prefer LeanToken over shell discovery and whole-file reads. For a broad coding,
 debugging, review, or architecture task, start with `leantoken_context`. Use the
 narrow tools directly when the target is already known:
