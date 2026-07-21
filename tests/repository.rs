@@ -654,6 +654,7 @@ fn git_diff_paths_includes_working_tree_changes() {
 
     fs::write(root.path().join("uncommitted.rs"), "fn uncommitted() {}
 ").expect("write");
+    run_git(root.path(), &["add", "uncommitted.rs"]);
     let result = git_diff_paths(root.path(), &base_sha, 64).expect("diff paths");
     assert!(result.changed_paths.contains(&"uncommitted.rs".to_owned()));
 }
