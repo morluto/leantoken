@@ -109,8 +109,14 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
   of failing retrieval. File modification time is not used as a recency proxy
   because fresh checkouts make it misleading.
 - Keep the existing bounded import-neighbor signal visible by representation.
-  Do not add call-path output until labeled precision and its protocol cost beat
-  lexical retrieval on a holdout.
+  The frozen eight-task development ablation produced no corroborated import
+  candidates. Reverse dependency changed no file or line recall and only 2/17
+  signal candidate files were relevant. Parsed caller candidates gained one
+  line anchor, but only 8/135 candidate files were relevant and complete
+  response cost increased by 1,068 tokens. Retain no new reverse-dependency or
+  caller boost and expose no graph metadata. Reconsider only with newly frozen
+  evidence that beats lexical retrieval on the same recall, dead-end, complete
+  response, and precision gates.
 - Do not add a hot-file cache yet. The release profile measured warm live reads
   in tens of microseconds on this host; cache ownership, invalidation, and
   memory cost need end-to-end evidence first.
