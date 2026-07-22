@@ -51,6 +51,14 @@ operation is active, so a cold idle repository reports
 exits with guidance to run `leantoken index`; use `leantoken doctor` to verify
 the complete MCP startup and first-retrieval flow.
 
+Index responses retain the aggregate `files_skipped` count and explain it with
+the bounded `skip_reasons` object: `binary`, `oversized_during_read`, and
+`failed`. These counts cover files admitted for preparation and always sum to
+`files_skipped`. No per-file skip list is returned; bounded failure warnings may
+still identify files that could not be read. Files excluded by repository
+discovery before admission are not part of `files_seen`, `files_skipped`, or the
+reason counts.
+
 ## MCP setup and version lifecycle
 
 Setup writes only the `leantoken` entry in each selected global client config.

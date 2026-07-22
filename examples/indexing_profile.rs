@@ -1123,6 +1123,7 @@ mod tests {
                     files_unchanged: 1,
                     files_removed: 0,
                     files_skipped: 0,
+                    skip_reasons: Default::default(),
                     warnings: Vec::new(),
                 })
             },

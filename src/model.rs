@@ -457,6 +457,27 @@ pub struct ContextCandidateEvaluation {
     pub token_count: usize,
 }
 
+/// Bounded aggregate counts for files skipped during index preparation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct IndexSkipReasonCounts {
+    /// Files detected as binary during preparation.
+    pub binary: usize,
+    /// Files admitted by discovery that exceeded the byte limit before reading completed.
+    pub oversized_during_read: usize,
+    /// Files whose preparation failed before searchable content could be produced.
+    pub failed: usize,
+}
+
+impl IndexSkipReasonCounts {
+    /// Return the total number of preparation skips across every public reason.
+    #[must_use]
+    pub fn total(&self) -> usize {
+        self.binary
+            .saturating_add(self.oversized_during_read)
+            .saturating_add(self.failed)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IndexResponse {
     pub repository_generation: u64,
@@ -465,6 +486,9 @@ pub struct IndexResponse {
     pub files_unchanged: usize,
     pub files_removed: usize,
     pub files_skipped: usize,
+    /// Aggregate preparation skip counts whose sum equals `files_skipped`.
+    #[serde(default)]
+    pub skip_reasons: IndexSkipReasonCounts,
     pub warnings: Vec<String>,
 }
 
@@ -500,6 +524,48 @@ fn source_representation() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn index_response_defaults_legacy_skip_reasons_and_serializes_reason_counts() {
+        let legacy: IndexResponse = serde_json::from_value(serde_json::json!({
+            "repository_generation": 1,
+            "files_seen": 2,
+            "files_indexed": 1,
+            "files_unchanged": 0,
+            "files_removed": 0,
+            "files_skipped": 1,
+            "warnings": []
+        }))
+        .expect("deserialize legacy index response");
+        assert_eq!(legacy.skip_reasons, IndexSkipReasonCounts::default());
+
+        let skip_reasons = IndexSkipReasonCounts {
+            binary: 1,
+            oversized_during_read: 2,
+            failed: 3,
+        };
+        let response = IndexResponse {
+            repository_generation: 2,
+            files_seen: 7,
+            files_indexed: 1,
+            files_unchanged: 0,
+            files_removed: 2,
+            files_skipped: skip_reasons.total(),
+            skip_reasons,
+            warnings: vec!["failed preparation".into()],
+        };
+        let value = serde_json::to_value(response).expect("serialize index response");
+
+        assert_eq!(value["files_skipped"], 6);
+        assert_eq!(
+            value["skip_reasons"],
+            serde_json::json!({
+                "binary": 1,
+                "oversized_during_read": 2,
+                "failed": 3
+            })
+        );
+    }
 
     #[test]
     fn status_response_serializes_readiness_independently_from_freshness() {

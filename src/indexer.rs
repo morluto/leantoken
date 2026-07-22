@@ -11,7 +11,7 @@ use rayon::prelude::*;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::RetryableOperation;
-use crate::model::IndexResponse;
+use crate::model::{IndexResponse, IndexSkipReasonCounts};
 use crate::parser::{self, ParseOutput};
 use crate::repository::{
     DiscoveredFile, discover_files_with_limits_policy_and_filter, enforce_limit, slash_path,
@@ -237,6 +237,15 @@ impl Indexer {
         rebuild: bool,
         cancellation: &CancellationToken,
     ) -> Result<ProfiledIndexResponse> {
+        self.reconcile_once_with_preparation_hook(rebuild, cancellation, || {})
+    }
+
+    fn reconcile_once_with_preparation_hook(
+        &self,
+        rebuild: bool,
+        cancellation: &CancellationToken,
+        before_preparation: impl FnOnce(),
+    ) -> Result<ProfiledIndexResponse> {
         let total_started = Instant::now();
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
@@ -304,8 +313,9 @@ impl Indexer {
 
         let mut removed_paths = deletions.into_iter().collect::<HashSet<_>>();
         let mut warnings = Vec::new();
-        let mut skipped = 0usize;
+        let mut skip_reasons = IndexSkipReasonCounts::default();
         let mut files_indexed = 0usize;
+        before_preparation();
         let publication_started = Instant::now();
         let (generation, preparation) =
             self.storage
@@ -324,8 +334,17 @@ impl Indexer {
                                         push_warning(&mut warnings, warning);
                                     }
                                 }
-                                PreparedFile::Binary(path) | PreparedFile::Oversized(path) => {
-                                    skipped += 1;
+                                PreparedFile::Binary(path) => {
+                                    skip_reasons.binary = skip_reasons.binary.saturating_add(1);
+                                    if existing.contains_key(&path)
+                                        && removed_paths.insert(path.clone())
+                                    {
+                                        writer.delete(&path)?;
+                                    }
+                                }
+                                PreparedFile::Oversized(path) => {
+                                    skip_reasons.oversized_during_read =
+                                        skip_reasons.oversized_during_read.saturating_add(1);
                                     if existing.contains_key(&path)
                                         && removed_paths.insert(path.clone())
                                     {
@@ -333,7 +352,7 @@ impl Indexer {
                                     }
                                 }
                                 PreparedFile::Failed(path, error) => {
-                                    skipped += 1;
+                                    skip_reasons.failed = skip_reasons.failed.saturating_add(1);
                                     push_warning(&mut warnings, format!("{path}: {error}"));
                                 }
                             }
@@ -352,6 +371,7 @@ impl Indexer {
         check_cancelled(cancellation)?;
         let files_seen = unchanged + candidates.len();
         let files_removed = removed_paths.len();
+        let files_skipped = skip_reasons.total();
 
         let response = IndexResponse {
             repository_generation: generation,
@@ -359,7 +379,8 @@ impl Indexer {
             files_indexed,
             files_unchanged: unchanged,
             files_removed,
-            files_skipped: skipped,
+            files_skipped,
+            skip_reasons,
             warnings,
         };
         let diagnostics = IndexingDiagnostics {
@@ -423,6 +444,15 @@ impl Indexer {
         &self,
         paths: &[String],
         cancellation: &CancellationToken,
+    ) -> Result<IndexResponse> {
+        self.reconcile_paths_once_with_preparation_hook(paths, cancellation, || {})
+    }
+
+    fn reconcile_paths_once_with_preparation_hook(
+        &self,
+        paths: &[String],
+        cancellation: &CancellationToken,
+        before_preparation: impl FnOnce(),
     ) -> Result<IndexResponse> {
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
@@ -567,8 +597,9 @@ impl Indexer {
         let files_seen = candidates.len() + deletions.len();
         let candidates = candidates.into_values().collect::<Vec<_>>();
         let mut warnings = Vec::new();
-        let mut skipped = 0usize;
+        let mut skip_reasons = IndexSkipReasonCounts::default();
         let mut files_indexed = 0usize;
+        before_preparation();
         let (generation, _preparation) =
             self.storage
                 .publish_reconciliation_at(&baseline, &config_hash, false, |writer| {
@@ -595,8 +626,17 @@ impl Indexer {
                                         push_warning(&mut warnings, warning);
                                     }
                                 }
-                                PreparedFile::Binary(path) | PreparedFile::Oversized(path) => {
-                                    skipped += 1;
+                                PreparedFile::Binary(path) => {
+                                    skip_reasons.binary = skip_reasons.binary.saturating_add(1);
+                                    if existing.contains_key(&path)
+                                        && deletions.insert(path.clone())
+                                    {
+                                        writer.delete(&path)?;
+                                    }
+                                }
+                                PreparedFile::Oversized(path) => {
+                                    skip_reasons.oversized_during_read =
+                                        skip_reasons.oversized_during_read.saturating_add(1);
                                     if existing.contains_key(&path)
                                         && deletions.insert(path.clone())
                                     {
@@ -604,7 +644,7 @@ impl Indexer {
                                     }
                                 }
                                 PreparedFile::Failed(path, error) => {
-                                    skipped += 1;
+                                    skip_reasons.failed = skip_reasons.failed.saturating_add(1);
                                     push_warning(&mut warnings, format!("{path}: {error}"));
                                 }
                             }
@@ -620,6 +660,7 @@ impl Indexer {
                 })?;
         check_cancelled(cancellation)?;
         let files_removed = deletions.len();
+        let files_skipped = skip_reasons.total();
 
         Ok(IndexResponse {
             repository_generation: generation,
@@ -627,7 +668,8 @@ impl Indexer {
             files_indexed,
             files_unchanged: unchanged,
             files_removed,
-            files_skipped: skipped,
+            files_skipped,
+            skip_reasons,
             warnings,
         })
     }
@@ -1193,6 +1235,114 @@ fn normalize_relative(path: &std::path::Path) -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_skip_reasons(
+        response: &IndexResponse,
+        binary: usize,
+        oversized_during_read: usize,
+        failed: usize,
+    ) {
+        assert_eq!(
+            response.skip_reasons,
+            IndexSkipReasonCounts {
+                binary,
+                oversized_during_read,
+                failed,
+            }
+        );
+        assert_eq!(response.files_skipped, response.skip_reasons.total());
+    }
+
+    #[test]
+    fn full_reconcile_counts_every_preparation_skip_reason() {
+        let root = tempfile::tempdir().expect("root");
+        let indexed_path = root.path().join("indexed.rs");
+        let binary_path = root.path().join("binary.rs");
+        let growing_path = root.path().join("growing.rs");
+        let failed_path = root.path().join("failed.rs");
+        fs::write(&indexed_path, "fn indexed() {}\n").expect("indexed fixture");
+        fs::write(&binary_path, b"\0binary").expect("binary fixture");
+        fs::write(&growing_path, "fn growing() {}\n").expect("growing fixture");
+        fs::write(&failed_path, "fn failed() {}\n").expect("failed fixture");
+
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.max_file_bytes = 64;
+        let storage = Storage::open(&config.database_path).expect("storage");
+        let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
+
+        let response = indexer
+            .reconcile_once_with_preparation_hook(false, &CancellationToken::new(), move || {
+                fs::write(growing_path, vec![b'x'; 65]).expect("grow after discovery");
+                fs::remove_file(failed_path).expect("remove after discovery");
+            })
+            .expect("full reconcile")
+            .response;
+
+        assert_eq!(response.files_seen, 4);
+        assert_eq!(response.files_indexed, 1);
+        assert_eq!(response.files_unchanged, 0);
+        assert_eq!(response.files_removed, 0);
+        assert_skip_reasons(&response, 1, 1, 1);
+        assert_eq!(response.warnings.len(), 1);
+        assert!(response.warnings[0].starts_with("failed.rs: "));
+        assert!(storage.find_file("indexed.rs").expect("indexed").is_some());
+        assert!(storage.find_file("binary.rs").expect("binary").is_none());
+        assert!(storage.find_file("growing.rs").expect("growing").is_none());
+        assert!(storage.find_file("failed.rs").expect("failed").is_none());
+    }
+
+    #[test]
+    fn incremental_reconcile_counts_every_preparation_skip_reason() {
+        let root = tempfile::tempdir().expect("root");
+        let indexed_path = root.path().join("indexed.rs");
+        let binary_path = root.path().join("binary.rs");
+        let growing_path = root.path().join("growing.rs");
+        let failed_path = root.path().join("failed.rs");
+        for path in [&indexed_path, &binary_path, &growing_path, &failed_path] {
+            fs::write(path, "fn original() {}\n").expect("initial fixture");
+        }
+
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.max_file_bytes = 64;
+        let storage = Storage::open(&config.database_path).expect("storage");
+        let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
+        indexer.reconcile(false).expect("initial reconcile");
+
+        fs::write(&indexed_path, "fn replacement() {}\n").expect("indexed replacement");
+        fs::write(&binary_path, b"\0binary").expect("binary replacement");
+        fs::write(&growing_path, "fn changed_growing() {}\n").expect("growing replacement");
+        fs::write(&failed_path, "fn changed_failed() {}\n").expect("failed replacement");
+        let paths = vec![
+            "indexed.rs".into(),
+            "binary.rs".into(),
+            "growing.rs".into(),
+            "failed.rs".into(),
+        ];
+        let response = indexer
+            .reconcile_paths_once_with_preparation_hook(
+                &paths,
+                &CancellationToken::new(),
+                move || {
+                    fs::write(growing_path, vec![b'x'; 65]).expect("grow after admission");
+                    fs::remove_file(failed_path).expect("remove after admission");
+                },
+            )
+            .expect("incremental reconcile");
+
+        assert_eq!(response.files_seen, 4);
+        assert_eq!(response.files_indexed, 1);
+        assert_eq!(response.files_unchanged, 0);
+        assert_eq!(response.files_removed, 2);
+        assert_skip_reasons(&response, 1, 1, 1);
+        assert_eq!(response.warnings.len(), 1);
+        assert!(response.warnings[0].starts_with("failed.rs: "));
+        assert!(storage.find_file("indexed.rs").expect("indexed").is_some());
+        assert!(storage.find_file("binary.rs").expect("binary").is_none());
+        assert!(storage.find_file("growing.rs").expect("growing").is_none());
+        assert!(storage.find_file("failed.rs").expect("failed").is_some());
+    }
 
     #[test]
     fn conservative_import_resolution_requires_one_existing_file() {
