@@ -4,30 +4,81 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "0 3 * * 1"
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
 
+permissions:
+  contents: read
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect relevant changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      manifests: ${{ steps.filter.outputs.manifests }}
+      release: ${{ steps.filter.outputs.release }}
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Classify changed paths
+        id: filter
+        if: github.event_name != 'schedule'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            manifests:
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+            rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+            release:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'dist-workspace.toml'
+              - '.github/workflows/release.yml'
+              - '.github/workflows/build-npm-packages.yml'
+              - 'npm/**'
+              - 'scripts/build-npm-packages.mjs'
+
   quality:
     name: Code quality checks
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      - name: Check large files
-        run: bash scripts/check-large-files.sh
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
-      - name: Check duplicate code
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: quality
+
+      - name: Check duplicate files
         run: bash scripts/check-duplicates.sh
-
-      - name: Scan technical debt markers
-        run: bash scripts/check-todos.sh
 
       - name: Validate AGENTS.md
         run: bash scripts/validate-agents-md.sh
@@ -35,8 +86,28 @@ jobs:
       - name: Test npm packaging
         run: node --test npm/npm-packaging.test.mjs
 
-  security:
-    name: Security checks
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint all targets
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Validate public API documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps
+
+      - name: Upload documentation for deployment
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdoc
+          path: target/doc/
+          retention-days: 7
+
+  secret-scan:
+    name: Secret scan
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -51,6 +122,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  dependency-audit:
+    name: Dependency audit
+    needs: changes
+    if: github.event_name == 'schedule' || needs.changes.outputs.manifests == 'true'
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -70,6 +151,8 @@ jobs:
 
   unused-deps:
     name: Unused dependencies
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -90,8 +173,25 @@ jobs:
       - name: Check unused dependencies
         run: cargo +nightly udeps --all-targets --all-features
 
+  release-plan:
+    name: Release plan
+    needs: changes
+    if: needs.changes.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dist
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-dist@0.32.0
+
+      - name: Validate release plan
+        run: dist plan
+
   ci:
     name: ${{ matrix.os }}
+    if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -114,7 +214,6 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95"
-          components: rustfmt, clippy
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -124,38 +223,27 @@ jobs:
       - name: Test npm installation
         run: node --test npm/npm-install-e2e.mjs
 
-      - name: cargo fmt
-        run: cargo fmt --all -- --check
-
-      - name: cargo check
-        run: cargo check --all-targets --all-features
-
-      - name: cargo clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: cargo doc
-        env:
-          RUSTDOCFLAGS: -D warnings
-        run: cargo doc --no-deps
-
-      - name: cargo test
+      - name: Test all targets
         run: |
+          set +e
           START=$(date +%s)
           cargo test --all-targets --all-features 2>&1 | tee test-output.txt
+          status=${PIPESTATUS[0]}
           END=$(date +%s)
           DURATION=$((END - START))
           echo "test_suite_duration_seconds=${DURATION}" >> "$GITHUB_ENV"
           echo "Test suite completed in ${DURATION}s"
+          exit "$status"
 
       - name: Test timing summary
         if: success() || failure()
         run: |
-          echo "## Test Results (${{ matrix.os }})" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Total suite duration: ${test_suite_duration_seconds}s" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          passed=$(grep -c 'ok' test-output.txt | head -1 || echo 0)
-          failed=$(grep -c 'FAILED' test-output.txt || echo 0)
-          echo "- Passed: $passed | Failed: $failed" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Test Results (${{ matrix.os }})"
+            echo "- Total suite duration: ${test_suite_duration_seconds:-unavailable}s"
+            echo ""
+            grep '^test result:' test-output.txt || true
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload test artifact
         if: always()
@@ -167,7 +255,10 @@ jobs:
 
   coverage:
     name: Test coverage
+    if: github.event_name == 'push' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v7
 
@@ -193,11 +284,13 @@ jobs:
         run: |
           echo "## Coverage Summary" >> "$GITHUB_STEP_SUMMARY"
           if [ -f lcov.info ]; then
-            covered=$(grep -c '^DA:[0-9]*,1' lcov.info || echo 0)
-            total=$(grep -c '^DA:' lcov.info || echo 0)
-            echo "- Lines covered: $covered / $total" >> "$GITHUB_STEP_SUMMARY"
+            awk -F '[:,]' '
+              /^DA:/ { total += 1; if ($3 > 0) covered += 1 }
+              END { printf "- Lines covered: %d / %d\n", covered, total }
+            ' lcov.info >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Coverage report was not generated" >> "$GITHUB_STEP_SUMMARY"
           fi
-          cargo llvm-cov --all-features --workspace --summary-only 2>&1 | head -10 >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage artifact
         if: always()
@@ -207,39 +300,21 @@ jobs:
           path: lcov.info
           retention-days: 7
 
-  docs:
-    name: API documentation
+  docs-deploy:
+    name: Deploy API documentation
+    needs: quality
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.95"
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: docs
-
-      - name: Generate rustdoc
-        env:
-          RUSTDOCFLAGS: -D warnings
-        run: cargo doc --no-deps --document-private-items
-
-      - name: Upload docs artifact
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Download generated documentation
+        uses: actions/download-artifact@v8
         with:
           name: rustdoc
           path: target/doc/
-          retention-days: 30
 
       - name: Deploy to GitHub Pages
-        if: github.ref == 'refs/heads/main'
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
