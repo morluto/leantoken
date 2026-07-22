@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["Indexer","IndexingDiagnostics","ProfiledIndexResponse"]};
+window.SIDEBAR_ITEMS = {"struct":["Indexer","IndexingDiagnostics","ProfiledIndexReport","ProfiledIndexResponse"]};
