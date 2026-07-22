@@ -21,6 +21,10 @@ use crate::storage::{ChunkInput, ImportInput, IndexedFile, ReferenceInput, Stora
 use crate::text::{PreparedText, TextKind, hash_bytes};
 use crate::{Config, Error, Result};
 
+const INDEX_CONTENT_VERSION: u32 = 7;
+#[cfg(test)]
+const PREVIOUS_INDEX_CONTENT_MARKER: &str = "leantoken-index-v6-9-language";
+
 /// Owns discovery/parse publication for one repository cache.
 ///
 /// The Rayon worker pool is built lazily on the first non-empty prepare and
@@ -795,8 +799,14 @@ impl Indexer {
     }
 
     fn config_hash(&self) -> String {
+        self.config_hash_for_content_marker(&format!(
+            "leantoken-index-content-v{INDEX_CONTENT_VERSION}"
+        ))
+    }
+
+    fn config_hash_for_content_marker(&self, index_content_marker: &str) -> String {
         let input = format!(
-            "leantoken-index-v6-9-language\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
+            "{index_content_marker}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
             env!("CARGO_PKG_VERSION"),
             self.config.max_walk_entries,
             self.config.max_files,
@@ -1340,6 +1350,63 @@ mod tests {
             ),
             Err(Error::Cancelled)
         ));
+    }
+
+    #[test]
+    fn parser_content_version_reindexes_legacy_symbol_rows() {
+        let root = tempfile::tempdir().expect("root");
+        let database = root.path().join("index.sqlite");
+        std::fs::write(
+            root.path().join("point.rs"),
+            "struct Point;\nimpl Point { fn distance(&self) {} }\n",
+        )
+        .expect("source");
+        let config =
+            Arc::new(Config::discover(root.path(), Some(database.clone())).expect("config"));
+        let storage = Storage::open(&database).expect("storage");
+        let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+
+        let first = indexer.reconcile(false).expect("initial reconcile");
+        assert_eq!(first.repository_generation, 1);
+        let legacy_hash = indexer.config_hash_for_content_marker(PREVIOUS_INDEX_CONTENT_MARKER);
+        let connection = rusqlite::Connection::open(&database).expect("legacy connection");
+        connection
+            .execute(
+                "INSERT INTO symbols(file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte)
+                 SELECT file_id, name, 'function', name, signature, start_line, end_line, start_byte, end_byte
+                 FROM symbols WHERE name = 'distance'",
+                [],
+            )
+            .expect("inject legacy duplicate");
+        connection
+            .execute(
+                "UPDATE meta SET config_hash = ?1 WHERE id = 1",
+                rusqlite::params![legacy_hash],
+            )
+            .expect("set legacy marker");
+        drop(connection);
+        assert_eq!(
+            storage
+                .search_symbols("distance", true, 10)
+                .expect("legacy symbols")
+                .len(),
+            2
+        );
+
+        let reparsed = indexer.reconcile(false).expect("content-version reparse");
+        assert_eq!(reparsed.repository_generation, 2);
+        assert_eq!(reparsed.files_indexed, 1);
+        assert_eq!(reparsed.files_unchanged, 0);
+        let symbols = storage
+            .search_symbols("distance", true, 10)
+            .expect("reparsed symbols");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].symbol.kind, "method");
+        assert_eq!(symbols[0].symbol.parent.as_deref(), Some("Point"));
+        assert_eq!(
+            storage.meta().expect("metadata").config_hash,
+            indexer.config_hash()
+        );
     }
 
     #[test]
