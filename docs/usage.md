@@ -55,9 +55,11 @@ Index responses retain the aggregate `files_skipped` count and explain it with
 the bounded `skip_reasons` object: `binary`, `oversized_during_read`, and
 `failed`. These counts cover files admitted for preparation and always sum to
 `files_skipped`. No per-file skip list is returned; bounded failure warnings may
-still identify files that could not be read. Files excluded by repository
-discovery before admission are not part of `files_seen`, `files_skipped`, or the
-reason counts.
+still identify files that could not be read. Files excluded before preparation
+admission, whether by repository discovery or a targeted metadata check, are not
+part of `files_seen`, `files_skipped`, or the reason counts. An already-indexed
+excluded file can still increment `files_removed` when its stale entry is
+deleted.
 
 ## MCP setup and version lifecycle
 

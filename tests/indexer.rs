@@ -99,6 +99,87 @@ fn targeted_reconcile_enforces_aggregate_bytes_before_publication() {
 }
 
 #[test]
+fn full_and_targeted_reconcile_exclude_metadata_oversized_file_from_files_seen() {
+    let root = tempfile::tempdir().expect("root");
+    let databases = tempfile::tempdir().expect("databases");
+    let path = root.path().join("oversized.rs");
+    std::fs::write(&path, "fn admitted() {}\n").expect("initial source");
+    let mut full_config =
+        Config::discover(root.path(), Some(databases.path().join("full.sqlite")))
+            .expect("full config");
+    full_config.max_file_bytes = 64;
+    let full_storage = Storage::open(&full_config.database_path).expect("full storage");
+    let full_indexer =
+        Indexer::new(Arc::new(full_config), full_storage.clone()).expect("full indexer");
+    full_indexer.reconcile(false).expect("initial full index");
+    let mut targeted_config =
+        Config::discover(root.path(), Some(databases.path().join("targeted.sqlite")))
+            .expect("targeted config");
+    targeted_config.max_file_bytes = 64;
+    let targeted_storage =
+        Storage::open(&targeted_config.database_path).expect("targeted storage");
+    let targeted_indexer = Indexer::new(Arc::new(targeted_config), targeted_storage.clone())
+        .expect("targeted indexer");
+    targeted_indexer
+        .reconcile(false)
+        .expect("initial targeted index");
+
+    std::fs::write(&path, vec![b'x'; 65]).expect("grow beyond admission limit");
+    let full = full_indexer.reconcile(false).expect("full reconcile");
+    let targeted = targeted_indexer
+        .reconcile_paths(&["oversized.rs".into()])
+        .expect("targeted reconcile");
+
+    for response in [&full, &targeted] {
+        assert_eq!(response.files_seen, 0);
+        assert_eq!(response.files_removed, 1);
+        assert_eq!(response.files_skipped, 0);
+        assert_eq!(response.skip_reasons.total(), 0);
+    }
+    assert!(
+        full_storage
+            .find_file("oversized.rs")
+            .expect("full lookup")
+            .is_none()
+    );
+    assert!(
+        targeted_storage
+            .find_file("oversized.rs")
+            .expect("targeted lookup")
+            .is_none()
+    );
+}
+
+#[test]
+fn visibility_reconcile_excludes_discovery_oversized_file_from_files_seen() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join(".git")).expect("git marker");
+    let oversized = root.path().join("oversized.rs");
+    std::fs::write(&oversized, "fn admitted() {}\n").expect("initial source");
+    std::fs::write(root.path().join(".gitignore"), "").expect("initial ignore");
+    let mut config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    config.max_file_bytes = 64;
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
+    indexer.reconcile(false).expect("initial reconcile");
+
+    std::fs::write(&oversized, vec![b'x'; 65]).expect("grow beyond discovery limit");
+    std::fs::write(root.path().join(".gitignore"), "# visibility refresh\n")
+        .expect("change ignore");
+    let response = indexer
+        .reconcile_paths(&[".gitignore".into()])
+        .expect("visibility reconcile");
+
+    assert_eq!(response.files_seen, 1);
+    assert_eq!(response.files_indexed, 1);
+    assert_eq!(response.files_removed, 1);
+    assert_eq!(response.files_skipped, 0);
+    assert_eq!(response.skip_reasons.total(), 0);
+    assert!(storage.find_file("oversized.rs").expect("lookup").is_none());
+}
+
+#[test]
 fn changing_discovery_limits_invalidates_the_index_configuration_hash() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
@@ -392,9 +473,11 @@ fn targeted_reconcile_applies_new_file_and_ignore_deltas() {
     let ignored = indexer
         .reconcile_paths(&[".gitignore".into()])
         .expect("ignore delta");
-    assert_eq!(ignored.files_seen, 2);
+    assert_eq!(ignored.files_seen, 1);
     assert_eq!(ignored.files_indexed, 1);
     assert_eq!(ignored.files_removed, 1);
+    assert_eq!(ignored.files_skipped, 0);
+    assert_eq!(ignored.skip_reasons.total(), 0);
     assert!(storage.find_file("hide.rs").expect("find hidden").is_none());
 }
 

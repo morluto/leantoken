@@ -520,6 +520,7 @@ impl Indexer {
 
         let mut candidates = HashMap::new();
         let mut deletions = HashSet::new();
+        let mut missing_deletions = HashSet::new();
         let mut unchanged = 0usize;
         if let Some(discovered) = &discovered_by_path {
             for (path, file) in discovered {
@@ -532,6 +533,12 @@ impl Indexer {
                 check_cancelled(cancellation)?;
                 if !discovered.contains_key(path) {
                     deletions.insert(path.clone());
+                    if matches!(
+                        fs::symlink_metadata(self.config.root.join(path)),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                    ) {
+                        missing_deletions.insert(path.clone());
+                    }
                 }
             }
         } else {
@@ -552,6 +559,7 @@ impl Indexer {
                     Ok(metadata) => metadata,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                         if existing.contains_key(&relative_path) {
+                            missing_deletions.insert(relative_path.clone());
                             deletions.insert(relative_path);
                         }
                         continue;
@@ -593,8 +601,9 @@ impl Indexer {
         let forced_importers =
             self.add_affected_importers(&mut candidates, &deletions, &change_set, cancellation)?;
         self.validate_membership_limits(&existing, &candidates, &deletions, cancellation)?;
+        debug_assert!(missing_deletions.is_subset(&deletions));
 
-        let files_seen = candidates.len() + deletions.len();
+        let files_seen = candidates.len() + missing_deletions.len();
         let candidates = candidates.into_values().collect::<Vec<_>>();
         let mut warnings = Vec::new();
         let mut skip_reasons = IndexSkipReasonCounts::default();
