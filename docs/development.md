@@ -166,6 +166,13 @@ reporting. This is an acknowledged source-compatibility change for consumers
 that exhaustively matched the earlier enum. Release PRs own package version
 changes; feature and fix PRs do not edit `Cargo.toml` versions independently.
 
+`IndexResponse` retains its original constructible field set for downstream
+Rust source compatibility. Additive preparation accounting is exposed through
+`IndexReport`, returned by the new `Indexer::*_report` and
+`Services::*_report` methods. The report flattens the compatible response for
+JSON output, so CLI consumers receive `skip_reasons` without forcing existing
+Rust consumers to update struct literals or destructuring patterns.
+
 Use `InvalidRequest` only for audited caller validation. Infrastructure and
 invariant failures use `InternalFailure`, which retains the historical
 `invalid request: ...` display prefix for CLI text compatibility while adapters

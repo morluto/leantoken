@@ -160,7 +160,14 @@ impl Services {
 
     /// Reconcile repository files into one committed index generation.
     pub async fn index(&self, rebuild: bool) -> Result<IndexResponse> {
-        self.index_cancellable(rebuild, CancellationToken::new())
+        self.index_report(rebuild)
+            .await
+            .map(IndexReport::into_response)
+    }
+
+    /// Reconcile repository files and include bounded preparation skip reasons.
+    pub async fn index_report(&self, rebuild: bool) -> Result<IndexReport> {
+        self.index_cancellable_report(rebuild, CancellationToken::new())
             .await
     }
 
@@ -170,13 +177,26 @@ impl Services {
         rebuild: bool,
         cancellation: CancellationToken,
     ) -> Result<IndexResponse> {
+        self.index_cancellable_report(rebuild, cancellation)
+            .await
+            .map(IndexReport::into_response)
+    }
+
+    /// Reconcile with cancellation and include bounded preparation skip reasons.
+    pub async fn index_cancellable_report(
+        &self,
+        rebuild: bool,
+        cancellation: CancellationToken,
+    ) -> Result<IndexReport> {
         let this = self.clone();
         let active_reconciliations = Arc::clone(&self.active_reconciliations);
         active_reconciliations.fetch_add(1, Ordering::AcqRel);
         tokio::task::spawn_blocking(move || {
             let _active = ActiveReconciliation(active_reconciliations);
             let operation = this.coordination.acquire_operation(&cancellation)?;
-            let result = this.indexer.reconcile_cancellable(rebuild, &cancellation);
+            let result = this
+                .indexer
+                .reconcile_cancellable_report(rebuild, &cancellation);
             operation.release()?;
             result
         })
@@ -186,7 +206,14 @@ impl Services {
     /// Reconcile watcher-reported paths, falling back internally when a
     /// repository-wide scan is required for correctness.
     pub async fn index_paths(&self, paths: Vec<String>) -> Result<IndexResponse> {
-        self.index_paths_cancellable(paths, CancellationToken::new())
+        self.index_paths_report(paths)
+            .await
+            .map(IndexReport::into_response)
+    }
+
+    /// Reconcile watcher paths and include bounded preparation skip reasons.
+    pub async fn index_paths_report(&self, paths: Vec<String>) -> Result<IndexReport> {
+        self.index_paths_cancellable_report(paths, CancellationToken::new())
             .await
     }
 
@@ -196,6 +223,17 @@ impl Services {
         paths: Vec<String>,
         cancellation: CancellationToken,
     ) -> Result<IndexResponse> {
+        self.index_paths_cancellable_report(paths, cancellation)
+            .await
+            .map(IndexReport::into_response)
+    }
+
+    /// Reconcile watcher paths with cancellation and preparation skip reasons.
+    pub async fn index_paths_cancellable_report(
+        &self,
+        paths: Vec<String>,
+        cancellation: CancellationToken,
+    ) -> Result<IndexReport> {
         let this = self.clone();
         let active_reconciliations = Arc::clone(&self.active_reconciliations);
         active_reconciliations.fetch_add(1, Ordering::AcqRel);
@@ -204,7 +242,7 @@ impl Services {
             let operation = this.coordination.acquire_operation(&cancellation)?;
             let result = this
                 .indexer
-                .reconcile_paths_cancellable(&paths, &cancellation);
+                .reconcile_paths_cancellable_report(&paths, &cancellation);
             operation.release()?;
             result
         })

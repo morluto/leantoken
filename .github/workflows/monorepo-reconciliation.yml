@@ -143,7 +143,7 @@ jobs:
 
       - name: Verify artifact identity
         run: |
-          test "$(jq -r '.schema_version' target/monorepo-profile/profile.json)" = 7
+          test "$(jq -r '.schema_version' target/monorepo-profile/profile.json)" = 8
           test "$(jq -r '.corpus.revision' target/monorepo-profile/profile.json)" = "${{ matrix.revision }}"
           test "$(jq -r '.release_build' target/monorepo-profile/profile.json)" = true
           test "$(jq -r '.leantoken_worktree_dirty' target/monorepo-profile/profile.json)" = false

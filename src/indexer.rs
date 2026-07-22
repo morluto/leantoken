@@ -11,7 +11,7 @@ use rayon::prelude::*;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::RetryableOperation;
-use crate::model::{IndexResponse, IndexSkipReasonCounts};
+use crate::model::{IndexReport, IndexResponse, IndexSkipReasonCounts};
 use crate::parser::{self, ParseOutput};
 use crate::repository::{
     DiscoveredFile, discover_files_with_limits_policy_and_filter, enforce_limit, slash_path,
@@ -71,6 +71,15 @@ pub struct IndexingDiagnostics {
 pub struct ProfiledIndexResponse {
     /// Ordinary index response returned by adapters and services.
     pub response: IndexResponse,
+    /// Internal phase and batch measurements for profiling.
+    pub diagnostics: IndexingDiagnostics,
+}
+
+/// Additive index report paired with full-reconciliation diagnostics.
+#[derive(Debug, Clone)]
+pub struct ProfiledIndexReport {
+    /// Flattened-compatible response plus preparation skip reasons.
+    pub report: IndexReport,
     /// Internal phase and batch measurements for profiling.
     pub diagnostics: IndexingDiagnostics,
 }
@@ -198,13 +207,28 @@ impl Indexer {
 
     /// Reconcile filesystem state into one committed repository generation.
     pub fn reconcile(&self, rebuild: bool) -> Result<IndexResponse> {
-        self.reconcile_profiled(rebuild)
-            .map(|profiled| profiled.response)
+        self.reconcile_report(rebuild)
+            .map(IndexReport::into_response)
+    }
+
+    /// Reconcile filesystem state and include bounded preparation skip reasons.
+    pub fn reconcile_report(&self, rebuild: bool) -> Result<IndexReport> {
+        self.reconcile_profiled_report(rebuild)
+            .map(|profiled| profiled.report)
     }
 
     /// Reconcile a full repository and return phase diagnostics for benchmarks.
     pub fn reconcile_profiled(&self, rebuild: bool) -> Result<ProfiledIndexResponse> {
-        self.reconcile_cancellable_profiled(rebuild, &CancellationToken::new())
+        self.reconcile_profiled_report(rebuild)
+            .map(|profiled| ProfiledIndexResponse {
+                response: profiled.report.into_response(),
+                diagnostics: profiled.diagnostics,
+            })
+    }
+
+    /// Reconcile a full repository with additive details and phase diagnostics.
+    pub fn reconcile_profiled_report(&self, rebuild: bool) -> Result<ProfiledIndexReport> {
+        self.reconcile_cancellable_profiled_report(rebuild, &CancellationToken::new())
     }
 
     /// Reconcile the repository with cooperative cancellation and stale-plan retry.
@@ -213,8 +237,18 @@ impl Indexer {
         rebuild: bool,
         cancellation: &CancellationToken,
     ) -> Result<IndexResponse> {
-        self.reconcile_cancellable_profiled(rebuild, cancellation)
-            .map(|profiled| profiled.response)
+        self.reconcile_cancellable_report(rebuild, cancellation)
+            .map(IndexReport::into_response)
+    }
+
+    /// Reconcile with cancellation and include bounded preparation skip reasons.
+    pub fn reconcile_cancellable_report(
+        &self,
+        rebuild: bool,
+        cancellation: &CancellationToken,
+    ) -> Result<IndexReport> {
+        self.reconcile_cancellable_profiled_report(rebuild, cancellation)
+            .map(|profiled| profiled.report)
     }
 
     /// Reconcile a full repository with cancellation and phase diagnostics.
@@ -223,6 +257,18 @@ impl Indexer {
         rebuild: bool,
         cancellation: &CancellationToken,
     ) -> Result<ProfiledIndexResponse> {
+        self.reconcile_cancellable_profiled_report(rebuild, cancellation)
+            .map(|profiled| ProfiledIndexResponse {
+                response: profiled.report.into_response(),
+                diagnostics: profiled.diagnostics,
+            })
+    }
+
+    fn reconcile_cancellable_profiled_report(
+        &self,
+        rebuild: bool,
+        cancellation: &CancellationToken,
+    ) -> Result<ProfiledIndexReport> {
         for _ in 0..3 {
             match self.reconcile_once(rebuild, cancellation) {
                 Err(Error::StaleReconciliation { .. }) => continue,
@@ -236,7 +282,7 @@ impl Indexer {
         &self,
         rebuild: bool,
         cancellation: &CancellationToken,
-    ) -> Result<ProfiledIndexResponse> {
+    ) -> Result<ProfiledIndexReport> {
         self.reconcile_once_with_preparation_hook(rebuild, cancellation, || {})
     }
 
@@ -245,7 +291,7 @@ impl Indexer {
         rebuild: bool,
         cancellation: &CancellationToken,
         before_preparation: impl FnOnce(),
-    ) -> Result<ProfiledIndexResponse> {
+    ) -> Result<ProfiledIndexReport> {
         let total_started = Instant::now();
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
@@ -380,9 +426,9 @@ impl Indexer {
             files_unchanged: unchanged,
             files_removed,
             files_skipped,
-            skip_reasons: Some(skip_reasons),
             warnings,
         };
+        let report = IndexReport::with_skip_reasons(response, skip_reasons);
         let diagnostics = IndexingDiagnostics {
             total_ms: duration_ms(total_started.elapsed()),
             discovery_ms: duration_ms(discovery_elapsed),
@@ -409,8 +455,8 @@ impl Indexer {
             max_batch_source_bytes = diagnostics.max_batch_source_bytes,
             "repository reconciliation profile"
         );
-        Ok(ProfiledIndexResponse {
-            response,
+        Ok(ProfiledIndexReport {
+            report,
             diagnostics,
         })
     }
@@ -422,7 +468,13 @@ impl Indexer {
     /// full reconciliation because they can affect files beyond the reported
     /// path.
     pub fn reconcile_paths(&self, paths: &[String]) -> Result<IndexResponse> {
-        self.reconcile_paths_cancellable(paths, &CancellationToken::new())
+        self.reconcile_paths_report(paths)
+            .map(IndexReport::into_response)
+    }
+
+    /// Reconcile watcher paths and include bounded preparation skip reasons.
+    pub fn reconcile_paths_report(&self, paths: &[String]) -> Result<IndexReport> {
+        self.reconcile_paths_cancellable_report(paths, &CancellationToken::new())
     }
 
     /// Reconcile watcher paths with cooperative cancellation and stale-plan retry.
@@ -431,6 +483,16 @@ impl Indexer {
         paths: &[String],
         cancellation: &CancellationToken,
     ) -> Result<IndexResponse> {
+        self.reconcile_paths_cancellable_report(paths, cancellation)
+            .map(IndexReport::into_response)
+    }
+
+    /// Reconcile watcher paths with cancellation and preparation skip reasons.
+    pub fn reconcile_paths_cancellable_report(
+        &self,
+        paths: &[String],
+        cancellation: &CancellationToken,
+    ) -> Result<IndexReport> {
         for _ in 0..3 {
             match self.reconcile_paths_once(paths, cancellation) {
                 Err(Error::StaleReconciliation { .. }) => continue,
@@ -444,7 +506,7 @@ impl Indexer {
         &self,
         paths: &[String],
         cancellation: &CancellationToken,
-    ) -> Result<IndexResponse> {
+    ) -> Result<IndexReport> {
         self.reconcile_paths_once_with_preparation_hook(paths, cancellation, || {})
     }
 
@@ -453,7 +515,7 @@ impl Indexer {
         paths: &[String],
         cancellation: &CancellationToken,
         before_preparation: impl FnOnce(),
-    ) -> Result<IndexResponse> {
+    ) -> Result<IndexReport> {
         self.reconcile_paths_once_with_hooks(paths, cancellation, || {}, before_preparation)
     }
 
@@ -481,13 +543,18 @@ impl Indexer {
                     let is_file = metadata.file_type().is_file();
                     visibility_delta |= !existing.contains_key(&relative_path) || !is_file;
                     if !is_file {
-                        let prefix = format!("{relative_path}/");
-                        observed_deletions.extend(
-                            existing
-                                .keys()
-                                .filter(|path| *path == &relative_path || path.starts_with(&prefix))
-                                .cloned(),
-                        );
+                        if existing.contains_key(&relative_path) {
+                            observed_deletions.insert(relative_path.clone());
+                        }
+                        if !metadata.file_type().is_dir() {
+                            let prefix = format!("{relative_path}/");
+                            observed_deletions.extend(
+                                existing
+                                    .keys()
+                                    .filter(|path| path.starts_with(&prefix))
+                                    .cloned(),
+                            );
+                        }
                     }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -515,12 +582,12 @@ impl Indexer {
         cancellation: &CancellationToken,
         after_discovery: impl FnOnce(),
         before_preparation: impl FnOnce(),
-    ) -> Result<IndexResponse> {
+    ) -> Result<IndexReport> {
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
         let config_hash = self.config_hash();
         if baseline.config_hash != config_hash {
-            return self.reconcile_cancellable(true, cancellation);
+            return self.reconcile_cancellable_report(true, cancellation);
         }
 
         let existing = self.existing_files(cancellation)?;
@@ -711,16 +778,16 @@ impl Indexer {
         let files_removed = deletions.len();
         let files_skipped = skip_reasons.total();
 
-        Ok(IndexResponse {
+        let response = IndexResponse {
             repository_generation: generation,
             files_seen,
             files_indexed,
             files_unchanged: unchanged,
             files_removed,
             files_skipped,
-            skip_reasons: Some(skip_reasons),
             warnings,
-        })
+        };
+        Ok(IndexReport::with_skip_reasons(response, skip_reasons))
     }
 
     fn validate_config(config: &Config) -> Result<()> {
@@ -1286,7 +1353,7 @@ mod tests {
     use super::*;
 
     fn assert_skip_reasons(
-        response: &IndexResponse,
+        response: &IndexReport,
         binary: usize,
         oversized_during_read: usize,
         failed: usize,
@@ -1363,7 +1430,7 @@ mod tests {
                 fs::remove_file(failed_path).expect("remove after discovery");
             })
             .expect("full reconcile")
-            .response;
+            .report;
 
         assert_eq!(response.files_seen, 4);
         assert_eq!(response.files_indexed, 1);

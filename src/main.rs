@@ -150,7 +150,7 @@ async fn run(cli: Cli) -> Result<()> {
     let services = Arc::new(Services::open(config)?);
 
     match request {
-        AppRequest::Index { rebuild } => print(&services.index(rebuild).await?, json),
+        AppRequest::Index { rebuild } => print(&services.index_report(rebuild).await?, json),
         AppRequest::Status => print(&services.status().await?, json),
         AppRequest::Files(request) => print(&services.files(request).await?, json),
         AppRequest::Search(request) => print(&services.search(request).await?, json),

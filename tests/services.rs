@@ -925,7 +925,7 @@ async fn database_artifact_notifications_do_not_publish_a_generation() {
         .repository_generation;
 
     let response = services
-        .index_paths(vec![
+        .index_paths_report(vec![
             "index.sqlite".into(),
             "index.sqlite-wal".into(),
             "index.sqlite-shm".into(),

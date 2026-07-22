@@ -125,9 +125,11 @@ fn full_and_targeted_reconcile_exclude_metadata_oversized_file_from_files_seen()
         .expect("initial targeted index");
 
     std::fs::write(&path, vec![b'x'; 65]).expect("grow beyond admission limit");
-    let full = full_indexer.reconcile(false).expect("full reconcile");
+    let full = full_indexer
+        .reconcile_report(false)
+        .expect("full reconcile");
     let targeted = targeted_indexer
-        .reconcile_paths(&["oversized.rs".into()])
+        .reconcile_paths_report(&["oversized.rs".into()])
         .expect("targeted reconcile");
 
     for response in [&full, &targeted] {
@@ -175,7 +177,7 @@ fn visibility_reconcile_excludes_discovery_oversized_file_from_files_seen() {
     std::fs::write(root.path().join(".gitignore"), "# visibility refresh\n")
         .expect("change ignore");
     let response = indexer
-        .reconcile_paths(&[".gitignore".into()])
+        .reconcile_paths_report(&[".gitignore".into()])
         .expect("visibility reconcile");
 
     assert_eq!(response.files_seen, 1);
@@ -260,7 +262,7 @@ fn targeted_reconcile_existing_directory_does_not_count_unchanged_descendants() 
     indexer.reconcile(false).expect("initial reconcile");
 
     let response = indexer
-        .reconcile_paths(&["src".into()])
+        .reconcile_paths_report(&["src".into()])
         .expect("directory reconcile");
 
     assert_eq!(response.files_seen, 0);
@@ -271,6 +273,43 @@ fn targeted_reconcile_existing_directory_does_not_count_unchanged_descendants() 
             .find_file("src/stable.rs")
             .expect("lookup")
             .is_some()
+    );
+}
+
+#[test]
+fn targeted_reconcile_existing_directory_excludes_oversized_descendants_from_files_seen() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("src")).expect("source directory");
+    let source = root.path().join("src/oversized.rs");
+    std::fs::write(&source, "fn admitted() {}\n").expect("source fixture");
+    let mut config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    config.max_file_bytes = 64;
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
+    indexer.reconcile(false).expect("initial reconcile");
+
+    std::fs::write(&source, vec![b'x'; 65]).expect("grow beyond discovery limit");
+    let response = indexer
+        .reconcile_paths_report(&["src".into()])
+        .expect("directory reconcile");
+
+    assert_eq!(response.files_seen, 0);
+    assert_eq!(response.files_removed, 1);
+    assert_eq!(response.files_skipped, 0);
+    assert_eq!(
+        response
+            .skip_reasons
+            .as_ref()
+            .expect("current skip reasons")
+            .total(),
+        0
+    );
+    assert!(
+        storage
+            .find_file("src/oversized.rs")
+            .expect("lookup")
+            .is_none()
     );
 }
 
@@ -566,7 +605,7 @@ fn targeted_reconcile_applies_new_file_and_ignore_deltas() {
 
     std::fs::write(root.path().join(".gitignore"), "hide.rs\n").expect("change ignore");
     let ignored = indexer
-        .reconcile_paths(&[".gitignore".into()])
+        .reconcile_paths_report(&[".gitignore".into()])
         .expect("ignore delta");
     assert_eq!(ignored.files_seen, 1);
     assert_eq!(ignored.files_indexed, 1);

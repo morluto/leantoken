@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 use leantoken::Config;
 use leantoken::indexer::{Indexer, IndexingDiagnostics};
-use leantoken::model::IndexResponse;
+use leantoken::model::{IndexReport, IndexResponse};
 use leantoken::repository::{DiscoveredFile, discover_files};
 use leantoken::storage::Storage;
 use leantoken::watcher::{RepositoryWatcher, WatcherMessage};
@@ -104,7 +104,7 @@ struct CorpusReport {
 #[derive(Debug, Serialize)]
 struct IndexSample {
     elapsed_ms: f64,
-    response: IndexResponse,
+    response: IndexReport,
     diagnostics: IndexingDiagnostics,
     storage_footprint: StorageFootprint,
 }
@@ -264,10 +264,10 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
     let indexer = Indexer::new(Arc::clone(&config), storage.clone())?;
 
     let start = Instant::now();
-    let initial_profile = indexer.reconcile_profiled(false)?;
+    let initial_profile = indexer.reconcile_profiled_report(false)?;
     let initial_index = IndexSample {
         elapsed_ms: milliseconds(start.elapsed()),
-        response: initial_profile.response,
+        response: initial_profile.report,
         diagnostics: initial_profile.diagnostics,
         storage_footprint: storage_footprint(&config.database_path)?,
     };
@@ -1123,7 +1123,6 @@ mod tests {
                     files_unchanged: 1,
                     files_removed: 0,
                     files_skipped: 0,
-                    skip_reasons: Some(Default::default()),
                     warnings: Vec::new(),
                 })
             },
