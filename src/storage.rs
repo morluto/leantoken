@@ -1780,17 +1780,17 @@ fn repository_identity(path: &Path) -> String {
 
 fn u64_to_i64(value: u64) -> Result<i64> {
     i64::try_from(value)
-        .map_err(|_| Error::InvalidRequest("value exceeds storage integer range".into()))
+        .map_err(|_| Error::InternalFailure("value exceeds storage integer range".into()))
 }
 
 fn usize_to_i64(value: usize) -> Result<i64> {
     i64::try_from(value)
-        .map_err(|_| Error::InvalidRequest("value exceeds storage integer range".into()))
+        .map_err(|_| Error::InternalFailure("value exceeds storage integer range".into()))
 }
 
 fn u128_to_i64(value: u128) -> Result<i64> {
     i64::try_from(value)
-        .map_err(|_| Error::InvalidRequest("value exceeds storage integer range".into()))
+        .map_err(|_| Error::InternalFailure("value exceeds storage integer range".into()))
 }
 
 fn i64_to_u64(value: i64) -> u64 {

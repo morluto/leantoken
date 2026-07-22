@@ -1,11 +1,12 @@
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     process::{Child, ChildStdin, Stdio},
     sync::mpsc,
     time::{Duration, Instant},
 };
 
 use assert_cmd::Command;
+use clap::Parser;
 use wait_timeout::ChildExt;
 
 #[test]
@@ -127,7 +128,110 @@ fn cold_cli_status_and_retrieval_explain_index_readiness() {
     assert!(!json.status.success());
     let error: serde_json::Value =
         serde_json::from_slice(&json.stderr).expect("structured error");
-    assert_eq!(error["error"], guidance);
+    assert_eq!(
+        error,
+        serde_json::json!({
+            "error": guidance,
+            "category": "index_not_ready"
+        })
+    );
+}
+
+#[test]
+fn cli_json_errors_expose_stable_safe_metadata() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "fn indexed() {}\n").expect("source");
+    let database = root.path().join("index.sqlite");
+    run(root.path(), &database, &["index"]);
+
+    assert_eq!(
+        run_error(root.path(), &database, &["files", "find"]),
+        serde_json::json!({
+            "error": "invalid query: is required for find",
+            "category": "invalid_input",
+            "field": "query"
+        })
+    );
+    assert_eq!(
+        run_error(
+            root.path(),
+            &database,
+            &["files", "tree", "--max-results", "101"],
+        ),
+        serde_json::json!({
+            "error": "max_results exceeds its configured limit: requested 101, limit 100",
+            "category": "request_limit_exceeded",
+            "field": "max_results",
+            "requested": 101,
+            "limit": 100
+        })
+    );
+    assert_eq!(
+        run_error(root.path(), &database, &["read", "missing.rs"]),
+        serde_json::json!({
+            "error": "path is not indexed: missing.rs",
+            "category": "not_indexed"
+        })
+    );
+    assert_eq!(
+        run_error(
+            root.path(),
+            &database,
+            &["files", "tree", "--cursor", "malformed"],
+        ),
+        serde_json::json!({
+            "error": "stale cursor",
+            "category": "stale_cursor"
+        })
+    );
+
+    let database_directory = root.path().join("database-directory");
+    std::fs::create_dir(&database_directory).expect("database directory");
+    let internal = run_error(root.path(), &database_directory, &["status"]);
+    assert_eq!(internal["category"], "internal_error");
+    assert!(
+        internal["error"]
+            .as_str()
+            .is_some_and(|message| message.starts_with("SQLite error:"))
+    );
+    assert_eq!(internal.as_object().map(serde_json::Map::len), Some(2));
+}
+
+#[test]
+fn cli_json_parse_errors_are_structured_without_changing_clap_help() {
+    assert_cli_parse_error(&[
+        "files",
+        "tree",
+        "--max-results",
+        "nope",
+        "--json",
+    ]);
+    assert_cli_parse_error(&["--json", "--unknown"]);
+
+    let human_arguments = ["files", "tree", "--max-results", "nope"];
+    let expected = leantoken::cli::Cli::try_parse_from(
+        std::iter::once(leantoken_program_name())
+            .chain(human_arguments.into_iter().map(std::ffi::OsString::from)),
+    )
+    .expect_err("invalid numeric argument")
+    .to_string();
+    let human = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .args(human_arguments)
+        .output()
+        .expect("run human parse failure");
+    assert_eq!(human.status.code(), Some(2));
+    assert!(human.stdout.is_empty());
+    assert_eq!(human.stderr, expected.as_bytes());
+
+    let help = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .args(["--json", "--help"])
+        .output()
+        .expect("run JSON help");
+    assert!(help.status.success());
+    assert!(help.stderr.is_empty());
+    assert!(String::from_utf8_lossy(&help.stdout).contains("Usage: leantoken"));
 }
 
 #[test]
@@ -159,6 +263,7 @@ fn cli_index_limit_error_is_structured_and_does_not_publish_partial_files() {
         error["error"],
         "index source files limit exceeded: observed 2, limit 1"
     );
+    assert_eq!(error["category"], "repository_index_limit");
     assert_eq!(database_state(&database).map(|state| state.0), Some(0));
     assert_eq!(database_state(&database).map(|state| state.1), Some(0));
 }
@@ -467,35 +572,37 @@ fn mcp_runtime_failure_transitions_tools_out_of_starting_state() {
     let mut process = McpProcess::spawn(root.path(), &database);
     process.initialize();
     process.send_initialized();
+    process.wait_until_unavailable(Duration::from_secs(5));
+}
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut id = 2;
-    loop {
-        process.send(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "tools/call",
-            "params": {
-                "name": "leantoken_files",
-                "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
-            }
-        }));
-        let response = process.response(deadline.saturating_duration_since(Instant::now()));
-        let message = response["result"]["content"][0]["text"]
-            .as_str()
-            .unwrap_or_default();
-        if message.contains("unavailable") {
-            assert_eq!(response["result"]["isError"], true);
-            assert!(process.child.try_wait().expect("poll process").is_none());
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "runtime failure remained hidden behind startup state: {response}"
-        );
-        id += 1;
-        std::thread::sleep(Duration::from_millis(50));
-    }
+#[test]
+fn cli_json_mcp_failure_is_one_document_after_a_logged_error() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "fn answer() {}\n").expect("write fixture");
+    let database = root.path().join("index.sqlite");
+    std::fs::create_dir(database.with_extension("sqlite.leader.lock"))
+        .expect("invalid leadership artifact");
+
+    let mut process =
+        McpProcess::spawn_with_captured_stderr(root.path(), &database, &["--json"]);
+    process.initialize();
+    process.send_initialized();
+    process.wait_until_unavailable(Duration::from_secs(5));
+    process.stdin.take();
+
+    let status = process
+        .child
+        .wait_timeout(Duration::from_secs(5))
+        .expect("wait for JSON MCP failure")
+        .expect("JSON MCP process should exit after EOF");
+    assert!(!status.success());
+
+    let stderr = process.take_stderr();
+    let error: serde_json::Value =
+        serde_json::from_slice(&stderr).expect("one structured error without tracing records");
+    assert_eq!(error["category"], "internal_error");
+    assert!(error["error"].is_string());
+    assert_eq!(error.as_object().map(serde_json::Map::len), Some(2));
 }
 
 #[test]
@@ -847,6 +954,7 @@ fn setup_requires_yes_before_non_interactive_mutation() {
             .as_str()
             .is_some_and(|message| message.contains("requires explicit client flags"))
     );
+    assert_eq!(error["category"], "invalid_request");
 }
 
 // Windows ProjectDirs uses the Known Folder API and cannot be redirected to a
@@ -984,6 +1092,15 @@ fn malformed_selected_config_blocks_all_setup_writes() {
         .expect("run setup");
     assert!(!output.status.success());
     assert!(!temp.path().join(".cursor/mcp.json").exists());
+    let error: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("structured setup error");
+    assert_eq!(error["category"], "internal_error");
+    assert!(
+        error["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("refusing to overwrite malformed config"))
+    );
+    assert_eq!(error.as_object().map(serde_json::Map::len), Some(2));
 }
 
 #[test]
@@ -1143,10 +1260,65 @@ fn run(
     serde_json::from_slice(&output.stdout).expect("JSON output")
 }
 
+fn run_error(
+    root: &std::path::Path,
+    database: &std::path::Path,
+    arguments: &[&str],
+) -> serde_json::Value {
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .args([
+            "--root",
+            root.to_str().expect("root UTF-8"),
+            "--database",
+            database.to_str().expect("database UTF-8"),
+            "--json",
+        ])
+        .args(arguments)
+        .output()
+        .expect("run leantoken");
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    serde_json::from_slice(&output.stderr).expect("structured error")
+}
+
+fn assert_cli_parse_error(arguments: &[&str]) {
+    let expected = leantoken::cli::Cli::try_parse_from(
+        std::iter::once(leantoken_program_name())
+            .chain(arguments.iter().map(std::ffi::OsString::from)),
+    )
+    .expect_err("invalid CLI arguments")
+    .to_string();
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .args(arguments)
+        .output()
+        .expect("run CLI parse failure");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stderr)
+            .expect("structured parse error"),
+        serde_json::json!({
+            "error": expected.trim_end(),
+            "category": "invalid_input"
+        })
+    );
+}
+
+fn leantoken_program_name() -> std::ffi::OsString {
+    assert_cmd::cargo::cargo_bin!("leantoken")
+        .file_name()
+        .expect("binary file name")
+        .to_os_string()
+}
+
 struct McpProcess {
     child: Child,
     stdin: Option<ChildStdin>,
     lines: mpsc::Receiver<String>,
+    stderr_task: Option<std::thread::JoinHandle<Vec<u8>>>,
 }
 
 impl McpProcess {
@@ -1159,6 +1331,23 @@ impl McpProcess {
         database: &std::path::Path,
         arguments: &[&str],
     ) -> Self {
+        Self::spawn_with_options(root, database, arguments, false)
+    }
+
+    fn spawn_with_captured_stderr(
+        root: &std::path::Path,
+        database: &std::path::Path,
+        arguments: &[&str],
+    ) -> Self {
+        Self::spawn_with_options(root, database, arguments, true)
+    }
+
+    fn spawn_with_options(
+        root: &std::path::Path,
+        database: &std::path::Path,
+        arguments: &[&str],
+        capture_stderr: bool,
+    ) -> Self {
         let mut command = std::process::Command::new(assert_cmd::cargo::cargo_bin!("leantoken"));
         command
             .args([
@@ -1169,14 +1358,27 @@ impl McpProcess {
             ])
             .args(arguments)
             .arg("mcp");
+        command.stderr(if capture_stderr {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
             .spawn()
             .expect("spawn MCP process");
         let stdin = child.stdin.take().expect("MCP stdin");
         let stdout = child.stdout.take().expect("MCP stdout");
+        let stderr_task = child.stderr.take().map(|mut stderr| {
+            std::thread::spawn(move || {
+                let mut output = Vec::new();
+                stderr
+                    .read_to_end(&mut output)
+                    .expect("read MCP stderr");
+                output
+            })
+        });
         let (tx, lines) = mpsc::channel();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
@@ -1190,7 +1392,16 @@ impl McpProcess {
             child,
             stdin: Some(stdin),
             lines,
+            stderr_task,
         }
+    }
+
+    fn take_stderr(&mut self) -> Vec<u8> {
+        self.stderr_task
+            .take()
+            .expect("captured MCP stderr")
+            .join()
+            .expect("join MCP stderr reader")
     }
 
     fn initialize(&mut self) -> serde_json::Value {
@@ -1238,6 +1449,37 @@ impl McpProcess {
             std::thread::sleep(Duration::from_millis(50));
         }
         panic!("MCP process did not become ready within {timeout:?}");
+    }
+
+    fn wait_until_unavailable(&mut self, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        let mut id = 2;
+        loop {
+            self.send(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": {
+                    "name": "leantoken_files",
+                    "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
+                }
+            }));
+            let response = self.response(deadline.saturating_duration_since(Instant::now()));
+            let message = response["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap_or_default();
+            if message.contains("unavailable") {
+                assert_eq!(response["result"]["isError"], true);
+                assert!(self.child.try_wait().expect("poll process").is_none());
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "runtime failure remained hidden behind startup state: {response}"
+            );
+            id += 1;
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 
     fn send(&mut self, message: serde_json::Value) {
@@ -1295,6 +1537,9 @@ impl Drop for McpProcess {
             let _ = self.child.kill();
         }
         let _ = self.child.wait();
+        if let Some(task) = self.stderr_task.take() {
+            let _ = task.join();
+        }
     }
 }
 

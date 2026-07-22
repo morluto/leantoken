@@ -1,4 +1,9 @@
-use std::{io::Write, sync::Arc, time::Duration};
+use std::{
+    ffi::{OsStr, OsString},
+    io::Write,
+    sync::Arc,
+    time::Duration,
+};
 
 use clap::Parser;
 use leantoken::{
@@ -48,20 +53,31 @@ impl RetryBackoff {
 
 #[tokio::main]
 async fn main() {
-    init_tracing();
-    if let Err(error) = run().await {
-        let message = cli_error_message(&error);
-        if std::env::args_os().any(|argument| argument == "--json") {
-            eprintln!("{}", serde_json::json!({ "error": message }));
+    let arguments = std::env::args_os().collect::<Vec<_>>();
+    let json_requested = cli_json_requested(&arguments);
+    let cli = match Cli::try_parse_from(arguments) {
+        Ok(cli) => cli,
+        Err(error) if json_requested && error.use_stderr() => {
+            let exit_code = error.exit_code();
+            eprintln!("{}", serde_json::json!(cli_parse_error_response(&error)));
+            std::process::exit(exit_code);
+        }
+        Err(error) => error.exit(),
+    };
+    let json = cli.json;
+    init_tracing(json);
+    if let Err(error) = run(cli).await {
+        if json {
+            eprintln!("{}", serde_json::json!(cli_error_response(&error)));
         } else {
+            let message = cli_error_message(&error);
             eprintln!("Error: {message}");
         }
         std::process::exit(1);
     }
 }
 
-async fn run() -> Result<()> {
-    let cli = Cli::parse();
+async fn run(cli: Cli) -> Result<()> {
     let json = cli.json;
 
     if matches!(
@@ -85,7 +101,7 @@ async fn run() -> Result<()> {
                 let report = cache::prune(&request)?;
                 cache::print_prune(&report, json)?;
                 if report.has_failures() {
-                    return Err(leantoken::Error::InvalidRequest(
+                    return Err(leantoken::Error::InternalFailure(
                         "one or more managed caches could not be pruned".into(),
                     ));
                 }
@@ -107,7 +123,7 @@ async fn run() -> Result<()> {
         let report = setup::run(operation, request, json)?;
         setup::print_report(&report, json)?;
         if report.has_failures() {
-            return Err(leantoken::Error::InvalidRequest(
+            return Err(leantoken::Error::InternalFailure(
                 "one or more MCP client configurations failed".into(),
             ));
         }
@@ -476,7 +492,111 @@ fn cli_error_message(error: &leantoken::Error) -> String {
     }
 }
 
-fn init_tracing() {
+fn cli_json_requested(arguments: &[OsString]) -> bool {
+    arguments
+        .iter()
+        .skip(1)
+        .take_while(|argument| argument.as_os_str() != OsStr::new("--"))
+        .any(|argument| argument.as_os_str() == OsStr::new("--json"))
+}
+
+#[derive(Debug, Serialize)]
+struct CliErrorResponse {
+    error: String,
+    category: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<usize>,
+}
+
+fn cli_parse_error_response(error: &clap::Error) -> CliErrorResponse {
+    use clap::error::ErrorKind;
+
+    let category = match error.kind() {
+        ErrorKind::InvalidValue
+        | ErrorKind::UnknownArgument
+        | ErrorKind::InvalidSubcommand
+        | ErrorKind::NoEquals
+        | ErrorKind::ValueValidation
+        | ErrorKind::TooManyValues
+        | ErrorKind::TooFewValues
+        | ErrorKind::WrongNumberOfValues
+        | ErrorKind::ArgumentConflict
+        | ErrorKind::MissingRequiredArgument
+        | ErrorKind::MissingSubcommand
+        | ErrorKind::InvalidUtf8
+        | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => "invalid_input",
+        _ => "internal_error",
+    };
+
+    CliErrorResponse {
+        error: error.to_string().trim_end().to_owned(),
+        category,
+        field: None,
+        requested: None,
+        limit: None,
+    }
+}
+
+fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
+    let (category, field, requested, limit) = match error {
+        leantoken::Error::InvalidInput { field, .. } => ("invalid_input", Some(*field), None, None),
+        leantoken::Error::InputTooLong { field, max_bytes } => {
+            ("input_too_long", Some(*field), None, Some(*max_bytes))
+        }
+        leantoken::Error::RequestLimitExceeded {
+            field,
+            requested,
+            limit,
+        } => (
+            "request_limit_exceeded",
+            Some(*field),
+            Some(*requested),
+            Some(*limit),
+        ),
+        leantoken::Error::LimitExceeded => ("request_limit_exceeded", None, None, None),
+        leantoken::Error::NotIndexed(_) => ("not_indexed", None, None, None),
+        leantoken::Error::IndexNotReady => ("index_not_ready", None, None, None),
+        leantoken::Error::StaleCursor => ("stale_cursor", None, None, None),
+        leantoken::Error::Cancelled => ("request_cancelled", None, None, None),
+        leantoken::Error::PathOutsideRoot(_) => ("path_outside_root", None, None, None),
+        leantoken::Error::UnsupportedLanguage(_) => ("unsupported_language", None, None, None),
+        leantoken::Error::InvalidRequest(_) => ("invalid_request", None, None, None),
+        leantoken::Error::Regex(_) => ("invalid_regex", None, None, None),
+        leantoken::Error::Glob(_) => ("invalid_glob", None, None, None),
+        leantoken::Error::RootNotFound(_)
+        | leantoken::Error::UnsafeRepositoryRoot(_)
+        | leantoken::Error::RepositoryMismatch { .. }
+        | leantoken::Error::InvalidConfiguration(_) => {
+            ("repository_configuration", None, None, None)
+        }
+        leantoken::Error::IndexLimitExceeded { .. } => ("repository_index_limit", None, None, None),
+        leantoken::Error::RuntimeCapabilityUnavailable { .. } => {
+            ("runtime_unavailable", None, None, None)
+        }
+        leantoken::Error::StaleReconciliation { .. } | leantoken::Error::RetryableConflict(_) => {
+            ("retryable_conflict", None, None, None)
+        }
+        _ => ("internal_error", None, None, None),
+    };
+
+    CliErrorResponse {
+        error: cli_error_message(error),
+        category,
+        field,
+        requested,
+        limit,
+    }
+}
+
+fn init_tracing(json: bool) {
+    if json {
+        return;
+    }
+
     use tracing_subscriber::EnvFilter;
     use tracing_subscriber::filter::FilterFn;
     use tracing_subscriber::prelude::*;
@@ -549,5 +669,152 @@ mod tests {
         assert!(!is_terminal_index_error(&leantoken::Error::Io(
             std::io::Error::other("transient")
         )));
+    }
+
+    #[test]
+    fn cli_error_json_has_exact_safe_metadata() {
+        let cases = [
+            (
+                leantoken::Error::InvalidInput {
+                    field: "query",
+                    reason: "is required for find",
+                },
+                serde_json::json!({
+                    "error": "invalid query: is required for find",
+                    "category": "invalid_input",
+                    "field": "query"
+                }),
+            ),
+            (
+                leantoken::Error::RequestLimitExceeded {
+                    field: "max_results",
+                    requested: 101,
+                    limit: 100,
+                },
+                serde_json::json!({
+                    "error": "max_results exceeds its configured limit: requested 101, limit 100",
+                    "category": "request_limit_exceeded",
+                    "field": "max_results",
+                    "requested": 101,
+                    "limit": 100
+                }),
+            ),
+            (
+                leantoken::Error::LimitExceeded,
+                serde_json::json!({
+                    "error": "requested content exceeds the configured limit",
+                    "category": "request_limit_exceeded"
+                }),
+            ),
+            (
+                leantoken::Error::InputTooLong {
+                    field: "query",
+                    max_bytes: 65_536,
+                },
+                serde_json::json!({
+                    "error": "query exceeds 65536 bytes",
+                    "category": "input_too_long",
+                    "field": "query",
+                    "limit": 65_536
+                }),
+            ),
+            (
+                leantoken::Error::NotIndexed("missing.rs".into()),
+                serde_json::json!({
+                    "error": "path is not indexed: missing.rs",
+                    "category": "not_indexed"
+                }),
+            ),
+            (
+                leantoken::Error::IndexNotReady,
+                serde_json::json!({
+                    "error": "repository index is not ready; run `leantoken index` for direct CLI use or `leantoken doctor` to verify MCP readiness",
+                    "category": "index_not_ready"
+                }),
+            ),
+            (
+                leantoken::Error::StaleCursor,
+                serde_json::json!({
+                    "error": "stale cursor",
+                    "category": "stale_cursor"
+                }),
+            ),
+            (
+                leantoken::Error::Cancelled,
+                serde_json::json!({
+                    "error": "request cancelled",
+                    "category": "request_cancelled"
+                }),
+            ),
+            (
+                leantoken::Error::Io(std::io::Error::other("private descriptor")),
+                serde_json::json!({
+                    "error": "I/O error: private descriptor",
+                    "category": "internal_error"
+                }),
+            ),
+            (
+                leantoken::Error::InvalidRequest("bad flags".into()),
+                serde_json::json!({
+                    "error": "invalid request: bad flags",
+                    "category": "invalid_request"
+                }),
+            ),
+            (
+                leantoken::Error::InternalFailure("parser returned None".into()),
+                serde_json::json!({
+                    "error": "invalid request: parser returned None",
+                    "category": "internal_error"
+                }),
+            ),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(
+                serde_json::to_value(cli_error_response(&error))
+                    .expect("CLI error response is serializable"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn cli_parse_error_json_preserves_plain_clap_message() {
+        let error = Cli::try_parse_from([
+            "leantoken",
+            "--json",
+            "files",
+            "tree",
+            "--max-results",
+            "nope",
+        ])
+        .expect_err("invalid numeric argument");
+
+        assert_eq!(
+            serde_json::to_value(cli_parse_error_response(&error))
+                .expect("CLI parse error response is serializable"),
+            serde_json::json!({
+                "error": error.to_string().trim_end(),
+                "category": "invalid_input"
+            })
+        );
+    }
+
+    #[test]
+    fn cli_json_detection_ignores_values_after_the_argument_separator() {
+        let arguments = |values: &[&str]| values.iter().map(OsString::from).collect::<Vec<_>>();
+
+        assert!(cli_json_requested(&arguments(&[
+            "leantoken",
+            "files",
+            "tree",
+            "--json"
+        ])));
+        assert!(!cli_json_requested(&arguments(&[
+            "leantoken",
+            "search",
+            "--",
+            "--json"
+        ])));
     }
 }

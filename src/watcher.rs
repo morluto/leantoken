@@ -413,7 +413,7 @@ impl RepositoryWatcher {
             Ok(Err(err)) => Err(err),
             Err(_) => {
                 let _ = handle.await;
-                Err(Error::InvalidRequest(
+                Err(Error::InternalFailure(
                     "watcher task terminated unexpectedly".into(),
                 ))
             }
