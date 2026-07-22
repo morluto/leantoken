@@ -486,9 +486,13 @@ pub struct IndexResponse {
     pub files_unchanged: usize,
     pub files_removed: usize,
     pub files_skipped: usize,
-    /// Aggregate preparation skip counts whose sum equals `files_skipped`.
-    #[serde(default)]
-    pub skip_reasons: IndexSkipReasonCounts,
+    /// Known aggregate preparation skip counts whose sum equals `files_skipped`.
+    ///
+    /// Legacy deserialized responses omit this field because their reason
+    /// breakdown is unknown. Responses produced by this version always include
+    /// the fixed-shape object.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_reasons: Option<IndexSkipReasonCounts>,
     pub warnings: Vec<String>,
 }
 
@@ -526,7 +530,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn index_response_defaults_legacy_skip_reasons_and_serializes_reason_counts() {
+    fn index_response_preserves_unknown_legacy_skip_reasons_and_serializes_known_counts() {
         let legacy: IndexResponse = serde_json::from_value(serde_json::json!({
             "repository_generation": 1,
             "files_seen": 2,
@@ -537,7 +541,9 @@ mod tests {
             "warnings": []
         }))
         .expect("deserialize legacy index response");
-        assert_eq!(legacy.skip_reasons, IndexSkipReasonCounts::default());
+        assert_eq!(legacy.skip_reasons, None);
+        let legacy_value = serde_json::to_value(&legacy).expect("reserialize legacy response");
+        assert!(legacy_value.get("skip_reasons").is_none());
 
         let skip_reasons = IndexSkipReasonCounts {
             binary: 1,
@@ -551,7 +557,7 @@ mod tests {
             files_unchanged: 0,
             files_removed: 2,
             files_skipped: skip_reasons.total(),
-            skip_reasons,
+            skip_reasons: Some(skip_reasons),
             warnings: vec!["failed preparation".into()],
         };
         let value = serde_json::to_value(response).expect("serialize index response");

@@ -134,7 +134,14 @@ fn full_and_targeted_reconcile_exclude_metadata_oversized_file_from_files_seen()
         assert_eq!(response.files_seen, 0);
         assert_eq!(response.files_removed, 1);
         assert_eq!(response.files_skipped, 0);
-        assert_eq!(response.skip_reasons.total(), 0);
+        assert_eq!(
+            response
+                .skip_reasons
+                .as_ref()
+                .expect("current skip reasons")
+                .total(),
+            0
+        );
     }
     assert!(
         full_storage
@@ -175,8 +182,96 @@ fn visibility_reconcile_excludes_discovery_oversized_file_from_files_seen() {
     assert_eq!(response.files_indexed, 1);
     assert_eq!(response.files_removed, 1);
     assert_eq!(response.files_skipped, 0);
-    assert_eq!(response.skip_reasons.total(), 0);
+    assert_eq!(
+        response
+            .skip_reasons
+            .as_ref()
+            .expect("current skip reasons")
+            .total(),
+        0
+    );
     assert!(storage.find_file("oversized.rs").expect("lookup").is_none());
+}
+
+#[test]
+fn visibility_reconcile_matches_full_files_seen_for_deleted_file() {
+    let root = tempfile::tempdir().expect("root");
+    let databases = tempfile::tempdir().expect("databases");
+    std::fs::create_dir(root.path().join(".git")).expect("git marker");
+    let removed = root.path().join("removed.rs");
+    std::fs::write(&removed, "fn removed() {}\n").expect("initial source");
+    std::fs::write(root.path().join(".gitignore"), "").expect("initial ignore");
+
+    let full_config = Arc::new(
+        Config::discover(root.path(), Some(databases.path().join("full.sqlite")))
+            .expect("full config"),
+    );
+    let full_storage = Storage::open(&full_config.database_path).expect("full storage");
+    let full_indexer = Indexer::new(full_config, full_storage.clone()).expect("full indexer");
+    full_indexer.reconcile(false).expect("initial full index");
+
+    let visibility_config = Arc::new(
+        Config::discover(
+            root.path(),
+            Some(databases.path().join("visibility.sqlite")),
+        )
+        .expect("visibility config"),
+    );
+    let visibility_storage =
+        Storage::open(&visibility_config.database_path).expect("visibility storage");
+    let visibility_indexer = Indexer::new(visibility_config, visibility_storage.clone())
+        .expect("visibility indexer");
+    visibility_indexer
+        .reconcile(false)
+        .expect("initial visibility index");
+
+    std::fs::remove_file(&removed).expect("remove source");
+    std::fs::write(root.path().join(".gitignore"), "# visibility refresh\n")
+        .expect("change ignore");
+    let full = full_indexer.reconcile(false).expect("full reconcile");
+    let visibility = visibility_indexer
+        .reconcile_paths(&[".gitignore".into()])
+        .expect("visibility reconcile");
+
+    assert_eq!(visibility.files_seen, full.files_seen);
+    assert_eq!(visibility.files_seen, 1);
+    assert_eq!(visibility.files_indexed, full.files_indexed);
+    assert_eq!(visibility.files_removed, full.files_removed);
+    assert_eq!(visibility.files_removed, 1);
+    assert!(
+        visibility_storage
+            .find_file("removed.rs")
+            .expect("visibility lookup")
+            .is_none()
+    );
+}
+
+#[test]
+fn targeted_reconcile_existing_directory_does_not_count_unchanged_descendants() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("src")).expect("source directory");
+    std::fs::write(root.path().join("src/stable.rs"), "fn stable() {}\n")
+        .expect("source fixture");
+    let config = Arc::new(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    );
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+    indexer.reconcile(false).expect("initial reconcile");
+
+    let response = indexer
+        .reconcile_paths(&["src".into()])
+        .expect("directory reconcile");
+
+    assert_eq!(response.files_seen, 0);
+    assert_eq!(response.files_indexed, 0);
+    assert_eq!(response.files_removed, 0);
+    assert!(
+        storage
+            .find_file("src/stable.rs")
+            .expect("lookup")
+            .is_some()
+    );
 }
 
 #[test]
@@ -477,7 +572,14 @@ fn targeted_reconcile_applies_new_file_and_ignore_deltas() {
     assert_eq!(ignored.files_indexed, 1);
     assert_eq!(ignored.files_removed, 1);
     assert_eq!(ignored.files_skipped, 0);
-    assert_eq!(ignored.skip_reasons.total(), 0);
+    assert_eq!(
+        ignored
+            .skip_reasons
+            .as_ref()
+            .expect("current skip reasons")
+            .total(),
+        0
+    );
     assert!(storage.find_file("hide.rs").expect("find hidden").is_none());
 }
 

@@ -454,7 +454,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
 
     let (leantoken_git_revision, leantoken_worktree_dirty) = leantoken_source_identity();
     Ok(Report {
-        schema_version: 7,
+        schema_version: 8,
         leantoken_version: env!("CARGO_PKG_VERSION"),
         leantoken_git_revision,
         leantoken_worktree_dirty,
@@ -1123,7 +1123,7 @@ mod tests {
                     files_unchanged: 1,
                     files_removed: 0,
                     files_skipped: 0,
-                    skip_reasons: Default::default(),
+                    skip_reasons: Some(Default::default()),
                     warnings: Vec::new(),
                 })
             },
@@ -1158,7 +1158,7 @@ mod tests {
 
         let report = run_profile(&args).expect("profile");
 
-        assert_eq!(report.schema_version, 7);
+        assert_eq!(report.schema_version, 8);
         assert_eq!(report.initial_index.response.files_indexed, 7);
         assert!(report.initial_index.storage_footprint.database_bytes > 0);
         assert_eq!(

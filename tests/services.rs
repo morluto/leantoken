@@ -938,7 +938,14 @@ async fn database_artifact_notifications_do_not_publish_a_generation() {
     assert_eq!(response.files_removed, 0);
     assert_eq!(response.files_unchanged, 0);
     assert_eq!(response.files_skipped, 0);
-    assert_eq!(response.skip_reasons.total(), 0);
+    assert_eq!(
+        response
+            .skip_reasons
+            .as_ref()
+            .expect("current skip reasons")
+            .total(),
+        0
+    );
     assert!(response.warnings.is_empty());
     assert_eq!(
         services

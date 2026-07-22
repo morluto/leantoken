@@ -589,7 +589,7 @@ cargo run --release --example indexing_profile -- \
   --output target/indexing_profile_tokio_linux.json
 ```
 
-The schema-version 7 report records the caller-supplied corpus label, exact
+The schema-version 8 report records the caller-supplied corpus label, exact
 revision, ignore-visible file count, total and mean bytes, maximum directory
 depth, extension mix, initial discovery/hash-plan/prepare/insert/publication
 timings, actual preparation batch file/byte high-water, and the SQLite, WAL, and

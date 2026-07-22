@@ -380,7 +380,7 @@ impl Indexer {
             files_unchanged: unchanged,
             files_removed,
             files_skipped,
-            skip_reasons,
+            skip_reasons: Some(skip_reasons),
             warnings,
         };
         let diagnostics = IndexingDiagnostics {
@@ -454,6 +454,68 @@ impl Indexer {
         cancellation: &CancellationToken,
         before_preparation: impl FnOnce(),
     ) -> Result<IndexResponse> {
+        self.reconcile_paths_once_with_hooks(paths, cancellation, || {}, before_preparation)
+    }
+
+    fn observe_visibility_delta(
+        &self,
+        paths: &[String],
+        existing: &HashMap<String, crate::storage::FileRecord>,
+    ) -> (bool, HashSet<String>) {
+        let mut visibility_delta = false;
+        let mut observed_deletions = HashSet::new();
+        for requested in paths {
+            let relative = Path::new(requested);
+            let relative_path = slash_path(relative);
+            if self
+                .config
+                .discovery_policy()
+                .is_ignore_control_path(&relative_path)
+            {
+                visibility_delta = true;
+                continue;
+            }
+            let absolute = self.config.root.join(relative);
+            match fs::symlink_metadata(&absolute) {
+                Ok(metadata) => {
+                    let is_file = metadata.file_type().is_file();
+                    visibility_delta |= !existing.contains_key(&relative_path) || !is_file;
+                    if !is_file {
+                        let prefix = format!("{relative_path}/");
+                        observed_deletions.extend(
+                            existing
+                                .keys()
+                                .filter(|path| *path == &relative_path || path.starts_with(&prefix))
+                                .cloned(),
+                        );
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    let prefix = format!("{relative_path}/");
+                    let observed = existing
+                        .keys()
+                        .filter(|path| *path == &relative_path || path.starts_with(&prefix))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    visibility_delta |= observed.iter().any(|path| path.starts_with(&prefix));
+                    observed_deletions.extend(observed);
+                }
+                Err(_) => {}
+            }
+        }
+        if !visibility_delta {
+            observed_deletions.clear();
+        }
+        (visibility_delta, observed_deletions)
+    }
+
+    fn reconcile_paths_once_with_hooks(
+        &self,
+        paths: &[String],
+        cancellation: &CancellationToken,
+        after_discovery: impl FnOnce(),
+        before_preparation: impl FnOnce(),
+    ) -> Result<IndexResponse> {
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
         let config_hash = self.config_hash();
@@ -477,27 +539,9 @@ impl Indexer {
         paths.sort_unstable();
         check_cancelled(cancellation)?;
 
-        let visibility_delta = paths.iter().any(|requested| {
-            let relative = Path::new(requested);
-            let relative_path = slash_path(relative);
-            if self
-                .config
-                .discovery_policy()
-                .is_ignore_control_path(&relative_path)
-            {
-                return true;
-            }
-            let absolute = self.config.root.join(relative);
-            match fs::symlink_metadata(&absolute) {
-                Ok(metadata) => {
-                    !existing.contains_key(&relative_path) || !metadata.file_type().is_file()
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => existing
-                    .keys()
-                    .any(|path| path.starts_with(&format!("{relative_path}/"))),
-                Err(_) => false,
-            }
-        });
+        // Preserve targeted deletion evidence from the observation that triggers discovery.
+        let (visibility_delta, visibility_observed_deletions) =
+            self.observe_visibility_delta(&paths, &existing);
         let discovered = visibility_delta
             .then(|| {
                 discover_files_with_limits_policy_and_filter(
@@ -517,10 +561,11 @@ impl Indexer {
                 .map(|file| (file.relative_path.clone(), file))
                 .collect::<HashMap<_, _>>()
         });
+        after_discovery();
 
         let mut candidates = HashMap::new();
         let mut deletions = HashSet::new();
-        let mut missing_deletions = HashSet::new();
+        let mut directly_observed_deletions = visibility_observed_deletions;
         let mut unchanged = 0usize;
         if let Some(discovered) = &discovered_by_path {
             for (path, file) in discovered {
@@ -533,12 +578,6 @@ impl Indexer {
                 check_cancelled(cancellation)?;
                 if !discovered.contains_key(path) {
                     deletions.insert(path.clone());
-                    if matches!(
-                        fs::symlink_metadata(self.config.root.join(path)),
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound
-                    ) {
-                        missing_deletions.insert(path.clone());
-                    }
                 }
             }
         } else {
@@ -559,7 +598,7 @@ impl Indexer {
                     Ok(metadata) => metadata,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                         if existing.contains_key(&relative_path) {
-                            missing_deletions.insert(relative_path.clone());
+                            directly_observed_deletions.insert(relative_path.clone());
                             deletions.insert(relative_path);
                         }
                         continue;
@@ -601,9 +640,10 @@ impl Indexer {
         let forced_importers =
             self.add_affected_importers(&mut candidates, &deletions, &change_set, cancellation)?;
         self.validate_membership_limits(&existing, &candidates, &deletions, cancellation)?;
-        debug_assert!(missing_deletions.is_subset(&deletions));
+        directly_observed_deletions.retain(|path| deletions.contains(path));
+        debug_assert!(directly_observed_deletions.is_subset(&deletions));
 
-        let files_seen = candidates.len() + missing_deletions.len();
+        let files_seen = candidates.len() + directly_observed_deletions.len();
         let candidates = candidates.into_values().collect::<Vec<_>>();
         let mut warnings = Vec::new();
         let mut skip_reasons = IndexSkipReasonCounts::default();
@@ -678,7 +718,7 @@ impl Indexer {
             files_unchanged: unchanged,
             files_removed,
             files_skipped,
-            skip_reasons,
+            skip_reasons: Some(skip_reasons),
             warnings,
         })
     }
@@ -1252,14 +1292,51 @@ mod tests {
         failed: usize,
     ) {
         assert_eq!(
-            response.skip_reasons,
-            IndexSkipReasonCounts {
+            response.skip_reasons.as_ref(),
+            Some(&IndexSkipReasonCounts {
                 binary,
                 oversized_during_read,
                 failed,
-            }
+            })
         );
-        assert_eq!(response.files_skipped, response.skip_reasons.total());
+        assert_eq!(
+            response.files_skipped,
+            response
+                .skip_reasons
+                .as_ref()
+                .expect("current skip reasons")
+                .total()
+        );
+    }
+
+    #[test]
+    fn visibility_reconcile_does_not_reclassify_exclusion_after_discovery() {
+        let root = tempfile::tempdir().expect("root");
+        fs::create_dir(root.path().join(".git")).expect("git marker");
+        let excluded_path = root.path().join("excluded.rs");
+        fs::write(&excluded_path, "fn excluded() {}\n").expect("source fixture");
+        fs::write(root.path().join(".gitignore"), "").expect("initial ignore");
+        let config = Arc::new(
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+        );
+        let storage = Storage::open(&config.database_path).expect("storage");
+        let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+        indexer.reconcile(false).expect("initial reconcile");
+        fs::write(root.path().join(".gitignore"), "excluded.rs\n").expect("exclude source");
+
+        let response = indexer
+            .reconcile_paths_once_with_hooks(
+                &[".gitignore".into()],
+                &CancellationToken::new(),
+                || fs::remove_file(&excluded_path).expect("remove after discovery"),
+                || {},
+            )
+            .expect("visibility reconcile");
+
+        assert_eq!(response.files_seen, 1);
+        assert_eq!(response.files_indexed, 1);
+        assert_eq!(response.files_removed, 1);
+        assert!(storage.find_file("excluded.rs").expect("lookup").is_none());
     }
 
     #[test]
