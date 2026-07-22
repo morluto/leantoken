@@ -79,6 +79,58 @@ fn cli_files_tree_treats_dot_as_the_repository_root() {
 }
 
 #[test]
+fn cold_cli_status_and_retrieval_explain_index_readiness() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "fn pending() {}\n").expect("source");
+    let database = root.path().join("index.sqlite");
+
+    let status = run(root.path(), &database, &["status"]);
+    assert_eq!(status["repository_generation"], 0);
+    assert_eq!(status["index_state"], "uninitialized");
+    assert_eq!(status["freshness"], "current");
+
+    let guidance = "repository index is not ready; run `leantoken index` for direct CLI use \
+        or `leantoken doctor` to verify MCP readiness";
+    let human = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .args([
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--database",
+            database.to_str().expect("database UTF-8"),
+            "files",
+            "tree",
+        ])
+        .output()
+        .expect("run human retrieval");
+    assert!(!human.status.success());
+    assert_eq!(
+        String::from_utf8(human.stderr)
+            .expect("UTF-8 stderr")
+            .trim(),
+        format!("Error: {guidance}")
+    );
+
+    let json = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .args([
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--database",
+            database.to_str().expect("database UTF-8"),
+            "--json",
+            "files",
+            "tree",
+        ])
+        .output()
+        .expect("run JSON retrieval");
+    assert!(!json.status.success());
+    let error: serde_json::Value =
+        serde_json::from_slice(&json.stderr).expect("structured error");
+    assert_eq!(error["error"], guidance);
+}
+
+#[test]
 fn cli_index_limit_error_is_structured_and_does_not_publish_partial_files() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("a.rs"), "fn a() {}\n").expect("a");

@@ -11,6 +11,16 @@ pub enum Freshness {
     Reconciling,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+/// Readiness of the repository index for retrieval.
+pub enum IndexState {
+    /// No index generation has completed.
+    Uninitialized,
+    /// At least one committed generation is available.
+    Ready,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 /// Consistency boundary applied before repository retrieval.
@@ -463,6 +473,8 @@ pub struct StatusResponse {
     pub repository_root: String,
     pub database_path: String,
     pub repository_generation: u64,
+    /// Whether a committed generation is available for retrieval.
+    pub index_state: IndexState,
     pub freshness: Freshness,
     pub file_count: usize,
     pub chunk_count: usize,
@@ -488,6 +500,45 @@ fn source_representation() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_response_serializes_readiness_independently_from_freshness() {
+        for (repository_generation, index_state, freshness) in [
+            (0, IndexState::Uninitialized, Freshness::Current),
+            (0, IndexState::Uninitialized, Freshness::Reconciling),
+            (4, IndexState::Ready, Freshness::Current),
+            (4, IndexState::Ready, Freshness::Reconciling),
+        ] {
+            let response = StatusResponse {
+                repository_root: "/repository".into(),
+                database_path: "/cache/index.sqlite".into(),
+                repository_generation,
+                index_state,
+                freshness: freshness.clone(),
+                file_count: 0,
+                chunk_count: 0,
+                symbol_count: 0,
+                languages: Vec::new(),
+                warnings: Vec::new(),
+            };
+
+            let value = serde_json::to_value(response).expect("serialize status");
+            assert_eq!(
+                value["index_state"],
+                match index_state {
+                    IndexState::Uninitialized => "uninitialized",
+                    IndexState::Ready => "ready",
+                }
+            );
+            assert_eq!(
+                value["freshness"],
+                match freshness {
+                    Freshness::Current => "current",
+                    Freshness::Reconciling => "reconciling",
+                }
+            );
+        }
+    }
 
     #[test]
     fn compact_context_response_round_trips_with_defaults() {

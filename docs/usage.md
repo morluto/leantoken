@@ -43,6 +43,14 @@ leantoken cache prune [--older-than DAYS] [--max-total-bytes BYTES]
 
 Use `leantoken <command> --help` for the complete argument list.
 
+`leantoken status` reports readiness separately from reconciliation activity.
+`index_state` is `uninitialized` until the first generation commits and `ready`
+afterward. `freshness` is `current` while idle and `reconciling` while an index
+operation is active, so a cold idle repository reports
+`uninitialized`/`current`. Before the first generation, direct CLI retrieval
+exits with guidance to run `leantoken index`; use `leantoken doctor` to verify
+the complete MCP startup and first-retrieval flow.
+
 ## MCP setup and version lifecycle
 
 Setup writes only the `leantoken` entry in each selected global client config.

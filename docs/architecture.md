@@ -137,6 +137,16 @@ generation. Changes written concurrently may require a later request.
 
 ## Indexing and freshness
 
+Status keeps committed-index readiness orthogonal to reconciliation activity.
+Generation zero is `index_state: "uninitialized"`; every later generation is
+`index_state: "ready"`. Independently, an idle cache is
+`freshness: "current"` and an active local or cross-process reconciliation is
+`freshness: "reconciling"`. The observable combinations are therefore
+`uninitialized/current` before indexing, `uninitialized/reconciling` during the
+first build, `ready/current` after a generation commits, and
+`ready/reconciling` while replacing an existing generation. No failed state is
+reported because reconciliation failures are not persisted.
+
 Discovery follows Git-compatible ignore rules, skips symlinks and oversized or
 binary files, and normalizes indexed paths to forward slashes. Text files are
 hashed, chunked on UTF-8 boundaries, and parsed in a bounded Rayon pool.
