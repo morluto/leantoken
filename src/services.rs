@@ -515,27 +515,35 @@ mod tests {
         let services = Services::open(config).expect("services");
         services.index(false).await.expect("index");
 
-        let response = services
-            .search(SearchRequest {
-                query: "needle".into(),
-                mode: SearchMode::Text,
-                include_paths: Vec::new(),
-                exclude_paths: Vec::new(),
-                focus_paths: Vec::new(),
-                max_results: Some(2),
-                max_tokens: Some(1),
-                context_lines: Some(0),
-                case_sensitive: false,
-                cursor: None,
-            })
-            .await
-            .expect("search");
+        let request = SearchRequest {
+            query: "needle".into(),
+            mode: SearchMode::Text,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(2),
+            max_tokens: Some(1),
+            context_lines: Some(0),
+            case_sensitive: false,
+            cursor: None,
+        };
+        let response = services.search(request.clone()).await.expect("search");
 
         assert!(response.hits.is_empty());
-        assert!(
-            response.meta.next_cursor.is_none(),
-            "all candidates were examined, so no next page remains"
-        );
+        let cursor = response
+            .meta
+            .next_cursor
+            .expect("unscanned candidates require another page");
+
+        let final_page = services
+            .search(SearchRequest {
+                cursor: Some(cursor),
+                ..request
+            })
+            .await
+            .expect("final search page");
+        assert!(final_page.hits.is_empty());
+        assert!(final_page.meta.next_cursor.is_none());
     }
 
     #[tokio::test]

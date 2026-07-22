@@ -8,7 +8,7 @@ mod facets;
 
 use super::Services;
 use super::read::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
-use super::search::{chunk_search_hit, fts_quote, matching_line};
+use super::search::{chunk_search_hit, compile_literal_regex, fts_quote, matching_line};
 use super::validation::{
     MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, check_cancelled,
     path_allowed, validate_input, validate_patterns,
@@ -20,8 +20,6 @@ use crate::storage::{ReadSession, SymbolRecord};
 use crate::text::{expand_terms, identifier_words};
 use crate::{Error, Result};
 use facets::{ContextQuery, FacetKind};
-use regex;
-
 const GIT_CHANGED_PATHS_MAX: usize = 512;
 /// Maximum explicit changed paths accepted from a diff-scoped request.
 const MAX_DIFF_CHANGED_PATHS: usize = 512;
@@ -856,12 +854,7 @@ impl Services {
                     .change_boost(change_boost);
                     candidates.push(annotate_candidate(candidate, query, "reference", rank));
                 }
-                let term_regex = regex::RegexBuilder::new(&regex::escape(term))
-                    .case_insensitive(true)
-                    .size_limit(1 << 20)
-                    .dfa_size_limit(1 << 20)
-                    .build()
-                    .ok();
+                let term_regex = compile_literal_regex(term, false)?;
                 let lexical = if term.chars().count() >= 3 {
                     session.search_trigram(term, MAX_CONTEXT_LEXICAL_HITS)?
                 } else {
@@ -878,8 +871,8 @@ impl Services {
                     else {
                         continue;
                     };
-                    let matched_line =
-                        matching_line(&hit, term, false).unwrap_or(search_hit.start_line);
+                    let matched_line = matching_line(&hit, term, false, term_regex.as_ref())
+                        .unwrap_or(search_hit.start_line);
                     lexical_hits.push((rank, hit, search_hit, matched_line));
                 }
                 let lexical_locations = lexical_hits
@@ -931,11 +924,9 @@ impl Services {
                             rank,
                         );
                     }
-                    let occurrences = hit
-                        .content
-                        .to_lowercase()
-                        .matches(&term.to_lowercase())
-                        .count();
+                    let occurrences = term_regex
+                        .as_ref()
+                        .map_or(0, |matcher| matcher.find_iter(&hit.content).count());
                     let change_boost = Self::file_change_boost(
                         Some(hit.generation),
                         &search_hit.path,
