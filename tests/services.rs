@@ -20,6 +20,20 @@ async fn fixture() -> (tempfile::TempDir, Services) {
     (root, services)
 }
 
+async fn indexed_source(path: &str, content: &[u8]) -> (tempfile::TempDir, Services) {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let source_path = root.path().join(path);
+    if let Some(parent) = source_path.parent() {
+        std::fs::create_dir_all(parent).expect("create source parent");
+    }
+    std::fs::write(source_path, content).expect("write source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index source");
+    (root, services)
+}
+
 #[test]
 fn services_reject_database_owned_by_another_repository() {
     let first_root = tempfile::tempdir().expect("first root");
@@ -903,6 +917,261 @@ async fn read_reports_live_content_that_differs_from_the_index() {
         changed.content.as_deref(),
         Some("pub fn changed() -> bool { true }\n")
     );
+}
+
+#[tokio::test]
+async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
+    let source = b"one\ntwo\nthree\nfour\nfive\n";
+    let (root, services) = indexed_source("lines.txt", source).await;
+
+    let exact = services
+        .read(ReadRequest {
+            path: "lines.txt".into(),
+            start_line: Some(2),
+            end_line: Some(3),
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("exact range");
+    assert_eq!((exact.start_line, exact.end_line), (2, 3));
+    assert_eq!(exact.content.as_deref(), Some("two\nthree\n"));
+
+    let unchanged = services
+        .read(ReadRequest {
+            path: "lines.txt".into(),
+            start_line: Some(2),
+            end_line: Some(3),
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: Some(exact.content_hash.clone()),
+        })
+        .await
+        .expect("conditional exact range");
+    assert_eq!(unchanged.status, ReadStatus::NotModified);
+    assert!(unchanged.content.is_none());
+    assert_eq!(unchanged.meta.emitted_tokens, 0);
+
+    let from_second = services
+        .read(ReadRequest {
+            path: "lines.txt".into(),
+            start_line: Some(2),
+            end_line: None,
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("open-ended range");
+    assert_eq!((from_second.start_line, from_second.end_line), (2, 5));
+    assert_eq!(from_second.content.as_deref(), Some("two\nthree\nfour\nfive\n"));
+
+    let through_third = services
+        .read(ReadRequest {
+            path: "lines.txt".into(),
+            start_line: None,
+            end_line: Some(3),
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("open-start range");
+    assert_eq!((through_third.start_line, through_third.end_line), (1, 3));
+    assert_eq!(through_third.content.as_deref(), Some("one\ntwo\nthree\n"));
+
+    let whole = services
+        .read(ReadRequest {
+            path: "lines.txt".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("whole file");
+    let exact_whole = services
+        .read(ReadRequest {
+            path: "lines.txt".into(),
+            start_line: Some(1),
+            end_line: Some(5),
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("exact whole file");
+    assert_eq!(whole.content.as_deref(), Some("one\ntwo\nthree\nfour\nfive\n"));
+    assert_eq!(exact_whole.content, whole.content);
+    assert_eq!(exact_whole.content_hash, whole.content_hash);
+
+    let through_eof = services
+        .read(ReadRequest {
+            path: "lines.txt".into(),
+            start_line: Some(4),
+            end_line: Some(99),
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("range through EOF");
+    assert_eq!((through_eof.start_line, through_eof.end_line), (4, 5));
+    assert_eq!(through_eof.content.as_deref(), Some("four\nfive\n"));
+
+    std::fs::write(
+        root.path().join("lines.txt"),
+        b"one\nchanged\nthree\nfour\nfive\n",
+    )
+    .expect("edit source");
+    let changed = services
+        .read(ReadRequest {
+            path: "lines.txt".into(),
+            start_line: Some(2),
+            end_line: Some(3),
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: Some(exact.content_hash.clone()),
+        })
+        .await
+        .expect("changed exact range");
+    assert_eq!(changed.status, ReadStatus::Content);
+    assert!(changed.index_stale);
+    assert_ne!(changed.content_hash, exact.content_hash);
+    assert_eq!(changed.content.as_deref(), Some("changed\nthree\n"));
+}
+
+#[tokio::test]
+async fn symbol_read_after_first_line_returns_the_complete_definition() {
+    let source = b"const PREFIX: usize = 1;\n\nfn target() -> usize {\n    let value = PREFIX + 1;\n    value\n}\n\nfn after() {}\n";
+    let (_root, services) = indexed_source("symbol.rs", source).await;
+
+    let response = services
+        .read(ReadRequest {
+            path: "symbol.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: Some("target".into()),
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("symbol range");
+
+    assert_eq!((response.start_line, response.end_line), (3, 6));
+    assert_eq!(
+        response.content.as_deref(),
+        Some("fn target() -> usize {\n    let value = PREFIX + 1;\n    value\n}\n")
+    );
+}
+
+#[tokio::test]
+async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
+    let source = b"alpha\r\nbeta\r\ngamma";
+    let (_root, services) = indexed_source("endings.txt", source).await;
+
+    let exact = services
+        .read(ReadRequest {
+            path: "endings.txt".into(),
+            start_line: Some(2),
+            end_line: Some(3),
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("exact CRLF range");
+    let open = services
+        .read(ReadRequest {
+            path: "endings.txt".into(),
+            start_line: Some(2),
+            end_line: None,
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("open CRLF range");
+
+    assert_eq!((exact.start_line, exact.end_line), (2, 3));
+    assert_eq!(exact.content.as_deref(), Some("beta\r\ngamma"));
+    assert_eq!(exact.content, open.content);
+    assert_eq!(exact.content_hash, open.content_hash);
+
+    let final_line = services
+        .read(ReadRequest {
+            path: "endings.txt".into(),
+            start_line: Some(3),
+            end_line: Some(3),
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("final line");
+    assert_eq!(final_line.content.as_deref(), Some("gamma"));
+}
+
+#[tokio::test]
+async fn read_validates_ranges_and_preserves_empty_file_metadata() {
+    let (_root, services) = indexed_source("empty.txt", b"").await;
+
+    let empty = services
+        .read(ReadRequest {
+            path: "empty.txt".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("empty file");
+    assert_eq!((empty.start_line, empty.end_line), (1, 1));
+    assert_eq!(empty.content.as_deref(), Some(""));
+
+    for (start_line, end_line) in [(Some(0), Some(1)), (Some(3), Some(2)), (Some(2), Some(2))] {
+        let error = services
+            .read(ReadRequest {
+                path: "empty.txt".into(),
+                start_line,
+                end_line,
+                symbol: None,
+                max_tokens: Some(100),
+                expected_hash: None,
+            })
+            .await
+            .expect_err("invalid range");
+        assert!(matches!(error, Error::InvalidInput { field: "line range", .. }));
+    }
+}
+
+#[tokio::test]
+async fn token_truncated_read_reports_the_returned_line_range() {
+    let source = b"header\nalpha beta gamma delta\nsecond retained line\nthird retained line\n";
+    let (_root, services) = indexed_source("tokens.txt", source).await;
+
+    let response = services
+        .read(ReadRequest {
+            path: "tokens.txt".into(),
+            start_line: Some(2),
+            end_line: Some(4),
+            symbol: None,
+            max_tokens: Some(3),
+            expected_hash: None,
+        })
+        .await
+        .expect("token-truncated range");
+    let content = response.content.as_deref().expect("content");
+    let returned_lines = content.lines().count().max(usize::from(!content.is_empty()));
+
+    assert!(!content.is_empty());
+    assert_eq!(response.start_line, 2);
+    assert_eq!(response.end_line, response.start_line + returned_lines - 1);
+    assert!(response.end_line <= 4);
+    assert!(response.meta.emitted_tokens <= 3);
 }
 
 #[tokio::test]

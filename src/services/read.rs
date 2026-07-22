@@ -42,6 +42,19 @@ pub(super) struct AdaptiveExcerptRequest {
     pub token_budget: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ResolvedReadTarget {
+    start_line: usize,
+    end_line: Option<usize>,
+}
+
+#[derive(Debug)]
+struct LiveReadRange {
+    content: String,
+    start_line: usize,
+    end_line: usize,
+}
+
 fn assemble_stored_excerpt(
     request: &StoredExcerptRequest,
     selected: &[crate::storage::ChunkRecord],
@@ -274,40 +287,17 @@ impl Services {
             .find_file(&request.path)?
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
         let path = resolve_existing(&self.config.root, &request.path)?;
+        let target = resolve_read_target(session, indexed.id, request)?;
 
         // Stream the file through a BufReader for the full-file hash so the
         // entire file does not need to be held in memory simultaneously. The
         // content range is extracted by a bounded line-oriented reader.
         let file = fs::File::open(&path)?;
         let full_hash = stream_hash(&file)?;
-
-        // For the content range, read only the needed lines. When the symbol or
-        // line range is bounded, a line-oriented reader avoids loading the
-        // whole file into a String.
-        let (content, line_count) = read_range(&file, request, session, &indexed)?;
-        let line_count = line_count.max(1);
-
-        let (start_line, requested_end) = if let Some(symbol_name) = &request.symbol {
-            let symbol = session
-                .find_symbol(indexed.id, symbol_name)?
-                .ok_or_else(|| Error::NotIndexed(format!("{}::{symbol_name}", request.path)))?;
-            (symbol.start_line, symbol.end_line)
-        } else {
-            (
-                request.start_line.unwrap_or(1),
-                request.end_line.unwrap_or(line_count),
-            )
-        };
-        if start_line == 0 || requested_end < start_line || start_line > line_count {
-            return Err(Error::InvalidInput {
-                field: "line range",
-                reason: "must be ordered and within the requested file",
-            });
-        }
-        let requested_end = requested_end.min(line_count);
-        let content = crate::text::excerpt(&content, start_line, requested_end);
+        let range = read_live_range(&file, target)?;
+        let start_line = range.start_line;
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens);
-        let (content, emitted_tokens) = self.config.tokenizer.truncate(&content, max_tokens);
+        let (content, emitted_tokens) = self.config.tokenizer.truncate(&range.content, max_tokens);
         let returned_lines = content
             .lines()
             .count()
@@ -315,7 +305,7 @@ impl Services {
         let end_line = if returned_lines == 0 {
             start_line
         } else {
-            start_line + returned_lines - 1
+            (start_line + returned_lines - 1).min(range.end_line)
         };
         let content_hash = hash(content);
         let index_stale = indexed.content_hash != full_hash;
@@ -344,6 +334,36 @@ impl Services {
     }
 }
 
+fn resolve_read_target(
+    session: &ReadSession,
+    file_id: i64,
+    request: &ReadRequest,
+) -> Result<ResolvedReadTarget> {
+    let target = if let Some(symbol_name) = &request.symbol {
+        let symbol = session
+            .find_symbol(file_id, symbol_name)?
+            .ok_or_else(|| Error::NotIndexed(format!("{}::{symbol_name}", request.path)))?;
+        ResolvedReadTarget {
+            start_line: symbol.start_line,
+            end_line: Some(symbol.end_line),
+        }
+    } else {
+        ResolvedReadTarget {
+            start_line: request.start_line.unwrap_or(1),
+            end_line: request.end_line,
+        }
+    };
+
+    if target.start_line == 0
+        || target
+            .end_line
+            .is_some_and(|end_line| end_line < target.start_line)
+    {
+        return Err(invalid_line_range());
+    }
+    Ok(target)
+}
+
 /// Stream a file through a BufReader and compute the content hash without
 /// loading the entire file into memory.
 fn stream_hash(file: &File) -> Result<String> {
@@ -360,70 +380,55 @@ fn stream_hash(file: &File) -> Result<String> {
     Ok(hasher.finalize().to_hex()[..crate::text::CONTENT_FINGERPRINT_HEX_LEN].to_string())
 }
 
-/// Read the file content needed to satisfy a read request. When a bounded line
-/// range is requested, only lines up to `end_line` are read. When no end is
-/// specified, the whole file is read as a String. Returns the content and the
-/// total line count.
-fn read_range(
-    file: &File,
-    request: &ReadRequest,
-    session: &ReadSession,
-    indexed: &crate::storage::FileRecord,
-) -> Result<(String, usize)> {
+/// Read a resolved range without changing its original line terminators.
+fn read_live_range(file: &File, target: ResolvedReadTarget) -> Result<LiveReadRange> {
     let mut file = file.try_clone()?;
-    // If a symbol is requested, we need the symbol's line range first.
-    if let Some(symbol_name) = &request.symbol {
-        let symbol = session
-            .find_symbol(indexed.id, symbol_name)?
-            .ok_or_else(|| Error::NotIndexed(format!("{}::{symbol_name}", request.path)))?;
-        return read_bounded_range(&mut file, symbol.start_line, symbol.end_line);
-    }
-
-    // If both start and end are specified, read only the needed range.
-    if let (Some(start), Some(end)) = (request.start_line, request.end_line) {
-        return read_bounded_range(&mut file, start, end);
-    }
-
-    // Otherwise, read the whole file (needed for line_count or default range).
     file.seek(SeekFrom::Start(0))?;
     let mut reader = BufReader::new(file);
-    let mut content = String::new();
-    reader.read_to_string(&mut content)?;
-    let line_count = content.lines().count();
-    Ok((content, line_count))
-}
-
-/// Read lines `start_line` through `end_line` (1-based, inclusive) from the
-/// file without loading the entire file into memory.
-fn read_bounded_range(
-    file: &mut File,
-    start_line: usize,
-    end_line: usize,
-) -> Result<(String, usize)> {
-    file.seek(SeekFrom::Start(0))?;
-    let reader = BufReader::new(file);
-    let mut content = String::new();
-    let mut line_count = 0usize;
+    let mut selected = Vec::new();
+    let mut line = Vec::new();
     let mut current_line = 0usize;
-    let effective_end = if end_line == 0 { usize::MAX } else { end_line };
+    let mut selected_end = None;
 
-    for line_result in reader.lines() {
-        current_line += 1;
-        let line = line_result?;
-        if current_line >= start_line && current_line <= effective_end {
-            content.push_str(&line);
-            content.push('\n');
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            break;
         }
-        if current_line > effective_end {
+        current_line += 1;
+        if current_line >= target.start_line
+            && target
+                .end_line
+                .is_none_or(|end_line| current_line <= end_line)
+        {
+            selected.extend_from_slice(&line);
+            selected_end = Some(current_line);
+        }
+        if target.end_line == Some(current_line) {
             break;
         }
     }
-    line_count = current_line.max(line_count);
 
-    // We need the total line count for validation, but we stopped early.
-    // For bounded reads, the count we have is at least the end line.
-    // The caller clamps to line_count, so returning current_line is safe.
-    Ok((content, line_count))
+    let logical_line_count = current_line.max(1);
+    if target.start_line > logical_line_count {
+        return Err(invalid_line_range());
+    }
+    let content = String::from_utf8(selected).map_err(|_| Error::InvalidInput {
+        field: "path",
+        reason: "must identify UTF-8 text",
+    })?;
+    Ok(LiveReadRange {
+        content,
+        start_line: target.start_line,
+        end_line: selected_end.unwrap_or(target.start_line),
+    })
+}
+
+fn invalid_line_range() -> Error {
+    Error::InvalidInput {
+        field: "line range",
+        reason: "must be ordered and within the requested file",
+    }
 }
 
 #[cfg(test)]
