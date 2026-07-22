@@ -8,7 +8,7 @@
 
 - [ ] `cargo fmt --all -- --check`
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings`
-- [ ] `cargo test --all-targets --all-features`
+- [ ] `cargo test --all-features --lib --bins --test integration`
 
 ## Impact
 

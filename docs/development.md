@@ -38,6 +38,22 @@ Run a focused test while developing by passing its module or test name:
 cargo test --test integration services::
 ```
 
+Run the complete product-behavior suite without compiling or executing the
+benchmark examples:
+
+```bash
+cargo test --all-features --lib --bins --test integration
+```
+
+Benchmark and example tests are a separate target group because Cargo executes
+test binaries serially. Run them when changing `examples/`, benchmark fixtures,
+or their shared behavior:
+
+```bash
+cargo test --all-features --examples
+cargo test --all-features --doc
+```
+
 ## Pull request readiness
 
 Before opening a pull request, run the behavioral suite appropriate to the
@@ -46,11 +62,13 @@ change:
 ```bash
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features
+cargo test --all-features --lib --bins --test integration
 ```
 
-CI is authoritative for rustdoc warnings and native behavior on Linux, macOS,
-and Windows. Run rustdoc locally when changing public APIs or documentation:
+CI runs benchmark, example, and documentation tests once on Linux, and runs
+product behavior on Linux, macOS, and Windows. It is also authoritative for
+rustdoc warnings. Run rustdoc locally when changing public APIs or
+documentation:
 
 ```bash
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
