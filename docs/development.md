@@ -166,6 +166,11 @@ reporting. This is an acknowledged source-compatibility change for consumers
 that exhaustively matched the earlier enum. Release PRs own package version
 changes; feature and fix PRs do not edit `Cargo.toml` versions independently.
 
+Use `InvalidRequest` only for audited caller validation. Infrastructure and
+invariant failures use `InternalFailure`, which retains the historical
+`invalid request: ...` display prefix for CLI text compatibility while adapters
+classify it as internal. Do not infer error categories from rendered strings.
+
 ## Benchmarks
 
 The fixture benchmark is a fast regression check:

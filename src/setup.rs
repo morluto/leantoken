@@ -393,7 +393,7 @@ impl SetupPrompt for InteractivePrompt {
 }
 
 fn prompt_error(error: InquireError) -> Error {
-    Error::InvalidRequest(format!("interactive setup failed: {error}"))
+    Error::InternalFailure(format!("interactive setup failed: {error}"))
 }
 
 /// Run global MCP setup or removal using the current user environment.
@@ -403,7 +403,7 @@ pub fn run(
     json_output: bool,
 ) -> Result<SetupReport> {
     let home = home_directory()
-        .ok_or_else(|| Error::InvalidRequest("could not determine the home directory".into()))?;
+        .ok_or_else(|| Error::InternalFailure("could not determine the home directory".into()))?;
     let launcher = McpLauncher::current()?;
     let environment = SetupEnvironment {
         home,
@@ -671,7 +671,7 @@ fn apply_plan(plan: &ResolvedSetupPlan) -> Vec<ClientSetupResult> {
 fn apply_edit(edit: &PlannedClientEdit) -> Result<()> {
     let current = read_optional(&edit.public.path)?;
     if current != edit.original {
-        return Err(Error::InvalidRequest(format!(
+        return Err(Error::InternalFailure(format!(
             "configuration changed after preflight: {}",
             edit.public.path.display()
         )));
@@ -964,7 +964,7 @@ fn write_if_changed(path: &Path, original: &str, updated: &str) -> Result<()> {
         return Ok(());
     }
     let parent = path.parent().ok_or_else(|| {
-        Error::InvalidRequest(format!("config path has no parent: {}", path.display()))
+        Error::InternalFailure(format!("config path has no parent: {}", path.display()))
     })?;
     fs::create_dir_all(parent)?;
     let mut temporary = NamedTempFile::new_in(parent)?;
@@ -982,7 +982,7 @@ fn write_if_changed(path: &Path, original: &str, updated: &str) -> Result<()> {
 }
 
 fn invalid_config(path: &Path, error: impl fmt::Display) -> Error {
-    Error::InvalidRequest(format!(
+    Error::InternalFailure(format!(
         "refusing to overwrite malformed config {}: {error}",
         path.display()
     ))

@@ -1,4 +1,9 @@
-use std::{io::Write, sync::Arc, time::Duration};
+use std::{
+    ffi::{OsStr, OsString},
+    io::Write,
+    sync::Arc,
+    time::Duration,
+};
 
 use clap::Parser;
 use leantoken::{
@@ -49,8 +54,20 @@ impl RetryBackoff {
 #[tokio::main]
 async fn main() {
     init_tracing();
-    if let Err(error) = run().await {
-        if std::env::args_os().any(|argument| argument == "--json") {
+    let arguments = std::env::args_os().collect::<Vec<_>>();
+    let json_requested = cli_json_requested(&arguments);
+    let cli = match Cli::try_parse_from(arguments) {
+        Ok(cli) => cli,
+        Err(error) if json_requested && error.use_stderr() => {
+            let exit_code = error.exit_code();
+            eprintln!("{}", serde_json::json!(cli_parse_error_response(&error)));
+            std::process::exit(exit_code);
+        }
+        Err(error) => error.exit(),
+    };
+    let json = cli.json;
+    if let Err(error) = run(cli).await {
+        if json {
             eprintln!("{}", serde_json::json!(cli_error_response(&error)));
         } else {
             let message = cli_error_message(&error);
@@ -60,8 +77,7 @@ async fn main() {
     }
 }
 
-async fn run() -> Result<()> {
-    let cli = Cli::parse();
+async fn run(cli: Cli) -> Result<()> {
     let json = cli.json;
 
     if matches!(
@@ -85,7 +101,7 @@ async fn run() -> Result<()> {
                 let report = cache::prune(&request)?;
                 cache::print_prune(&report, json)?;
                 if report.has_failures() {
-                    return Err(leantoken::Error::InvalidRequest(
+                    return Err(leantoken::Error::InternalFailure(
                         "one or more managed caches could not be pruned".into(),
                     ));
                 }
@@ -107,7 +123,7 @@ async fn run() -> Result<()> {
         let report = setup::run(operation, request, json)?;
         setup::print_report(&report, json)?;
         if report.has_failures() {
-            return Err(leantoken::Error::InvalidRequest(
+            return Err(leantoken::Error::InternalFailure(
                 "one or more MCP client configurations failed".into(),
             ));
         }
@@ -476,6 +492,14 @@ fn cli_error_message(error: &leantoken::Error) -> String {
     }
 }
 
+fn cli_json_requested(arguments: &[OsString]) -> bool {
+    arguments
+        .iter()
+        .skip(1)
+        .take_while(|argument| argument.as_os_str() != OsStr::new("--"))
+        .any(|argument| argument.as_os_str() == OsStr::new("--json"))
+}
+
 #[derive(Debug, Serialize)]
 struct CliErrorResponse {
     error: String,
@@ -486,6 +510,35 @@ struct CliErrorResponse {
     requested: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     limit: Option<usize>,
+}
+
+fn cli_parse_error_response(error: &clap::Error) -> CliErrorResponse {
+    use clap::error::ErrorKind;
+
+    let category = match error.kind() {
+        ErrorKind::InvalidValue
+        | ErrorKind::UnknownArgument
+        | ErrorKind::InvalidSubcommand
+        | ErrorKind::NoEquals
+        | ErrorKind::ValueValidation
+        | ErrorKind::TooManyValues
+        | ErrorKind::TooFewValues
+        | ErrorKind::WrongNumberOfValues
+        | ErrorKind::ArgumentConflict
+        | ErrorKind::MissingRequiredArgument
+        | ErrorKind::MissingSubcommand
+        | ErrorKind::InvalidUtf8
+        | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => "invalid_input",
+        _ => "internal_error",
+    };
+
+    CliErrorResponse {
+        error: error.to_string().trim_end().to_owned(),
+        category,
+        field: None,
+        requested: None,
+        limit: None,
+    }
 }
 
 fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
@@ -696,6 +749,20 @@ mod tests {
                     "category": "internal_error"
                 }),
             ),
+            (
+                leantoken::Error::InvalidRequest("bad flags".into()),
+                serde_json::json!({
+                    "error": "invalid request: bad flags",
+                    "category": "invalid_request"
+                }),
+            ),
+            (
+                leantoken::Error::InternalFailure("parser returned None".into()),
+                serde_json::json!({
+                    "error": "invalid request: parser returned None",
+                    "category": "internal_error"
+                }),
+            ),
         ];
 
         for (error, expected) in cases {
@@ -705,5 +772,45 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn cli_parse_error_json_preserves_plain_clap_message() {
+        let error = Cli::try_parse_from([
+            "leantoken",
+            "--json",
+            "files",
+            "tree",
+            "--max-results",
+            "nope",
+        ])
+        .expect_err("invalid numeric argument");
+
+        assert_eq!(
+            serde_json::to_value(cli_parse_error_response(&error))
+                .expect("CLI parse error response is serializable"),
+            serde_json::json!({
+                "error": error.to_string().trim_end(),
+                "category": "invalid_input"
+            })
+        );
+    }
+
+    #[test]
+    fn cli_json_detection_ignores_values_after_the_argument_separator() {
+        let arguments = |values: &[&str]| values.iter().map(OsString::from).collect::<Vec<_>>();
+
+        assert!(cli_json_requested(&arguments(&[
+            "leantoken",
+            "files",
+            "tree",
+            "--json"
+        ])));
+        assert!(!cli_json_requested(&arguments(&[
+            "leantoken",
+            "search",
+            "--",
+            "--json"
+        ])));
     }
 }

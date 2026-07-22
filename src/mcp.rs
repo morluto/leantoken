@@ -1178,6 +1178,7 @@ mod tests {
 
         let internal = [
             crate::Error::InvalidConfiguration("chunk size must be positive".into()),
+            crate::Error::InternalFailure("parser returned None".into()),
             crate::Error::RuntimeCapabilityUnavailable {
                 capability: "SQLite FTS5",
                 source: None,
@@ -1204,6 +1205,7 @@ mod tests {
             crate::Error::NotIndexed(unix_secret.into()),
             crate::Error::UnsupportedLanguage(unix_secret.into()),
             crate::Error::InvalidRequest(format!("invalid path: {unix_secret}")),
+            crate::Error::InternalFailure(format!("failed at {unix_secret}")),
             crate::Error::RepositoryMismatch {
                 database: windows_secret.into(),
                 expected_repository: unix_secret.into(),

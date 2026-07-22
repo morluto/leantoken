@@ -360,6 +360,31 @@ field is the stable machine-readable discriminator. Request errors may also
 include the public `field`, `requested`, and active `limit`; clients should
 branch on these fields instead of parsing `error` text.
 
+Argument parsing failures use `invalid_input` and retain clap's exit status 2.
+Help and version output are not failures: they remain on stdout with status 0,
+even when `--json` is present. Errors after successful parsing retain status 1.
+
+Current category values are:
+
+| Category | Condition |
+| --- | --- |
+| `invalid_input` | Invalid values, missing arguments, or typed input validation |
+| `input_too_long` | A public input crossed its byte limit |
+| `invalid_request` | An audited caller-usage conflict |
+| `request_limit_exceeded` | A result, token, context, or collection limit |
+| `not_indexed` | A requested path or symbol is absent from the index |
+| `index_not_ready` | No repository generation has committed yet |
+| `stale_cursor` | A cursor is malformed or belongs to another request/generation |
+| `request_cancelled` | Cooperative cancellation stopped the request |
+| `path_outside_root` | A path escaped the repository boundary |
+| `unsupported_language` | Structured parsing is unavailable for the language |
+| `invalid_regex`, `invalid_glob` | Invalid pattern syntax |
+| `repository_configuration` | Invalid root, cache binding, or configuration |
+| `repository_index_limit` | Repository discovery crossed a hard bound |
+| `runtime_unavailable` | A required runtime capability is unavailable |
+| `retryable_conflict` | Concurrent repository state requires a retry |
+| `internal_error` | An implementation, storage, I/O, or other unexpected failure |
+
 The structured fields are an allowlist. I/O, SQLite, serialization, and other
 unexpected failures use `category: "internal_error"` and expose no additional
 machine-readable details. Future releases may add categories or optional

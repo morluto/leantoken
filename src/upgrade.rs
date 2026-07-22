@@ -165,7 +165,7 @@ pub fn run(options: UpgradeOptions) -> Result<()> {
             .default(true)
             .interact()
             .map_err(|error| {
-                Error::InvalidRequest(format!("update confirmation failed: {error}"))
+                Error::InternalFailure(format!("update confirmation failed: {error}"))
             })?
     {
         return print_report(
@@ -292,7 +292,7 @@ fn run_command(command: &CommandSpec, capture_output: bool) -> Result<()> {
     child.args(&command.arguments);
     if capture_output {
         let output = child.output().map_err(|error| {
-            Error::InvalidRequest(format!("failed to run {}: {error}", command.program))
+            Error::InternalFailure(format!("failed to run {}: {error}", command.program))
         })?;
         require_success(command, &output)
     } else {
@@ -304,7 +304,7 @@ fn run_command(command: &CommandSpec, capture_output: bool) -> Result<()> {
         if status.success() {
             Ok(())
         } else {
-            Err(Error::InvalidRequest(format!(
+            Err(Error::InternalFailure(format!(
                 "update command failed: {}",
                 command.display()
             )))
@@ -317,7 +317,7 @@ fn require_success(command: &CommandSpec, output: &Output) -> Result<()> {
         return Ok(());
     }
     let detail = String::from_utf8_lossy(&output.stderr);
-    Err(Error::InvalidRequest(format!(
+    Err(Error::InternalFailure(format!(
         "update command failed: {}{}{}",
         command.display(),
         if detail.trim().is_empty() { "" } else { ": " },

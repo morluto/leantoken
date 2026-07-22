@@ -103,6 +103,9 @@ pub enum Error {
     },
     #[error("invalid request: {0}")]
     InvalidRequest(String),
+    /// Internal operation failure retaining its historical CLI rendering.
+    #[error("invalid request: {0}")]
+    InternalFailure(String),
     #[error("invalid repository configuration: {0}")]
     InvalidConfiguration(String),
     #[error(

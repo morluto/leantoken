@@ -6,6 +6,7 @@ use std::{
 };
 
 use assert_cmd::Command;
+use clap::Parser;
 use wait_timeout::ChildExt;
 
 #[test]
@@ -194,6 +195,42 @@ fn cli_json_errors_expose_stable_safe_metadata() {
             .is_some_and(|message| message.starts_with("SQLite error:"))
     );
     assert_eq!(internal.as_object().map(serde_json::Map::len), Some(2));
+}
+
+#[test]
+fn cli_json_parse_errors_are_structured_without_changing_clap_help() {
+    assert_cli_parse_error(&[
+        "files",
+        "tree",
+        "--max-results",
+        "nope",
+        "--json",
+    ]);
+    assert_cli_parse_error(&["--json", "--unknown"]);
+
+    let human_arguments = ["files", "tree", "--max-results", "nope"];
+    let expected = leantoken::cli::Cli::try_parse_from(
+        std::iter::once("leantoken").chain(human_arguments),
+    )
+    .expect_err("invalid numeric argument")
+    .to_string();
+    let human = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .args(human_arguments)
+        .output()
+        .expect("run human parse failure");
+    assert_eq!(human.status.code(), Some(2));
+    assert!(human.stdout.is_empty());
+    assert_eq!(human.stderr, expected.as_bytes());
+
+    let help = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .args(["--json", "--help"])
+        .output()
+        .expect("run JSON help");
+    assert!(help.status.success());
+    assert!(help.stderr.is_empty());
+    assert!(String::from_utf8_lossy(&help.stdout).contains("Usage: leantoken"));
 }
 
 #[test]
@@ -914,6 +951,7 @@ fn setup_requires_yes_before_non_interactive_mutation() {
             .as_str()
             .is_some_and(|message| message.contains("requires explicit client flags"))
     );
+    assert_eq!(error["category"], "invalid_request");
 }
 
 // Windows ProjectDirs uses the Known Folder API and cannot be redirected to a
@@ -1051,6 +1089,15 @@ fn malformed_selected_config_blocks_all_setup_writes() {
         .expect("run setup");
     assert!(!output.status.success());
     assert!(!temp.path().join(".cursor/mcp.json").exists());
+    let error: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("structured setup error");
+    assert_eq!(error["category"], "internal_error");
+    assert!(
+        error["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("refusing to overwrite malformed config"))
+    );
+    assert_eq!(error.as_object().map(serde_json::Map::len), Some(2));
 }
 
 #[test]
@@ -1230,6 +1277,30 @@ fn run_error(
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     serde_json::from_slice(&output.stderr).expect("structured error")
+}
+
+fn assert_cli_parse_error(arguments: &[&str]) {
+    let expected = leantoken::cli::Cli::try_parse_from(
+        std::iter::once("leantoken").chain(arguments.iter().copied()),
+    )
+    .expect_err("invalid CLI arguments")
+    .to_string();
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .args(arguments)
+        .output()
+        .expect("run CLI parse failure");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stderr)
+            .expect("structured parse error"),
+        serde_json::json!({
+            "error": expected.trim_end(),
+            "category": "invalid_input"
+        })
+    );
 }
 
 struct McpProcess {

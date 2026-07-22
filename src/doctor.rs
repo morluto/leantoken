@@ -294,7 +294,7 @@ fn tool_message(result: &serde_json::Map<String, Value>) -> String {
 }
 
 fn doctor_error(message: impl Into<String>) -> Error {
-    Error::InvalidRequest(format!("doctor failed: {}", message.into()))
+    Error::InternalFailure(format!("doctor failed: {}", message.into()))
 }
 
 struct DoctorTransport {
