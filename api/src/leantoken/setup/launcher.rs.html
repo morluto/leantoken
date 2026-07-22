@@ -17,10 +17,10 @@
 <a href=#17 id=17 data-nosnippet>17</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>current() -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
 <a href=#18 id=18 data-nosnippet>18</a>        <span class="kw">if </span>std::env::var_os(<span class="string">"npm_lifecycle_event"</span>).as_deref() == <span class="prelude-val">Some</span>(OsStr::new(<span class="string">"npx"</span>)) {
 <a href=#19 id=19 data-nosnippet>19</a>            <span class="kw">let </span>node = std::env::var_os(<span class="string">"npm_node_execpath"</span>).ok_or_else(|| {
-<a href=#20 id=20 data-nosnippet>20</a>                Error::InvalidRequest(<span class="string">"npx did not report its Node executable path"</span>.into())
+<a href=#20 id=20 data-nosnippet>20</a>                Error::InternalFailure(<span class="string">"npx did not report its Node executable path"</span>.into())
 <a href=#21 id=21 data-nosnippet>21</a>            })<span class="question-mark">?</span>;
 <a href=#22 id=22 data-nosnippet>22</a>            <span class="kw">let </span>npm = std::env::var_os(<span class="string">"npm_execpath"</span>).ok_or_else(|| {
-<a href=#23 id=23 data-nosnippet>23</a>                Error::InvalidRequest(<span class="string">"npx did not report its npm CLI path"</span>.into())
+<a href=#23 id=23 data-nosnippet>23</a>                Error::InternalFailure(<span class="string">"npx did not report its npm CLI path"</span>.into())
 <a href=#24 id=24 data-nosnippet>24</a>            })<span class="question-mark">?</span>;
 <a href=#25 id=25 data-nosnippet>25</a>            <span class="kw">return </span><span class="self">Self</span>::from_npx_paths(Path::new(<span class="kw-2">&amp;</span>node), Path::new(<span class="kw-2">&amp;</span>npm));
 <a href=#26 id=26 data-nosnippet>26</a>        }
@@ -53,7 +53,7 @@
 <a href=#53 id=53 data-nosnippet>53</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>command(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span>str&gt; {
 <a href=#54 id=54 data-nosnippet>54</a>        <span class="self">self</span>.command
 <a href=#55 id=55 data-nosnippet>55</a>            .to_str()
-<a href=#56 id=56 data-nosnippet>56</a>            .ok_or_else(|| Error::InvalidRequest(<span class="string">"LeanToken executable path is not UTF-8"</span>.into()))
+<a href=#56 id=56 data-nosnippet>56</a>            .ok_or_else(|| Error::InternalFailure(<span class="string">"LeanToken executable path is not UTF-8"</span>.into()))
 <a href=#57 id=57 data-nosnippet>57</a>    }
 <a href=#58 id=58 data-nosnippet>58</a>
 <a href=#59 id=59 data-nosnippet>59</a>    <span class="kw">fn </span>from_npx_paths(node: <span class="kw-2">&amp;</span>Path, npm: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
@@ -66,13 +66,13 @@
 <a href=#66 id=66 data-nosnippet>66</a>        version: <span class="kw-2">&amp;</span>str,
 <a href=#67 id=67 data-nosnippet>67</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
 <a href=#68 id=68 data-nosnippet>68</a>        <span class="kw">if </span>!node.is_absolute() || !npm.is_absolute() {
-<a href=#69 id=69 data-nosnippet>69</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidRequest(
+<a href=#69 id=69 data-nosnippet>69</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InternalFailure(
 <a href=#70 id=70 data-nosnippet>70</a>                <span class="string">"npx reported a relative Node or npm CLI path"</span>.into(),
 <a href=#71 id=71 data-nosnippet>71</a>            ));
 <a href=#72 id=72 data-nosnippet>72</a>        }
 <a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">let </span>npm = npm
 <a href=#74 id=74 data-nosnippet>74</a>            .to_str()
-<a href=#75 id=75 data-nosnippet>75</a>            .ok_or_else(|| Error::InvalidRequest(<span class="string">"npm CLI path is not UTF-8"</span>.into()))<span class="question-mark">?</span>;
+<a href=#75 id=75 data-nosnippet>75</a>            .ok_or_else(|| Error::InternalFailure(<span class="string">"npm CLI path is not UTF-8"</span>.into()))<span class="question-mark">?</span>;
 <a href=#76 id=76 data-nosnippet>76</a>        <span class="kw">let </span>package = <span class="macro">format!</span>(<span class="string">"leantoken@{version}"</span>);
 <a href=#77 id=77 data-nosnippet>77</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
 <a href=#78 id=78 data-nosnippet>78</a>            command: node.into(),

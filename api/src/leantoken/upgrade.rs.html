@@ -165,7 +165,7 @@
 <a href=#165 id=165 data-nosnippet>165</a>            .default(<span class="bool-val">true</span>)
 <a href=#166 id=166 data-nosnippet>166</a>            .interact()
 <a href=#167 id=167 data-nosnippet>167</a>            .map_err(|error| {
-<a href=#168 id=168 data-nosnippet>168</a>                Error::InvalidRequest(<span class="macro">format!</span>(<span class="string">"update confirmation failed: {error}"</span>))
+<a href=#168 id=168 data-nosnippet>168</a>                Error::InternalFailure(<span class="macro">format!</span>(<span class="string">"update confirmation failed: {error}"</span>))
 <a href=#169 id=169 data-nosnippet>169</a>            })<span class="question-mark">?
 <a href=#170 id=170 data-nosnippet>170</a>    </span>{
 <a href=#171 id=171 data-nosnippet>171</a>        <span class="kw">return </span>print_report(
@@ -292,7 +292,7 @@
 <a href=#292 id=292 data-nosnippet>292</a>    child.args(<span class="kw-2">&amp;</span>command.arguments);
 <a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">if </span>capture_output {
 <a href=#294 id=294 data-nosnippet>294</a>        <span class="kw">let </span>output = child.output().map_err(|error| {
-<a href=#295 id=295 data-nosnippet>295</a>            Error::InvalidRequest(<span class="macro">format!</span>(<span class="string">"failed to run {}: {error}"</span>, command.program))
+<a href=#295 id=295 data-nosnippet>295</a>            Error::InternalFailure(<span class="macro">format!</span>(<span class="string">"failed to run {}: {error}"</span>, command.program))
 <a href=#296 id=296 data-nosnippet>296</a>        })<span class="question-mark">?</span>;
 <a href=#297 id=297 data-nosnippet>297</a>        require_success(command, <span class="kw-2">&amp;</span>output)
 <a href=#298 id=298 data-nosnippet>298</a>    } <span class="kw">else </span>{
@@ -304,7 +304,7 @@
 <a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">if </span>status.success() {
 <a href=#305 id=305 data-nosnippet>305</a>            <span class="prelude-val">Ok</span>(())
 <a href=#306 id=306 data-nosnippet>306</a>        } <span class="kw">else </span>{
-<a href=#307 id=307 data-nosnippet>307</a>            <span class="prelude-val">Err</span>(Error::InvalidRequest(<span class="macro">format!</span>(
+<a href=#307 id=307 data-nosnippet>307</a>            <span class="prelude-val">Err</span>(Error::InternalFailure(<span class="macro">format!</span>(
 <a href=#308 id=308 data-nosnippet>308</a>                <span class="string">"update command failed: {}"</span>,
 <a href=#309 id=309 data-nosnippet>309</a>                command.display()
 <a href=#310 id=310 data-nosnippet>310</a>            )))
@@ -317,7 +317,7 @@
 <a href=#317 id=317 data-nosnippet>317</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
 <a href=#318 id=318 data-nosnippet>318</a>    }
 <a href=#319 id=319 data-nosnippet>319</a>    <span class="kw">let </span>detail = String::from_utf8_lossy(<span class="kw-2">&amp;</span>output.stderr);
-<a href=#320 id=320 data-nosnippet>320</a>    <span class="prelude-val">Err</span>(Error::InvalidRequest(<span class="macro">format!</span>(
+<a href=#320 id=320 data-nosnippet>320</a>    <span class="prelude-val">Err</span>(Error::InternalFailure(<span class="macro">format!</span>(
 <a href=#321 id=321 data-nosnippet>321</a>        <span class="string">"update command failed: {}{}{}"</span>,
 <a href=#322 id=322 data-nosnippet>322</a>        command.display(),
 <a href=#323 id=323 data-nosnippet>323</a>        <span class="kw">if </span>detail.trim().is_empty() { <span class="string">"" </span>} <span class="kw">else </span>{ <span class="string">": " </span>},

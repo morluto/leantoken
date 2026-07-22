@@ -393,7 +393,7 @@
 <a href=#393 id=393 data-nosnippet>393</a>}
 <a href=#394 id=394 data-nosnippet>394</a>
 <a href=#395 id=395 data-nosnippet>395</a><span class="kw">fn </span>prompt_error(error: InquireError) -&gt; Error {
-<a href=#396 id=396 data-nosnippet>396</a>    Error::InvalidRequest(<span class="macro">format!</span>(<span class="string">"interactive setup failed: {error}"</span>))
+<a href=#396 id=396 data-nosnippet>396</a>    Error::InternalFailure(<span class="macro">format!</span>(<span class="string">"interactive setup failed: {error}"</span>))
 <a href=#397 id=397 data-nosnippet>397</a>}
 <a href=#398 id=398 data-nosnippet>398</a>
 <a href=#399 id=399 data-nosnippet>399</a><span class="doccomment">/// Run global MCP setup or removal using the current user environment.
@@ -403,7 +403,7 @@
 <a href=#403 id=403 data-nosnippet>403</a>    json_output: bool,
 <a href=#404 id=404 data-nosnippet>404</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SetupReport&gt; {
 <a href=#405 id=405 data-nosnippet>405</a>    <span class="kw">let </span>home = home_directory()
-<a href=#406 id=406 data-nosnippet>406</a>        .ok_or_else(|| Error::InvalidRequest(<span class="string">"could not determine the home directory"</span>.into()))<span class="question-mark">?</span>;
+<a href=#406 id=406 data-nosnippet>406</a>        .ok_or_else(|| Error::InternalFailure(<span class="string">"could not determine the home directory"</span>.into()))<span class="question-mark">?</span>;
 <a href=#407 id=407 data-nosnippet>407</a>    <span class="kw">let </span>launcher = McpLauncher::current()<span class="question-mark">?</span>;
 <a href=#408 id=408 data-nosnippet>408</a>    <span class="kw">let </span>environment = SetupEnvironment {
 <a href=#409 id=409 data-nosnippet>409</a>        home,
@@ -671,7 +671,7 @@
 <a href=#671 id=671 data-nosnippet>671</a><span class="kw">fn </span>apply_edit(edit: <span class="kw-2">&amp;</span>PlannedClientEdit) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
 <a href=#672 id=672 data-nosnippet>672</a>    <span class="kw">let </span>current = read_optional(<span class="kw-2">&amp;</span>edit.public.path)<span class="question-mark">?</span>;
 <a href=#673 id=673 data-nosnippet>673</a>    <span class="kw">if </span>current != edit.original {
-<a href=#674 id=674 data-nosnippet>674</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidRequest(<span class="macro">format!</span>(
+<a href=#674 id=674 data-nosnippet>674</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InternalFailure(<span class="macro">format!</span>(
 <a href=#675 id=675 data-nosnippet>675</a>            <span class="string">"configuration changed after preflight: {}"</span>,
 <a href=#676 id=676 data-nosnippet>676</a>            edit.public.path.display()
 <a href=#677 id=677 data-nosnippet>677</a>        )));
@@ -964,7 +964,7 @@
 <a href=#964 id=964 data-nosnippet>964</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
 <a href=#965 id=965 data-nosnippet>965</a>    }
 <a href=#966 id=966 data-nosnippet>966</a>    <span class="kw">let </span>parent = path.parent().ok_or_else(|| {
-<a href=#967 id=967 data-nosnippet>967</a>        Error::InvalidRequest(<span class="macro">format!</span>(<span class="string">"config path has no parent: {}"</span>, path.display()))
+<a href=#967 id=967 data-nosnippet>967</a>        Error::InternalFailure(<span class="macro">format!</span>(<span class="string">"config path has no parent: {}"</span>, path.display()))
 <a href=#968 id=968 data-nosnippet>968</a>    })<span class="question-mark">?</span>;
 <a href=#969 id=969 data-nosnippet>969</a>    fs::create_dir_all(parent)<span class="question-mark">?</span>;
 <a href=#970 id=970 data-nosnippet>970</a>    <span class="kw">let </span><span class="kw-2">mut </span>temporary = NamedTempFile::new_in(parent)<span class="question-mark">?</span>;
@@ -982,7 +982,7 @@
 <a href=#982 id=982 data-nosnippet>982</a>}
 <a href=#983 id=983 data-nosnippet>983</a>
 <a href=#984 id=984 data-nosnippet>984</a><span class="kw">fn </span>invalid_config(path: <span class="kw-2">&amp;</span>Path, error: <span class="kw">impl </span>fmt::Display) -&gt; Error {
-<a href=#985 id=985 data-nosnippet>985</a>    Error::InvalidRequest(<span class="macro">format!</span>(
+<a href=#985 id=985 data-nosnippet>985</a>    Error::InternalFailure(<span class="macro">format!</span>(
 <a href=#986 id=986 data-nosnippet>986</a>        <span class="string">"refusing to overwrite malformed config {}: {error}"</span>,
 <a href=#987 id=987 data-nosnippet>987</a>        path.display()
 <a href=#988 id=988 data-nosnippet>988</a>    ))

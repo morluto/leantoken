@@ -1780,17 +1780,17 @@
 <a href=#1780 id=1780 data-nosnippet>1780</a>
 <a href=#1781 id=1781 data-nosnippet>1781</a><span class="kw">fn </span>u64_to_i64(value: u64) -&gt; <span class="prelude-ty">Result</span>&lt;i64&gt; {
 <a href=#1782 id=1782 data-nosnippet>1782</a>    i64::try_from(value)
-<a href=#1783 id=1783 data-nosnippet>1783</a>        .map_err(|<span class="kw">_</span>| Error::InvalidRequest(<span class="string">"value exceeds storage integer range"</span>.into()))
+<a href=#1783 id=1783 data-nosnippet>1783</a>        .map_err(|<span class="kw">_</span>| Error::InternalFailure(<span class="string">"value exceeds storage integer range"</span>.into()))
 <a href=#1784 id=1784 data-nosnippet>1784</a>}
 <a href=#1785 id=1785 data-nosnippet>1785</a>
 <a href=#1786 id=1786 data-nosnippet>1786</a><span class="kw">fn </span>usize_to_i64(value: usize) -&gt; <span class="prelude-ty">Result</span>&lt;i64&gt; {
 <a href=#1787 id=1787 data-nosnippet>1787</a>    i64::try_from(value)
-<a href=#1788 id=1788 data-nosnippet>1788</a>        .map_err(|<span class="kw">_</span>| Error::InvalidRequest(<span class="string">"value exceeds storage integer range"</span>.into()))
+<a href=#1788 id=1788 data-nosnippet>1788</a>        .map_err(|<span class="kw">_</span>| Error::InternalFailure(<span class="string">"value exceeds storage integer range"</span>.into()))
 <a href=#1789 id=1789 data-nosnippet>1789</a>}
 <a href=#1790 id=1790 data-nosnippet>1790</a>
 <a href=#1791 id=1791 data-nosnippet>1791</a><span class="kw">fn </span>u128_to_i64(value: u128) -&gt; <span class="prelude-ty">Result</span>&lt;i64&gt; {
 <a href=#1792 id=1792 data-nosnippet>1792</a>    i64::try_from(value)
-<a href=#1793 id=1793 data-nosnippet>1793</a>        .map_err(|<span class="kw">_</span>| Error::InvalidRequest(<span class="string">"value exceeds storage integer range"</span>.into()))
+<a href=#1793 id=1793 data-nosnippet>1793</a>        .map_err(|<span class="kw">_</span>| Error::InternalFailure(<span class="string">"value exceeds storage integer range"</span>.into()))
 <a href=#1794 id=1794 data-nosnippet>1794</a>}
 <a href=#1795 id=1795 data-nosnippet>1795</a>
 <a href=#1796 id=1796 data-nosnippet>1796</a><span class="kw">fn </span>i64_to_u64(value: i64) -&gt; u64 {
