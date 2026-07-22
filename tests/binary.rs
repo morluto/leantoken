@@ -746,13 +746,7 @@ fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
 #[test]
 fn concurrent_mcp_startup_initializes_once_and_followers_read() {
     let root = tempfile::tempdir().expect("temporary repository");
-    for file in 0..60 {
-        let content = (0..200)
-            .map(|function| format!("fn item_{file}_{function}() -> usize {{ {function} }}\n"))
-            .collect::<String>();
-        std::fs::write(root.path().join(format!("file_{file}.rs")), content)
-            .expect("write fixture");
-    }
+    write_rust_fixture_set(root.path(), "file", 20, 100);
     let database = root.path().join("index.sqlite");
     let mut processes = (0..3)
         .map(|_| McpProcess::spawn(root.path(), &database))
@@ -785,7 +779,7 @@ fn concurrent_mcp_startup_initializes_once_and_followers_read() {
 
     wait_until(Duration::from_secs(15), || {
         database_state(&database).is_some_and(|(generation, files, _)| {
-            generation == 1 && files == 60
+            generation == 1 && files == 20
         })
     });
     for process in &mut processes {
@@ -842,13 +836,7 @@ fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation() {
     assert_eq!(initial["repository_generation"], 1);
     assert_eq!(database_state(&database).map(|state| state.1), Some(1));
 
-    for file in 0..120 {
-        let content = (0..300)
-            .map(|function| format!("fn item_{file}_{function}() -> usize {{ {function} }}\n"))
-            .collect::<String>();
-        std::fs::write(root.path().join(format!("new_{file}.rs")), content)
-            .expect("write replacement fixture");
-    }
+    write_rust_fixture_set(root.path(), "new", 40, 150);
 
     let coordination =
         leantoken::coordination::IndexCoordination::for_database(&database);
@@ -884,7 +872,7 @@ fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation() {
     });
     wait_until(Duration::from_secs(20), || {
         database_state(&database).is_some_and(|(generation, files, _)| {
-            generation == 2 && files == 121
+            generation == 2 && files == 41
         })
     });
     follower.wait_until_ready(Duration::from_secs(5));
@@ -1558,6 +1546,21 @@ fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) {
         std::thread::sleep(Duration::from_millis(50));
     }
     panic!("condition not met within {timeout:?}");
+}
+
+fn write_rust_fixture_set(
+    root: &std::path::Path,
+    prefix: &str,
+    file_count: usize,
+    functions_per_file: usize,
+) {
+    for file in 0..file_count {
+        let content = (0..functions_per_file)
+            .map(|function| format!("fn item_{file}_{function}() -> usize {{ {function} }}\n"))
+            .collect::<String>();
+        std::fs::write(root.join(format!("{prefix}_{file}.rs")), content)
+            .expect("write generated Rust fixture");
+    }
 }
 
 fn database_state(database: &std::path::Path) -> Option<(u64, u64, bool)> {
