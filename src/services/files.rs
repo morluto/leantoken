@@ -213,6 +213,40 @@ fn glob_entries(
     Ok(finish_path_page(entries, limit, PathOperation::Glob))
 }
 
+fn validate_files_input(request: &FilesRequest) -> Result<()> {
+    validate_optional_input(request.path.as_deref(), "path", MAX_PATH_BYTES)?;
+    validate_optional_input(request.query.as_deref(), "query", MAX_QUERY_BYTES)?;
+    validate_optional_input(request.pattern.as_deref(), "pattern", MAX_PATTERN_BYTES)?;
+    match request.operation {
+        FileOperation::Tree => {
+            normalize_tree_root(request.path.as_deref())?;
+        }
+        FileOperation::Find => {
+            request
+                .query
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .ok_or(Error::InvalidInput {
+                    field: "query",
+                    reason: "is required for find",
+                })?;
+        }
+        FileOperation::Glob => {
+            let pattern = request
+                .pattern
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .ok_or(Error::InvalidInput {
+                    field: "pattern",
+                    reason: "is required for glob",
+                })?;
+            Glob::new(pattern)?;
+        }
+    }
+    validate_files_cursor(request.cursor.as_deref(), &request.operation)?;
+    Ok(())
+}
+
 fn for_each_file(
     session: &ReadSession,
     cancellation: &CancellationToken,
@@ -273,20 +307,21 @@ fn finish_path_page(
     FilePage { entries, next }
 }
 
-fn parse_files_cursor(
+fn decode_files_cursor(
     cursor: Option<&str>,
-    generation: u64,
     operation: &FileOperation,
-) -> Result<Option<FileCursor>> {
+) -> Result<Option<(u64, FileCursor)>> {
     let Some(cursor) = cursor else {
         return Ok(None);
     };
     if cursor.len() > MAX_PATH_BYTES.saturating_mul(2).saturating_add(64) {
         return Err(Error::StaleCursor);
     }
-    let prefix = format!("{generation}:files:");
-    let payload = cursor.strip_prefix(&prefix).ok_or(Error::StaleCursor)?;
-    match operation {
+    let (cursor_generation, payload) = cursor.split_once(":files:").ok_or(Error::StaleCursor)?;
+    let cursor_generation = cursor_generation
+        .parse::<u64>()
+        .map_err(|_| Error::StaleCursor)?;
+    let cursor = match operation {
         FileOperation::Tree | FileOperation::Glob => {
             let (operation_name, operation) = match operation {
                 FileOperation::Tree => ("tree:", PathOperation::Tree),
@@ -296,20 +331,39 @@ fn parse_files_cursor(
             let path = payload
                 .strip_prefix(operation_name)
                 .ok_or(Error::StaleCursor)?;
-            Ok(Some(FileCursor::Path {
+            FileCursor::Path {
                 operation,
                 path: hex_decode(path)?,
-            }))
+            }
         }
         FileOperation::Find => {
             let payload = payload.strip_prefix("find:").ok_or(Error::StaleCursor)?;
             let (score, path) = payload.split_once(':').ok_or(Error::StaleCursor)?;
-            Ok(Some(FileCursor::Fuzzy {
+            FileCursor::Fuzzy {
                 score: score.parse().map_err(|_| Error::StaleCursor)?,
                 path: hex_decode(path)?,
-            }))
+            }
         }
+    };
+    Ok(Some((cursor_generation, cursor)))
+}
+
+fn validate_files_cursor(cursor: Option<&str>, operation: &FileOperation) -> Result<()> {
+    decode_files_cursor(cursor, operation).map(drop)
+}
+
+fn parse_files_cursor(
+    cursor: Option<&str>,
+    generation: u64,
+    operation: &FileOperation,
+) -> Result<Option<FileCursor>> {
+    let Some((cursor_generation, cursor)) = decode_files_cursor(cursor, operation)? else {
+        return Ok(None);
+    };
+    if cursor_generation != generation {
+        return Err(Error::StaleCursor);
     }
+    Ok(Some(cursor))
 }
 
 fn hex_encode(value: &str) -> String {
@@ -360,6 +414,8 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<FilesResponse> {
+        validate_files_input(&request)?;
+        self.result_limit(request.max_results)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
         self.files_cancellable(request, cancellation).await
@@ -380,11 +436,9 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<FilesResponse> {
         check_cancelled(cancellation)?;
-        validate_optional_input(request.path.as_deref(), "path", MAX_PATH_BYTES)?;
-        validate_optional_input(request.query.as_deref(), "query", MAX_QUERY_BYTES)?;
-        validate_optional_input(request.pattern.as_deref(), "pattern", MAX_PATTERN_BYTES)?;
+        validate_files_input(&request)?;
+        let limit = self.result_limit(request.max_results)?;
         self.consistent(|session, generation| {
-            let limit = self.result_limit(request.max_results);
             let cursor =
                 parse_files_cursor(request.cursor.as_deref(), generation, &request.operation)?;
             let page = match request.operation {

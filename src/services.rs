@@ -26,6 +26,35 @@ const STARTUP_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(25);
 const STARTUP_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
+pub(crate) fn validate_positive_request_limit(
+    field: &'static str,
+    requested: usize,
+    limit: usize,
+) -> Result<usize> {
+    if requested == 0 {
+        return Err(Error::InvalidInput {
+            field,
+            reason: "must be greater than zero",
+        });
+    }
+    validate_request_limit(field, requested, limit)
+}
+
+pub(crate) fn validate_request_limit(
+    field: &'static str,
+    requested: usize,
+    limit: usize,
+) -> Result<usize> {
+    if requested > limit {
+        return Err(Error::RequestLimitExceeded {
+            field,
+            requested,
+            limit,
+        });
+    }
+    Ok(requested)
+}
+
 #[derive(Debug, Clone)]
 /// Shared application services used by both CLI and MCP adapters.
 ///
@@ -44,6 +73,7 @@ pub struct Services {
 impl Services {
     /// Open the SQLite index and construct retrieval services.
     pub fn open(config: Config) -> Result<Self> {
+        config.validate()?;
         let coordination = IndexCoordination::for_database(&config.database_path);
         let cancellation = CancellationToken::new();
         let cache_lease = coordination.acquire_cache_lease(&cancellation)?;
@@ -54,6 +84,7 @@ impl Services {
     /// Open services under exclusive cache initialization ownership, retrying
     /// transient SQLite contention until the caller cancels.
     pub fn open_cancellable(config: Config, cancellation: &CancellationToken) -> Result<Self> {
+        config.validate()?;
         let coordination = IndexCoordination::for_database(&config.database_path);
         let cache_lease = coordination.acquire_cache_lease(cancellation)?;
         let _initialization = coordination.acquire_initialization(cancellation)?;
@@ -265,18 +296,32 @@ impl Services {
         Err(Error::RetryableConflict(RetryableOperation::Retrieval))
     }
 
-    pub(super) fn result_limit(&self, requested: Option<usize>) -> usize {
-        requested
-            .unwrap_or(self.config.default_results)
-            .max(1)
-            .min(self.config.max_results)
+    pub(super) fn result_limit(&self, requested: Option<usize>) -> Result<usize> {
+        validate_positive_request_limit(
+            "max_results",
+            requested.unwrap_or(self.config.default_results),
+            self.config.max_results,
+        )
     }
 
-    pub(super) fn token_limit(&self, requested: Option<usize>, default: usize) -> usize {
-        requested
-            .unwrap_or(default)
-            .max(1)
-            .min(self.config.max_output_tokens)
+    pub(super) fn token_limit(&self, requested: Option<usize>, default: usize) -> Result<usize> {
+        validate_positive_request_limit(
+            "max_tokens",
+            requested.unwrap_or(default),
+            self.config.max_output_tokens,
+        )
+    }
+
+    pub(super) fn token_budget_limit(&self, requested: usize) -> Result<usize> {
+        validate_positive_request_limit("token_budget", requested, self.config.max_output_tokens)
+    }
+
+    pub(super) fn context_line_limit(&self, requested: Option<usize>) -> Result<usize> {
+        validate_request_limit(
+            "context_lines",
+            requested.unwrap_or(self.config.context_lines),
+            crate::config::MAX_CONTEXT_LINES,
+        )
     }
 
     pub(super) async fn apply_consistency(

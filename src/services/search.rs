@@ -9,7 +9,7 @@ use super::files::FILE_LIST_PAGE_SIZE;
 use super::read::{StoredExcerpt, StoredExcerptRequest};
 use super::validation::{
     MAX_QUERY_BYTES, check_cancelled, make_cursor, parse_cursor, path_allowed, path_matches,
-    validate_input, validate_patterns,
+    validate_cursor, validate_glob_patterns, validate_input,
 };
 use crate::model::*;
 use crate::storage::{ChunkHit, ReadSession, ReferenceHit, SymbolHit};
@@ -147,6 +147,26 @@ pub(super) fn compile_literal_regex(
     ))
 }
 
+fn validate_search_input(request: &SearchRequest) -> Result<()> {
+    if request.query.trim().is_empty() {
+        return Err(Error::InvalidInput {
+            field: "search query",
+            reason: "must not be empty",
+        });
+    }
+    validate_input(&request.query, "search query", MAX_QUERY_BYTES)?;
+    validate_glob_patterns(&request.include_paths)?;
+    validate_glob_patterns(&request.exclude_paths)?;
+    validate_glob_patterns(&request.focus_paths)?;
+    validate_cursor(request.cursor.as_deref())?;
+    if matches!(request.mode, SearchMode::Regex) {
+        compile_regex(request)?;
+    } else {
+        compile_literal_regex(&request.query, request.case_sensitive)?;
+    }
+    Ok(())
+}
+
 impl Services {
     /// Search indexed lexical and structural evidence.
     pub async fn search(&self, request: SearchRequest) -> Result<SearchResponse> {
@@ -161,6 +181,10 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<SearchResponse> {
+        validate_search_input(&request)?;
+        self.result_limit(request.max_results)?;
+        self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
+        self.context_line_limit(request.context_lines)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
         self.search_cancellable(request, cancellation).await
@@ -181,16 +205,7 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<SearchResponse> {
         check_cancelled(cancellation)?;
-        if request.query.trim().is_empty() {
-            return Err(Error::InvalidInput {
-                field: "search query",
-                reason: "must not be empty",
-            });
-        }
-        validate_input(&request.query, "search query", MAX_QUERY_BYTES)?;
-        validate_patterns(&request.include_paths)?;
-        validate_patterns(&request.exclude_paths)?;
-        validate_patterns(&request.focus_paths)?;
+        validate_search_input(&request)?;
         let regex = matches!(request.mode, SearchMode::Regex)
             .then(|| compile_regex(&request))
             .transpose()?;
@@ -199,23 +214,22 @@ impl Services {
         } else {
             None
         };
+        let limit = self.result_limit(request.max_results)?;
+        let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
+        let context_lines = self.context_line_limit(request.context_lines)?;
         self.consistent(|session, generation| {
-            let limit = self.result_limit(request.max_results);
-            let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens);
             let offset = parse_cursor(request.cursor.as_deref(), generation)?;
-            let context_lines = request
-                .context_lines
-                .unwrap_or(self.config.context_lines)
-                .min(20);
             let mut hits = Vec::new();
             if matches!(
                 request.mode,
                 SearchMode::Auto | SearchMode::Identifier | SearchMode::Symbol
             ) {
                 let mut symbol_hits = Vec::new();
-                for hit in
-                    session.search_symbols(&request.query, request.case_sensitive, limit * 4)?
-                {
+                for hit in session.search_symbols(
+                    &request.query,
+                    request.case_sensitive,
+                    limit.saturating_mul(4),
+                )? {
                     check_cancelled(cancellation)?;
                     if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)? {
                         symbol_hits.push(hit);
@@ -250,9 +264,11 @@ impl Services {
                 SearchMode::Auto | SearchMode::Identifier | SearchMode::Reference
             ) {
                 let mut reference_hits = Vec::new();
-                for hit in
-                    session.search_references(&request.query, request.case_sensitive, limit * 4)?
-                {
+                for hit in session.search_references(
+                    &request.query,
+                    request.case_sensitive,
+                    limit.saturating_mul(4),
+                )? {
                     check_cancelled(cancellation)?;
                     if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)? {
                         reference_hits.push(hit);
@@ -288,18 +304,18 @@ impl Services {
                     session,
                     &request,
                     regex.as_ref().expect("regex mode compiles a pattern"),
-                    limit * 20,
+                    limit.saturating_mul(20),
                     cancellation,
                 )?,
                 SearchMode::Text | SearchMode::Auto => {
                     if request.query.chars().count() >= 3 {
-                        session.search_trigram(&request.query, limit * 8)?
+                        session.search_trigram(&request.query, limit.saturating_mul(8))?
                     } else {
-                        session.search_word(&fts_quote(&request.query), limit * 8)?
+                        session.search_word(&fts_quote(&request.query), limit.saturating_mul(8))?
                     }
                 }
                 SearchMode::Identifier => {
-                    session.search_word(&fts_quote(&request.query), limit * 8)?
+                    session.search_word(&fts_quote(&request.query), limit.saturating_mul(8))?
                 }
                 SearchMode::Symbol | SearchMode::Reference => Vec::new(),
             };

@@ -214,6 +214,75 @@ fn cli_context_requires_task_and_budget() {
 }
 
 #[test]
+fn cli_request_limit_boundaries_reject_only_meaningless_zero_values() {
+    for args in [
+        &["leantoken", "files", "tree", "--max-results", "0"][..],
+        &["leantoken", "search", "x", "--max-results", "0"],
+        &["leantoken", "search", "x", "--max-tokens", "0"],
+        &["leantoken", "outline", "src/lib.rs", "--max-results", "0"],
+        &["leantoken", "outline", "src/lib.rs", "--max-tokens", "0"],
+        &["leantoken", "read", "src/lib.rs", "--max-tokens", "0"],
+        &["leantoken", "context", "--task", "x", "--budget", "0"],
+    ] {
+        assert!(Cli::try_parse_from(args).is_err(), "accepted {args:?}");
+    }
+
+    for value in ["1", "100", "101"] {
+        for args in [
+            vec!["leantoken", "files", "tree", "--max-results", value],
+            vec!["leantoken", "search", "x", "--max-results", value],
+            vec![
+                "leantoken",
+                "outline",
+                "src/lib.rs",
+                "--max-results",
+                value,
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args).is_ok(), "rejected {value}");
+        }
+    }
+
+    for value in ["1", "32000", "32001"] {
+        for args in [
+            vec!["leantoken", "search", "x", "--max-tokens", value],
+            vec![
+                "leantoken",
+                "outline",
+                "src/lib.rs",
+                "--max-tokens",
+                value,
+            ],
+            vec![
+                "leantoken",
+                "read",
+                "src/lib.rs",
+                "--max-tokens",
+                value,
+            ],
+            vec!["leantoken", "context", "--task", "x", "--budget", value],
+        ] {
+            assert!(Cli::try_parse_from(args).is_ok(), "rejected {value}");
+        }
+    }
+
+    for value in ["0", "1", "20", "21"] {
+        assert!(
+            Cli::try_parse_from([
+                "leantoken",
+                "search",
+                "x",
+                "--context-lines",
+                value,
+            ])
+            .is_ok(),
+            "CLI should defer context-lines={value} to Services"
+        );
+    }
+    assert!(Cli::try_parse_from(["leantoken", "files", "tree", "--depth", "0"]).is_ok());
+}
+
+#[test]
 fn cli_index_and_status_and_mcp_commands() {
     let cli = parse(&["index"]);
     assert!(matches!(

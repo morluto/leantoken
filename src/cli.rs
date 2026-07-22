@@ -17,6 +17,16 @@ use crate::model::{
 use crate::setup::{SetupClient, SetupRequest};
 use crate::tokens::Tokenizer;
 
+fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
+    let value = value
+        .parse::<usize>()
+        .map_err(|_| "value must be a positive integer".to_owned())?;
+    if value == 0 {
+        return Err("value must be a positive integer".to_owned());
+    }
+    Ok(value)
+}
+
 /// LeanToken CLI and MCP server entry point.
 #[derive(Debug, Clone, Parser)]
 #[command(
@@ -416,7 +426,7 @@ pub struct FilesArgs {
     pub pattern: Option<String>,
 
     /// Maximum number of results.
-    #[arg(long)]
+    #[arg(long, value_parser = parse_positive_usize)]
     pub max_results: Option<usize>,
 
     /// Pagination cursor.
@@ -464,11 +474,11 @@ pub struct SearchArgs {
     pub focus_paths: Vec<String>,
 
     /// Maximum number of results.
-    #[arg(long)]
+    #[arg(long, value_parser = parse_positive_usize)]
     pub max_results: Option<usize>,
 
     /// Maximum tokens to return.
-    #[arg(long)]
+    #[arg(long, value_parser = parse_positive_usize)]
     pub max_tokens: Option<usize>,
 
     /// Lines of context around each match.
@@ -515,11 +525,11 @@ pub struct OutlineArgs {
     pub symbol_kind: Option<String>,
 
     /// Maximum number of symbols.
-    #[arg(long)]
+    #[arg(long, value_parser = parse_positive_usize)]
     pub max_results: Option<usize>,
 
     /// Maximum tokens to return.
-    #[arg(long)]
+    #[arg(long, value_parser = parse_positive_usize)]
     pub max_tokens: Option<usize>,
 }
 
@@ -616,7 +626,7 @@ pub struct ReadArgs {
     pub symbol: Option<String>,
 
     /// Maximum tokens to return.
-    #[arg(long)]
+    #[arg(long, value_parser = parse_positive_usize)]
     pub max_tokens: Option<usize>,
 
     /// Expected content hash; returns not_modified when current.
@@ -649,7 +659,7 @@ pub struct ContextArgs {
     pub task: String,
 
     /// Token budget for the response.
-    #[arg(short, long)]
+    #[arg(short, long, value_parser = parse_positive_usize)]
     pub budget: usize,
 
     /// Focus on these paths (repeatable).

@@ -11,7 +11,7 @@ use super::read::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
 use super::search::{chunk_search_hit, compile_literal_regex, fts_quote, matching_line};
 use super::validation::{
     MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, check_cancelled,
-    path_allowed, validate_input, validate_patterns,
+    path_allowed, validate_glob_patterns, validate_input,
 };
 use crate::model::*;
 use crate::ranking::{self, Candidate};
@@ -351,6 +351,53 @@ fn task_mentions_language(task: &str, language: &str) -> bool {
 }
 
 impl Services {
+    fn validate_context_request(&self, request: &ContextRequest) -> Result<()> {
+        if request.task.trim().is_empty() {
+            return Err(Error::InvalidInput {
+                field: "task",
+                reason: "must not be empty",
+            });
+        }
+        self.token_budget_limit(request.token_budget)?;
+        validate_input(&request.task, "task", MAX_QUERY_BYTES)?;
+        validate_glob_patterns(&request.focus_paths)?;
+        validate_glob_patterns(&request.exclude_paths)?;
+        if request.focus_symbols.len() > MAX_INPUT_ITEMS {
+            return Err(Error::LimitExceeded);
+        }
+        for symbol in &request.focus_symbols {
+            validate_input(symbol, "focus symbol", MAX_PATTERN_BYTES)?;
+        }
+        if request.known_hashes.len() > MAX_INPUT_ITEMS {
+            return Err(Error::LimitExceeded);
+        }
+        for hash in &request.known_hashes {
+            validate_input(hash, "known hash", 128)?;
+        }
+        if request.changed_paths.len() > MAX_DIFF_CHANGED_PATHS {
+            return Err(Error::LimitExceeded);
+        }
+        for path in &request.changed_paths {
+            validate_input(path, "changed path", MAX_PATH_BYTES)?;
+            validate_relative(path)?;
+        }
+        if let Some(revision) = request
+            .base_revision
+            .as_deref()
+            .filter(|revision| !revision.trim().is_empty())
+        {
+            validate_input(revision, "base revision", MAX_BASE_REVISION_BYTES)?;
+        }
+        for query in facets::plan(&request.task, MAX_CONTEXT_QUERIES)
+            .queries
+            .iter()
+            .filter(|query| !query.has_facet(FacetKind::TestIntent))
+        {
+            compile_literal_regex(&query.value, false)?;
+        }
+        Ok(())
+    }
+
     fn file_change_boost(
         file_generation: Option<u64>,
         path: &str,
@@ -517,7 +564,6 @@ impl Services {
         if let Some(ref revision) = request.base_revision
             && !revision.trim().is_empty()
         {
-            validate_input(revision, "base revision", MAX_BASE_REVISION_BYTES)?;
             let git_result = git_diff_paths(&self.config.root, revision, MAX_DIFF_CHANGED_PATHS)?;
             let mut changed_paths = git_result.changed_paths;
             for path in &request.changed_paths {
@@ -553,6 +599,7 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
+        self.validate_context_request(&request)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
         self.context_cancellable(request, cancellation).await
@@ -625,44 +672,7 @@ impl Services {
         signals: ContextSignals,
     ) -> Result<ContextEvaluation> {
         check_cancelled(cancellation)?;
-        if request.task.trim().is_empty() {
-            return Err(Error::InvalidInput {
-                field: "task",
-                reason: "must not be empty",
-            });
-        }
-        if request.token_budget == 0 {
-            return Err(Error::InvalidInput {
-                field: "token budget",
-                reason: "must be positive",
-            });
-        }
-        validate_input(&request.task, "task", MAX_QUERY_BYTES)?;
-        validate_patterns(&request.focus_paths)?;
-        validate_patterns(&request.exclude_paths)?;
-        if request.focus_symbols.len() > MAX_INPUT_ITEMS {
-            return Err(Error::LimitExceeded);
-        }
-        for symbol in &request.focus_symbols {
-            validate_input(symbol, "focus symbol", MAX_PATTERN_BYTES)?;
-        }
-        if request.token_budget > self.config.max_output_tokens {
-            return Err(Error::LimitExceeded);
-        }
-        if request.known_hashes.len() > MAX_INPUT_ITEMS {
-            return Err(Error::LimitExceeded);
-        }
-        for hash in &request.known_hashes {
-            validate_input(hash, "known hash", 128)?;
-        }
-        validate_patterns(&request.changed_paths)?;
-        if request.changed_paths.len() > MAX_DIFF_CHANGED_PATHS {
-            return Err(Error::LimitExceeded);
-        }
-        for path in &request.changed_paths {
-            validate_input(path, "changed path", MAX_PATH_BYTES)?;
-            validate_relative(path)?;
-        }
+        self.validate_context_request(&request)?;
         let diff_scope = self.resolve_diff_scope(&request)?;
 
         let mut changed_paths = git_changed_paths(&self.config.root, GIT_CHANGED_PATHS_MAX)

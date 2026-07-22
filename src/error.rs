@@ -42,6 +42,11 @@ impl std::fmt::Display for RetryableOperation {
     }
 }
 
+/// Errors returned by LeanToken operations.
+///
+/// Callers should match the variants they can recover from and retain a
+/// fallback arm for errors added by later releases.
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("repository root does not exist: {0}")]
@@ -68,6 +73,16 @@ pub enum Error {
     NotIndexed(String),
     #[error("requested content exceeds the configured limit")]
     LimitExceeded,
+    /// Caller-controlled response limit crossed its configured maximum.
+    #[error("{field} exceeds its configured limit: requested {requested}, limit {limit}")]
+    RequestLimitExceeded {
+        /// Safe public request field name.
+        field: &'static str,
+        /// Caller-provided value.
+        requested: usize,
+        /// Configured inclusive maximum.
+        limit: usize,
+    },
     #[error("unsupported structured language for {0}")]
     UnsupportedLanguage(String),
     /// Request input failed a validation rule described entirely by static text.

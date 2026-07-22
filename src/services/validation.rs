@@ -9,6 +9,7 @@ pub(super) const MAX_QUERY_BYTES: usize = 64 * 1024;
 pub(super) const MAX_PATTERN_BYTES: usize = 4 * 1024;
 pub(super) const MAX_PATH_BYTES: usize = 4 * 1024;
 pub(super) const MAX_INPUT_ITEMS: usize = 256;
+const MAX_CURSOR_BYTES: usize = 64;
 pub(super) fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
     if cancellation.is_cancelled() {
         Err(Error::Cancelled)
@@ -47,6 +48,16 @@ pub(super) fn validate_patterns(patterns: &[String]) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn validate_glob_patterns(patterns: &[String]) -> Result<()> {
+    validate_patterns(patterns)?;
+    for pattern in patterns {
+        if pattern.contains(['*', '?', '[', ']']) {
+            Glob::new(pattern)?;
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn validate_optional_input(
     value: Option<&str>,
     name: &'static str,
@@ -68,15 +79,35 @@ pub(super) fn validate_input(value: &str, name: &'static str, max_bytes: usize) 
     Ok(())
 }
 
-pub(super) fn parse_cursor(cursor: Option<&str>, generation: u64) -> Result<usize> {
-    let Some(cursor) = cursor else { return Ok(0) };
+fn decode_cursor(cursor: Option<&str>) -> Result<Option<(u64, usize)>> {
+    let Some(cursor) = cursor else {
+        return Ok(None);
+    };
+    if cursor.len() > MAX_CURSOR_BYTES {
+        return Err(Error::StaleCursor);
+    }
     let Some((cursor_generation, offset)) = cursor.split_once(':') else {
         return Err(Error::StaleCursor);
     };
-    if cursor_generation.parse::<u64>().ok() != Some(generation) {
+    let cursor_generation = cursor_generation
+        .parse::<u64>()
+        .map_err(|_| Error::StaleCursor)?;
+    let offset = offset.parse::<usize>().map_err(|_| Error::StaleCursor)?;
+    Ok(Some((cursor_generation, offset)))
+}
+
+pub(super) fn validate_cursor(cursor: Option<&str>) -> Result<()> {
+    decode_cursor(cursor).map(drop)
+}
+
+pub(super) fn parse_cursor(cursor: Option<&str>, generation: u64) -> Result<usize> {
+    let Some((cursor_generation, offset)) = decode_cursor(cursor)? else {
+        return Ok(0);
+    };
+    if cursor_generation != generation {
         return Err(Error::StaleCursor);
     }
-    offset.parse().map_err(|_| Error::StaleCursor)
+    Ok(offset)
 }
 
 pub(super) fn make_cursor(generation: u64, offset: usize) -> String {

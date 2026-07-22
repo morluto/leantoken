@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use leantoken::{Config, DiscoveryLimits};
+use leantoken::{Config, DiscoveryLimits, Error, services::Services};
 use leantoken::tokens::Tokenizer;
 
 #[test]
@@ -149,12 +149,63 @@ fn config_defaults_bound_output_and_timing() {
     assert_eq!(config.discovery_limits(), DiscoveryLimits::default());
     assert!(config.max_results > 0);
     assert!(config.max_output_tokens > 0);
+    assert!(config.default_context_tokens > 0);
     assert!(config.context_lines > 0);
     assert!(config.chunk_lines > 0);
     assert!(config.chunk_bytes > 0);
     assert!(config.watcher_debounce >= Duration::ZERO);
     assert_eq!(config.tokenizer, Tokenizer::default());
     assert!(config.tokenizer.is_exact());
+}
+
+#[test]
+fn services_reject_invalid_retrieval_limit_configuration() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let base = Config::discover(root.path(), Some(root.path().join("index.sqlite")))
+        .expect("discover");
+    let mut invalid = Vec::new();
+
+    let mut config = base.clone();
+    config.default_results = 0;
+    invalid.push(config);
+    let mut config = base.clone();
+    config.max_results = 0;
+    invalid.push(config);
+    let mut config = base.clone();
+    config.default_results = config.max_results + 1;
+    invalid.push(config);
+    let mut config = base.clone();
+    config.max_results = leantoken::storage::HARD_MAX_RESULTS;
+    invalid.push(config);
+    let mut config = base.clone();
+    config.max_results = usize::MAX;
+    invalid.push(config);
+    let mut config = base.clone();
+    config.default_read_tokens = 0;
+    invalid.push(config);
+    let mut config = base.clone();
+    config.default_context_tokens = 0;
+    invalid.push(config);
+    let mut config = base.clone();
+    config.max_output_tokens = 0;
+    invalid.push(config);
+    let mut config = base.clone();
+    config.default_read_tokens = config.max_output_tokens + 1;
+    invalid.push(config);
+    let mut config = base.clone();
+    config.default_context_tokens = config.max_output_tokens + 1;
+    invalid.push(config);
+    let mut config = base.clone();
+    config.max_output_tokens = 32_001;
+    invalid.push(config);
+    let mut config = base;
+    config.context_lines = 21;
+    invalid.push(config);
+
+    for config in invalid {
+        let error = Services::open(config).expect_err("invalid retrieval limits");
+        assert!(matches!(error, Error::InvalidConfiguration(_)), "got {error:?}");
+    }
 }
 
 #[test]
