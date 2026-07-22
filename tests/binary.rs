@@ -47,6 +47,32 @@ fn cli_indexes_statuses_and_searches_as_json() {
 }
 
 #[test]
+fn cli_index_explains_skipped_binary_files_without_returning_paths() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
+        .expect("write text fixture");
+    let binary_path = root.path().join("secret-binary.rs");
+    std::fs::write(&binary_path, b"\0binary").expect("write binary fixture");
+    let database = root.path().join("index.sqlite");
+
+    let response = run(root.path(), &database, &["index"]);
+
+    assert_eq!(response["files_seen"], 2);
+    assert_eq!(response["files_indexed"], 1);
+    assert_eq!(response["files_skipped"], 1);
+    assert_eq!(
+        response["skip_reasons"],
+        serde_json::json!({
+            "binary": 1,
+            "oversized_during_read": 0,
+            "failed": 0
+        })
+    );
+    assert_eq!(response["warnings"], serde_json::json!([]));
+    assert!(!response.to_string().contains("secret-binary.rs"));
+}
+
+#[test]
 fn cli_files_tree_treats_dot_as_the_repository_root() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::create_dir(root.path().join("src")).expect("src directory");

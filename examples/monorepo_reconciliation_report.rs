@@ -303,12 +303,12 @@ fn validate_profile(
     profile: &Profile,
     runtime_revision: &mut Option<String>,
 ) -> AnyResult<()> {
-    if profile.schema_version != 7
+    if !supported_profile_schema(profile.schema_version)
         || !profile.release_build
         || profile.leantoken_worktree_dirty != Some(false)
     {
         return Err(invalid_data(
-            "profile must be clean schema-v7 release evidence",
+            "profile must be clean schema-v7 or schema-v8 release evidence",
         ));
     }
     if profile.corpus.revision.as_deref() != Some(corpus.revision.as_str())
@@ -351,6 +351,10 @@ fn validate_profile(
         Some(_) => {}
     }
     Ok(())
+}
+
+fn supported_profile_schema(schema_version: u32) -> bool {
+    matches!(schema_version, 7 | 8)
 }
 
 fn pair_result(
@@ -460,6 +464,14 @@ fn invalid_data(message: &str) -> Box<dyn Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_schema_accepts_archived_and_current_versions() {
+        assert!(supported_profile_schema(7));
+        assert!(supported_profile_schema(8));
+        assert!(!supported_profile_schema(6));
+        assert!(!supported_profile_schema(9));
+    }
 
     #[test]
     fn materiality_requires_both_absolute_cost_and_scan_share() {

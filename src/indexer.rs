@@ -11,7 +11,7 @@ use rayon::prelude::*;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::RetryableOperation;
-use crate::model::IndexResponse;
+use crate::model::{IndexReport, IndexResponse, IndexSkipReasonCounts};
 use crate::parser::{self, ParseOutput};
 use crate::repository::{
     DiscoveredFile, discover_files_with_limits_policy_and_filter, enforce_limit, slash_path,
@@ -71,6 +71,15 @@ pub struct IndexingDiagnostics {
 pub struct ProfiledIndexResponse {
     /// Ordinary index response returned by adapters and services.
     pub response: IndexResponse,
+    /// Internal phase and batch measurements for profiling.
+    pub diagnostics: IndexingDiagnostics,
+}
+
+/// Additive index report paired with full-reconciliation diagnostics.
+#[derive(Debug, Clone)]
+pub struct ProfiledIndexReport {
+    /// Flattened-compatible response plus preparation skip reasons.
+    pub report: IndexReport,
     /// Internal phase and batch measurements for profiling.
     pub diagnostics: IndexingDiagnostics,
 }
@@ -198,13 +207,28 @@ impl Indexer {
 
     /// Reconcile filesystem state into one committed repository generation.
     pub fn reconcile(&self, rebuild: bool) -> Result<IndexResponse> {
-        self.reconcile_profiled(rebuild)
-            .map(|profiled| profiled.response)
+        self.reconcile_report(rebuild)
+            .map(IndexReport::into_response)
+    }
+
+    /// Reconcile filesystem state and include bounded preparation skip reasons.
+    pub fn reconcile_report(&self, rebuild: bool) -> Result<IndexReport> {
+        self.reconcile_profiled_report(rebuild)
+            .map(|profiled| profiled.report)
     }
 
     /// Reconcile a full repository and return phase diagnostics for benchmarks.
     pub fn reconcile_profiled(&self, rebuild: bool) -> Result<ProfiledIndexResponse> {
-        self.reconcile_cancellable_profiled(rebuild, &CancellationToken::new())
+        self.reconcile_profiled_report(rebuild)
+            .map(|profiled| ProfiledIndexResponse {
+                response: profiled.report.into_response(),
+                diagnostics: profiled.diagnostics,
+            })
+    }
+
+    /// Reconcile a full repository with additive details and phase diagnostics.
+    pub fn reconcile_profiled_report(&self, rebuild: bool) -> Result<ProfiledIndexReport> {
+        self.reconcile_cancellable_profiled_report(rebuild, &CancellationToken::new())
     }
 
     /// Reconcile the repository with cooperative cancellation and stale-plan retry.
@@ -213,8 +237,18 @@ impl Indexer {
         rebuild: bool,
         cancellation: &CancellationToken,
     ) -> Result<IndexResponse> {
-        self.reconcile_cancellable_profiled(rebuild, cancellation)
-            .map(|profiled| profiled.response)
+        self.reconcile_cancellable_report(rebuild, cancellation)
+            .map(IndexReport::into_response)
+    }
+
+    /// Reconcile with cancellation and include bounded preparation skip reasons.
+    pub fn reconcile_cancellable_report(
+        &self,
+        rebuild: bool,
+        cancellation: &CancellationToken,
+    ) -> Result<IndexReport> {
+        self.reconcile_cancellable_profiled_report(rebuild, cancellation)
+            .map(|profiled| profiled.report)
     }
 
     /// Reconcile a full repository with cancellation and phase diagnostics.
@@ -223,6 +257,18 @@ impl Indexer {
         rebuild: bool,
         cancellation: &CancellationToken,
     ) -> Result<ProfiledIndexResponse> {
+        self.reconcile_cancellable_profiled_report(rebuild, cancellation)
+            .map(|profiled| ProfiledIndexResponse {
+                response: profiled.report.into_response(),
+                diagnostics: profiled.diagnostics,
+            })
+    }
+
+    fn reconcile_cancellable_profiled_report(
+        &self,
+        rebuild: bool,
+        cancellation: &CancellationToken,
+    ) -> Result<ProfiledIndexReport> {
         for _ in 0..3 {
             match self.reconcile_once(rebuild, cancellation) {
                 Err(Error::StaleReconciliation { .. }) => continue,
@@ -236,7 +282,16 @@ impl Indexer {
         &self,
         rebuild: bool,
         cancellation: &CancellationToken,
-    ) -> Result<ProfiledIndexResponse> {
+    ) -> Result<ProfiledIndexReport> {
+        self.reconcile_once_with_preparation_hook(rebuild, cancellation, || {})
+    }
+
+    fn reconcile_once_with_preparation_hook(
+        &self,
+        rebuild: bool,
+        cancellation: &CancellationToken,
+        before_preparation: impl FnOnce(),
+    ) -> Result<ProfiledIndexReport> {
         let total_started = Instant::now();
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
@@ -304,8 +359,9 @@ impl Indexer {
 
         let mut removed_paths = deletions.into_iter().collect::<HashSet<_>>();
         let mut warnings = Vec::new();
-        let mut skipped = 0usize;
+        let mut skip_reasons = IndexSkipReasonCounts::default();
         let mut files_indexed = 0usize;
+        before_preparation();
         let publication_started = Instant::now();
         let (generation, preparation) =
             self.storage
@@ -324,8 +380,17 @@ impl Indexer {
                                         push_warning(&mut warnings, warning);
                                     }
                                 }
-                                PreparedFile::Binary(path) | PreparedFile::Oversized(path) => {
-                                    skipped += 1;
+                                PreparedFile::Binary(path) => {
+                                    skip_reasons.binary = skip_reasons.binary.saturating_add(1);
+                                    if existing.contains_key(&path)
+                                        && removed_paths.insert(path.clone())
+                                    {
+                                        writer.delete(&path)?;
+                                    }
+                                }
+                                PreparedFile::Oversized(path) => {
+                                    skip_reasons.oversized_during_read =
+                                        skip_reasons.oversized_during_read.saturating_add(1);
                                     if existing.contains_key(&path)
                                         && removed_paths.insert(path.clone())
                                     {
@@ -333,7 +398,7 @@ impl Indexer {
                                     }
                                 }
                                 PreparedFile::Failed(path, error) => {
-                                    skipped += 1;
+                                    skip_reasons.failed = skip_reasons.failed.saturating_add(1);
                                     push_warning(&mut warnings, format!("{path}: {error}"));
                                 }
                             }
@@ -352,6 +417,7 @@ impl Indexer {
         check_cancelled(cancellation)?;
         let files_seen = unchanged + candidates.len();
         let files_removed = removed_paths.len();
+        let files_skipped = skip_reasons.total();
 
         let response = IndexResponse {
             repository_generation: generation,
@@ -359,9 +425,10 @@ impl Indexer {
             files_indexed,
             files_unchanged: unchanged,
             files_removed,
-            files_skipped: skipped,
+            files_skipped,
             warnings,
         };
+        let report = IndexReport::with_skip_reasons(response, skip_reasons);
         let diagnostics = IndexingDiagnostics {
             total_ms: duration_ms(total_started.elapsed()),
             discovery_ms: duration_ms(discovery_elapsed),
@@ -388,8 +455,8 @@ impl Indexer {
             max_batch_source_bytes = diagnostics.max_batch_source_bytes,
             "repository reconciliation profile"
         );
-        Ok(ProfiledIndexResponse {
-            response,
+        Ok(ProfiledIndexReport {
+            report,
             diagnostics,
         })
     }
@@ -401,7 +468,13 @@ impl Indexer {
     /// full reconciliation because they can affect files beyond the reported
     /// path.
     pub fn reconcile_paths(&self, paths: &[String]) -> Result<IndexResponse> {
-        self.reconcile_paths_cancellable(paths, &CancellationToken::new())
+        self.reconcile_paths_report(paths)
+            .map(IndexReport::into_response)
+    }
+
+    /// Reconcile watcher paths and include bounded preparation skip reasons.
+    pub fn reconcile_paths_report(&self, paths: &[String]) -> Result<IndexReport> {
+        self.reconcile_paths_cancellable_report(paths, &CancellationToken::new())
     }
 
     /// Reconcile watcher paths with cooperative cancellation and stale-plan retry.
@@ -410,6 +483,16 @@ impl Indexer {
         paths: &[String],
         cancellation: &CancellationToken,
     ) -> Result<IndexResponse> {
+        self.reconcile_paths_cancellable_report(paths, cancellation)
+            .map(IndexReport::into_response)
+    }
+
+    /// Reconcile watcher paths with cancellation and preparation skip reasons.
+    pub fn reconcile_paths_cancellable_report(
+        &self,
+        paths: &[String],
+        cancellation: &CancellationToken,
+    ) -> Result<IndexReport> {
         for _ in 0..3 {
             match self.reconcile_paths_once(paths, cancellation) {
                 Err(Error::StaleReconciliation { .. }) => continue,
@@ -423,12 +506,84 @@ impl Indexer {
         &self,
         paths: &[String],
         cancellation: &CancellationToken,
-    ) -> Result<IndexResponse> {
+    ) -> Result<IndexReport> {
+        self.reconcile_paths_once_with_preparation_hook(paths, cancellation, || {})
+    }
+
+    fn reconcile_paths_once_with_preparation_hook(
+        &self,
+        paths: &[String],
+        cancellation: &CancellationToken,
+        before_preparation: impl FnOnce(),
+    ) -> Result<IndexReport> {
+        self.reconcile_paths_once_with_hooks(paths, cancellation, || {}, before_preparation)
+    }
+
+    fn observe_visibility_delta(
+        &self,
+        paths: &[String],
+        existing: &HashMap<String, crate::storage::FileRecord>,
+    ) -> (bool, HashSet<String>) {
+        let mut visibility_delta = false;
+        let mut observed_deletions = HashSet::new();
+        for requested in paths {
+            let relative = Path::new(requested);
+            let relative_path = slash_path(relative);
+            visibility_delta |= self
+                .config
+                .discovery_policy()
+                .is_ignore_control_path(&relative_path);
+            let absolute = self.config.root.join(relative);
+            match fs::symlink_metadata(&absolute) {
+                Ok(metadata) => {
+                    let is_file = metadata.file_type().is_file();
+                    visibility_delta |= !existing.contains_key(&relative_path) || !is_file;
+                    if !is_file {
+                        if existing.contains_key(&relative_path) {
+                            observed_deletions.insert(relative_path.clone());
+                        }
+                        if !metadata.file_type().is_dir() {
+                            let prefix = format!("{relative_path}/");
+                            observed_deletions.extend(
+                                existing
+                                    .keys()
+                                    .filter(|path| path.starts_with(&prefix))
+                                    .cloned(),
+                            );
+                        }
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    let prefix = format!("{relative_path}/");
+                    let observed = existing
+                        .keys()
+                        .filter(|path| *path == &relative_path || path.starts_with(&prefix))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    visibility_delta |= observed.iter().any(|path| path.starts_with(&prefix));
+                    observed_deletions.extend(observed);
+                }
+                Err(_) => {}
+            }
+        }
+        if !visibility_delta {
+            observed_deletions.clear();
+        }
+        (visibility_delta, observed_deletions)
+    }
+
+    fn reconcile_paths_once_with_hooks(
+        &self,
+        paths: &[String],
+        cancellation: &CancellationToken,
+        after_discovery: impl FnOnce(),
+        before_preparation: impl FnOnce(),
+    ) -> Result<IndexReport> {
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
         let config_hash = self.config_hash();
         if baseline.config_hash != config_hash {
-            return self.reconcile_cancellable(true, cancellation);
+            return self.reconcile_cancellable_report(true, cancellation);
         }
 
         let existing = self.existing_files(cancellation)?;
@@ -447,27 +602,9 @@ impl Indexer {
         paths.sort_unstable();
         check_cancelled(cancellation)?;
 
-        let visibility_delta = paths.iter().any(|requested| {
-            let relative = Path::new(requested);
-            let relative_path = slash_path(relative);
-            if self
-                .config
-                .discovery_policy()
-                .is_ignore_control_path(&relative_path)
-            {
-                return true;
-            }
-            let absolute = self.config.root.join(relative);
-            match fs::symlink_metadata(&absolute) {
-                Ok(metadata) => {
-                    !existing.contains_key(&relative_path) || !metadata.file_type().is_file()
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => existing
-                    .keys()
-                    .any(|path| path.starts_with(&format!("{relative_path}/"))),
-                Err(_) => false,
-            }
-        });
+        // Preserve targeted deletion evidence from the observation that triggers discovery.
+        let (visibility_delta, visibility_observed_deletions) =
+            self.observe_visibility_delta(&paths, &existing);
         let discovered = visibility_delta
             .then(|| {
                 discover_files_with_limits_policy_and_filter(
@@ -487,9 +624,11 @@ impl Indexer {
                 .map(|file| (file.relative_path.clone(), file))
                 .collect::<HashMap<_, _>>()
         });
+        after_discovery();
 
         let mut candidates = HashMap::new();
         let mut deletions = HashSet::new();
+        let mut directly_observed_deletions = visibility_observed_deletions;
         let mut unchanged = 0usize;
         if let Some(discovered) = &discovered_by_path {
             for (path, file) in discovered {
@@ -522,6 +661,7 @@ impl Indexer {
                     Ok(metadata) => metadata,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                         if existing.contains_key(&relative_path) {
+                            directly_observed_deletions.insert(relative_path.clone());
                             deletions.insert(relative_path);
                         }
                         continue;
@@ -563,12 +703,15 @@ impl Indexer {
         let forced_importers =
             self.add_affected_importers(&mut candidates, &deletions, &change_set, cancellation)?;
         self.validate_membership_limits(&existing, &candidates, &deletions, cancellation)?;
+        directly_observed_deletions.retain(|path| deletions.contains(path));
+        debug_assert!(directly_observed_deletions.is_subset(&deletions));
 
-        let files_seen = candidates.len() + deletions.len();
+        let files_seen = candidates.len() + directly_observed_deletions.len();
         let candidates = candidates.into_values().collect::<Vec<_>>();
         let mut warnings = Vec::new();
-        let mut skipped = 0usize;
+        let mut skip_reasons = IndexSkipReasonCounts::default();
         let mut files_indexed = 0usize;
+        before_preparation();
         let (generation, _preparation) =
             self.storage
                 .publish_reconciliation_at(&baseline, &config_hash, false, |writer| {
@@ -595,8 +738,17 @@ impl Indexer {
                                         push_warning(&mut warnings, warning);
                                     }
                                 }
-                                PreparedFile::Binary(path) | PreparedFile::Oversized(path) => {
-                                    skipped += 1;
+                                PreparedFile::Binary(path) => {
+                                    skip_reasons.binary = skip_reasons.binary.saturating_add(1);
+                                    if existing.contains_key(&path)
+                                        && deletions.insert(path.clone())
+                                    {
+                                        writer.delete(&path)?;
+                                    }
+                                }
+                                PreparedFile::Oversized(path) => {
+                                    skip_reasons.oversized_during_read =
+                                        skip_reasons.oversized_during_read.saturating_add(1);
                                     if existing.contains_key(&path)
                                         && deletions.insert(path.clone())
                                     {
@@ -604,7 +756,7 @@ impl Indexer {
                                     }
                                 }
                                 PreparedFile::Failed(path, error) => {
-                                    skipped += 1;
+                                    skip_reasons.failed = skip_reasons.failed.saturating_add(1);
                                     push_warning(&mut warnings, format!("{path}: {error}"));
                                 }
                             }
@@ -620,16 +772,18 @@ impl Indexer {
                 })?;
         check_cancelled(cancellation)?;
         let files_removed = deletions.len();
+        let files_skipped = skip_reasons.total();
 
-        Ok(IndexResponse {
+        let response = IndexResponse {
             repository_generation: generation,
             files_seen,
             files_indexed,
             files_unchanged: unchanged,
             files_removed,
-            files_skipped: skipped,
+            files_skipped,
             warnings,
-        })
+        };
+        Ok(IndexReport::with_skip_reasons(response, skip_reasons))
     }
 
     fn validate_config(config: &Config) -> Result<()> {
@@ -1193,6 +1347,151 @@ fn normalize_relative(path: &std::path::Path) -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_skip_reasons(
+        response: &IndexReport,
+        binary: usize,
+        oversized_during_read: usize,
+        failed: usize,
+    ) {
+        assert_eq!(
+            response.skip_reasons.as_ref(),
+            Some(&IndexSkipReasonCounts {
+                binary,
+                oversized_during_read,
+                failed,
+            })
+        );
+        assert_eq!(
+            response.files_skipped,
+            response
+                .skip_reasons
+                .as_ref()
+                .expect("current skip reasons")
+                .total()
+        );
+    }
+
+    #[test]
+    fn visibility_reconcile_does_not_reclassify_exclusion_after_discovery() {
+        let root = tempfile::tempdir().expect("root");
+        fs::create_dir(root.path().join(".git")).expect("git marker");
+        let excluded_path = root.path().join("excluded.rs");
+        fs::write(&excluded_path, "fn excluded() {}\n").expect("source fixture");
+        fs::write(root.path().join(".gitignore"), "").expect("initial ignore");
+        let config = Arc::new(
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+        );
+        let storage = Storage::open(&config.database_path).expect("storage");
+        let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+        indexer.reconcile(false).expect("initial reconcile");
+        fs::write(root.path().join(".gitignore"), "excluded.rs\n").expect("exclude source");
+
+        let response = indexer
+            .reconcile_paths_once_with_hooks(
+                &[".gitignore".into()],
+                &CancellationToken::new(),
+                || fs::remove_file(&excluded_path).expect("remove after discovery"),
+                || {},
+            )
+            .expect("visibility reconcile");
+
+        assert_eq!(response.files_seen, 1);
+        assert_eq!(response.files_indexed, 1);
+        assert_eq!(response.files_removed, 1);
+        assert!(storage.find_file("excluded.rs").expect("lookup").is_none());
+    }
+
+    #[test]
+    fn full_reconcile_counts_every_preparation_skip_reason() {
+        let root = tempfile::tempdir().expect("root");
+        let indexed_path = root.path().join("indexed.rs");
+        let binary_path = root.path().join("binary.rs");
+        let growing_path = root.path().join("growing.rs");
+        let failed_path = root.path().join("failed.rs");
+        fs::write(&indexed_path, "fn indexed() {}\n").expect("indexed fixture");
+        fs::write(&binary_path, b"\0binary").expect("binary fixture");
+        fs::write(&growing_path, "fn growing() {}\n").expect("growing fixture");
+        fs::write(&failed_path, "fn failed() {}\n").expect("failed fixture");
+
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.max_file_bytes = 64;
+        let storage = Storage::open(&config.database_path).expect("storage");
+        let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
+
+        let response = indexer
+            .reconcile_once_with_preparation_hook(false, &CancellationToken::new(), move || {
+                fs::write(growing_path, vec![b'x'; 65]).expect("grow after discovery");
+                fs::remove_file(failed_path).expect("remove after discovery");
+            })
+            .expect("full reconcile")
+            .report;
+
+        assert_eq!(response.files_seen, 4);
+        assert_eq!(response.files_indexed, 1);
+        assert_eq!(response.files_unchanged, 0);
+        assert_eq!(response.files_removed, 0);
+        assert_skip_reasons(&response, 1, 1, 1);
+        assert_eq!(response.warnings.len(), 1);
+        assert!(response.warnings[0].starts_with("failed.rs: "));
+        assert!(storage.find_file("indexed.rs").expect("indexed").is_some());
+        assert!(storage.find_file("binary.rs").expect("binary").is_none());
+        assert!(storage.find_file("growing.rs").expect("growing").is_none());
+        assert!(storage.find_file("failed.rs").expect("failed").is_none());
+    }
+
+    #[test]
+    fn incremental_reconcile_counts_every_preparation_skip_reason() {
+        let root = tempfile::tempdir().expect("root");
+        let indexed_path = root.path().join("indexed.rs");
+        let binary_path = root.path().join("binary.rs");
+        let growing_path = root.path().join("growing.rs");
+        let failed_path = root.path().join("failed.rs");
+        for path in [&indexed_path, &binary_path, &growing_path, &failed_path] {
+            fs::write(path, "fn original() {}\n").expect("initial fixture");
+        }
+
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.max_file_bytes = 64;
+        let storage = Storage::open(&config.database_path).expect("storage");
+        let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
+        indexer.reconcile(false).expect("initial reconcile");
+
+        fs::write(&indexed_path, "fn replacement() {}\n").expect("indexed replacement");
+        fs::write(&binary_path, b"\0binary").expect("binary replacement");
+        fs::write(&growing_path, "fn changed_growing() {}\n").expect("growing replacement");
+        fs::write(&failed_path, "fn changed_failed() {}\n").expect("failed replacement");
+        let paths = vec![
+            "indexed.rs".into(),
+            "binary.rs".into(),
+            "growing.rs".into(),
+            "failed.rs".into(),
+        ];
+        let response = indexer
+            .reconcile_paths_once_with_preparation_hook(
+                &paths,
+                &CancellationToken::new(),
+                move || {
+                    fs::write(growing_path, vec![b'x'; 65]).expect("grow after admission");
+                    fs::remove_file(failed_path).expect("remove after admission");
+                },
+            )
+            .expect("incremental reconcile");
+
+        assert_eq!(response.files_seen, 4);
+        assert_eq!(response.files_indexed, 1);
+        assert_eq!(response.files_unchanged, 0);
+        assert_eq!(response.files_removed, 2);
+        assert_skip_reasons(&response, 1, 1, 1);
+        assert_eq!(response.warnings.len(), 1);
+        assert!(response.warnings[0].starts_with("failed.rs: "));
+        assert!(storage.find_file("indexed.rs").expect("indexed").is_some());
+        assert!(storage.find_file("binary.rs").expect("binary").is_none());
+        assert!(storage.find_file("growing.rs").expect("growing").is_none());
+        assert!(storage.find_file("failed.rs").expect("failed").is_some());
+    }
 
     #[test]
     fn conservative_import_resolution_requires_one_existing_file() {

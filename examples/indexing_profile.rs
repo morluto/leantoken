@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 use leantoken::Config;
 use leantoken::indexer::{Indexer, IndexingDiagnostics};
-use leantoken::model::IndexResponse;
+use leantoken::model::{IndexReport, IndexResponse};
 use leantoken::repository::{DiscoveredFile, discover_files};
 use leantoken::storage::Storage;
 use leantoken::watcher::{RepositoryWatcher, WatcherMessage};
@@ -104,7 +104,7 @@ struct CorpusReport {
 #[derive(Debug, Serialize)]
 struct IndexSample {
     elapsed_ms: f64,
-    response: IndexResponse,
+    response: IndexReport,
     diagnostics: IndexingDiagnostics,
     storage_footprint: StorageFootprint,
 }
@@ -264,10 +264,10 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
     let indexer = Indexer::new(Arc::clone(&config), storage.clone())?;
 
     let start = Instant::now();
-    let initial_profile = indexer.reconcile_profiled(false)?;
+    let initial_profile = indexer.reconcile_profiled_report(false)?;
     let initial_index = IndexSample {
         elapsed_ms: milliseconds(start.elapsed()),
-        response: initial_profile.response,
+        response: initial_profile.report,
         diagnostics: initial_profile.diagnostics,
         storage_footprint: storage_footprint(&config.database_path)?,
     };
@@ -454,7 +454,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
 
     let (leantoken_git_revision, leantoken_worktree_dirty) = leantoken_source_identity();
     Ok(Report {
-        schema_version: 7,
+        schema_version: 8,
         leantoken_version: env!("CARGO_PKG_VERSION"),
         leantoken_git_revision,
         leantoken_worktree_dirty,
@@ -1157,7 +1157,7 @@ mod tests {
 
         let report = run_profile(&args).expect("profile");
 
-        assert_eq!(report.schema_version, 7);
+        assert_eq!(report.schema_version, 8);
         assert_eq!(report.initial_index.response.files_indexed, 7);
         assert!(report.initial_index.storage_footprint.database_bytes > 0);
         assert_eq!(

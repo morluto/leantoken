@@ -589,7 +589,7 @@ cargo run --release --example indexing_profile -- \
   --output target/indexing_profile_tokio_linux.json
 ```
 
-The schema-version 7 report records the caller-supplied corpus label, exact
+The schema-version 8 report records the caller-supplied corpus label, exact
 revision, ignore-visible file count, total and mean bytes, maximum directory
 depth, extension mix, initial discovery/hash-plan/prepare/insert/publication
 timings, actual preparation batch file/byte high-water, and the SQLite, WAL, and
@@ -626,9 +626,10 @@ reported separately because they are not comparable corpora.
 The pinned cross-platform monorepo reconciliation matrix is defined in
 [`monorepo_reconciliation.json`](monorepo_reconciliation.json). Its separate
 workflow runs the release profiler against Tokio and Vue core on Linux, macOS,
-and Windows, retaining the raw schema-v7 profile, process-memory receipt, and
-stdout for each corpus/platform pair. The adoption threshold is frozen in the
-manifest before results are collected: a changed-path journal or directory
+and Windows, retaining the raw schema-v8 profile, process-memory receipt, and
+stdout for each corpus/platform pair. The completed decision report below keeps
+its archived schema-v7 evidence readable. The adoption threshold is frozen in
+the manifest before results are collected: a changed-path journal or directory
 invalidation prototype is eligible only if full fallback reaches 250 ms p95,
 discovery plus hash/planning accounts for at least 50% of that work, and the
 result repeats in at least two corpus/platform pairs.
@@ -666,8 +667,8 @@ cargo run --release --example monorepo_reconciliation_report -- \
 ```
 
 The aggregator requires every expected pair, exact corpus and runtime
-revisions, a clean release build, schema v7, and the manifest's sample policy.
-Missing or mixed evidence is an error, not an incomplete decision.
+revisions, a clean release build, schema v7 or v8, and the manifest's sample
+policy. Missing or mixed evidence is an error, not an incomplete decision.
 
 A five-sample schema-version 3 development run on the same pinned Tokio tree
 initially measured median create, rename, and ignore-change rebuilds at 21.1 s,

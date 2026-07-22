@@ -457,6 +457,27 @@ pub struct ContextCandidateEvaluation {
     pub token_count: usize,
 }
 
+/// Bounded aggregate counts for files skipped during index preparation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct IndexSkipReasonCounts {
+    /// Files detected as binary during preparation.
+    pub binary: usize,
+    /// Files admitted by discovery that exceeded the byte limit before reading completed.
+    pub oversized_during_read: usize,
+    /// Files whose preparation failed before searchable content could be produced.
+    pub failed: usize,
+}
+
+impl IndexSkipReasonCounts {
+    /// Return the total number of preparation skips across every public reason.
+    #[must_use]
+    pub fn total(&self) -> usize {
+        self.binary
+            .saturating_add(self.oversized_during_read)
+            .saturating_add(self.failed)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IndexResponse {
     pub repository_generation: u64,
@@ -466,6 +487,46 @@ pub struct IndexResponse {
     pub files_removed: usize,
     pub files_skipped: usize,
     pub warnings: Vec<String>,
+}
+
+/// Additive index details serialized beside the compatible response fields.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct IndexReport {
+    /// Source-compatible index response retained for existing Rust consumers.
+    #[serde(flatten)]
+    pub response: IndexResponse,
+    /// Known aggregate preparation skip counts whose sum equals `files_skipped`.
+    ///
+    /// Legacy deserialized responses omit this field because their reason
+    /// breakdown is unknown. Responses produced by this version always include
+    /// the fixed-shape object.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_reasons: Option<IndexSkipReasonCounts>,
+}
+
+impl IndexReport {
+    /// Attach a known preparation breakdown to a compatible index response.
+    #[must_use]
+    pub fn with_skip_reasons(response: IndexResponse, skip_reasons: IndexSkipReasonCounts) -> Self {
+        Self {
+            response,
+            skip_reasons: Some(skip_reasons),
+        }
+    }
+
+    /// Discard additive details and return the compatible index response.
+    #[must_use]
+    pub fn into_response(self) -> IndexResponse {
+        self.response
+    }
+}
+
+impl std::ops::Deref for IndexReport {
+    type Target = IndexResponse;
+
+    fn deref(&self) -> &Self::Target {
+        &self.response
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -500,6 +561,61 @@ fn source_representation() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn index_report_preserves_unknown_legacy_skip_reasons_and_serializes_known_counts() {
+        let legacy: IndexReport = serde_json::from_value(serde_json::json!({
+            "repository_generation": 1,
+            "files_seen": 2,
+            "files_indexed": 1,
+            "files_unchanged": 0,
+            "files_removed": 0,
+            "files_skipped": 1,
+            "warnings": []
+        }))
+        .expect("deserialize legacy index report");
+        assert_eq!(legacy.skip_reasons, None);
+        let legacy_value = serde_json::to_value(&legacy).expect("reserialize legacy report");
+        assert!(legacy_value.get("skip_reasons").is_none());
+
+        let skip_reasons = IndexSkipReasonCounts {
+            binary: 1,
+            oversized_during_read: 2,
+            failed: 3,
+        };
+        let response = IndexResponse {
+            repository_generation: 2,
+            files_seen: 7,
+            files_indexed: 1,
+            files_unchanged: 0,
+            files_removed: 2,
+            files_skipped: skip_reasons.total(),
+            warnings: vec!["failed preparation".into()],
+        };
+        let report = IndexReport::with_skip_reasons(response, skip_reasons);
+        let value = serde_json::to_value(report).expect("serialize index report");
+
+        assert_eq!(value["files_skipped"], 6);
+        assert_eq!(
+            value["skip_reasons"],
+            serde_json::json!({
+                "binary": 1,
+                "oversized_during_read": 2,
+                "failed": 3
+            })
+        );
+        let round_trip: IndexReport =
+            serde_json::from_value(value).expect("deserialize current index report");
+        assert_eq!(
+            round_trip.skip_reasons,
+            Some(IndexSkipReasonCounts {
+                binary: 1,
+                oversized_during_read: 2,
+                failed: 3,
+            })
+        );
+        assert_eq!(round_trip.files_skipped, 6);
+    }
 
     #[test]
     fn status_response_serializes_readiness_independently_from_freshness() {
