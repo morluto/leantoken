@@ -6,8 +6,8 @@ updates a release PR containing the version bump and regenerated changelog.
 Merging that PR creates the git tag and explicitly dispatches [cargo-dist] with
 that tag to publish platform archives to a GitHub release. A custom packaging
 job also assembles the five native binaries into one script-free npm tarball.
-npm publication is a separate manual step documented in the [development
-guide](development.md#release-artifacts).
+A trusted-publishing job verifies that tarball and publishes it to npm with
+provenance before the release workflow completes.
 
 The Cargo package, git tag, GitHub release, and npm package must use the same
 exact version. MCP setup embeds `CARGO_PKG_VERSION` in npx launchers, so a

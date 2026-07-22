@@ -117,8 +117,12 @@ Merging an `autorelease` PR creates a version tag such as `v0.1.0` and
 dispatches `.github/workflows/release.yml` with that tag. Keep the Cargo package
 version, tag, GitHub release, and npm package version identical.
 
-npm publication is currently manual. Once the GitHub release finishes, inspect
-the package before publishing it:
+npm publication uses npm trusted publishing from `.github/workflows/release.yml`.
+Configure the `leantoken` package on npmjs.com with `morluto/leantoken` as the
+repository and `release.yml` as the workflow filename. The release workflow
+checks the package identity and contents before publishing it with provenance.
+
+To inspect a package manually before publication, run:
 
 ```bash
 tar -xOf leantoken-VERSION.tgz package/package.json
@@ -127,7 +131,8 @@ npm publish leantoken-VERSION.tgz --dry-run
 
 The dry-run file list must contain one binary for every target in
 `npm/platforms.json`, and the manifest must not define lifecycle scripts or
-dependencies. Publish only after those checks pass:
+dependencies. For recovery when trusted publishing is unavailable, publish
+only after those checks pass:
 
 ```bash
 npm publish leantoken-VERSION.tgz --access public
@@ -140,8 +145,7 @@ npm view leantoken@VERSION version
 npx --yes leantoken@VERSION --version
 ```
 
-Configure trusted publishing for `leantoken` before automating later npm
-releases.
+Prereleases use the npm `next` tag; stable releases use `latest`.
 
 ## Test responsibilities
 

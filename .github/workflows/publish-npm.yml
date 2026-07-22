@@ -1,0 +1,75 @@
+name: Publish npm package
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          registry-url: https://registry.npmjs.org
+
+      - name: Install trusted-publishing npm CLI
+        run: npm install --global npm@12.0.1
+
+      - name: Download npm package
+        uses: actions/download-artifact@v8
+        with:
+          name: artifacts-npm-packages
+          path: target/npm-packages
+
+      - name: Verify npm package
+        id: package
+        shell: bash
+        env:
+          DIST_PLAN: ${{ inputs.plan }}
+        run: |
+          mapfile -t packages < <(find target/npm-packages -maxdepth 1 -type f -name '*.tgz' -print)
+          if [[ "${#packages[@]}" -ne 1 ]]; then
+            echo "Expected exactly one npm package, found ${#packages[@]}" >&2
+            exit 1
+          fi
+
+          package="${packages[0]}"
+          package_json=$(tar -xOf "$package" package/package.json)
+          package_name=$(jq -r '.name' <<< "$package_json")
+          package_version=$(jq -r '.version' <<< "$package_json")
+          expected_version=$(jq -r '.releases[] | select(.app_name == "leantoken") | .app_version' <<< "$DIST_PLAN")
+
+          if [[ "$package_name" != "leantoken" || "$package_version" != "$expected_version" ]]; then
+            echo "Package identity $package_name@$package_version does not match leantoken@$expected_version" >&2
+            exit 1
+          fi
+
+          if jq -e '.scripts or .dependencies or .optionalDependencies' <<< "$package_json" >/dev/null; then
+            echo "npm package must not define scripts or dependencies" >&2
+            exit 1
+          fi
+
+          npm publish "$package" --access public --dry-run
+
+          npm_tag=latest
+          if jq -e '.announcement_is_prerelease' <<< "$DIST_PLAN" >/dev/null; then
+            npm_tag=next
+          fi
+          echo "path=$package" >> "$GITHUB_OUTPUT"
+          echo "tag=$npm_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Publish npm package
+        run: npm publish "${{ steps.package.outputs.path }}" --access public --provenance --tag "${{ steps.package.outputs.tag }}"
