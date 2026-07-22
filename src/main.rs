@@ -50,10 +50,10 @@ impl RetryBackoff {
 async fn main() {
     init_tracing();
     if let Err(error) = run().await {
-        let message = cli_error_message(&error);
         if std::env::args_os().any(|argument| argument == "--json") {
-            eprintln!("{}", serde_json::json!({ "error": message }));
+            eprintln!("{}", serde_json::json!(cli_error_response(&error)));
         } else {
+            let message = cli_error_message(&error);
             eprintln!("Error: {message}");
         }
         std::process::exit(1);
@@ -476,6 +476,69 @@ fn cli_error_message(error: &leantoken::Error) -> String {
     }
 }
 
+#[derive(Debug, Serialize)]
+struct CliErrorResponse {
+    error: String,
+    category: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<usize>,
+}
+
+fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
+    let (category, field, requested, limit) = match error {
+        leantoken::Error::InvalidInput { field, .. } => ("invalid_input", Some(*field), None, None),
+        leantoken::Error::InputTooLong { field, max_bytes } => {
+            ("input_too_long", Some(*field), None, Some(*max_bytes))
+        }
+        leantoken::Error::RequestLimitExceeded {
+            field,
+            requested,
+            limit,
+        } => (
+            "request_limit_exceeded",
+            Some(*field),
+            Some(*requested),
+            Some(*limit),
+        ),
+        leantoken::Error::LimitExceeded => ("request_limit_exceeded", None, None, None),
+        leantoken::Error::NotIndexed(_) => ("not_indexed", None, None, None),
+        leantoken::Error::IndexNotReady => ("index_not_ready", None, None, None),
+        leantoken::Error::StaleCursor => ("stale_cursor", None, None, None),
+        leantoken::Error::Cancelled => ("request_cancelled", None, None, None),
+        leantoken::Error::PathOutsideRoot(_) => ("path_outside_root", None, None, None),
+        leantoken::Error::UnsupportedLanguage(_) => ("unsupported_language", None, None, None),
+        leantoken::Error::InvalidRequest(_) => ("invalid_request", None, None, None),
+        leantoken::Error::Regex(_) => ("invalid_regex", None, None, None),
+        leantoken::Error::Glob(_) => ("invalid_glob", None, None, None),
+        leantoken::Error::RootNotFound(_)
+        | leantoken::Error::UnsafeRepositoryRoot(_)
+        | leantoken::Error::RepositoryMismatch { .. }
+        | leantoken::Error::InvalidConfiguration(_) => {
+            ("repository_configuration", None, None, None)
+        }
+        leantoken::Error::IndexLimitExceeded { .. } => ("repository_index_limit", None, None, None),
+        leantoken::Error::RuntimeCapabilityUnavailable { .. } => {
+            ("runtime_unavailable", None, None, None)
+        }
+        leantoken::Error::StaleReconciliation { .. } | leantoken::Error::RetryableConflict(_) => {
+            ("retryable_conflict", None, None, None)
+        }
+        _ => ("internal_error", None, None, None),
+    };
+
+    CliErrorResponse {
+        error: cli_error_message(error),
+        category,
+        field,
+        requested,
+        limit,
+    }
+}
+
 fn init_tracing() {
     use tracing_subscriber::EnvFilter;
     use tracing_subscriber::filter::FilterFn;
@@ -549,5 +612,98 @@ mod tests {
         assert!(!is_terminal_index_error(&leantoken::Error::Io(
             std::io::Error::other("transient")
         )));
+    }
+
+    #[test]
+    fn cli_error_json_has_exact_safe_metadata() {
+        let cases = [
+            (
+                leantoken::Error::InvalidInput {
+                    field: "query",
+                    reason: "is required for find",
+                },
+                serde_json::json!({
+                    "error": "invalid query: is required for find",
+                    "category": "invalid_input",
+                    "field": "query"
+                }),
+            ),
+            (
+                leantoken::Error::RequestLimitExceeded {
+                    field: "max_results",
+                    requested: 101,
+                    limit: 100,
+                },
+                serde_json::json!({
+                    "error": "max_results exceeds its configured limit: requested 101, limit 100",
+                    "category": "request_limit_exceeded",
+                    "field": "max_results",
+                    "requested": 101,
+                    "limit": 100
+                }),
+            ),
+            (
+                leantoken::Error::LimitExceeded,
+                serde_json::json!({
+                    "error": "requested content exceeds the configured limit",
+                    "category": "request_limit_exceeded"
+                }),
+            ),
+            (
+                leantoken::Error::InputTooLong {
+                    field: "query",
+                    max_bytes: 65_536,
+                },
+                serde_json::json!({
+                    "error": "query exceeds 65536 bytes",
+                    "category": "input_too_long",
+                    "field": "query",
+                    "limit": 65_536
+                }),
+            ),
+            (
+                leantoken::Error::NotIndexed("missing.rs".into()),
+                serde_json::json!({
+                    "error": "path is not indexed: missing.rs",
+                    "category": "not_indexed"
+                }),
+            ),
+            (
+                leantoken::Error::IndexNotReady,
+                serde_json::json!({
+                    "error": "repository index is not ready; run `leantoken index` for direct CLI use or `leantoken doctor` to verify MCP readiness",
+                    "category": "index_not_ready"
+                }),
+            ),
+            (
+                leantoken::Error::StaleCursor,
+                serde_json::json!({
+                    "error": "stale cursor",
+                    "category": "stale_cursor"
+                }),
+            ),
+            (
+                leantoken::Error::Cancelled,
+                serde_json::json!({
+                    "error": "request cancelled",
+                    "category": "request_cancelled"
+                }),
+            ),
+            (
+                leantoken::Error::Io(std::io::Error::other("private descriptor")),
+                serde_json::json!({
+                    "error": "I/O error: private descriptor",
+                    "category": "internal_error"
+                }),
+            ),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(
+                serde_json::to_value(cli_error_response(&error))
+                    .expect("CLI error response is serializable"),
+                expected
+            );
+        }
     }
 }

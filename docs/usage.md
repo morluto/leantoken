@@ -353,6 +353,18 @@ state.
 
 ## Errors and limits
 
+Failed CLI commands emit a human-readable `Error: ...` line by default. With
+`--json`, they emit one compact JSON object on stderr and retain the existing
+top-level `error` string for backward compatibility. The additive `category`
+field is the stable machine-readable discriminator. Request errors may also
+include the public `field`, `requested`, and active `limit`; clients should
+branch on these fields instead of parsing `error` text.
+
+The structured fields are an allowlist. I/O, SQLite, serialization, and other
+unexpected failures use `category: "internal_error"` and expose no additional
+machine-readable details. Future releases may add categories or optional
+fields, so consumers should ignore keys and category values they do not know.
+
 Oversized inputs, invalid regular expressions or globs, stale cursors,
 unsupported structured reads, and unsafe paths return request errors without
 terminating the server. Their MCP `data.category` values are stable enough for

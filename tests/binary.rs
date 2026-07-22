@@ -127,7 +127,73 @@ fn cold_cli_status_and_retrieval_explain_index_readiness() {
     assert!(!json.status.success());
     let error: serde_json::Value =
         serde_json::from_slice(&json.stderr).expect("structured error");
-    assert_eq!(error["error"], guidance);
+    assert_eq!(
+        error,
+        serde_json::json!({
+            "error": guidance,
+            "category": "index_not_ready"
+        })
+    );
+}
+
+#[test]
+fn cli_json_errors_expose_stable_safe_metadata() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "fn indexed() {}\n").expect("source");
+    let database = root.path().join("index.sqlite");
+    run(root.path(), &database, &["index"]);
+
+    assert_eq!(
+        run_error(root.path(), &database, &["files", "find"]),
+        serde_json::json!({
+            "error": "invalid query: is required for find",
+            "category": "invalid_input",
+            "field": "query"
+        })
+    );
+    assert_eq!(
+        run_error(
+            root.path(),
+            &database,
+            &["files", "tree", "--max-results", "101"],
+        ),
+        serde_json::json!({
+            "error": "max_results exceeds its configured limit: requested 101, limit 100",
+            "category": "request_limit_exceeded",
+            "field": "max_results",
+            "requested": 101,
+            "limit": 100
+        })
+    );
+    assert_eq!(
+        run_error(root.path(), &database, &["read", "missing.rs"]),
+        serde_json::json!({
+            "error": "path is not indexed: missing.rs",
+            "category": "not_indexed"
+        })
+    );
+    assert_eq!(
+        run_error(
+            root.path(),
+            &database,
+            &["files", "tree", "--cursor", "malformed"],
+        ),
+        serde_json::json!({
+            "error": "stale cursor",
+            "category": "stale_cursor"
+        })
+    );
+
+    let database_directory = root.path().join("database-directory");
+    std::fs::create_dir(&database_directory).expect("database directory");
+    let internal = run_error(root.path(), &database_directory, &["status"]);
+    assert_eq!(internal["category"], "internal_error");
+    assert!(
+        internal["error"]
+            .as_str()
+            .is_some_and(|message| message.starts_with("SQLite error:"))
+    );
+    assert_eq!(internal.as_object().map(serde_json::Map::len), Some(2));
 }
 
 #[test]
@@ -159,6 +225,7 @@ fn cli_index_limit_error_is_structured_and_does_not_publish_partial_files() {
         error["error"],
         "index source files limit exceeded: observed 2, limit 1"
     );
+    assert_eq!(error["category"], "repository_index_limit");
     assert_eq!(database_state(&database).map(|state| state.0), Some(0));
     assert_eq!(database_state(&database).map(|state| state.1), Some(0));
 }
@@ -1141,6 +1208,28 @@ fn run(
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout).expect("JSON output")
+}
+
+fn run_error(
+    root: &std::path::Path,
+    database: &std::path::Path,
+    arguments: &[&str],
+) -> serde_json::Value {
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .args([
+            "--root",
+            root.to_str().expect("root UTF-8"),
+            "--database",
+            database.to_str().expect("database UTF-8"),
+            "--json",
+        ])
+        .args(arguments)
+        .output()
+        .expect("run leantoken");
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    serde_json::from_slice(&output.stderr).expect("structured error")
 }
 
 struct McpProcess {
