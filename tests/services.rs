@@ -1,6 +1,6 @@
 use leantoken::{
     Config, ContextRequest, ContextSignalPolicy, Error, FileOperation, FilesRequest, Freshness,
-    IndexConsistency, OutlineRequest, ReadRequest, ReadStatus, SearchMode, SearchRequest,
+    IndexConsistency, IndexState, OutlineRequest, ReadRequest, ReadStatus, SearchMode, SearchRequest,
     coordination::IndexCoordination, services::Services,
 };
 use tokio_util::sync::CancellationToken;
@@ -1727,6 +1727,8 @@ async fn empty_index_reports_status_but_retrieval_is_not_ready() {
 
     let status = services.status().await.expect("status");
     assert_eq!(status.repository_generation, 0);
+    assert_eq!(status.index_state, IndexState::Uninitialized);
+    assert_eq!(status.freshness, Freshness::Current);
     assert_eq!(status.file_count, 0);
 
     let error = services
@@ -1742,6 +1744,36 @@ async fn empty_index_reports_status_but_retrieval_is_not_ready() {
         .await
         .expect_err("retrieval must not report an empty success");
     assert!(matches!(error, leantoken::Error::IndexNotReady));
+}
+
+#[tokio::test]
+async fn first_index_reports_uninitialized_while_reconciling() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("lib.rs"), "fn pending() {}\n").expect("source");
+    let database = root.path().join("index.sqlite");
+    let services = Services::open(
+        Config::discover(root.path(), Some(database.clone())).expect("config"),
+    )
+    .expect("services");
+    let coordination = IndexCoordination::for_database(&database);
+    let operation = coordination
+        .acquire_operation(&CancellationToken::new())
+        .expect("hold reconciliation lock");
+    let indexing_services = services.clone();
+    let indexing = tokio::spawn(async move { indexing_services.index(false).await });
+    tokio::task::yield_now().await;
+
+    let during = services.status().await.expect("status during first index");
+    assert_eq!(during.repository_generation, 0);
+    assert_eq!(during.index_state, IndexState::Uninitialized);
+    assert_eq!(during.freshness, Freshness::Reconciling);
+
+    drop(operation);
+    indexing.await.expect("join index").expect("complete index");
+    let after = services.status().await.expect("status after first index");
+    assert!(after.repository_generation > 0);
+    assert_eq!(after.index_state, IndexState::Ready);
+    assert_eq!(after.freshness, Freshness::Current);
 }
 
 fn git_available() -> bool {
@@ -2257,6 +2289,7 @@ async fn status_reports_reconciling_when_shared_operation_lock_is_held() {
 
     let before = services.status().await.expect("status before");
     assert_eq!(before.freshness, Freshness::Current);
+    assert_eq!(before.index_state, IndexState::Ready);
     assert!(before.repository_generation >= 1);
 
     let coordination = IndexCoordination::for_database(&database);
@@ -2270,6 +2303,7 @@ async fn status_reports_reconciling_when_shared_operation_lock_is_held() {
         Freshness::Reconciling,
         "followers must see reconciling via the shared operation lock"
     );
+    assert_eq!(during.index_state, IndexState::Ready);
     assert_eq!(during.repository_generation, before.repository_generation);
 }
 

@@ -198,6 +198,11 @@ impl Services {
                 repository_root: self.config.root.display().to_string(),
                 database_path: self.config.database_path.display().to_string(),
                 repository_generation: generation,
+                index_state: if generation == 0 {
+                    IndexState::Uninitialized
+                } else {
+                    IndexState::Ready
+                },
                 freshness: self.freshness(),
                 file_count: counts.files,
                 chunk_count: counts.chunks,

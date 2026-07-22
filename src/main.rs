@@ -50,10 +50,11 @@ impl RetryBackoff {
 async fn main() {
     init_tracing();
     if let Err(error) = run().await {
+        let message = cli_error_message(&error);
         if std::env::args_os().any(|argument| argument == "--json") {
-            eprintln!("{}", serde_json::json!({ "error": error.to_string() }));
+            eprintln!("{}", serde_json::json!({ "error": message }));
         } else {
-            eprintln!("Error: {error}");
+            eprintln!("Error: {message}");
         }
         std::process::exit(1);
     }
@@ -462,6 +463,15 @@ fn print<T: Serialize>(value: &T, compact: bool) -> Result<()> {
     }
     lock.write_all(b"\n")?;
     Ok(())
+}
+
+fn cli_error_message(error: &leantoken::Error) -> String {
+    match error {
+        leantoken::Error::IndexNotReady => "repository index is not ready; run `leantoken index` \
+            for direct CLI use or `leantoken doctor` to verify MCP readiness"
+            .into(),
+        _ => error.to_string(),
+    }
 }
 
 fn init_tracing() {
