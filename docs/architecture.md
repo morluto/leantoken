@@ -254,6 +254,13 @@ file preparation and reused afterward. Read-only followers therefore allocate
 no indexing threads, while a process that becomes leader retains its configured
 worker bound without rebuilding a pool on every reconciliation.
 
+Request result, token, and context-line bounds are validated in `Services`, so
+library and direct MCP callers receive the same contract as the CLI. CLI
+non-zero numeric types and MCP JSON Schema ranges provide earlier feedback but
+are not treated as enforcement boundaries. Zero is valid only for
+`context_lines`; values above an active maximum return a structured
+`RequestLimitExceeded` error rather than being clamped.
+
 ## Retrieval hot-path bounds
 
 These limits cap context fan-out, regex work, and file-list memory. A request

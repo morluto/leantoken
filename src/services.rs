@@ -265,18 +265,58 @@ impl Services {
         Err(Error::RetryableConflict(RetryableOperation::Retrieval))
     }
 
-    pub(super) fn result_limit(&self, requested: Option<usize>) -> usize {
-        requested
-            .unwrap_or(self.config.default_results)
-            .max(1)
-            .min(self.config.max_results)
+    fn positive_request_limit(
+        &self,
+        field: &'static str,
+        requested: usize,
+        limit: usize,
+    ) -> Result<usize> {
+        if requested == 0 {
+            return Err(Error::InvalidInput {
+                field,
+                reason: "must be greater than zero",
+            });
+        }
+        self.request_limit(field, requested, limit)
     }
 
-    pub(super) fn token_limit(&self, requested: Option<usize>, default: usize) -> usize {
-        requested
-            .unwrap_or(default)
-            .max(1)
-            .min(self.config.max_output_tokens)
+    fn request_limit(&self, field: &'static str, requested: usize, limit: usize) -> Result<usize> {
+        if requested > limit {
+            return Err(Error::RequestLimitExceeded {
+                field,
+                requested,
+                limit,
+            });
+        }
+        Ok(requested)
+    }
+
+    pub(super) fn result_limit(&self, requested: Option<usize>) -> Result<usize> {
+        self.positive_request_limit(
+            "max_results",
+            requested.unwrap_or(self.config.default_results),
+            self.config.max_results,
+        )
+    }
+
+    pub(super) fn token_limit(&self, requested: Option<usize>, default: usize) -> Result<usize> {
+        self.positive_request_limit(
+            "max_tokens",
+            requested.unwrap_or(default),
+            self.config.max_output_tokens,
+        )
+    }
+
+    pub(super) fn token_budget_limit(&self, requested: usize) -> Result<usize> {
+        self.positive_request_limit("token_budget", requested, self.config.max_output_tokens)
+    }
+
+    pub(super) fn context_line_limit(&self, requested: Option<usize>) -> Result<usize> {
+        self.request_limit(
+            "context_lines",
+            requested.unwrap_or(self.config.context_lines),
+            crate::config::MAX_CONTEXT_LINES,
+        )
     }
 
     pub(super) async fn apply_consistency(

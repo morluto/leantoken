@@ -383,8 +383,8 @@ impl Services {
         validate_optional_input(request.path.as_deref(), "path", MAX_PATH_BYTES)?;
         validate_optional_input(request.query.as_deref(), "query", MAX_QUERY_BYTES)?;
         validate_optional_input(request.pattern.as_deref(), "pattern", MAX_PATTERN_BYTES)?;
+        let limit = self.result_limit(request.max_results)?;
         self.consistent(|session, generation| {
-            let limit = self.result_limit(request.max_results);
             let cursor =
                 parse_files_cursor(request.cursor.as_deref(), generation, &request.operation)?;
             let page = match request.operation {

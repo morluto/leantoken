@@ -125,7 +125,7 @@ async fn compare_context_representations() {
             path: None,
             query: None,
             pattern: None,
-            max_results: Some(1_000),
+            max_results: Some(100),
             cursor: None,
             depth: Some(2),
         })
@@ -223,7 +223,7 @@ async fn compare_context_representations() {
                 paths: task.relevant.iter().map(|&p| p.into()).collect(),
                 symbol_name: None,
                 symbol_kind: None,
-                max_results: Some(1_000),
+                max_results: Some(100),
                 max_tokens: Some(TOKEN_BUDGET),
             })
             .await

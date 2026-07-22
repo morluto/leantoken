@@ -206,9 +206,9 @@ impl Services {
             "symbol kind",
             MAX_PATTERN_BYTES,
         )?;
+        let limit = self.result_limit(request.max_results)?;
+        let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         self.consistent(|session, generation| {
-            let limit = self.result_limit(request.max_results);
-            let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens);
             let mut remaining = limit;
             let mut emitted_tokens = 0usize;
             let mut files = Vec::new();
@@ -299,9 +299,10 @@ impl Services {
                 reason: "must use either a symbol or line range, not both",
             });
         }
+        let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         self.consistent(|session, generation| {
             check_cancelled(cancellation)?;
-            self.read_at_generation(session, &request, generation)
+            self.read_at_generation(session, &request, generation, max_tokens)
         })
     }
 
@@ -310,6 +311,7 @@ impl Services {
         session: &ReadSession,
         request: &ReadRequest,
         generation: u64,
+        max_tokens: usize,
     ) -> Result<ReadResponse> {
         let indexed = session
             .find_file(&request.path)?
@@ -324,7 +326,6 @@ impl Services {
         let full_hash = stream_hash(&file)?;
         let range = read_live_range(&file, target)?;
         let start_line = range.start_line;
-        let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens);
         let (content, emitted_tokens) = self.config.tokenizer.truncate(&range.content, max_tokens);
         let returned_lines = content
             .lines()

@@ -211,6 +211,15 @@ request remains cancellable. Writes that begin concurrently with the call may
 require another `working_tree` request. CLI users can run `leantoken index`
 immediately before retrieval when they need to reconcile first.
 
+Numeric retrieval limits are inclusive and validated uniformly by the CLI,
+MCP, and direct service APIs. `max_results` must be in `1..=100`;
+`max_tokens` and `token_budget` must be in `1..=32,000`; `context_lines` may be
+zero and must not exceed 20. Omitted optional values use their documented
+defaults. Values outside these ranges are rejected rather than silently
+clamped. Disallowed zero values are invalid input; values above a maximum
+produce an MCP error with the public field name, requested value, and active
+maximum.
+
 ## `leantoken_files`
 
 Discovers repository structure without returning source bodies.
@@ -270,7 +279,7 @@ Reads an exact source range.
   one-based range.
 - `target: {"kind":"symbol","name":"LeanTokenMcp"}` selects one indexed
   symbol definition.
-- `max_tokens` defaults to 8,000 and is capped at 32,000.
+- `max_tokens` defaults to 8,000 and accepts values through 32,000.
 - `expected_hash` returns `not_modified` without source when it matches the
   hash from the same prior target.
 
@@ -290,7 +299,7 @@ may still use `index_stale` and `expected_hash` to detect or suppress live range
 ## `leantoken_context`
 
 Turns a task into a ranked set of source evidence. `task` is the only required
-input; `token_budget` defaults to 3,000 and is capped at 32,000.
+input; `token_budget` defaults to 3,000 and accepts values through 32,000.
 
 Optional inputs focus or exclude paths and symbols, provide hashes already held
 by the caller, and identify a prior repository generation. The selector merges

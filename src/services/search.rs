@@ -199,14 +199,11 @@ impl Services {
         } else {
             None
         };
+        let limit = self.result_limit(request.max_results)?;
+        let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
+        let context_lines = self.context_line_limit(request.context_lines)?;
         self.consistent(|session, generation| {
-            let limit = self.result_limit(request.max_results);
-            let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens);
             let offset = parse_cursor(request.cursor.as_deref(), generation)?;
-            let context_lines = request
-                .context_lines
-                .unwrap_or(self.config.context_lines)
-                .min(20);
             let mut hits = Vec::new();
             if matches!(
                 request.mode,

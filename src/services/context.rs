@@ -631,12 +631,7 @@ impl Services {
                 reason: "must not be empty",
             });
         }
-        if request.token_budget == 0 {
-            return Err(Error::InvalidInput {
-                field: "token budget",
-                reason: "must be positive",
-            });
-        }
+        self.token_budget_limit(request.token_budget)?;
         validate_input(&request.task, "task", MAX_QUERY_BYTES)?;
         validate_patterns(&request.focus_paths)?;
         validate_patterns(&request.exclude_paths)?;
@@ -645,9 +640,6 @@ impl Services {
         }
         for symbol in &request.focus_symbols {
             validate_input(symbol, "focus symbol", MAX_PATTERN_BYTES)?;
-        }
-        if request.token_budget > self.config.max_output_tokens {
-            return Err(Error::LimitExceeded);
         }
         if request.known_hashes.len() > MAX_INPUT_ITEMS {
             return Err(Error::LimitExceeded);

@@ -417,7 +417,7 @@ pub struct FilesArgs {
 
     /// Maximum number of results.
     #[arg(long)]
-    pub max_results: Option<usize>,
+    pub max_results: Option<NonZeroUsize>,
 
     /// Pagination cursor.
     #[arg(long)]
@@ -435,7 +435,7 @@ impl From<FilesArgs> for FilesRequest {
             path: args.path,
             query: args.query,
             pattern: args.pattern,
-            max_results: args.max_results,
+            max_results: args.max_results.map(NonZeroUsize::get),
             cursor: args.cursor,
             depth: args.depth,
         }
@@ -465,11 +465,11 @@ pub struct SearchArgs {
 
     /// Maximum number of results.
     #[arg(long)]
-    pub max_results: Option<usize>,
+    pub max_results: Option<NonZeroUsize>,
 
     /// Maximum tokens to return.
     #[arg(long)]
-    pub max_tokens: Option<usize>,
+    pub max_tokens: Option<NonZeroUsize>,
 
     /// Lines of context around each match.
     #[arg(long)]
@@ -492,8 +492,8 @@ impl From<SearchArgs> for SearchRequest {
             include_paths: args.include_paths,
             exclude_paths: args.exclude_paths,
             focus_paths: args.focus_paths,
-            max_results: args.max_results,
-            max_tokens: args.max_tokens,
+            max_results: args.max_results.map(NonZeroUsize::get),
+            max_tokens: args.max_tokens.map(NonZeroUsize::get),
             context_lines: args.context_lines,
             case_sensitive: args.case_sensitive,
             cursor: args.cursor,
@@ -516,11 +516,11 @@ pub struct OutlineArgs {
 
     /// Maximum number of symbols.
     #[arg(long)]
-    pub max_results: Option<usize>,
+    pub max_results: Option<NonZeroUsize>,
 
     /// Maximum tokens to return.
     #[arg(long)]
-    pub max_tokens: Option<usize>,
+    pub max_tokens: Option<NonZeroUsize>,
 }
 
 impl From<OutlineArgs> for OutlineRequest {
@@ -529,8 +529,8 @@ impl From<OutlineArgs> for OutlineRequest {
             paths: args.paths,
             symbol_name: args.symbol_name,
             symbol_kind: args.symbol_kind,
-            max_results: args.max_results,
-            max_tokens: args.max_tokens,
+            max_results: args.max_results.map(NonZeroUsize::get),
+            max_tokens: args.max_tokens.map(NonZeroUsize::get),
         }
     }
 }
@@ -617,7 +617,7 @@ pub struct ReadArgs {
 
     /// Maximum tokens to return.
     #[arg(long)]
-    pub max_tokens: Option<usize>,
+    pub max_tokens: Option<NonZeroUsize>,
 
     /// Expected content hash; returns not_modified when current.
     #[arg(long)]
@@ -636,7 +636,7 @@ impl From<ReadArgs> for ReadRequest {
             start_line,
             end_line,
             symbol: args.symbol,
-            max_tokens: args.max_tokens,
+            max_tokens: args.max_tokens.map(NonZeroUsize::get),
             expected_hash: args.expected_hash,
         }
     }
@@ -650,7 +650,7 @@ pub struct ContextArgs {
 
     /// Token budget for the response.
     #[arg(short, long)]
-    pub budget: usize,
+    pub budget: NonZeroUsize,
 
     /// Focus on these paths (repeatable).
     #[arg(long = "focus")]
@@ -685,7 +685,7 @@ impl From<ContextArgs> for ContextRequest {
     fn from(args: ContextArgs) -> Self {
         Self {
             task: args.task,
-            token_budget: args.budget,
+            token_budget: args.budget.get(),
             focus_paths: args.focus_paths,
             focus_symbols: args.focus_symbols,
             exclude_paths: args.exclude_paths,

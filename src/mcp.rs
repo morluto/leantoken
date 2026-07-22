@@ -16,7 +16,8 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{
-    DEFAULT_CONTEXT_LINES, DEFAULT_READ_TOKENS, DEFAULT_RESULTS, MAX_OUTPUT_TOKENS, MAX_RESULTS,
+    DEFAULT_CONTEXT_LINES, DEFAULT_READ_TOKENS, DEFAULT_RESULTS, MAX_CONTEXT_LINES,
+    MAX_OUTPUT_TOKENS, MAX_RESULTS,
 };
 use crate::model::{
     ContextRequest, FileOperation, FilesRequest, IndexConsistency, OutlineRequest, ReadRequest,
@@ -74,7 +75,7 @@ struct SearchMcpRequest {
     max_tokens: usize,
     /// Lines before and after each match (default 2, maximum 20).
     #[serde(default = "default_context_lines")]
-    #[schemars(default = "default_context_lines", range(max = 20))]
+    #[schemars(default = "default_context_lines", range(max = MAX_CONTEXT_LINES))]
     context_lines: usize,
     /// Preserve query case when matching.
     #[serde(default)]
@@ -710,6 +711,19 @@ fn into_mcp_error(error: crate::Error) -> ErrorData {
             "request exceeds a configured limit",
             mcp_error_data("request_limit_exceeded"),
         ),
+        crate::Error::RequestLimitExceeded {
+            field,
+            requested,
+            limit,
+        } => ErrorData::invalid_params(
+            format!("{field} exceeds its configured limit"),
+            Some(serde_json::json!({
+                "category": "request_limit_exceeded",
+                "field": field,
+                "requested": requested,
+                "limit": limit,
+            })),
+        ),
         crate::Error::UnsupportedLanguage(_) => ErrorData::invalid_params(
             "requested structured language is unsupported",
             mcp_error_data("unsupported_language"),
@@ -955,6 +969,22 @@ mod tests {
         assert_eq!(
             invalid.data.as_ref().map(|data| &data["limit"]),
             Some(&serde_json::json!(64))
+        );
+
+        let request_limit = into_mcp_error(crate::Error::RequestLimitExceeded {
+            field: "max_tokens",
+            requested: 32_001,
+            limit: 32_000,
+        });
+        assert_eq!(request_limit.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert_eq!(
+            request_limit.data,
+            Some(serde_json::json!({
+                "category": "request_limit_exceeded",
+                "field": "max_tokens",
+                "requested": 32_001,
+                "limit": 32_000,
+            }))
         );
 
         let internal = [

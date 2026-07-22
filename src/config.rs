@@ -12,6 +12,7 @@ pub(crate) const MAX_RESULTS: usize = 100;
 pub(crate) const DEFAULT_READ_TOKENS: usize = 8_000;
 pub(crate) const MAX_OUTPUT_TOKENS: usize = 32_000;
 pub(crate) const DEFAULT_CONTEXT_LINES: usize = 2;
+pub(crate) const MAX_CONTEXT_LINES: usize = 20;
 
 /// Hard repository discovery and preparation limits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
