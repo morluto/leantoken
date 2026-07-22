@@ -13,7 +13,7 @@ use super::validation::{
 use crate::model::*;
 use crate::repository::{resolve_existing, validate_relative};
 use crate::storage::ReadSession;
-use crate::text::hash;
+use crate::text::{anchored_line_window, hash};
 use crate::{Error, Result};
 
 const MIN_CONTEXT_RANGE_LINES: usize = 12;
@@ -28,10 +28,46 @@ pub(super) struct StoredExcerpt {
 
 pub(super) struct StoredExcerptRequest {
     pub file_id: i64,
-    pub start_line: usize,
-    pub end_line: usize,
-    pub context: usize,
+    pub desired_start_line: usize,
+    pub desired_end_line: usize,
+    pub required_start_line: usize,
+    pub required_end_line: usize,
     pub max_lines: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ResolvedStoredExcerptRequest {
+    file_id: i64,
+    start_line: usize,
+    end_line: usize,
+}
+
+impl StoredExcerptRequest {
+    fn resolve(&self, file_end_line: Option<usize>) -> Option<ResolvedStoredExcerptRequest> {
+        let file_end_line = file_end_line?;
+        let required_start = self.required_start_line.max(1);
+        if required_start > file_end_line {
+            return None;
+        }
+        let required_end = self
+            .required_end_line
+            .max(required_start)
+            .min(file_end_line);
+        let desired_start = self.desired_start_line.max(1).min(file_end_line);
+        let desired_end = self.desired_end_line.max(desired_start).min(file_end_line);
+        let (start_line, end_line) = anchored_line_window(
+            desired_start,
+            desired_end,
+            required_start,
+            required_end,
+            self.max_lines,
+        );
+        Some(ResolvedStoredExcerptRequest {
+            file_id: self.file_id,
+            start_line,
+            end_line,
+        })
+    }
 }
 
 pub(super) struct AdaptiveExcerptRequest {
@@ -56,29 +92,21 @@ struct LiveReadRange {
 }
 
 fn assemble_stored_excerpt(
-    request: &StoredExcerptRequest,
+    request: ResolvedStoredExcerptRequest,
     selected: &[crate::storage::ChunkRecord],
 ) -> Option<StoredExcerpt> {
-    let first = request.start_line.saturating_sub(request.context).max(1);
-    let mut last = request.end_line.saturating_add(request.context);
-    if request.max_lines > 0 && last.saturating_sub(first).saturating_add(1) > request.max_lines {
-        last = first + request.max_lines - 1;
-    }
-    let (Some(first_chunk), Some(last_chunk)) = (selected.first(), selected.last()) else {
-        return None;
-    };
-    last = last.min(last_chunk.end_line);
+    let first_chunk = selected.first()?;
     let base_line = first_chunk.start_line;
     let mut combined = String::new();
     for chunk in selected {
         combined.push_str(&chunk.content);
     }
-    let local_start = first.saturating_sub(base_line) + 1;
-    let local_end = last.saturating_sub(base_line) + 1;
+    let local_start = request.start_line.saturating_sub(base_line) + 1;
+    let local_end = request.end_line.saturating_sub(base_line) + 1;
     Some(StoredExcerpt {
         content: crate::text::excerpt(&combined, local_start, local_end),
-        start_line: first,
-        end_line: last,
+        start_line: request.start_line,
+        end_line: request.end_line,
     })
 }
 
@@ -444,18 +472,17 @@ impl Services {
     ) -> Result<Option<StoredExcerpt>> {
         let request = StoredExcerptRequest {
             file_id,
-            start_line,
-            end_line,
-            context,
+            desired_start_line: start_line.saturating_sub(context).max(1),
+            desired_end_line: end_line.saturating_add(context),
+            required_start_line: start_line,
+            required_end_line: end_line,
             max_lines,
         };
-        let first = start_line.saturating_sub(context).max(1);
-        let mut last = end_line.saturating_add(context);
-        if max_lines > 0 && last.saturating_sub(first).saturating_add(1) > max_lines {
-            last = first + max_lines - 1;
-        }
-        let selected = session.get_chunks_overlapping(file_id, first, last)?;
-        Ok(assemble_stored_excerpt(&request, &selected))
+        Ok(self
+            .stored_excerpts(session, &[request])?
+            .into_iter()
+            .next()
+            .flatten())
     }
 }
 
@@ -465,25 +492,26 @@ impl Services {
         session: &ReadSession,
         requests: &[StoredExcerptRequest],
     ) -> Result<Vec<Option<StoredExcerpt>>> {
-        let ranges = requests
+        let file_ids = requests
             .iter()
-            .map(|request| {
-                let first = request.start_line.saturating_sub(request.context).max(1);
-                let mut last = request.end_line.saturating_add(request.context);
-                if request.max_lines > 0
-                    && last.saturating_sub(first).saturating_add(1) > request.max_lines
-                {
-                    last = first + request.max_lines - 1;
-                }
-                (request.file_id, first, last)
-            })
+            .map(|request| request.file_id)
             .collect::<Vec<_>>();
+        let file_end_lines = session.file_end_lines_batch(&file_ids)?;
+        let mut resolved = Vec::new();
+        let mut ranges = Vec::new();
+        for (index, (request, file_end_line)) in requests.iter().zip(file_end_lines).enumerate() {
+            let Some(request) = request.resolve(file_end_line) else {
+                continue;
+            };
+            ranges.push((request.file_id, request.start_line, request.end_line));
+            resolved.push((index, request));
+        }
         let chunks = session.get_chunks_overlapping_batch(&ranges)?;
-        Ok(requests
-            .iter()
-            .zip(chunks)
-            .map(|(request, chunks)| assemble_stored_excerpt(request, &chunks))
-            .collect())
+        let mut excerpts = vec![None; requests.len()];
+        for ((index, request), chunks) in resolved.into_iter().zip(chunks) {
+            excerpts[index] = assemble_stored_excerpt(request, &chunks);
+        }
+        Ok(excerpts)
     }
 
     #[cfg(test)]
@@ -540,9 +568,10 @@ impl Services {
             .iter()
             .map(|request| StoredExcerptRequest {
                 file_id: request.file_id,
-                start_line: request.declaration_start,
-                end_line: request.declaration_end,
-                context: 0,
+                desired_start_line: request.declaration_start,
+                desired_end_line: request.declaration_end,
+                required_start_line: request.matched_line,
+                required_end_line: request.matched_line,
                 max_lines: 0,
             })
             .collect::<Vec<_>>();
@@ -586,9 +615,10 @@ impl Services {
             narrowed_indices.push(index);
             narrowed_requests.push(StoredExcerptRequest {
                 file_id: request.file_id,
-                start_line: start,
-                end_line: end,
-                context: 0,
+                desired_start_line: start,
+                desired_end_line: end,
+                required_start_line: request.matched_line,
+                required_end_line: request.matched_line,
                 max_lines: 0,
             });
         }

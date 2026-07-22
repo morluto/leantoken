@@ -809,9 +809,10 @@ impl Services {
                     .iter()
                     .map(|(_, hit)| StoredExcerptRequest {
                         file_id: hit.reference.file_id,
-                        start_line: hit.reference.start_line,
-                        end_line: hit.reference.end_line,
-                        context: 2,
+                        desired_start_line: hit.reference.start_line.saturating_sub(2).max(1),
+                        desired_end_line: hit.reference.end_line.saturating_add(2),
+                        required_start_line: hit.reference.start_line,
+                        required_end_line: hit.reference.end_line,
                         max_lines: 12,
                     })
                     .collect::<Vec<_>>();
@@ -873,7 +874,7 @@ impl Services {
                         continue;
                     }
                     let Some(search_hit) =
-                        chunk_search_hit(hit.clone(), term, false, 2, term_regex.as_ref())?
+                        chunk_search_hit(hit.clone(), term, false, 2, term_regex.as_ref(), false)?
                     else {
                         continue;
                     };

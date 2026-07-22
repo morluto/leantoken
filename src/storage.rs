@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt, fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -1338,23 +1338,39 @@ impl ReadSession {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
-    #[cfg(test)]
-    pub(crate) fn get_chunks_overlapping(
-        &self,
-        file_id: i64,
-        start_line: usize,
-        end_line: usize,
-    ) -> Result<Vec<ChunkRecord>> {
-        let start_line = usize_to_i64(start_line)?;
-        let end_line = usize_to_i64(end_line)?;
+    /// Return the final indexed line for each file id, preserving request order.
+    pub(crate) fn file_end_lines_batch(&self, file_ids: &[i64]) -> Result<Vec<Option<usize>>> {
+        if file_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut seen = HashSet::new();
+        let unique_file_ids = file_ids
+            .iter()
+            .copied()
+            .filter(|file_id| seen.insert(*file_id))
+            .collect::<Vec<_>>();
+        let input = serde_json::to_string(&unique_file_ids)?;
         let mut stmt = self.conn.prepare_cached(
-            "SELECT id, file_id, content, start_line, end_line, start_byte, end_byte, token_count
-                 FROM chunks
-                 WHERE file_id = ?1 AND end_line >= ?2 AND start_line <= ?3
-                 ORDER BY start_line",
+            "WITH requested AS (
+                 SELECT CAST(value AS INTEGER) AS file_id
+                 FROM json_each(?1)
+             )
+             SELECT requested.file_id, MAX(chunks.end_line)
+             FROM requested
+             LEFT JOIN chunks ON chunks.file_id = requested.file_id
+             GROUP BY requested.file_id",
         )?;
-        let rows = stmt.query_map(params![file_id, start_line, end_line], Storage::map_chunk)?;
-        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+        let rows = stmt.query_map(params![input], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Option<i64>>(1)?.map(i64_to_usize),
+            ))
+        })?;
+        let end_lines = rows.collect::<std::result::Result<HashMap<_, _>, _>>()?;
+        Ok(file_ids
+            .iter()
+            .map(|file_id| end_lines.get(file_id).copied().flatten())
+            .collect())
     }
 
     /// Hydrate overlapping chunks for every requested range in one SQL query.
@@ -1827,6 +1843,28 @@ mod tests {
             references: Vec::new(),
             imports: Vec::new(),
         }
+    }
+
+    #[test]
+    fn file_end_line_batch_maps_duplicate_and_missing_file_ids() {
+        let directory = tempfile::tempdir().expect("directory");
+        let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+        storage
+            .full_reconcile("config", vec![sample_file("source.rs", "fn source() {}\n")])
+            .expect("index source");
+        let session = storage.begin_read().expect("read session");
+        let file_id = session
+            .find_file("source.rs")
+            .expect("find source")
+            .expect("indexed source")
+            .id;
+
+        assert_eq!(
+            session
+                .file_end_lines_batch(&[file_id, file_id, i64::MAX, file_id])
+                .expect("end lines"),
+            vec![Some(1), Some(1), None, Some(1)]
+        );
     }
 
     #[test]

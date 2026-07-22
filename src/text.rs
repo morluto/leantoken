@@ -295,6 +295,50 @@ pub fn excerpt(text: &str, start_line: usize, end_line: usize) -> String {
     text[start_byte..end_byte].to_string()
 }
 
+/// Resolve a bounded inclusive line window that always contains a required span.
+///
+/// `desired_start` through `desired_end` describes all useful surrounding
+/// context. `required_start` through `required_end` is the evidence that cannot
+/// be removed by `max_lines`. A zero maximum leaves the desired span uncapped.
+#[must_use]
+pub fn anchored_line_window(
+    desired_start: usize,
+    desired_end: usize,
+    required_start: usize,
+    required_end: usize,
+    max_lines: usize,
+) -> (usize, usize) {
+    let required_start = required_start.max(1);
+    let required_end = required_end.max(required_start);
+    let desired_start = desired_start.max(1).min(required_start);
+    let desired_end = desired_end.max(required_end);
+    let desired_lines = desired_end.saturating_sub(desired_start).saturating_add(1);
+    if max_lines == 0 || desired_lines <= max_lines {
+        return (desired_start, desired_end);
+    }
+
+    let required_lines = required_end
+        .saturating_sub(required_start)
+        .saturating_add(1);
+    if required_lines >= max_lines {
+        return (required_start, required_end);
+    }
+
+    let available_before = required_start.saturating_sub(desired_start);
+    let available_after = desired_end.saturating_sub(required_end);
+    let extra_lines = max_lines - required_lines;
+    let mut before = available_before.min(extra_lines.div_ceil(2));
+    let mut after = available_after.min(extra_lines - before);
+    let mut remaining = extra_lines - before - after;
+
+    let additional_before = available_before.saturating_sub(before).min(remaining);
+    before += additional_before;
+    remaining -= additional_before;
+    after += available_after.saturating_sub(after).min(remaining);
+
+    (required_start - before, required_end.saturating_add(after))
+}
+
 /// Return lines around `focus_start_line`..`focus_end_line` extended by
 /// `context_lines`, optionally capped to `max_lines` (0 means no cap).
 #[must_use]
@@ -311,14 +355,17 @@ pub fn excerpt_with_context(
         return String::new();
     }
 
-    let first = focus_start_line.saturating_sub(context_lines).max(1);
-    let mut last = focus_end_line.saturating_add(context_lines);
-    if last > count {
-        last = count;
-    }
-    if max_lines > 0 && last.saturating_sub(first).saturating_add(1) > max_lines {
-        last = first + max_lines - 1;
-    }
+    let required_start = focus_start_line.max(1).min(count);
+    let required_end = focus_end_line.max(required_start).min(count);
+    let desired_start = required_start.saturating_sub(context_lines).max(1);
+    let desired_end = required_end.saturating_add(context_lines).min(count);
+    let (first, last) = anchored_line_window(
+        desired_start,
+        desired_end,
+        required_start,
+        required_end,
+        max_lines,
+    );
 
     excerpt(text, first, last)
 }
@@ -610,6 +657,15 @@ mod tests {
         let text = "1\n2\n3\n4\n5\n";
         assert_eq!(excerpt_with_context(text, 3, 3, 1, 0), "2\n3\n4\n");
         assert_eq!(excerpt_with_context(text, 3, 3, 1, 2), "2\n3\n");
+    }
+
+    #[test]
+    fn anchored_windows_keep_required_lines_and_rebalance_at_boundaries() {
+        assert_eq!(anchored_line_window(10, 50, 30, 30, 20), (20, 39));
+        assert_eq!(anchored_line_window(1, 22, 2, 2, 20), (1, 20));
+        assert_eq!(anchored_line_window(39, 60, 59, 59, 20), (41, 60));
+        assert_eq!(anchored_line_window(1, 40, 6, 31, 20), (6, 31));
+        assert_eq!(anchored_line_window(2, 4, 3, 3, 0), (2, 4));
     }
 
     #[test]
