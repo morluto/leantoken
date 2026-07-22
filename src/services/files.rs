@@ -14,7 +14,7 @@ use super::validation::{
     MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, check_cancelled, validate_optional_input,
 };
 use crate::model::*;
-use crate::repository::validate_relative;
+use crate::repository::{slash_path, validate_relative};
 use crate::storage::{FileRecord, ReadSession};
 use crate::{Error, Result};
 
@@ -68,16 +68,12 @@ fn tree_entries(
     limit: usize,
     cancellation: &CancellationToken,
 ) -> Result<FilePage> {
-    let root = root.unwrap_or("");
-    if !root.is_empty() {
-        validate_relative(root)?;
-    }
-    let root = root.trim_matches('/');
+    let root = normalize_tree_root(root)?;
     let max_depth = depth.unwrap_or(usize::MAX);
     let after = cursor_path(cursor)?;
     check_cancelled(cancellation)?;
     let projected =
-        session.list_tree_paths(root, max_depth, after.as_deref(), limit.saturating_add(1))?;
+        session.list_tree_paths(&root, max_depth, after.as_deref(), limit.saturating_add(1))?;
     let has_more = projected.len() > limit;
     let entries = projected
         .into_iter()
@@ -102,6 +98,16 @@ fn tree_entries(
             path: entry.path.clone(),
         });
     Ok(FilePage { entries, next })
+}
+
+fn normalize_tree_root(root: Option<&str>) -> Result<String> {
+    let Some(root) = root else {
+        return Ok(String::new());
+    };
+    if root.is_empty() {
+        return Ok(String::new());
+    }
+    Ok(slash_path(&validate_relative(root)?))
 }
 
 fn fuzzy_entries(
