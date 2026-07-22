@@ -783,6 +783,196 @@ async fn search_range_covers_the_returned_context_lines() {
 }
 
 #[tokio::test]
+async fn text_search_windows_keep_case_insensitive_matches_across_a_chunk() {
+    let mut lines = (1..=60)
+        .map(|line| format!("ordinary line {line}"))
+        .collect::<Vec<_>>();
+    let cases = [
+        (30usize, "MiddleNeedle"),
+        (59usize, "LateNeedle"),
+        (2usize, "EarlyNeedle"),
+    ];
+    for (line, needle) in cases {
+        lines[line - 1] = format!("{needle} is anchored here");
+    }
+    let source = format!("{}\n", lines.join("\n"));
+    let (_root, services) = indexed_source("positions.txt", source.as_bytes()).await;
+
+    for (match_line, needle) in cases {
+        let response = services
+            .search(SearchRequest {
+                query: needle.to_ascii_lowercase(),
+                mode: SearchMode::Text,
+                include_paths: vec!["positions.txt".into()],
+                exclude_paths: Vec::new(),
+                focus_paths: Vec::new(),
+                max_results: Some(1),
+                max_tokens: Some(1_000),
+                context_lines: Some(20),
+                case_sensitive: false,
+                cursor: None,
+            })
+            .await
+            .expect("case-insensitive text search");
+
+        let hit = response.hits.first().expect("text hit");
+        assert!(
+            hit.excerpt.contains(needle),
+            "excerpt for line {match_line} omitted {needle}: {:?}",
+            hit.excerpt
+        );
+        assert_eq!(hit.match_kind, "text");
+        assert!(hit.start_line <= match_line && hit.end_line >= match_line);
+        assert_eq!(
+            hit.end_line - hit.start_line + 1,
+            hit.excerpt.lines().count()
+        );
+        assert_eq!(hit.excerpt.lines().count(), 20);
+    }
+}
+
+#[tokio::test]
+async fn maximum_text_context_keeps_the_original_read_bounded_range_match() {
+    let mut lines = (1..=50)
+        .map(|line| format!("// legacy source line {line}"))
+        .collect::<Vec<_>>();
+    lines[29] = "fn read_bounded_range() {}".into();
+    let source = format!("{}\n", lines.join("\n"));
+    let (_root, services) = indexed_source("legacy.rs", source.as_bytes()).await;
+
+    let response = services
+        .search(SearchRequest {
+            query: "read_bounded_range".into(),
+            mode: SearchMode::Text,
+            include_paths: vec!["legacy.rs".into()],
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(1),
+            max_tokens: Some(1_000),
+            context_lines: Some(20),
+            case_sensitive: true,
+            cursor: None,
+        })
+        .await
+        .expect("legacy reproduction search");
+
+    let hit = response.hits.first().expect("legacy text hit");
+    assert!(hit.excerpt.contains("read_bounded_range"));
+    assert!(hit.start_line <= 30 && hit.end_line >= 30);
+}
+
+#[tokio::test]
+async fn regex_search_keeps_a_multiline_match_that_exceeds_the_line_cap() {
+    let mut lines = (1..=5)
+        .map(|line| format!("prefix {line}"))
+        .collect::<Vec<_>>();
+    lines.push("MATCH_BEGIN".into());
+    lines.extend((1..=24).map(|line| format!("matched body {line}")));
+    lines.push("MATCH_END".into());
+    lines.extend((1..=5).map(|line| format!("suffix {line}")));
+    let source = format!("{}\n", lines.join("\n"));
+    let (_root, services) = indexed_source("multiline.txt", source.as_bytes()).await;
+
+    let response = services
+        .search(SearchRequest {
+            query: "(?s)MATCH_BEGIN.*?MATCH_END".into(),
+            mode: SearchMode::Regex,
+            include_paths: vec!["multiline.txt".into()],
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(1),
+            max_tokens: Some(5_000),
+            context_lines: Some(20),
+            case_sensitive: true,
+            cursor: None,
+        })
+        .await
+        .expect("multiline regex search");
+
+    let hit = response.hits.first().expect("regex hit");
+    assert!(hit.excerpt.contains("MATCH_BEGIN"));
+    assert!(hit.excerpt.contains("MATCH_END"));
+    assert_eq!((hit.start_line, hit.end_line), (6, 31));
+    assert_eq!(
+        hit.end_line - hit.start_line + 1,
+        hit.excerpt.lines().count()
+    );
+    assert_eq!(hit.excerpt.lines().count(), 26);
+}
+
+#[tokio::test]
+async fn symbol_search_caps_a_long_definition_without_losing_its_declaration() {
+    let mut lines = (1..=20)
+        .map(|line| format!("const PREFIX_{line}: usize = {line};"))
+        .collect::<Vec<_>>();
+    let declaration_line = lines.len() + 1;
+    lines.push("fn long_target() -> usize {".into());
+    lines.extend((1..=40).map(|line| format!("    let value_{line} = {line};")));
+    lines.push("    40".into());
+    lines.push("}".into());
+    let source = format!("{}\n", lines.join("\n"));
+    let (_root, services) = indexed_source("long_symbol.rs", source.as_bytes()).await;
+
+    let response = services
+        .search(SearchRequest {
+            query: "long_target".into(),
+            mode: SearchMode::Symbol,
+            include_paths: vec!["long_symbol.rs".into()],
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(1),
+            max_tokens: Some(2_000),
+            context_lines: Some(20),
+            case_sensitive: true,
+            cursor: None,
+        })
+        .await
+        .expect("long symbol search");
+
+    let hit = response.hits.first().expect("symbol hit");
+    assert!(hit.excerpt.contains("fn long_target()"));
+    assert!(hit.start_line <= declaration_line && hit.end_line >= declaration_line);
+    assert_eq!(hit.excerpt.lines().count(), 30);
+    assert_eq!(hit.end_line - hit.start_line + 1, 30);
+}
+
+#[tokio::test]
+async fn reference_search_window_keeps_the_required_reference_span() {
+    let mut lines = vec!["fn target() {}".to_string(), String::new(), "fn caller() {".into()];
+    lines.extend((1..=25).map(|line| format!("    let value_{line} = {line};")));
+    let reference_line = lines.len() + 1;
+    lines.push("    target();".into());
+    lines.push("}".into());
+    let source = format!("{}\n", lines.join("\n"));
+    let (_root, services) = indexed_source("reference.rs", source.as_bytes()).await;
+
+    let response = services
+        .search(SearchRequest {
+            query: "target".into(),
+            mode: SearchMode::Reference,
+            include_paths: vec!["reference.rs".into()],
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(1),
+            max_tokens: Some(1_000),
+            context_lines: Some(20),
+            case_sensitive: true,
+            cursor: None,
+        })
+        .await
+        .expect("reference search");
+
+    let hit = response.hits.first().expect("reference hit");
+    assert!(hit.excerpt.contains("target();"));
+    assert!(hit.start_line <= reference_line && hit.end_line >= reference_line);
+    assert_eq!(
+        hit.end_line - hit.start_line + 1,
+        hit.excerpt.lines().count()
+    );
+    assert_eq!(hit.excerpt.lines().count(), 12);
+}
+
+#[tokio::test]
 async fn text_search_reports_enclosing_symbols_across_languages() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(

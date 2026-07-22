@@ -13,7 +13,7 @@ use super::validation::{
 };
 use crate::model::*;
 use crate::storage::{ChunkHit, ReadSession, ReferenceHit, SymbolHit};
-use crate::text::{byte_range_to_line_range, excerpt, hash};
+use crate::text::{anchored_line_window, byte_range_to_line_range, excerpt, hash};
 use crate::{Error, Result};
 
 /// Absolute regex scan candidate cap (independent of max_results multiplier).
@@ -27,9 +27,10 @@ pub(super) fn chunk_search_hit(
     query: &str,
     case_sensitive: bool,
     context: usize,
-    compiled_regex: Option<&regex::Regex>,
+    compiled_matcher: Option<&regex::Regex>,
+    regex_match: bool,
 ) -> Result<Option<SearchHit>> {
-    let byte_range = if let Some(regex) = compiled_regex {
+    let byte_range = if let Some(regex) = compiled_matcher {
         regex
             .find(&hit.content)
             .map(|matched| (matched.start(), matched.end()))
@@ -48,12 +49,11 @@ pub(super) fn chunk_search_hit(
         return Ok(None);
     };
     let (local_start, local_end) = byte_range_to_line_range(&hit.content, start, end);
-    let excerpt_start = local_start.saturating_sub(context).max(1);
     let available_lines = hit.content.lines().count().max(1);
-    let mut excerpt_end = local_end.saturating_add(context).min(available_lines);
-    if excerpt_end.saturating_sub(excerpt_start).saturating_add(1) > 20 {
-        excerpt_end = excerpt_start + 19;
-    }
+    let desired_start = local_start.saturating_sub(context).max(1);
+    let desired_end = local_end.saturating_add(context).min(available_lines);
+    let (excerpt_start, excerpt_end) =
+        anchored_line_window(desired_start, desired_end, local_start, local_end, 20);
     let excerpt = excerpt(&hit.content, excerpt_start, excerpt_end);
     Ok(Some(SearchHit {
         path: hit.path,
@@ -61,7 +61,7 @@ pub(super) fn chunk_search_hit(
         end_line: hit.start_line + excerpt_end - 1,
         content_hash: hash(&excerpt),
         excerpt,
-        match_kind: if compiled_regex.is_some() {
+        match_kind: if regex_match {
             "regex".into()
         } else {
             "text".into()
@@ -70,7 +70,7 @@ pub(super) fn chunk_search_hit(
         symbol: None,
         enclosing_symbol: None,
         score: 3.0 + (-hit.score).max(0.0) * 1_000_000.0,
-        score_reasons: vec![if compiled_regex.is_some() {
+        score_reasons: vec![if regex_match {
             "regex match".into()
         } else {
             "text match".into()
@@ -200,7 +200,7 @@ impl Services {
             .then(|| compile_regex(&request))
             .transpose()?;
         let literal_regex = if !matches!(request.mode, SearchMode::Regex) {
-            compile_literal_regex(&request.query, request.case_sensitive)?.map(Some)
+            compile_literal_regex(&request.query, request.case_sensitive)?
         } else {
             None
         };
@@ -230,9 +230,14 @@ impl Services {
                     .iter()
                     .map(|hit| StoredExcerptRequest {
                         file_id: hit.symbol.file_id,
-                        start_line: hit.symbol.start_line,
-                        end_line: hit.symbol.end_line,
-                        context: context_lines,
+                        desired_start_line: hit
+                            .symbol
+                            .start_line
+                            .saturating_sub(context_lines)
+                            .max(1),
+                        desired_end_line: hit.symbol.end_line.saturating_add(context_lines),
+                        required_start_line: hit.symbol.start_line,
+                        required_end_line: hit.symbol.start_line,
                         max_lines: 30,
                     })
                     .collect::<Vec<_>>();
@@ -262,9 +267,14 @@ impl Services {
                     .iter()
                     .map(|hit| StoredExcerptRequest {
                         file_id: hit.reference.file_id,
-                        start_line: hit.reference.start_line,
-                        end_line: hit.reference.end_line,
-                        context: context_lines,
+                        desired_start_line: hit
+                            .reference
+                            .start_line
+                            .saturating_sub(context_lines)
+                            .max(1),
+                        desired_end_line: hit.reference.end_line.saturating_add(context_lines),
+                        required_start_line: hit.reference.start_line,
+                        required_end_line: hit.reference.end_line,
                         max_lines: 12,
                     })
                     .collect::<Vec<_>>();
@@ -307,18 +317,15 @@ impl Services {
                         &request.query,
                         request.case_sensitive,
                         context_lines,
-                        regex
-                            .as_ref()
-                            .or(literal_regex.as_ref().and_then(|r| r.as_ref())),
+                        regex.as_ref().or(literal_regex.as_ref()),
+                        matches!(request.mode, SearchMode::Regex),
                     )?
                 {
                     let matched_line = matching_line_for_search(
                         &hit,
                         &request.query,
                         request.case_sensitive,
-                        regex
-                            .as_ref()
-                            .or(literal_regex.as_ref().and_then(|r| r.as_ref())),
+                        regex.as_ref().or(literal_regex.as_ref()),
                     )
                     .unwrap_or(search_hit.start_line);
                     lexical_hits.push((hit, search_hit, matched_line));
