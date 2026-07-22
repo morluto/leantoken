@@ -21,7 +21,7 @@ use crate::storage::{ChunkInput, ImportInput, IndexedFile, ReferenceInput, Stora
 use crate::text::{PreparedText, TextKind, hash_bytes};
 use crate::{Config, Error, Result};
 
-const INDEX_CONTENT_VERSION: u32 = 7;
+const INDEX_CONTENT_VERSION: u32 = 8;
 #[cfg(test)]
 const PREVIOUS_INDEX_CONTENT_MARKER: &str = "leantoken-index-v6-9-language";
 
@@ -371,11 +371,14 @@ impl Indexer {
                     }
                     self.prepare_candidate_batches(&candidates, cancellation, |prepared| {
                         let mut indexed = Vec::with_capacity(prepared.len());
+                        let mut source_token_counts = HashMap::with_capacity(prepared.len());
                         for result in prepared {
                             check_cancelled(cancellation)?;
                             match result {
-                                PreparedFile::Indexed(file, warning) => {
-                                    indexed.push(file);
+                                PreparedFile::Indexed(file, source_token_count, warning) => {
+                                    source_token_counts
+                                        .insert(file.path.clone(), source_token_count);
+                                    indexed.push(*file);
                                     if let Some(warning) = warning {
                                         push_warning(&mut warnings, warning);
                                     }
@@ -407,7 +410,14 @@ impl Indexer {
                         files_indexed = files_indexed.saturating_add(indexed.len());
                         for file in indexed {
                             check_cancelled(cancellation)?;
-                            writer.replace(file)?;
+                            let source_token_count = source_token_counts
+                                .remove(&file.path)
+                                .expect("prepared file has a source token count");
+                            writer.replace_with_source_tokens(
+                                file,
+                                self.config.tokenizer.name(),
+                                source_token_count,
+                            )?;
                         }
                         Ok(())
                     })
@@ -720,10 +730,11 @@ impl Indexer {
                     }
                     self.prepare_candidate_batches(&candidates, cancellation, |prepared| {
                         let mut indexed = Vec::with_capacity(prepared.len());
+                        let mut source_token_counts = HashMap::with_capacity(prepared.len());
                         for result in prepared {
                             check_cancelled(cancellation)?;
                             match result {
-                                PreparedFile::Indexed(file, warning) => {
+                                PreparedFile::Indexed(file, source_token_count, warning) => {
                                     let same = existing.get(&file.path).is_some_and(|record| {
                                         record.content_hash == file.content_hash
                                             && record.size_bytes == file.size_bytes
@@ -733,7 +744,9 @@ impl Indexer {
                                         unchanged += 1;
                                         continue;
                                     }
-                                    indexed.push(file);
+                                    source_token_counts
+                                        .insert(file.path.clone(), source_token_count);
+                                    indexed.push(*file);
                                     if let Some(warning) = warning {
                                         push_warning(&mut warnings, warning);
                                     }
@@ -765,7 +778,14 @@ impl Indexer {
                         files_indexed = files_indexed.saturating_add(indexed.len());
                         for file in indexed {
                             check_cancelled(cancellation)?;
-                            writer.replace(file)?;
+                            let source_token_count = source_token_counts
+                                .remove(&file.path)
+                                .expect("prepared file has a source token count");
+                            writer.replace_with_source_tokens(
+                                file,
+                                self.config.tokenizer.name(),
+                                source_token_count,
+                            )?;
                         }
                         Ok(())
                     })
@@ -1003,7 +1023,7 @@ fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
 }
 
 enum PreparedFile {
-    Indexed(IndexedFile, Option<String>),
+    Indexed(Box<IndexedFile>, usize, Option<String>),
     Binary(String),
     Oversized(String),
     Failed(String, String),
@@ -1052,6 +1072,7 @@ fn prepare_file(
             ),
         };
 
+    let source_token_count = tokenizer.count(&prepared.content);
     let chunks = prepared
         .chunks
         .into_iter()
@@ -1104,7 +1125,7 @@ fn prepare_file(
         .collect();
 
     Ok(PreparedFile::Indexed(
-        IndexedFile {
+        Box::new(IndexedFile {
             path: file.relative_path.clone(),
             language: parsed.language,
             structurally_complete: parsed.structurally_complete,
@@ -1115,7 +1136,8 @@ fn prepare_file(
             symbols,
             references,
             imports,
-        },
+        }),
+        source_token_count,
         warning,
     ))
 }

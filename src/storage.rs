@@ -12,7 +12,7 @@ use rusqlite::{
 };
 use rusqlite_migration::{M, Migrations};
 
-use crate::model::ReferenceRole;
+use crate::model::{ReferenceRole, TokenSavingsOperation};
 use crate::{Error, Result};
 
 pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 5;
@@ -203,6 +203,18 @@ UPDATE meta
 SET last_access_unix_seconds = CAST(strftime('%s', 'now') AS INTEGER),
     schema_version = 5
 WHERE id = 1;
+"#;
+
+const TOKEN_SAVINGS_TABLE_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS token_savings (
+    tokenizer TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    tracked_requests INTEGER NOT NULL DEFAULT 0,
+    baseline_source_tokens INTEGER NOT NULL DEFAULT 0,
+    emitted_source_tokens INTEGER NOT NULL DEFAULT 0,
+    estimated_source_tokens_saved INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(tokenizer, operation)
+);
 "#;
 
 const MIGRATIONS_SLICE: &[M<'_>] = &[
@@ -411,6 +423,14 @@ pub struct StorageCounts {
     pub languages: Vec<(String, usize)>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct TokenSavingsRecord {
+    pub tracked_requests: u64,
+    pub baseline_source_tokens: u64,
+    pub emitted_source_tokens: u64,
+    pub estimated_source_tokens_saved: u64,
+}
+
 /// SQLite-backed repository index with one serialized writer and pooled readers.
 ///
 /// Clones share the same writer mutex and established read pool. Each
@@ -436,11 +456,28 @@ pub(crate) struct ReconciliationWriter<'transaction, 'connection> {
 impl ReconciliationWriter<'_, '_> {
     /// Insert one complete file replacement without retaining it in memory.
     pub(crate) fn replace(&mut self, file: IndexedFile) -> Result<()> {
+        self.replace_inner(file, None)
+    }
+
+    pub(crate) fn replace_with_source_tokens(
+        &mut self,
+        file: IndexedFile,
+        tokenizer: &str,
+        source_token_count: usize,
+    ) -> Result<()> {
+        self.replace_inner(file, Some((tokenizer, source_token_count)))
+    }
+
+    fn replace_inner(
+        &mut self,
+        file: IndexedFile,
+        source_tokens: Option<(&str, usize)>,
+    ) -> Result<()> {
         if !self.rebuild {
             self.transaction
                 .execute("DELETE FROM files WHERE path = ?1", params![&file.path])?;
         }
-        Storage::insert_file(self.transaction, &file, self.generation)?;
+        Storage::insert_file(self.transaction, &file, self.generation, source_tokens)?;
         self.replacements = self.replacements.saturating_add(1);
         Ok(())
     }
@@ -526,6 +563,7 @@ impl Storage {
         let mut conn = Connection::open(&path)?;
         Self::configure(&mut conn, startup_timeout)?;
         MIGRATIONS.to_latest(&mut conn)?;
+        Self::ensure_token_savings_schema(&mut conn)?;
         Self::ensure_path_projection(&mut conn)?;
         Self::validate_fts5(&mut conn)?;
         conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
@@ -670,6 +708,30 @@ impl Storage {
         Ok(())
     }
 
+    fn ensure_token_savings_schema(conn: &mut Connection) -> Result<()> {
+        // These additive fields are intentionally outside the numbered cache
+        // schema so older LeanToken versions can still open and rebuild it.
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let columns = {
+            let mut stmt = tx.prepare("PRAGMA table_info(files)")?;
+            stmt.query_map([], |row| row.get::<_, String>(1))?
+                .collect::<std::result::Result<HashSet<_>, _>>()?
+        };
+        if !columns.contains("source_token_count") {
+            tx.execute_batch(
+                "ALTER TABLE files ADD COLUMN source_token_count INTEGER NOT NULL DEFAULT 0;",
+            )?;
+        }
+        if !columns.contains("source_tokenizer") {
+            tx.execute_batch(
+                "ALTER TABLE files ADD COLUMN source_tokenizer TEXT NOT NULL DEFAULT '';",
+            )?;
+        }
+        tx.execute_batch(TOKEN_SAVINGS_TABLE_SQL)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Read the currently committed schema, configuration, and generation metadata.
     pub fn meta(&self) -> Result<MetaRecord> {
         self.begin_read()?.meta()
@@ -806,9 +868,15 @@ impl Storage {
         Ok((i64_to_u64(next_generation), output))
     }
 
-    fn insert_file(tx: &Transaction, file: &IndexedFile, generation: i64) -> Result<()> {
+    fn insert_file(
+        tx: &Transaction,
+        file: &IndexedFile,
+        generation: i64,
+        source_tokens: Option<(&str, usize)>,
+    ) -> Result<()> {
+        let (source_tokenizer, source_token_count) = source_tokens.unwrap_or(("", 0));
         tx.execute(
-            "INSERT INTO files(path, language, structurally_complete, size_bytes, modified_ns, content_hash, generation) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO files(path, language, structurally_complete, size_bytes, modified_ns, content_hash, generation, source_token_count, source_tokenizer) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 &file.path,
                 file.language.as_deref(),
@@ -817,6 +885,8 @@ impl Storage {
                 file.modified_ns.map(u128_to_i64).transpose()?,
                 &file.content_hash,
                 generation,
+                usize_to_i64(source_token_count)?,
+                source_tokenizer,
             ],
         )?;
         let file_id = tx.last_insert_rowid();
@@ -1007,6 +1077,86 @@ impl Storage {
         self.begin_read()?.counts()
     }
 
+    pub(crate) fn record_token_savings(
+        &self,
+        tokenizer: &str,
+        operation: TokenSavingsOperation,
+        baseline_source_tokens: usize,
+        emitted_source_tokens: usize,
+    ) -> Result<bool> {
+        let baseline_source_tokens = usize_to_i64(baseline_source_tokens)?;
+        let emitted_source_tokens = usize_to_i64(emitted_source_tokens)?;
+        let estimated_source_tokens_saved = baseline_source_tokens
+            .saturating_sub(emitted_source_tokens)
+            .max(0);
+        let conn = match self.writer.try_lock() {
+            Ok(conn) => conn,
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        };
+        conn.busy_timeout(Duration::ZERO)?;
+        let result = conn.execute(
+            "INSERT INTO token_savings(
+                 tokenizer, operation, tracked_requests, baseline_source_tokens,
+                 emitted_source_tokens, estimated_source_tokens_saved
+             ) VALUES (?1, ?2, 1, ?3, ?4, ?5)
+             ON CONFLICT(tokenizer, operation) DO UPDATE SET
+                 tracked_requests = CASE
+                     WHEN tracked_requests = 9223372036854775807 THEN tracked_requests
+                     ELSE tracked_requests + 1
+                 END,
+                 baseline_source_tokens = CASE
+                     WHEN baseline_source_tokens > 9223372036854775807 - excluded.baseline_source_tokens
+                         THEN 9223372036854775807
+                     ELSE baseline_source_tokens + excluded.baseline_source_tokens
+                 END,
+                 emitted_source_tokens = CASE
+                     WHEN emitted_source_tokens > 9223372036854775807 - excluded.emitted_source_tokens
+                         THEN 9223372036854775807
+                     ELSE emitted_source_tokens + excluded.emitted_source_tokens
+                 END,
+                 estimated_source_tokens_saved = CASE
+                     WHEN estimated_source_tokens_saved > 9223372036854775807 - excluded.estimated_source_tokens_saved
+                         THEN 9223372036854775807
+                     ELSE estimated_source_tokens_saved + excluded.estimated_source_tokens_saved
+                 END",
+            params![
+                tokenizer,
+                operation.as_str(),
+                baseline_source_tokens,
+                emitted_source_tokens,
+                estimated_source_tokens_saved,
+            ],
+        );
+        let restore_timeout = conn.busy_timeout(DEFAULT_BUSY_TIMEOUT);
+        match result {
+            Ok(_) => {
+                restore_timeout?;
+                Ok(true)
+            }
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if matches!(
+                    error.code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                ) =>
+            {
+                restore_timeout?;
+                Ok(false)
+            }
+            Err(error) => {
+                restore_timeout?;
+                Err(error.into())
+            }
+        }
+    }
+
+    pub(crate) fn token_savings(
+        &self,
+        tokenizer: &str,
+    ) -> Result<HashMap<String, TokenSavingsRecord>> {
+        self.begin_read()?.token_savings(tokenizer)
+    }
+
     /// Open a read-only connection and begin a DEFERRED transaction so callers
     /// observe one WAL snapshot until the session is dropped.
     ///
@@ -1137,6 +1287,57 @@ impl ReadSession {
             |row| row.get(0),
         )?;
         Ok(i64_to_u64(generation))
+    }
+
+    pub(crate) fn whole_file_source_tokens(
+        &self,
+        paths: &[String],
+        tokenizer: &str,
+    ) -> Result<Option<usize>> {
+        if paths.is_empty() {
+            return Ok(Some(0));
+        }
+        let input = serde_json::to_string(paths)?;
+        let tokens: Option<i64> = self.conn.query_row(
+            "WITH requested(path) AS (
+                 SELECT DISTINCT CAST(value AS TEXT) FROM json_each(?1)
+             )
+             SELECT CASE
+                 WHEN COUNT(*) = SUM(files.source_tokenizer = ?2)
+                     THEN COALESCE(SUM(files.source_token_count), 0)
+                 ELSE NULL
+             END
+             FROM requested
+             JOIN files ON files.path = requested.path",
+            params![input, tokenizer],
+            |row| row.get(0),
+        )?;
+        Ok(tokens.map(i64_to_usize))
+    }
+
+    pub(crate) fn token_savings(
+        &self,
+        tokenizer: &str,
+    ) -> Result<HashMap<String, TokenSavingsRecord>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT operation, tracked_requests, baseline_source_tokens,
+                    emitted_source_tokens, estimated_source_tokens_saved
+             FROM token_savings
+             WHERE tokenizer = ?1
+             ORDER BY operation",
+        )?;
+        let rows = stmt.query_map(params![tokenizer], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                TokenSavingsRecord {
+                    tracked_requests: i64_to_u64(row.get(1)?),
+                    baseline_source_tokens: i64_to_u64(row.get(2)?),
+                    emitted_source_tokens: i64_to_u64(row.get(3)?),
+                    estimated_source_tokens_saved: i64_to_u64(row.get(4)?),
+                },
+            ))
+        })?;
+        Ok(rows.collect::<std::result::Result<HashMap<_, _>, _>>()?)
     }
 
     /// Return a row-id keyset page from this session's pinned snapshot.
@@ -2055,6 +2256,76 @@ mod tests {
                 )
                 .expect("second access"),
             5_678
+        );
+    }
+
+    #[test]
+    fn token_savings_accounting_skips_a_busy_local_writer() {
+        let directory = tempfile::tempdir().expect("directory");
+        let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+        let writer = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        assert!(
+            !storage
+                .record_token_savings("cl100k_base", TokenSavingsOperation::Search, 10, 2)
+                .expect("best-effort accounting")
+        );
+        drop(writer);
+        assert!(
+            storage
+                .record_token_savings("cl100k_base", TokenSavingsOperation::Search, 10, 2)
+                .expect("available accounting")
+        );
+    }
+
+    #[test]
+    fn whole_file_source_tokens_uses_the_exact_indexed_file_count() {
+        let directory = tempfile::tempdir().expect("directory");
+        let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+        let mut file = sample_file("source.rs", "hello\n\n");
+        file.chunks = vec![
+            ChunkInput {
+                content: "hello\n".into(),
+                start_line: 1,
+                end_line: 1,
+                start_byte: 0,
+                end_byte: 6,
+                token_count: 2,
+            },
+            ChunkInput {
+                content: "\n".into(),
+                start_line: 2,
+                end_line: 2,
+                start_byte: 6,
+                end_byte: 7,
+                token_count: 1,
+            },
+        ];
+        let baseline = storage.meta().expect("baseline");
+        storage
+            .publish_reconciliation_at(&baseline, "config", false, |writer| {
+                writer.replace_with_source_tokens(file, "cl100k_base", 2)
+            })
+            .expect("indexed file");
+
+        assert_eq!(
+            storage
+                .begin_read()
+                .expect("read session")
+                .whole_file_source_tokens(&["source.rs".into()], "cl100k_base")
+                .expect("whole-file tokens"),
+            Some(2)
+        );
+        assert_eq!(
+            storage
+                .begin_read()
+                .expect("read session")
+                .whole_file_source_tokens(&["source.rs".into()], "o200k_base")
+                .expect("mismatched tokenizer"),
+            None
         );
     }
 }

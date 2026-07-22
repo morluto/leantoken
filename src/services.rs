@@ -25,6 +25,8 @@ const STARTUP_BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 const STARTUP_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(25);
 const STARTUP_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const TOKEN_SAVINGS_ESTIMATE_BASIS: &str =
+    "requested read ranges or whole source files represented in each response";
 
 pub(crate) fn validate_positive_request_limit(
     field: &'static str,
@@ -286,6 +288,51 @@ impl Services {
         })
     }
 
+    /// Return cumulative source-token savings estimates for this repository and tokenizer.
+    pub async fn token_savings(&self) -> Result<TokenSavingsResponse> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.token_savings_sync()).await?
+    }
+
+    fn token_savings_sync(&self) -> Result<TokenSavingsResponse> {
+        let tokenizer = self.config.tokenizer.name();
+        let mut stored = self.storage.token_savings(tokenizer)?;
+        let mut tracked_requests = 0u64;
+        let mut baseline_source_tokens = 0u64;
+        let mut emitted_source_tokens = 0u64;
+        let mut estimated_source_tokens_saved = 0u64;
+        let by_operation = TokenSavingsOperation::ALL
+            .into_iter()
+            .map(|operation| {
+                let record = stored.remove(operation.as_str()).unwrap_or_default();
+                tracked_requests = tracked_requests.saturating_add(record.tracked_requests);
+                baseline_source_tokens =
+                    baseline_source_tokens.saturating_add(record.baseline_source_tokens);
+                emitted_source_tokens =
+                    emitted_source_tokens.saturating_add(record.emitted_source_tokens);
+                estimated_source_tokens_saved = estimated_source_tokens_saved
+                    .saturating_add(record.estimated_source_tokens_saved);
+                TokenSavingsByOperation {
+                    operation,
+                    tracked_requests: record.tracked_requests,
+                    baseline_source_tokens: record.baseline_source_tokens,
+                    emitted_source_tokens: record.emitted_source_tokens,
+                    estimated_source_tokens_saved: record.estimated_source_tokens_saved,
+                }
+            })
+            .collect();
+        Ok(TokenSavingsResponse {
+            tokenizer: tokenizer.to_owned(),
+            token_count_exact: self.config.tokenizer.is_exact(),
+            estimate_basis: TOKEN_SAVINGS_ESTIMATE_BASIS.to_owned(),
+            tracked_requests,
+            baseline_source_tokens,
+            emitted_source_tokens,
+            estimated_source_tokens_saved,
+            by_operation,
+        })
+    }
+
     pub(super) fn consistent<T>(
         &self,
         operation: impl Fn(&ReadSession, u64) -> Result<T>,
@@ -395,6 +442,31 @@ impl Services {
             emitted_tokens,
             token_count_exact: self.config.tokenizer.is_exact(),
             next_cursor,
+        }
+    }
+
+    pub(super) fn record_token_savings(
+        &self,
+        operation: TokenSavingsOperation,
+        baseline_source_tokens: usize,
+        emitted_source_tokens: usize,
+    ) {
+        match self.storage.record_token_savings(
+            self.config.tokenizer.name(),
+            operation,
+            baseline_source_tokens,
+            emitted_source_tokens,
+        ) {
+            Ok(true) => {}
+            Ok(false) => tracing::debug!(
+                operation = operation.as_str(),
+                "token-savings accounting skipped a busy writer"
+            ),
+            Err(error) => tracing::warn!(
+                %error,
+                operation = operation.as_str(),
+                "token-savings accounting was skipped"
+            ),
         }
     }
 }

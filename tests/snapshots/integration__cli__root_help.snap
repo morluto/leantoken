@@ -9,6 +9,7 @@ Usage: leantoken [OPTIONS] <COMMAND>
 Commands:
   index    Index the repository
   status   Show index status
+  savings  Show cumulative estimated source tokens saved
   files    List, find, or glob repository paths
   search   Search the repository for terms, symbols, or references
   outline  Show the structural outline of one or more files

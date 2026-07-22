@@ -44,6 +44,16 @@ fn cli_indexes_statuses_and_searches_as_json() {
             .as_u64()
             .is_some_and(|value| value <= 100)
     );
+
+    let savings = run(root.path(), &database, &["savings"]);
+    assert_eq!(savings["tracked_requests"], 1);
+    assert_eq!(savings["by_operation"][0]["operation"], "search");
+    assert_eq!(savings["by_operation"][0]["tracked_requests"], 1);
+    assert!(
+        savings["estimated_source_tokens_saved"]
+            .as_u64()
+            .is_some()
+    );
 }
 
 #[test]

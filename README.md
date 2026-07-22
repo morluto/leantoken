@@ -144,6 +144,7 @@ Run LeanToken directly through `npx`:
 
 ```bash
 npx leantoken status
+npx leantoken savings
 npx leantoken doctor
 npx leantoken --root /path/to/repo search handle_request
 ```

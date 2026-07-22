@@ -44,9 +44,14 @@ the official Rust MCP SDK.
 ## Storage
 
 SQLite stores repository metadata, files, text chunks, definitions, syntactic
-references, imports, reverse import candidates, and an ordinary relational path
-projection. External-content FTS5 tables provide word and trigram indexes over
-chunks.
+references, imports, reverse import candidates, an ordinary relational path
+projection, and cumulative source-token savings estimates. External-content
+FTS5 tables provide word and trigram indexes over chunks.
+
+Savings data uses additive tables and file columns without advancing the core
+cache schema version. Older LeanToken releases ignore those fields and can
+still open or rebuild the cache; the current release repopulates exact
+whole-file token metadata on its next reconciliation.
 
 LeanToken does not serialize a separate in-memory index snapshot. In this
 document, a request snapshot means a SQLite read transaction pinned to one

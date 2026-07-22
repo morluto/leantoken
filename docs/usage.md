@@ -27,6 +27,7 @@ responses are bounded.
 ```text
 leantoken index [--rebuild]
 leantoken status
+leantoken savings
 leantoken doctor
 leantoken files <tree|find|glob> [options]
 leantoken search <query> [options]
@@ -50,6 +51,24 @@ operation is active, so a cold idle repository reports
 `uninitialized`/`current`. Before the first generation, direct CLI retrieval
 exits with guidance to run `leantoken index`; use `leantoken doctor` to verify
 the complete MCP startup and first-retrieval flow.
+
+`leantoken savings` reports a persistent, repository-local estimate for
+successful `search`, `outline`, `read`, and `context` responses. Search,
+outline, and context compare emitted source tokens with whole-file reads of the
+unique files represented in that response. Read compares the emitted range
+with the requested live range before token truncation or known-hash
+suppression. The fixed `by_operation` rows expose both sides of the comparison
+and the tracked request count. Counts are stored separately per configured
+tokenizer.
+
+This is a source-token estimate, not provider input, billing, cache, or complete
+MCP wire savings. JSON keys, tool schemas, envelopes, model behavior, and
+evidence sufficiency are outside the estimate. A response with no represented
+source can legitimately add a tracked request and zero saved tokens. Accounting
+is best effort: a busy repository writer skips telemetry rather than delaying
+or failing retrieval. Whole-file telemetry is also skipped when the selected
+tokenizer does not match the indexed tokenizer until reconciliation completes,
+so this is not an audit ledger.
 
 Current index responses retain the aggregate `files_skipped` count and explain
 it with the bounded `skip_reasons` object: `binary`,
@@ -352,6 +371,11 @@ is `cl100k_base`. Exact built-in modes are `cl100k_base`, `o200k_base`,
 `estimate` is an inexact heuristic for providers whose tokenizer is not
 available locally. It does not guarantee that a provider will accept a payload
 at the reported budget; responses mark this with `token_count_exact: false`.
+
+`savings` uses the same tokenizer and marks whether its local counts are exact.
+Its `estimated_source_tokens_saved` total sums a saturating per-request
+difference, so one response whose estimate has no savings cannot reduce savings
+recorded for another response.
 
 Source limits do not include JSON keys, paths, scores, hashes, receipts, tool
 schemas, or JSON-RPC envelopes. The benchmark utilities report those costs
