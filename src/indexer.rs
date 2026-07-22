@@ -633,13 +633,7 @@ impl Indexer {
     }
 
     fn validate_config(config: &Config) -> Result<()> {
-        config.discovery_limits().validate()?;
-        if config.chunk_lines == 0 || config.chunk_bytes == 0 {
-            return Err(Error::InvalidConfiguration(
-                "chunk_lines and chunk_bytes must be positive".into(),
-            ));
-        }
-        Ok(())
+        config.validate()
     }
 
     fn prepare_candidate_batches(

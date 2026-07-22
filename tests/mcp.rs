@@ -180,6 +180,82 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
 }
 
 #[tokio::test]
+async fn omitted_mcp_limits_use_customized_service_defaults() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "fn before() {}\npub fn answer() -> u8 { 42 }\nfn after() {}\n",
+    )
+    .expect("write fixture");
+    let mut config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    config.default_results = 1;
+    config.max_results = 1;
+    config.default_read_tokens = 50;
+    config.max_output_tokens = 50;
+    config.context_lines = 0;
+    let services = Arc::new(Services::open(config).expect("services"));
+    services.index(false).await.expect("index fixture");
+
+    let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
+    let server_start = tokio::spawn(async move {
+        serve_server(LeanTokenMcp::new(services), server_stream)
+            .await
+            .expect("start MCP server")
+    });
+    let mut client = serve_client((), client_stream)
+        .await
+        .expect("initialize MCP client");
+    let mut server = server_start.await.expect("join server startup");
+
+    let files = call_tool(
+        client.peer(),
+        "leantoken_files",
+        serde_json::json!({"operation": {"kind": "tree"}}),
+    )
+    .await
+    .expect("files with configured default");
+    assert_eq!(
+        files.structured_content.as_ref().and_then(|value| value["entries"].as_array()).map(Vec::len),
+        Some(1)
+    );
+
+    let search = call_tool(
+        client.peer(),
+        "leantoken_search",
+        serde_json::json!({"query": "answer", "mode": "text"}),
+    )
+    .await
+    .expect("search with configured defaults");
+    let hits = search
+        .structured_content
+        .as_ref()
+        .and_then(|value| value["hits"].as_array())
+        .expect("search hits");
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0]["start_line"], hits[0]["end_line"]);
+
+    for (tool, arguments) in [
+        ("leantoken_outline", serde_json::json!({"paths": ["lib.rs"]})),
+        (
+            "leantoken_read",
+            serde_json::json!({
+                "path": "lib.rs",
+                "target": {"kind": "lines", "start": 2, "end": 2}
+            }),
+        ),
+    ] {
+        let response = call_tool(client.peer(), tool, arguments)
+            .await
+            .expect("tool with configured token default");
+        assert_ne!(response.is_error, Some(true));
+    }
+
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
 async fn sdk_transport_initializes_lists_calls_and_closes() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
@@ -525,6 +601,78 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
         .await
         .expect("initialize MCP client");
     let mut server = server_start.await.expect("join server startup");
+
+    for (tool, arguments, field, limit, zero_is_valid) in [
+        (
+            "leantoken_files",
+            serde_json::json!({"operation": {"kind": "tree", "depth": 0}}),
+            "max_results",
+            100,
+            false,
+        ),
+        (
+            "leantoken_search",
+            serde_json::json!({"query": "answer", "mode": "text"}),
+            "max_results",
+            100,
+            false,
+        ),
+        (
+            "leantoken_search",
+            serde_json::json!({"query": "answer", "mode": "text"}),
+            "max_tokens",
+            32_000,
+            false,
+        ),
+        (
+            "leantoken_search",
+            serde_json::json!({"query": "answer", "mode": "text"}),
+            "context_lines",
+            20,
+            true,
+        ),
+        (
+            "leantoken_outline",
+            serde_json::json!({"paths": ["lib.rs"]}),
+            "max_results",
+            100,
+            false,
+        ),
+        (
+            "leantoken_outline",
+            serde_json::json!({"paths": ["lib.rs"]}),
+            "max_tokens",
+            32_000,
+            false,
+        ),
+        (
+            "leantoken_read",
+            serde_json::json!({
+                "path": "lib.rs",
+                "target": {"kind": "lines", "start": 1, "end": 1}
+            }),
+            "max_tokens",
+            32_000,
+            false,
+        ),
+        (
+            "leantoken_context",
+            serde_json::json!({"task": "find the answer definition"}),
+            "token_budget",
+            32_000,
+            false,
+        ),
+    ] {
+        assert_mcp_limit_contract(
+            client.peer(),
+            tool,
+            arguments,
+            field,
+            limit,
+            zero_is_valid,
+        )
+        .await;
+    }
 
     let request = || {
         let arguments = serde_json::json!({ "operation": {"kind": "tree"} })

@@ -360,6 +360,7 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<FilesResponse> {
+        self.result_limit(request.max_results)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
         self.files_cancellable(request, cancellation).await

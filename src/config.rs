@@ -113,11 +113,11 @@ pub struct Config {
     pub include_generated: bool,
     /// Default number of returned results.
     pub default_results: usize,
-    /// Maximum number of returned results.
+    /// Maximum number of returned results, up to the public protocol ceiling.
     pub max_results: usize,
     /// Default source-token limit for reads and searches.
     pub default_read_tokens: usize,
-    /// Hard source-token ceiling for any response.
+    /// Hard source-token ceiling for any response, up to the public protocol ceiling.
     pub max_output_tokens: usize,
     /// Default lines included around a search match.
     pub context_lines: usize,
@@ -199,6 +199,51 @@ impl Config {
             watcher_debounce: Duration::from_millis(500),
             tokenizer: Tokenizer::default(),
         })
+    }
+
+    pub(crate) fn validate(&self) -> Result<()> {
+        self.discovery_limits().validate()?;
+        if self.default_results == 0 || self.max_results == 0 {
+            return Err(Error::InvalidConfiguration(
+                "default_results and max_results must be positive".into(),
+            ));
+        }
+        if self.default_results > self.max_results {
+            return Err(Error::InvalidConfiguration(
+                "default_results must not exceed max_results".into(),
+            ));
+        }
+        if self.max_results > MAX_RESULTS {
+            return Err(Error::InvalidConfiguration(format!(
+                "max_results must not exceed {MAX_RESULTS}"
+            )));
+        }
+        if self.default_read_tokens == 0 || self.max_output_tokens == 0 {
+            return Err(Error::InvalidConfiguration(
+                "default_read_tokens and max_output_tokens must be positive".into(),
+            ));
+        }
+        if self.default_read_tokens > self.max_output_tokens {
+            return Err(Error::InvalidConfiguration(
+                "default_read_tokens must not exceed max_output_tokens".into(),
+            ));
+        }
+        if self.max_output_tokens > MAX_OUTPUT_TOKENS {
+            return Err(Error::InvalidConfiguration(format!(
+                "max_output_tokens must not exceed {MAX_OUTPUT_TOKENS}"
+            )));
+        }
+        if self.context_lines > MAX_CONTEXT_LINES {
+            return Err(Error::InvalidConfiguration(format!(
+                "context_lines must not exceed {MAX_CONTEXT_LINES}"
+            )));
+        }
+        if self.chunk_lines == 0 || self.chunk_bytes == 0 {
+            return Err(Error::InvalidConfiguration(
+                "chunk_lines and chunk_bytes must be positive".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Return whether a repository-relative path names the SQLite database,

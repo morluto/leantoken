@@ -553,6 +553,7 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
+        self.token_budget_limit(request.token_budget)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
         self.context_cancellable(request, cancellation).await

@@ -137,6 +137,8 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<OutlineResponse> {
+        self.result_limit(request.max_results)?;
+        self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
         self.outline_cancellable(request, cancellation).await
@@ -164,6 +166,7 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<ReadResponse> {
+        self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
         self.read_cancellable(request, cancellation).await

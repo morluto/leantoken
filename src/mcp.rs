@@ -12,7 +12,7 @@ use rmcp::{
     transport::stdio,
 };
 use schemars::{JsonSchema, Schema, SchemaGenerator};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{
@@ -23,7 +23,7 @@ use crate::model::{
     ContextRequest, FileOperation, FilesRequest, IndexConsistency, OutlineRequest, ReadRequest,
     SearchMode, SearchRequest,
 };
-use crate::services::Services;
+use crate::services::{Services, validate_positive_request_limit, validate_request_limit};
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -31,9 +31,9 @@ struct FilesMcpRequest {
     /// Path operation and its operation-specific arguments.
     operation: FilesMcpOperation,
     /// Maximum entries to return (default 20, maximum 100).
-    #[serde(default = "default_results")]
-    #[schemars(default = "default_results", range(min = 1, max = MAX_RESULTS))]
-    max_results: usize,
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(schema_with = "result_limit_schema", default = "default_result_option")]
+    max_results: Option<usize>,
     /// Cursor returned by the same operation and repository generation.
     #[serde(default)]
     #[schemars(length(max = 4096))]
@@ -66,17 +66,20 @@ struct SearchMcpRequest {
     #[schemars(length(max = 256), inner(length(max = 4096)))]
     focus_paths: Vec<String>,
     /// Maximum hits to return (default 20, maximum 100).
-    #[serde(default = "default_results")]
-    #[schemars(default = "default_results", range(min = 1, max = MAX_RESULTS))]
-    max_results: usize,
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(schema_with = "result_limit_schema", default = "default_result_option")]
+    max_results: Option<usize>,
     /// Maximum source tokens across excerpts (default 8000, maximum 32000).
-    #[serde(default = "default_read_tokens")]
-    #[schemars(default = "default_read_tokens", range(min = 1, max = MAX_OUTPUT_TOKENS))]
-    max_tokens: usize,
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
+    max_tokens: Option<usize>,
     /// Lines before and after each match (default 2, maximum 20).
-    #[serde(default = "default_context_lines")]
-    #[schemars(default = "default_context_lines", range(max = MAX_CONTEXT_LINES))]
-    context_lines: usize,
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(
+        schema_with = "context_line_limit_schema",
+        default = "default_context_line_option"
+    )]
+    context_lines: Option<usize>,
     /// Preserve query case when matching.
     #[serde(default)]
     case_sensitive: bool,
@@ -91,6 +94,12 @@ struct SearchMcpRequest {
 }
 
 impl SearchMcpRequest {
+    fn validate_limits(&self) -> crate::Result<()> {
+        validate_optional_positive_limit("max_results", self.max_results, MAX_RESULTS)?;
+        validate_optional_positive_limit("max_tokens", self.max_tokens, MAX_OUTPUT_TOKENS)?;
+        validate_optional_limit("context_lines", self.context_lines, MAX_CONTEXT_LINES)
+    }
+
     fn into_parts(self) -> (SearchRequest, IndexConsistency) {
         (
             SearchRequest {
@@ -99,9 +108,9 @@ impl SearchMcpRequest {
                 include_paths: self.include_paths,
                 exclude_paths: self.exclude_paths,
                 focus_paths: self.focus_paths,
-                max_results: Some(self.max_results),
-                max_tokens: Some(self.max_tokens),
-                context_lines: Some(self.context_lines),
+                max_results: self.max_results,
+                max_tokens: self.max_tokens,
+                context_lines: self.context_lines,
                 case_sensitive: self.case_sensitive,
                 cursor: self.cursor,
             },
@@ -125,13 +134,13 @@ struct OutlineMcpRequest {
     #[schemars(length(max = 4096))]
     symbol_kind: Option<String>,
     /// Maximum definitions and imports to return (default 20, maximum 100).
-    #[serde(default = "default_results")]
-    #[schemars(default = "default_results", range(min = 1, max = MAX_RESULTS))]
-    max_results: usize,
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(schema_with = "result_limit_schema", default = "default_result_option")]
+    max_results: Option<usize>,
     /// Maximum signature and import tokens (default 8000, maximum 32000).
-    #[serde(default = "default_read_tokens")]
-    #[schemars(default = "default_read_tokens", range(min = 1, max = MAX_OUTPUT_TOKENS))]
-    max_tokens: usize,
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
+    max_tokens: Option<usize>,
     /// Use `working_tree` after edits; otherwise `committed`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
@@ -139,14 +148,19 @@ struct OutlineMcpRequest {
 }
 
 impl OutlineMcpRequest {
+    fn validate_limits(&self) -> crate::Result<()> {
+        validate_optional_positive_limit("max_results", self.max_results, MAX_RESULTS)?;
+        validate_optional_positive_limit("max_tokens", self.max_tokens, MAX_OUTPUT_TOKENS)
+    }
+
     fn into_parts(self) -> (OutlineRequest, IndexConsistency) {
         (
             OutlineRequest {
                 paths: self.paths,
                 symbol_name: self.symbol_name,
                 symbol_kind: self.symbol_kind,
-                max_results: Some(self.max_results),
-                max_tokens: Some(self.max_tokens),
+                max_results: self.max_results,
+                max_tokens: self.max_tokens,
             },
             self.consistency,
         )
@@ -181,6 +195,10 @@ enum FilesMcpOperation {
 }
 
 impl FilesMcpRequest {
+    fn validate_limits(&self) -> crate::Result<()> {
+        validate_optional_positive_limit("max_results", self.max_results, MAX_RESULTS)
+    }
+
     fn into_parts(self) -> (FilesRequest, IndexConsistency) {
         let (operation, path, query, pattern, depth) = match self.operation {
             FilesMcpOperation::Tree { path, depth } => {
@@ -199,7 +217,7 @@ impl FilesMcpRequest {
                 path,
                 query,
                 pattern,
-                max_results: Some(self.max_results),
+                max_results: self.max_results,
                 cursor: self.cursor,
                 depth,
             },
@@ -217,9 +235,9 @@ struct ReadMcpRequest {
     /// Exact symbol or inclusive line range to read.
     target: ReadMcpTarget,
     /// Maximum source tokens to return (default 8000, maximum 32000).
-    #[serde(default = "default_read_tokens")]
-    #[schemars(default = "default_read_tokens", range(min = 1, max = MAX_OUTPUT_TOKENS))]
-    max_tokens: usize,
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
+    max_tokens: Option<usize>,
     /// Hash from the same prior target; matching content returns `not_modified`.
     #[serde(default)]
     #[schemars(length(max = 128))]
@@ -254,6 +272,10 @@ enum ReadMcpTarget {
 }
 
 impl ReadMcpRequest {
+    fn validate_limits(&self) -> crate::Result<()> {
+        validate_optional_positive_limit("max_tokens", self.max_tokens, MAX_OUTPUT_TOKENS)
+    }
+
     fn into_parts(self) -> (ReadRequest, IndexConsistency) {
         let (start_line, end_line, symbol) = match self.target {
             ReadMcpTarget::Symbol { name } => (None, None, Some(name)),
@@ -265,7 +287,7 @@ impl ReadMcpRequest {
                 start_line,
                 end_line,
                 symbol,
-                max_tokens: Some(self.max_tokens),
+                max_tokens: self.max_tokens,
                 expected_hash: self.expected_hash,
             },
             self.consistency,
@@ -317,6 +339,10 @@ struct ContextMcpRequest {
 }
 
 impl ContextMcpRequest {
+    fn validate_limits(&self) -> crate::Result<()> {
+        validate_positive_limit("token_budget", self.token_budget, MAX_OUTPUT_TOKENS)
+    }
+
     fn into_parts(self) -> (ContextRequest, IndexConsistency) {
         (
             ContextRequest {
@@ -335,20 +361,87 @@ impl ContextMcpRequest {
     }
 }
 
-const fn default_read_tokens() -> usize {
-    DEFAULT_READ_TOKENS
-}
-
-const fn default_results() -> usize {
-    DEFAULT_RESULTS
-}
-
-const fn default_context_lines() -> usize {
-    DEFAULT_CONTEXT_LINES
-}
-
 const fn default_context_tokens() -> usize {
     3_000
+}
+
+const fn default_result_option() -> Option<usize> {
+    Some(DEFAULT_RESULTS)
+}
+
+const fn default_token_option() -> Option<usize> {
+    Some(DEFAULT_READ_TOKENS)
+}
+
+const fn default_context_line_option() -> Option<usize> {
+    Some(DEFAULT_CONTEXT_LINES)
+}
+
+fn result_limit_schema(_: &mut SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "type": "integer",
+        "format": "uint",
+        "minimum": 1,
+        "maximum": MAX_RESULTS,
+        "default": DEFAULT_RESULTS
+    })
+}
+
+fn token_limit_schema(_: &mut SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "type": "integer",
+        "format": "uint",
+        "minimum": 1,
+        "maximum": MAX_OUTPUT_TOKENS,
+        "default": DEFAULT_READ_TOKENS
+    })
+}
+
+fn context_line_limit_schema(_: &mut SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0,
+        "maximum": MAX_CONTEXT_LINES,
+        "default": DEFAULT_CONTEXT_LINES
+    })
+}
+
+fn validate_optional_positive_limit(
+    field: &'static str,
+    requested: Option<usize>,
+    limit: usize,
+) -> crate::Result<()> {
+    requested.map_or(Ok(()), |requested| {
+        validate_positive_request_limit(field, requested, limit).map(drop)
+    })
+}
+
+fn validate_positive_limit(
+    field: &'static str,
+    requested: usize,
+    limit: usize,
+) -> crate::Result<()> {
+    validate_positive_request_limit(field, requested, limit).map(drop)
+}
+
+fn validate_optional_limit(
+    field: &'static str,
+    requested: Option<usize>,
+    limit: usize,
+) -> crate::Result<()> {
+    requested.map_or(Ok(()), |requested| {
+        validate_request_limit(field, requested, limit).map(drop)
+    })
+}
+
+fn deserialize_optional_limit<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<usize>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    usize::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Serialize)]
@@ -558,6 +651,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<FilesMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        req.validate_limits().map_err(into_mcp_error)?;
         let services = match self.services() {
             Ok(services) => services,
             Err(result) => return Ok(result),
@@ -578,6 +672,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<SearchMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        req.validate_limits().map_err(into_mcp_error)?;
         let services = match self.services() {
             Ok(services) => services,
             Err(result) => return Ok(result),
@@ -598,6 +693,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<OutlineMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        req.validate_limits().map_err(into_mcp_error)?;
         let services = match self.services() {
             Ok(services) => services,
             Err(result) => return Ok(result),
@@ -618,6 +714,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<ReadMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        req.validate_limits().map_err(into_mcp_error)?;
         let services = match self.services() {
             Ok(services) => services,
             Err(result) => return Ok(result),
@@ -638,6 +735,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<ContextMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        req.validate_limits().map_err(into_mcp_error)?;
         let services = match self.services() {
             Ok(services) => services,
             Err(result) => return Ok(result),
@@ -1052,6 +1150,67 @@ mod tests {
                 "public error has no stable category: {wire}"
             );
         }
+    }
+
+    #[test]
+    fn explicit_null_limits_are_not_treated_as_omitted() {
+        assert!(
+            serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
+                "operation": {"kind": "tree"},
+                "max_results": null
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+                "query": "answer",
+                "max_results": null
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+                "query": "answer",
+                "max_tokens": null
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+                "query": "answer",
+                "context_lines": null
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
+                "paths": ["lib.rs"],
+                "max_results": null
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
+                "paths": ["lib.rs"],
+                "max_tokens": null
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+                "path": "lib.rs",
+                "target": {"kind": "lines", "start": 1, "end": 1},
+                "max_tokens": null
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+                "task": "find answer",
+                "token_budget": null
+            }))
+            .is_err()
+        );
     }
 
     #[test]

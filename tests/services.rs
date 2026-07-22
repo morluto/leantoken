@@ -310,6 +310,105 @@ async fn context_enforces_token_budget_contract() {
     assert_limit_exceeded(error, "token_budget", limit + 1, limit);
 }
 
+#[tokio::test]
+async fn working_tree_limit_errors_do_not_reconcile_the_index() {
+    let (root, services) = fixture().await;
+    let generation = services
+        .status()
+        .await
+        .expect("initial status")
+        .repository_generation;
+    std::fs::write(
+        root.path().join("src/unreconciled.rs"),
+        "pub fn unreconciled() {}\n",
+    )
+    .expect("write unindexed source");
+
+    let error = services
+        .files_with_consistency_cancellable(
+            files_limit_request(Some(0)),
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("invalid files limit");
+    assert_zero_limit(error, "max_results");
+
+    for (request, field) in [
+        (search_limit_request(Some(0), Some(1), Some(0)), "max_results"),
+        (search_limit_request(Some(1), Some(0), Some(0)), "max_tokens"),
+    ] {
+        let error = services
+            .search_with_consistency_cancellable(
+                request,
+                IndexConsistency::WorkingTree,
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("invalid search limit");
+        assert_zero_limit(error, field);
+    }
+    let error = services
+        .search_with_consistency_cancellable(
+            search_limit_request(Some(1), Some(1), Some(21)),
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("invalid search context limit");
+    assert_limit_exceeded(error, "context_lines", 21, 20);
+
+    for (request, field) in [
+        (outline_limit_request(Some(0), Some(1)), "max_results"),
+        (outline_limit_request(Some(1), Some(0)), "max_tokens"),
+    ] {
+        let error = services
+            .outline_with_consistency_cancellable(
+                request,
+                IndexConsistency::WorkingTree,
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("invalid outline limit");
+        assert_zero_limit(error, field);
+    }
+
+    let error = services
+        .read_with_consistency_cancellable(
+            read_limit_request(Some(0)),
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("invalid read limit");
+    assert_zero_limit(error, "max_tokens");
+    let error = services
+        .context_with_consistency_cancellable(
+            context_limit_request(0),
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("invalid context limit");
+    assert_zero_limit(error, "token_budget");
+
+    let after = services.status().await.expect("status after invalid requests");
+    assert_eq!(after.repository_generation, generation);
+    let committed = services
+        .files(FilesRequest {
+            operation: FileOperation::Find,
+            path: None,
+            query: Some("unreconciled".into()),
+            pattern: None,
+            max_results: Some(1),
+            cursor: None,
+            depth: None,
+        })
+        .await
+        .expect("committed lookup");
+    assert!(committed.entries.is_empty());
+}
+
 async fn tree_pages(
     services: &Services,
     path: Option<&str>,

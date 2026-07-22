@@ -161,6 +161,9 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<SearchResponse> {
+        self.result_limit(request.max_results)?;
+        self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
+        self.context_line_limit(request.context_lines)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
         self.search_cancellable(request, cancellation).await
@@ -210,9 +213,11 @@ impl Services {
                 SearchMode::Auto | SearchMode::Identifier | SearchMode::Symbol
             ) {
                 let mut symbol_hits = Vec::new();
-                for hit in
-                    session.search_symbols(&request.query, request.case_sensitive, limit * 4)?
-                {
+                for hit in session.search_symbols(
+                    &request.query,
+                    request.case_sensitive,
+                    limit.saturating_mul(4),
+                )? {
                     check_cancelled(cancellation)?;
                     if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)? {
                         symbol_hits.push(hit);
@@ -247,9 +252,11 @@ impl Services {
                 SearchMode::Auto | SearchMode::Identifier | SearchMode::Reference
             ) {
                 let mut reference_hits = Vec::new();
-                for hit in
-                    session.search_references(&request.query, request.case_sensitive, limit * 4)?
-                {
+                for hit in session.search_references(
+                    &request.query,
+                    request.case_sensitive,
+                    limit.saturating_mul(4),
+                )? {
                     check_cancelled(cancellation)?;
                     if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)? {
                         reference_hits.push(hit);
@@ -285,18 +292,18 @@ impl Services {
                     session,
                     &request,
                     regex.as_ref().expect("regex mode compiles a pattern"),
-                    limit * 20,
+                    limit.saturating_mul(20),
                     cancellation,
                 )?,
                 SearchMode::Text | SearchMode::Auto => {
                     if request.query.chars().count() >= 3 {
-                        session.search_trigram(&request.query, limit * 8)?
+                        session.search_trigram(&request.query, limit.saturating_mul(8))?
                     } else {
-                        session.search_word(&fts_quote(&request.query), limit * 8)?
+                        session.search_word(&fts_quote(&request.query), limit.saturating_mul(8))?
                     }
                 }
                 SearchMode::Identifier => {
-                    session.search_word(&fts_quote(&request.query), limit * 8)?
+                    session.search_word(&fts_quote(&request.query), limit.saturating_mul(8))?
                 }
                 SearchMode::Symbol | SearchMode::Reference => Vec::new(),
             };
