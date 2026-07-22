@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["INDEX_CONTENT_VERSION"],"enum":["PreparedFile"],"fn":["check_cancelled","content_unchanged","duration_ms","import_candidates","normalize_relative","prepare_batch_end","prepare_file","push_warning","read_bounded","resolve_import_candidates","resolve_imports","rust_module_paths"],"struct":["ChangeSet","Indexer","IndexingDiagnostics","LazyWorkerPool","PreparationMetrics","ProfiledIndexResponse"]};
+window.SIDEBAR_ITEMS = {"struct":["Indexer","IndexingDiagnostics","ProfiledIndexResponse"]};

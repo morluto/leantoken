@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Tokenizer"],"fn":["count","count_with","estimate_count","truncate","truncate_with"]};
+window.SIDEBAR_ITEMS = {"enum":["Tokenizer"],"fn":["count","count_with","truncate","truncate_with"]};

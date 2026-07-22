@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_CURSOR_BYTES","MAX_INPUT_ITEMS","MAX_PATH_BYTES","MAX_PATTERN_BYTES","MAX_QUERY_BYTES"],"fn":["check_cancelled","decode_cursor","make_cursor","parse_cursor","path_allowed","path_matches","validate_cursor","validate_glob_patterns","validate_input","validate_optional_input","validate_patterns"]};
