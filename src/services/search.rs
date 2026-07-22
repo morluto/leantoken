@@ -9,7 +9,7 @@ use super::files::FILE_LIST_PAGE_SIZE;
 use super::read::{StoredExcerpt, StoredExcerptRequest};
 use super::validation::{
     MAX_QUERY_BYTES, check_cancelled, make_cursor, parse_cursor, path_allowed, path_matches,
-    validate_input, validate_patterns,
+    validate_glob_patterns, validate_input,
 };
 use crate::model::*;
 use crate::storage::{ChunkHit, ReadSession, ReferenceHit, SymbolHit};
@@ -147,6 +147,25 @@ pub(super) fn compile_literal_regex(
     ))
 }
 
+fn validate_search_input(request: &SearchRequest) -> Result<()> {
+    if request.query.trim().is_empty() {
+        return Err(Error::InvalidInput {
+            field: "search query",
+            reason: "must not be empty",
+        });
+    }
+    validate_input(&request.query, "search query", MAX_QUERY_BYTES)?;
+    validate_glob_patterns(&request.include_paths)?;
+    validate_glob_patterns(&request.exclude_paths)?;
+    validate_glob_patterns(&request.focus_paths)?;
+    if matches!(request.mode, SearchMode::Regex) {
+        compile_regex(request)?;
+    } else {
+        compile_literal_regex(&request.query, request.case_sensitive)?;
+    }
+    Ok(())
+}
+
 impl Services {
     /// Search indexed lexical and structural evidence.
     pub async fn search(&self, request: SearchRequest) -> Result<SearchResponse> {
@@ -161,6 +180,7 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<SearchResponse> {
+        validate_search_input(&request)?;
         self.result_limit(request.max_results)?;
         self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         self.context_line_limit(request.context_lines)?;
@@ -184,16 +204,7 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<SearchResponse> {
         check_cancelled(cancellation)?;
-        if request.query.trim().is_empty() {
-            return Err(Error::InvalidInput {
-                field: "search query",
-                reason: "must not be empty",
-            });
-        }
-        validate_input(&request.query, "search query", MAX_QUERY_BYTES)?;
-        validate_patterns(&request.include_paths)?;
-        validate_patterns(&request.exclude_paths)?;
-        validate_patterns(&request.focus_paths)?;
+        validate_search_input(&request)?;
         let regex = matches!(request.mode, SearchMode::Regex)
             .then(|| compile_regex(&request))
             .transpose()?;

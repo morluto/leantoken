@@ -123,6 +123,57 @@ fn storage_symbol(symbol: crate::storage::SymbolRecord) -> Symbol {
     }
 }
 
+fn validate_outline_input(request: &OutlineRequest) -> Result<()> {
+    if request.paths.is_empty() {
+        return Err(Error::InvalidInput {
+            field: "paths",
+            reason: "must contain at least one path",
+        });
+    }
+    if request.paths.len() > MAX_INPUT_ITEMS {
+        return Err(Error::LimitExceeded);
+    }
+    for path in &request.paths {
+        validate_input(path, "path", MAX_PATH_BYTES)?;
+        validate_relative(path)?;
+    }
+    validate_optional_input(
+        request.symbol_name.as_deref(),
+        "symbol name",
+        MAX_PATTERN_BYTES,
+    )?;
+    validate_optional_input(
+        request.symbol_kind.as_deref(),
+        "symbol kind",
+        MAX_PATTERN_BYTES,
+    )?;
+    Ok(())
+}
+
+fn validate_read_input(request: &ReadRequest) -> Result<()> {
+    validate_input(&request.path, "path", MAX_PATH_BYTES)?;
+    validate_optional_input(request.symbol.as_deref(), "symbol", MAX_PATTERN_BYTES)?;
+    validate_optional_input(request.expected_hash.as_deref(), "expected hash", 128)?;
+    validate_relative(&request.path)?;
+    if request.symbol.is_some() && (request.start_line.is_some() || request.end_line.is_some()) {
+        return Err(Error::InvalidInput {
+            field: "read target",
+            reason: "must use either a symbol or line range, not both",
+        });
+    }
+    if request.symbol.is_none() {
+        let start_line = request.start_line.unwrap_or(1);
+        if start_line == 0
+            || request
+                .end_line
+                .is_some_and(|end_line| end_line < start_line)
+        {
+            return Err(invalid_line_range());
+        }
+    }
+    Ok(())
+}
+
 impl Services {
     /// Return bounded structural outlines for indexed files.
     pub async fn outline(&self, request: OutlineRequest) -> Result<OutlineResponse> {
@@ -137,6 +188,7 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<OutlineResponse> {
+        validate_outline_input(&request)?;
         self.result_limit(request.max_results)?;
         self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         self.apply_consistency(consistency, cancellation.clone())
@@ -166,6 +218,7 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<ReadResponse> {
+        validate_read_input(&request)?;
         self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
@@ -187,28 +240,7 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<OutlineResponse> {
         check_cancelled(cancellation)?;
-        if request.paths.is_empty() {
-            return Err(Error::InvalidInput {
-                field: "paths",
-                reason: "must contain at least one path",
-            });
-        }
-        if request.paths.len() > MAX_INPUT_ITEMS {
-            return Err(Error::LimitExceeded);
-        }
-        for path in &request.paths {
-            validate_input(path, "path", MAX_PATH_BYTES)?;
-        }
-        validate_optional_input(
-            request.symbol_name.as_deref(),
-            "symbol name",
-            MAX_PATTERN_BYTES,
-        )?;
-        validate_optional_input(
-            request.symbol_kind.as_deref(),
-            "symbol kind",
-            MAX_PATTERN_BYTES,
-        )?;
+        validate_outline_input(&request)?;
         let limit = self.result_limit(request.max_results)?;
         let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         self.consistent(|session, generation| {
@@ -217,7 +249,6 @@ impl Services {
             let mut files = Vec::new();
             for path in &request.paths {
                 check_cancelled(cancellation)?;
-                validate_relative(path)?;
                 let file = session
                     .find_file(path)?
                     .ok_or_else(|| Error::NotIndexed(path.clone()))?;
@@ -291,17 +322,7 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<ReadResponse> {
         check_cancelled(cancellation)?;
-        validate_input(&request.path, "path", MAX_PATH_BYTES)?;
-        validate_optional_input(request.symbol.as_deref(), "symbol", MAX_PATTERN_BYTES)?;
-        validate_optional_input(request.expected_hash.as_deref(), "expected hash", 128)?;
-        validate_relative(&request.path)?;
-        if request.symbol.is_some() && (request.start_line.is_some() || request.end_line.is_some())
-        {
-            return Err(Error::InvalidInput {
-                field: "read target",
-                reason: "must use either a symbol or line range, not both",
-            });
-        }
+        validate_read_input(&request)?;
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         self.consistent(|session, generation| {
             check_cancelled(cancellation)?;

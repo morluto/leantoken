@@ -409,6 +409,250 @@ async fn working_tree_limit_errors_do_not_reconcile_the_index() {
     assert!(committed.entries.is_empty());
 }
 
+#[tokio::test]
+async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
+    let (root, services) = fixture().await;
+    let generation = services
+        .status()
+        .await
+        .expect("initial status")
+        .repository_generation;
+    std::fs::write(
+        root.path().join("src/unreconciled.rs"),
+        "pub fn unreconciled() {}\n",
+    )
+    .expect("write unindexed source");
+
+    macro_rules! assert_static_error {
+        ($future:expr, $case:literal) => {{
+            assert!($future.await.is_err(), concat!($case, " must fail"));
+            let current = services.status().await.expect("status after static error");
+            assert_eq!(
+                current.repository_generation, generation,
+                concat!($case, " must not reconcile")
+            );
+        }};
+    }
+
+    assert_static_error!(
+        services.files_with_consistency_cancellable(
+            FilesRequest {
+                operation: FileOperation::Find,
+                path: None,
+                query: None,
+                pattern: None,
+                max_results: Some(1),
+                cursor: None,
+                depth: None,
+            },
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "missing find query"
+    );
+    assert_static_error!(
+        services.files_with_consistency_cancellable(
+            FilesRequest {
+                operation: FileOperation::Tree,
+                path: Some("../outside.rs".into()),
+                query: None,
+                pattern: None,
+                max_results: Some(1),
+                cursor: None,
+                depth: None,
+            },
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "unsafe tree root"
+    );
+    assert_static_error!(
+        services.files_with_consistency_cancellable(
+            FilesRequest {
+                operation: FileOperation::Glob,
+                path: None,
+                query: None,
+                pattern: Some("[".into()),
+                max_results: Some(1),
+                cursor: None,
+                depth: None,
+            },
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "invalid files glob"
+    );
+
+    let mut search = search_limit_request(Some(1), Some(1), Some(0));
+    search.query = " ".into();
+    assert_static_error!(
+        services.search_with_consistency_cancellable(
+            search,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "empty search query"
+    );
+    let mut search = search_limit_request(Some(1), Some(1), Some(0));
+    search.query = "[".into();
+    search.mode = SearchMode::Regex;
+    assert_static_error!(
+        services.search_with_consistency_cancellable(
+            search,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "invalid search regex"
+    );
+    let mut search = search_limit_request(Some(1), Some(1), Some(0));
+    search.focus_paths = vec!["[".into()];
+    assert_static_error!(
+        services.search_with_consistency_cancellable(
+            search,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "invalid search path glob"
+    );
+    let mut search = search_limit_request(Some(1), Some(1), Some(0));
+    search.query = "x".repeat(64 * 1024 + 1);
+    assert_static_error!(
+        services.search_with_consistency_cancellable(
+            search,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "oversized search query"
+    );
+
+    let mut outline = outline_limit_request(Some(1), Some(1));
+    outline.paths = Vec::new();
+    assert_static_error!(
+        services.outline_with_consistency_cancellable(
+            outline,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "empty outline paths"
+    );
+    let mut outline = outline_limit_request(Some(1), Some(1));
+    outline.paths = (0..257).map(|index| format!("src/{index}.rs")).collect();
+    assert_static_error!(
+        services.outline_with_consistency_cancellable(
+            outline,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "excessive outline paths"
+    );
+    let mut outline = outline_limit_request(Some(1), Some(1));
+    outline.paths = vec!["../outside.rs".into()];
+    assert_static_error!(
+        services.outline_with_consistency_cancellable(
+            outline,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "unsafe outline path"
+    );
+
+    let mut read = read_limit_request(Some(1));
+    read.start_line = Some(0);
+    assert_static_error!(
+        services.read_with_consistency_cancellable(
+            read,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "invalid read range"
+    );
+    let mut read = read_limit_request(Some(1));
+    read.symbol = Some("greet".into());
+    assert_static_error!(
+        services.read_with_consistency_cancellable(
+            read,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "conflicting read target"
+    );
+
+    let mut context = context_limit_request(1);
+    context.task = " ".into();
+    assert_static_error!(
+        services.context_with_consistency_cancellable(
+            context,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "empty context task"
+    );
+    let mut context = context_limit_request(1);
+    context.focus_paths = vec!["[".into()];
+    assert_static_error!(
+        services.context_with_consistency_cancellable(
+            context,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "invalid context path glob"
+    );
+    let mut context = context_limit_request(1);
+    context.focus_symbols = vec!["symbol".into(); 257];
+    assert_static_error!(
+        services.context_with_consistency_cancellable(
+            context,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "excessive context symbols"
+    );
+    let mut context = context_limit_request(1);
+    context.changed_paths = vec!["../outside.rs".into()];
+    assert_static_error!(
+        services.context_with_consistency_cancellable(
+            context,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "unsafe context changed path"
+    );
+    let mut context = context_limit_request(1);
+    context.base_revision = Some("r".repeat(257));
+    assert_static_error!(
+        services.context_with_consistency_cancellable(
+            context,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "oversized context base revision"
+    );
+    let mut context = context_limit_request(1);
+    context.changed_paths = (0..513).map(|index| format!("src/{index}.rs")).collect();
+    assert_static_error!(
+        services.context_with_consistency_cancellable(
+            context,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "excessive context changed paths"
+    );
+
+    let committed = services
+        .files(FilesRequest {
+            operation: FileOperation::Find,
+            path: None,
+            query: Some("unreconciled".into()),
+            pattern: None,
+            max_results: Some(1),
+            cursor: None,
+            depth: None,
+        })
+        .await
+        .expect("committed lookup");
+    assert!(committed.entries.is_empty());
+}
+
 async fn tree_pages(
     services: &Services,
     path: Option<&str>,

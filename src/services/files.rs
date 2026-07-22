@@ -213,6 +213,39 @@ fn glob_entries(
     Ok(finish_path_page(entries, limit, PathOperation::Glob))
 }
 
+fn validate_files_input(request: &FilesRequest) -> Result<()> {
+    validate_optional_input(request.path.as_deref(), "path", MAX_PATH_BYTES)?;
+    validate_optional_input(request.query.as_deref(), "query", MAX_QUERY_BYTES)?;
+    validate_optional_input(request.pattern.as_deref(), "pattern", MAX_PATTERN_BYTES)?;
+    match request.operation {
+        FileOperation::Tree => {
+            normalize_tree_root(request.path.as_deref())?;
+        }
+        FileOperation::Find => {
+            request
+                .query
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .ok_or(Error::InvalidInput {
+                    field: "query",
+                    reason: "is required for find",
+                })?;
+        }
+        FileOperation::Glob => {
+            let pattern = request
+                .pattern
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .ok_or(Error::InvalidInput {
+                    field: "pattern",
+                    reason: "is required for glob",
+                })?;
+            Glob::new(pattern)?;
+        }
+    }
+    Ok(())
+}
+
 fn for_each_file(
     session: &ReadSession,
     cancellation: &CancellationToken,
@@ -360,6 +393,7 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<FilesResponse> {
+        validate_files_input(&request)?;
         self.result_limit(request.max_results)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
@@ -381,9 +415,7 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<FilesResponse> {
         check_cancelled(cancellation)?;
-        validate_optional_input(request.path.as_deref(), "path", MAX_PATH_BYTES)?;
-        validate_optional_input(request.query.as_deref(), "query", MAX_QUERY_BYTES)?;
-        validate_optional_input(request.pattern.as_deref(), "pattern", MAX_PATTERN_BYTES)?;
+        validate_files_input(&request)?;
         let limit = self.result_limit(request.max_results)?;
         self.consistent(|session, generation| {
             let cursor =

@@ -47,6 +47,16 @@ pub(super) fn validate_patterns(patterns: &[String]) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn validate_glob_patterns(patterns: &[String]) -> Result<()> {
+    validate_patterns(patterns)?;
+    for pattern in patterns {
+        if pattern.contains(['*', '?', '[', ']']) {
+            Glob::new(pattern)?;
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn validate_optional_input(
     value: Option<&str>,
     name: &'static str,
