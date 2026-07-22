@@ -210,7 +210,8 @@ fn cli_json_parse_errors_are_structured_without_changing_clap_help() {
 
     let human_arguments = ["files", "tree", "--max-results", "nope"];
     let expected = leantoken::cli::Cli::try_parse_from(
-        std::iter::once("leantoken").chain(human_arguments),
+        std::iter::once(leantoken_program_name())
+            .chain(human_arguments.into_iter().map(std::ffi::OsString::from)),
     )
     .expect_err("invalid numeric argument")
     .to_string();
@@ -1283,7 +1284,8 @@ fn run_error(
 
 fn assert_cli_parse_error(arguments: &[&str]) {
     let expected = leantoken::cli::Cli::try_parse_from(
-        std::iter::once("leantoken").chain(arguments.iter().copied()),
+        std::iter::once(leantoken_program_name())
+            .chain(arguments.iter().map(std::ffi::OsString::from)),
     )
     .expect_err("invalid CLI arguments")
     .to_string();
@@ -1303,6 +1305,13 @@ fn assert_cli_parse_error(arguments: &[&str]) {
             "category": "invalid_input"
         })
     );
+}
+
+fn leantoken_program_name() -> std::ffi::OsString {
+    assert_cmd::cargo::cargo_bin!("leantoken")
+        .file_name()
+        .expect("binary file name")
+        .to_os_string()
 }
 
 struct McpProcess {
