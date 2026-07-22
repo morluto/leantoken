@@ -27,6 +27,7 @@ jobs:
       pull-requests: read
     outputs:
       manifests: ${{ steps.filter.outputs.manifests }}
+      npm: ${{ steps.filter.outputs.npm }}
       release: ${{ steps.filter.outputs.release }}
       rust: ${{ steps.filter.outputs.rust }}
     steps:
@@ -42,9 +43,25 @@ jobs:
               - '**/Cargo.toml'
               - 'Cargo.lock'
             rust:
-              - '**/*.rs'
+              - 'src/**'
+              - 'tests/**'
+              - 'examples/**'
+              - 'fixtures/**'
+              - 'benchmarks/**/*.json'
+              - 'benchmarks/**/*.jsonl'
+              - 'README.md'
+              - 'docs/usage.md'
               - '**/Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.cargo/**'
+              - '.github/workflows/ci.yml'
+            npm:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'npm/**'
+              - 'scripts/build-npm-packages.mjs'
+              - '.github/workflows/ci.yml'
             release:
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -56,23 +73,27 @@ jobs:
 
   quality:
     name: Code quality checks
+    needs: changes
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
       - name: Install Node.js
+        if: needs.changes.outputs.npm == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
       - name: Install Rust
+        if: needs.changes.outputs.rust == 'true'
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95"
           components: rustfmt, clippy
 
       - name: Cache Rust dependencies
+        if: needs.changes.outputs.rust == 'true'
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: quality
@@ -84,21 +105,25 @@ jobs:
         run: bash scripts/validate-agents-md.sh
 
       - name: Test npm packaging
+        if: needs.changes.outputs.npm == 'true'
         run: node --test npm/npm-packaging.test.mjs
 
       - name: Check formatting
+        if: needs.changes.outputs.rust == 'true'
         run: cargo fmt --all -- --check
 
       - name: Lint all targets
+        if: needs.changes.outputs.rust == 'true'
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Validate public API documentation
+        if: needs.changes.outputs.rust == 'true'
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps
 
       - name: Upload documentation for deployment
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.rust == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: rustdoc
@@ -152,7 +177,7 @@ jobs:
   unused-deps:
     name: Unused dependencies
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: github.event_name == 'schedule' || needs.changes.outputs.manifests == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -191,7 +216,8 @@ jobs:
 
   ci:
     name: ${{ matrix.os }}
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: github.event_name != 'schedule' && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.npm == 'true')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -206,9 +232,38 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Node.js
+        if: needs.changes.outputs.npm == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Install Rust
+        if: needs.changes.outputs.rust == 'true'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+
+      - name: Cache Rust dependencies
+        if: needs.changes.outputs.rust == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-${{ matrix.os }}
+
+      - name: Test npm installation
+        if: needs.changes.outputs.npm == 'true'
+        run: node --test npm/npm-install-e2e.mjs
+
+      - name: Test library, binary, and integration behavior
+        if: needs.changes.outputs.rust == 'true'
+        run: cargo test --all-features --lib --bins --test integration
+
+  example-tests:
+    name: Benchmark and example tests
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -218,40 +273,12 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-${{ matrix.os }}
+          shared-key: example-tests
 
-      - name: Test npm installation
-        run: node --test npm/npm-install-e2e.mjs
-
-      - name: Test all targets
+      - name: Test benchmark, example, and documentation targets
         run: |
-          set +e
-          START=$(date +%s)
-          cargo test --all-targets --all-features 2>&1 | tee test-output.txt
-          status=${PIPESTATUS[0]}
-          END=$(date +%s)
-          DURATION=$((END - START))
-          echo "test_suite_duration_seconds=${DURATION}" >> "$GITHUB_ENV"
-          echo "Test suite completed in ${DURATION}s"
-          exit "$status"
-
-      - name: Test timing summary
-        if: success() || failure()
-        run: |
-          {
-            echo "## Test Results (${{ matrix.os }})"
-            echo "- Total suite duration: ${test_suite_duration_seconds:-unavailable}s"
-            echo ""
-            grep '^test result:' test-output.txt || true
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload test artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-output-${{ matrix.os }}
-          path: test-output.txt
-          retention-days: 7
+          cargo test --all-features --examples
+          cargo test --all-features --doc
 
   coverage:
     name: Test coverage
@@ -279,18 +306,9 @@ jobs:
       - name: Run coverage
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info --fail-under-lines 60
 
-      - name: Coverage report summary
+      - name: Print coverage summary
         if: success() || failure()
-        run: |
-          echo "## Coverage Summary" >> "$GITHUB_STEP_SUMMARY"
-          if [ -f lcov.info ]; then
-            awk -F '[:,]' '
-              /^DA:/ { total += 1; if ($3 > 0) covered += 1 }
-              END { printf "- Lines covered: %d / %d\n", covered, total }
-            ' lcov.info >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "- Coverage report was not generated" >> "$GITHUB_STEP_SUMMARY"
-          fi
+        run: cargo llvm-cov report
 
       - name: Upload coverage artifact
         if: always()
@@ -302,8 +320,8 @@ jobs:
 
   docs-deploy:
     name: Deploy API documentation
-    needs: quality
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [changes, quality]
+    if: needs.changes.outputs.rust == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write

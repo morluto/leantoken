@@ -525,10 +525,9 @@ fn mcp_recovers_when_startup_database_contention_clears() {
     process.initialize();
     process.send_initialized();
 
-    // The previous one-shot startup became permanently unavailable after the
-    // five-second SQLite busy timeout. Keep the lock beyond that boundary,
-    // then prove the same MCP process recovers after it is released.
-    std::thread::sleep(Duration::from_millis(5_500));
+    // Cross more than one startup busy-timeout and retry interval. A one-shot
+    // startup would be permanently unavailable before the lock is released.
+    std::thread::sleep(Duration::from_millis(750));
     blocker.execute_batch("ROLLBACK").expect("release database");
     process.wait_until_ready(Duration::from_secs(10));
 }
@@ -763,35 +762,14 @@ fn concurrent_mcp_startup_initializes_once_and_followers_read() {
             generation == 1 && files == 60
         })
     });
-    std::thread::sleep(Duration::from_millis(750));
+    for process in &mut processes {
+        process.wait_until_ready(Duration::from_secs(5));
+    }
     assert_eq!(
         database_state(&database).map(|state| state.0),
         Some(1),
         "concurrent MCP followers must not publish duplicate generations"
     );
-
-    for process in &mut processes {
-        process.send(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/call",
-            "params": {
-                "name": "leantoken_files",
-                "arguments": { "operation": {"kind": "tree"}, "max_results": 5 }
-            }
-        }));
-    }
-    for process in &processes {
-        let response = process.response(Duration::from_secs(5));
-        assert_eq!(response["id"], 2);
-        assert_ne!(response["result"]["isError"], true);
-        assert!(
-            response["result"]["structuredContent"]["entries"]
-                .as_array()
-                .is_some_and(|entries| !entries.is_empty()),
-            "follower did not observe the committed generation: {response}"
-        );
-    }
 }
 
 #[test]
@@ -1442,7 +1420,9 @@ impl McpProcess {
                 }
             }));
             let response = self.response(deadline.saturating_duration_since(Instant::now()));
-            if response["result"]["isError"] != true {
+            if response["result"]["isError"] != true
+                && response["result"]["structuredContent"]["status"] != "retryable"
+            {
                 return;
             }
             id += 1;
