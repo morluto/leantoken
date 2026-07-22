@@ -529,14 +529,10 @@ impl Indexer {
         for requested in paths {
             let relative = Path::new(requested);
             let relative_path = slash_path(relative);
-            if self
+            visibility_delta |= self
                 .config
                 .discovery_policy()
-                .is_ignore_control_path(&relative_path)
-            {
-                visibility_delta = true;
-                continue;
-            }
+                .is_ignore_control_path(&relative_path);
             let absolute = self.config.root.join(relative);
             match fs::symlink_metadata(&absolute) {
                 Ok(metadata) => {

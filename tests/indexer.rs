@@ -650,9 +650,13 @@ fn targeted_reconcile_applies_leantokenignore_add_change_and_removal() {
     assert!(storage.find_file("second.rs").expect("second lookup").is_none());
 
     std::fs::remove_file(root.path().join(".leantokenignore")).expect("remove ignore");
-    indexer
+    let removed = indexer
         .reconcile_paths(&[".leantokenignore".into()])
         .expect("apply removed ignore");
+    assert_eq!(removed.files_seen, 2);
+    assert_eq!(removed.files_indexed, 1);
+    assert_eq!(removed.files_removed, 1);
+    assert_eq!(removed.files_skipped, 0);
     assert!(storage.find_file("first.rs").expect("first lookup").is_some());
     assert!(storage.find_file("second.rs").expect("second lookup").is_some());
 }
