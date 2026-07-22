@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use notify::event::{Event, EventKind, ModifyKind, RenameMode};
+use notify::event::{CreateKind, Event, EventKind, ModifyKind, RemoveKind, RenameMode};
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::{
     sync::{mpsc, mpsc::error::TrySendError, oneshot},
@@ -290,7 +290,7 @@ impl RepositoryWatcher {
                 }
             };
 
-            let directory_count = count_visible_directories(&watched_root, policy);
+            let directory_count = count_watch_directories(&watched_root, MAX_WATCHED_DIRECTORIES);
             let watch_enabled = directory_count <= MAX_WATCHED_DIRECTORIES;
             if watch_enabled {
                 if let Err(err) = watcher.watch(&watched_root, RecursiveMode::Recursive) {
@@ -437,15 +437,17 @@ fn into_error(err: notify::Error) -> Error {
     Error::Io(std::io::Error::other(err.to_string()))
 }
 
-/// Count visible directories under `root` using the same discovery policy as
-/// file discovery. This bounds the inotify watch set before registration.
-fn count_visible_directories(root: &Path, policy: DiscoveryPolicy) -> usize {
+/// Count every directory that a recursive backend may register before
+/// enabling the watcher. Callback filtering does not reduce kernel watches.
+fn count_watch_directories(root: &Path, cap: usize) -> usize {
     use ignore::WalkBuilder;
     let mut builder = WalkBuilder::new(root);
     builder.hidden(false);
-    builder.git_ignore(true);
-    builder.git_exclude(true);
-    builder.git_global(true);
+    builder.ignore(false);
+    builder.parents(false);
+    builder.git_ignore(false);
+    builder.git_exclude(false);
+    builder.git_global(false);
     builder.follow_links(false);
     let walker = builder.build();
     let mut count = 0usize;
@@ -455,30 +457,25 @@ fn count_visible_directories(root: &Path, policy: DiscoveryPolicy) -> usize {
                 if !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
                     continue;
                 }
-                let relative = entry
-                    .path()
-                    .strip_prefix(root)
-                    .ok()
-                    .and_then(|p| p.to_str())
-                    .map(|s| s.replace('\\', "/"));
-                if let Some(rel) = relative {
-                    if policy.includes_path(&rel, true) {
-                        count += 1;
-                        if count > MAX_WATCHED_DIRECTORIES {
-                            return count;
-                        }
-                    }
-                } else if entry.path() == root {
-                    count += 1;
+                count += 1;
+                if count > cap {
+                    return count;
                 }
             }
-            Err(_) => continue,
+            // Failure to inspect a subtree means the recursive backend's
+            // watch count cannot be proven bounded. Use polling instead.
+            Err(_) => return cap.saturating_add(1),
         }
     }
     count
 }
 
-fn relative_path(root: &Path, path: &Path, policy: DiscoveryPolicy) -> Option<String> {
+fn relative_path(
+    root: &Path,
+    path: &Path,
+    policy: DiscoveryPolicy,
+    directory_hint: bool,
+) -> Option<String> {
     if !path.starts_with(root) {
         return None;
     }
@@ -487,12 +484,19 @@ fn relative_path(root: &Path, path: &Path, policy: DiscoveryPolicy) -> Option<St
     if s.is_empty()
         || s.starts_with(".git/")
         || s == ".git"
-        || !policy.includes_path(&s, path.is_dir())
+        || !policy.includes_path(&s, directory_hint || path.is_dir())
     {
         None
     } else {
         Some(s)
     }
+}
+
+fn event_path_is_directory(event: &Event) -> bool {
+    matches!(
+        event.kind,
+        EventKind::Create(CreateKind::Folder) | EventKind::Remove(RemoveKind::Folder)
+    )
 }
 
 fn process_raw_event(
@@ -524,7 +528,7 @@ fn process_raw_event(
     let mut inside = Vec::with_capacity(event.paths.len());
     let mut outside = false;
     for path in &event.paths {
-        match relative_path(root, path, policy) {
+        match relative_path(root, path, policy, event_path_is_directory(&event)) {
             Some(rel) => inside.push(rel),
             None => {
                 outside = true;
@@ -579,10 +583,9 @@ fn raw_event_is_relevant(
 ) -> bool {
     match event {
         Ok(event) if event.need_rescan() => true,
-        Ok(event) if !event.paths.is_empty() => event
-            .paths
-            .iter()
-            .any(|path| relative_path(root, path, policy).is_some()),
+        Ok(event) if !event.paths.is_empty() => event.paths.iter().any(|path| {
+            relative_path(root, path, policy, event_path_is_directory(event)).is_some()
+        }),
         Ok(_) | Err(_) => true,
     }
 }
@@ -930,6 +933,7 @@ mod tests {
                 root.path(),
                 &root.path().join("nested/b.txt"),
                 DiscoveryPolicy::default(),
+                false,
             )
             .as_deref(),
             Some("nested/b.txt")
@@ -1091,6 +1095,30 @@ mod tests {
             root.path(),
             DiscoveryPolicy::default(),
         ));
+    }
+
+    #[test]
+    fn removed_generated_directory_is_filtered_after_it_disappears() {
+        let root = tempfile::tempdir().unwrap();
+        let generated = root.path().join("node_modules");
+        let event = Event::new(EventKind::Remove(RemoveKind::Folder)).add_path(generated);
+
+        assert!(!raw_event_is_relevant(
+            &Ok(event),
+            root.path(),
+            DiscoveryPolicy::default(),
+        ));
+    }
+
+    #[test]
+    fn watch_count_includes_ignored_and_generated_directories() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join(".gitignore"), "ignored/\n").unwrap();
+        std::fs::create_dir_all(root.path().join("ignored/nested")).unwrap();
+        std::fs::create_dir_all(root.path().join("node_modules/pkg")).unwrap();
+
+        assert_eq!(count_watch_directories(root.path(), 100), 5);
+        assert_eq!(count_watch_directories(root.path(), 2), 3);
     }
 
     #[test]
