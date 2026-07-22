@@ -152,6 +152,12 @@ fn validate_outline_input(request: &OutlineRequest) -> Result<()> {
 
 fn validate_read_input(request: &ReadRequest) -> Result<()> {
     validate_input(&request.path, "path", MAX_PATH_BYTES)?;
+    if request.symbol.as_deref().is_some_and(str::is_empty) {
+        return Err(Error::InvalidInput {
+            field: "symbol",
+            reason: "must not be empty",
+        });
+    }
     validate_optional_input(request.symbol.as_deref(), "symbol", MAX_PATTERN_BYTES)?;
     validate_optional_input(request.expected_hash.as_deref(), "expected hash", 128)?;
     validate_relative(&request.path)?;

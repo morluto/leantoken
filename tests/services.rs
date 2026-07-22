@@ -596,6 +596,36 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
         ),
         "conflicting read target"
     );
+    let mut read = read_limit_request(Some(1));
+    read.start_line = None;
+    read.end_line = None;
+    read.symbol = Some(String::new());
+    let error = services
+        .read_with_consistency_cancellable(
+            read,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("empty read symbol must fail");
+    let current = services
+        .status()
+        .await
+        .expect("status after empty read symbol");
+    assert_eq!(
+        current.repository_generation, generation,
+        "empty read symbol must not reconcile"
+    );
+    assert!(
+        matches!(
+            error,
+            Error::InvalidInput {
+                field: "symbol",
+                reason: "must not be empty"
+            }
+        ),
+        "unexpected empty read symbol error: {error:?}"
+    );
 
     let mut context = context_limit_request(1);
     context.task = " ".into();
