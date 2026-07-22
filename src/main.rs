@@ -212,9 +212,11 @@ async fn run_mcp_runtime(
     cancellation: CancellationToken,
 ) -> Result<()> {
     let startup_cancellation = cancellation.clone();
+    let startup_state = service_state.clone();
     let services = Arc::new(
         tokio::task::spawn_blocking(move || {
             let config = cli.config()?;
+            startup_state.configure_limits(&config)?;
             Services::open_cancellable(config, &startup_cancellation)
         })
         .await??,

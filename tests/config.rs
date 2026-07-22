@@ -149,6 +149,7 @@ fn config_defaults_bound_output_and_timing() {
     assert_eq!(config.discovery_limits(), DiscoveryLimits::default());
     assert!(config.max_results > 0);
     assert!(config.max_output_tokens > 0);
+    assert!(config.default_context_tokens > 0);
     assert!(config.context_lines > 0);
     assert!(config.chunk_lines > 0);
     assert!(config.chunk_bytes > 0);
@@ -183,10 +184,16 @@ fn services_reject_invalid_retrieval_limit_configuration() {
     config.default_read_tokens = 0;
     invalid.push(config);
     let mut config = base.clone();
+    config.default_context_tokens = 0;
+    invalid.push(config);
+    let mut config = base.clone();
     config.max_output_tokens = 0;
     invalid.push(config);
     let mut config = base.clone();
     config.default_read_tokens = config.max_output_tokens + 1;
+    invalid.push(config);
+    let mut config = base.clone();
+    config.default_context_tokens = config.max_output_tokens + 1;
     invalid.push(config);
     let mut config = base.clone();
     config.max_output_tokens = 32_001;

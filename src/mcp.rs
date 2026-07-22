@@ -15,9 +15,10 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Deserializer, Serialize};
 use tokio_util::sync::CancellationToken;
 
+use crate::Config;
 use crate::config::{
-    DEFAULT_CONTEXT_LINES, DEFAULT_READ_TOKENS, DEFAULT_RESULTS, MAX_CONTEXT_LINES,
-    MAX_OUTPUT_TOKENS, MAX_RESULTS,
+    DEFAULT_CONTEXT_LINES, DEFAULT_CONTEXT_TOKENS, DEFAULT_READ_TOKENS, DEFAULT_RESULTS,
+    MAX_CONTEXT_LINES, MAX_OUTPUT_TOKENS, MAX_RESULTS,
 };
 use crate::model::{
     ContextRequest, FileOperation, FilesRequest, IndexConsistency, OutlineRequest, ReadRequest,
@@ -94,10 +95,14 @@ struct SearchMcpRequest {
 }
 
 impl SearchMcpRequest {
-    fn validate_limits(&self) -> crate::Result<()> {
-        validate_optional_positive_limit("max_results", self.max_results, MAX_RESULTS)?;
-        validate_optional_positive_limit("max_tokens", self.max_tokens, MAX_OUTPUT_TOKENS)?;
-        validate_optional_limit("context_lines", self.context_lines, MAX_CONTEXT_LINES)
+    fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
+        validate_optional_positive_limit("max_results", self.max_results, limits.max_results)?;
+        validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)?;
+        validate_optional_limit(
+            "context_lines",
+            self.context_lines,
+            limits.max_context_lines,
+        )
     }
 
     fn into_parts(self) -> (SearchRequest, IndexConsistency) {
@@ -148,9 +153,9 @@ struct OutlineMcpRequest {
 }
 
 impl OutlineMcpRequest {
-    fn validate_limits(&self) -> crate::Result<()> {
-        validate_optional_positive_limit("max_results", self.max_results, MAX_RESULTS)?;
-        validate_optional_positive_limit("max_tokens", self.max_tokens, MAX_OUTPUT_TOKENS)
+    fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
+        validate_optional_positive_limit("max_results", self.max_results, limits.max_results)?;
+        validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)
     }
 
     fn into_parts(self) -> (OutlineRequest, IndexConsistency) {
@@ -195,8 +200,8 @@ enum FilesMcpOperation {
 }
 
 impl FilesMcpRequest {
-    fn validate_limits(&self) -> crate::Result<()> {
-        validate_optional_positive_limit("max_results", self.max_results, MAX_RESULTS)
+    fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
+        validate_optional_positive_limit("max_results", self.max_results, limits.max_results)
     }
 
     fn into_parts(self) -> (FilesRequest, IndexConsistency) {
@@ -272,8 +277,8 @@ enum ReadMcpTarget {
 }
 
 impl ReadMcpRequest {
-    fn validate_limits(&self) -> crate::Result<()> {
-        validate_optional_positive_limit("max_tokens", self.max_tokens, MAX_OUTPUT_TOKENS)
+    fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
+        validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)
     }
 
     fn into_parts(self) -> (ReadRequest, IndexConsistency) {
@@ -302,9 +307,12 @@ struct ContextMcpRequest {
     #[schemars(length(min = 3, max = 65536))]
     task: String,
     /// Maximum source tokens across selected fragments (default 3000, maximum 32000).
-    #[serde(default = "default_context_tokens")]
-    #[schemars(default = "default_context_tokens", range(min = 1, max = MAX_OUTPUT_TOKENS))]
-    token_budget: usize,
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(
+        schema_with = "context_token_limit_schema",
+        default = "default_context_token_option"
+    )]
+    token_budget: Option<usize>,
     /// Boost matching paths without filtering other candidates.
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 4096)))]
@@ -339,15 +347,19 @@ struct ContextMcpRequest {
 }
 
 impl ContextMcpRequest {
-    fn validate_limits(&self) -> crate::Result<()> {
-        validate_positive_limit("token_budget", self.token_budget, MAX_OUTPUT_TOKENS)
+    fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
+        validate_optional_positive_limit(
+            "token_budget",
+            self.token_budget,
+            limits.max_output_tokens,
+        )
     }
 
-    fn into_parts(self) -> (ContextRequest, IndexConsistency) {
+    fn into_parts(self, default_token_budget: usize) -> (ContextRequest, IndexConsistency) {
         (
             ContextRequest {
                 task: self.task,
-                token_budget: self.token_budget,
+                token_budget: self.token_budget.unwrap_or(default_token_budget),
                 focus_paths: self.focus_paths,
                 focus_symbols: self.focus_symbols,
                 exclude_paths: self.exclude_paths,
@@ -361,8 +373,8 @@ impl ContextMcpRequest {
     }
 }
 
-const fn default_context_tokens() -> usize {
-    3_000
+const fn default_context_token_option() -> Option<usize> {
+    Some(DEFAULT_CONTEXT_TOKENS)
 }
 
 const fn default_result_option() -> Option<usize> {
@@ -397,6 +409,16 @@ fn token_limit_schema(_: &mut SchemaGenerator) -> Schema {
     })
 }
 
+fn context_token_limit_schema(_: &mut SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "type": "integer",
+        "format": "uint",
+        "minimum": 1,
+        "maximum": MAX_OUTPUT_TOKENS,
+        "default": DEFAULT_CONTEXT_TOKENS
+    })
+}
+
 fn context_line_limit_schema(_: &mut SchemaGenerator) -> Schema {
     schemars::json_schema!({
         "type": "integer",
@@ -415,14 +437,6 @@ fn validate_optional_positive_limit(
     requested.map_or(Ok(()), |requested| {
         validate_positive_request_limit(field, requested, limit).map(drop)
     })
-}
-
-fn validate_positive_limit(
-    field: &'static str,
-    requested: usize,
-    limit: usize,
-) -> crate::Result<()> {
-    validate_positive_request_limit(field, requested, limit).map(drop)
 }
 
 fn validate_optional_limit(
@@ -477,11 +491,49 @@ pub struct LeanTokenMcp {
     result_mode: McpResultMode,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct McpLimitPolicy {
+    max_results: usize,
+    max_output_tokens: usize,
+    max_context_lines: usize,
+    default_context_tokens: usize,
+}
+
+impl McpLimitPolicy {
+    const DEFAULT: Self = Self {
+        max_results: MAX_RESULTS,
+        max_output_tokens: MAX_OUTPUT_TOKENS,
+        max_context_lines: MAX_CONTEXT_LINES,
+        default_context_tokens: DEFAULT_CONTEXT_TOKENS,
+    };
+
+    fn from_config(config: &Config) -> crate::Result<Self> {
+        config.validate()?;
+        Ok(Self {
+            max_results: config.max_results,
+            max_output_tokens: config.max_output_tokens,
+            max_context_lines: MAX_CONTEXT_LINES,
+            default_context_tokens: config.default_context_tokens,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 enum McpServiceState {
-    Starting,
-    Ready(Arc<Services>),
-    Failed,
+    Starting(McpLimitPolicy),
+    Ready {
+        services: Arc<Services>,
+        limits: McpLimitPolicy,
+    },
+    Failed(McpLimitPolicy),
+}
+
+impl McpServiceState {
+    const fn limits(&self) -> McpLimitPolicy {
+        match self {
+            Self::Starting(limits) | Self::Ready { limits, .. } | Self::Failed(limits) => *limits,
+        }
+    }
 }
 
 /// Shared readiness handle used by handshake-first MCP startup.
@@ -516,7 +568,7 @@ impl LeanTokenMcp {
     /// Construct a protocol-ready server before storage and indexing start.
     #[must_use]
     pub fn pending() -> (Self, McpServices) {
-        let services = McpServices::starting();
+        let services = McpServices::starting(McpLimitPolicy::DEFAULT);
         (
             Self {
                 services: services.clone(),
@@ -537,15 +589,18 @@ impl LeanTokenMcp {
         tool_result(value, self.result_mode)
     }
 
-    fn services(&self) -> std::result::Result<Arc<Services>, CallToolResult> {
-        match self.services.get() {
-            McpServiceState::Ready(services) => Ok(services),
-            McpServiceState::Starting => Err(self.retryable_result(RetryableToolResponse::new(
+    fn services(
+        &self,
+        state: &McpServiceState,
+    ) -> std::result::Result<Arc<Services>, CallToolResult> {
+        match state {
+            McpServiceState::Ready { services, .. } => Ok(Arc::clone(services)),
+            McpServiceState::Starting(_) => Err(self.retryable_result(RetryableToolResponse::new(
                 "index_starting",
                 "repository index is starting; retry the same call shortly",
                 500,
             ))),
-            McpServiceState::Failed => Err(tool_unavailable(
+            McpServiceState::Failed(_) => Err(tool_unavailable(
                 "repository index is unavailable; check server logs and retry",
             )),
         }
@@ -584,17 +639,19 @@ impl LeanTokenMcp {
 }
 
 impl McpServices {
-    fn starting() -> Self {
+    fn starting(limits: McpLimitPolicy) -> Self {
         Self {
-            state: Arc::new(RwLock::new(McpServiceState::Starting)),
+            state: Arc::new(RwLock::new(McpServiceState::Starting(limits))),
             protocol_initialized: Arc::new(AtomicBool::new(false)),
             initialized: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
     fn ready(services: Arc<Services>) -> Self {
+        let limits = McpLimitPolicy::from_config(services.config())
+            .expect("Services always contains a validated configuration");
         Self {
-            state: Arc::new(RwLock::new(McpServiceState::Ready(services))),
+            state: Arc::new(RwLock::new(McpServiceState::Ready { services, limits })),
             protocol_initialized: Arc::new(AtomicBool::new(false)),
             initialized: Arc::new(tokio::sync::Notify::new()),
         }
@@ -609,18 +666,42 @@ impl McpServices {
 
     /// Make initialized retrieval services visible to MCP tool handlers.
     pub fn set_ready(&self, services: Arc<Services>) {
+        let limits = McpLimitPolicy::from_config(services.config())
+            .expect("Services always contains a validated configuration");
         *self
             .state
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = McpServiceState::Ready(services);
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            McpServiceState::Ready { services, limits };
+    }
+
+    /// Apply validated configured request limits before retrieval services are ready.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `config` contains invalid runtime limits.
+    pub fn configure_limits(&self, config: &Config) -> crate::Result<()> {
+        let limits = McpLimitPolicy::from_config(config)?;
+        let mut state = self
+            .state
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match &mut *state {
+            McpServiceState::Starting(current) | McpServiceState::Failed(current) => {
+                *current = limits;
+            }
+            McpServiceState::Ready { .. } => {}
+        }
+        Ok(())
     }
 
     /// Mark startup as failed without exposing internal diagnostics to clients.
     pub fn set_failed(&self) {
-        *self
+        let mut state = self
             .state
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = McpServiceState::Failed;
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *state = McpServiceState::Failed(state.limits());
     }
 
     fn mark_protocol_initialized(&self) {
@@ -651,8 +732,10 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<FilesMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        req.validate_limits().map_err(into_mcp_error)?;
-        let services = match self.services() {
+        let state = self.services.get();
+        req.validate_limits(state.limits())
+            .map_err(into_mcp_error)?;
+        let services = match self.services(&state) {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
@@ -672,8 +755,10 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<SearchMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        req.validate_limits().map_err(into_mcp_error)?;
-        let services = match self.services() {
+        let state = self.services.get();
+        req.validate_limits(state.limits())
+            .map_err(into_mcp_error)?;
+        let services = match self.services(&state) {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
@@ -693,8 +778,10 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<OutlineMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        req.validate_limits().map_err(into_mcp_error)?;
-        let services = match self.services() {
+        let state = self.services.get();
+        req.validate_limits(state.limits())
+            .map_err(into_mcp_error)?;
+        let services = match self.services(&state) {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
@@ -714,8 +801,10 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<ReadMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        req.validate_limits().map_err(into_mcp_error)?;
-        let services = match self.services() {
+        let state = self.services.get();
+        req.validate_limits(state.limits())
+            .map_err(into_mcp_error)?;
+        let services = match self.services(&state) {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
@@ -735,12 +824,14 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<ContextMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        req.validate_limits().map_err(into_mcp_error)?;
-        let services = match self.services() {
+        let state = self.services.get();
+        let limits = state.limits();
+        req.validate_limits(limits).map_err(into_mcp_error)?;
+        let services = match self.services(&state) {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, consistency) = req.into_parts();
+        let (request, consistency) = req.into_parts(limits.default_context_tokens);
         let resp = services
             .context_with_consistency_cancellable(request, consistency, context.ct.clone())
             .await;

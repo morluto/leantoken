@@ -10,6 +10,7 @@ use crate::{Error, Result};
 pub(crate) const DEFAULT_RESULTS: usize = 20;
 pub(crate) const MAX_RESULTS: usize = 100;
 pub(crate) const DEFAULT_READ_TOKENS: usize = 8_000;
+pub(crate) const DEFAULT_CONTEXT_TOKENS: usize = 3_000;
 pub(crate) const MAX_OUTPUT_TOKENS: usize = 32_000;
 pub(crate) const DEFAULT_CONTEXT_LINES: usize = 2;
 pub(crate) const MAX_CONTEXT_LINES: usize = 20;
@@ -117,6 +118,8 @@ pub struct Config {
     pub max_results: usize,
     /// Default source-token limit for reads and searches.
     pub default_read_tokens: usize,
+    /// Default source-token budget for assembled task context.
+    pub default_context_tokens: usize,
     /// Hard source-token ceiling for any response, up to the public protocol ceiling.
     pub max_output_tokens: usize,
     /// Default lines included around a search match.
@@ -189,6 +192,7 @@ impl Config {
             default_results: DEFAULT_RESULTS,
             max_results: MAX_RESULTS,
             default_read_tokens: DEFAULT_READ_TOKENS,
+            default_context_tokens: DEFAULT_CONTEXT_TOKENS,
             max_output_tokens: MAX_OUTPUT_TOKENS,
             context_lines: DEFAULT_CONTEXT_LINES,
             chunk_lines: 80,
@@ -218,14 +222,23 @@ impl Config {
                 "max_results must not exceed {MAX_RESULTS}"
             )));
         }
-        if self.default_read_tokens == 0 || self.max_output_tokens == 0 {
+        if self.default_read_tokens == 0
+            || self.default_context_tokens == 0
+            || self.max_output_tokens == 0
+        {
             return Err(Error::InvalidConfiguration(
-                "default_read_tokens and max_output_tokens must be positive".into(),
+                "default_read_tokens, default_context_tokens, and max_output_tokens must be positive"
+                    .into(),
             ));
         }
         if self.default_read_tokens > self.max_output_tokens {
             return Err(Error::InvalidConfiguration(
                 "default_read_tokens must not exceed max_output_tokens".into(),
+            ));
+        }
+        if self.default_context_tokens > self.max_output_tokens {
+            return Err(Error::InvalidConfiguration(
+                "default_context_tokens must not exceed max_output_tokens".into(),
             ));
         }
         if self.max_output_tokens > MAX_OUTPUT_TOKENS {

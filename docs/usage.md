@@ -329,7 +329,9 @@ leantoken --json context --task "finish the validated fix" --budget 1200 \
 
 `search`, `outline`, `read`, and `context` bound returned source text. The
 default read limit is 8,000 tokens and the hard source-output ceiling is 32,000
-tokens.
+tokens. Assembled context has a separate 3,000-token default. Programmatic
+configurations may lower these defaults and ceilings; omitted MCP fields use
+the active service defaults rather than the static tool-schema examples.
 
 `emitted_tokens` counts source text with the configured tokenizer. The default
 is `cl100k_base`. Exact built-in modes are `cl100k_base`, `o200k_base`,

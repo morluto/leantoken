@@ -256,8 +256,10 @@ worker bound without rebuilding a pool on every reconciliation.
 
 Request result, token, and context-line bounds are validated in `Services`, so
 library and direct MCP callers receive the same contract as the CLI. CLI
-non-zero numeric types and MCP JSON Schema ranges provide earlier feedback but
-are not treated as enforcement boundaries. Zero is valid only for
+positive-integer parsers and MCP JSON Schema ranges provide earlier feedback
+but are not treated as enforcement boundaries. MCP startup, ready, and failed
+states retain one validated configured-limit snapshot, so readiness does not
+change whether an explicit value is accepted. Zero is valid only for
 `context_lines`; values above an active maximum return a structured
 `RequestLimitExceeded` error rather than being clamped.
 

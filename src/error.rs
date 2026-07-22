@@ -42,6 +42,11 @@ impl std::fmt::Display for RetryableOperation {
     }
 }
 
+/// Errors returned by LeanToken operations.
+///
+/// Callers should match the variants they can recover from and retain a
+/// fallback arm for errors added by later releases.
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("repository root does not exist: {0}")]
