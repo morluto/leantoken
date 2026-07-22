@@ -6,16 +6,54 @@ LeanToken requires Rust 1.95 or later and a native C/C++ toolchain for bundled
 SQLite and tree-sitter grammar crates. On macOS, install Xcode Command Line
 Tools. On Windows, install Visual Studio Build Tools.
 
-## Local checks
+Install the repository's Git hooks after cloning:
 
-Run the same checks used by CI:
+```bash
+python -m pip install pre-commit
+pre-commit install --install-hooks
+```
+
+This installs both commit and push hooks. Commit-time checks are deliberately
+limited to formatting and inexpensive file validation. The push hook runs full
+Clippy when pushed commits change Rust sources or the Cargo manifests.
+
+## Development checks
+
+The normal edit-and-commit loop does not need to reproduce the complete CI
+suite. The installed commit hook runs:
 
 ```bash
 cargo fmt --all -- --check
-cargo check --all-targets --all-features
+```
+
+Before pushing Rust or dependency changes, the push hook runs:
+
+```bash
 cargo clippy --all-targets --all-features -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+```
+
+Run a focused test while developing by passing its module or test name:
+
+```bash
+cargo test --test integration services::
+```
+
+## Pull request readiness
+
+Before opening a pull request, run the behavioral suite appropriate to the
+change:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features
+```
+
+CI is authoritative for rustdoc warnings and native behavior on Linux, macOS,
+and Windows. Run rustdoc locally when changing public APIs or documentation:
+
+```bash
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 ```
 
 Build and verify the distributable crate when changing packaging or features:
