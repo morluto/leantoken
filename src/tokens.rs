@@ -135,15 +135,25 @@ impl Tokenizer {
                 self.bpe_boundary(tiktoken_rs::r50k_base_singleton(), text, max_tokens)
             }
             Self::Estimate => {
-                // Estimate is not BPE-backed; fall back to character boundaries.
-                let mut offset = 0;
-                for (_tokens, chunk) in text.split_whitespace().enumerate().take(max_tokens) {
-                    offset = text
-                        .find(chunk)
-                        .map(|start| start + chunk.len())
-                        .unwrap_or(offset);
+                // Keep the boundary consistent with `estimate_count`, whose
+                // budget is the larger of words and one token per four chars.
+                let mut offset = 0usize;
+                let mut chars = 0usize;
+                let mut words = 0usize;
+                let mut in_word = false;
+                for (start, character) in text.char_indices() {
+                    let next_chars = chars + 1;
+                    let next_in_word = !character.is_whitespace();
+                    let next_words = words + usize::from(next_in_word && !in_word);
+                    if next_chars.div_ceil(4).max(next_words) > max_tokens {
+                        break;
+                    }
+                    chars = next_chars;
+                    words = next_words;
+                    in_word = next_in_word;
+                    offset = start + character.len_utf8();
                 }
-                offset.min(text.len())
+                offset
             }
         }
     }
@@ -284,5 +294,18 @@ mod tests {
             assert!(tokens <= 12);
             assert!(std::str::from_utf8(prefix.as_bytes()).is_ok());
         }
+    }
+
+    #[test]
+    fn estimate_truncate_tracks_sequential_words_and_character_budget() {
+        let repeated = "a a a";
+        let (prefix, tokens) = Tokenizer::Estimate.truncate(repeated, 2);
+        assert_eq!(prefix, "a a ");
+        assert_eq!(tokens, 2);
+
+        let long_word = "abcdefghijklmnop";
+        let (prefix, tokens) = Tokenizer::Estimate.truncate(long_word, 2);
+        assert_eq!(prefix, "abcdefgh");
+        assert_eq!(tokens, 2);
     }
 }

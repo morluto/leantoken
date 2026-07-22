@@ -78,20 +78,7 @@ pub(super) fn chunk_search_hit(
     }))
 }
 
-pub(super) fn matching_line(hit: &ChunkHit, query: &str, case_sensitive: bool) -> Option<usize> {
-    hit.content
-        .lines()
-        .position(|line| {
-            if case_sensitive {
-                line.contains(query)
-            } else {
-                line.to_lowercase().contains(&query.to_lowercase())
-            }
-        })
-        .map(|offset| hit.start_line + offset)
-}
-
-fn matching_line_for_search(
+pub(super) fn matching_line(
     hit: &ChunkHit,
     query: &str,
     case_sensitive: bool,
@@ -104,7 +91,13 @@ fn matching_line_for_search(
             hit.start_line + local_start - 1
         });
     }
-    matching_line(hit, query, case_sensitive)
+    if !case_sensitive {
+        return None;
+    }
+    hit.content
+        .lines()
+        .position(|line| line.contains(query))
+        .map(|offset| hit.start_line + offset)
 }
 
 fn apply_focus(hits: &mut [SearchHit], focus_paths: &[String]) -> Result<()> {
@@ -136,10 +129,12 @@ fn compile_regex(request: &SearchRequest) -> Result<regex::Regex> {
 /// Compile a case-insensitive literal matcher for non-regex search modes.
 ///
 /// In Auto/Text/Identifier modes the query is a literal string, not a regex
-/// pattern. Without this,  would rebuild an identical regex
-/// for every lexical hit. Returns  when the search is case-sensitive
-/// (the fast  path handles that without any compilation).
-fn compile_literal_regex(query: &str, case_sensitive: bool) -> Result<Option<regex::Regex>> {
+/// pattern. Compile it once per request so every lexical hit reuses the same
+/// matcher. Case-sensitive search uses `str::find` without compilation.
+pub(super) fn compile_literal_regex(
+    query: &str,
+    case_sensitive: bool,
+) -> Result<Option<regex::Regex>> {
     if case_sensitive {
         return Ok(None);
     }
@@ -321,7 +316,7 @@ impl Services {
                         matches!(request.mode, SearchMode::Regex),
                     )?
                 {
-                    let matched_line = matching_line_for_search(
+                    let matched_line = matching_line(
                         &hit,
                         &request.query,
                         request.case_sensitive,
@@ -361,13 +356,11 @@ impl Services {
 
             let mut emitted_tokens = 0usize;
             let mut selected = Vec::new();
-            let remaining = hits.len().saturating_sub(offset);
+            let total_candidates = hits.len();
+            let page = hits.into_iter().skip(offset).take(limit);
             let mut consumed = 0usize;
-            for hit in hits.into_iter().skip(offset) {
+            for hit in page {
                 check_cancelled(cancellation)?;
-                if selected.len() >= limit {
-                    break;
-                }
                 consumed += 1;
                 let count = self.config.tokenizer.count(&hit.excerpt);
                 if emitted_tokens.saturating_add(count) > token_limit {
@@ -376,7 +369,7 @@ impl Services {
                 emitted_tokens += count;
                 selected.push(hit);
             }
-            let has_more = consumed < remaining;
+            let has_more = offset.saturating_add(consumed) < total_candidates;
             Ok(SearchResponse {
                 hits: selected,
                 meta: self.meta(

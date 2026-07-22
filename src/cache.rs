@@ -692,7 +692,9 @@ fn select_prune_candidates(
     }
     let mut lru = entries
         .iter()
-        .filter(|cache| !selected.contains_key(&cache.entry.id))
+        .filter(|cache| {
+            !selected.contains_key(&cache.entry.id) && cache.safe_to_prune && !cache.entry.active
+        })
         .collect::<Vec<_>>();
     lru.sort_by(|left, right| {
         left.entry
@@ -709,9 +711,7 @@ fn select_prune_candidates(
             .entry(cache.entry.id.clone())
             .or_default()
             .push("max_total_bytes".into());
-        if cache.safe_to_prune && !cache.entry.active {
-            projected = projected.saturating_sub(cache.entry.size_bytes);
-        }
+        projected = projected.saturating_sub(cache.entry.size_bytes);
     }
     selected
 }
@@ -958,11 +958,11 @@ mod tests {
         prune.yes = true;
 
         let first = manager.prune(&prune).expect("active prune");
-        assert_eq!(first.results[0].action, CachePruneAction::SkippedActive);
+        assert_eq!(first.results[0].action, CachePruneAction::Kept);
         assert!(database.exists());
         drop(services);
         let second = manager.prune(&prune).expect("follower prune");
-        assert_eq!(second.results[0].action, CachePruneAction::SkippedActive);
+        assert_eq!(second.results[0].action, CachePruneAction::Kept);
         drop(follower);
 
         let deleted = manager.prune(&prune).expect("inactive prune");
@@ -1094,7 +1094,8 @@ mod tests {
 
         let report = manager.prune(&prune).expect("prune");
 
-        assert_eq!(report.results[0].action, CachePruneAction::SkippedUnsafe);
+        assert_eq!(report.results[0].action, CachePruneAction::Kept);
+        assert!(report.results[0].reasons.is_empty());
         assert!(directory.join(DATABASE_NAME).exists());
         assert!(directory.join("keep.txt").exists());
     }
@@ -1155,15 +1156,9 @@ mod tests {
             .iter()
             .find(|result| result.id == future_migration_id)
             .expect("future migration result");
-        assert_eq!(future.action, CachePruneAction::SkippedUnsafe);
-        assert_eq!(mismatch.action, CachePruneAction::SkippedUnsafe);
-        assert_eq!(future_migration.action, CachePruneAction::SkippedUnsafe);
-        assert!(
-            future
-                .detail
-                .as_deref()
-                .is_some_and(|detail| detail.contains("newer unsupported schema"))
-        );
+        assert_eq!(future.action, CachePruneAction::Kept);
+        assert_eq!(mismatch.action, CachePruneAction::Kept);
+        assert_eq!(future_migration.action, CachePruneAction::Kept);
         assert!(future_database.exists());
         assert!(mismatch_database.exists());
         assert!(future_migration_database.exists());

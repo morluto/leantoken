@@ -1,6 +1,5 @@
 use std::{
     collections::HashSet,
-    fs::File,
     io::{BufRead, BufReader, Seek},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
@@ -441,7 +440,7 @@ fn git_changed_paths_with(
     if !status.success() || output.rewind().is_err() {
         return Ok(HashSet::new());
     }
-    Ok(parse_git_status(output, max, &prefix))
+    Ok(parse_git_status(BufReader::new(output), max, &prefix))
 }
 
 fn git_worktree_prefix(root: &Path) -> String {
@@ -454,8 +453,10 @@ fn git_worktree_prefix(root: &Path) -> String {
         .unwrap_or_default()
 }
 
-fn parse_git_status(output: File, max: usize, prefix: &str) -> HashSet<String> {
-    let mut reader = BufReader::new(output);
+fn parse_git_status<R: BufRead>(mut reader: R, max: usize, prefix: &str) -> HashSet<String> {
+    if max == 0 {
+        return HashSet::new();
+    }
     let mut changed = HashSet::new();
     let mut record = Vec::new();
 
@@ -485,8 +486,9 @@ fn parse_git_status(output: File, max: usize, prefix: &str) -> HashSet<String> {
         let Some(path) = path.strip_prefix(prefix) else {
             continue;
         };
-        if changed.len() < max {
-            changed.insert(slash_path(Path::new(path)));
+        changed.insert(slash_path(Path::new(path)));
+        if changed.len() == max {
+            break;
         }
     }
     changed
@@ -662,11 +664,13 @@ fn diff_name_only(
     if !status.success() || output.rewind().is_err() {
         return Ok(Vec::new());
     }
-    Ok(parse_diff_names(output, max, prefix))
+    Ok(parse_diff_names(BufReader::new(output), max, prefix))
 }
 
-fn parse_diff_names(output: File, max: usize, prefix: &str) -> Vec<String> {
-    let mut reader = BufReader::new(output);
+fn parse_diff_names<R: BufRead>(mut reader: R, max: usize, prefix: &str) -> Vec<String> {
+    if max == 0 {
+        return Vec::new();
+    }
     let mut changed = Vec::new();
     let mut record = Vec::new();
     loop {
@@ -686,8 +690,9 @@ fn parse_diff_names(output: File, max: usize, prefix: &str) -> Vec<String> {
         let Some(path) = path.strip_prefix(prefix) else {
             continue;
         };
-        if changed.len() < max {
-            changed.push(slash_path(Path::new(path)));
+        changed.push(slash_path(Path::new(path)));
+        if changed.len() == max {
+            break;
         }
     }
     changed
@@ -696,10 +701,33 @@ fn parse_diff_names(output: File, max: usize, prefix: &str) -> Vec<String> {
 #[cfg(all(test, unix))]
 mod tests {
     use std::fs;
+    use std::io::Cursor;
     use std::os::unix::fs::PermissionsExt;
     use std::time::Instant;
 
     use super::*;
+
+    #[test]
+    fn git_status_parser_stops_after_collecting_max_paths() {
+        let first = b"M  first.rs\0";
+        let mut input = Cursor::new([first.as_slice(), b"M  second.rs\0"].concat());
+
+        let changed = parse_git_status(&mut input, 1, "");
+
+        assert_eq!(changed, HashSet::from(["first.rs".to_string()]));
+        assert_eq!(input.position(), first.len() as u64);
+    }
+
+    #[test]
+    fn diff_name_parser_stops_after_collecting_max_paths() {
+        let first = b"first.rs\0";
+        let mut input = Cursor::new([first.as_slice(), b"second.rs\0"].concat());
+
+        let changed = parse_diff_names(&mut input, 1, "");
+
+        assert_eq!(changed, vec!["first.rs".to_string()]);
+        assert_eq!(input.position(), first.len() as u64);
+    }
 
     #[test]
     fn git_changed_paths_kills_a_timed_out_process() {

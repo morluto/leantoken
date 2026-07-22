@@ -229,6 +229,12 @@ count, case sensitivity, and a generation-bound cursor. Defaults are 20 results,
 path, one-based returned line range, excerpt, match kind, score reasons, and
 content hash. Structural fields appear only when syntax supports them.
 
+Each page examines at most `max_results` ranked candidates. `max_tokens` may
+filter some or all of those candidates, so a page can contain fewer hits or be
+empty while still returning `next_cursor`. Follow the cursor to examine later
+candidates. When `next_cursor` is absent, every candidate was examined; increase
+`max_tokens` and restart the search if omitted excerpts must become eligible.
+
 Lexical matches remain eligible when structural extraction is unavailable or
 incomplete.
 
