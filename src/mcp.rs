@@ -1305,6 +1305,24 @@ mod tests {
     }
 
     #[test]
+    fn omitted_context_budget_uses_the_runtime_default() {
+        let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+            "task": "find answer"
+        }))
+        .expect("context request without a budget");
+        let (request, _) = request.into_parts(37);
+        assert_eq!(request.token_budget, 37);
+
+        let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+            "task": "find answer",
+            "token_budget": 23
+        }))
+        .expect("context request with a budget");
+        let (request, _) = request.into_parts(37);
+        assert_eq!(request.token_budget, 23);
+    }
+
+    #[test]
     fn tool_input_fields_are_documented() {
         for tool in LeanTokenMcp::tool_router().list_all() {
             let properties = tool

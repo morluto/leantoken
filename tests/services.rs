@@ -482,6 +482,16 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
         ),
         "invalid files glob"
     );
+    let mut files = files_limit_request(Some(1));
+    files.cursor = Some("invalid".into());
+    assert_static_error!(
+        services.files_with_consistency_cancellable(
+            files,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "malformed files cursor"
+    );
 
     let mut search = search_limit_request(Some(1), Some(1), Some(0));
     search.query = " ".into();
@@ -523,6 +533,16 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
             CancellationToken::new(),
         ),
         "oversized search query"
+    );
+    let mut search = search_limit_request(Some(1), Some(1), Some(0));
+    search.cursor = Some("invalid".into());
+    assert_static_error!(
+        services.search_with_consistency_cancellable(
+            search,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "malformed search cursor"
     );
 
     let mut outline = outline_limit_request(Some(1), Some(1));
@@ -637,6 +657,16 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
         ),
         "excessive context changed paths"
     );
+    let mut context = context_limit_request(1);
+    context.task = "a_".repeat(30_000);
+    assert_static_error!(
+        services.context_with_consistency_cancellable(
+            context,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        ),
+        "oversized derived context matcher"
+    );
 
     let committed = services
         .files(FilesRequest {
@@ -651,6 +681,49 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
         .await
         .expect("committed lookup");
     assert!(committed.entries.is_empty());
+}
+
+#[tokio::test]
+async fn working_tree_generation_checks_run_after_reconciliation() {
+    let (root, services) = fixture().await;
+    let generation = services
+        .status()
+        .await
+        .expect("initial status")
+        .repository_generation;
+    std::fs::write(
+        root.path().join("src/reconciled.rs"),
+        "pub fn reconciled() {}\n",
+    )
+    .expect("write unindexed source");
+
+    let mut request = search_limit_request(Some(1), Some(1), Some(0));
+    request.cursor = Some(format!("{generation}:0"));
+    let error = services
+        .search_with_consistency_cancellable(
+            request,
+            IndexConsistency::WorkingTree,
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("cursor from the pre-reconciliation generation must be stale");
+    assert!(matches!(error, Error::StaleCursor));
+
+    let after = services.status().await.expect("status after reconciliation");
+    assert!(after.repository_generation > generation);
+    let committed = services
+        .files(FilesRequest {
+            operation: FileOperation::Find,
+            path: None,
+            query: Some("reconciled".into()),
+            pattern: None,
+            max_results: Some(1),
+            cursor: None,
+            depth: None,
+        })
+        .await
+        .expect("committed lookup");
+    assert_eq!(committed.entries.len(), 1);
 }
 
 async fn tree_pages(

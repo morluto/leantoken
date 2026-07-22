@@ -388,6 +388,13 @@ impl Services {
         {
             validate_input(revision, "base revision", MAX_BASE_REVISION_BYTES)?;
         }
+        for query in facets::plan(&request.task, MAX_CONTEXT_QUERIES)
+            .queries
+            .iter()
+            .filter(|query| !query.has_facet(FacetKind::TestIntent))
+        {
+            compile_literal_regex(&query.value, false)?;
+        }
         Ok(())
     }
 

@@ -9,7 +9,7 @@ use super::files::FILE_LIST_PAGE_SIZE;
 use super::read::{StoredExcerpt, StoredExcerptRequest};
 use super::validation::{
     MAX_QUERY_BYTES, check_cancelled, make_cursor, parse_cursor, path_allowed, path_matches,
-    validate_glob_patterns, validate_input,
+    validate_cursor, validate_glob_patterns, validate_input,
 };
 use crate::model::*;
 use crate::storage::{ChunkHit, ReadSession, ReferenceHit, SymbolHit};
@@ -158,6 +158,7 @@ fn validate_search_input(request: &SearchRequest) -> Result<()> {
     validate_glob_patterns(&request.include_paths)?;
     validate_glob_patterns(&request.exclude_paths)?;
     validate_glob_patterns(&request.focus_paths)?;
+    validate_cursor(request.cursor.as_deref())?;
     if matches!(request.mode, SearchMode::Regex) {
         compile_regex(request)?;
     } else {
