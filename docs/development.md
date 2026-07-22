@@ -89,6 +89,14 @@ cargo build --release
 cargo package
 ```
 
+While `rmcp` is pinned to the temporary response-task fix for rust-sdk#1026,
+`cargo package` is a validation step only. Cargo normalizes git dependencies to
+their registry version in a published crate, which would resolve unpatched
+`rmcp 2.2.0`. Native release artifacts and the documented `cargo install --git`
+path build from the pinned repository revision. Do not publish this crate to
+crates.io until the fix is available in a released `rmcp` version and the pin
+has been removed.
+
 ## Release artifacts
 
 The generated release workflow builds native archives for Linux x64/arm64,

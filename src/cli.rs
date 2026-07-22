@@ -171,6 +171,7 @@ impl Cli {
         match self.command {
             Commands::Index { rebuild } => AppRequest::Index { rebuild },
             Commands::Status => AppRequest::Status,
+            Commands::Savings => AppRequest::Savings,
             Commands::Files(args) => AppRequest::Files(args.into()),
             Commands::Search(args) => AppRequest::Search(args.into()),
             Commands::Outline(args) => AppRequest::Outline(args.into()),
@@ -199,6 +200,7 @@ impl Cli {
 pub enum AppRequest {
     Index { rebuild: bool },
     Status,
+    Savings,
     Files(FilesRequest),
     Search(SearchRequest),
     Outline(OutlineRequest),
@@ -224,6 +226,9 @@ pub enum Commands {
 
     /// Show index status.
     Status,
+
+    /// Show cumulative estimated source tokens saved.
+    Savings,
 
     /// List, find, or glob repository paths.
     Files(FilesArgs),

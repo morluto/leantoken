@@ -1113,8 +1113,8 @@ mod tests {
         Connection::open(&future_database)
             .expect("future database")
             .execute(
-                "UPDATE meta SET schema_version = 6, repository_root = x'80' WHERE id = 1",
-                [],
+                "UPDATE meta SET schema_version = ?1, repository_root = x'80' WHERE id = 1",
+                [CURRENT_SCHEMA_VERSION + 1],
             )
             .expect("future schema");
         let mismatch_id = FIRST_ID;
@@ -1132,7 +1132,10 @@ mod tests {
         let future_migration_database = future_migration_directory.join(DATABASE_NAME);
         Connection::open(&future_migration_database)
             .expect("future migration database")
-            .execute_batch("PRAGMA user_version = 7; CREATE TABLE replacement(value INTEGER);")
+            .execute_batch(&format!(
+                "PRAGMA user_version = {}; CREATE TABLE replacement(value INTEGER);",
+                CURRENT_MIGRATION_VERSION + 1
+            ))
             .expect("future migration");
         let mut prune = request();
         prune.max_total_bytes = Some(0);

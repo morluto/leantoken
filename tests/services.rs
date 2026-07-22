@@ -1,7 +1,8 @@
 use leantoken::{
     Config, ContextRequest, ContextSignalPolicy, Error, FileOperation, FilesRequest, Freshness,
     IndexConsistency, IndexState, OutlineRequest, ReadRequest, ReadStatus, SearchMode, SearchRequest,
-    coordination::IndexCoordination, services::Services,
+    TokenSavingsOperation, coordination::IndexCoordination, services::Services,
+    tokens::Tokenizer,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -1098,6 +1099,104 @@ async fn five_services_return_bounded_grounded_responses() {
             .fragments
             .iter()
             .all(|fragment| fragment.content_hash != known)
+    );
+}
+
+#[tokio::test]
+async fn token_savings_tracks_successful_source_retrievals_by_operation() {
+    let (root, services) = fixture().await;
+    let initial = services.token_savings().await.expect("initial savings");
+    assert_eq!(initial.tracked_requests, 0);
+    assert_eq!(initial.estimated_source_tokens_saved, 0);
+    assert_eq!(initial.by_operation.len(), 4);
+
+    let search = services
+        .search(search_limit_request(Some(5), Some(100), Some(1)))
+        .await
+        .expect("search");
+    let outline = services
+        .outline(outline_limit_request(Some(10), Some(100)))
+        .await
+        .expect("outline");
+    let first_read = services
+        .read(ReadRequest {
+            path: "src/lib.rs".into(),
+            start_line: Some(1),
+            end_line: Some(3),
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("first read");
+    let repeated_read = services
+        .read(ReadRequest {
+            path: "src/lib.rs".into(),
+            start_line: Some(1),
+            end_line: Some(3),
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: Some(first_read.content_hash),
+        })
+        .await
+        .expect("conditional read");
+    let context = services
+        .context(context_limit_request(200))
+        .await
+        .expect("context");
+
+    assert_eq!(repeated_read.status, ReadStatus::NotModified);
+    let report = services.token_savings().await.expect("tracked savings");
+    assert_eq!(report.tokenizer, services.config().tokenizer.name());
+    assert_eq!(report.tracked_requests, 5);
+    assert_eq!(report.by_operation.len(), 4);
+    assert_eq!(
+        report
+            .by_operation
+            .iter()
+            .map(|row| (row.operation, row.tracked_requests))
+            .collect::<Vec<_>>(),
+        vec![
+            (TokenSavingsOperation::Search, 1),
+            (TokenSavingsOperation::Outline, 1),
+            (TokenSavingsOperation::Read, 2),
+            (TokenSavingsOperation::Context, 1),
+        ]
+    );
+    assert_eq!(
+        report.emitted_source_tokens,
+        search.meta.emitted_tokens as u64
+            + outline.meta.emitted_tokens as u64
+            + first_read.meta.emitted_tokens as u64
+            + context.meta.emitted_tokens as u64
+    );
+    assert!(report.baseline_source_tokens >= report.emitted_source_tokens);
+    assert!(report.estimated_source_tokens_saved > 0);
+
+    let config = Config::discover(root.path(), Some(root.path().join("index.sqlite")))
+        .expect("reopen config");
+    let reopened = Services::open(config).expect("reopen services");
+    assert_eq!(
+        reopened.token_savings().await.expect("persisted savings"),
+        report
+    );
+
+    let mut alternate_config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite")))
+            .expect("alternate tokenizer config");
+    alternate_config.tokenizer = Tokenizer::O200kBase;
+    let alternate = Services::open(alternate_config).expect("alternate tokenizer services");
+    alternate
+        .outline(outline_limit_request(Some(10), Some(100)))
+        .await
+        .expect("outline against stale tokenizer index");
+    assert_eq!(
+        alternate
+            .token_savings()
+            .await
+            .expect("alternate tokenizer savings")
+            .tracked_requests,
+        0
     );
 }
 

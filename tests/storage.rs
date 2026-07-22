@@ -124,6 +124,9 @@ fn storage_applies_lookup_index_migration_to_existing_databases() {
             "DROP INDEX chunks_file_line_idx;
              DROP TABLE path_entries;
              DROP TABLE import_candidates;
+             DROP TABLE token_savings;
+             ALTER TABLE files DROP COLUMN source_tokenizer;
+             ALTER TABLE files DROP COLUMN source_token_count;
              ALTER TABLE meta DROP COLUMN last_access_unix_seconds;
              ALTER TABLE meta DROP COLUMN repository_identity;
              ALTER TABLE meta DROP COLUMN repository_root;
@@ -154,7 +157,10 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
     let connection = rusqlite::Connection::open(&db).expect("raw connection");
     connection
         .execute_batch(
-            "ALTER TABLE meta DROP COLUMN last_access_unix_seconds;
+            "DROP TABLE token_savings;
+             ALTER TABLE files DROP COLUMN source_tokenizer;
+             ALTER TABLE files DROP COLUMN source_token_count;
+             ALTER TABLE meta DROP COLUMN last_access_unix_seconds;
              UPDATE meta SET schema_version = 4 WHERE id = 1;
              PRAGMA user_version = 5;",
         )
@@ -172,6 +178,34 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
         )
         .expect("last access");
     assert!(last_access > 0);
+    let savings_table: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'token_savings'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("token savings table");
+    assert_eq!(savings_table, 1);
+    let source_token_count_column: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM pragma_table_info('files') WHERE name = 'source_token_count'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("source token count column");
+    assert_eq!(source_token_count_column, 1);
+    let source_tokenizer_column: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM pragma_table_info('files') WHERE name = 'source_tokenizer'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("source tokenizer column");
+    assert_eq!(source_tokenizer_column, 1);
+    let migration_version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .expect("migration version");
+    assert_eq!(migration_version, 6);
 }
 
 #[test]

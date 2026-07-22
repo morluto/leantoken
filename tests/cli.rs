@@ -335,6 +335,9 @@ fn cli_index_and_status_and_mcp_commands() {
     let cli = parse(&["status"]);
     assert!(matches!(cli.app_request(), AppRequest::Status));
 
+    let cli = parse(&["savings"]);
+    assert!(matches!(cli.app_request(), AppRequest::Savings));
+
     let cli = parse(&["mcp"]);
     assert!(matches!(
         cli.app_request(),

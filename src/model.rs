@@ -544,6 +544,71 @@ pub struct StatusResponse {
     pub warnings: Vec<String>,
 }
 
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
+)]
+#[serde(rename_all = "snake_case")]
+/// Source retrieval operation included in token-savings accounting.
+pub enum TokenSavingsOperation {
+    /// Indexed source search.
+    Search,
+    /// Structural file outline.
+    Outline,
+    /// Exact source read.
+    Read,
+    /// Ranked task context.
+    Context,
+}
+
+impl TokenSavingsOperation {
+    pub(crate) const ALL: [Self; 4] = [Self::Search, Self::Outline, Self::Read, Self::Context];
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Search => "search",
+            Self::Outline => "outline",
+            Self::Read => "read",
+            Self::Context => "context",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Cumulative source-token estimate for one retrieval operation.
+pub struct TokenSavingsByOperation {
+    /// Retrieval operation represented by this row.
+    pub operation: TokenSavingsOperation,
+    /// Number of successful responses included in the estimate.
+    pub tracked_requests: u64,
+    /// Source tokens in the corresponding direct-read baseline.
+    pub baseline_source_tokens: u64,
+    /// Source tokens returned by LeanToken.
+    pub emitted_source_tokens: u64,
+    /// Saturating per-request difference between baseline and emitted source tokens.
+    pub estimated_source_tokens_saved: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Cumulative, repository-local estimate of source tokens avoided by retrieval.
+pub struct TokenSavingsResponse {
+    /// Tokenizer used for the tracked source counts.
+    pub tokenizer: String,
+    /// Whether the configured tokenizer provides exact local source counts.
+    pub token_count_exact: bool,
+    /// Stable description of the baseline used by this estimate.
+    pub estimate_basis: String,
+    /// Number of successful source responses included in the estimate.
+    pub tracked_requests: u64,
+    /// Source tokens in the corresponding direct-read baselines.
+    pub baseline_source_tokens: u64,
+    /// Source tokens returned by LeanToken.
+    pub emitted_source_tokens: u64,
+    /// Sum of saturating per-request baseline reductions.
+    pub estimated_source_tokens_saved: u64,
+    /// Fixed-shape breakdown for every tracked retrieval operation.
+    pub by_operation: Vec<TokenSavingsByOperation>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LanguageCount {
     pub language: String,

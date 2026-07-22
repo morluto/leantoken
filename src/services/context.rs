@@ -612,13 +612,20 @@ impl Services {
     ) -> Result<ContextResponse> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || {
-            this.context_sync(
+            let (evaluation, baseline_source_tokens) = this.context_sync(
                 request,
                 &cancellation,
                 CandidateDiagnostics::Omit,
                 ContextSignals::PRODUCTION,
-            )
-            .map(|evaluation| evaluation.response)
+            )?;
+            if let Some(baseline_source_tokens) = baseline_source_tokens {
+                this.record_token_savings(
+                    TokenSavingsOperation::Context,
+                    baseline_source_tokens,
+                    evaluation.response.meta.emitted_tokens,
+                );
+            }
+            Ok(evaluation.response)
         })
         .await?
     }
@@ -637,6 +644,7 @@ impl Services {
                 CandidateDiagnostics::Collect,
                 ContextSignals::PRODUCTION,
             )
+            .map(|(evaluation, _)| evaluation)
         })
         .await?
     }
@@ -659,6 +667,7 @@ impl Services {
                 CandidateDiagnostics::Collect,
                 ContextSignals::evaluation(policy),
             )
+            .map(|(evaluation, _)| evaluation)
         })
         .await?
     }
@@ -670,7 +679,7 @@ impl Services {
         cancellation: &CancellationToken,
         diagnostics: CandidateDiagnostics,
         signals: ContextSignals,
-    ) -> Result<ContextEvaluation> {
+    ) -> Result<(ContextEvaluation, Option<usize>)> {
         check_cancelled(cancellation)?;
         self.validate_context_request(&request)?;
         let diff_scope = self.resolve_diff_scope(&request)?;
@@ -1038,11 +1047,23 @@ impl Services {
                     .warnings
                     .push("no relevant indexed evidence found".into());
             }
-            Ok(ContextEvaluation {
-                response,
-                generated_candidate_paths,
-                generated_candidates,
-            })
+            let paths = response
+                .fragments
+                .iter()
+                .map(|fragment| fragment.path.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let baseline_source_tokens =
+                session.whole_file_source_tokens(&paths, self.config.tokenizer.name())?;
+            Ok((
+                ContextEvaluation {
+                    response,
+                    generated_candidate_paths,
+                    generated_candidates,
+                },
+                baseline_source_tokens,
+            ))
         })
     }
 }

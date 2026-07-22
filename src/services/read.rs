@@ -249,7 +249,7 @@ impl Services {
         validate_outline_input(&request)?;
         let limit = self.result_limit(request.max_results)?;
         let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
-        self.consistent(|session, generation| {
+        let (response, baseline_source_tokens) = self.consistent(|session, generation| {
             let mut remaining = limit;
             let mut emitted_tokens = 0usize;
             let mut files = Vec::new();
@@ -315,11 +315,28 @@ impl Services {
                     break;
                 }
             }
-            Ok(OutlineResponse {
-                files,
-                meta: self.meta(generation, emitted_tokens, None),
-            })
-        })
+            let paths = files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect::<Vec<_>>();
+            let baseline_source_tokens =
+                session.whole_file_source_tokens(&paths, self.config.tokenizer.name())?;
+            Ok((
+                OutlineResponse {
+                    files,
+                    meta: self.meta(generation, emitted_tokens, None),
+                },
+                baseline_source_tokens,
+            ))
+        })?;
+        if let Some(baseline_source_tokens) = baseline_source_tokens {
+            self.record_token_savings(
+                TokenSavingsOperation::Outline,
+                baseline_source_tokens,
+                response.meta.emitted_tokens,
+            );
+        }
+        Ok(response)
     }
 
     fn read_sync(
@@ -330,10 +347,16 @@ impl Services {
         check_cancelled(cancellation)?;
         validate_read_input(&request)?;
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
-        self.consistent(|session, generation| {
+        let (response, baseline_source_tokens) = self.consistent(|session, generation| {
             check_cancelled(cancellation)?;
             self.read_at_generation(session, &request, generation, max_tokens)
-        })
+        })?;
+        self.record_token_savings(
+            TokenSavingsOperation::Read,
+            baseline_source_tokens,
+            response.meta.emitted_tokens,
+        );
+        Ok(response)
     }
 
     fn read_at_generation(
@@ -342,7 +365,7 @@ impl Services {
         request: &ReadRequest,
         generation: u64,
         max_tokens: usize,
-    ) -> Result<ReadResponse> {
+    ) -> Result<(ReadResponse, usize)> {
         let indexed = session
             .find_file(&request.path)?
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
@@ -355,6 +378,7 @@ impl Services {
         let file = fs::File::open(&path)?;
         let full_hash = stream_hash(&file)?;
         let range = read_live_range(&file, target)?;
+        let baseline_source_tokens = self.config.tokenizer.count(&range.content);
         let start_line = range.start_line;
         let (content, emitted_tokens) = self.config.tokenizer.truncate(&range.content, max_tokens);
         let returned_lines = content
@@ -371,25 +395,28 @@ impl Services {
         let indexed_hash = Some(indexed.content_hash);
         let not_modified = request.expected_hash.as_deref() == Some(content_hash.as_str());
 
-        Ok(ReadResponse {
-            path: request.path.clone(),
-            status: if not_modified {
-                ReadStatus::NotModified
-            } else {
-                ReadStatus::Content
+        Ok((
+            ReadResponse {
+                path: request.path.clone(),
+                status: if not_modified {
+                    ReadStatus::NotModified
+                } else {
+                    ReadStatus::Content
+                },
+                start_line,
+                end_line,
+                content: (!not_modified).then(|| content.to_string()),
+                content_hash,
+                indexed_hash,
+                index_stale,
+                meta: self.meta(
+                    generation,
+                    if not_modified { 0 } else { emitted_tokens },
+                    None,
+                ),
             },
-            start_line,
-            end_line,
-            content: (!not_modified).then(|| content.to_string()),
-            content_hash,
-            indexed_hash,
-            index_stale,
-            meta: self.meta(
-                generation,
-                if not_modified { 0 } else { emitted_tokens },
-                None,
-            ),
-        })
+            baseline_source_tokens,
+        ))
     }
 }
 

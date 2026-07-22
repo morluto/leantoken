@@ -217,7 +217,7 @@ impl Services {
         let limit = self.result_limit(request.max_results)?;
         let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         let context_lines = self.context_line_limit(request.context_lines)?;
-        self.consistent(|session, generation| {
+        let (response, baseline_source_tokens) = self.consistent(|session, generation| {
             let offset = parse_cursor(request.cursor.as_deref(), generation)?;
             let mut hits = Vec::new();
             if matches!(
@@ -386,15 +386,34 @@ impl Services {
                 selected.push(hit);
             }
             let has_more = offset.saturating_add(consumed) < total_candidates;
-            Ok(SearchResponse {
-                hits: selected,
-                meta: self.meta(
-                    generation,
-                    emitted_tokens,
-                    has_more.then(|| make_cursor(generation, offset + consumed)),
-                ),
-            })
-        })
+            let paths = selected
+                .iter()
+                .map(|hit| hit.path.clone())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let baseline_source_tokens =
+                session.whole_file_source_tokens(&paths, self.config.tokenizer.name())?;
+            Ok((
+                SearchResponse {
+                    hits: selected,
+                    meta: self.meta(
+                        generation,
+                        emitted_tokens,
+                        has_more.then(|| make_cursor(generation, offset + consumed)),
+                    ),
+                },
+                baseline_source_tokens,
+            ))
+        })?;
+        if let Some(baseline_source_tokens) = baseline_source_tokens {
+            self.record_token_savings(
+                TokenSavingsOperation::Search,
+                baseline_source_tokens,
+                response.meta.emitted_tokens,
+            );
+        }
+        Ok(response)
     }
 
     fn symbol_search_hit(&self, hit: SymbolHit, query: &str, excerpt: StoredExcerpt) -> SearchHit {
