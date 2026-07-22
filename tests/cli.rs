@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, error::ErrorKind};
 use leantoken::cli::{AppRequest, Cli};
 use leantoken::model::{FileOperation, SearchMode};
 use leantoken::tokens::Tokenizer;
@@ -6,6 +6,42 @@ use leantoken::setup::SetupClient;
 
 fn parse(args: &[&str]) -> Cli {
     Cli::try_parse_from(std::iter::once("leantoken").chain(args.iter().copied())).unwrap()
+}
+
+fn help(args: &[&str]) -> String {
+    let error = Cli::try_parse_from(
+        std::iter::once("leantoken")
+            .chain(args.iter().copied())
+            .chain(std::iter::once("--help")),
+    )
+    .expect_err("help exits before producing a parsed CLI");
+    assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+    error
+        .to_string()
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn cli_root_help_snapshot() {
+    insta::assert_snapshot!("root_help", help(&[]));
+}
+
+#[test]
+fn cli_search_help_snapshot() {
+    insta::assert_snapshot!("search_help", help(&["search"]));
+}
+
+#[test]
+fn cli_setup_help_snapshot() {
+    insta::assert_snapshot!("setup_help", help(&["setup"]));
+}
+
+#[test]
+fn cli_cache_help_snapshot() {
+    insta::assert_snapshot!("cache_help", help(&["cache"]));
 }
 
 #[test]

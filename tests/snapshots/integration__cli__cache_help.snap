@@ -1,0 +1,70 @@
+---
+source: tests/cli.rs
+expression: "help(&[\"cache\"])"
+---
+Inspect or prune centrally managed repository caches
+
+Usage: leantoken cache [OPTIONS] <COMMAND>
+
+Commands:
+  list   List managed caches, sizes, roots, access times, and active leases
+  prune  Remove inactive managed caches selected by explicit criteria
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+      --root <PATH>
+          Repository root path
+
+          [default: .]
+
+      --database <PATH>
+          SQLite database path
+
+      --json
+          Emit compact JSON; retrieval commands use pretty JSON by default
+
+      --tokenizer <ENCODING>
+          Tokenizer used for source and protocol token accounting
+
+          Possible values:
+          - cl100k_base:   OpenAI `cl100k_base` (GPT-4, GPT-3.5-turbo, text-embedding-ada-002, ...)
+          - o200k_base:    OpenAI `o200k_base` (GPT-4o, o1/o3/o4, codex-*, ...)
+          - o200k_harmony: OpenAI `o200k_harmony`
+          - p50k_base:     OpenAI `p50k_base` (code models, text-davinci-002/003)
+          - r50k_base:     OpenAI `r50k_base` / GPT-2
+          - gpt2:          GPT-2 (alias for `r50k_base`)
+          - p50k_edit:     OpenAI `p50k_edit`
+          - estimate:      Fast estimate: the larger of one token per four characters and the whitespace-split word count
+
+          [default: cl100k_base]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Advanced repository options:
+      --allow-broad-root
+          Allow indexing a filesystem root, home directory, or parent of home
+
+      --include-generated
+          Include known generated and package-cache directories
+
+      --max-walk-entries <COUNT>
+          Maximum filesystem entries yielded by repository discovery
+
+      --max-files <COUNT>
+          Maximum files admitted to the repository index
+
+      --max-total-source-bytes <BYTES>
+          Maximum aggregate bytes admitted to the repository index
+
+      --max-depth <DEPTH>
+          Maximum repository-relative traversal depth
+
+      --max-file-bytes <BYTES>
+          Maximum bytes admitted from one file
+
+      --max-prepare-batch-files <COUNT>
+          Maximum files scheduled in one preparation batch
+
+      --max-prepare-batch-bytes <BYTES>
+          Maximum source bytes scheduled in one preparation batch
