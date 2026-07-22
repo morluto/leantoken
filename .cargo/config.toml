@@ -1,0 +1,5 @@
+[alias]
+# Fast product-behavior loop; excludes benchmark/example targets.
+test-product = "test --all-features --lib --bins --test integration"
+# Less-frequent benchmark and example target group.
+test-extras = "test --all-features --examples"

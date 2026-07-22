@@ -42,7 +42,7 @@ Run the complete product-behavior suite without compiling or executing the
 benchmark examples:
 
 ```bash
-cargo test --all-features --lib --bins --test integration
+cargo test-product
 ```
 
 Benchmark and example tests are a separate target group because Cargo executes
@@ -50,9 +50,17 @@ test binaries serially. Run them when changing `examples/`, benchmark fixtures,
 or their shared behavior:
 
 ```bash
-cargo test --all-features --examples
+cargo test-extras
 cargo test --all-features --doc
 ```
+
+These repository-local Cargo aliases keep the fast and extended target groups
+consistent with CI. The development profile retains line tables for useful
+backtraces in LeanToken while omitting dependency debug information, which
+keeps links and the local `target` directory smaller. Override it temporarily
+with `CARGO_PROFILE_DEV_DEBUG=2` when a debugger needs full local-variable data
+for LeanToken code. When debugging a dependency too, pass
+`--config 'profile.dev.package."*".debug=2'` to Cargo.
 
 ## Pull request readiness
 
@@ -62,7 +70,7 @@ change:
 ```bash
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features --lib --bins --test integration
+cargo test-product
 ```
 
 CI runs benchmark, example, and documentation tests once on Linux, and runs
