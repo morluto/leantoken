@@ -427,26 +427,26 @@
           "surface": "outline_response",
           "mode": "dual",
           "baseline": {
-            "source_tokens": 47,
-            "response_json_tokens": 224,
-            "serialized_result_tokens": 488,
-            "complete_wire_tokens": 3184,
+            "source_tokens": 33,
+            "response_json_tokens": 179,
+            "serialized_result_tokens": 397,
+            "complete_wire_tokens": 3093,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 0
           },
           "candidate": {
-            "source_tokens": 47,
-            "response_json_tokens": 160,
-            "serialized_result_tokens": 356,
-            "complete_wire_tokens": 3052,
+            "source_tokens": 33,
+            "response_json_tokens": 130,
+            "serialized_result_tokens": 296,
+            "complete_wire_tokens": 2992,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 0
           },
-          "response_json_token_delta": -64,
-          "serialized_result_token_delta": -132,
-          "complete_wire_token_delta": -132
+          "response_json_token_delta": -49,
+          "serialized_result_token_delta": -101,
+          "complete_wire_token_delta": -101
         }
       ],
       "round_trip": false,

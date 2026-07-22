@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::ops::ControlFlow;
 use std::path::Path;
 
@@ -181,7 +182,14 @@ fn parse_language_with_cancellation(
         let mut imports = Vec::new();
 
         run_query(source, &cache.tags_query, root, &mut is_cancelled, |qm| {
-            process_tags_match(source, &cache.tags_query, qm, &mut symbols, &mut references);
+            process_tags_match(
+                language,
+                source,
+                &cache.tags_query,
+                qm,
+                &mut symbols,
+                &mut references,
+            );
         })?;
         if let Some(import_query) = &cache.import_query {
             run_query(source, import_query, root, &mut is_cancelled, |qm| {
@@ -193,6 +201,7 @@ fn parse_language_with_cancellation(
             return Err(Error::Cancelled);
         }
 
+        deduplicate_symbols(&mut symbols);
         compute_symbol_parents(&mut symbols);
         compute_reference_enclosing(&symbols, &mut references);
 
@@ -346,6 +355,7 @@ where
 }
 
 fn process_tags_match(
+    language: &str,
     source: &str,
     query: &Query,
     qm: &QueryMatch,
@@ -374,14 +384,14 @@ fn process_tags_match(
     let name = node_text(source, name_node);
 
     for (is_definition, kind, kind_node) in kind_captures {
-        let kind = kind.to_string();
         if is_definition {
             let kind_node = definition_extent(kind_node);
+            let (kind, parent) = canonical_definition(language, source, kind, kind_node);
             let (start_line, end_line, start_byte, end_byte) = range_from_node(kind_node);
             symbols.push(Symbol {
                 name: name.clone(),
                 kind,
-                parent: None,
+                parent,
                 signature: signature_from_node(source, kind_node),
                 start_line,
                 end_line,
@@ -392,7 +402,7 @@ fn process_tags_match(
             let (start_line, end_line, start_byte, end_byte) = range_from_node(name_node);
             references.push(Reference {
                 name: name.clone(),
-                kind,
+                kind: kind.to_string(),
                 role: ReferenceRole::Reference,
                 enclosing_symbol: None,
                 start_line,
@@ -401,6 +411,77 @@ fn process_tags_match(
                 end_byte,
             });
         }
+    }
+}
+
+fn canonical_definition(
+    language: &str,
+    source: &str,
+    kind: &str,
+    node: Node<'_>,
+) -> (String, Option<String>) {
+    match (language, node.kind()) {
+        ("rust", "function_item") => rust_function_identity(source, node),
+        ("go", "method_declaration") => ("method".into(), go_method_owner(source, node)),
+        _ => (kind.to_string(), None),
+    }
+}
+
+fn rust_function_identity(source: &str, node: Node<'_>) -> (String, Option<String>) {
+    let Some(declarations) = node
+        .parent()
+        .filter(|parent| parent.kind() == "declaration_list")
+    else {
+        return ("function".into(), None);
+    };
+    match declarations.parent() {
+        Some(owner) if owner.kind() == "impl_item" => {
+            let owner = owner
+                .child_by_field_name("type")
+                .and_then(|node| base_type_name(source, node));
+            ("method".into(), owner)
+        }
+        Some(owner) if owner.kind() == "trait_item" => {
+            let owner = owner
+                .child_by_field_name("name")
+                .and_then(|node| base_type_name(source, node));
+            ("method".into(), owner)
+        }
+        _ => ("function".into(), None),
+    }
+}
+
+fn go_method_owner(source: &str, node: Node<'_>) -> Option<String> {
+    let receiver = node.child_by_field_name("receiver")?;
+    let mut cursor = receiver.walk();
+    receiver.named_children(&mut cursor).find_map(|parameter| {
+        parameter
+            .child_by_field_name("type")
+            .and_then(|node| base_type_name(source, node))
+    })
+}
+
+fn base_type_name(source: &str, node: Node<'_>) -> Option<String> {
+    match node.kind() {
+        "type_identifier" | "identifier" | "field_identifier" | "primitive_type" => {
+            let name = node_text(source, node);
+            (!name.is_empty()).then_some(name)
+        }
+        "generic_type" => node
+            .child_by_field_name("type")
+            .and_then(|node| base_type_name(source, node)),
+        "scoped_type_identifier" | "qualified_type" => node
+            .child_by_field_name("name")
+            .and_then(|node| base_type_name(source, node)),
+        "pointer_type" | "reference_type" | "parenthesized_type" | "bracketed_type"
+        | "abstract_type" => {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor)
+                .find_map(|child| base_type_name(source, child))
+        }
+        _ => node
+            .child_by_field_name("type")
+            .and_then(|node| base_type_name(source, node)),
     }
 }
 
@@ -496,13 +577,14 @@ fn compute_symbol_parents(symbols: &mut [Symbol]) {
     let mut stack: Vec<usize> = Vec::new();
     for i in indices {
         while let Some(&top) = stack.last() {
-            if symbols[top].end_byte <= symbols[i].start_byte {
-                stack.pop();
-            } else {
+            if strictly_contains(&symbols[top], &symbols[i]) {
                 break;
             }
+            stack.pop();
         }
-        symbols[i].parent = stack.last().map(|&top| symbols[top].name.clone());
+        if symbols[i].parent.is_none() {
+            symbols[i].parent = stack.last().map(|&top| symbols[top].name.clone());
+        }
         stack.push(i);
     }
 
@@ -511,6 +593,24 @@ fn compute_symbol_parents(symbols: &mut [Symbol]) {
             .cmp(&b.start_byte)
             .then_with(|| a.end_byte.cmp(&b.end_byte))
     });
+}
+
+fn deduplicate_symbols(symbols: &mut Vec<Symbol>) {
+    let mut seen = HashSet::with_capacity(symbols.len());
+    symbols.retain(|symbol| {
+        seen.insert((
+            symbol.kind.clone(),
+            symbol.name.clone(),
+            symbol.start_byte,
+            symbol.end_byte,
+        ))
+    });
+}
+
+fn strictly_contains(parent: &Symbol, child: &Symbol) -> bool {
+    parent.start_byte <= child.start_byte
+        && parent.end_byte >= child.end_byte
+        && (parent.start_byte < child.start_byte || parent.end_byte > child.end_byte)
 }
 
 fn compute_reference_enclosing(symbols: &[Symbol], references: &mut [Reference]) {
@@ -874,6 +974,88 @@ end
     }
 
     #[test]
+    fn rust_canonicalizes_function_identity_and_method_owners() -> Result<()> {
+        let source = r#"
+struct Point;
+struct Wrapper<T>(T);
+mod nested {
+    pub struct Scoped<T>(pub T);
+}
+
+fn top_level() {}
+
+mod tests {
+    fn helper() {}
+}
+
+impl Point {
+    fn distance(&self) {}
+
+    const VALUE: usize = {
+        fn associated_helper() -> usize { 1 }
+        associated_helper()
+    };
+}
+
+impl<T> Wrapper<T> {
+    fn generic_owner(&self) {}
+}
+
+impl<T> nested::Scoped<T> {
+    fn scoped_owner(&self) {}
+}
+
+trait Render {
+    fn render(&self) {}
+}
+
+trait Local {
+    fn primitive_owner(&self);
+}
+
+impl Local for u32 {
+    fn primitive_owner(&self) {}
+}
+"#;
+        let output = parse_language("rust", source)?;
+
+        for (name, kind, parent) in [
+            ("top_level", "function", None),
+            ("helper", "function", Some("tests")),
+            ("distance", "method", Some("Point")),
+            ("associated_helper", "function", Some("VALUE")),
+            ("generic_owner", "method", Some("Wrapper")),
+            ("scoped_owner", "method", Some("Scoped")),
+            ("render", "method", Some("Render")),
+            ("primitive_owner", "method", Some("u32")),
+        ] {
+            let matching = output
+                .symbols
+                .iter()
+                .filter(|symbol| symbol.name == name)
+                .collect::<Vec<_>>();
+            assert_eq!(matching.len(), 1, "symbols for {name}: {matching:?}");
+            assert_eq!(matching[0].kind, kind, "symbol: {:?}", matching[0]);
+            assert_eq!(
+                matching[0].parent.as_deref(),
+                parent,
+                "symbol: {:?}",
+                matching[0]
+            );
+        }
+
+        assert!(output.symbols.iter().all(|symbol| {
+            symbol.parent.as_deref() != Some(symbol.name.as_str())
+                || output.symbols.iter().any(|candidate| {
+                    candidate.name == symbol.name
+                        && candidate.start_byte < symbol.start_byte
+                        && candidate.end_byte > symbol.end_byte
+                })
+        }));
+        Ok(())
+    }
+
+    #[test]
     fn python_parses_class_function_imports() -> Result<()> {
         let out = parse_language("python", PYTHON_SRC)?;
         assert_eq!(out.language.as_deref(), Some("python"));
@@ -977,6 +1159,37 @@ end
         let imports = import_targets(&out);
         assert!(imports.contains(&"fmt"), "imports: {imports:?}");
         assert!(imports.contains(&"strings"), "imports: {imports:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn go_methods_use_value_pointer_and_generic_receiver_owners() -> Result<()> {
+        let source = r#"
+package sample
+
+type Point struct{}
+func (p Point) Value() {}
+func (p *Point) Pointer() {}
+
+type Pair[T any] struct{}
+func (p Pair[T]) Generic() {}
+"#;
+        let output = parse_language("go", source)?;
+
+        for (name, parent) in [
+            ("Value", "Point"),
+            ("Pointer", "Point"),
+            ("Generic", "Pair"),
+        ] {
+            let matching = output
+                .symbols
+                .iter()
+                .filter(|symbol| symbol.name == name)
+                .collect::<Vec<_>>();
+            assert_eq!(matching.len(), 1, "symbols for {name}: {matching:?}");
+            assert_eq!(matching[0].kind, "method");
+            assert_eq!(matching[0].parent.as_deref(), Some(parent));
+        }
         Ok(())
     }
 

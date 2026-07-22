@@ -1438,6 +1438,61 @@ async fn symbol_reads_and_outline_filters_search_beyond_result_caps() {
 }
 
 #[tokio::test]
+async fn fixture_outlines_deduplicate_methods_and_report_receiver_owners() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    for (path, source) in [
+        (
+            "src/rust/math.rs",
+            include_str!("../fixtures/sample_repo/src/rust/math.rs"),
+        ),
+        (
+            "src/go/point.go",
+            include_str!("../fixtures/sample_repo/src/go/point.go"),
+        ),
+    ] {
+        let absolute = root.path().join(path);
+        std::fs::create_dir_all(absolute.parent().expect("fixture parent"))
+            .expect("create fixture parent");
+        std::fs::write(absolute, source).expect("write fixture source");
+    }
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index fixtures");
+
+    let outline = services
+        .outline(OutlineRequest {
+            paths: vec!["src/rust/math.rs".into(), "src/go/point.go".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(100),
+            max_tokens: Some(2_000),
+        })
+        .await
+        .expect("fixture outline");
+    let symbols = outline
+        .files
+        .iter()
+        .flat_map(|file| file.symbols.iter())
+        .collect::<Vec<_>>();
+
+    for (name, parent) in [("distance", "Point"), ("Distance", "Point")] {
+        let matching = symbols
+            .iter()
+            .filter(|symbol| symbol.name == name)
+            .collect::<Vec<_>>();
+        assert_eq!(matching.len(), 1, "symbols for {name}: {matching:?}");
+        assert_eq!(matching[0].kind, "method");
+        assert_eq!(matching[0].parent.as_deref(), Some(parent));
+    }
+
+    let status = services.status().await.expect("status");
+    assert_eq!(status.symbol_count, symbols.len());
+    assert_eq!(status.symbol_count, 6);
+}
+
+#[tokio::test]
 async fn oversized_query_is_rejected_without_stopping_services() {
     let (_root, services) = fixture().await;
     let oversized = "x".repeat(64 * 1024 + 1);

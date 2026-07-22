@@ -51,7 +51,7 @@ resends and zero overlapping tokens relative to that baseline.
 | short reason codes | -10 | rejected: no model-behavior evidence |
 | omit omission details | -60 | rejected: loses resend diagnostics |
 | omit default freshness metadata | -22 | rejected: loses explicit correctness state |
-| positional outline tuples | -132 | rejected: breaks typed range identity |
+| positional outline tuples | -101 | rejected: breaks typed range identity |
 | tree path strings | -129 | rejected: loses kind/language/size metadata |
 | remove tool-description examples | -87 | rejected: call-quality effect unmeasured |
 
