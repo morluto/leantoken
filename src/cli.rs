@@ -40,46 +40,81 @@ pub struct Cli {
     pub root: PathBuf,
 
     /// Allow indexing a filesystem root, home directory, or parent of home.
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help_heading = "Advanced repository options")]
     pub allow_broad_root: bool,
 
     /// Include known generated and package-cache directories.
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help_heading = "Advanced repository options")]
     pub include_generated: bool,
 
     /// Maximum filesystem entries yielded by repository discovery.
-    #[arg(long, value_name = "COUNT", global = true)]
+    #[arg(
+        long,
+        value_name = "COUNT",
+        global = true,
+        help_heading = "Advanced repository options"
+    )]
     pub max_walk_entries: Option<NonZeroU64>,
 
     /// Maximum files admitted to the repository index.
-    #[arg(long, value_name = "COUNT", global = true)]
+    #[arg(
+        long,
+        value_name = "COUNT",
+        global = true,
+        help_heading = "Advanced repository options"
+    )]
     pub max_files: Option<NonZeroU64>,
 
     /// Maximum aggregate bytes admitted to the repository index.
-    #[arg(long, value_name = "BYTES", global = true)]
+    #[arg(
+        long,
+        value_name = "BYTES",
+        global = true,
+        help_heading = "Advanced repository options"
+    )]
     pub max_total_source_bytes: Option<NonZeroU64>,
 
     /// Maximum repository-relative traversal depth.
-    #[arg(long, value_name = "DEPTH", global = true)]
+    #[arg(
+        long,
+        value_name = "DEPTH",
+        global = true,
+        help_heading = "Advanced repository options"
+    )]
     pub max_depth: Option<NonZeroUsize>,
 
     /// Maximum bytes admitted from one file.
-    #[arg(long, value_name = "BYTES", global = true)]
+    #[arg(
+        long,
+        value_name = "BYTES",
+        global = true,
+        help_heading = "Advanced repository options"
+    )]
     pub max_file_bytes: Option<NonZeroU64>,
 
     /// Maximum files scheduled in one preparation batch.
-    #[arg(long, value_name = "COUNT", global = true)]
+    #[arg(
+        long,
+        value_name = "COUNT",
+        global = true,
+        help_heading = "Advanced repository options"
+    )]
     pub max_prepare_batch_files: Option<NonZeroUsize>,
 
     /// Maximum source bytes scheduled in one preparation batch.
-    #[arg(long, value_name = "BYTES", global = true)]
+    #[arg(
+        long,
+        value_name = "BYTES",
+        global = true,
+        help_heading = "Advanced repository options"
+    )]
     pub max_prepare_batch_bytes: Option<NonZeroU64>,
 
     /// SQLite database path.
     #[arg(long, value_name = "PATH", global = true)]
     pub database: Option<PathBuf>,
 
-    /// Emit JSON output where applicable.
+    /// Emit compact JSON; retrieval commands use pretty JSON by default.
     #[arg(long, global = true)]
     pub json: bool,
 
