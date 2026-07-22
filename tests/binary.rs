@@ -46,6 +46,39 @@ fn cli_indexes_statuses_and_searches_as_json() {
 }
 
 #[test]
+fn cli_files_tree_treats_dot_as_the_repository_root() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir(root.path().join("src")).expect("src directory");
+    std::fs::write(root.path().join("README.md"), "fixture\n").expect("readme");
+    std::fs::write(root.path().join("src/lib.rs"), "pub fn answer() -> u8 { 42 }\n")
+        .expect("source");
+    let database = root.path().join("index.sqlite");
+    run(root.path(), &database, &["index"]);
+
+    let omitted = run(
+        root.path(),
+        &database,
+        &["files", "tree", "--depth", "2", "--max-results", "2"],
+    );
+    let dotted = run(
+        root.path(),
+        &database,
+        &[
+            "files",
+            "tree",
+            "--path",
+            ".",
+            "--depth",
+            "2",
+            "--max-results",
+            "2",
+        ],
+    );
+
+    assert_eq!(dotted, omitted);
+}
+
+#[test]
 fn cli_index_limit_error_is_structured_and_does_not_publish_partial_files() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("a.rs"), "fn a() {}\n").expect("a");

@@ -20,6 +20,38 @@ async fn fixture() -> (tempfile::TempDir, Services) {
     (root, services)
 }
 
+async fn tree_pages(
+    services: &Services,
+    path: Option<&str>,
+) -> Vec<(serde_json::Value, Option<String>)> {
+    let mut cursor = None;
+    let mut pages = Vec::new();
+    loop {
+        let response = services
+            .files(FilesRequest {
+                operation: FileOperation::Tree,
+                path: path.map(str::to_owned),
+                query: None,
+                pattern: None,
+                max_results: Some(2),
+                cursor,
+                depth: Some(2),
+            })
+            .await
+            .expect("tree page");
+        let next = response.meta.next_cursor;
+        pages.push((
+            serde_json::to_value(response.entries).expect("serialize tree entries"),
+            next.clone(),
+        ));
+        let Some(next) = next else {
+            break;
+        };
+        cursor = Some(next);
+    }
+    pages
+}
+
 async fn indexed_source(path: &str, content: &[u8]) -> (tempfile::TempDir, Services) {
     let root = tempfile::tempdir().expect("temporary repository");
     let source_path = root.path().join(path);
@@ -719,6 +751,37 @@ async fn file_tree_projection_respects_root_depth_and_removes_empty_directories(
 }
 
 #[tokio::test]
+async fn file_tree_normalizes_equivalent_roots_before_query_and_pagination() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir_all(root.path().join("src/rust")).expect("directories");
+    std::fs::write(root.path().join("README.md"), "fixture\n").expect("readme");
+    std::fs::write(root.path().join("src/lib.rs"), "fn lib() {}\n").expect("lib source");
+    std::fs::write(root.path().join("src/rust/a.rs"), "fn a() {}\n").expect("a source");
+    std::fs::write(root.path().join("src/rust/b.rs"), "fn b() {}\n").expect("b source");
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index");
+
+    for aliases in [
+        vec![None, Some(""), Some("."), Some("./")],
+        vec![Some("src"), Some("./src"), Some("src/")],
+        vec![
+            Some("src/rust"),
+            Some("./src//rust"),
+            Some("src/rust/"),
+        ],
+    ] {
+        let expected = tree_pages(&services, aliases[0]).await;
+        assert!(expected.len() > 1, "fixture must exercise pagination");
+        for alias in aliases.into_iter().skip(1) {
+            assert_eq!(tree_pages(&services, alias).await, expected, "alias {alias:?}");
+        }
+    }
+}
+
+#[tokio::test]
 async fn invalid_focus_glob_is_a_typed_error() {
     let (_root, services) = fixture().await;
     let error = services
@@ -740,21 +803,22 @@ async fn invalid_focus_glob_is_a_typed_error() {
 }
 
 #[tokio::test]
-async fn file_tree_rejects_absolute_roots() {
+async fn file_tree_rejects_unsafe_roots() {
     let (_root, services) = fixture().await;
-    let error = services
-        .files(FilesRequest {
-            operation: FileOperation::Tree,
-            path: Some("/src".into()),
-            query: None,
-            pattern: None,
-            max_results: None,
-            cursor: None,
-            depth: None,
-        })
-        .await
-        .expect_err("absolute tree root must fail");
-    assert!(error.to_string().contains("escapes repository root"));
+    for path in ["/src", "../src", "src/../rust", "src\0rust"] {
+        services
+            .files(FilesRequest {
+                operation: FileOperation::Tree,
+                path: Some(path.into()),
+                query: None,
+                pattern: None,
+                max_results: None,
+                cursor: None,
+                depth: None,
+            })
+            .await
+            .expect_err("unsafe tree root must fail");
+    }
 }
 
 #[tokio::test]
