@@ -53,7 +53,6 @@ impl RetryBackoff {
 
 #[tokio::main]
 async fn main() {
-    init_tracing();
     let arguments = std::env::args_os().collect::<Vec<_>>();
     let json_requested = cli_json_requested(&arguments);
     let cli = match Cli::try_parse_from(arguments) {
@@ -66,6 +65,7 @@ async fn main() {
         Err(error) => error.exit(),
     };
     let json = cli.json;
+    init_tracing(json);
     if let Err(error) = run(cli).await {
         if json {
             eprintln!("{}", serde_json::json!(cli_error_response(&error)));
@@ -592,7 +592,11 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
     }
 }
 
-fn init_tracing() {
+fn init_tracing(json: bool) {
+    if json {
+        return;
+    }
+
     use tracing_subscriber::EnvFilter;
     use tracing_subscriber::filter::FilterFn;
     use tracing_subscriber::prelude::*;

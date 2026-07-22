@@ -1,5 +1,5 @@
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     process::{Child, ChildStdin, Stdio},
     sync::mpsc,
     time::{Duration, Instant},
@@ -571,35 +571,37 @@ fn mcp_runtime_failure_transitions_tools_out_of_starting_state() {
     let mut process = McpProcess::spawn(root.path(), &database);
     process.initialize();
     process.send_initialized();
+    process.wait_until_unavailable(Duration::from_secs(5));
+}
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut id = 2;
-    loop {
-        process.send(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "tools/call",
-            "params": {
-                "name": "leantoken_files",
-                "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
-            }
-        }));
-        let response = process.response(deadline.saturating_duration_since(Instant::now()));
-        let message = response["result"]["content"][0]["text"]
-            .as_str()
-            .unwrap_or_default();
-        if message.contains("unavailable") {
-            assert_eq!(response["result"]["isError"], true);
-            assert!(process.child.try_wait().expect("poll process").is_none());
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "runtime failure remained hidden behind startup state: {response}"
-        );
-        id += 1;
-        std::thread::sleep(Duration::from_millis(50));
-    }
+#[test]
+fn cli_json_mcp_failure_is_one_document_after_a_logged_error() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "fn answer() {}\n").expect("write fixture");
+    let database = root.path().join("index.sqlite");
+    std::fs::create_dir(database.with_extension("sqlite.leader.lock"))
+        .expect("invalid leadership artifact");
+
+    let mut process =
+        McpProcess::spawn_with_captured_stderr(root.path(), &database, &["--json"]);
+    process.initialize();
+    process.send_initialized();
+    process.wait_until_unavailable(Duration::from_secs(5));
+    process.stdin.take();
+
+    let status = process
+        .child
+        .wait_timeout(Duration::from_secs(5))
+        .expect("wait for JSON MCP failure")
+        .expect("JSON MCP process should exit after EOF");
+    assert!(!status.success());
+
+    let stderr = process.take_stderr();
+    let error: serde_json::Value =
+        serde_json::from_slice(&stderr).expect("one structured error without tracing records");
+    assert_eq!(error["category"], "internal_error");
+    assert!(error["error"].is_string());
+    assert_eq!(error.as_object().map(serde_json::Map::len), Some(2));
 }
 
 #[test]
@@ -1307,6 +1309,7 @@ struct McpProcess {
     child: Child,
     stdin: Option<ChildStdin>,
     lines: mpsc::Receiver<String>,
+    stderr_task: Option<std::thread::JoinHandle<Vec<u8>>>,
 }
 
 impl McpProcess {
@@ -1319,6 +1322,23 @@ impl McpProcess {
         database: &std::path::Path,
         arguments: &[&str],
     ) -> Self {
+        Self::spawn_with_options(root, database, arguments, false)
+    }
+
+    fn spawn_with_captured_stderr(
+        root: &std::path::Path,
+        database: &std::path::Path,
+        arguments: &[&str],
+    ) -> Self {
+        Self::spawn_with_options(root, database, arguments, true)
+    }
+
+    fn spawn_with_options(
+        root: &std::path::Path,
+        database: &std::path::Path,
+        arguments: &[&str],
+        capture_stderr: bool,
+    ) -> Self {
         let mut command = std::process::Command::new(assert_cmd::cargo::cargo_bin!("leantoken"));
         command
             .args([
@@ -1329,14 +1349,27 @@ impl McpProcess {
             ])
             .args(arguments)
             .arg("mcp");
+        command.stderr(if capture_stderr {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
             .spawn()
             .expect("spawn MCP process");
         let stdin = child.stdin.take().expect("MCP stdin");
         let stdout = child.stdout.take().expect("MCP stdout");
+        let stderr_task = child.stderr.take().map(|mut stderr| {
+            std::thread::spawn(move || {
+                let mut output = Vec::new();
+                stderr
+                    .read_to_end(&mut output)
+                    .expect("read MCP stderr");
+                output
+            })
+        });
         let (tx, lines) = mpsc::channel();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
@@ -1350,7 +1383,16 @@ impl McpProcess {
             child,
             stdin: Some(stdin),
             lines,
+            stderr_task,
         }
+    }
+
+    fn take_stderr(&mut self) -> Vec<u8> {
+        self.stderr_task
+            .take()
+            .expect("captured MCP stderr")
+            .join()
+            .expect("join MCP stderr reader")
     }
 
     fn initialize(&mut self) -> serde_json::Value {
@@ -1398,6 +1440,37 @@ impl McpProcess {
             std::thread::sleep(Duration::from_millis(50));
         }
         panic!("MCP process did not become ready within {timeout:?}");
+    }
+
+    fn wait_until_unavailable(&mut self, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        let mut id = 2;
+        loop {
+            self.send(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": {
+                    "name": "leantoken_files",
+                    "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
+                }
+            }));
+            let response = self.response(deadline.saturating_duration_since(Instant::now()));
+            let message = response["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap_or_default();
+            if message.contains("unavailable") {
+                assert_eq!(response["result"]["isError"], true);
+                assert!(self.child.try_wait().expect("poll process").is_none());
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "runtime failure remained hidden behind startup state: {response}"
+            );
+            id += 1;
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 
     fn send(&mut self, message: serde_json::Value) {
@@ -1455,6 +1528,9 @@ impl Drop for McpProcess {
             let _ = self.child.kill();
         }
         let _ = self.child.wait();
+        if let Some(task) = self.stderr_task.take() {
+            let _ = task.join();
+        }
     }
 }
 

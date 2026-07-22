@@ -363,6 +363,8 @@ branch on these fields instead of parsing `error` text.
 Argument parsing failures use `invalid_input` and retain clap's exit status 2.
 Help and version output are not failures: they remain on stdout with status 0,
 even when `--json` is present. Errors after successful parsing retain status 1.
+JSON mode suppresses tracing on stderr so each failure remains one complete JSON
+document.
 
 Current category values are:
 
