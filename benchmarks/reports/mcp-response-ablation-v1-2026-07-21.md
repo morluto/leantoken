@@ -53,11 +53,11 @@ resends and zero overlapping tokens relative to that baseline.
 | omit default freshness metadata | -22 | rejected: loses explicit correctness state |
 | positional outline tuples | -101 | rejected: breaks typed range identity |
 | tree path strings | -129 | rejected: loses kind/language/size metadata |
-| remove tool-description examples | -87 | rejected: call-quality effect unmeasured |
+| remove tool-description examples | -91 | rejected: call-quality effect unmeasured |
 
 Omitting the task fingerprint reduces response JSON from 549 to 531 tokens,
 the dual result from 1,162 to 1,123 tokens, and the complete modeled handoff
-from 3,824 to 3,785 tokens. The request already carries the task, no follow-up
+from 3,979 to 3,940 tokens. The request already carries the task, no follow-up
 request accepts the fingerprint, and aligned fragment hashes retain the
 identity used by known-content deduplication. The in-memory response keeps the
 fingerprint for evaluation; only serialization omits it.
@@ -67,8 +67,8 @@ selection reasons, aligned fragment hashes, bounded omission details,
 warnings, repository generation, freshness, emitted-source count, and exact-
 token status. It omits the internal task fingerprint, repeated fragment hash,
 score, per-fragment token count, default source representation, and null
-cursor. The MCP tool catalog snapshot is unchanged because output schemas are
-not published.
+cursor. The six-tool MCP catalog is 2,381 tokens after adding the read-only
+`leantoken_savings` entry. Output schemas remain unpublished.
 
 ## Decision
 

@@ -27,11 +27,11 @@
   "baseline": {
     "source_tokens": 195,
     "response_json_tokens": 549,
-    "catalog_tokens": 2306,
+    "catalog_tokens": 2381,
     "dual_result_tokens": 1162,
     "text_result_tokens": 610,
     "structured_result_tokens": 574,
-    "complete_dual_wire_tokens": 3888,
+    "complete_dual_wire_tokens": 3979,
     "fragment_count": 5,
     "receipt_hash_count": 5,
     "omitted_detail_count": 1,
@@ -54,7 +54,7 @@
             "source_tokens": 195,
             "response_json_tokens": 549,
             "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3888,
+            "complete_wire_tokens": 3979,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -63,7 +63,7 @@
             "source_tokens": 195,
             "response_json_tokens": 549,
             "serialized_result_tokens": 574,
-            "complete_wire_tokens": 3300,
+            "complete_wire_tokens": 3391,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -93,7 +93,7 @@
             "source_tokens": 195,
             "response_json_tokens": 549,
             "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3888,
+            "complete_wire_tokens": 3979,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -102,7 +102,7 @@
             "source_tokens": 195,
             "response_json_tokens": 549,
             "serialized_result_tokens": 610,
-            "complete_wire_tokens": 3336,
+            "complete_wire_tokens": 3427,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -132,7 +132,7 @@
             "source_tokens": 195,
             "response_json_tokens": 549,
             "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3888,
+            "complete_wire_tokens": 3979,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -141,7 +141,7 @@
             "source_tokens": 195,
             "response_json_tokens": 531,
             "serialized_result_tokens": 1123,
-            "complete_wire_tokens": 3849,
+            "complete_wire_tokens": 3940,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -171,7 +171,7 @@
             "source_tokens": 195,
             "response_json_tokens": 654,
             "serialized_result_tokens": 1374,
-            "complete_wire_tokens": 4100,
+            "complete_wire_tokens": 4191,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -180,7 +180,7 @@
             "source_tokens": 195,
             "response_json_tokens": 549,
             "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3888,
+            "complete_wire_tokens": 3979,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -210,7 +210,7 @@
             "source_tokens": 195,
             "response_json_tokens": 717,
             "serialized_result_tokens": 1498,
-            "complete_wire_tokens": 4224,
+            "complete_wire_tokens": 4315,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -219,7 +219,7 @@
             "source_tokens": 195,
             "response_json_tokens": 549,
             "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3888,
+            "complete_wire_tokens": 3979,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -249,7 +249,7 @@
             "source_tokens": 195,
             "response_json_tokens": 562,
             "serialized_result_tokens": 1188,
-            "complete_wire_tokens": 3914,
+            "complete_wire_tokens": 4005,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -258,7 +258,7 @@
             "source_tokens": 195,
             "response_json_tokens": 549,
             "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3888,
+            "complete_wire_tokens": 3979,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -274,7 +274,7 @@
             "source_tokens": 0,
             "response_json_tokens": 50,
             "serialized_result_tokens": 137,
-            "complete_wire_tokens": 2830,
+            "complete_wire_tokens": 2921,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 0
@@ -283,7 +283,7 @@
             "source_tokens": 0,
             "response_json_tokens": 39,
             "serialized_result_tokens": 112,
-            "complete_wire_tokens": 2805,
+            "complete_wire_tokens": 2896,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 0
@@ -313,7 +313,7 @@
             "source_tokens": 195,
             "response_json_tokens": 549,
             "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3888,
+            "complete_wire_tokens": 3979,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -322,7 +322,7 @@
             "source_tokens": 195,
             "response_json_tokens": 544,
             "serialized_result_tokens": 1152,
-            "complete_wire_tokens": 3878,
+            "complete_wire_tokens": 3969,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -352,7 +352,7 @@
             "source_tokens": 195,
             "response_json_tokens": 549,
             "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3888,
+            "complete_wire_tokens": 3979,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -361,7 +361,7 @@
             "source_tokens": 195,
             "response_json_tokens": 520,
             "serialized_result_tokens": 1102,
-            "complete_wire_tokens": 3828,
+            "complete_wire_tokens": 3919,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -391,7 +391,7 @@
             "source_tokens": 195,
             "response_json_tokens": 549,
             "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3888,
+            "complete_wire_tokens": 3979,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -400,7 +400,7 @@
             "source_tokens": 195,
             "response_json_tokens": 538,
             "serialized_result_tokens": 1140,
-            "complete_wire_tokens": 3866,
+            "complete_wire_tokens": 3957,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -430,7 +430,7 @@
             "source_tokens": 33,
             "response_json_tokens": 179,
             "serialized_result_tokens": 397,
-            "complete_wire_tokens": 3093,
+            "complete_wire_tokens": 3184,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 0
@@ -439,7 +439,7 @@
             "source_tokens": 33,
             "response_json_tokens": 130,
             "serialized_result_tokens": 296,
-            "complete_wire_tokens": 2992,
+            "complete_wire_tokens": 3083,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 0
@@ -469,7 +469,7 @@
             "source_tokens": 0,
             "response_json_tokens": 111,
             "serialized_result_tokens": 269,
-            "complete_wire_tokens": 2972,
+            "complete_wire_tokens": 3063,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 0
@@ -478,7 +478,7 @@
             "source_tokens": 0,
             "response_json_tokens": 52,
             "serialized_result_tokens": 140,
-            "complete_wire_tokens": 2843,
+            "complete_wire_tokens": 2934,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 0
@@ -508,7 +508,7 @@
             "source_tokens": 195,
             "response_json_tokens": 549,
             "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3888,
+            "complete_wire_tokens": 3979,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -517,14 +517,14 @@
             "source_tokens": 195,
             "response_json_tokens": 549,
             "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3801,
+            "complete_wire_tokens": 3888,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
           },
           "response_json_token_delta": 0,
           "serialized_result_token_delta": 0,
-          "complete_wire_token_delta": -87
+          "complete_wire_token_delta": -91
         }
       ],
       "round_trip": true,

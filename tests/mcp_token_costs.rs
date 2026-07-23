@@ -198,7 +198,7 @@ async fn mcp_handoff_token_costs() {
 
     assert!(
         schema_tokens <= 2_400,
-        "five-tool schema exceeds allowed budget: {}",
+        "six-tool schema exceeds allowed budget: {}",
         schema_tokens
     );
     assert!(handoff_tokens > schema_tokens + dual_result_tokens);
