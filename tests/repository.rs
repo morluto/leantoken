@@ -18,9 +18,7 @@ fn validate_relative_rejects_parent_traversal() {
 
 #[test]
 fn validate_relative_rejects_absolute_paths() {
-    if cfg!(unix) {
-        assert!(validate_relative("/tmp/secret").is_err());
-    }
+    assert!(validate_relative("/tmp/secret").is_err());
     assert!(validate_relative("C:/windows/secret").is_err());
     assert!(validate_relative(r"C:\windows\secret").is_err());
     assert!(validate_relative(r"\windows\secret").is_err());

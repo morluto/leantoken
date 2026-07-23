@@ -371,6 +371,9 @@ pub fn normalize_relative(requested: &str) -> Result<String> {
         return Err(Error::PathOutsideRoot(PathBuf::from(requested)));
     }
     let normalized = requested.replace('\\', "/");
+    if normalized.starts_with('/') {
+        return Err(Error::PathOutsideRoot(PathBuf::from(requested)));
+    }
     let path = Path::new(&normalized);
     if path.is_absolute() {
         return Err(Error::PathOutsideRoot(path.to_path_buf()));
