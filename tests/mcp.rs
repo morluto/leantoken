@@ -247,11 +247,22 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
         files.structured_content.as_ref().and_then(|value| value["entries"].as_array()).map(Vec::len),
         Some(1)
     );
+    let repository_id = files
+        .structured_content
+        .as_ref()
+        .and_then(|value| value.pointer("/meta/repository_id"))
+        .and_then(serde_json::Value::as_str)
+        .expect("repository identity")
+        .to_owned();
 
     let search = call_tool(
         client.peer(),
         "leantoken_search",
-        serde_json::json!({"query": "answer", "mode": "text"}),
+        serde_json::json!({
+            "query": "answer",
+            "mode": "text",
+            "expected_repository_id": repository_id,
+        }),
     )
     .await
     .expect("search with configured defaults");
@@ -262,6 +273,24 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
         .expect("search hits");
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0]["start_line"], hits[0]["end_line"]);
+
+    let mismatch = call_tool(
+        client.peer(),
+        "leantoken_search",
+        serde_json::json!({
+            "query": "answer",
+            "expected_repository_id": "different-repository",
+        }),
+    )
+    .await
+    .expect_err("repository mismatch");
+    assert!(matches!(
+        mismatch,
+        ServiceError::McpError(data)
+            if data.code == ErrorCode::INVALID_PARAMS
+                && data.data.as_ref().and_then(|value| value["category"].as_str())
+                    == Some("repository_identity_mismatch")
+    ));
 
     for (tool, arguments) in [
         ("leantoken_outline", serde_json::json!({"paths": ["lib.rs"]})),
@@ -282,11 +311,21 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
     let context = call_tool(
         client.peer(),
         "leantoken_context",
-        serde_json::json!({"task": "find the answer definition"}),
+        serde_json::json!({
+            "task": "find the answer definition",
+            "workflow": "investigation",
+        }),
     )
     .await
     .expect("context with configured token default");
     assert_ne!(context.is_error, Some(true));
+    assert_eq!(
+        context
+            .structured_content
+            .as_ref()
+            .and_then(|value| value["workflow"].as_str()),
+        Some("investigation")
+    );
     assert!(
         context
             .structured_content

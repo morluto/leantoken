@@ -2,14 +2,14 @@
 
 use std::{
     fmt, fs,
-    io::{IsTerminal, Write},
+    io::{IsTerminal, Read, Write},
     path::{Path, PathBuf},
 };
 
-use directories::BaseDirs;
+use directories::{BaseDirs, ProjectDirs};
 use inquire::{Confirm, InquireError, MultiSelect};
 use jsonc_parser::{ParseOptions, cst::CstInputValue, cst::CstRootNode};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tempfile::NamedTempFile;
 use toml_edit::{Array, DocumentMut, Item, Table, value};
@@ -22,6 +22,15 @@ mod launcher;
 use launcher::McpLauncher;
 
 const SERVER_NAME: &str = "leantoken";
+const DISCOVERY_SKILL_MARKER: &str = "<!-- managed by leantoken setup -->";
+
+#[derive(Debug)]
+pub(crate) struct SetupDiagnostic {
+    pub(crate) registration_status: &'static str,
+    pub(crate) configured_clients: Vec<SetupClient>,
+    pub(crate) discovery_status: &'static str,
+    pub(crate) discovery_paths: Vec<PathBuf>,
+}
 
 /// Coding clients supported by the global setup wizard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -170,6 +179,8 @@ pub struct SetupRequest {
     pub all: bool,
     /// Refresh every existing LeanToken entry without selecting new clients.
     pub refresh: bool,
+    /// Install and register a direct application-owned native runtime.
+    pub private_runtime: bool,
     /// Apply an explicitly scoped plan without interactive confirmation.
     pub yes: bool,
     /// Resolve and print the setup plan without changing configuration.
@@ -218,6 +229,15 @@ pub struct ClientSetupPlan {
     pub detected: bool,
 }
 
+/// One agent-discovery artifact owned by LeanToken setup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DiscoverySetupPlan {
+    /// Host-native skill path.
+    pub path: PathBuf,
+    /// Resolved action for the current state.
+    pub action: ClientPlanAction,
+}
+
 /// Exact MCP launcher that setup will register.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LauncherPlan {
@@ -232,6 +252,12 @@ pub struct LauncherPlan {
     pub package: Option<String>,
     /// Whether client startup may contact the package registry.
     pub may_contact_network: bool,
+    /// Application-owned native runtime path, when private-runtime mode is selected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_path: Option<PathBuf>,
+    /// BLAKE3 digest of the native executable installed at `runtime_path`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_digest: Option<String>,
 }
 
 /// Outcome for one client configuration.
@@ -264,6 +290,11 @@ pub struct SetupReport {
     pub launcher: Option<LauncherPlan>,
     /// Secret-free resolved plan used for confirmation and execution.
     pub plan: Vec<ClientSetupPlan>,
+    /// Agent-visible discovery artifacts included in the same transaction.
+    pub discovery_plan: Vec<DiscoverySetupPlan>,
+    /// Exact cl100k token count of one managed discovery skill.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discovery_skill_tokens: Option<usize>,
     /// Per-client outcomes.
     pub results: Vec<ClientSetupResult>,
 }
@@ -309,6 +340,8 @@ enum JsonEntryShape {
 #[derive(Debug)]
 struct SetupEnvironment {
     home: PathBuf,
+    runtime_root: PathBuf,
+    native_executable: PathBuf,
     launcher: McpLauncher,
     interactive: bool,
     persistent_cli: bool,
@@ -405,8 +438,16 @@ pub fn run(
     let home = home_directory()
         .ok_or_else(|| Error::InternalFailure("could not determine the home directory".into()))?;
     let launcher = McpLauncher::current()?;
+    let runtime_root = ProjectDirs::from("dev", "LeanToken", "leantoken")
+        .ok_or_else(|| {
+            Error::InternalFailure("could not determine the application data directory".into())
+        })?
+        .data_local_dir()
+        .join("runtimes");
     let environment = SetupEnvironment {
         home,
+        runtime_root,
+        native_executable: std::env::current_exe()?.canonicalize()?,
         persistent_cli: !launcher.uses_npx(),
         launcher,
         interactive: !json_output
@@ -435,12 +476,150 @@ fn home_directory() -> Option<PathBuf> {
         .or_else(|| BaseDirs::new().map(|directories| directories.home_dir().to_path_buf()))
 }
 
+pub(crate) fn diagnostic_state() -> SetupDiagnostic {
+    let Some(home) = home_directory() else {
+        return SetupDiagnostic {
+            registration_status: "unknown",
+            configured_clients: Vec::new(),
+            discovery_status: "unknown",
+            discovery_paths: Vec::new(),
+        };
+    };
+    let configured =
+        McpLauncher::current().and_then(|launcher| configured_clients(&home, &launcher));
+    let (registration_status, configured_clients) = match configured {
+        Ok(clients) if clients.is_empty() => ("not_registered", clients),
+        Ok(clients) => ("registered", clients),
+        Err(_) => ("unknown", Vec::new()),
+    };
+    let discovery_paths = [
+        home.join(".agents/skills/leantoken/SKILL.md"),
+        home.join(".claude/skills/leantoken/SKILL.md"),
+    ]
+    .into_iter()
+    .filter(|path| {
+        read_optional(path)
+            .ok()
+            .flatten()
+            .is_some_and(|content| content.contains(DISCOVERY_SKILL_MARKER))
+    })
+    .collect::<Vec<_>>();
+    SetupDiagnostic {
+        registration_status,
+        configured_clients,
+        discovery_status: match discovery_paths.len() {
+            0 => "missing",
+            2 => "installed",
+            _ => "partial",
+        },
+        discovery_paths,
+    }
+}
+
+fn runtime_install_plan(environment: &SetupEnvironment) -> Result<RuntimeInstallPlan> {
+    let digest = file_digest(&environment.native_executable)?;
+    let executable_name = runtime_executable_name(cfg!(windows));
+    let destination = environment
+        .runtime_root
+        .join(environment.launcher.version())
+        .join(executable_name);
+    let install_required = if destination.exists() {
+        let installed_digest = file_digest(&destination)?;
+        if installed_digest != digest {
+            return Err(Error::InternalFailure(format!(
+                "private runtime identity mismatch at {}",
+                destination.display()
+            )));
+        }
+        false
+    } else {
+        true
+    };
+    Ok(RuntimeInstallPlan {
+        source: environment.native_executable.clone(),
+        destination,
+        digest,
+        install_required,
+    })
+}
+
+fn runtime_executable_name(windows: bool) -> &'static str {
+    if windows {
+        "leantoken.exe"
+    } else {
+        "leantoken"
+    }
+}
+
+fn file_digest(path: &Path) -> Result<String> {
+    let mut input = fs::File::open(path)?;
+    let mut hasher = blake3::Hasher::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = input.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn install_runtime(plan: &RuntimeInstallPlan) -> Result<bool> {
+    if !plan.install_required {
+        return Ok(false);
+    }
+    let parent = plan.destination.parent().ok_or_else(|| {
+        Error::InternalFailure("private runtime destination has no parent".into())
+    })?;
+    fs::create_dir_all(parent)?;
+    let mut staged = NamedTempFile::new_in(parent)?;
+    let mut source = fs::File::open(&plan.source)?;
+    std::io::copy(&mut source, staged.as_file_mut())?;
+    staged
+        .as_file_mut()
+        .set_permissions(source.metadata()?.permissions())?;
+    staged.as_file_mut().sync_all()?;
+    if file_digest(staged.path())? != plan.digest {
+        return Err(Error::InternalFailure(
+            "staged private runtime digest mismatch".into(),
+        ));
+    }
+    match staged.persist_noclobber(&plan.destination) {
+        Ok(_) => Ok(true),
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if file_digest(&plan.destination)? == plan.digest {
+                Ok(false)
+            } else {
+                Err(Error::InternalFailure(format!(
+                    "private runtime identity mismatch at {}",
+                    plan.destination.display()
+                )))
+            }
+        }
+        Err(error) => Err(Error::Io(error.error)),
+    }
+}
+
 fn run_with(
     operation: SetupOperation,
     request: SetupRequest,
     environment: &SetupEnvironment,
     prompt: &dyn SetupPrompt,
 ) -> Result<SetupReport> {
+    let recovery_path = transaction_path(&environment.runtime_root);
+    if request.dry_run && recovery_path.exists() {
+        return Err(Error::InternalFailure(format!(
+            "interrupted setup requires recovery before dry-run: {}",
+            recovery_path.display()
+        )));
+    }
+    let _setup_lock = (!request.dry_run)
+        .then(|| acquire_setup_lock(&environment.runtime_root))
+        .transpose()?;
+    if !request.dry_run {
+        recover_interrupted_transaction(&environment.runtime_root)?;
+    }
     if request.refresh && operation != SetupOperation::Setup {
         return Err(Error::InvalidRequest(
             "--refresh is only valid with the setup command".into(),
@@ -451,6 +630,23 @@ fn run_with(
             "--refresh cannot be combined with client flags or --all".into(),
         ));
     }
+    if request.private_runtime && operation != SetupOperation::Setup {
+        return Err(Error::InvalidRequest(
+            "--private-runtime is only valid with the setup command".into(),
+        ));
+    }
+
+    let runtime = request
+        .private_runtime
+        .then(|| runtime_install_plan(environment))
+        .transpose()?;
+    let private_launcher = runtime.as_ref().map(|runtime| {
+        McpLauncher::from_executable_with_version(
+            &runtime.destination,
+            environment.launcher.version(),
+        )
+    });
+    let launcher = private_launcher.as_ref().unwrap_or(&environment.launcher);
 
     let detected = SetupClient::ALL
         .into_iter()
@@ -458,7 +654,7 @@ fn run_with(
         .collect::<Vec<_>>();
 
     let clients = if request.refresh {
-        configured_clients(&environment.home, &environment.launcher)?
+        configured_clients(&environment.home, launcher)?
     } else if request.all {
         SetupClient::ALL.to_vec()
     } else if !request.clients.is_empty() {
@@ -489,14 +685,26 @@ fn run_with(
                 .into(),
         ));
     }
+    let manage_discovery = if operation == SetupOperation::Setup {
+        true
+    } else {
+        configured_clients(&environment.home, launcher)?
+            .into_iter()
+            .all(|configured| clients.contains(&configured))
+    };
 
     let plan = resolve_plan(
         operation,
         &clients,
-        &detected,
-        &environment.home,
-        &environment.launcher,
-        environment.persistent_cli,
+        PlanEnvironment {
+            detected: &detected,
+            home: &environment.home,
+            launcher,
+            persistent_cli: environment.persistent_cli,
+            runtime,
+            manage_discovery,
+            transaction_root: &environment.runtime_root,
+        },
     )?;
 
     if request.dry_run {
@@ -517,6 +725,12 @@ fn report_from_plan(
     dry_run: bool,
     results: Vec<ClientSetupResult>,
 ) -> SetupReport {
+    let discovery_skill_tokens = plan.discovery_edits.first().and_then(|edit| {
+        edit.updated
+            .as_ref()
+            .or(edit.original.as_ref())
+            .map(|content| crate::tokens::Tokenizer::Cl100kBase.count(content))
+    });
     SetupReport {
         operation: plan.operation,
         cancelled,
@@ -524,6 +738,12 @@ fn report_from_plan(
         persistent_cli: plan.persistent_cli,
         launcher: plan.launcher.clone(),
         plan: plan.edits.iter().map(|edit| edit.public.clone()).collect(),
+        discovery_plan: plan
+            .discovery_edits
+            .iter()
+            .map(|edit| edit.public.clone())
+            .collect(),
+        discovery_skill_tokens,
         results,
     }
 }
@@ -536,6 +756,8 @@ fn empty_report(operation: SetupOperation, persistent_cli: bool) -> SetupReport 
         persistent_cli,
         launcher: None,
         plan: Vec::new(),
+        discovery_plan: Vec::new(),
+        discovery_skill_tokens: None,
         results: Vec::new(),
     }
 }
@@ -566,7 +788,177 @@ struct ResolvedSetupPlan {
     operation: SetupOperation,
     persistent_cli: bool,
     launcher: Option<LauncherPlan>,
+    runtime: Option<RuntimeInstallPlan>,
     edits: Vec<PlannedClientEdit>,
+    discovery_edits: Vec<PlannedDiscoveryEdit>,
+    transaction_root: PathBuf,
+}
+
+#[derive(Debug)]
+struct RuntimeInstallPlan {
+    source: PathBuf,
+    destination: PathBuf,
+    digest: String,
+    install_required: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SetupTransactionJournal {
+    schema_version: u32,
+    entries: Vec<SetupTransactionEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SetupTransactionEntry {
+    path: PathBuf,
+    original: Option<String>,
+    updated_hash: Option<String>,
+    updated_exists: bool,
+}
+
+struct SetupTransaction {
+    path: PathBuf,
+}
+
+struct SetupLock {
+    _file: fs::File,
+}
+
+fn acquire_setup_lock(runtime_root: &Path) -> Result<SetupLock> {
+    fs::create_dir_all(runtime_root)?;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(runtime_root.join("setup.lock"))?;
+    file.lock()?;
+    Ok(SetupLock { _file: file })
+}
+
+impl SetupTransaction {
+    fn commit(self) -> Result<()> {
+        fs::remove_file(self.path)?;
+        Ok(())
+    }
+}
+
+fn transaction_path(runtime_root: &Path) -> PathBuf {
+    runtime_root.join("setup-transaction-v1.json")
+}
+
+fn content_hash(content: &str) -> String {
+    blake3::hash(content.as_bytes()).to_hex().to_string()
+}
+
+fn recover_interrupted_transaction(runtime_root: &Path) -> Result<()> {
+    let path = transaction_path(runtime_root);
+    let Some(serialized) = read_optional(&path)? else {
+        return Ok(());
+    };
+    let journal: SetupTransactionJournal = serde_json::from_str(&serialized).map_err(|error| {
+        Error::InternalFailure(format!(
+            "invalid setup recovery journal {}: {error}",
+            path.display()
+        ))
+    })?;
+    if journal.schema_version != 1 {
+        return Err(Error::InternalFailure(format!(
+            "unsupported setup recovery journal version at {}",
+            path.display()
+        )));
+    }
+    for entry in &journal.entries {
+        let current = read_optional(&entry.path)?;
+        let still_original = current == entry.original;
+        let matches_applied = current.as_ref().is_some_and(|value| {
+            entry.updated_exists
+                && entry
+                    .updated_hash
+                    .as_deref()
+                    .is_some_and(|hash| content_hash(value) == hash)
+        }) || (!entry.updated_exists && current.is_none());
+        if !still_original && !matches_applied {
+            return Err(Error::InternalFailure(format!(
+                "cannot recover interrupted setup because {} changed afterward",
+                entry.path.display()
+            )));
+        }
+        restore_path(&entry.path, entry.original.as_deref())?;
+    }
+    fs::remove_file(path)?;
+    Ok(())
+}
+
+fn begin_setup_transaction(plan: &ResolvedSetupPlan) -> Result<Option<SetupTransaction>> {
+    let mut entries = Vec::new();
+    for edit in &plan.edits {
+        if let Some(updated) = &edit.updated {
+            entries.push(SetupTransactionEntry {
+                path: edit.public.path.clone(),
+                original: edit.original.clone(),
+                updated_hash: Some(content_hash(updated)),
+                updated_exists: true,
+            });
+        }
+    }
+    for edit in &plan.discovery_edits {
+        let (updated_hash, updated_exists) = match edit.public.action {
+            ClientPlanAction::Create | ClientPlanAction::Update => {
+                (edit.updated.as_deref().map(content_hash), true)
+            }
+            ClientPlanAction::Remove => (None, false),
+            ClientPlanAction::AlreadyCurrent | ClientPlanAction::NotConfigured => continue,
+        };
+        entries.push(SetupTransactionEntry {
+            path: edit.public.path.clone(),
+            original: edit.original.clone(),
+            updated_hash,
+            updated_exists,
+        });
+    }
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    fs::create_dir_all(&plan.transaction_root)?;
+    let path = transaction_path(&plan.transaction_root);
+    if path.exists() {
+        return Err(Error::InternalFailure(format!(
+            "setup recovery journal already exists at {}",
+            path.display()
+        )));
+    }
+    let journal = SetupTransactionJournal {
+        schema_version: 1,
+        entries,
+    };
+    let serialized = serde_json::to_string(&journal)?;
+    let mut temporary = NamedTempFile::new_in(&plan.transaction_root)?;
+    temporary.write_all(serialized.as_bytes())?;
+    temporary.as_file_mut().sync_all()?;
+    temporary.persist_noclobber(&path).map_err(|error| {
+        Error::InternalFailure(format!(
+            "another setup transaction became active at {}: {}",
+            path.display(),
+            error.error
+        ))
+    })?;
+    Ok(Some(SetupTransaction { path }))
+}
+
+fn restore_path(path: &Path, original: Option<&str>) -> Result<()> {
+    match original {
+        Some(original) => {
+            let current = read_optional(path)?.unwrap_or_default();
+            write_if_changed(path, &current, original)
+        }
+        None => {
+            if path.exists() {
+                fs::remove_file(path)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -577,38 +969,135 @@ struct PlannedClientEdit {
     updated: Option<String>,
 }
 
+#[derive(Debug)]
+struct PlannedDiscoveryEdit {
+    public: DiscoverySetupPlan,
+    original: Option<String>,
+    updated: Option<String>,
+}
+
+struct PlanEnvironment<'a> {
+    detected: &'a [SetupClient],
+    home: &'a Path,
+    launcher: &'a McpLauncher,
+    persistent_cli: bool,
+    runtime: Option<RuntimeInstallPlan>,
+    manage_discovery: bool,
+    transaction_root: &'a Path,
+}
+
 fn resolve_plan(
     operation: SetupOperation,
     clients: &[SetupClient],
-    detected: &[SetupClient],
-    home: &Path,
-    launcher: &McpLauncher,
-    persistent_cli: bool,
+    environment: PlanEnvironment<'_>,
 ) -> Result<ResolvedSetupPlan> {
     let edits = clients
         .iter()
         .copied()
-        .map(|client| resolve_client_edit(operation, client, detected, home, launcher))
+        .map(|client| {
+            resolve_client_edit(
+                operation,
+                client,
+                environment.detected,
+                environment.home,
+                environment.launcher,
+            )
+        })
         .collect::<Result<Vec<_>>>()?;
+    let discovery_edits = if environment.manage_discovery {
+        resolve_discovery_edits(operation, environment.home, Some(environment.launcher))?
+    } else {
+        Vec::new()
+    };
     let launcher = (operation == SetupOperation::Setup)
-        .then(|| launcher_plan(launcher))
+        .then(|| launcher_plan(environment.launcher, environment.runtime.as_ref()))
         .transpose()?;
     Ok(ResolvedSetupPlan {
         operation,
-        persistent_cli,
+        persistent_cli: environment.persistent_cli,
         launcher,
+        runtime: environment.runtime,
         edits,
+        discovery_edits,
+        transaction_root: environment.transaction_root.to_path_buf(),
     })
 }
 
-fn launcher_plan(launcher: &McpLauncher) -> Result<LauncherPlan> {
+fn launcher_plan(
+    launcher: &McpLauncher,
+    runtime: Option<&RuntimeInstallPlan>,
+) -> Result<LauncherPlan> {
     Ok(LauncherPlan {
         command: launcher.command()?.to_string(),
         args: launcher.args.clone(),
         version: launcher.version().into(),
         package: launcher.npm_package().map(str::to_owned),
         may_contact_network: launcher.uses_npx(),
+        runtime_path: runtime.map(|runtime| runtime.destination.clone()),
+        runtime_digest: runtime.map(|runtime| runtime.digest.clone()),
     })
+}
+
+fn resolve_discovery_edits(
+    operation: SetupOperation,
+    home: &Path,
+    launcher: Option<&McpLauncher>,
+) -> Result<Vec<PlannedDiscoveryEdit>> {
+    let content = launcher.map(discovery_skill).transpose()?;
+    [
+        home.join(".agents/skills/leantoken/SKILL.md"),
+        home.join(".claude/skills/leantoken/SKILL.md"),
+    ]
+    .into_iter()
+    .map(|path| {
+        let original = read_optional(&path)?;
+        let owned = original
+            .as_deref()
+            .is_some_and(|value| value.contains(DISCOVERY_SKILL_MARKER));
+        let (action, updated) = match operation {
+            SetupOperation::Setup => {
+                if original.as_deref() == content.as_deref() {
+                    (ClientPlanAction::AlreadyCurrent, None)
+                } else if original.is_none() || owned {
+                    (
+                        if original.is_none() {
+                            ClientPlanAction::Create
+                        } else {
+                            ClientPlanAction::Update
+                        },
+                        content.clone(),
+                    )
+                } else {
+                    return Err(Error::InternalFailure(format!(
+                        "refusing to overwrite unowned discovery skill {}",
+                        path.display()
+                    )));
+                }
+            }
+            SetupOperation::Remove if owned => (ClientPlanAction::Remove, Some(String::new())),
+            SetupOperation::Remove => (ClientPlanAction::NotConfigured, None),
+        };
+        Ok(PlannedDiscoveryEdit {
+            public: DiscoverySetupPlan { path, action },
+            original,
+            updated,
+        })
+    })
+    .collect()
+}
+
+fn discovery_skill(launcher: &McpLauncher) -> Result<String> {
+    let doctor = if launcher.uses_npx() {
+        format!(
+            "npx --yes {} doctor --json",
+            launcher.npm_package().unwrap_or("leantoken")
+        )
+    } else {
+        "leantoken doctor --json".into()
+    };
+    Ok(format!(
+        "---\nname: leantoken\ndescription: Use LeanToken for token-bounded repository exploration, code search, symbol outlines, exact source reads, or when the user explicitly asks to use LeanToken.\n---\n\n{DISCOVERY_SKILL_MARKER}\n\nBefore repository exploration, discover the deferred `leantoken` MCP server and its tools. Route progressively:\n\n- `leantoken_files`: find paths or inspect a compact tree.\n- `leantoken_outline`: inspect definitions and imports before reading source.\n- `leantoken_search`: locate symbols, references, identifiers, text, or regex matches.\n- `leantoken_read`: read an exact symbol or narrow line range.\n- `leantoken_context`: use bounded task-shaped retrieval only while scope remains uncertain.\n- `leantoken_savings`: inspect cumulative repository-local source-token savings.\n\nUse native workspace tools for edits, commands, tests, and Git operations. If the server or tools cannot be discovered, run `{doctor}` and report its structured registration, launch, handshake, and catalog status instead of silently claiming LeanToken was used.\n"
+    ))
 }
 
 fn resolve_client_edit(
@@ -646,26 +1135,162 @@ fn resolve_client_edit(
 }
 
 fn apply_plan(plan: &ResolvedSetupPlan) -> Vec<ClientSetupResult> {
+    let runtime_installed = match plan.runtime.as_ref().map(install_runtime).transpose() {
+        Ok(installed) => installed.unwrap_or(false),
+        Err(error) => return failed_results(&plan.edits, error.to_string()),
+    };
+    if let Err(error) =
+        preflight_edits(&plan.edits).and_then(|()| preflight_discovery(&plan.discovery_edits))
+    {
+        if runtime_installed && let Some(runtime) = &plan.runtime {
+            let _ = fs::remove_file(&runtime.destination);
+        }
+        return failed_results(&plan.edits, error.to_string());
+    }
+    let transaction = match begin_setup_transaction(plan) {
+        Ok(transaction) => transaction,
+        Err(error) => {
+            if runtime_installed && let Some(runtime) = &plan.runtime {
+                let _ = fs::remove_file(&runtime.destination);
+            }
+            return failed_results(&plan.edits, error.to_string());
+        }
+    };
+
+    let mut applied: Vec<&PlannedClientEdit> = Vec::new();
+    let mut applied_discovery: Vec<&PlannedDiscoveryEdit> = Vec::new();
+    for edit in &plan.edits {
+        if let Err(error) = apply_edit(edit) {
+            let rollback = rollback_setup(
+                plan,
+                runtime_installed,
+                &applied,
+                &applied_discovery,
+                transaction,
+            );
+            return failed_results(&plan.edits, rollback_message(error, rollback));
+        }
+        applied.push(edit);
+    }
+    for edit in &plan.discovery_edits {
+        if let Err(error) = apply_discovery_edit(edit) {
+            let rollback = rollback_setup(
+                plan,
+                runtime_installed,
+                &applied,
+                &applied_discovery,
+                transaction,
+            );
+            return failed_results(&plan.edits, rollback_message(error, rollback));
+        }
+        applied_discovery.push(edit);
+    }
+    if let Some(transaction) = transaction
+        && let Err(error) = transaction.commit()
+    {
+        return failed_results(&plan.edits, error.to_string());
+    }
     plan.edits
         .iter()
-        .map(|edit| {
-            let outcome = apply_edit(edit);
-            match outcome {
-                Ok(()) => ClientSetupResult {
-                    client: edit.public.client,
-                    path: edit.public.path.clone(),
-                    status: edit.status.to_string(),
-                    error: None,
-                },
-                Err(error) => ClientSetupResult {
-                    client: edit.public.client,
-                    path: edit.public.path.clone(),
-                    status: "failed".into(),
-                    error: Some(error.to_string()),
-                },
-            }
+        .map(|edit| ClientSetupResult {
+            client: edit.public.client,
+            path: edit.public.path.clone(),
+            status: edit.status.to_string(),
+            error: None,
         })
         .collect()
+}
+
+fn rollback_setup(
+    plan: &ResolvedSetupPlan,
+    runtime_installed: bool,
+    applied: &[&PlannedClientEdit],
+    applied_discovery: &[&PlannedDiscoveryEdit],
+    transaction: Option<SetupTransaction>,
+) -> Result<()> {
+    for edit in applied_discovery.iter().rev() {
+        restore_discovery_edit(edit)?;
+    }
+    for edit in applied.iter().rev() {
+        restore_edit(edit)?;
+    }
+    if runtime_installed && let Some(runtime) = &plan.runtime {
+        let _ = fs::remove_file(&runtime.destination);
+    }
+    if let Some(transaction) = transaction {
+        transaction.commit()?;
+    }
+    Ok(())
+}
+
+fn rollback_message(error: Error, rollback: Result<()>) -> String {
+    match rollback {
+        Ok(()) => format!("setup transaction rolled back: {error}"),
+        Err(rollback_error) => format!(
+            "setup transaction failed: {error}; rollback requires recovery: {rollback_error}"
+        ),
+    }
+}
+
+fn preflight_edits(edits: &[PlannedClientEdit]) -> Result<()> {
+    for edit in edits {
+        if read_optional(&edit.public.path)? != edit.original {
+            return Err(Error::InternalFailure(format!(
+                "configuration changed after preflight: {}",
+                edit.public.path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn preflight_discovery(edits: &[PlannedDiscoveryEdit]) -> Result<()> {
+    for edit in edits {
+        if read_optional(&edit.public.path)? != edit.original {
+            return Err(Error::InternalFailure(format!(
+                "discovery skill changed after preflight: {}",
+                edit.public.path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn failed_results(edits: &[PlannedClientEdit], error: String) -> Vec<ClientSetupResult> {
+    edits
+        .iter()
+        .map(|edit| ClientSetupResult {
+            client: edit.public.client,
+            path: edit.public.path.clone(),
+            status: "failed".into(),
+            error: Some(error.clone()),
+        })
+        .collect()
+}
+
+fn restore_edit(edit: &PlannedClientEdit) -> Result<()> {
+    restore_path(&edit.public.path, edit.original.as_deref())
+}
+
+fn apply_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> {
+    match edit.public.action {
+        ClientPlanAction::Create | ClientPlanAction::Update => write_if_changed(
+            &edit.public.path,
+            edit.original.as_deref().unwrap_or_default(),
+            edit.updated.as_deref().unwrap_or_default(),
+        ),
+        ClientPlanAction::Remove => {
+            if edit.public.path.exists() {
+                fs::remove_file(&edit.public.path)?;
+            }
+            Ok(())
+        }
+        ClientPlanAction::AlreadyCurrent | ClientPlanAction::NotConfigured => Ok(()),
+    }
+}
+
+fn restore_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> {
+    restore_path(&edit.public.path, edit.original.as_deref())
 }
 
 fn apply_edit(edit: &PlannedClientEdit) -> Result<()> {
@@ -1007,6 +1632,19 @@ fn print_preflight(plan: &ResolvedSetupPlan) -> Result<()> {
             edit.public.path.display()
         )?;
     }
+    for edit in &plan.discovery_edits {
+        writeln!(
+            output,
+            "  {} Agent discovery",
+            plan_symbol(edit.public.action)
+        )?;
+        writeln!(
+            output,
+            "    {} · {}",
+            edit.public.action,
+            edit.public.path.display()
+        )?;
+    }
     if let Some(launcher) = &plan.launcher {
         writeln!(output)?;
         writeln!(output, "  MCP launcher")?;
@@ -1019,6 +1657,10 @@ fn print_preflight(plan: &ResolvedSetupPlan) -> Result<()> {
         writeln!(output, "    version: {}", launcher.version)?;
         if let Some(package) = &launcher.package {
             writeln!(output, "    package: {package}")?;
+        }
+        if let (Some(path), Some(digest)) = (&launcher.runtime_path, &launcher.runtime_digest) {
+            writeln!(output, "    private runtime: {}", path.display())?;
+            writeln!(output, "    BLAKE3: {digest}")?;
         }
         if launcher.may_contact_network {
             writeln!(
@@ -1057,6 +1699,15 @@ fn print_report_plan(output: &mut impl Write, report: &SetupReport) -> Result<()
             effect.action
         )?;
     }
+    for effect in &report.discovery_plan {
+        writeln!(
+            output,
+            "  {} Agent discovery: {} ({})",
+            plan_symbol(effect.action),
+            effect.path.display(),
+            effect.action
+        )?;
+    }
     if let Some(launcher) = &report.launcher {
         writeln!(output)?;
         writeln!(output, "  Launcher: {}", launcher.command)?;
@@ -1068,6 +1719,10 @@ fn print_report_plan(output: &mut impl Write, report: &SetupReport) -> Result<()
         writeln!(output, "  Version: {}", launcher.version)?;
         if let Some(package) = &launcher.package {
             writeln!(output, "  Package: {package}")?;
+        }
+        if let (Some(path), Some(digest)) = (&launcher.runtime_path, &launcher.runtime_digest) {
+            writeln!(output, "  Private runtime: {}", path.display())?;
+            writeln!(output, "  BLAKE3: {digest}")?;
         }
         if launcher.may_contact_network {
             writeln!(
@@ -1156,7 +1811,18 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
             writeln!(output, "No configuration changes were needed.")?;
         }
         writeln!(output)?;
-        if report.persistent_cli {
+        if report
+            .launcher
+            .as_ref()
+            .is_some_and(|launcher| launcher.runtime_path.is_some())
+        {
+            writeln!(
+                output,
+                "MCP clients now launch the pinned private native runtime directly."
+            )?;
+            writeln!(output, "Versioned runtimes are retained during removal.")?;
+            writeln!(output, "Verify from a repository: leantoken doctor")?;
+        } else if report.persistent_cli {
             writeln!(output, "Verify from a repository: leantoken doctor")?;
             writeln!(output, "Update later with: leantoken upgrade")?;
         } else {
@@ -1217,6 +1883,8 @@ mod tests {
     fn environment(temp: &tempfile::TempDir) -> SetupEnvironment {
         SetupEnvironment {
             home: temp.path().join("home"),
+            runtime_root: temp.path().join("runtime"),
+            native_executable: temp.path().join("bin/lean token"),
             launcher: McpLauncher::from_executable(&temp.path().join("bin/lean token")),
             interactive: true,
             persistent_cli: true,
@@ -1227,6 +1895,8 @@ mod tests {
         let runtime = temp.path().join("node runtime");
         SetupEnvironment {
             home: temp.path().join("home"),
+            runtime_root: temp.path().join("runtime"),
+            native_executable: temp.path().join("native/leantoken"),
             launcher: McpLauncher::from_npx_paths_with_version(
                 &runtime.join(if cfg!(windows) { "node.exe" } else { "node" }),
                 &runtime.join("npm cli.js"),
@@ -1401,6 +2071,7 @@ mod tests {
                 clients: Vec::new(),
                 all: false,
                 refresh: false,
+                private_runtime: false,
                 yes: false,
                 dry_run: false,
             },
@@ -1426,6 +2097,7 @@ mod tests {
                 clients: Vec::new(),
                 all: false,
                 refresh: false,
+                private_runtime: false,
                 yes: true,
                 dry_run: false,
             },
@@ -1448,6 +2120,7 @@ mod tests {
             clients: Vec::new(),
             all: true,
             refresh: false,
+            private_runtime: false,
             yes: true,
             dry_run: false,
         };
@@ -1516,6 +2189,7 @@ mod tests {
                 clients: Vec::new(),
                 all: false,
                 refresh: true,
+                private_runtime: false,
                 yes: true,
                 dry_run: false,
             },
@@ -1547,6 +2221,7 @@ mod tests {
                 clients: vec![SetupClient::Claude, SetupClient::Cursor],
                 all: false,
                 refresh: false,
+                private_runtime: false,
                 yes: true,
                 dry_run: false,
             },
@@ -1580,6 +2255,7 @@ mod tests {
                 clients: vec![SetupClient::Codex],
                 all: false,
                 refresh: false,
+                private_runtime: false,
                 yes: false,
                 dry_run: false,
             },
@@ -1605,6 +2281,7 @@ mod tests {
                 clients: vec![SetupClient::Codex],
                 all: false,
                 refresh: false,
+                private_runtime: false,
                 yes: false,
                 dry_run: true,
             },
@@ -1631,6 +2308,7 @@ mod tests {
                 clients: vec![SetupClient::Codex],
                 all: false,
                 refresh: false,
+                private_runtime: false,
                 yes: false,
                 dry_run: false,
             },
@@ -1661,6 +2339,7 @@ mod tests {
                 clients: vec![SetupClient::Claude, SetupClient::Codex],
                 all: false,
                 refresh: false,
+                private_runtime: false,
                 yes: true,
                 dry_run: false,
             },
@@ -1677,6 +2356,7 @@ mod tests {
             clients: Vec::new(),
             all: false,
             refresh: true,
+            private_runtime: false,
             yes: true,
             dry_run: false,
         };
@@ -1744,6 +2424,7 @@ mod tests {
                 clients: Vec::new(),
                 all: false,
                 refresh: true,
+                private_runtime: false,
                 yes: true,
                 dry_run: false,
             },
@@ -1782,6 +2463,7 @@ mod tests {
             clients: vec![SetupClient::Codex],
             all: false,
             refresh: true,
+            private_runtime: false,
             yes: true,
             dry_run: false,
         };
@@ -1795,6 +2477,7 @@ mod tests {
             clients: Vec::new(),
             all: false,
             refresh: true,
+            private_runtime: false,
             yes: true,
             dry_run: false,
         };
@@ -1804,5 +2487,285 @@ mod tests {
                 .to_string()
                 .contains("only valid with the setup command")
         );
+    }
+
+    #[test]
+    fn private_runtime_dry_run_install_and_remove_are_pinned_and_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let environment = npx_environment(&temp, "1.2.3");
+        fs::create_dir_all(environment.native_executable.parent().unwrap()).unwrap();
+        fs::write(
+            &environment.native_executable,
+            b"verified native executable",
+        )
+        .unwrap();
+        let request = SetupRequest {
+            clients: vec![SetupClient::Codex],
+            all: false,
+            refresh: false,
+            private_runtime: true,
+            yes: true,
+            dry_run: true,
+        };
+        let prompt = FixedPrompt {
+            selected: None,
+            confirmed: true,
+        };
+
+        let dry_run = run_with(
+            SetupOperation::Setup,
+            request.clone(),
+            &environment,
+            &prompt,
+        )
+        .unwrap();
+        let launcher = dry_run.launcher.expect("launcher plan");
+        let runtime_path = launcher.runtime_path.expect("private runtime path");
+        assert_eq!(
+            runtime_path,
+            environment
+                .runtime_root
+                .join("1.2.3")
+                .join(if cfg!(windows) {
+                    "leantoken.exe"
+                } else {
+                    "leantoken"
+                })
+        );
+        let expected_digest = file_digest(&environment.native_executable).unwrap();
+        assert_eq!(
+            launcher.runtime_digest.as_deref(),
+            Some(expected_digest.as_str())
+        );
+        assert!(!runtime_path.exists(), "dry-run must not install");
+
+        let mut apply = request;
+        apply.dry_run = false;
+        let first = run_with(SetupOperation::Setup, apply.clone(), &environment, &prompt).unwrap();
+        assert!(!first.has_failures());
+        assert_eq!(
+            fs::read(&runtime_path).unwrap(),
+            b"verified native executable"
+        );
+        let codex = fs::read_to_string(environment.home.join(".codex/config.toml")).unwrap();
+        assert!(codex.contains(runtime_path.to_str().unwrap()));
+        assert!(!codex.contains("npm"));
+
+        let second = run_with(SetupOperation::Setup, apply, &environment, &prompt).unwrap();
+        assert!(!second.has_failures());
+        assert_eq!(second.plan[0].action, ClientPlanAction::AlreadyCurrent);
+
+        let removal = run_with(
+            SetupOperation::Remove,
+            SetupRequest {
+                clients: vec![SetupClient::Codex],
+                all: false,
+                refresh: false,
+                private_runtime: false,
+                yes: true,
+                dry_run: false,
+            },
+            &environment,
+            &prompt,
+        )
+        .unwrap();
+        assert!(!removal.has_failures());
+        assert!(runtime_path.exists(), "removal retains versioned runtimes");
+    }
+
+    #[test]
+    fn private_runtime_uses_native_executable_names_for_supported_package_layouts() {
+        for (platform, windows, expected) in [
+            ("linux", false, "leantoken"),
+            ("macos", false, "leantoken"),
+            ("windows", true, "leantoken.exe"),
+        ] {
+            assert_eq!(runtime_executable_name(windows), expected, "{platform}");
+        }
+    }
+
+    #[test]
+    fn setup_transaction_rolls_back_earlier_client_edits() {
+        let temp = tempfile::tempdir().unwrap();
+        let first_path = temp.path().join("first/config.json");
+        let blocked_parent = temp.path().join("blocked");
+        fs::write(&blocked_parent, "not a directory").unwrap();
+        let edits = vec![
+            PlannedClientEdit {
+                public: ClientSetupPlan {
+                    client: SetupClient::Claude,
+                    path: first_path.clone(),
+                    action: ClientPlanAction::Create,
+                    detected: true,
+                },
+                status: EditStatus::Configured,
+                original: None,
+                updated: Some("{\"mcpServers\":{}}".into()),
+            },
+            PlannedClientEdit {
+                public: ClientSetupPlan {
+                    client: SetupClient::Cursor,
+                    path: blocked_parent.join("config.json"),
+                    action: ClientPlanAction::Create,
+                    detected: true,
+                },
+                status: EditStatus::Configured,
+                original: None,
+                updated: Some("{\"mcpServers\":{}}".into()),
+            },
+        ];
+        let plan = ResolvedSetupPlan {
+            operation: SetupOperation::Setup,
+            persistent_cli: true,
+            launcher: None,
+            runtime: None,
+            edits,
+            discovery_edits: Vec::new(),
+            transaction_root: temp.path().join("runtime"),
+        };
+
+        let results = apply_plan(&plan);
+
+        assert!(results.iter().all(|result| result.error.is_some()));
+        assert!(!first_path.exists(), "first edit must be rolled back");
+        assert_eq!(
+            fs::read_to_string(blocked_parent).unwrap(),
+            "not a directory"
+        );
+    }
+
+    #[test]
+    fn failed_rollback_retains_recovery_journal() {
+        let temp = tempfile::tempdir().unwrap();
+        let runtime_root = temp.path().join("runtime");
+        let parent = temp.path().join("config");
+        let path = parent.join("client.json");
+        fs::create_dir(&parent).unwrap();
+        fs::write(&path, "old").unwrap();
+        let edit = PlannedClientEdit {
+            public: ClientSetupPlan {
+                client: SetupClient::Codex,
+                path: path.clone(),
+                action: ClientPlanAction::Update,
+                detected: true,
+            },
+            status: EditStatus::Updated,
+            original: Some("old".into()),
+            updated: Some("new".into()),
+        };
+        let plan = ResolvedSetupPlan {
+            operation: SetupOperation::Setup,
+            persistent_cli: true,
+            launcher: None,
+            runtime: None,
+            edits: vec![edit],
+            discovery_edits: Vec::new(),
+            transaction_root: runtime_root.clone(),
+        };
+        let transaction = begin_setup_transaction(&plan)
+            .unwrap()
+            .expect("transaction");
+        fs::write(&path, "new").unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&parent).unwrap();
+        fs::write(&parent, "blocks restoration").unwrap();
+
+        let error = rollback_setup(&plan, false, &[&plan.edits[0]], &[], Some(transaction))
+            .expect_err("rollback must fail");
+        assert!(matches!(error, Error::Io(_)));
+        assert!(transaction_path(&runtime_root).exists());
+    }
+
+    #[test]
+    fn setup_manages_compact_discovery_skills_without_overwriting_unowned_content() {
+        let temp = tempfile::tempdir().unwrap();
+        let environment = environment(&temp);
+        let prompt = FixedPrompt {
+            selected: None,
+            confirmed: true,
+        };
+        let request = SetupRequest {
+            clients: vec![SetupClient::Codex],
+            all: false,
+            refresh: false,
+            private_runtime: false,
+            yes: true,
+            dry_run: false,
+        };
+
+        let report = run_with(
+            SetupOperation::Setup,
+            request.clone(),
+            &environment,
+            &prompt,
+        )
+        .unwrap();
+        assert_eq!(report.discovery_plan.len(), 2);
+        assert!(
+            report
+                .discovery_skill_tokens
+                .is_some_and(|tokens| tokens > 0)
+        );
+        for effect in &report.discovery_plan {
+            let skill = fs::read_to_string(&effect.path).unwrap();
+            assert!(skill.contains(DISCOVERY_SKILL_MARKER));
+            assert!(skill.contains("leantoken_context"));
+            assert!(skill.contains("leantoken_savings"));
+            assert!(skill.contains("leantoken doctor --json"));
+            assert!(!skill.contains("inputSchema"));
+            assert_eq!(
+                report.discovery_skill_tokens,
+                Some(crate::tokens::Tokenizer::Cl100kBase.count(&skill))
+            );
+        }
+
+        let shared_skill = environment.home.join(".agents/skills/leantoken/SKILL.md");
+        fs::write(&shared_skill, "user-owned skill").unwrap();
+        let error = run_with(SetupOperation::Setup, request, &environment, &prompt)
+            .expect_err("unowned skill must block setup");
+        assert!(error.to_string().contains("unowned discovery skill"));
+        assert_eq!(
+            fs::read_to_string(shared_skill).unwrap(),
+            "user-owned skill"
+        );
+    }
+
+    #[test]
+    fn interrupted_setup_journal_restores_applied_and_unapplied_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let runtime_root = temp.path().join("runtime");
+        fs::create_dir_all(&runtime_root).unwrap();
+        let applied = temp.path().join("applied.json");
+        let untouched = temp.path().join("untouched.json");
+        fs::write(&applied, "new").unwrap();
+        fs::write(&untouched, "old-two").unwrap();
+        let journal = SetupTransactionJournal {
+            schema_version: 1,
+            entries: vec![
+                SetupTransactionEntry {
+                    path: applied.clone(),
+                    original: Some("old-one".into()),
+                    updated_hash: Some(content_hash("new")),
+                    updated_exists: true,
+                },
+                SetupTransactionEntry {
+                    path: untouched.clone(),
+                    original: Some("old-two".into()),
+                    updated_hash: Some(content_hash("new-two")),
+                    updated_exists: true,
+                },
+            ],
+        };
+        fs::write(
+            transaction_path(&runtime_root),
+            serde_json::to_string(&journal).unwrap(),
+        )
+        .unwrap();
+
+        recover_interrupted_transaction(&runtime_root).unwrap();
+
+        assert_eq!(fs::read_to_string(applied).unwrap(), "old-one");
+        assert_eq!(fs::read_to_string(untouched).unwrap(), "old-two");
+        assert!(!transaction_path(&runtime_root).exists());
     }
 }

@@ -36,6 +36,9 @@ Options:
       --refresh
           Refresh existing LeanToken MCP entries without selecting new clients
 
+      --private-runtime
+          Copy the verified native executable into LeanToken's private runtime directory and register it directly instead of retaining an npx chain
+
   -y, --yes
           Apply without prompting; requires explicit clients, --all, or --refresh
 

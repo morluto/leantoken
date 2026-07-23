@@ -15,6 +15,11 @@ use rusqlite_migration::{M, Migrations};
 use crate::model::{ReferenceRole, TokenSavingsOperation};
 use crate::{Error, Result};
 
+// SQLite normally recycles a completed WAL without shrinking it. Retain four
+// default auto-checkpoint windows for reuse while bounding the steady-state
+// disk footprint after a large initial publication.
+const WAL_JOURNAL_SIZE_LIMIT_BYTES: i64 = 16 * 1024 * 1024;
+
 pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 5;
 
 /// Default row limit used by callers that do not provide a tighter bound.
@@ -749,6 +754,7 @@ impl Storage {
     fn configure(conn: &mut Connection, startup_timeout: Duration) -> Result<()> {
         conn.busy_timeout(startup_timeout)?;
         conn.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
+        conn.pragma_update(None, "journal_size_limit", WAL_JOURNAL_SIZE_LIMIT_BYTES)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         Ok(())
     }
@@ -2143,6 +2149,20 @@ fn role_from_str(role: &str) -> ReferenceRole {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn writer_bounds_recycled_wal_size() {
+        let root = tempfile::tempdir().expect("root");
+        let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
+        let connection = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let limit: i64 = connection
+            .query_row("PRAGMA journal_size_limit", [], |row| row.get(0))
+            .expect("journal size limit");
+        assert_eq!(limit, WAL_JOURNAL_SIZE_LIMIT_BYTES);
+    }
 
     fn sample_file(path: &str, content: &str) -> IndexedFile {
         IndexedFile {

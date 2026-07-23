@@ -1,6 +1,6 @@
 use clap::{Parser, error::ErrorKind};
 use leantoken::cli::{AppRequest, Cli};
-use leantoken::model::{FileOperation, SearchMode};
+use leantoken::model::{ContextWorkflow, FileOperation, SearchMode};
 use leantoken::tokens::Tokenizer;
 use leantoken::setup::SetupClient;
 
@@ -227,10 +227,13 @@ fn cli_context_request() {
         "abc",
         "--prior-generation",
         "7",
+        "--workflow",
+        "contribution",
     ]);
-    let AppRequest::Context(request) = cli.app_request() else {
+    let AppRequest::Context { request, workflow } = cli.app_request() else {
         panic!("expected context request");
     };
+    assert_eq!(workflow, ContextWorkflow::Contribution);
     assert_eq!(request.task, "fix the bug");
     assert_eq!(request.token_budget, 1024);
     assert_eq!(request.focus_paths, vec!["src".to_string()]);

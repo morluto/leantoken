@@ -1,8 +1,10 @@
 ---
 source: src/model.rs
+assertion_line: 832
 expression: response
 ---
 {
+  "workflow": "implementation",
   "fragments": [
     {
       "path": "src/lib.rs",
@@ -29,6 +31,7 @@ expression: response
     "1 omitted"
   ],
   "meta": {
+    "repository_id": "repository",
     "repository_generation": 7,
     "freshness": "reconciling",
     "emitted_tokens": 9,

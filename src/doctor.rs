@@ -11,6 +11,7 @@ use std::{
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use crate::setup::{self, SetupClient};
 use crate::{Config, Error, Result};
 
 const EXPECTED_TOOLS: [&str; 6] = [
@@ -39,8 +40,31 @@ pub struct DoctorReport {
     pub instructions_loaded: bool,
     /// Exact MCP tool names exposed by the server.
     pub tools: Vec<String>,
+    /// Host registration and pre-session discovery state.
+    pub integration: IntegrationReport,
     /// First-retrieval readiness result.
     pub first_call: FirstCallReport,
+}
+
+/// Structured host-integration status independent of repository readiness.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IntegrationReport {
+    /// `registered`, `not_registered`, or `unknown`.
+    pub registration_status: &'static str,
+    /// Clients with an existing LeanToken MCP registration.
+    pub configured_clients: Vec<SetupClient>,
+    /// `installed`, `partial`, `missing`, or `unknown`.
+    pub discovery_status: &'static str,
+    /// LeanToken-owned skill descriptors found on disk.
+    pub discovery_paths: Vec<std::path::PathBuf>,
+    /// Native child process launch state.
+    pub launcher_status: &'static str,
+    /// MCP initialize exchange state.
+    pub handshake_status: &'static str,
+    /// Static MCP tool catalog state.
+    pub catalog_status: &'static str,
+    /// Actionable exact-version verification command.
+    pub repair_command: String,
 }
 
 /// First retrieval outcome recorded by [`DoctorReport`].
@@ -73,33 +97,41 @@ pub fn print_progress() -> Result<()> {
 /// first-run contract against the configured repository.
 pub fn run(config: &Config) -> Result<DoctorReport> {
     let mut transport = DoctorTransport::spawn(config)?;
-    transport.send(json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "initialize",
-        "params": {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {},
-            "clientInfo": {
-                "name": "leantoken-doctor",
-                "version": env!("CARGO_PKG_VERSION")
+    transport.send(
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "leantoken-doctor",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
             }
-        }
-    }))?;
-    let initialize = transport.response(1, RESPONSE_TIMEOUT)?;
-    let result = result_object(&initialize, "initialize")?;
-    let server_name = required_string(result, "/serverInfo/name", "server name")?;
-    let server_version = required_string(result, "/serverInfo/version", "server version")?;
+        }),
+        "handshake",
+    )?;
+    let initialize = transport.response(1, RESPONSE_TIMEOUT, "handshake")?;
+    let result = result_object(&initialize, "initialize", "handshake")?;
+    let server_name = required_string(result, "/serverInfo/name", "server name", "handshake")?;
+    let server_version =
+        required_string(result, "/serverInfo/version", "server version", "handshake")?;
     if server_name != "leantoken" {
-        return Err(doctor_error(format!(
-            "MCP identified itself as {server_name:?}, expected \"leantoken\""
-        )));
+        return Err(doctor_error(
+            "handshake",
+            format!("MCP identified itself as {server_name:?}, expected \"leantoken\""),
+        ));
     }
     if server_version != env!("CARGO_PKG_VERSION") {
-        return Err(doctor_error(format!(
-            "MCP reported version {server_version}, expected {}",
-            env!("CARGO_PKG_VERSION")
-        )));
+        return Err(doctor_error(
+            "handshake",
+            format!(
+                "MCP reported version {server_version}, expected {}",
+                env!("CARGO_PKG_VERSION")
+            ),
+        ));
     }
     let instructions_loaded = result
         .get("instructions")
@@ -111,41 +143,48 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
         });
     if !instructions_loaded {
         return Err(doctor_error(
+            "handshake",
             "MCP initialization omitted required agent workflow guidance",
         ));
     }
 
-    transport.send(json!({
-        "jsonrpc": "2.0",
-        "method": "notifications/initialized"
-    }))?;
-    transport.send(json!({
-        "jsonrpc": "2.0",
-        "id": 2,
-        "method": "tools/list",
-        "params": {}
-    }))?;
-    let catalog = transport.response(2, RESPONSE_TIMEOUT)?;
-    let catalog_result = result_object(&catalog, "tools/list")?;
+    transport.send(
+        json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        }),
+        "handshake",
+    )?;
+    transport.send(
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": {}
+        }),
+        "catalog",
+    )?;
+    let catalog = transport.response(2, RESPONSE_TIMEOUT, "catalog")?;
+    let catalog_result = result_object(&catalog, "tools/list", "catalog")?;
     let tools = catalog_result
         .get("tools")
         .and_then(Value::as_array)
-        .ok_or_else(|| doctor_error("tools/list did not return a tool array"))?
+        .ok_or_else(|| doctor_error("catalog", "tools/list did not return a tool array"))?
         .iter()
         .map(|tool| {
             tool.get("name")
                 .and_then(Value::as_str)
                 .map(str::to_owned)
-                .ok_or_else(|| doctor_error("tools/list returned a tool without a name"))
+                .ok_or_else(|| doctor_error("catalog", "tools/list returned a tool without a name"))
         })
         .collect::<Result<Vec<_>>>()?;
     let actual = tools.iter().map(String::as_str).collect::<BTreeSet<_>>();
     let expected = EXPECTED_TOOLS.into_iter().collect::<BTreeSet<_>>();
     if actual != expected || tools.len() != EXPECTED_TOOLS.len() {
-        return Err(doctor_error(format!(
-            "unexpected MCP tool catalog: {}",
-            tools.join(", ")
-        )));
+        return Err(doctor_error(
+            "catalog",
+            format!("unexpected MCP tool catalog: {}", tools.join(", ")),
+        ));
     }
 
     let deadline = Instant::now() + READY_TIMEOUT;
@@ -154,37 +193,49 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
     let mut warmed_index = false;
     let repository_generation = loop {
         attempts += 1;
-        transport.send(json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "tools/call",
-            "params": {
-                "name": "leantoken_context",
-                "arguments": {
-                    "task": "Verify LeanToken Context Distillery first-run readiness",
-                    "token_budget": 200
+        transport.send(
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": {
+                    "name": "leantoken_context",
+                    "arguments": {
+                        "task": "Verify LeanToken Context Distillery first-run readiness",
+                        "token_budget": 200
+                    }
                 }
-            }
-        }))?;
-        let response =
-            transport.response(id, deadline.saturating_duration_since(Instant::now()))?;
-        let call = result_object(&response, "leantoken_context")?;
+            }),
+            "first_retrieval",
+        )?;
+        let response = transport.response(
+            id,
+            deadline.saturating_duration_since(Instant::now()),
+            "first_retrieval",
+        )?;
+        let call = result_object(&response, "leantoken_context", "first_retrieval")?;
         if call.get("isError").and_then(Value::as_bool) == Some(true) {
-            return Err(doctor_error(format!(
-                "first retrieval failed: {}",
-                tool_message(call)
-            )));
+            return Err(doctor_error(
+                "first_retrieval",
+                format!("first retrieval failed: {}", tool_message(call)),
+            ));
         }
-        let structured = call
-            .get("structuredContent")
-            .ok_or_else(|| doctor_error("first retrieval omitted structuredContent"))?;
+        let structured = call.get("structuredContent").ok_or_else(|| {
+            doctor_error(
+                "first_retrieval",
+                "first retrieval omitted structuredContent",
+            )
+        })?;
         if structured.get("status").and_then(Value::as_str) == Some("retryable") {
             warmed_index = true;
             if Instant::now() >= deadline {
-                return Err(doctor_error(format!(
-                    "repository index did not become ready within {} seconds",
-                    READY_TIMEOUT.as_secs()
-                )));
+                return Err(doctor_error(
+                    "first_retrieval",
+                    format!(
+                        "repository index did not become ready within {} seconds",
+                        READY_TIMEOUT.as_secs()
+                    ),
+                ));
             }
             let retry_after = structured
                 .get("retry_after_ms")
@@ -201,6 +252,7 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
     };
 
     transport.close();
+    let setup = setup::diagnostic_state();
     Ok(DoctorReport {
         status: "ready",
         repository_root: config.root.clone(),
@@ -208,6 +260,20 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
         server_version,
         instructions_loaded,
         tools,
+        integration: IntegrationReport {
+            registration_status: setup.registration_status,
+            configured_clients: setup.configured_clients,
+            discovery_status: setup.discovery_status,
+            discovery_paths: setup.discovery_paths,
+            launcher_status: "healthy",
+            handshake_status: "healthy",
+            catalog_status: "healthy",
+            repair_command: if setup.registration_status == "not_registered" {
+                "leantoken setup --all --dry-run".into()
+            } else {
+                "leantoken doctor --json".into()
+            },
+        },
         first_call: FirstCallReport {
             status: "ready",
             warmed_index,
@@ -236,6 +302,26 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
     )?;
     writeln!(output, "  ✓ Agent guidance loaded")?;
     writeln!(output, "  ✓ Tool catalog: {} MCP tools", report.tools.len())?;
+    writeln!(
+        output,
+        "  {} Host registration: {}",
+        if report.integration.registration_status == "registered" {
+            "✓"
+        } else {
+            "◇"
+        },
+        report.integration.registration_status
+    )?;
+    writeln!(
+        output,
+        "  {} Agent discovery: {}",
+        if report.integration.discovery_status == "installed" {
+            "✓"
+        } else {
+            "◇"
+        },
+        report.integration.discovery_status
+    )?;
     if report.first_call.warmed_index {
         writeln!(
             output,
@@ -256,28 +342,31 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
 fn result_object<'a>(
     message: &'a Value,
     operation: &str,
+    stage: &'static str,
 ) -> Result<&'a serde_json::Map<String, Value>> {
     if let Some(error) = message.get("error") {
-        return Err(doctor_error(format!(
-            "{operation} returned an MCP error: {error}"
-        )));
+        return Err(doctor_error(
+            stage,
+            format!("{operation} returned an MCP error: {error}"),
+        ));
     }
     message
         .get("result")
         .and_then(Value::as_object)
-        .ok_or_else(|| doctor_error(format!("{operation} returned no result object")))
+        .ok_or_else(|| doctor_error(stage, format!("{operation} returned no result object")))
 }
 
 fn required_string(
     result: &serde_json::Map<String, Value>,
     pointer: &str,
     label: &str,
+    stage: &'static str,
 ) -> Result<String> {
     Value::Object(result.clone())
         .pointer(pointer)
         .and_then(Value::as_str)
         .map(str::to_owned)
-        .ok_or_else(|| doctor_error(format!("initialize result omitted {label}")))
+        .ok_or_else(|| doctor_error(stage, format!("initialize result omitted {label}")))
 }
 
 fn tool_message(result: &serde_json::Map<String, Value>) -> String {
@@ -291,8 +380,11 @@ fn tool_message(result: &serde_json::Map<String, Value>) -> String {
         .to_owned()
 }
 
-fn doctor_error(message: impl Into<String>) -> Error {
-    Error::InternalFailure(format!("doctor failed: {}", message.into()))
+fn doctor_error(stage: &'static str, message: impl Into<String>) -> Error {
+    Error::DoctorFailure {
+        stage,
+        message: message.into(),
+    }
 }
 
 struct DoctorTransport {
@@ -303,7 +395,9 @@ struct DoctorTransport {
 
 impl DoctorTransport {
     fn spawn(config: &Config) -> Result<Self> {
-        let executable = std::env::current_exe()?.canonicalize()?;
+        let executable = std::env::current_exe()
+            .and_then(|path| path.canonicalize())
+            .map_err(|error| doctor_error("launch", error.to_string()))?;
         let mut child = std::process::Command::new(executable)
             .arg("--root")
             .arg(&config.root)
@@ -315,15 +409,16 @@ impl DoctorTransport {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .spawn()?;
+            .spawn()
+            .map_err(|error| doctor_error("launch", error.to_string()))?;
         let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| doctor_error("could not open MCP stdin"))?;
+            .ok_or_else(|| doctor_error("launch", "could not open MCP stdin"))?;
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| doctor_error("could not open MCP stdout"))?;
+            .ok_or_else(|| doctor_error("launch", "could not open MCP stdout"))?;
         let (sender, lines) = mpsc::channel();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
@@ -340,30 +435,35 @@ impl DoctorTransport {
         })
     }
 
-    fn send(&mut self, message: Value) -> Result<()> {
+    fn send(&mut self, message: Value, stage: &'static str) -> Result<()> {
         let stdin = self
             .stdin
             .as_mut()
-            .ok_or_else(|| doctor_error("MCP process stdin is closed"))?;
-        serde_json::to_writer(&mut *stdin, &message)?;
-        stdin.write_all(b"\n")?;
-        stdin.flush()?;
+            .ok_or_else(|| doctor_error(stage, "MCP process stdin is closed"))?;
+        serde_json::to_writer(&mut *stdin, &message)
+            .map_err(|error| doctor_error(stage, error.to_string()))?;
+        stdin
+            .write_all(b"\n")
+            .and_then(|()| stdin.flush())
+            .map_err(|error| doctor_error(stage, error.to_string()))?;
         Ok(())
     }
 
-    fn response(&self, id: u64, timeout: Duration) -> Result<Value> {
+    fn response(&self, id: u64, timeout: Duration, stage: &'static str) -> Result<Value> {
         let deadline = Instant::now() + timeout;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                return Err(doctor_error(format!(
-                    "timed out waiting for MCP response {id}"
-                )));
+                return Err(doctor_error(
+                    stage,
+                    format!("timed out waiting for MCP response {id}"),
+                ));
             }
             let line = self.lines.recv_timeout(remaining).map_err(|error| {
-                doctor_error(format!("MCP response {id} was unavailable: {error}"))
+                doctor_error(stage, format!("MCP response {id} was unavailable: {error}"))
             })?;
-            let message: Value = serde_json::from_str(&line)?;
+            let message: Value = serde_json::from_str(&line)
+                .map_err(|error| doctor_error(stage, error.to_string()))?;
             if message.get("id").and_then(Value::as_u64) == Some(id) {
                 return Ok(message);
             }

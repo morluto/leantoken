@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    io::{BufRead, BufReader, Seek},
+    io::{BufRead, BufReader, Read, Seek},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, UNIX_EPOCH},
@@ -539,6 +539,17 @@ pub struct GitDiffResult {
     pub changed_paths: Vec<String>,
 }
 
+/// One target-side line range parsed from a zero-context Git diff.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitHunkRange {
+    /// Repository-relative target path.
+    pub path: String,
+    /// First target line touched by the hunk.
+    pub start_line: usize,
+    /// Last target line touched by the hunk, inclusive.
+    pub end_line: usize,
+}
+
 /// Resolve changed paths between a base revision and the working tree.
 ///
 /// Runs `git diff --name-only -z --no-renames <base> -- .` to capture both
@@ -554,6 +565,89 @@ pub fn git_diff_paths(root: &Path, base_revision: &str, max: usize) -> Result<Gi
         Path::new("git"),
         Duration::from_millis(1_000),
     )
+}
+
+/// Parse bounded target-side hunk ranges between a base revision and the working tree.
+pub fn git_diff_hunks(root: &Path, base_revision: &str, max: usize) -> Result<Vec<GitHunkRange>> {
+    if max == 0 {
+        return Ok(Vec::new());
+    }
+    let timeout = Duration::from_millis(1_000);
+    let base_sha = resolve_revision_sha(root, Path::new("git"), base_revision, timeout)?;
+    let prefix = git_worktree_prefix(root);
+    let mut output =
+        tempfile::tempfile().map_err(|error| Error::InternalFailure(error.to_string()))?;
+    let child_output = output
+        .try_clone()
+        .map_err(|error| Error::InternalFailure(error.to_string()))?;
+    let mut child = Command::new("git")
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "diff",
+            "--unified=0",
+            "--no-renames",
+            &base_sha,
+            "--",
+            ".",
+        ])
+        .current_dir(root)
+        .stdout(Stdio::from(child_output))
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| Error::InvalidInput {
+            field: "base revision",
+            reason: "git is unavailable",
+        })?;
+    let status = match child.wait_timeout(timeout) {
+        Ok(Some(status)) => status,
+        Ok(None) | Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Error::InvalidInput {
+                field: "base revision",
+                reason: "git diff timed out",
+            });
+        }
+    };
+    if !status.success() {
+        return Err(Error::InvalidInput {
+            field: "base revision",
+            reason: "could not diff revision",
+        });
+    }
+    output
+        .rewind()
+        .map_err(|error| Error::InternalFailure(error.to_string()))?;
+    let mut diff = String::new();
+    output
+        .take(8 * 1024 * 1024)
+        .read_to_string(&mut diff)
+        .map_err(|error| Error::InternalFailure(error.to_string()))?;
+    let mut patch = unidiff::PatchSet::new();
+    patch
+        .parse(diff)
+        .map_err(|error| Error::InternalFailure(error.to_string()))?;
+
+    let mut ranges = Vec::new();
+    for file in patch.files() {
+        let path = file.path();
+        let Some(path) = path.strip_prefix(&prefix) else {
+            continue;
+        };
+        for hunk in file.hunks() {
+            let start_line = hunk.target_start.max(1);
+            ranges.push(GitHunkRange {
+                path: slash_path(Path::new(path)),
+                start_line,
+                end_line: start_line + hunk.target_length.saturating_sub(1),
+            });
+            if ranges.len() == max {
+                return Ok(ranges);
+            }
+        }
+    }
+    Ok(ranges)
 }
 
 fn git_diff_paths_with(

@@ -26,12 +26,12 @@
   },
   "baseline": {
     "source_tokens": 195,
-    "response_json_tokens": 549,
-    "catalog_tokens": 2381,
-    "dual_result_tokens": 1162,
-    "text_result_tokens": 610,
-    "structured_result_tokens": 574,
-    "complete_dual_wire_tokens": 3979,
+    "response_json_tokens": 574,
+    "catalog_tokens": 2695,
+    "dual_result_tokens": 1214,
+    "text_result_tokens": 637,
+    "structured_result_tokens": 599,
+    "complete_dual_wire_tokens": 4345,
     "fragment_count": 5,
     "receipt_hash_count": 5,
     "omitted_detail_count": 1,
@@ -52,25 +52,25 @@
           "mode": "structured",
           "baseline": {
             "source_tokens": 195,
-            "response_json_tokens": 549,
-            "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3979,
+            "response_json_tokens": 574,
+            "serialized_result_tokens": 1214,
+            "complete_wire_tokens": 4345,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
           },
           "candidate": {
             "source_tokens": 195,
-            "response_json_tokens": 549,
-            "serialized_result_tokens": 574,
-            "complete_wire_tokens": 3391,
+            "response_json_tokens": 574,
+            "serialized_result_tokens": 599,
+            "complete_wire_tokens": 3730,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
           },
           "response_json_token_delta": 0,
-          "serialized_result_token_delta": -588,
-          "complete_wire_token_delta": -588
+          "serialized_result_token_delta": -615,
+          "complete_wire_token_delta": -615
         }
       ],
       "round_trip": true,
@@ -91,25 +91,25 @@
           "mode": "text",
           "baseline": {
             "source_tokens": 195,
-            "response_json_tokens": 549,
-            "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3979,
+            "response_json_tokens": 574,
+            "serialized_result_tokens": 1214,
+            "complete_wire_tokens": 4345,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
           },
           "candidate": {
             "source_tokens": 195,
-            "response_json_tokens": 549,
-            "serialized_result_tokens": 610,
-            "complete_wire_tokens": 3427,
+            "response_json_tokens": 574,
+            "serialized_result_tokens": 637,
+            "complete_wire_tokens": 3768,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
           },
           "response_json_token_delta": 0,
-          "serialized_result_token_delta": -552,
-          "complete_wire_token_delta": -552
+          "serialized_result_token_delta": -577,
+          "complete_wire_token_delta": -577
         }
       ],
       "round_trip": true,
@@ -130,18 +130,18 @@
           "mode": "dual",
           "baseline": {
             "source_tokens": 195,
-            "response_json_tokens": 549,
-            "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3979,
+            "response_json_tokens": 574,
+            "serialized_result_tokens": 1214,
+            "complete_wire_tokens": 4345,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
           },
           "candidate": {
             "source_tokens": 195,
-            "response_json_tokens": 531,
-            "serialized_result_tokens": 1123,
-            "complete_wire_tokens": 3940,
+            "response_json_tokens": 556,
+            "serialized_result_tokens": 1175,
+            "complete_wire_tokens": 4306,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -169,18 +169,18 @@
           "mode": "dual",
           "baseline": {
             "source_tokens": 195,
-            "response_json_tokens": 654,
-            "serialized_result_tokens": 1374,
-            "complete_wire_tokens": 4191,
+            "response_json_tokens": 679,
+            "serialized_result_tokens": 1426,
+            "complete_wire_tokens": 4557,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
           },
           "candidate": {
             "source_tokens": 195,
-            "response_json_tokens": 549,
-            "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3979,
+            "response_json_tokens": 574,
+            "serialized_result_tokens": 1214,
+            "complete_wire_tokens": 4345,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -208,18 +208,18 @@
           "mode": "dual",
           "baseline": {
             "source_tokens": 195,
-            "response_json_tokens": 717,
-            "serialized_result_tokens": 1498,
-            "complete_wire_tokens": 4315,
+            "response_json_tokens": 742,
+            "serialized_result_tokens": 1550,
+            "complete_wire_tokens": 4681,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
           },
           "candidate": {
             "source_tokens": 195,
-            "response_json_tokens": 549,
-            "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3979,
+            "response_json_tokens": 574,
+            "serialized_result_tokens": 1214,
+            "complete_wire_tokens": 4345,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -247,18 +247,18 @@
           "mode": "dual",
           "baseline": {
             "source_tokens": 195,
-            "response_json_tokens": 562,
-            "serialized_result_tokens": 1188,
-            "complete_wire_tokens": 4005,
+            "response_json_tokens": 587,
+            "serialized_result_tokens": 1240,
+            "complete_wire_tokens": 4371,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
           },
           "candidate": {
             "source_tokens": 195,
-            "response_json_tokens": 549,
-            "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3979,
+            "response_json_tokens": 574,
+            "serialized_result_tokens": 1214,
+            "complete_wire_tokens": 4345,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -272,18 +272,18 @@
           "mode": "dual",
           "baseline": {
             "source_tokens": 0,
-            "response_json_tokens": 50,
-            "serialized_result_tokens": 137,
-            "complete_wire_tokens": 2921,
+            "response_json_tokens": 71,
+            "serialized_result_tokens": 179,
+            "complete_wire_tokens": 3277,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 0
           },
           "candidate": {
             "source_tokens": 0,
-            "response_json_tokens": 39,
-            "serialized_result_tokens": 112,
-            "complete_wire_tokens": 2896,
+            "response_json_tokens": 60,
+            "serialized_result_tokens": 154,
+            "complete_wire_tokens": 3252,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 0
@@ -311,18 +311,18 @@
           "mode": "dual",
           "baseline": {
             "source_tokens": 195,
-            "response_json_tokens": 549,
-            "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3979,
+            "response_json_tokens": 574,
+            "serialized_result_tokens": 1214,
+            "complete_wire_tokens": 4345,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
           },
           "candidate": {
             "source_tokens": 195,
-            "response_json_tokens": 544,
-            "serialized_result_tokens": 1152,
-            "complete_wire_tokens": 3969,
+            "response_json_tokens": 569,
+            "serialized_result_tokens": 1204,
+            "complete_wire_tokens": 4335,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -350,18 +350,18 @@
           "mode": "dual",
           "baseline": {
             "source_tokens": 195,
-            "response_json_tokens": 549,
-            "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3979,
+            "response_json_tokens": 574,
+            "serialized_result_tokens": 1214,
+            "complete_wire_tokens": 4345,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
           },
           "candidate": {
             "source_tokens": 195,
-            "response_json_tokens": 520,
-            "serialized_result_tokens": 1102,
-            "complete_wire_tokens": 3919,
+            "response_json_tokens": 545,
+            "serialized_result_tokens": 1154,
+            "complete_wire_tokens": 4285,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
@@ -389,25 +389,25 @@
           "mode": "dual",
           "baseline": {
             "source_tokens": 195,
-            "response_json_tokens": 549,
-            "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3979,
+            "response_json_tokens": 574,
+            "serialized_result_tokens": 1214,
+            "complete_wire_tokens": 4345,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
           },
           "candidate": {
             "source_tokens": 195,
-            "response_json_tokens": 538,
-            "serialized_result_tokens": 1140,
-            "complete_wire_tokens": 3957,
+            "response_json_tokens": 563,
+            "serialized_result_tokens": 1193,
+            "complete_wire_tokens": 4324,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
           },
           "response_json_token_delta": -11,
-          "serialized_result_token_delta": -22,
-          "complete_wire_token_delta": -22
+          "serialized_result_token_delta": -21,
+          "complete_wire_token_delta": -21
         }
       ],
       "round_trip": false,
@@ -428,18 +428,18 @@
           "mode": "dual",
           "baseline": {
             "source_tokens": 33,
-            "response_json_tokens": 179,
-            "serialized_result_tokens": 397,
-            "complete_wire_tokens": 3184,
+            "response_json_tokens": 200,
+            "serialized_result_tokens": 439,
+            "complete_wire_tokens": 3540,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 0
           },
           "candidate": {
             "source_tokens": 33,
-            "response_json_tokens": 130,
-            "serialized_result_tokens": 296,
-            "complete_wire_tokens": 3083,
+            "response_json_tokens": 151,
+            "serialized_result_tokens": 338,
+            "complete_wire_tokens": 3439,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 0
@@ -467,18 +467,18 @@
           "mode": "dual",
           "baseline": {
             "source_tokens": 0,
-            "response_json_tokens": 111,
-            "serialized_result_tokens": 269,
-            "complete_wire_tokens": 3063,
+            "response_json_tokens": 132,
+            "serialized_result_tokens": 311,
+            "complete_wire_tokens": 3419,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 0
           },
           "candidate": {
             "source_tokens": 0,
-            "response_json_tokens": 52,
-            "serialized_result_tokens": 140,
-            "complete_wire_tokens": 2934,
+            "response_json_tokens": 73,
+            "serialized_result_tokens": 182,
+            "complete_wire_tokens": 3290,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 0
@@ -506,18 +506,18 @@
           "mode": "dual",
           "baseline": {
             "source_tokens": 195,
-            "response_json_tokens": 549,
-            "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3979,
+            "response_json_tokens": 574,
+            "serialized_result_tokens": 1214,
+            "complete_wire_tokens": 4345,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14
           },
           "candidate": {
             "source_tokens": 195,
-            "response_json_tokens": 549,
-            "serialized_result_tokens": 1162,
-            "complete_wire_tokens": 3888,
+            "response_json_tokens": 574,
+            "serialized_result_tokens": 1214,
+            "complete_wire_tokens": 4254,
             "provider_native_input_tokens": null,
             "exact_resend_source_tokens": 0,
             "overlapping_source_tokens": 14

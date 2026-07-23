@@ -1,9 +1,9 @@
 use std::time::Instant;
 
 use leantoken::{
-    Config, ContextRequest, ContextSignalPolicy, Error, FileOperation, FilesRequest, Freshness,
-    IndexConsistency, IndexState, OutlineRequest, ReadRequest, ReadStatus, SearchMode, SearchRequest,
-    TokenSavingsOperation, coordination::IndexCoordination, services::Services,
+    Config, ContextRequest, ContextSignalPolicy, ContextWorkflow, Error, FileOperation, FilesRequest,
+    Freshness, IndexConsistency, IndexState, OutlineRequest, ReadRequest, ReadStatus, SearchMode,
+    SearchRequest, TokenSavingsOperation, coordination::IndexCoordination, services::Services,
     tokens::Tokenizer,
 };
 use tokio_util::sync::CancellationToken;
@@ -21,6 +21,196 @@ async fn fixture() -> (tempfile::TempDir, Services) {
     let services = Services::open(config).expect("services");
     services.index(false).await.expect("index fixture");
     (root, services)
+}
+
+#[tokio::test]
+async fn retrieval_receipt_identifies_bound_repository_and_rejects_mismatch() {
+    let (_root, services) = fixture().await;
+    let expected_repository = services.repository_id();
+    let response = services
+        .files(FilesRequest {
+            operation: FileOperation::Tree,
+            path: None,
+            query: None,
+            pattern: None,
+            max_results: Some(10),
+            cursor: None,
+            depth: Some(1),
+        })
+        .await
+        .expect("files");
+
+    assert_eq!(response.meta.repository_id, expected_repository);
+    services
+        .validate_repository_id(Some(&expected_repository))
+        .expect("matching repository");
+    assert!(matches!(
+        services.validate_repository_id(Some("different-repository")),
+        Err(Error::RepositoryIdentityMismatch { expected, actual })
+            if expected == "different-repository" && actual == expected_repository
+    ));
+}
+
+#[tokio::test]
+async fn repository_identity_distinguishes_linked_worktrees_before_empty_search_is_evidence() {
+    if !git_available() {
+        return;
+    }
+
+    let parent = tempfile::tempdir().expect("parent");
+    let base = parent.path().join("base");
+    let linked = parent.path().join("linked");
+    std::fs::create_dir(&base).expect("base");
+    std::fs::write(base.join("base.rs"), "pub fn base_only() {}\n").expect("base source");
+    init_git_repo(&base);
+    let worktree = std::process::Command::new("git")
+        .args(["worktree", "add", "-b", "holdout-worktree"])
+        .arg(&linked)
+        .current_dir(&base)
+        .output()
+        .expect("git worktree add");
+    assert!(
+        worktree.status.success(),
+        "git worktree add failed: {}",
+        String::from_utf8_lossy(&worktree.stderr)
+    );
+    std::fs::write(
+        linked.join("holdout.rs"),
+        "pub fn linked_worktree_holdout_symbol() {}\n",
+    )
+    .expect("holdout source");
+
+    let base_services = Services::open(
+        Config::discover(&base, Some(parent.path().join("base.sqlite"))).expect("base config"),
+    )
+    .expect("base services");
+    let linked_services = Services::open(
+        Config::discover(&linked, Some(parent.path().join("linked.sqlite"))).expect("linked config"),
+    )
+    .expect("linked services");
+    base_services.index(false).await.expect("index base");
+    linked_services.index(false).await.expect("index linked");
+
+    let base_id = base_services.repository_id();
+    let linked_id = linked_services.repository_id();
+    assert_ne!(base_id, linked_id);
+    assert!(matches!(
+        base_services.validate_repository_id(Some(&linked_id)),
+        Err(Error::RepositoryIdentityMismatch { expected, actual })
+            if expected == linked_id && actual == base_id
+    ));
+    let response = linked_services
+        .search(SearchRequest {
+            query: "linked_worktree_holdout_symbol".into(),
+            mode: SearchMode::Symbol,
+            case_sensitive: true,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(10),
+            max_tokens: Some(200),
+            context_lines: Some(0),
+            cursor: None,
+        })
+        .await
+        .expect("linked search");
+    assert_eq!(response.meta.repository_id, linked_id);
+    assert_eq!(response.hits.len(), 1);
+}
+
+#[tokio::test]
+async fn contribution_context_routes_to_guidance_validation_and_owner_tests() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir_all(root.path().join("src")).expect("src");
+    std::fs::create_dir_all(root.path().join("tests")).expect("tests");
+    std::fs::create_dir_all(root.path().join("docs")).expect("docs");
+    std::fs::create_dir_all(root.path().join(".github/workflows")).expect("workflows");
+    for (path, content) in [
+        (
+            "src/parser.rs",
+            "pub fn parse_contribution_target() -> bool { true }\n",
+        ),
+        (
+            "tests/parser.rs",
+            "#[test]\nfn parser_contract() { assert!(true); }\n",
+        ),
+        (
+            "AGENTS.md",
+            "# Contribution rules\nRun focused tests before full validation.\n",
+        ),
+        (
+            "docs/development.md",
+            "# Development\nUse cargo fmt, clippy, and test.\n",
+        ),
+        (
+            ".github/workflows/ci.yml",
+            "name: CI\njobs: { test: { runs-on: ubuntu-latest } }\n",
+        ),
+        (
+            "docs/release.md",
+            "# Parser contribution release archive\nUnrelated historical release notes.\n",
+        ),
+    ] {
+        std::fs::write(root.path().join(path), content).expect("fixture");
+    }
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    let response = services
+        .context_with_workflow_consistency_cancellable(
+            ContextRequest {
+                task: "prepare a contribution for parse_contribution_target".into(),
+                token_budget: 1_000,
+                focus_paths: Vec::new(),
+                focus_symbols: vec!["parse_contribution_target".into()],
+                exclude_paths: Vec::new(),
+                known_hashes: Vec::new(),
+                prior_repository_generation: None,
+                base_revision: None,
+                changed_paths: vec!["src/parser.rs".into()],
+            },
+            ContextWorkflow::Contribution,
+            IndexConsistency::Committed,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("contribution context");
+
+    let paths = response
+        .fragments
+        .iter()
+        .map(|fragment| fragment.path.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(response.workflow, ContextWorkflow::Contribution);
+    let receipt = response
+        .workflow_receipt
+        .as_ref()
+        .expect("workflow receipt");
+    assert_eq!(receipt.guidance_candidates, 2);
+    assert_eq!(receipt.validation_candidates, 1);
+    assert_eq!(receipt.owner_test_candidates, 1);
+    assert_eq!(receipt.missing_families, vec!["templates"]);
+    let diff_evidence = response
+        .diff_scope
+        .as_ref()
+        .and_then(|scope| scope.evidence.as_ref())
+        .expect("diff evidence");
+    assert!(
+        diff_evidence
+            .changed_symbols
+            .iter()
+            .any(|symbol| symbol.name == "parse_contribution_target")
+    );
+    assert!(diff_evidence.related_paths.iter().any(|relationship| {
+        relationship.related_path == "tests/parser.rs"
+            && relationship.signal == "test_name_match"
+    }));
+    assert!(paths.contains("AGENTS.md"));
+    assert!(paths.contains("docs/development.md"));
+    assert!(paths.contains(".github/workflows/ci.yml"));
+    assert!(paths.contains("tests/parser.rs"));
 }
 
 fn assert_zero_limit(error: Error, expected_field: &'static str) {
@@ -876,6 +1066,26 @@ async fn independent_repositories_index_concurrently_without_result_leakage() {
     assert_eq!(first_status.file_count, 1);
     assert_eq!(second_status.file_count, 1);
     assert_ne!(first.config().database_path, second.config().database_path);
+    assert_ne!(first.repository_id(), second.repository_id());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn repository_identity_is_stable_across_symlink_aliases() {
+    let root = tempfile::tempdir().expect("root");
+    let aliases = tempfile::tempdir().expect("aliases");
+    let alias = aliases.path().join("repository");
+    std::os::unix::fs::symlink(root.path(), &alias).expect("symlink root");
+    let first = Services::open(
+        Config::discover(root.path(), Some(root.path().join("first.sqlite"))).expect("root config"),
+    )
+    .expect("root services");
+    let second = Services::open(
+        Config::discover(&alias, Some(root.path().join("second.sqlite"))).expect("alias config"),
+    )
+    .expect("alias services");
+
+    assert_eq!(first.repository_id(), second.repository_id());
 }
 
 #[cfg(unix)]
@@ -3284,6 +3494,140 @@ async fn diff_scoped_context_with_explicit_changed_paths_reports_receipt() {
     assert!(scope.base_revision.is_none());
     assert!(scope.head_revision.is_none());
     assert_eq!(scope.indexed_changed_paths, 1);
+    let evidence = scope.evidence.as_ref().expect("diff evidence");
+    assert!(
+        evidence
+            .changed_symbols
+            .iter()
+            .any(|symbol| symbol.name == "greet")
+    );
+    assert!(
+        evidence
+            .gaps
+            .contains(&"hunk_ranges_unavailable_for_explicit_paths".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracked_owner_tests() {
+    if !git_available() {
+        return;
+    }
+
+    let root = tempfile::tempdir().expect("root");
+    let database = tempfile::tempdir().expect("database");
+    std::fs::create_dir_all(root.path().join("src")).expect("src");
+    std::fs::create_dir_all(root.path().join("tests")).expect("tests");
+    std::fs::write(
+        root.path().join("src/service.py"),
+        "def compute(value):\n    return value + 1\n",
+    )
+    .expect("python source");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn rust_changed(value: i32) -> i32 {\n    value + 1\n}\n",
+    )
+    .expect("rust source");
+    std::fs::write(
+        root.path().join("src/obsolete.py"),
+        "def obsolete():\n    return True\n",
+    )
+    .expect("deleted source");
+    init_git_repo(root.path());
+    let base_revision = String::from_utf8(
+        std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(root.path())
+            .output()
+            .expect("git rev-parse")
+            .stdout,
+    )
+    .expect("UTF-8 revision")
+    .trim()
+    .to_owned();
+
+    std::fs::write(
+        root.path().join("src/service.py"),
+        "def compute(value):\n    return value + 2\n",
+    )
+    .expect("modify python source");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn rust_changed(value: i32) -> i32 {\n    value + 2\n}\n",
+    )
+    .expect("modify rust source");
+    std::fs::remove_file(root.path().join("src/obsolete.py")).expect("delete source");
+    std::fs::write(
+        root.path().join("tests/service_test.py"),
+        "from src.service import compute\n\ndef test_compute():\n    assert compute(1) == 3\n",
+    )
+    .expect("untracked owner test");
+
+    let config = Config::discover(
+        root.path(),
+        Some(database.path().join("index.sqlite")),
+    )
+    .expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index working tree");
+    let response = services
+        .context_with_workflow_consistency_cancellable(
+            ContextRequest {
+                task: "review compute and rust_changed with owning tests".into(),
+                token_budget: 1_500,
+                focus_paths: Vec::new(),
+                focus_symbols: Vec::new(),
+                exclude_paths: Vec::new(),
+                known_hashes: Vec::new(),
+                prior_repository_generation: None,
+                base_revision: Some(base_revision),
+                changed_paths: Vec::new(),
+            },
+            ContextWorkflow::Review,
+            IndexConsistency::Committed,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("base-revision context");
+
+    let scope = response.diff_scope.expect("diff scope");
+    for path in [
+        "src/lib.rs",
+        "src/obsolete.py",
+        "src/service.py",
+        "tests/service_test.py",
+    ] {
+        assert!(
+            scope.changed_paths.iter().any(|changed| changed == path),
+            "missing changed path {path}: {:?}",
+            scope.changed_paths
+        );
+    }
+    let evidence = scope.evidence.expect("diff evidence");
+    assert!(
+        evidence
+            .changed_hunks
+            .iter()
+            .any(|hunk| hunk.path == "src/service.py" && hunk.start_line <= 2)
+    );
+    for symbol in ["compute", "rust_changed"] {
+        assert!(
+            evidence
+                .changed_symbols
+                .iter()
+                .any(|changed| changed.name == symbol),
+            "missing changed symbol {symbol}: {:?}",
+            evidence.changed_symbols
+        );
+    }
+    assert!(evidence.gaps.contains(
+        &"src/obsolete.py:not_indexed_or_deleted".to_owned()
+    ));
+    assert!(evidence.related_paths.iter().any(|relationship| {
+        relationship.changed_path == "src/service.py"
+            && relationship.related_path == "tests/service_test.py"
+            && relationship.signal == "test_name_match"
+    }));
 }
 
 #[tokio::test]

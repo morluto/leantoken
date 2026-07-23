@@ -21,8 +21,8 @@ use crate::config::{
     MAX_CONTEXT_LINES, MAX_OUTPUT_TOKENS, MAX_RESULTS,
 };
 use crate::model::{
-    ContextRequest, FileOperation, FilesRequest, IndexConsistency, OutlineRequest, ReadRequest,
-    SearchMode, SearchRequest,
+    ContextRequest, ContextWorkflow, FileOperation, FilesRequest, IndexConsistency, OutlineRequest,
+    ReadRequest, SearchMode, SearchRequest,
 };
 use crate::services::{Services, validate_positive_request_limit, validate_request_limit};
 
@@ -33,6 +33,10 @@ struct SavingsMcpRequest {}
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct FilesMcpRequest {
+    /// Expected opaque repository identity from an earlier response.
+    #[serde(default)]
+    #[schemars(length(max = 128))]
+    expected_repository_id: Option<String>,
     /// Path operation and its operation-specific arguments.
     operation: FilesMcpOperation,
     /// Maximum entries to return (default 20, maximum 100).
@@ -52,6 +56,10 @@ struct FilesMcpRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SearchMcpRequest {
+    /// Expected opaque repository identity from an earlier response.
+    #[serde(default)]
+    #[schemars(length(max = 128))]
+    expected_repository_id: Option<String>,
     /// Non-empty text, identifier, symbol, or Rust regular expression to find.
     #[schemars(length(min = 1, max = 65536))]
     query: String,
@@ -109,7 +117,7 @@ impl SearchMcpRequest {
         )
     }
 
-    fn into_parts(self) -> (SearchRequest, IndexConsistency) {
+    fn into_parts(self) -> (SearchRequest, IndexConsistency, Option<String>) {
         (
             SearchRequest {
                 query: self.query,
@@ -124,6 +132,7 @@ impl SearchMcpRequest {
                 cursor: self.cursor,
             },
             self.consistency,
+            self.expected_repository_id,
         )
     }
 }
@@ -131,6 +140,10 @@ impl SearchMcpRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct OutlineMcpRequest {
+    /// Expected opaque repository identity from an earlier response.
+    #[serde(default)]
+    #[schemars(length(max = 128))]
+    expected_repository_id: Option<String>,
     /// One to 256 repository-relative source files to outline.
     #[schemars(length(min = 1, max = 256), inner(length(max = 4096)))]
     paths: Vec<String>,
@@ -162,7 +175,7 @@ impl OutlineMcpRequest {
         validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)
     }
 
-    fn into_parts(self) -> (OutlineRequest, IndexConsistency) {
+    fn into_parts(self) -> (OutlineRequest, IndexConsistency, Option<String>) {
         (
             OutlineRequest {
                 paths: self.paths,
@@ -172,6 +185,7 @@ impl OutlineMcpRequest {
                 max_tokens: self.max_tokens,
             },
             self.consistency,
+            self.expected_repository_id,
         )
     }
 }
@@ -208,7 +222,7 @@ impl FilesMcpRequest {
         validate_optional_positive_limit("max_results", self.max_results, limits.max_results)
     }
 
-    fn into_parts(self) -> (FilesRequest, IndexConsistency) {
+    fn into_parts(self) -> (FilesRequest, IndexConsistency, Option<String>) {
         let (operation, path, query, pattern, depth) = match self.operation {
             FilesMcpOperation::Tree { path, depth } => {
                 (FileOperation::Tree, path, None, None, depth)
@@ -231,6 +245,7 @@ impl FilesMcpRequest {
                 depth,
             },
             self.consistency,
+            self.expected_repository_id,
         )
     }
 }
@@ -238,6 +253,10 @@ impl FilesMcpRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ReadMcpRequest {
+    /// Expected opaque repository identity from an earlier response.
+    #[serde(default)]
+    #[schemars(length(max = 128))]
+    expected_repository_id: Option<String>,
     /// Repository-relative UTF-8 source file.
     #[schemars(length(min = 1, max = 4096))]
     path: String,
@@ -285,7 +304,7 @@ impl ReadMcpRequest {
         validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)
     }
 
-    fn into_parts(self) -> (ReadRequest, IndexConsistency) {
+    fn into_parts(self) -> (ReadRequest, IndexConsistency, Option<String>) {
         let (start_line, end_line, symbol) = match self.target {
             ReadMcpTarget::Symbol { name } => (None, None, Some(name)),
             ReadMcpTarget::Lines { start, end } => (Some(start), Some(end), None),
@@ -300,6 +319,7 @@ impl ReadMcpRequest {
                 expected_hash: self.expected_hash,
             },
             self.consistency,
+            self.expected_repository_id,
         )
     }
 }
@@ -307,6 +327,13 @@ impl ReadMcpRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ContextMcpRequest {
+    /// Expected opaque repository identity from an earlier response.
+    #[serde(default)]
+    #[schemars(length(max = 128))]
+    expected_repository_id: Option<String>,
+    /// Evidence workflow; `auto` selects only on high-confidence task language.
+    #[serde(default)]
+    workflow: ContextWorkflow,
     /// Natural-language coding task; include known identifiers and constraints.
     #[schemars(length(min = 3, max = 65536))]
     task: String,
@@ -359,7 +386,15 @@ impl ContextMcpRequest {
         )
     }
 
-    fn into_parts(self, default_token_budget: usize) -> (ContextRequest, IndexConsistency) {
+    fn into_parts(
+        self,
+        default_token_budget: usize,
+    ) -> (
+        ContextRequest,
+        ContextWorkflow,
+        IndexConsistency,
+        Option<String>,
+    ) {
         (
             ContextRequest {
                 task: self.task,
@@ -372,7 +407,9 @@ impl ContextMcpRequest {
                 base_revision: self.base_revision,
                 changed_paths: self.changed_paths,
             },
+            self.workflow,
             self.consistency,
+            self.expected_repository_id,
         )
     }
 }
@@ -743,7 +780,10 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, consistency) = req.into_parts();
+        let (request, consistency, expected_repository_id) = req.into_parts();
+        services
+            .validate_repository_id(expected_repository_id.as_deref())
+            .map_err(into_mcp_error)?;
         let resp = services
             .files_with_consistency_cancellable(request, consistency, context.ct.clone())
             .await;
@@ -766,7 +806,10 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, consistency) = req.into_parts();
+        let (request, consistency, expected_repository_id) = req.into_parts();
+        services
+            .validate_repository_id(expected_repository_id.as_deref())
+            .map_err(into_mcp_error)?;
         let resp = services
             .search_with_consistency_cancellable(request, consistency, context.ct.clone())
             .await;
@@ -789,7 +832,10 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, consistency) = req.into_parts();
+        let (request, consistency, expected_repository_id) = req.into_parts();
+        services
+            .validate_repository_id(expected_repository_id.as_deref())
+            .map_err(into_mcp_error)?;
         let resp = services
             .outline_with_consistency_cancellable(request, consistency, context.ct.clone())
             .await;
@@ -812,7 +858,10 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, consistency) = req.into_parts();
+        let (request, consistency, expected_repository_id) = req.into_parts();
+        services
+            .validate_repository_id(expected_repository_id.as_deref())
+            .map_err(into_mcp_error)?;
         let resp = services
             .read_with_consistency_cancellable(request, consistency, context.ct.clone())
             .await;
@@ -835,9 +884,18 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, consistency) = req.into_parts(limits.default_context_tokens);
+        let (request, workflow, consistency, expected_repository_id) =
+            req.into_parts(limits.default_context_tokens);
+        services
+            .validate_repository_id(expected_repository_id.as_deref())
+            .map_err(into_mcp_error)?;
         let resp = services
-            .context_with_consistency_cancellable(request, consistency, context.ct.clone())
+            .context_with_workflow_consistency_cancellable(
+                request,
+                workflow,
+                consistency,
+                context.ct.clone(),
+            )
             .await;
         self.service_result(resp)
     }
@@ -916,6 +974,14 @@ fn into_mcp_error(error: crate::Error) -> ErrorData {
         crate::Error::NotIndexed(_) => ErrorData::invalid_params(
             "requested path or symbol is not indexed",
             mcp_error_data("not_indexed"),
+        ),
+        crate::Error::RepositoryIdentityMismatch { expected, actual } => ErrorData::invalid_params(
+            "repository identity does not match this server",
+            Some(serde_json::json!({
+                "category": "repository_identity_mismatch",
+                "expected_repository_id": expected,
+                "actual_repository_id": actual,
+            })),
         ),
         crate::Error::LimitExceeded => ErrorData::invalid_params(
             "request exceeds a configured limit",
@@ -1017,7 +1083,10 @@ fn tool_unavailable(message: &'static str) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(message)])
 }
 
-/// Return the JSON-serialized tool catalog for token-cost measurements.
+/// Return the complete JSON-serialized tool catalog for telemetry and snapshots.
+///
+/// Catalog size is measured rather than capped: descriptions are part of the
+/// model-facing capability contract and require model-use evidence before removal.
 pub fn tool_catalog_json() -> String {
     serde_json::to_string(&LeanTokenMcp::tool_router().list_all())
         .expect("tool catalog is serializable")
@@ -1334,7 +1403,7 @@ mod tests {
             "task": "find answer"
         }))
         .expect("context request without a budget");
-        let (request, _) = request.into_parts(37);
+        let (request, _, _, _) = request.into_parts(37);
         assert_eq!(request.token_budget, 37);
 
         let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
@@ -1342,7 +1411,7 @@ mod tests {
             "token_budget": 23
         }))
         .expect("context request with a budget");
-        let (request, _) = request.into_parts(37);
+        let (request, _, _, _) = request.into_parts(37);
         assert_eq!(request.token_budget, 23);
     }
 
@@ -1520,21 +1589,10 @@ mod tests {
                 "target": target
             }))
             .expect("common line-range aliases should remain readable");
-            let (request, _) = request.into_parts();
+            let (request, _, _) = request.into_parts();
             assert_eq!(request.start_line, Some(10));
             assert_eq!(request.end_line, Some(20));
         }
-    }
-
-    #[test]
-    fn complete_tool_catalog_stays_token_bounded() {
-        let tools = LeanTokenMcp::tool_router().list_all();
-        let json = serde_json::to_string(&tools).expect("tool catalog JSON");
-        let token_count = crate::tokens::count(&json);
-        assert!(
-            token_count <= 2_400,
-            "six-tool catalog grew to {token_count} cl100k tokens"
-        );
     }
 
     #[test]

@@ -61,6 +61,9 @@ and are reconciled against repository files by the indexing leader.
 The connection is configured with:
 
 - WAL journal mode;
+- a 16 MiB recycled-WAL size limit (four default SQLite auto-checkpoint
+  windows), bounding retained disk after large publications without forcing a
+  reader-blocking `TRUNCATE` checkpoint;
 - foreign keys;
 - a bounded busy timeout;
 - bundled SQLite with an FTS5 trigram startup probe;
@@ -254,7 +257,10 @@ visible to followers as well as the leader. Watcher and reconciliation tasks
 receive caller-owned cancellation and are joined during shutdown.
 
 Each `Services`/`Indexer` instance can own one Rayon worker pool sized from that
-instance's `max_index_workers`. The pool is built lazily on the first non-empty
+instance's `max_index_workers`. MCP background indexing defaults to one worker
+so protocol handling and sibling agents retain CPU capacity; an explicit
+`--max-index-workers` value is preserved. Direct `index` commands retain the
+normal bounded default. The pool is built lazily on the first non-empty
 file preparation and reused afterward. Read-only followers therefore allocate
 no indexing threads, while a process that becomes leader retains its configured
 worker bound without rebuilding a pool on every reconciliation.

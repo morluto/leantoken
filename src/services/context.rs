@@ -1,7 +1,11 @@
 //! Task-shaped context candidate assembly and ranking handoff.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    sync::LazyLock,
+};
 
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use tokio_util::sync::CancellationToken;
 
 mod facets;
@@ -15,7 +19,7 @@ use super::validation::{
 };
 use crate::model::*;
 use crate::ranking::{self, Candidate};
-use crate::repository::{git_changed_paths, git_diff_paths, validate_relative};
+use crate::repository::{git_changed_paths, git_diff_hunks, git_diff_paths, validate_relative};
 use crate::storage::{ReadSession, SymbolRecord};
 use crate::text::{expand_terms, identifier_words};
 use crate::{Error, Result};
@@ -38,6 +42,12 @@ const SYMBOL_CONTEXT_TOKEN_CAP: usize = 768;
 const REFERENCE_CONTEXT_TOKEN_CAP: usize = 256;
 const TEXT_CONTEXT_TOKEN_CAP: usize = 256;
 const IMPORT_SYMBOL_CONTEXT_TOKEN_CAP: usize = 384;
+const MAX_DIFF_EVIDENCE_SYMBOLS: usize = 64;
+const MAX_DIFF_EVIDENCE_RELATIONSHIPS: usize = 64;
+const MAX_DIFF_EVIDENCE_PATHS: usize = 64;
+const MAX_WORKFLOW_SCAN_FILES: usize = 8_192;
+const MAX_OWNER_TEST_SCAN_FILES: usize = 4_096;
+const MAX_REFERENCES_PER_CHANGED_SYMBOL: usize = 8;
 
 #[derive(Clone, Copy)]
 enum ContextExcerptKind {
@@ -105,6 +115,118 @@ fn context_path_score(path: &str, terms: &[String], task: &str) -> f64 {
         }
     }
     score
+}
+
+fn resolve_context_workflow(requested: ContextWorkflow, task: &str) -> ContextWorkflow {
+    if requested != ContextWorkflow::Auto {
+        return requested;
+    }
+    let task = task.to_ascii_lowercase();
+    if ["pull request", "contribution", "contributing"]
+        .iter()
+        .any(|signal| task.contains(signal))
+    {
+        ContextWorkflow::Contribution
+    } else if ["code review", "review this", "review the changes"]
+        .iter()
+        .any(|signal| task.contains(signal))
+    {
+        ContextWorkflow::Review
+    } else if ["investigate", "root cause", "diagnose"]
+        .iter()
+        .any(|signal| task.contains(signal))
+    {
+        ContextWorkflow::Investigation
+    } else {
+        ContextWorkflow::Implementation
+    }
+}
+
+fn workflow_path_role(path: &str, request: &ContextRequest) -> Option<(f64, &'static str)> {
+    let normalized = path.replace('\\', "/");
+    let lower = normalized.to_ascii_lowercase();
+    let mut best = WORKFLOW_PATHS
+        .matches(&normalized)
+        .into_iter()
+        .map(|index| WORKFLOW_PATH_ROLES[index])
+        .max_by(|left, right| left.0.total_cmp(&right.0));
+    if likely_owner_test(&lower, request) && best.is_none_or(|(score, _)| score < OWNER_TEST_SCORE)
+    {
+        best = Some((OWNER_TEST_SCORE, "owner_test"));
+    }
+    best
+}
+
+const OWNER_TEST_SCORE: f64 = 3.75;
+const WORKFLOW_PATH_RULES: [(&str, f64, &str); 15] = [
+    ("AGENTS.md", 5.0, "guidance"),
+    ("**/AGENTS.md", 5.0, "guidance"),
+    ("CONTRIBUTING*", 5.0, "guidance"),
+    ("**/CONTRIBUTING*", 5.0, "guidance"),
+    (".github/PULL_REQUEST_TEMPLATE*", 5.0, "guidance"),
+    (".github/PULL_REQUEST_TEMPLATE/**", 5.0, "guidance"),
+    (".github/ISSUE_TEMPLATE/**", 4.5, "template"),
+    ("docs/development*", 4.25, "guidance"),
+    ("docs/contributing*", 4.25, "guidance"),
+    ("docs/testing*", 4.25, "guidance"),
+    (".github/workflows/**", 3.0, "validation"),
+    ("Cargo.toml", 3.0, "validation"),
+    ("Makefile", 3.0, "validation"),
+    ("justfile", 3.0, "validation"),
+    ("{package.json,pyproject.toml,go.mod}", 3.0, "validation"),
+];
+const WORKFLOW_PATH_ROLES: [(f64, &str); WORKFLOW_PATH_RULES.len()] = workflow_path_roles();
+
+const fn workflow_path_roles() -> [(f64, &'static str); WORKFLOW_PATH_RULES.len()] {
+    let mut roles = [(0.0, ""); WORKFLOW_PATH_RULES.len()];
+    let mut index = 0;
+    while index < WORKFLOW_PATH_RULES.len() {
+        roles[index] = (WORKFLOW_PATH_RULES[index].1, WORKFLOW_PATH_RULES[index].2);
+        index += 1;
+    }
+    roles
+}
+
+static WORKFLOW_PATHS: LazyLock<GlobSet> = LazyLock::new(|| {
+    let mut builder = GlobSetBuilder::new();
+    for (pattern, _, _) in WORKFLOW_PATH_RULES {
+        builder.add(
+            GlobBuilder::new(pattern)
+                .case_insensitive(true)
+                .literal_separator(true)
+                .build()
+                .expect("static workflow glob"),
+        );
+    }
+    builder.build().expect("static workflow glob set")
+});
+
+fn likely_owner_test(path: &str, request: &ContextRequest) -> bool {
+    owner_test_changed_path(path, request).is_some()
+}
+
+fn owner_test_changed_path(path: &str, request: &ContextRequest) -> Option<String> {
+    let path = path.replace('\\', "/").to_ascii_lowercase();
+    let is_test = path.contains("/test")
+        || path.starts_with("test")
+        || path.contains("/spec")
+        || path.starts_with("spec");
+    if !is_test {
+        return None;
+    }
+    request
+        .changed_paths
+        .iter()
+        .chain(&request.focus_paths)
+        .find_map(|changed| {
+            let normalized = changed.replace('\\', "/");
+            let stem = normalized
+                .rsplit('/')
+                .next()
+                .and_then(|name| name.split('.').next())?
+                .to_ascii_lowercase();
+            (stem.len() >= 3 && path.contains(&stem)).then(|| changed.clone())
+        })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -547,11 +669,10 @@ impl Services {
 
     /// Resolve a diff scope from the request into a receipt, if one is supplied.
     ///
-    /// When `base_revision` is set, changed paths are resolved from the
-    /// repository. When `changed_paths` is set explicitly, they are used
-    /// directly. When both are supplied, the explicit paths are merged with
-    /// the resolved diff. When neither is supplied, `None` is returned and
-    /// task-only behavior is preserved.
+    /// When `base_revision` is set, committed and working-tree paths since that
+    /// revision are resolved from the repository, including untracked files.
+    /// Explicit `changed_paths` are merged with that result. When neither input
+    /// is supplied, `None` is returned and task-only behavior is preserved.
     fn resolve_diff_scope(&self, request: &ContextRequest) -> Result<Option<DiffScopeReceipt>> {
         let has_base = request
             .base_revision
@@ -565,17 +686,32 @@ impl Services {
             && !revision.trim().is_empty()
         {
             let git_result = git_diff_paths(&self.config.root, revision, MAX_DIFF_CHANGED_PATHS)?;
-            let mut changed_paths = git_result.changed_paths;
-            for path in &request.changed_paths {
-                if !changed_paths.contains(path) {
-                    changed_paths.push(path.clone());
+            let mut changed_paths = request.changed_paths.clone();
+            let mut resolved_paths = git_result.changed_paths;
+            match git_changed_paths(&self.config.root, MAX_DIFF_CHANGED_PATHS) {
+                Ok(working_tree_paths) => resolved_paths.extend(working_tree_paths),
+                Err(error) => {
+                    tracing::debug!(%error, "working-tree diff scope unavailable");
                 }
             }
+            resolved_paths.sort();
+            resolved_paths.dedup();
+            for path in resolved_paths {
+                if changed_paths.len() == MAX_DIFF_CHANGED_PATHS {
+                    break;
+                }
+                if !changed_paths.contains(&path) {
+                    changed_paths.push(path);
+                }
+            }
+            changed_paths.sort();
+            changed_paths.dedup();
             return Ok(Some(DiffScopeReceipt {
                 base_revision: Some(git_result.base_revision),
                 head_revision: Some(git_result.head_revision),
                 changed_paths,
                 indexed_changed_paths: 0,
+                evidence: None,
             }));
         }
         Ok(Some(DiffScopeReceipt {
@@ -583,13 +719,18 @@ impl Services {
             head_revision: None,
             changed_paths: request.changed_paths.clone(),
             indexed_changed_paths: 0,
+            evidence: None,
         }))
     }
 
     /// Select ranked task evidence within an exact source-token budget.
     pub async fn context(&self, request: ContextRequest) -> Result<ContextResponse> {
-        self.context_cancellable(request, CancellationToken::new())
-            .await
+        self.context_cancellable_with_workflow(
+            request,
+            ContextWorkflow::Auto,
+            CancellationToken::new(),
+        )
+        .await
     }
 
     /// Retrieve context after applying the requested index consistency boundary.
@@ -602,7 +743,23 @@ impl Services {
         self.validate_context_request(&request)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
-        self.context_cancellable(request, cancellation).await
+        self.context_cancellable_with_workflow(request, ContextWorkflow::Auto, cancellation)
+            .await
+    }
+
+    /// Retrieve context under an explicit or auto-detected workflow.
+    pub async fn context_with_workflow_consistency_cancellable(
+        &self,
+        request: ContextRequest,
+        workflow: ContextWorkflow,
+        consistency: IndexConsistency,
+        cancellation: CancellationToken,
+    ) -> Result<ContextResponse> {
+        self.validate_context_request(&request)?;
+        self.apply_consistency(consistency, cancellation.clone())
+            .await?;
+        self.context_cancellable_with_workflow(request, workflow, cancellation)
+            .await
     }
 
     pub async fn context_cancellable(
@@ -610,10 +767,21 @@ impl Services {
         request: ContextRequest,
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
+        self.context_cancellable_with_workflow(request, ContextWorkflow::Auto, cancellation)
+            .await
+    }
+
+    async fn context_cancellable_with_workflow(
+        &self,
+        request: ContextRequest,
+        workflow: ContextWorkflow,
+        cancellation: CancellationToken,
+    ) -> Result<ContextResponse> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || {
             let (evaluation, baseline_source_tokens) = this.context_sync(
                 request,
+                workflow,
                 &cancellation,
                 CandidateDiagnostics::Omit,
                 ContextSignals::PRODUCTION,
@@ -640,6 +808,7 @@ impl Services {
         tokio::task::spawn_blocking(move || {
             this.context_sync(
                 request,
+                ContextWorkflow::Implementation,
                 &cancellation,
                 CandidateDiagnostics::Collect,
                 ContextSignals::PRODUCTION,
@@ -663,6 +832,7 @@ impl Services {
         tokio::task::spawn_blocking(move || {
             this.context_sync(
                 request,
+                ContextWorkflow::Implementation,
                 &cancellation,
                 CandidateDiagnostics::Collect,
                 ContextSignals::evaluation(policy),
@@ -672,10 +842,281 @@ impl Services {
         .await?
     }
 
+    fn append_workflow_candidates(
+        &self,
+        session: &ReadSession,
+        request: &ContextRequest,
+        workflow: ContextWorkflow,
+        cancellation: &CancellationToken,
+        candidates: &mut Vec<Candidate>,
+    ) -> Result<Option<WorkflowReceipt>> {
+        if !matches!(
+            workflow,
+            ContextWorkflow::Contribution | ContextWorkflow::Review
+        ) {
+            return Ok(None);
+        }
+
+        let mut matches = Vec::new();
+        let mut cursor = None;
+        let mut scanned_files = 0;
+        let mut scan_truncated = false;
+        loop {
+            check_cancelled(cancellation)?;
+            let page = session.list_files(512, cursor)?;
+            let Some(last) = page.last() else {
+                break;
+            };
+            cursor = Some(last.id);
+            for file in page {
+                if scanned_files == MAX_WORKFLOW_SCAN_FILES {
+                    scan_truncated = true;
+                    break;
+                }
+                scanned_files += 1;
+                if let Some((score, family)) = workflow_path_role(&file.path, request) {
+                    matches.push((file, score, family));
+                }
+            }
+            if scan_truncated {
+                break;
+            }
+        }
+        let count = |family| {
+            matches
+                .iter()
+                .filter(|(_, _, candidate_family)| *candidate_family == family)
+                .count()
+        };
+        let guidance_candidates = count("guidance");
+        let template_candidates = count("template");
+        let validation_candidates = count("validation");
+        let owner_test_candidates = count("owner_test");
+        let mut missing_families = Vec::new();
+        for (family, candidates) in [
+            ("guidance", guidance_candidates),
+            ("templates", template_candidates),
+            ("validation", validation_candidates),
+            ("owner_tests", owner_test_candidates),
+        ] {
+            if candidates == 0 {
+                missing_families.push(family.to_owned());
+            }
+        }
+        if scan_truncated {
+            missing_families.push("repository_scan_truncated".to_owned());
+        }
+        matches.sort_by(|left, right| {
+            right
+                .1
+                .total_cmp(&left.1)
+                .then_with(|| left.0.path.cmp(&right.0.path))
+        });
+        matches.truncate(24);
+
+        let excerpt_requests = matches
+            .iter()
+            .map(|(file, _, _)| StoredExcerptRequest {
+                file_id: file.id,
+                desired_start_line: 1,
+                desired_end_line: 80,
+                required_start_line: 1,
+                required_end_line: 1,
+                max_lines: 80,
+            })
+            .collect::<Vec<_>>();
+        for ((file, score, family), excerpt) in matches
+            .into_iter()
+            .zip(self.stored_excerpts(session, &excerpt_requests)?)
+        {
+            let Some(excerpt) = excerpt else { continue };
+            candidates.push(
+                Candidate::new(
+                    file.path,
+                    excerpt.start_line,
+                    excerpt.end_line,
+                    excerpt.content,
+                )
+                .match_kind(format!("workflow_{family}"))
+                .representation("workflow")
+                .path_score(score)
+                .focus_boost(score),
+            );
+        }
+        Ok(Some(WorkflowReceipt {
+            guidance_candidates,
+            template_candidates,
+            validation_candidates,
+            owner_test_candidates,
+            missing_families,
+        }))
+    }
+
+    fn build_diff_evidence(
+        &self,
+        session: &ReadSession,
+        request: &ContextRequest,
+        scope: &DiffScopeReceipt,
+        cancellation: &CancellationToken,
+    ) -> Result<DiffEvidenceReceipt> {
+        let mut changed_symbols = Vec::new();
+        let mut relationships = BTreeSet::new();
+        let mut gaps = Vec::new();
+        let changed_hunks = if let Some(base_revision) = &scope.base_revision {
+            let mut hunks = git_diff_hunks(
+                &self.config.root,
+                base_revision,
+                MAX_DIFF_EVIDENCE_SYMBOLS + 1,
+            )?;
+            if hunks.len() > MAX_DIFF_EVIDENCE_SYMBOLS {
+                gaps.push("changed_hunk_evidence_truncated".into());
+                hunks.truncate(MAX_DIFF_EVIDENCE_SYMBOLS);
+            }
+            hunks
+                .into_iter()
+                .map(|hunk| DiffHunkEvidence {
+                    path: hunk.path,
+                    start_line: hunk.start_line,
+                    end_line: hunk.end_line,
+                })
+                .collect::<Vec<_>>()
+        } else {
+            gaps.push("hunk_ranges_unavailable_for_explicit_paths".into());
+            Vec::new()
+        };
+        let scoped_paths = scope
+            .changed_paths
+            .iter()
+            .take(MAX_DIFF_EVIDENCE_PATHS)
+            .collect::<Vec<_>>();
+        if scope.changed_paths.len() > scoped_paths.len() {
+            gaps.push("changed_path_evidence_truncated".into());
+        }
+
+        for path in &scoped_paths {
+            check_cancelled(cancellation)?;
+            let Some(file) = session.find_file(path)? else {
+                gaps.push(format!("{path}:not_indexed_or_deleted"));
+                continue;
+            };
+            if !file.structurally_complete {
+                gaps.push(format!("{path}:structural_coverage_incomplete"));
+            }
+            let symbols = session.get_symbols_for_file(file.id, MAX_DIFF_EVIDENCE_SYMBOLS)?;
+            let path_hunks = changed_hunks
+                .iter()
+                .filter(|hunk| hunk.path == **path)
+                .collect::<Vec<_>>();
+            let symbols = symbols
+                .into_iter()
+                .filter(|symbol| {
+                    path_hunks.is_empty()
+                        || path_hunks.iter().any(|hunk| {
+                            symbol.start_line <= hunk.end_line && symbol.end_line >= hunk.start_line
+                        })
+                })
+                .collect::<Vec<_>>();
+            if symbols.is_empty() && file.structurally_complete {
+                gaps.push(format!("{path}:no_indexed_definitions"));
+            }
+            for symbol in symbols {
+                if changed_symbols.len() == MAX_DIFF_EVIDENCE_SYMBOLS {
+                    gaps.push("changed_symbol_evidence_truncated".into());
+                    break;
+                }
+                let mut references = session.search_references(
+                    &symbol.name,
+                    true,
+                    MAX_REFERENCES_PER_CHANGED_SYMBOL + 1,
+                )?;
+                if references.len() > MAX_REFERENCES_PER_CHANGED_SYMBOL {
+                    gaps.push(format!(
+                        "{path}:{}:reference_evidence_truncated",
+                        symbol.name
+                    ));
+                    references.truncate(MAX_REFERENCES_PER_CHANGED_SYMBOL);
+                }
+                for reference in references {
+                    if reference.path != **path {
+                        relationships.insert((
+                            (**path).clone(),
+                            reference.path,
+                            "reference".to_owned(),
+                        ));
+                    }
+                }
+                changed_symbols.push(DiffSymbolEvidence {
+                    path: (**path).clone(),
+                    name: symbol.name,
+                    kind: symbol.kind,
+                    start_line: symbol.start_line,
+                    end_line: symbol.end_line,
+                });
+            }
+            for importer in session.affected_importers(&[(**path).clone()])? {
+                if importer != **path {
+                    relationships.insert(((**path).clone(), importer, "importer".to_owned()));
+                }
+            }
+        }
+
+        let mut cursor = None;
+        let mut scanned_owner_test_files = 0;
+        let mut owner_test_scan_truncated = false;
+        loop {
+            check_cancelled(cancellation)?;
+            let page = session.list_files(512, cursor)?;
+            let Some(last) = page.last() else {
+                break;
+            };
+            cursor = Some(last.id);
+            for file in page {
+                if scanned_owner_test_files == MAX_OWNER_TEST_SCAN_FILES {
+                    owner_test_scan_truncated = true;
+                    break;
+                }
+                scanned_owner_test_files += 1;
+                if let Some(changed_path) = owner_test_changed_path(&file.path, request) {
+                    relationships.insert((changed_path, file.path, "test_name_match".to_owned()));
+                }
+            }
+            if owner_test_scan_truncated {
+                break;
+            }
+        }
+        if owner_test_scan_truncated {
+            gaps.push("owner_test_scan_truncated".into());
+        }
+
+        let relationship_count = relationships.len();
+        let related_paths = relationships
+            .into_iter()
+            .take(MAX_DIFF_EVIDENCE_RELATIONSHIPS)
+            .map(|(changed_path, related_path, signal)| DiffRelatedPath {
+                changed_path,
+                related_path,
+                signal,
+            })
+            .collect();
+        if relationship_count > MAX_DIFF_EVIDENCE_RELATIONSHIPS {
+            gaps.push("related_path_evidence_truncated".into());
+        }
+        gaps.sort();
+        gaps.dedup();
+
+        Ok(DiffEvidenceReceipt {
+            changed_hunks,
+            changed_symbols,
+            related_paths,
+            gaps,
+        })
+    }
+
     #[allow(clippy::cognitive_complexity)]
     fn context_sync(
         &self,
         request: ContextRequest,
+        workflow: ContextWorkflow,
         cancellation: &CancellationToken,
         diagnostics: CandidateDiagnostics,
         signals: ContextSignals,
@@ -683,6 +1124,10 @@ impl Services {
         check_cancelled(cancellation)?;
         self.validate_context_request(&request)?;
         let diff_scope = self.resolve_diff_scope(&request)?;
+        let mut scoped_request = request.clone();
+        if let Some(scope) = &diff_scope {
+            scoped_request.changed_paths = scope.changed_paths.clone();
+        }
 
         let mut changed_paths = git_changed_paths(&self.config.root, GIT_CHANGED_PATHS_MAX)
             .unwrap_or_else(|error| {
@@ -972,6 +1417,14 @@ impl Services {
             }
 
             apply_query_fusion(&mut candidates, &query_fusion);
+            let resolved_workflow = resolve_context_workflow(workflow, &request.task);
+            let workflow_receipt = self.append_workflow_candidates(
+                session,
+                &scoped_request,
+                resolved_workflow,
+                cancellation,
+                &mut candidates,
+            )?;
 
             signals
                 .import_neighbor
@@ -1031,7 +1484,10 @@ impl Services {
                 generation,
                 self.config.tokenizer,
             );
+            response.workflow = resolved_workflow;
+            response.workflow_receipt = workflow_receipt;
             response.meta.freshness = self.freshness();
+            response.meta.repository_id = self.repository_id();
             if let Some(mut scope) = diff_scope.clone() {
                 let mut indexed = 0usize;
                 for path in &scope.changed_paths {
@@ -1040,6 +1496,12 @@ impl Services {
                     }
                 }
                 scope.indexed_changed_paths = indexed;
+                scope.evidence = Some(self.build_diff_evidence(
+                    session,
+                    &scoped_request,
+                    &scope,
+                    cancellation,
+                )?);
                 response.diff_scope = Some(scope);
             }
             if response.fragments.is_empty() {
@@ -1071,6 +1533,22 @@ impl Services {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workflow_auto_detection_requires_high_confidence_language() {
+        assert_eq!(
+            resolve_context_workflow(ContextWorkflow::Auto, "prepare this pull request"),
+            ContextWorkflow::Contribution
+        );
+        assert_eq!(
+            resolve_context_workflow(ContextWorkflow::Auto, "review this parser change"),
+            ContextWorkflow::Review
+        );
+        assert_eq!(
+            resolve_context_workflow(ContextWorkflow::Auto, "implement parser review comments"),
+            ContextWorkflow::Implementation
+        );
+    }
 
     fn context_queries(task: &str, limit: usize) -> Vec<ContextQuery> {
         facets::plan(task, limit).queries

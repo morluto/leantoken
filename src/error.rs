@@ -106,6 +106,14 @@ pub enum Error {
     /// Internal operation failure retaining its historical CLI rendering.
     #[error("invalid request: {0}")]
     InternalFailure(String),
+    /// A doctor probe failed at a named integration boundary.
+    #[error("doctor {stage} check failed: {message}")]
+    DoctorFailure {
+        /// Stable integration stage suitable for structured diagnostics.
+        stage: &'static str,
+        /// Human-readable failure detail.
+        message: String,
+    },
     #[error("invalid repository configuration: {0}")]
     InvalidConfiguration(String),
     #[error(
@@ -115,6 +123,14 @@ pub enum Error {
         database: PathBuf,
         expected_repository: String,
         actual_repository: PathBuf,
+    },
+    /// Retrieval request was intended for a different bound repository.
+    #[error("repository identity mismatch: expected {expected}, actual {actual}")]
+    RepositoryIdentityMismatch {
+        /// Opaque identity supplied by the caller.
+        expected: String,
+        /// Opaque identity of this server's canonical root.
+        actual: String,
     },
     #[error("stale cursor")]
     StaleCursor,

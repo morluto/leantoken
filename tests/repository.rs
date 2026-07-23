@@ -3,7 +3,8 @@ use std::fs;
 use leantoken::repository::{
     DiscoveryPolicy, discover_files, discover_files_with_limits,
     discover_files_with_limits_and_policy, discover_files_with_limits_cancellable,
-    git_changed_paths, git_diff_paths, resolve_existing, slash_path, validate_relative,
+    git_changed_paths, git_diff_hunks, git_diff_paths, resolve_existing, slash_path,
+    validate_relative,
 };
 use leantoken::{DiscoveryLimits, Error, IndexLimitKind};
 use tokio_util::sync::CancellationToken;
@@ -657,6 +658,30 @@ fn git_diff_paths_includes_working_tree_changes() {
     run_git(root.path(), &["add", "uncommitted.rs"]);
     let result = git_diff_paths(root.path(), &base_sha, 64).expect("diff paths");
     assert!(result.changed_paths.contains(&"uncommitted.rs".to_owned()));
+}
+
+#[test]
+fn git_diff_hunks_reports_target_line_ranges() {
+    if !git_available() {
+        return;
+    }
+    let root = tempfile::tempdir().expect("root");
+    init_git_repo(root.path());
+    fs::write(root.path().join("changed.rs"), "fn changed() {\n    one();\n}\n")
+        .expect("write");
+    run_git(root.path(), &["add", "."]);
+    run_git(root.path(), &["commit", "-m", "initial"]);
+
+    fs::write(
+        root.path().join("changed.rs"),
+        "fn changed() {\n    one();\n    two();\n}\n",
+    )
+    .expect("write");
+
+    let hunks = git_diff_hunks(root.path(), "HEAD", 64).expect("diff hunks");
+    assert_eq!(hunks.len(), 1);
+    assert_eq!(hunks[0].path, "changed.rs");
+    assert_eq!((hunks[0].start_line, hunks[0].end_line), (3, 3));
 }
 
 #[test]
