@@ -110,6 +110,15 @@ pub struct Cli {
     )]
     pub max_prepare_batch_bytes: Option<NonZeroU64>,
 
+    /// Maximum parallel file-preparation workers.
+    #[arg(
+        long,
+        value_name = "COUNT",
+        global = true,
+        help_heading = "Advanced repository options"
+    )]
+    pub max_index_workers: Option<NonZeroUsize>,
+
     /// SQLite database path.
     #[arg(long, value_name = "PATH", global = true)]
     pub database: Option<PathBuf>,
@@ -159,6 +168,9 @@ impl Cli {
         }
         if let Some(value) = self.max_prepare_batch_bytes {
             config.max_prepare_batch_bytes = value.get();
+        }
+        if let Some(value) = self.max_index_workers {
+            config.max_index_workers = value.get();
         }
         config.include_generated = self.include_generated;
         config.tokenizer = self.tokenizer;

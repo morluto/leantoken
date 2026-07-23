@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use leantoken::{
     Config, ContextRequest, ContextSignalPolicy, Error, FileOperation, FilesRequest, Freshness,
     IndexConsistency, IndexState, OutlineRequest, ReadRequest, ReadStatus, SearchMode, SearchRequest,
@@ -2165,6 +2167,82 @@ async fn symbol_read_after_first_line_returns_the_complete_definition() {
 }
 
 #[tokio::test]
+async fn open_ended_read_bounds_live_suffix_before_returning_content() {
+    let source = (0..50_000)
+        .map(|line| format!("fn generated_{line}() {{}}\n"))
+        .collect::<String>();
+    let (_root, services) = indexed_source("large.rs", source.as_bytes()).await;
+
+    let response = services
+        .read(ReadRequest {
+            path: "large.rs".into(),
+            start_line: Some(25_000),
+            end_line: None,
+            symbol: None,
+            max_tokens: Some(12),
+            expected_hash: None,
+        })
+        .await
+        .expect("bounded open-ended read");
+
+    let content = response.content.as_deref().expect("content");
+    assert!(content.len() <= 12 * 32);
+    assert!(content.contains("generated_25000"));
+    assert!(response.start_line >= 25_000);
+    assert!(response.meta.emitted_tokens <= 12);
+}
+
+#[tokio::test]
+async fn live_read_rejects_malformed_utf8_at_eof() {
+    let (root, services) = indexed_source("malformed.rs", b"fn valid() {}\n").await;
+    std::fs::write(root.path().join("malformed.rs"), b"a\xC3").expect("malformed edit");
+
+    let error = services
+        .read(ReadRequest {
+            path: "malformed.rs".into(),
+            start_line: Some(1),
+            end_line: None,
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect_err("malformed UTF-8 must fail");
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "path",
+            reason: "must identify UTF-8 text"
+        }
+    ));
+}
+
+#[tokio::test]
+async fn live_read_rejects_line_after_terminal_newline() {
+    let (root, services) = indexed_source("short.rs", b"a\n").await;
+    std::fs::write(root.path().join("short.rs"), b"a\n").expect("short edit");
+
+    let error = services
+        .read(ReadRequest {
+            path: "short.rs".into(),
+            start_line: Some(2),
+            end_line: None,
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect_err("line after terminal newline must fail");
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "line range",
+            reason: "must be ordered and within the requested file"
+        }
+    ));
+}
+
+#[tokio::test]
 async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
     let source = b"alpha\r\nbeta\r\ngamma";
     let (_root, services) = indexed_source("endings.txt", source).await;
@@ -3148,6 +3226,35 @@ async fn status_reports_reconciling_when_shared_operation_lock_is_held() {
     );
     assert_eq!(during.index_state, IndexState::Ready);
     assert_eq!(during.repository_generation, before.repository_generation);
+}
+
+#[test]
+fn read_only_status_does_not_wait_for_an_active_writer() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write");
+    let database = root.path().join("index.sqlite");
+    let config = Config::discover(root.path(), Some(database.clone())).expect("config");
+    let services = Services::open(config.clone()).expect("services");
+
+    let connection = rusqlite::Connection::open(&database).expect("writer connection");
+    connection
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("hold writer transaction");
+
+    let started = Instant::now();
+    let status = Services::status_without_initializing(config).expect("read-only status");
+    assert!(
+        started.elapsed().as_secs() < 1,
+        "status waited on writer for {:?}",
+        started.elapsed()
+    );
+    assert_eq!(status.repository_generation, 0);
+    assert_eq!(status.index_state, IndexState::Uninitialized);
+
+    drop(services);
+    connection
+        .execute_batch("ROLLBACK")
+        .expect("release writer transaction");
 }
 
 #[tokio::test]

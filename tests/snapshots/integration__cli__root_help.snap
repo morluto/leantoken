@@ -84,3 +84,6 @@ Advanced repository options:
 
       --max-prepare-batch-bytes <BYTES>
           Maximum source bytes scheduled in one preparation batch
+
+      --max-index-workers <COUNT>
+          Maximum parallel file-preparation workers

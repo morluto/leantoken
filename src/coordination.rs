@@ -88,6 +88,16 @@ impl IndexCoordination {
         acquire(&self.operation_path, cancellation).map(|file| IndexOperation { file })
     }
 
+    /// Try to reserve reconciliation ownership without waiting.
+    pub(crate) fn try_acquire_operation(&self) -> Result<Option<IndexOperation>> {
+        let file = open_lock_file(&self.operation_path)?;
+        if try_lock_file(&file)? {
+            Ok(Some(IndexOperation { file }))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Return whether another handle or process currently owns a reconciliation.
     pub fn is_reconciling(&self) -> Result<bool> {
         let file = open_lock_file(&self.operation_path)?;

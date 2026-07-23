@@ -12,7 +12,7 @@ use crate::coordination::{CacheLease, IndexCoordination, IndexLeadership};
 use crate::error::RetryableOperation;
 use crate::indexer::Indexer;
 use crate::model::*;
-use crate::storage::{ReadSession, Storage};
+use crate::storage::{ReadSession, Storage, StorageCounts};
 use crate::{Config, Error, Result};
 
 mod context;
@@ -262,29 +262,47 @@ impl Services {
         tokio::task::spawn_blocking(move || this.status_sync()).await?
     }
 
+    /// Return status without initializing an existing SQLite cache.
+    ///
+    /// This keeps a read-only status request responsive while another process
+    /// is creating, migrating, or indexing the cache. A missing cache still
+    /// follows the normal open path so cold status reports an uninitialized
+    /// repository and creates the cache as it did previously.
+    pub fn status_without_initializing(config: Config) -> Result<StatusResponse> {
+        config.validate()?;
+        if !config.database_path.exists() {
+            return Self::open(config)?.status_sync();
+        }
+
+        let coordination = IndexCoordination::for_database(&config.database_path);
+        let operation = coordination.try_acquire_operation()?;
+        let freshness = operation.is_none();
+        let snapshot = Storage::read_only_status(&config.database_path, &config.root);
+        if let Some(operation) = operation {
+            operation.release()?;
+        }
+        let snapshot = snapshot?;
+        Ok(status_response(
+            &config,
+            snapshot.generation,
+            snapshot.counts,
+            if freshness {
+                Freshness::Reconciling
+            } else {
+                Freshness::Current
+            },
+        ))
+    }
+
     fn status_sync(&self) -> Result<StatusResponse> {
         self.consistent_allow_empty(|session, generation| {
             let counts = session.counts()?;
-            Ok(StatusResponse {
-                repository_root: self.config.root.display().to_string(),
-                database_path: self.config.database_path.display().to_string(),
-                repository_generation: generation,
-                index_state: if generation == 0 {
-                    IndexState::Uninitialized
-                } else {
-                    IndexState::Ready
-                },
-                freshness: self.freshness(),
-                file_count: counts.files,
-                chunk_count: counts.chunks,
-                symbol_count: counts.symbols,
-                languages: counts
-                    .languages
-                    .into_iter()
-                    .map(|(language, files)| LanguageCount { language, files })
-                    .collect(),
-                warnings: Vec::new(),
-            })
+            Ok(status_response(
+                &self.config,
+                generation,
+                counts,
+                self.freshness(),
+            ))
         })
     }
 
@@ -476,6 +494,34 @@ fn is_database_corruption(error: &Error) -> bool {
         sqlite_error_code(error),
         Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
     )
+}
+
+fn status_response(
+    config: &Config,
+    generation: u64,
+    counts: StorageCounts,
+    freshness: Freshness,
+) -> StatusResponse {
+    StatusResponse {
+        repository_root: config.root.display().to_string(),
+        database_path: config.database_path.display().to_string(),
+        repository_generation: generation,
+        index_state: if generation == 0 {
+            IndexState::Uninitialized
+        } else {
+            IndexState::Ready
+        },
+        freshness,
+        file_count: counts.files,
+        chunk_count: counts.chunks,
+        symbol_count: counts.symbols,
+        languages: counts
+            .languages
+            .into_iter()
+            .map(|(language, files)| LanguageCount { language, files })
+            .collect(),
+        warnings: Vec::new(),
+    }
 }
 
 fn is_database_contention(error: &Error) -> bool {

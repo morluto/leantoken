@@ -567,3 +567,23 @@ fn cli_discovery_limits_reject_zero_and_inconsistent_batches() {
     ]);
     assert!(cli.config().is_err());
 }
+
+#[test]
+fn cli_index_worker_limit_is_explicit_and_positive() {
+    let root = tempfile::tempdir().expect("root");
+    let cli = parse(&[
+        "status",
+        "--root",
+        root.path().to_str().expect("root UTF-8"),
+        "--max-index-workers",
+        "2",
+    ]);
+    assert_eq!(cli.config().expect("config").max_index_workers, 2);
+    assert!(Cli::try_parse_from([
+        "leantoken",
+        "status",
+        "--max-index-workers",
+        "0",
+    ])
+    .is_err());
+}

@@ -23,6 +23,7 @@ pub const DEFAULT_MAX_RESULTS: usize = 100;
 pub const HARD_MAX_RESULTS: usize = 10_000;
 
 const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_millis(5_000);
+const READ_ONLY_STATUS_BUSY_TIMEOUT: Duration = Duration::from_millis(100);
 
 const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -423,6 +424,12 @@ pub struct StorageCounts {
     pub languages: Vec<(String, usize)>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ReadOnlyStatusSnapshot {
+    pub generation: u64,
+    pub counts: StorageCounts,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct TokenSavingsRecord {
     pub tracked_requests: u64,
@@ -550,6 +557,98 @@ impl Storage {
     /// useful for storage tests and tools that deliberately manage that invariant.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         Self::open_with_startup_timeout(path, DEFAULT_BUSY_TIMEOUT)
+    }
+
+    /// Read status from an existing cache without running migrations, changing
+    /// SQLite pragmas, or binding the cache to a repository.
+    pub(crate) fn read_only_status(
+        path: &Path,
+        repository_root: &Path,
+    ) -> Result<ReadOnlyStatusSnapshot> {
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.busy_timeout(READ_ONLY_STATUS_BUSY_TIMEOUT)?;
+        conn.execute_batch("BEGIN DEFERRED")?;
+
+        if !table_exists(&conn, "meta")? {
+            return Ok(ReadOnlyStatusSnapshot {
+                generation: 0,
+                counts: StorageCounts {
+                    files: 0,
+                    chunks: 0,
+                    symbols: 0,
+                    languages: Vec::new(),
+                },
+            });
+        }
+
+        let has_repository_root = column_exists(&conn, "meta", "repository_root")?;
+        let has_repository_identity = column_exists(&conn, "meta", "repository_identity")?;
+        let expected_repository = if has_repository_root {
+            conn.query_row("SELECT repository_root FROM meta WHERE id = 1", [], |row| {
+                row.get::<_, String>(0)
+            })?
+        } else {
+            String::new()
+        };
+        let expected_identity = if has_repository_identity {
+            conn.query_row(
+                "SELECT repository_identity FROM meta WHERE id = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )?
+        } else {
+            String::new()
+        };
+        let actual_identity = repository_identity(repository_root);
+        let actual_repository = repository_root.to_string_lossy();
+        let mismatched_identity =
+            !expected_identity.is_empty() && expected_identity != actual_identity;
+        let mismatched_legacy_root = expected_identity.is_empty()
+            && !expected_repository.is_empty()
+            && expected_repository != actual_repository;
+        if mismatched_identity || mismatched_legacy_root {
+            return Err(Error::RepositoryMismatch {
+                database: path.to_path_buf(),
+                expected_repository,
+                actual_repository: repository_root.to_path_buf(),
+            });
+        }
+
+        let generation = if column_exists(&conn, "meta", "repository_generation")? {
+            i64_to_u64(conn.query_row(
+                "SELECT repository_generation FROM meta WHERE id = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)
+        } else {
+            0
+        };
+        let files = count_table_rows(&conn, "files")?;
+        let chunks = count_table_rows(&conn, "chunks")?;
+        let symbols = count_table_rows(&conn, "symbols")?;
+        let languages = if table_exists(&conn, "files")? {
+            let mut statement = conn.prepare(
+                "SELECT language, count(*) FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY language",
+            )?;
+            statement
+                .query_map([], |row| Ok((row.get(0)?, i64_to_usize(row.get(1)?))))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
+
+        Ok(ReadOnlyStatusSnapshot {
+            generation,
+            counts: StorageCounts {
+                files,
+                chunks,
+                symbols,
+                languages,
+            },
+        })
     }
 
     pub(crate) fn open_with_startup_timeout(
@@ -1958,6 +2057,27 @@ fn verify_baseline(
 fn bounded_limit(limit: usize) -> i64 {
     let capped = limit.clamp(1, HARD_MAX_RESULTS);
     i64::try_from(capped).unwrap_or(i64::MAX)
+}
+
+fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        [table],
+        |row| row.get(0),
+    )?)
+}
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let sql = format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1)");
+    Ok(conn.query_row(&sql, [column], |row| row.get(0))?)
+}
+
+fn count_table_rows(conn: &Connection, table: &str) -> Result<usize> {
+    if !table_exists(conn, table)? {
+        return Ok(0);
+    }
+    let sql = format!("SELECT count(*) FROM {table}");
+    Ok(i64_to_usize(conn.query_row(&sql, [], |row| row.get(0))?))
 }
 
 fn repository_identity(path: &Path) -> String {

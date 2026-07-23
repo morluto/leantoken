@@ -18,6 +18,10 @@ use crate::{Error, Result};
 
 const MIN_CONTEXT_RANGE_LINES: usize = 12;
 const MAX_CONTEXT_RANGE_LINES: usize = 128;
+// Re-tokenize bounded candidate windows instead of guessing a byte/token ratio.
+// The hard cap prevents pathological low-token inputs from growing forever.
+const LIVE_READ_TOKEN_CHECK_BYTES: usize = 64 * 1024;
+const MAX_LIVE_READ_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone)]
 pub(super) struct StoredExcerpt {
@@ -377,7 +381,7 @@ impl Services {
         // content range is extracted by a bounded line-oriented reader.
         let file = fs::File::open(&path)?;
         let full_hash = stream_hash(&file)?;
-        let range = read_live_range(&file, target)?;
+        let range = read_live_range(&file, target, max_tokens, self.config.tokenizer)?;
         let baseline_source_tokens = self.config.tokenizer.count(&range.content);
         let start_line = range.start_line;
         let (content, emitted_tokens) = self.config.tokenizer.truncate(&range.content, max_tokens);
@@ -467,36 +471,103 @@ fn stream_hash(file: &File) -> Result<String> {
 }
 
 /// Read a resolved range without changing its original line terminators.
-fn read_live_range(file: &File, target: ResolvedReadTarget) -> Result<LiveReadRange> {
+fn read_live_range(
+    file: &File,
+    target: ResolvedReadTarget,
+    max_tokens: usize,
+    tokenizer: crate::tokens::Tokenizer,
+) -> Result<LiveReadRange> {
     let mut file = file.try_clone()?;
     file.seek(SeekFrom::Start(0))?;
     let mut reader = BufReader::new(file);
-    let mut selected = Vec::new();
-    let mut line = Vec::new();
-    let mut current_line = 0usize;
+    let mut selected = Vec::with_capacity(LIVE_READ_TOKEN_CHECK_BYTES);
+    let mut current_line = 1usize;
     let mut selected_end = None;
+    let mut target_finished = false;
+    let mut token_bound_reached = false;
+    let mut last_byte_was_newline = false;
+    let mut next_token_check = LIVE_READ_TOKEN_CHECK_BYTES;
+    let mut utf8_pending = Vec::new();
 
-    loop {
-        line.clear();
-        if reader.read_until(b'\n', &mut line)? == 0 {
+    while !target_finished {
+        let buffer = reader.fill_buf()?;
+        if buffer.is_empty() {
             break;
         }
-        current_line += 1;
-        if current_line >= target.start_line
-            && target
-                .end_line
-                .is_none_or(|end_line| current_line <= end_line)
+
+        let mut consumed = 0usize;
+        let mut validation_chunk = Vec::new();
+        for &byte in buffer {
+            let in_target = current_line >= target.start_line
+                && target
+                    .end_line
+                    .is_none_or(|end_line| current_line <= end_line);
+            if in_target {
+                validation_chunk.push(byte);
+            }
+            if in_target && !token_bound_reached {
+                selected_end = Some(current_line);
+                selected.push(byte);
+            }
+            consumed += 1;
+            last_byte_was_newline = byte == b'\n';
+            if byte == b'\n' {
+                if target.end_line == Some(current_line) {
+                    target_finished = true;
+                    break;
+                }
+                current_line = current_line.saturating_add(1);
+            }
+        }
+        reader.consume(consumed);
+        validate_utf8_chunk(&mut utf8_pending, &validation_chunk, target_finished)?;
+
+        if !token_bound_reached
+            && (target_finished
+                || selected.len() >= next_token_check
+                || selected.len() >= MAX_LIVE_READ_BYTES)
         {
-            selected.extend_from_slice(&line);
-            selected_end = Some(current_line);
-        }
-        if target.end_line == Some(current_line) {
-            break;
+            match std::str::from_utf8(&selected) {
+                Ok(content) if tokenizer.count(content) > max_tokens => {
+                    token_bound_reached = true;
+                }
+                Ok(_) => {
+                    if selected.len() >= MAX_LIVE_READ_BYTES {
+                        return Err(Error::LimitExceeded);
+                    }
+                    next_token_check = selected.len().saturating_add(LIVE_READ_TOKEN_CHECK_BYTES);
+                }
+                Err(error) if error.error_len().is_none() => {
+                    if target_finished || selected.len() >= MAX_LIVE_READ_BYTES {
+                        return Err(Error::InvalidInput {
+                            field: "path",
+                            reason: "must identify UTF-8 text",
+                        });
+                    }
+                }
+                Err(_) => {
+                    return Err(Error::InvalidInput {
+                        field: "path",
+                        reason: "must identify UTF-8 text",
+                    });
+                }
+            }
         }
     }
 
-    let logical_line_count = current_line.max(1);
-    if target.start_line > logical_line_count {
+    if !utf8_pending.is_empty() {
+        return Err(Error::InvalidInput {
+            field: "path",
+            reason: "must identify UTF-8 text",
+        });
+    }
+
+    let logical_line_count = if current_line == 1 || last_byte_was_newline {
+        current_line.saturating_sub(usize::from(current_line > 1))
+    } else {
+        current_line
+    };
+    if selected_end.is_none() && target.start_line > logical_line_count.max(1) {
         return Err(invalid_line_range());
     }
     let content = String::from_utf8(selected).map_err(|_| Error::InvalidInput {
@@ -506,8 +577,29 @@ fn read_live_range(file: &File, target: ResolvedReadTarget) -> Result<LiveReadRa
     Ok(LiveReadRange {
         content,
         start_line: target.start_line,
-        end_line: selected_end.unwrap_or(target.start_line),
+        end_line: selected_end
+            .unwrap_or(target.start_line)
+            .min(target.end_line.unwrap_or(usize::MAX)),
     })
+}
+
+fn validate_utf8_chunk(pending: &mut Vec<u8>, bytes: &[u8], final_chunk: bool) -> Result<()> {
+    pending.extend_from_slice(bytes);
+    match std::str::from_utf8(pending) {
+        Ok(_) => {
+            pending.clear();
+            Ok(())
+        }
+        Err(error) if error.error_len().is_none() && !final_chunk => {
+            let valid_up_to = error.valid_up_to();
+            pending.drain(..valid_up_to);
+            Ok(())
+        }
+        Err(_) => Err(Error::InvalidInput {
+            field: "path",
+            reason: "must identify UTF-8 text",
+        }),
+    }
 }
 
 fn invalid_line_range() -> Error {

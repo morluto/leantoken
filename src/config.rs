@@ -199,7 +199,7 @@ impl Config {
             chunk_bytes: 32 * 1024,
             max_index_workers: std::thread::available_parallelism()
                 .map_or(1, std::num::NonZero::get)
-                .min(8),
+                .min(4),
             watcher_debounce: Duration::from_millis(500),
             tokenizer: Tokenizer::default(),
         })
@@ -254,6 +254,11 @@ impl Config {
         if self.chunk_lines == 0 || self.chunk_bytes == 0 {
             return Err(Error::InvalidConfiguration(
                 "chunk_lines and chunk_bytes must be positive".into(),
+            ));
+        }
+        if self.max_index_workers == 0 {
+            return Err(Error::InvalidConfiguration(
+                "max_index_workers must be positive".into(),
             ));
         }
         Ok(())

@@ -153,6 +153,8 @@ fn config_defaults_bound_output_and_timing() {
     assert!(config.context_lines > 0);
     assert!(config.chunk_lines > 0);
     assert!(config.chunk_bytes > 0);
+    assert!(config.max_index_workers > 0);
+    assert!(config.max_index_workers <= 4);
     assert!(config.watcher_debounce >= Duration::ZERO);
     assert_eq!(config.tokenizer, Tokenizer::default());
     assert!(config.tokenizer.is_exact());
