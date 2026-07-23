@@ -476,17 +476,41 @@ fn parse_git_status<R: BufRead>(mut reader: R, max: usize, prefix: &str) -> Hash
         }
 
         let status = &record[..2];
-        let path = String::from_utf8_lossy(&record[3..]);
+        let path = String::from_utf8_lossy(&record[3..]).into_owned();
 
         // Ignore ignored files; keep modified, added, deleted, and untracked.
         if status == b"!!" {
             continue;
         }
 
-        let Some(path) = path.strip_prefix(prefix) else {
-            continue;
-        };
-        changed.insert(slash_path(Path::new(path)));
+        let mut paths = vec![path];
+        let is_rename = status[0] == b'R' || status[1] == b'R';
+        let is_copy = status[0] == b'C' || status[1] == b'C';
+        if is_rename || is_copy {
+            let mut renamed = Vec::new();
+            match reader.read_until(0, &mut renamed) {
+                Ok(0) => break,
+                Ok(_) => {
+                    if renamed.last() == Some(&0) {
+                        renamed.pop();
+                    }
+                    if is_rename {
+                        paths.push(String::from_utf8_lossy(&renamed).into_owned());
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        for path in paths {
+            let Some(path) = path.strip_prefix(prefix) else {
+                continue;
+            };
+            changed.insert(slash_path(Path::new(path)));
+            if changed.len() == max {
+                break;
+            }
+        }
         if changed.len() == max {
             break;
         }
@@ -716,6 +740,34 @@ mod tests {
 
         assert_eq!(changed, HashSet::from(["first.rs".to_string()]));
         assert_eq!(input.position(), first.len() as u64);
+    }
+
+    #[test]
+    fn git_status_parser_consumes_rename_destination_as_part_of_one_record() {
+        let mut input = Cursor::new(b"R  old.rs\0new.rs\0M  after.rs\0".to_vec());
+
+        let changed = parse_git_status(&mut input, 10, "");
+
+        assert_eq!(
+            changed,
+            HashSet::from([
+                "old.rs".to_string(),
+                "new.rs".to_string(),
+                "after.rs".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn git_status_parser_consumes_copy_source_without_reporting_it_as_changed() {
+        let mut input = Cursor::new(b"C  copied.rs\0source.rs\0M  after.rs\0".to_vec());
+
+        let changed = parse_git_status(&mut input, 10, "");
+
+        assert_eq!(
+            changed,
+            HashSet::from(["copied.rs".to_string(), "after.rs".to_string()])
+        );
     }
 
     #[test]
