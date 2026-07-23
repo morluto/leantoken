@@ -438,12 +438,7 @@ pub fn run(
     let home = home_directory()
         .ok_or_else(|| Error::InternalFailure("could not determine the home directory".into()))?;
     let launcher = McpLauncher::current()?;
-    let runtime_root = ProjectDirs::from("dev", "LeanToken", "leantoken")
-        .ok_or_else(|| {
-            Error::InternalFailure("could not determine the application data directory".into())
-        })?
-        .data_local_dir()
-        .join("runtimes");
+    let runtime_root = setup_runtime_root(&home);
     let environment = SetupEnvironment {
         home,
         runtime_root,
@@ -455,6 +450,21 @@ pub fn run(
             && std::io::stderr().is_terminal(),
     };
     run_with(operation, request, &environment, &InteractivePrompt)
+}
+
+fn setup_runtime_root(home: &Path) -> PathBuf {
+    let data_local = ProjectDirs::from("dev", "LeanToken", "leantoken")
+        .map(|directories| directories.data_local_dir().to_path_buf());
+    setup_runtime_root_from(home, data_local.as_deref())
+}
+
+fn setup_runtime_root_from(home: &Path, data_local: Option<&Path>) -> PathBuf {
+    data_local
+        .map_or_else(
+            || home.join(".local").join("share").join("leantoken"),
+            Path::to_path_buf,
+        )
+        .join("runtimes")
 }
 
 fn home_directory() -> Option<PathBuf> {
@@ -1860,6 +1870,14 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_root_falls_back_below_the_resolved_home() {
+        assert_eq!(
+            setup_runtime_root_from(Path::new("/home/agent"), None),
+            Path::new("/home/agent/.local/share/leantoken/runtimes")
+        );
+    }
 
     struct FixedPrompt {
         selected: Option<Vec<SetupClient>>,

@@ -191,7 +191,7 @@ async fn contribution_context_routes_to_guidance_validation_and_owner_tests() {
     assert_eq!(receipt.guidance_candidates, 2);
     assert_eq!(receipt.validation_candidates, 1);
     assert_eq!(receipt.owner_test_candidates, 1);
-    assert_eq!(receipt.missing_families, vec!["templates"]);
+    assert_eq!(receipt.missing_families, vec!["template"]);
     let diff_evidence = response
         .diff_scope
         .as_ref()
@@ -1312,6 +1312,91 @@ async fn five_services_return_bounded_grounded_responses() {
             .iter()
             .all(|fragment| fragment.content_hash != known)
     );
+}
+
+#[tokio::test]
+async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
+    let (_root, services) = fixture().await;
+
+    let read = services
+        .read(ReadRequest {
+            path: r".\src\lib.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("normalized read");
+    assert_eq!(read.path, "src/lib.rs");
+
+    let outline = services
+        .outline(OutlineRequest {
+            paths: vec!["./src/lib.rs".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(10),
+            max_tokens: Some(100),
+        })
+        .await
+        .expect("normalized outline");
+    assert_eq!(outline.files[0].path, "src/lib.rs");
+
+    let files = services
+        .files(FilesRequest {
+            operation: FileOperation::Glob,
+            path: None,
+            query: None,
+            pattern: Some(r"src\*.rs".into()),
+            max_results: Some(10),
+            cursor: None,
+            depth: None,
+        })
+        .await
+        .expect("normalized files glob");
+    assert_eq!(files.entries[0].path, "src/lib.rs");
+
+    let search = services
+        .search(SearchRequest {
+            query: "greet".into(),
+            mode: SearchMode::Auto,
+            include_paths: vec![r"src\*.rs".into()],
+            exclude_paths: Vec::new(),
+            focus_paths: vec![r"src\lib.rs".into()],
+            max_results: Some(10),
+            max_tokens: Some(100),
+            context_lines: Some(1),
+            case_sensitive: false,
+            cursor: None,
+        })
+        .await
+        .expect("normalized search paths");
+    assert!(search.hits.iter().any(|hit| hit.path == "src/lib.rs"));
+    assert!(
+        search
+            .hits
+            .iter()
+            .any(|hit| hit.score_reasons.contains(&"focus path".to_owned()))
+    );
+
+    let context = services
+        .context(ContextRequest {
+            task: "find greet".into(),
+            token_budget: 200,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+            base_revision: None,
+            changed_paths: vec![r".\src\lib.rs".into()],
+        })
+        .await
+        .expect("normalized context path");
+    let scope = context.diff_scope.expect("explicit diff scope");
+    assert_eq!(scope.changed_paths, vec!["src/lib.rs"]);
+    assert_eq!(scope.indexed_changed_paths, 1);
 }
 
 #[tokio::test]

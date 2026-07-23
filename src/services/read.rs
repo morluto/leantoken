@@ -11,7 +11,7 @@ use super::validation::{
     validate_optional_input,
 };
 use crate::model::*;
-use crate::repository::{resolve_existing, validate_relative};
+use crate::repository::{normalize_relative, resolve_existing, validate_relative};
 use crate::storage::ReadSession;
 use crate::text::{anchored_line_window, hash};
 use crate::{Error, Result};
@@ -246,11 +246,16 @@ impl Services {
 
     fn outline_sync(
         &self,
-        request: OutlineRequest,
+        mut request: OutlineRequest,
         cancellation: &CancellationToken,
     ) -> Result<OutlineResponse> {
         check_cancelled(cancellation)?;
         validate_outline_input(&request)?;
+        request.paths = request
+            .paths
+            .iter()
+            .map(|path| normalize_relative(path))
+            .collect::<Result<Vec<_>>>()?;
         let limit = self.result_limit(request.max_results)?;
         let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         let (response, baseline_source_tokens) = self.consistent(|session, generation| {
@@ -345,11 +350,12 @@ impl Services {
 
     fn read_sync(
         &self,
-        request: ReadRequest,
+        mut request: ReadRequest,
         cancellation: &CancellationToken,
     ) -> Result<ReadResponse> {
         check_cancelled(cancellation)?;
         validate_read_input(&request)?;
+        request.path = normalize_relative(&request.path)?;
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         let (response, baseline_source_tokens) = self.consistent(|session, generation| {
             check_cancelled(cancellation)?;
@@ -552,6 +558,9 @@ fn read_live_range(
                     });
                 }
             }
+        }
+        if token_bound_reached && target.end_line.is_none() {
+            target_finished = true;
         }
     }
 

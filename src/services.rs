@@ -19,7 +19,7 @@ mod context;
 mod files;
 mod read;
 mod search;
-mod validation;
+pub(crate) mod validation;
 
 const STARTUP_BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 const STARTUP_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(25);

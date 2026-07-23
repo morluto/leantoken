@@ -19,7 +19,9 @@ use super::validation::{
 };
 use crate::model::*;
 use crate::ranking::{self, Candidate};
-use crate::repository::{git_changed_paths, git_diff_hunks, git_diff_paths, validate_relative};
+use crate::repository::{
+    git_changed_paths, git_diff_hunks, git_diff_paths, normalize_relative, validate_relative,
+};
 use crate::storage::{ReadSession, SymbolRecord};
 use crate::text::{expand_terms, identifier_words};
 use crate::{Error, Result};
@@ -100,14 +102,19 @@ fn context_path_score(path: &str, terms: &[String], task: &str) -> f64 {
             }
         }
     }
-    for (language, component) in [
-        ("javascript", "/js/"),
-        ("typescript", "/ts/"),
-        ("python", "/python/"),
-        ("rust", "/rust/"),
-        ("go", "/go/"),
+    for (language, component, extensions) in [
+        ("javascript", "/js/", &["js", "jsx", "mjs", "cjs"][..]),
+        ("typescript", "/ts/", &["ts", "tsx"][..]),
+        ("python", "/python/", &["py", "pyw"][..]),
+        ("rust", "/rust/", &["rs"][..]),
+        ("go", "/go/", &["go"][..]),
     ] {
-        if task_mentions_language(task, language) && format!("/{path}/").contains(component) {
+        let extension_matches = path
+            .rsplit_once('.')
+            .is_some_and(|(_, extension)| extensions.contains(&extension));
+        if task_mentions_language(task, language)
+            && (extension_matches || format!("/{path}/").contains(component))
+        {
             // An explicit language name in the task is strong repository-scope
             // evidence. Keep this above an exact-name match in another
             // language so common names such as `Point` do not dominate.
@@ -214,6 +221,8 @@ fn owner_test_changed_path(path: &str, request: &ContextRequest) -> Option<Strin
     if !is_test {
         return None;
     }
+    let test_name = path.rsplit('/').next().unwrap_or(&path);
+    let test_stem = test_name.split('.').next().unwrap_or(test_name);
     request
         .changed_paths
         .iter()
@@ -225,8 +234,17 @@ fn owner_test_changed_path(path: &str, request: &ContextRequest) -> Option<Strin
                 .next()
                 .and_then(|name| name.split('.').next())?
                 .to_ascii_lowercase();
-            (stem.len() >= 3 && path.contains(&stem)).then(|| changed.clone())
+            (stem.len() >= 3 && contains_filename_token(test_stem, &stem)).then(|| changed.clone())
         })
+}
+
+fn contains_filename_token(path: &str, token: &str) -> bool {
+    path.match_indices(token).any(|(start, matched)| {
+        let end = start + matched.len();
+        let boundary =
+            |character: Option<char>| character.is_none_or(|value| !value.is_alphanumeric());
+        boundary(path[..start].chars().next_back()) && boundary(path[end..].chars().next())
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -895,9 +913,9 @@ impl Services {
         let mut missing_families = Vec::new();
         for (family, candidates) in [
             ("guidance", guidance_candidates),
-            ("templates", template_candidates),
+            ("template", template_candidates),
             ("validation", validation_candidates),
-            ("owner_tests", owner_test_candidates),
+            ("owner_test", owner_test_candidates),
         ] {
             if candidates == 0 {
                 missing_families.push(family.to_owned());
@@ -1115,7 +1133,7 @@ impl Services {
     #[allow(clippy::cognitive_complexity)]
     fn context_sync(
         &self,
-        request: ContextRequest,
+        mut request: ContextRequest,
         workflow: ContextWorkflow,
         cancellation: &CancellationToken,
         diagnostics: CandidateDiagnostics,
@@ -1123,6 +1141,11 @@ impl Services {
     ) -> Result<(ContextEvaluation, Option<usize>)> {
         check_cancelled(cancellation)?;
         self.validate_context_request(&request)?;
+        request.changed_paths = request
+            .changed_paths
+            .iter()
+            .map(|path| normalize_relative(path))
+            .collect::<Result<Vec<_>>>()?;
         let diff_scope = self.resolve_diff_scope(&request)?;
         let mut scoped_request = request.clone();
         if let Some(scope) = &diff_scope {
@@ -1563,6 +1586,55 @@ mod tests {
             "fix TypeScript parsing",
             "typescript"
         ));
+    }
+
+    #[test]
+    fn language_scope_boosts_common_source_file_extensions() {
+        assert_eq!(
+            context_path_score("src/main.rs", &[], "Fix this Rust bug"),
+            12.0
+        );
+        assert_eq!(
+            context_path_score("lib/parser.py", &[], "Fix this Python parser"),
+            12.0
+        );
+        assert_eq!(
+            context_path_score("src/main.rs", &[], "Fix this Python parser"),
+            0.0
+        );
+    }
+
+    #[test]
+    fn owner_test_matching_requires_filename_token_boundaries() {
+        let mut request = ContextRequest {
+            task: "fix core".into(),
+            token_budget: 100,
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            prior_repository_generation: None,
+            base_revision: None,
+            changed_paths: vec!["src/core.rs".into()],
+        };
+
+        assert_eq!(
+            owner_test_changed_path("tests/core_tests.rs", &request),
+            Some("src/core.rs".into())
+        );
+        assert_eq!(
+            owner_test_changed_path("tests/hardcore_tests.rs", &request),
+            None
+        );
+        assert_eq!(
+            owner_test_changed_path("tests/core/unrelated_tests.rs", &request),
+            None
+        );
+        request.changed_paths = vec!["src/my_core.rs".into()];
+        assert_eq!(
+            owner_test_changed_path("tests/my_core_spec.rs", &request),
+            Some("src/my_core.rs".into())
+        );
     }
 
     #[test]

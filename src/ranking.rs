@@ -24,6 +24,7 @@ use crate::model::{
     ContextFragment, ContextRequest, ContextResponse, EvidenceReceipt, Freshness, OmittedCandidate,
     ResponseMeta,
 };
+use crate::services::validation::path_matches;
 use crate::tokens;
 
 const FACET_PREFIX: &str = "facet:";
@@ -732,19 +733,14 @@ fn apply_request_signals(candidates: &mut [Candidate], request: &ContextRequest)
 }
 
 fn focus_matches(path: &str, pattern: &str) -> bool {
-    path == pattern
-        || path.contains(pattern)
-        || path.starts_with(&format!("{pattern}/"))
-        || path.ends_with(&format!("/{pattern}"))
+    path_matches(path, pattern).unwrap_or(false)
 }
 
 fn is_excluded(path: &str, patterns: &[String]) -> bool {
-    patterns.iter().any(|pattern| {
-        if pattern.is_empty() {
-            return false;
-        }
-        path == pattern || path.starts_with(&format!("{pattern}/"))
-    })
+    patterns
+        .iter()
+        .filter(|pattern| !pattern.is_empty())
+        .any(|pattern| path_matches(path, pattern).unwrap_or(false))
 }
 
 fn greedy_select(

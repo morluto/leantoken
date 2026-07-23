@@ -244,12 +244,17 @@ fn cli_context_request() {
 }
 
 #[test]
-fn cli_context_requires_task_and_budget() {
+fn cli_context_requires_task_and_defaults_budget() {
     let no_task = Cli::try_parse_from(["leantoken", "context", "--budget", "100"]);
     assert!(no_task.is_err());
 
     let no_budget = Cli::try_parse_from(["leantoken", "context", "--task", "x"]);
-    assert!(no_budget.is_err());
+    assert!(no_budget.is_ok());
+    let AppRequest::Context { request, .. } = no_budget.expect("default budget").app_request()
+    else {
+        panic!("expected context request");
+    };
+    assert_eq!(request.token_budget, 3_000);
 }
 
 #[test]
