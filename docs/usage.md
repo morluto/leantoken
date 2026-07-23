@@ -93,7 +93,7 @@ Setup writes only the `leantoken` entry in each selected global client config.
 It also manages a concise `leantoken` discovery skill in
 `~/.agents/skills/leantoken/SKILL.md` and
 `~/.claude/skills/leantoken/SKILL.md`. Hosts preload only its name and routing
-description, then load the instructions on selection; the five MCP schemas
+description, then load the instructions on selection; the six MCP schemas
 remain deferred. Repeated setup updates only marker-owned copies, removal
 preserves an unowned file at either path, and partial client removal retains the
 skill while another LeanToken registration remains. JSON setup reports the
@@ -179,7 +179,7 @@ pruning during a mixed-version rollout.
 ## First-run doctor
 
 `leantoken doctor` launches the current executable as a real MCP subprocess and
-verifies its initialization identity and agent instructions, exact five-tool
+verifies its initialization identity and agent instructions, exact six-tool
 catalog, and first `leantoken_context` retrieval. On a cold repository it
 follows structured `retry_after_ms` guidance until the first index generation
 is ready. Use `--json` for a machine-readable readiness report. Failures use
@@ -284,6 +284,17 @@ defaults. Values outside these ranges are rejected rather than silently
 clamped. Disallowed zero values are invalid input; values above a maximum
 produce an MCP error with the public field name, requested value, and active
 maximum.
+
+## `leantoken_savings`
+
+Returns cumulative repository-local source-token savings estimates with no
+input fields. The response includes the tokenizer, whether local counts are
+exact, tracked request count, baseline and emitted source tokens, the estimated
+source tokens saved, and a fixed breakdown by retrieval operation.
+
+This is a read-only observation: calling `leantoken_savings` does not update
+the tracker. Ask the host agent how many tokens LeanToken saved or request
+LeanToken usage statistics to route directly to this tool.
 
 ## `leantoken_files`
 

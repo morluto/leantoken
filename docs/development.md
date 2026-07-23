@@ -219,7 +219,7 @@ results.
 
 ## MCP schema snapshots
 
-The generated five-tool catalog is snapshot-tested. Review snapshot changes as
+The generated six-tool catalog is snapshot-tested. Review snapshot changes as
 protocol changes: tool names, descriptions, required fields, defaults, and
 schema size all consume client context or affect compatibility.
 

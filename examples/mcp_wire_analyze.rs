@@ -1355,14 +1355,14 @@ mod tests {
             "../benchmarks/reports/wire-trace-synthetic-v2.json"
         ))
         .expect("checked-in report");
-        assert_eq!(report["total_serialized_json_tokens"], 2_044);
+        assert_eq!(report["total_serialized_json_tokens"], 2_820);
         assert_eq!(report["total_source_tokens"], 21);
         assert_eq!(report["total_provider_visible_payload_tokens"], 13);
         assert_eq!(report["total_handoff_tokens"], 13);
-        assert_eq!(report["total_observed_boundary_tokens"], 2_057);
+        assert_eq!(report["total_observed_boundary_tokens"], 2_833);
         assert_eq!(
             report["result_lifetimes"][0]["serialized_token_amplification"],
-            720
+            663
         );
         assert_eq!(
             report["result_lifetimes"][0]["provider_visible_token_amplification"],

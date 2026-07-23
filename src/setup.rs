@@ -1096,7 +1096,7 @@ fn discovery_skill(launcher: &McpLauncher) -> Result<String> {
         "leantoken doctor --json".into()
     };
     Ok(format!(
-        "---\nname: leantoken\ndescription: Use LeanToken for token-bounded repository exploration, code search, symbol outlines, exact source reads, or when the user explicitly asks to use LeanToken.\n---\n\n{DISCOVERY_SKILL_MARKER}\n\nBefore repository exploration, discover the deferred `leantoken` MCP server and its tools. Route progressively:\n\n- `leantoken_files`: find paths or inspect a compact tree.\n- `leantoken_outline`: inspect definitions and imports before reading source.\n- `leantoken_search`: locate symbols, references, identifiers, text, or regex matches.\n- `leantoken_read`: read an exact symbol or narrow line range.\n- `leantoken_context`: use bounded task-shaped retrieval only while scope remains uncertain.\n\nUse native workspace tools for edits, commands, tests, and Git operations. If the server or tools cannot be discovered, run `{doctor}` and report its structured registration, launch, handshake, and catalog status instead of silently claiming LeanToken was used.\n"
+        "---\nname: leantoken\ndescription: Use LeanToken for token-bounded repository exploration, code search, symbol outlines, exact source reads, or when the user explicitly asks to use LeanToken.\n---\n\n{DISCOVERY_SKILL_MARKER}\n\nBefore repository exploration, discover the deferred `leantoken` MCP server and its tools. Route progressively:\n\n- `leantoken_files`: find paths or inspect a compact tree.\n- `leantoken_outline`: inspect definitions and imports before reading source.\n- `leantoken_search`: locate symbols, references, identifiers, text, or regex matches.\n- `leantoken_read`: read an exact symbol or narrow line range.\n- `leantoken_context`: use bounded task-shaped retrieval only while scope remains uncertain.\n- `leantoken_savings`: inspect cumulative repository-local source-token savings.\n\nUse native workspace tools for edits, commands, tests, and Git operations. If the server or tools cannot be discovered, run `{doctor}` and report its structured registration, launch, handshake, and catalog status instead of silently claiming LeanToken was used.\n"
     ))
 }
 
@@ -2710,6 +2710,7 @@ mod tests {
             let skill = fs::read_to_string(&effect.path).unwrap();
             assert!(skill.contains(DISCOVERY_SKILL_MARKER));
             assert!(skill.contains("leantoken_context"));
+            assert!(skill.contains("leantoken_savings"));
             assert!(skill.contains("leantoken doctor --json"));
             assert!(!skill.contains("inputSchema"));
             assert_eq!(

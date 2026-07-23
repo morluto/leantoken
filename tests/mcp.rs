@@ -505,6 +505,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .clone()
         .expect("server instructions");
     assert!(instructions.contains("preferred repository discovery"));
+    assert!(instructions.contains("call leantoken_savings directly"));
     assert!(instructions.contains("call leantoken_context first"));
     assert!(instructions.contains("leantoken_search over grep or rg"));
     assert!(instructions.contains("consistency=working_tree"));
@@ -515,13 +516,14 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .iter()
         .map(|tool| tool.name.as_ref())
         .collect::<std::collections::HashSet<_>>();
-    assert_eq!(tools.len(), 5);
+    assert_eq!(tools.len(), 6);
     for name in [
         "leantoken_files",
         "leantoken_search",
         "leantoken_outline",
         "leantoken_read",
         "leantoken_context",
+        "leantoken_savings",
     ] {
         assert!(names.contains(name));
     }
@@ -679,6 +681,41 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
             .and_then(|value| value.pointer("/meta/emitted_tokens"))
             .and_then(serde_json::Value::as_u64)
             .is_some_and(|tokens| tokens <= 3_000)
+    );
+
+    let savings = client
+        .peer()
+        .call_tool(
+            CallToolRequestParams::new("leantoken_savings")
+                .with_arguments(Default::default()),
+        )
+        .await
+        .expect("call savings tool");
+    assert_ne!(savings.is_error, Some(true));
+    let savings_structured = savings.structured_content.expect("structured savings");
+    assert!(
+        savings_structured["tracked_requests"]
+            .as_u64()
+            .is_some_and(|requests| requests >= 1)
+    );
+    assert!(
+        savings_structured["estimated_source_tokens_saved"]
+            .as_u64()
+            .is_some()
+    );
+
+    let repeated_savings = client
+        .peer()
+        .call_tool(
+            CallToolRequestParams::new("leantoken_savings")
+                .with_arguments(Default::default()),
+        )
+        .await
+        .expect("repeat savings tool");
+    assert_eq!(
+        repeated_savings.structured_content,
+        Some(savings_structured),
+        "observing savings must not update the tracker"
     );
 
     let context = ContextRequest {

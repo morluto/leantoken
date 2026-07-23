@@ -28,6 +28,10 @@ use crate::services::{Services, validate_positive_request_limit, validate_reques
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct SavingsMcpRequest {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct FilesMcpRequest {
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
@@ -895,11 +899,28 @@ impl LeanTokenMcp {
             .await;
         self.service_result(resp)
     }
+
+    #[tool(
+        name = "leantoken_savings",
+        description = "Report cumulative repository-local estimated source-token savings. Use when asked how many tokens LeanToken saved. Example: {}.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn leantoken_savings(
+        &self,
+        Parameters(_req): Parameters<SavingsMcpRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let state = self.services.get();
+        let services = match self.services(&state) {
+            Ok(services) => services,
+            Err(result) => return Ok(result),
+        };
+        self.service_result(services.token_savings().await)
+    }
 }
 
 #[tool_handler(
     name = "leantoken",
-    instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken_context first with the user's task. PREFER leantoken_search over grep or rg for source search; leantoken_files over find, ls, or glob for paths; leantoken_outline over opening whole files to discover structure; and leantoken_read over cat, head, or sed for exact symbols and ranges. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=working_tree after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, generated artifacts, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
+    instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken_savings directly. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken_context first with the user's task. PREFER leantoken_search over grep or rg for source search; leantoken_files over find, ls, or glob for paths; leantoken_outline over opening whole files to discover structure; and leantoken_read over cat, head, or sed for exact symbols and ranges. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=working_tree after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, generated artifacts, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
 )]
 impl ServerHandler for LeanTokenMcp {
     fn on_initialized(
@@ -1112,10 +1133,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mcp_exposes_five_tools() {
+    fn mcp_exposes_six_tools() {
         let router = LeanTokenMcp::tool_router();
         let tools = router.list_all();
-        assert_eq!(tools.len(), 5);
+        assert_eq!(tools.len(), 6);
 
         let names: std::collections::HashSet<_> = tools.iter().map(|t| t.name.as_ref()).collect();
         for name in [
@@ -1124,6 +1145,7 @@ mod tests {
             "leantoken_outline",
             "leantoken_read",
             "leantoken_context",
+            "leantoken_savings",
         ] {
             assert!(names.contains(name), "missing tool {name}");
         }
@@ -1399,8 +1421,16 @@ mod tests {
             let properties = tool
                 .input_schema
                 .get("properties")
-                .and_then(serde_json::Value::as_object)
-                .unwrap_or_else(|| panic!("{} input properties missing", tool.name));
+                .and_then(serde_json::Value::as_object);
+            if tool.name == "leantoken_savings" {
+                assert!(
+                    properties.is_none_or(serde_json::Map::is_empty),
+                    "savings must remain a zero-input tool"
+                );
+                continue;
+            }
+            let properties =
+                properties.unwrap_or_else(|| panic!("{} input properties missing", tool.name));
             for (field, schema) in properties {
                 assert!(
                     schema
@@ -1417,7 +1447,11 @@ mod tests {
 
     #[test]
     fn retrieval_tools_expose_consistency_boundary() {
-        for tool in LeanTokenMcp::tool_router().list_all() {
+        for tool in LeanTokenMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .filter(|tool| tool.name != "leantoken_savings")
+        {
             let consistency = tool
                 .input_schema
                 .get("properties")
@@ -1463,11 +1497,24 @@ mod tests {
         assert!(descriptions["leantoken_read"].contains("expected_hash"));
         assert!(descriptions["leantoken_read"].contains("instead of cat"));
         assert!(descriptions["leantoken_context"].contains("DEFAULT FIRST CALL"));
+        assert!(descriptions["leantoken_savings"].contains("how many tokens LeanToken saved"));
         assert!(
             descriptions
                 .values()
                 .all(|description| description.contains("Example:"))
         );
+    }
+
+    #[test]
+    fn savings_tool_is_local_and_read_only() {
+        let tool = LeanTokenMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|tool| tool.name == "leantoken_savings")
+            .expect("savings tool");
+        let annotations = tool.annotations.expect("savings annotations");
+        assert_eq!(annotations.read_only_hint, Some(true));
+        assert_eq!(annotations.open_world_hint, Some(false));
     }
 
     #[test]

@@ -388,7 +388,7 @@ fn doctor_verifies_identity_catalog_and_first_retrieval() {
     assert_eq!(report["server_name"], "leantoken");
     assert_eq!(report["server_version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(report["instructions_loaded"], true);
-    assert_eq!(report["tools"].as_array().map(Vec::len), Some(5));
+    assert_eq!(report["tools"].as_array().map(Vec::len), Some(6));
     assert!(
         matches!(
             report["integration"]["registration_status"].as_str(),
@@ -445,7 +445,7 @@ fn doctor_human_output_uses_context_distillery_handoff() {
     assert!(stderr.contains("Context Distillery is checking"));
     assert!(stdout.contains("LeanToken // Context Distillery"));
     assert!(stdout.contains("MCP identity: leantoken"));
-    assert!(stdout.contains("Tool catalog: 5 retrieval tools"));
+    assert!(stdout.contains("Tool catalog: 6 MCP tools"));
     assert!(stdout.contains("leantoken_context first"));
 }
 
@@ -571,7 +571,10 @@ fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
     assert!(
         initialize["result"]["instructions"]
             .as_str()
-            .is_some_and(|instructions| instructions.contains("call leantoken_context first"))
+            .is_some_and(|instructions| {
+                instructions.contains("call leantoken_savings directly")
+                    && instructions.contains("call leantoken_context first")
+            })
     );
     process.send_initialized();
 
@@ -595,6 +598,7 @@ fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
             "leantoken_files",
             "leantoken_outline",
             "leantoken_read",
+            "leantoken_savings",
             "leantoken_search",
         ]
         .into_iter()
@@ -1380,6 +1384,7 @@ fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
             "leantoken_files",
             "leantoken_outline",
             "leantoken_read",
+            "leantoken_savings",
             "leantoken_search"
         ])
     );

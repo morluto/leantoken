@@ -38,7 +38,7 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 
 - Exact local modes now cover the bundled `tiktoken-rs` encodings; an explicit
   inexact estimate mode covers providers without a local vocabulary.
-- MCP accounting includes initialization, the five-tool catalog,
+- MCP accounting includes initialization, the six-tool catalog,
   `notifications/initialized`, JSON-RPC envelopes, results, and handoffs. A
   transparent stdio proxy can capture exact exchanges from real hosts.
 - Compare dual, text-only, and structured-only results per host/version. Keep

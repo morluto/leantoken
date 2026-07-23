@@ -66,8 +66,8 @@ out the task.
 </td>
 <td width="33%" valign="top">
 <strong>Built for agent workflows</strong><br><br>
-Browse paths, search identifiers, inspect outlines, and read exact ranges
-through five focused MCP tools.
+Browse paths, search identifiers, inspect outlines, read exact ranges, and
+inspect cumulative savings through six focused MCP tools.
 </td>
 </tr>
 </table>
@@ -137,6 +137,7 @@ retrieval.
 | `leantoken_files` | Prefer over find/ls/glob for compact, ignore-aware path discovery. |
 | `leantoken_outline` | Inspect definitions, signatures, imports, and ranges without whole-file reads. |
 | `leantoken_read` | Prefer over cat/head/sed for one exact symbol or inclusive line range. |
+| `leantoken_savings` | Report cumulative repository-local estimated source-token savings. |
 
 Every retrieval tool accepts `consistency: "working_tree"` when completed edits
 must be reconciled before the query. The default, `"committed"`, returns the

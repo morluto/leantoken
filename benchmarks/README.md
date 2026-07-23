@@ -490,7 +490,7 @@ The frozen
 12 response and catalog representations against that compatibility matrix.
 The one new runtime change omits the internal task fingerprint from the
 serialized receipt: response JSON falls from 574 to 556 exact local tokens and
-the complete modeled dual handoff from 4,254 to 4,215. The fixed follow-up adds
+the complete modeled dual handoff from 4,345 to 4,306. The fixed follow-up adds
 no exact resend or overlapping source relative to baseline. Larger candidates
 that remove freshness, range, deduplication, or model-readable metadata are
 rejected; structured-only remains a Codex CLI 0.144.1 opt-in and `dual` remains
