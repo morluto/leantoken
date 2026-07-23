@@ -13,11 +13,12 @@ use serde_json::{Value, json};
 
 use crate::{Config, Error, Result};
 
-const EXPECTED_TOOLS: [&str; 5] = [
+const EXPECTED_TOOLS: [&str; 6] = [
     "leantoken_context",
     "leantoken_files",
     "leantoken_outline",
     "leantoken_read",
+    "leantoken_savings",
     "leantoken_search",
 ];
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -104,7 +105,8 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
         .get("instructions")
         .and_then(Value::as_str)
         .is_some_and(|instructions| {
-            instructions.contains("call leantoken_context first")
+            instructions.contains("call leantoken_savings directly")
+                && instructions.contains("call leantoken_context first")
                 && instructions.contains("leantoken_search over grep or rg")
         });
     if !instructions_loaded {
@@ -233,11 +235,7 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
         report.server_name, report.server_version
     )?;
     writeln!(output, "  ✓ Agent guidance loaded")?;
-    writeln!(
-        output,
-        "  ✓ Tool catalog: {} retrieval tools",
-        report.tools.len()
-    )?;
+    writeln!(output, "  ✓ Tool catalog: {} MCP tools", report.tools.len())?;
     if report.first_call.warmed_index {
         writeln!(
             output,

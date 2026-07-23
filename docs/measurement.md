@@ -822,10 +822,10 @@ usage remains null, and the `dual` classification does not prove that any real
 host delivers text or structured content to a model.
 The checked-in [trace](../benchmarks/wire_trace.synthetic.json) and
 [analysis](../benchmarks/reports/wire-trace-synthetic-v2.json) are the
-regenerable schema-v2 baseline. The current fixture records 2,044 complete
-JSON-RPC tokens: 1,610 for the five-tool catalog response and 240 for the dual
+regenerable schema-v2 baseline. The current fixture records 2,820 complete
+JSON-RPC tokens: 2,396 for the six-tool catalog response and 221 for the dual
 context result. The returned range contains 21 source tokens. The complete
-result envelope remains visible for three turns, producing 720 serialized
+result envelope remains visible for three turns, producing 663 serialized
 token-turns. Its 13-token synthetic handoff first becomes provider-visible in
 turn two and remains visible through turn three, producing 26 provider-visible
 token-turns. These values are separate measurements and must not be summed into

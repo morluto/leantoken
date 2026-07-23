@@ -1,6 +1,6 @@
 ---
 source: src/mcp.rs
-assertion_line: 1196
+assertion_line: 1535
 expression: tools
 ---
 [
@@ -406,6 +406,19 @@ expression: tools
         "target"
       ],
       "type": "object"
+    }
+  },
+  {
+    "name": "leantoken_savings",
+    "description": "Report cumulative repository-local estimated source-token savings. Use when asked how many tokens LeanToken saved. Example: {}.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false
     }
   },
   {
