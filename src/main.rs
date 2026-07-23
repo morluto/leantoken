@@ -147,11 +147,15 @@ async fn run(cli: Cli) -> Result<()> {
         return Ok(());
     }
 
+    if matches!(&request, AppRequest::Status) {
+        return print(&Services::status_without_initializing(config)?, json);
+    }
+
     let services = Arc::new(Services::open(config)?);
 
     match request {
         AppRequest::Index { rebuild } => print(&services.index_report(rebuild).await?, json),
-        AppRequest::Status => print(&services.status().await?, json),
+        AppRequest::Status => unreachable!("handled before service setup"),
         AppRequest::Savings => print(&services.token_savings().await?, json),
         AppRequest::Files(request) => print(&services.files(request).await?, json),
         AppRequest::Search(request) => print(&services.search(request).await?, json),

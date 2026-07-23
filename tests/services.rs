@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use leantoken::{
     Config, ContextRequest, ContextSignalPolicy, Error, FileOperation, FilesRequest, Freshness,
     IndexConsistency, IndexState, OutlineRequest, ReadRequest, ReadStatus, SearchMode, SearchRequest,
@@ -3148,6 +3150,35 @@ async fn status_reports_reconciling_when_shared_operation_lock_is_held() {
     );
     assert_eq!(during.index_state, IndexState::Ready);
     assert_eq!(during.repository_generation, before.repository_generation);
+}
+
+#[test]
+fn read_only_status_does_not_wait_for_an_active_writer() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write");
+    let database = root.path().join("index.sqlite");
+    let config = Config::discover(root.path(), Some(database.clone())).expect("config");
+    let services = Services::open(config.clone()).expect("services");
+
+    let connection = rusqlite::Connection::open(&database).expect("writer connection");
+    connection
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("hold writer transaction");
+
+    let started = Instant::now();
+    let status = Services::status_without_initializing(config).expect("read-only status");
+    assert!(
+        started.elapsed().as_secs() < 1,
+        "status waited on writer for {:?}",
+        started.elapsed()
+    );
+    assert_eq!(status.repository_generation, 0);
+    assert_eq!(status.index_state, IndexState::Uninitialized);
+
+    drop(services);
+    connection
+        .execute_batch("ROLLBACK")
+        .expect("release writer transaction");
 }
 
 #[tokio::test]
