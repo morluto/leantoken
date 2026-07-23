@@ -19,6 +19,8 @@ use serde::Serialize;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
+mod savings;
+
 const WATCHER_QUEUE_CAPACITY: usize = 1;
 const INDEX_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(500);
 const INDEX_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
@@ -156,7 +158,7 @@ async fn run(cli: Cli) -> Result<()> {
     match request {
         AppRequest::Index { rebuild } => print(&services.index_report(rebuild).await?, json),
         AppRequest::Status => unreachable!("handled before service setup"),
-        AppRequest::Savings => print(&services.token_savings().await?, json),
+        AppRequest::Savings => savings::print_report(&services.token_savings().await?, json),
         AppRequest::Files(request) => print(&services.files(request).await?, json),
         AppRequest::Search(request) => print(&services.search(request).await?, json),
         AppRequest::Outline(request) => print(&services.outline(request).await?, json),

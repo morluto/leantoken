@@ -57,6 +57,75 @@ fn cli_indexes_statuses_and_searches_as_json() {
 }
 
 #[test]
+fn cli_savings_renders_a_color_aware_human_table() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "pub fn answer() -> u8 { 42 }\n",
+    )
+    .expect("write fixture");
+    let database = root.path().join("index.sqlite");
+    run(root.path(), &database, &["index"]);
+    run(
+        root.path(),
+        &database,
+        &[
+            "search",
+            "answer",
+            "--mode",
+            "identifier",
+            "--max-tokens",
+            "100",
+        ],
+    );
+
+    let command = || {
+        let mut command = Command::cargo_bin("leantoken").expect("binary");
+        command.args([
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--database",
+            database.to_str().expect("database UTF-8"),
+            "savings",
+        ]);
+        command
+    };
+
+    let plain = command()
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("plain savings report");
+    assert!(plain.status.success());
+    let plain = String::from_utf8(plain.stdout).expect("plain UTF-8");
+    assert!(plain.starts_with("LeanToken Savings\n=================\n"));
+    assert!(plain.contains("source tokens saved"));
+    assert!(plain.contains("Operation"));
+    assert!(plain.contains("Search"));
+    assert!(plain.contains("Reduction"));
+    assert!(!plain.contains("\x1b["));
+
+    let colored = command()
+        .env_remove("NO_COLOR")
+        .env("CLICOLOR_FORCE", "1")
+        .output()
+        .expect("colored savings report");
+    assert!(colored.status.success());
+    assert!(String::from_utf8(colored.stdout)
+        .expect("colored UTF-8")
+        .contains("\x1b[1;36mLeanToken Savings\x1b[0m"));
+
+    let no_color = command()
+        .env("CLICOLOR_FORCE", "1")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("NO_COLOR savings report");
+    assert!(no_color.status.success());
+    assert!(!String::from_utf8(no_color.stdout)
+        .expect("NO_COLOR UTF-8")
+        .contains("\x1b["));
+}
+
+#[test]
 fn cli_index_explains_skipped_binary_files_without_returning_paths() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")

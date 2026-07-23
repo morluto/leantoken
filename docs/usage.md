@@ -61,6 +61,11 @@ suppression. The fixed `by_operation` rows expose both sides of the comparison
 and the tracked request count. Counts are stored separately per configured
 tokenizer.
 
+The default terminal view presents an aligned summary and per-operation table,
+using color when stdout is a terminal. `NO_COLOR` or `CLICOLOR=0` disables
+color, while `CLICOLOR_FORCE=1` enables it for compatible redirected output.
+Pass `--json` for the stable compact JSON representation used by scripts.
+
 This is a source-token estimate, not provider input, billing, cache, or complete
 MCP wire savings. JSON keys, tool schemas, envelopes, model behavior, and
 evidence sufficiency are outside the estimate. A response with no represented
