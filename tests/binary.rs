@@ -393,14 +393,15 @@ fn mcp_survives_malformed_and_invalid_messages() {
     let mut process = McpProcess::spawn(root.path(), &database);
     process.initialize();
     process.send_initialized();
-    process.wait_until_ready(Duration::from_secs(10));
 
     // rmcp intentionally ignores unparsable input, but a well-formed value
     // with the wrong JSON-RPC shape receives Invalid Request. Neither may
     // close the stdio transport or poison the next tool call.
     process.send_raw_line("{not json");
     process.send_raw_line(r#"{"foo":"bar"}"#);
-    let invalid = process.message(Duration::from_secs(2));
+    // Keep this independent from host load: the process may still be finishing
+    // watcher/index work while rmcp drains the malformed input.
+    let invalid = process.message(Duration::from_secs(10));
     assert_eq!(invalid["error"]["code"], -32600);
 
     process.send(serde_json::json!({
@@ -412,7 +413,7 @@ fn mcp_survives_malformed_and_invalid_messages() {
             "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
         }
     }));
-    let response = process.response(Duration::from_secs(2));
+    let response = process.response(Duration::from_secs(10));
     assert_eq!(response["id"], 100);
     assert!(response.get("result").is_some(), "{response}");
     assert!(process.child.try_wait().expect("poll process").is_none());
