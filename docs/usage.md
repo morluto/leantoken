@@ -440,5 +440,5 @@ Default limits include:
 - 2 MiB maximum indexed file size;
 - 20 default and 100 maximum results per request;
 - 80 lines or 32 KiB per search chunk;
-- up to eight indexing workers;
+- up to four indexing workers by default; override with `--max-index-workers`;
 - 64 KiB query input and 4 KiB path/pattern input.
