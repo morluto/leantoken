@@ -688,6 +688,7 @@ fn select_with_options(
     };
 
     let meta = ResponseMeta {
+        repository_id: String::new(),
         repository_generation,
         freshness: Freshness::Current,
         emitted_tokens,
@@ -696,6 +697,8 @@ fn select_with_options(
     };
 
     ContextResponse {
+        workflow: crate::model::ContextWorkflow::Implementation,
+        workflow_receipt: None,
         fragments,
         receipt,
         diff_scope: None,

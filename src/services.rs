@@ -455,12 +455,32 @@ impl Services {
         next_cursor: Option<String>,
     ) -> ResponseMeta {
         ResponseMeta {
+            repository_id: self.repository_id(),
             repository_generation: generation,
             freshness: self.freshness(),
             emitted_tokens,
             token_count_exact: self.config.tokenizer.is_exact(),
             next_cursor,
         }
+    }
+
+    /// Returns a stable opaque identity for the canonical repository root.
+    pub fn repository_id(&self) -> String {
+        let mut input = b"leantoken-repository-root-v1\0".to_vec();
+        input.extend_from_slice(self.config.root.as_os_str().as_encoded_bytes());
+        blake3::hash(&input).to_hex()[..32].to_string()
+    }
+
+    /// Rejects retrieval bound to a different repository/worktree.
+    pub fn validate_repository_id(&self, expected: Option<&str>) -> Result<()> {
+        let actual = self.repository_id();
+        if expected.is_none_or(|expected| expected == actual) {
+            return Ok(());
+        }
+        Err(Error::RepositoryIdentityMismatch {
+            expected: expected.unwrap_or_default().to_owned(),
+            actual,
+        })
     }
 
     pub(super) fn record_token_savings(

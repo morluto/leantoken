@@ -188,7 +188,13 @@ impl Cli {
             Commands::Search(args) => AppRequest::Search(args.into()),
             Commands::Outline(args) => AppRequest::Outline(args.into()),
             Commands::Read(args) => AppRequest::Read(args.into()),
-            Commands::Context(args) => AppRequest::Context(args.into()),
+            Commands::Context(args) => {
+                let workflow = args.workflow.into();
+                AppRequest::Context {
+                    request: args.into(),
+                    workflow,
+                }
+            }
             Commands::Doctor => AppRequest::Doctor,
             Commands::Mcp(args) => AppRequest::Mcp {
                 result_mode: args.result_mode,
@@ -210,21 +216,31 @@ impl Cli {
 /// Parsed application request produced by the CLI.
 #[derive(Debug, Clone)]
 pub enum AppRequest {
-    Index { rebuild: bool },
+    Index {
+        rebuild: bool,
+    },
     Status,
     Savings,
     Files(FilesRequest),
     Search(SearchRequest),
     Outline(OutlineRequest),
     Read(ReadRequest),
-    Context(ContextRequest),
+    Context {
+        request: ContextRequest,
+        workflow: crate::model::ContextWorkflow,
+    },
     Doctor,
-    Mcp { result_mode: McpResultMode },
+    Mcp {
+        result_mode: McpResultMode,
+    },
     Setup(SetupRequest),
     Remove(SetupRequest),
     CacheList,
     CachePrune(CachePruneRequest),
-    Upgrade { check: bool, yes: bool },
+    Upgrade {
+        check: bool,
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -327,6 +343,10 @@ pub struct IntegrationArgs {
     /// Refresh existing LeanToken MCP entries without selecting new clients.
     #[arg(long)]
     pub refresh: bool,
+    /// Copy the verified native executable into LeanToken's private runtime
+    /// directory and register it directly instead of retaining an npx chain.
+    #[arg(long)]
+    pub private_runtime: bool,
     /// Apply without prompting; requires explicit clients, --all, or --refresh.
     #[arg(short = 'y', long)]
     pub yes: bool,
@@ -409,6 +429,7 @@ impl From<IntegrationArgs> for SetupRequest {
             clients,
             all: args.all,
             refresh: args.refresh,
+            private_runtime: args.private_runtime,
             yes: args.yes,
             dry_run: args.dry_run,
         }
@@ -710,6 +731,10 @@ pub struct ContextArgs {
     #[arg(short, long)]
     pub task: String,
 
+    /// Evidence workflow; auto selects only on high-confidence task language.
+    #[arg(long, value_enum, default_value = "auto")]
+    pub workflow: ContextWorkflowArg,
+
     /// Token budget for the response.
     #[arg(short, long, value_parser = parse_positive_usize)]
     pub budget: usize,
@@ -741,6 +766,28 @@ pub struct ContextArgs {
     /// Changed paths for diff-scoped context (repeatable).
     #[arg(long = "changed-path")]
     pub changed_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
+pub enum ContextWorkflowArg {
+    #[default]
+    Auto,
+    Implementation,
+    Contribution,
+    Review,
+    Investigation,
+}
+
+impl From<ContextWorkflowArg> for crate::model::ContextWorkflow {
+    fn from(value: ContextWorkflowArg) -> Self {
+        match value {
+            ContextWorkflowArg::Auto => Self::Auto,
+            ContextWorkflowArg::Implementation => Self::Implementation,
+            ContextWorkflowArg::Contribution => Self::Contribution,
+            ContextWorkflowArg::Review => Self::Review,
+            ContextWorkflowArg::Investigation => Self::Investigation,
+        }
+    }
 }
 
 impl From<ContextArgs> for ContextRequest {

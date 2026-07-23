@@ -26,6 +26,10 @@ const INDEX_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(500);
 const INDEX_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 const LEADERSHIP_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
+fn mcp_index_worker_limit(configured: usize, explicitly_configured: bool) -> usize {
+    if explicitly_configured { configured } else { 1 }
+}
+
 #[derive(Debug)]
 struct RetryBackoff {
     initial: Duration,
@@ -163,7 +167,17 @@ async fn run(cli: Cli) -> Result<()> {
         AppRequest::Search(request) => print(&services.search(request).await?, json),
         AppRequest::Outline(request) => print(&services.outline(request).await?, json),
         AppRequest::Read(request) => print(&services.read(request).await?, json),
-        AppRequest::Context(request) => print(&services.context(request).await?, json),
+        AppRequest::Context { request, workflow } => print(
+            &services
+                .context_with_workflow_consistency_cancellable(
+                    request,
+                    workflow,
+                    leantoken::model::IndexConsistency::Committed,
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await?,
+            json,
+        ),
         AppRequest::Doctor => unreachable!("handled before service setup"),
         AppRequest::Mcp { .. } => unreachable!("handled before service setup"),
         AppRequest::Setup(_) | AppRequest::Remove(_) => {
@@ -238,7 +252,13 @@ async fn run_mcp_runtime(
     let startup_state = service_state.clone();
     let services = Arc::new(
         tokio::task::spawn_blocking(move || {
-            let config = cli.config()?;
+            let use_background_worker_default = cli.max_index_workers.is_none();
+            let mut config = cli.config()?;
+            // MCP indexing is background work. Reserve host capacity for
+            // protocol handling and sibling agents unless the user made
+            // concurrency explicit.
+            config.max_index_workers =
+                mcp_index_worker_limit(config.max_index_workers, !use_background_worker_default);
             startup_state.configure_limits(&config)?;
             Services::open_cancellable(config, &startup_cancellation)
         })
@@ -512,6 +532,8 @@ struct CliErrorResponse {
     error: String,
     category: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    stage: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     field: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     requested: Option<usize>,
@@ -542,6 +564,7 @@ fn cli_parse_error_response(error: &clap::Error) -> CliErrorResponse {
     CliErrorResponse {
         error: error.to_string().trim_end().to_owned(),
         category,
+        stage: None,
         field: None,
         requested: None,
         limit: None,
@@ -549,10 +572,15 @@ fn cli_parse_error_response(error: &clap::Error) -> CliErrorResponse {
 }
 
 fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
-    let (category, field, requested, limit) = match error {
-        leantoken::Error::InvalidInput { field, .. } => ("invalid_input", Some(*field), None, None),
+    let (category, stage, field, requested, limit) = match error {
+        leantoken::Error::DoctorFailure { stage, .. } => {
+            ("doctor_failure", Some(*stage), None, None, None)
+        }
+        leantoken::Error::InvalidInput { field, .. } => {
+            ("invalid_input", None, Some(*field), None, None)
+        }
         leantoken::Error::InputTooLong { field, max_bytes } => {
-            ("input_too_long", Some(*field), None, Some(*max_bytes))
+            ("input_too_long", None, Some(*field), None, Some(*max_bytes))
         }
         leantoken::Error::RequestLimitExceeded {
             field,
@@ -560,39 +588,45 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
             limit,
         } => (
             "request_limit_exceeded",
+            None,
             Some(*field),
             Some(*requested),
             Some(*limit),
         ),
-        leantoken::Error::LimitExceeded => ("request_limit_exceeded", None, None, None),
-        leantoken::Error::NotIndexed(_) => ("not_indexed", None, None, None),
-        leantoken::Error::IndexNotReady => ("index_not_ready", None, None, None),
-        leantoken::Error::StaleCursor => ("stale_cursor", None, None, None),
-        leantoken::Error::Cancelled => ("request_cancelled", None, None, None),
-        leantoken::Error::PathOutsideRoot(_) => ("path_outside_root", None, None, None),
-        leantoken::Error::UnsupportedLanguage(_) => ("unsupported_language", None, None, None),
-        leantoken::Error::InvalidRequest(_) => ("invalid_request", None, None, None),
-        leantoken::Error::Regex(_) => ("invalid_regex", None, None, None),
-        leantoken::Error::Glob(_) => ("invalid_glob", None, None, None),
+        leantoken::Error::LimitExceeded => ("request_limit_exceeded", None, None, None, None),
+        leantoken::Error::NotIndexed(_) => ("not_indexed", None, None, None, None),
+        leantoken::Error::IndexNotReady => ("index_not_ready", None, None, None, None),
+        leantoken::Error::StaleCursor => ("stale_cursor", None, None, None, None),
+        leantoken::Error::Cancelled => ("request_cancelled", None, None, None, None),
+        leantoken::Error::PathOutsideRoot(_) => ("path_outside_root", None, None, None, None),
+        leantoken::Error::UnsupportedLanguage(_) => {
+            ("unsupported_language", None, None, None, None)
+        }
+        leantoken::Error::InvalidRequest(_) => ("invalid_request", None, None, None, None),
+        leantoken::Error::Regex(_) => ("invalid_regex", None, None, None, None),
+        leantoken::Error::Glob(_) => ("invalid_glob", None, None, None, None),
         leantoken::Error::RootNotFound(_)
         | leantoken::Error::UnsafeRepositoryRoot(_)
         | leantoken::Error::RepositoryMismatch { .. }
         | leantoken::Error::InvalidConfiguration(_) => {
-            ("repository_configuration", None, None, None)
+            ("repository_configuration", None, None, None, None)
         }
-        leantoken::Error::IndexLimitExceeded { .. } => ("repository_index_limit", None, None, None),
+        leantoken::Error::IndexLimitExceeded { .. } => {
+            ("repository_index_limit", None, None, None, None)
+        }
         leantoken::Error::RuntimeCapabilityUnavailable { .. } => {
-            ("runtime_unavailable", None, None, None)
+            ("runtime_unavailable", None, None, None, None)
         }
         leantoken::Error::StaleReconciliation { .. } | leantoken::Error::RetryableConflict(_) => {
-            ("retryable_conflict", None, None, None)
+            ("retryable_conflict", None, None, None, None)
         }
-        _ => ("internal_error", None, None, None),
+        _ => ("internal_error", None, None, None, None),
     };
 
     CliErrorResponse {
         error: cli_error_message(error),
         category,
+        stage,
         field,
         requested,
         limit,
@@ -774,6 +808,17 @@ mod tests {
                     "category": "internal_error"
                 }),
             ),
+            (
+                leantoken::Error::DoctorFailure {
+                    stage: "catalog",
+                    message: "tools/list returned no result".into(),
+                },
+                serde_json::json!({
+                    "error": "doctor catalog check failed: tools/list returned no result",
+                    "category": "doctor_failure",
+                    "stage": "catalog"
+                }),
+            ),
         ];
 
         for (error, expected) in cases {
@@ -823,5 +868,11 @@ mod tests {
             "--",
             "--json"
         ])));
+    }
+
+    #[test]
+    fn mcp_background_indexing_defaults_to_one_worker_but_preserves_explicit_limit() {
+        assert_eq!(mcp_index_worker_limit(4, false), 1);
+        assert_eq!(mcp_index_worker_limit(3, true), 3);
     }
 }

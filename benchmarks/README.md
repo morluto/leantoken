@@ -450,6 +450,15 @@ structured-only result costs separately. These are fixture values, not provider
 billing numbers. Use the transparent wire proxy for an actual host trace; see
 [`../docs/measurement.md`](../docs/measurement.md).
 
+Catalog size is telemetry, not a product budget. Tool names, descriptions, and
+input-field descriptions are part of the model-facing capability contract: an
+agent cannot compensate at call time for semantics removed from `tools/list`.
+Accordingly, the suite snapshots the complete catalog and checks that every
+input field is documented, but does not reject it for crossing an arbitrary
+word or token threshold. Any proposed catalog reduction needs model-use evidence
+that routing and argument quality are preserved; serialization size alone is
+not sufficient.
+
 In the 2026-07-15 fixture run, the five-tool catalog was 1,539 tokens. The same
 tool result cost 875 tokens in dual mode, 464 as text only, and 433 as structured
 content only. That measures serialization opportunity, not host compatibility;
@@ -480,8 +489,8 @@ The frozen
 [2026-07-21 report](reports/mcp-response-ablation-v1-2026-07-21.md) then compare
 12 response and catalog representations against that compatibility matrix.
 The one new runtime change omits the internal task fingerprint from the
-serialized receipt: response JSON falls from 549 to 531 exact local tokens and
-the complete modeled dual handoff from 3,824 to 3,785. The fixed follow-up adds
+serialized receipt: response JSON falls from 574 to 556 exact local tokens and
+the complete modeled dual handoff from 4,254 to 4,215. The fixed follow-up adds
 no exact resend or overlapping source relative to baseline. Larger candidates
 that remove freshness, range, deduplication, or model-readable metadata are
 rejected; structured-only remains a Codex CLI 0.144.1 opt-in and `dual` remains

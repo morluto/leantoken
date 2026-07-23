@@ -389,6 +389,28 @@ fn doctor_verifies_identity_catalog_and_first_retrieval() {
     assert_eq!(report["server_version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(report["instructions_loaded"], true);
     assert_eq!(report["tools"].as_array().map(Vec::len), Some(5));
+    assert!(
+        matches!(
+            report["integration"]["registration_status"].as_str(),
+            Some("registered" | "not_registered" | "unknown")
+        ),
+        "structured registration status: {report}"
+    );
+    assert!(
+        matches!(
+            report["integration"]["discovery_status"].as_str(),
+            Some("installed" | "partial" | "missing" | "unknown")
+        ),
+        "structured discovery status: {report}"
+    );
+    assert_eq!(report["integration"]["launcher_status"], "healthy");
+    assert_eq!(report["integration"]["handshake_status"], "healthy");
+    assert_eq!(report["integration"]["catalog_status"], "healthy");
+    assert!(
+        report["integration"]["repair_command"]
+            .as_str()
+            .is_some_and(|command| command.contains("leantoken"))
+    );
     assert_eq!(report["first_call"]["status"], "ready");
     assert!(
         report["first_call"]["attempts"]
@@ -1269,6 +1291,103 @@ fn setup_refresh_targets_only_existing_mcp_entries() {
     let cursor = std::fs::read_to_string(temp.path().join(".cursor/mcp.json"))
         .expect("Cursor config after refresh");
     assert!(!cursor.contains("\"leantoken\""));
+}
+
+#[test]
+fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
+    let temp = tempfile::tempdir().expect("temporary home");
+    let data_home = temp.path().join("data");
+    let runtime = temp.path().join("node runtime");
+    let setup = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", temp.path())
+        .env("USERPROFILE", temp.path())
+        .env("XDG_DATA_HOME", &data_home)
+        .env("LOCALAPPDATA", &data_home)
+        .env("npm_lifecycle_event", "npx")
+        .env("npm_node_execpath", runtime.join("node"))
+        .env("npm_execpath", runtime.join("npm-cli.js"))
+        .args([
+            "--json",
+            "setup",
+            "--codex",
+            "--private-runtime",
+            "--yes",
+        ])
+        .output()
+        .expect("run private runtime setup");
+    assert!(
+        setup.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&setup.stdout).expect("setup JSON output");
+    let runtime_path = std::path::PathBuf::from(
+        report["launcher"]["runtime_path"]
+            .as_str()
+            .expect("runtime path"),
+    );
+    assert!(runtime_path.exists());
+    assert_eq!(report["launcher"]["package"], serde_json::Value::Null);
+    assert_eq!(report["launcher"]["may_contact_network"], false);
+    assert_eq!(report["discovery_plan"].as_array().map(Vec::len), Some(2));
+
+    let version = Command::new(&runtime_path)
+        .arg("--version")
+        .output()
+        .expect("run installed native executable");
+    assert!(version.status.success());
+    assert!(
+        String::from_utf8_lossy(&version.stdout).contains(env!("CARGO_PKG_VERSION"))
+    );
+    let repository = temp.path().join("workspace");
+    std::fs::create_dir(&repository).expect("workspace");
+    std::fs::write(
+        repository.join("lib.rs"),
+        "pub fn private_runtime_retrieval() -> bool { true }\n",
+    )
+    .expect("workspace source");
+    let doctor = Command::new(&runtime_path)
+        .env("HOME", temp.path())
+        .env("USERPROFILE", temp.path())
+        .env("XDG_DATA_HOME", &data_home)
+        .env("LOCALAPPDATA", &data_home)
+        .args([
+            "--root",
+            repository.to_str().expect("repository UTF-8"),
+            "--database",
+            temp.path()
+                .join("private-runtime.sqlite")
+                .to_str()
+                .expect("database UTF-8"),
+            "--json",
+            "doctor",
+        ])
+        .output()
+        .expect("run installed runtime doctor");
+    assert!(
+        doctor.status.success(),
+        "private runtime doctor stderr: {}",
+        String::from_utf8_lossy(&doctor.stderr)
+    );
+    let doctor_report: serde_json::Value =
+        serde_json::from_slice(&doctor.stdout).expect("doctor report");
+    assert_eq!(
+        doctor_report["tools"],
+        serde_json::json!([
+            "leantoken_context",
+            "leantoken_files",
+            "leantoken_outline",
+            "leantoken_read",
+            "leantoken_search"
+        ])
+    );
+    assert_eq!(doctor_report["first_call"]["status"], "ready");
+    let codex = std::fs::read_to_string(temp.path().join(".codex/config.toml"))
+        .expect("Codex configuration");
+    assert!(codex.contains(runtime_path.to_str().expect("UTF-8 runtime path")));
+    assert!(!codex.contains("npm-cli"));
 }
 
 #[test]

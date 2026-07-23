@@ -261,8 +261,13 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
         base_revision: None,
         changed_paths: Vec::new(),
     };
-    let response = services.context(request.clone()).await?;
+    let mut response = services.context(request.clone()).await?;
     validate_context_semantics(&response)?;
+    let fixture_repository_id = manifest.fixture.tree_blake3[..32].to_owned();
+    response
+        .meta
+        .repository_id
+        .clone_from(&fixture_repository_id);
     let follow_up_response = services
         .context(ContextRequest {
             known_hashes: response.receipt.fragment_hashes.clone(),
@@ -272,7 +277,7 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
         .await?;
     let follow_up = follow_up_metrics(&response, &follow_up_response);
 
-    let outline_empty = services
+    let mut outline_empty = services
         .outline(OutlineRequest {
             paths: vec!["README.md".into()],
             symbol_name: None,
@@ -281,7 +286,11 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
             max_tokens: Some(8_000),
         })
         .await?;
-    let outline_rich = services
+    outline_empty
+        .meta
+        .repository_id
+        .clone_from(&fixture_repository_id);
+    let mut outline_rich = services
         .outline(OutlineRequest {
             paths: vec!["src/rust/math.rs".into()],
             symbol_name: None,
@@ -290,7 +299,11 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
             max_tokens: Some(8_000),
         })
         .await?;
-    let files = services
+    outline_rich
+        .meta
+        .repository_id
+        .clone_from(&fixture_repository_id);
+    let mut files = services
         .files(FilesRequest {
             operation: FileOperation::Tree,
             path: None,
@@ -301,6 +314,7 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
             depth: Some(2),
         })
         .await?;
+    files.meta.repository_id = fixture_repository_id;
 
     let catalog: Value = serde_json::from_str(&tool_catalog_json())?;
     let server = LeanTokenMcp::new(Arc::clone(&services));

@@ -32,8 +32,27 @@ pub enum IndexConsistency {
     WorkingTree,
 }
 
+/// Requested or resolved evidence workflow for context retrieval.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextWorkflow {
+    /// Infer a workflow only from high-confidence task language.
+    #[default]
+    Auto,
+    /// General feature, fix, and refactor implementation evidence.
+    Implementation,
+    /// Repository guidance, templates, validation, changed files, and owner tests.
+    Contribution,
+    /// Changed code, repository guidance, validation, and review evidence.
+    Review,
+    /// Diagnostic evidence for tracing behavior and root causes.
+    Investigation,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ResponseMeta {
+    /// Stable opaque identity for the canonical repository root.
+    pub repository_id: String,
     pub repository_generation: u64,
     pub freshness: Freshness,
     pub emitted_tokens: usize,
@@ -388,10 +407,60 @@ pub struct DiffScopeReceipt {
     pub changed_paths: Vec<String>,
     /// Number of changed paths found in the committed index.
     pub indexed_changed_paths: usize,
+    /// Bounded symbol and relationship evidence derived from changed paths.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<DiffEvidenceReceipt>,
+}
+
+/// Bounded evidence mapping a diff scope to indexed definitions and neighbors.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DiffEvidenceReceipt {
+    /// Target-side changed line ranges parsed from Git.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changed_hunks: Vec<DiffHunkEvidence>,
+    /// Definitions owned by indexed changed files.
+    pub changed_symbols: Vec<DiffSymbolEvidence>,
+    /// Direct reference, import, and likely owner-test relationships.
+    pub related_paths: Vec<DiffRelatedPath>,
+    /// Coverage gaps or truncation reasons; absence never means no relationship.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gaps: Vec<String>,
+}
+
+/// One target-side changed line range.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DiffHunkEvidence {
+    pub path: String,
+    pub start_line: usize,
+    pub end_line: usize,
+}
+
+/// One indexed definition within diff scope.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DiffSymbolEvidence {
+    pub path: String,
+    pub name: String,
+    pub kind: String,
+    pub start_line: usize,
+    pub end_line: usize,
+}
+
+/// One path related to diff scope by an observed or explicitly labeled heuristic signal.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DiffRelatedPath {
+    pub changed_path: String,
+    pub related_path: String,
+    /// `reference`, `importer`, or `test_name_match`.
+    pub signal: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ContextResponse {
+    /// Workflow selected by the context router.
+    pub workflow: ContextWorkflow,
+    /// Bounded routing evidence for specialized workflows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_receipt: Option<WorkflowReceipt>,
     pub fragments: Vec<ContextFragment>,
     pub receipt: EvidenceReceipt,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -401,6 +470,22 @@ pub struct ContextResponse {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
     pub meta: ResponseMeta,
+}
+
+/// Evidence-family coverage produced by specialized context routing.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct WorkflowReceipt {
+    /// Number of repository-guidance candidates discovered.
+    pub guidance_candidates: usize,
+    /// Number of issue or pull-request template candidates discovered.
+    pub template_candidates: usize,
+    /// Number of validation-configuration candidates discovered.
+    pub validation_candidates: usize,
+    /// Number of changed/focused-path owner-test candidates discovered.
+    pub owner_test_candidates: usize,
+    /// Evidence families absent from the indexed repository.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_families: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -724,6 +809,8 @@ mod tests {
     #[test]
     fn compact_context_response_round_trips_with_defaults() {
         let response = ContextResponse {
+            workflow: ContextWorkflow::Implementation,
+            workflow_receipt: None,
             fragments: vec![ContextFragment {
                 path: "src/lib.rs".into(),
                 start_line: 1,
@@ -743,6 +830,7 @@ mod tests {
             omitted: Vec::new(),
             warnings: Vec::new(),
             meta: ResponseMeta {
+                repository_id: "repository".into(),
                 repository_generation: 7,
                 freshness: Freshness::Current,
                 emitted_tokens: 4,
@@ -772,6 +860,8 @@ mod tests {
     #[test]
     fn compact_context_response_snapshot() {
         let response = ContextResponse {
+            workflow: ContextWorkflow::Implementation,
+            workflow_receipt: None,
             fragments: vec![ContextFragment {
                 path: "src/lib.rs".into(),
                 start_line: 4,
@@ -796,6 +886,7 @@ mod tests {
             }],
             warnings: vec!["1 omitted".into()],
             meta: ResponseMeta {
+                repository_id: "repository".into(),
                 repository_generation: 7,
                 freshness: Freshness::Reconciling,
                 emitted_tokens: 9,

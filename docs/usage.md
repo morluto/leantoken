@@ -33,7 +33,7 @@ leantoken files <tree|find|glob> [options]
 leantoken search <query> [options]
 leantoken outline <path>...
 leantoken read <path> [--lines START:END] [--symbol NAME]
-leantoken context --task <text> --budget <tokens>
+leantoken context --task <text> --budget <tokens> [--workflow <mode>]
 leantoken mcp [--result-mode dual|text|structured]
 leantoken setup [CLIENT...] [--all] [--refresh] [--yes] [--dry-run]
 leantoken remove [CLIENT...] [--all] [--yes] [--dry-run]
@@ -90,11 +90,38 @@ increment `files_removed` when its stale entry is deleted.
 ## MCP setup and version lifecycle
 
 Setup writes only the `leantoken` entry in each selected global client config.
+It also manages a concise `leantoken` discovery skill in
+`~/.agents/skills/leantoken/SKILL.md` and
+`~/.claude/skills/leantoken/SKILL.md`. Hosts preload only its name and routing
+description, then load the instructions on selection; the five MCP schemas
+remain deferred. Repeated setup updates only marker-owned copies, removal
+preserves an unowned file at either path, and partial client removal retains the
+skill while another LeanToken registration remains. JSON setup reports the
+exact `cl100k_base` size of one discovery skill as telemetry; it is not a
+pass/fail cap on the routing guidance.
 When setup runs through npx, the stored command pins
 `leantoken@<exact current version>` and retains `--yes` so background MCP
 startup cannot block on an install prompt. The launcher may contact npm to
 resolve or download that exact package, but it cannot switch to a newer version
 between restarts.
+
+To avoid retaining npm and Node wrapper processes for every MCP session, select
+the private native runtime explicitly:
+
+```bash
+npx --yes leantoken@0.1.10 setup --codex --private-runtime --dry-run
+npx --yes leantoken@0.1.10 setup --codex --private-runtime --yes
+```
+
+Dry-run reports the exact versioned application-data path and BLAKE3 digest.
+Setup copies the native executable already verified by the running package,
+activates it with an atomic no-clobber rename, then updates all selected client
+registrations as one rollback-capable transaction. A process lock serializes
+setup, and a durable journal restores pre-transaction contents on the next
+setup invocation after an interruption; recovery refuses to overwrite a file
+changed independently after the interruption. The registered command launches
+that native executable directly. Removal deletes registrations but retains
+versioned runtimes for explicit rollback; it never selects `latest`.
 
 Choose upgrades and rollbacks explicitly by running the desired version, then
 refresh only entries that already exist:
@@ -155,7 +182,9 @@ pruning during a mixed-version rollout.
 verifies its initialization identity and agent instructions, exact five-tool
 catalog, and first `leantoken_context` retrieval. On a cold repository it
 follows structured `retry_after_ms` guidance until the first index generation
-is ready. Use `--json` for a machine-readable readiness report.
+is ready. Use `--json` for a machine-readable readiness report. Failures use
+the `doctor_failure` category and identify the `launch`, `handshake`, `catalog`,
+or `first_retrieval` stage so repair tooling does not need to parse prose.
 
 ## MCP server
 
@@ -342,6 +371,15 @@ by the caller, and identify a prior repository generation. The selector merges
 overlapping candidates, suppresses duplicate or known content, preserves file
 diversity, and returns short reasons for each chosen fragment.
 
+`workflow` accepts `auto`, `implementation`, `contribution`, `review`, or
+`investigation`. Contribution and review modes add bounded repository guidance,
+issue/PR templates, validation configuration, and tests whose names match
+changed or focused source paths. `auto` selects a specialized mode only from
+high-confidence task language; ordinary tasks retain implementation ranking.
+The resolved mode is returned as `workflow`. Specialized responses include a
+`workflow_receipt` with candidate counts and explicit missing evidence families;
+missing guidance or owner tests is not represented as proof that none exists.
+
 The evidence receipt contains a task fingerprint and a compact hash list aligned
 by index with the returned fragments. Repository generation appears once in
 response metadata. The receipt is returned but not persisted. Passing its
@@ -352,6 +390,11 @@ For a frontier-to-executor handoff, transfer the grounded fragments, receipt,
 repository generation, current todo list, and first validated edit. This is a
 compact trajectory manifest, not a LeanToken session. The executor can pass the
 receipt hashes back without rereading the same evidence.
+
+Every retrieval response also includes an opaque `meta.repository_id`. MCP
+callers can pass it back as `expected_repository_id`; a server bound to another
+repository or linked worktree rejects the call with
+`repository_identity_mismatch` instead of returning misleading empty evidence.
 
 CLI equivalents make the reuse contract explicit:
 

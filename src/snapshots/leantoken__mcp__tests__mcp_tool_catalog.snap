@@ -1,6 +1,6 @@
 ---
 source: src/mcp.rs
-assertion_line: 1196
+assertion_line: 1551
 expression: tools
 ---
 [
@@ -8,6 +8,38 @@ expression: tools
     "name": "leantoken_context",
     "description": "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}.",
     "inputSchema": {
+      "$defs": {
+        "ContextWorkflow": {
+          "description": "Requested or resolved evidence workflow for context retrieval.",
+          "oneOf": [
+            {
+              "const": "auto",
+              "description": "Infer a workflow only from high-confidence task language.",
+              "type": "string"
+            },
+            {
+              "const": "implementation",
+              "description": "General feature, fix, and refactor implementation evidence.",
+              "type": "string"
+            },
+            {
+              "const": "contribution",
+              "description": "Repository guidance, templates, validation, changed files, and owner tests.",
+              "type": "string"
+            },
+            {
+              "const": "review",
+              "description": "Changed code, repository guidance, validation, and review evidence.",
+              "type": "string"
+            },
+            {
+              "const": "investigation",
+              "description": "Diagnostic evidence for tracing behavior and root causes.",
+              "type": "string"
+            }
+          ]
+        }
+      },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
@@ -48,6 +80,15 @@ expression: tools
           },
           "maxItems": 256,
           "type": "array"
+        },
+        "expected_repository_id": {
+          "default": null,
+          "description": "Expected opaque repository identity from an earlier response.",
+          "maxLength": 128,
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "focus_paths": {
           "default": [],
@@ -102,6 +143,11 @@ expression: tools
           "maximum": 32000,
           "minimum": 1,
           "type": "integer"
+        },
+        "workflow": {
+          "$ref": "#/$defs/ContextWorkflow",
+          "default": "auto",
+          "description": "Evidence workflow; `auto` selects only on high-confidence task language."
         }
       },
       "required": [
@@ -216,6 +262,15 @@ expression: tools
             "null"
           ]
         },
+        "expected_repository_id": {
+          "default": null,
+          "description": "Expected opaque repository identity from an earlier response.",
+          "maxLength": 128,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "max_results": {
           "default": 20,
           "description": "Maximum entries to return (default 20, maximum 100).",
@@ -250,6 +305,15 @@ expression: tools
             "working_tree"
           ],
           "type": "string"
+        },
+        "expected_repository_id": {
+          "default": null,
+          "description": "Expected opaque repository identity from an earlier response.",
+          "maxLength": 128,
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "max_results": {
           "default": 20,
@@ -382,6 +446,15 @@ expression: tools
             "null"
           ]
         },
+        "expected_repository_id": {
+          "default": null,
+          "description": "Expected opaque repository identity from an earlier response.",
+          "maxLength": 128,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "max_tokens": {
           "default": 8000,
           "description": "Maximum source tokens to return (default 8000, maximum 32000).",
@@ -492,6 +565,15 @@ expression: tools
           },
           "maxItems": 256,
           "type": "array"
+        },
+        "expected_repository_id": {
+          "default": null,
+          "description": "Expected opaque repository identity from an earlier response.",
+          "maxLength": 128,
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "focus_paths": {
           "default": [],

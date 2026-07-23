@@ -30,10 +30,14 @@ impl McpLauncher {
     }
 
     pub(super) fn from_executable(executable: &Path) -> Self {
+        Self::from_executable_with_version(executable, env!("CARGO_PKG_VERSION"))
+    }
+
+    pub(super) fn from_executable_with_version(executable: &Path, version: &str) -> Self {
         Self {
             command: executable.into(),
             args: vec!["mcp".into()],
-            version: env!("CARGO_PKG_VERSION").into(),
+            version: version.into(),
             npm_package: None,
         }
     }

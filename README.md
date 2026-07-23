@@ -80,6 +80,11 @@ npx leantoken setup --claude --codex --yes
 npx leantoken setup --all --yes
 ```
 
+Use `--private-runtime` to copy the exact package-native executable into
+LeanToken's versioned application-data directory and configure clients to
+launch it directly, without persistent npm/Node wrappers. Preview its path and
+digest with `--dry-run`.
+
 Automation never treats detection as consent: `--yes` requires explicit client
 flags, `--all`, or `--refresh` for entries already managed by LeanToken. Preview
 the same resolved plan without changing files:
@@ -88,8 +93,10 @@ the same resolved plan without changing files:
 npx leantoken setup --codex --cursor --dry-run
 ```
 
-Setup adds only the `leantoken` MCP entry. It does not add skills, rules, or
-shell hooks. Remove the entry with:
+Setup adds the `leantoken` MCP entry plus a small owned discovery skill in the
+host-standard user skill directories. The skill advertises routing metadata;
+it does not duplicate tool schemas, add rules, or install shell hooks. Remove
+the owned integration with:
 
 ```bash
 npx leantoken remove
