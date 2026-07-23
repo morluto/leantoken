@@ -9,6 +9,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use crate::Config;
 use crate::Result;
 use crate::cache::CachePruneRequest;
+use crate::config::DEFAULT_CONTEXT_TOKENS;
 use crate::mcp::McpResultMode;
 use crate::model::{
     ContextRequest, FileOperation, FilesRequest, OutlineRequest, ReadRequest, SearchMode,
@@ -736,7 +737,12 @@ pub struct ContextArgs {
     pub workflow: ContextWorkflowArg,
 
     /// Token budget for the response.
-    #[arg(short, long, value_parser = parse_positive_usize)]
+    #[arg(
+        short,
+        long,
+        value_parser = parse_positive_usize,
+        default_value_t = DEFAULT_CONTEXT_TOKENS
+    )]
     pub budget: usize,
 
     /// Focus on these paths (repeatable).

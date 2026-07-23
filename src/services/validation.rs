@@ -29,9 +29,10 @@ pub(super) fn path_allowed(path: &str, includes: &[String], excludes: &[String])
     Ok(included && !excluded)
 }
 
-pub(super) fn path_matches(path: &str, pattern: &str) -> Result<bool> {
-    if pattern.contains(['*', '?', '[', ']']) {
-        Ok(Glob::new(pattern)?.compile_matcher().is_match(path))
+pub(crate) fn path_matches(path: &str, pattern: &str) -> Result<bool> {
+    let pattern = pattern.replace('\\', "/");
+    if pattern.contains(['*', '?', '[', ']', '{', '}']) {
+        Ok(Glob::new(&pattern)?.compile_matcher().is_match(path))
     } else {
         let pattern = pattern.trim_matches('/');
         Ok(path == pattern || path.starts_with(&format!("{pattern}/")))
@@ -51,8 +52,9 @@ pub(super) fn validate_patterns(patterns: &[String]) -> Result<()> {
 pub(super) fn validate_glob_patterns(patterns: &[String]) -> Result<()> {
     validate_patterns(patterns)?;
     for pattern in patterns {
-        if pattern.contains(['*', '?', '[', ']']) {
-            Glob::new(pattern)?;
+        let pattern = pattern.replace('\\', "/");
+        if pattern.contains(['*', '?', '[', ']', '{', '}']) {
+            Glob::new(&pattern)?;
         }
     }
     Ok(())

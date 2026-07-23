@@ -189,7 +189,8 @@ fn glob_entries(
             field: "pattern",
             reason: "is required for glob",
         })?;
-    let matcher = Glob::new(pattern)?.compile_matcher();
+    let normalized_pattern = pattern.replace('\\', "/");
+    let matcher = Glob::new(&normalized_pattern)?.compile_matcher();
     let after = cursor_path(cursor)?;
     let capacity = limit.saturating_add(1);
     let mut entries = BTreeMap::new();
@@ -240,7 +241,7 @@ fn validate_files_input(request: &FilesRequest) -> Result<()> {
                     field: "pattern",
                     reason: "is required for glob",
                 })?;
-            Glob::new(pattern)?;
+            Glob::new(&pattern.replace('\\', "/"))?;
         }
     }
     validate_files_cursor(request.cursor.as_deref(), &request.operation)?;

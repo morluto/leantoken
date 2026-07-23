@@ -139,6 +139,36 @@ fn select_excludes_paths() {
 }
 
 #[test]
+fn select_uses_globs_and_normalized_separators_for_path_signals() {
+    let candidates = vec![
+        candidate("src/lib.rs", "fn lib() {}", 0.5),
+        candidate("dist/lib.rs", "fn generated() {}", 1.0),
+    ];
+    let mut request = request_with_budget(50);
+    request.focus_paths = vec![r"src\**\*.rs".into()];
+    request.exclude_paths = vec!["dist/**".into()];
+
+    let response = select(candidates, &request, 1);
+
+    assert_eq!(response.fragments[0].path, "src/lib.rs");
+    assert!(response.fragments.iter().all(|item| item.path != "dist/lib.rs"));
+}
+
+#[test]
+fn select_does_not_focus_substring_path_matches() {
+    let candidates = vec![
+        candidate("src/main.rs", "fn main() {}", 0.5),
+        candidate("src/mainly.rs", "fn mainly() {}", 0.6),
+    ];
+    let mut request = request_with_budget(50);
+    request.focus_paths = vec!["main".into()];
+
+    let response = select(candidates, &request, 1);
+
+    assert_eq!(response.fragments[0].path, "src/mainly.rs");
+}
+
+#[test]
 fn select_boosts_focus_paths_and_symbols() {
     let candidates = vec![
         candidate("src/a.rs", "fn a() {}", 0.5).symbol_name("Alpha"),

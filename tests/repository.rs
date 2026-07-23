@@ -3,8 +3,8 @@ use std::fs;
 use leantoken::repository::{
     DiscoveryPolicy, discover_files, discover_files_with_limits,
     discover_files_with_limits_and_policy, discover_files_with_limits_cancellable,
-    git_changed_paths, git_diff_hunks, git_diff_paths, resolve_existing, slash_path,
-    validate_relative,
+    git_changed_paths, git_diff_hunks, git_diff_paths, normalize_relative, resolve_existing,
+    slash_path, validate_relative,
 };
 use leantoken::{DiscoveryLimits, Error, IndexLimitKind};
 use tokio_util::sync::CancellationToken;
@@ -24,6 +24,8 @@ fn validate_relative_rejects_absolute_paths() {
     assert!(validate_relative("C:/windows/secret").is_err());
     assert!(validate_relative(r"C:\windows\secret").is_err());
     assert!(validate_relative(r"\windows\secret").is_err());
+    assert!(validate_relative("C:windows/secret").is_err());
+    assert!(validate_relative("d:temp").is_err());
 }
 
 #[test]
@@ -36,6 +38,14 @@ fn validate_relative_rejects_empty_and_nul() {
 fn validate_relative_accepts_clean_relative_paths() {
     assert!(validate_relative("src/lib.rs").is_ok());
     assert!(validate_relative("a/b/c.rs").is_ok());
+}
+
+#[test]
+fn normalize_relative_uses_repository_key_separators_and_collapses_current_directory() {
+    assert_eq!(
+        normalize_relative(r".\src\lib.rs").expect("normalized path"),
+        "src/lib.rs"
+    );
 }
 
 #[test]

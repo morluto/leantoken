@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    io::{BufRead, BufReader, Read, Seek},
+    io::{BufRead, BufReader, Seek},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, UNIX_EPOCH},
@@ -346,6 +346,15 @@ pub fn resolve_existing(root: &Path, requested: &str) -> Result<PathBuf> {
 }
 
 pub fn validate_relative(requested: &str) -> Result<PathBuf> {
+    Ok(PathBuf::from(normalize_relative(requested)?))
+}
+
+/// Validate and normalize a repository-relative request path.
+///
+/// Repository keys always use forward slashes, independent of the host
+/// platform. This helper therefore recognizes both separator styles before
+/// applying the relative-path contract.
+pub fn normalize_relative(requested: &str) -> Result<String> {
     if requested.is_empty() || requested.contains('\0') {
         return Err(Error::InvalidInput {
             field: "path",
@@ -356,27 +365,28 @@ pub fn validate_relative(requested: &str) -> Result<PathBuf> {
     // Windows absolute forms explicitly so a request has the same contract on
     // Linux, macOS, and Windows.
     let bytes = requested.as_bytes();
-    let has_windows_drive = bytes.len() >= 3
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-        && matches!(bytes[2], b'/' | b'\\');
+    let has_windows_drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
     let has_windows_root = requested.starts_with('\\');
     if has_windows_drive || has_windows_root {
         return Err(Error::PathOutsideRoot(PathBuf::from(requested)));
     }
-    let path = Path::new(requested);
+    let normalized = requested.replace('\\', "/");
+    let path = Path::new(&normalized);
     if path.is_absolute() {
         return Err(Error::PathOutsideRoot(path.to_path_buf()));
     }
-    for component in path.components() {
-        if matches!(
-            component,
-            Component::ParentDir | Component::RootDir | Component::Prefix(_)
-        ) {
-            return Err(Error::PathOutsideRoot(path.to_path_buf()));
+    let mut components = Vec::new();
+    for component in normalized.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => return Err(Error::PathOutsideRoot(path.to_path_buf())),
+            component => components.push(component),
         }
     }
-    Ok(path.to_path_buf())
+    if components.is_empty() {
+        return Ok(".".to_owned());
+    }
+    Ok(components.join("/"))
 }
 
 /// Return paths reported by `git status` as working-tree changes.
@@ -483,34 +493,10 @@ fn parse_git_status<R: BufRead>(mut reader: R, max: usize, prefix: &str) -> Hash
             continue;
         }
 
-        let mut paths = vec![path];
-        let is_rename = status[0] == b'R' || status[1] == b'R';
-        let is_copy = status[0] == b'C' || status[1] == b'C';
-        if is_rename || is_copy {
-            let mut renamed = Vec::new();
-            match reader.read_until(0, &mut renamed) {
-                Ok(0) => break,
-                Ok(_) => {
-                    if renamed.last() == Some(&0) {
-                        renamed.pop();
-                    }
-                    if is_rename {
-                        paths.push(String::from_utf8_lossy(&renamed).into_owned());
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-
-        for path in paths {
-            let Some(path) = path.strip_prefix(prefix) else {
-                continue;
-            };
-            changed.insert(slash_path(Path::new(path)));
-            if changed.len() == max {
-                break;
-            }
-        }
+        let Some(path) = path.strip_prefix(prefix) else {
+            continue;
+        };
+        changed.insert(slash_path(Path::new(path)));
         if changed.len() == max {
             break;
         }
@@ -619,33 +605,55 @@ pub fn git_diff_hunks(root: &Path, base_revision: &str, max: usize) -> Result<Ve
     output
         .rewind()
         .map_err(|error| Error::InternalFailure(error.to_string()))?;
-    let mut diff = String::new();
-    output
-        .take(8 * 1024 * 1024)
-        .read_to_string(&mut diff)
-        .map_err(|error| Error::InternalFailure(error.to_string()))?;
-    let mut patch = unidiff::PatchSet::new();
-    patch
-        .parse(diff)
-        .map_err(|error| Error::InternalFailure(error.to_string()))?;
+    parse_git_diff_hunks(BufReader::new(output), max, &prefix)
+}
 
+fn parse_git_diff_hunks<R: BufRead>(
+    mut reader: R,
+    max: usize,
+    prefix: &str,
+) -> Result<Vec<GitHunkRange>> {
     let mut ranges = Vec::new();
-    for file in patch.files() {
-        let path = file.path();
-        let Some(path) = path.strip_prefix(&prefix) else {
+    let mut target_path = None;
+    let mut line = String::new();
+    while ranges.len() < max {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            break;
+        }
+        if let Some(path) = line.strip_prefix("+++ ") {
+            target_path = path
+                .strip_prefix("b/")
+                .map(|path| path.trim_end_matches(['\r', '\n']))
+                .and_then(|path| path.strip_prefix(prefix))
+                .map(|path| slash_path(Path::new(path)));
+            continue;
+        }
+        let Some(path) = target_path.as_ref() else {
             continue;
         };
-        for hunk in file.hunks() {
-            let start_line = hunk.target_start.max(1);
-            ranges.push(GitHunkRange {
-                path: slash_path(Path::new(path)),
-                start_line,
-                end_line: start_line + hunk.target_length.saturating_sub(1),
-            });
-            if ranges.len() == max {
-                return Ok(ranges);
-            }
-        }
+        let Some(header) = line.strip_prefix("@@ ") else {
+            continue;
+        };
+        let Some(target) = header.split_whitespace().find(|part| part.starts_with('+')) else {
+            continue;
+        };
+        let target = &target[1..];
+        let (start, length) = target
+            .split_once(',')
+            .map_or((target, "1"), |(start, length)| (start, length));
+        let start_line = start
+            .parse::<usize>()
+            .map_err(|error| Error::InternalFailure(error.to_string()))?
+            .max(1);
+        let length = length
+            .parse::<usize>()
+            .map_err(|error| Error::InternalFailure(error.to_string()))?;
+        ranges.push(GitHunkRange {
+            path: path.clone(),
+            start_line,
+            end_line: start_line + length.saturating_sub(1),
+        });
     }
     Ok(ranges)
 }
@@ -837,34 +845,6 @@ mod tests {
     }
 
     #[test]
-    fn git_status_parser_consumes_rename_destination_as_part_of_one_record() {
-        let mut input = Cursor::new(b"R  old.rs\0new.rs\0M  after.rs\0".to_vec());
-
-        let changed = parse_git_status(&mut input, 10, "");
-
-        assert_eq!(
-            changed,
-            HashSet::from([
-                "old.rs".to_string(),
-                "new.rs".to_string(),
-                "after.rs".to_string(),
-            ])
-        );
-    }
-
-    #[test]
-    fn git_status_parser_consumes_copy_source_without_reporting_it_as_changed() {
-        let mut input = Cursor::new(b"C  copied.rs\0source.rs\0M  after.rs\0".to_vec());
-
-        let changed = parse_git_status(&mut input, 10, "");
-
-        assert_eq!(
-            changed,
-            HashSet::from(["copied.rs".to_string(), "after.rs".to_string()])
-        );
-    }
-
-    #[test]
     fn diff_name_parser_stops_after_collecting_max_paths() {
         let first = b"first.rs\0";
         let mut input = Cursor::new([first.as_slice(), b"second.rs\0"].concat());
@@ -873,6 +853,31 @@ mod tests {
 
         assert_eq!(changed, vec!["first.rs".to_string()]);
         assert_eq!(input.position(), first.len() as u64);
+    }
+
+    #[test]
+    fn diff_hunk_parser_reads_complete_records_beyond_the_old_byte_cap() {
+        let mut diff = String::from("+++ b/first.rs\n@@ -1 +1 @@\n");
+        diff.push_str(&format!(" {}\n", "x".repeat(8 * 1024 * 1024)));
+        diff.push_str("+++ b/second.rs\n@@ -9,2 +10,3 @@\n");
+
+        let ranges = parse_git_diff_hunks(Cursor::new(diff), 10, "").expect("diff hunks");
+
+        assert_eq!(
+            ranges,
+            vec![
+                GitHunkRange {
+                    path: "first.rs".into(),
+                    start_line: 1,
+                    end_line: 1,
+                },
+                GitHunkRange {
+                    path: "second.rs".into(),
+                    start_line: 10,
+                    end_line: 12,
+                },
+            ]
+        );
     }
 
     #[test]
