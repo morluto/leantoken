@@ -835,7 +835,11 @@ impl Indexer {
         while start < candidates.len() {
             check_cancelled(cancellation)?;
             let end = prepare_batch_end(candidates, start, limits);
-            debug_assert!(end > start, "validated limits admit at least one file");
+            if end <= start {
+                return Err(Error::InternalFailure(
+                    "candidate batch preparation made no progress".into(),
+                ));
+            }
             let batch_source_bytes = candidates[start..end]
                 .iter()
                 .fold(0u64, |total, file| total.saturating_add(file.size_bytes));
@@ -1763,23 +1767,67 @@ mod tests {
             max_prepare_batch_bytes: 3,
             ..crate::DiscoveryLimits::default()
         };
+        let oversized_first_file = crate::DiscoveryLimits {
+            max_file_bytes: 2,
+            max_prepare_batch_files: 3,
+            max_prepare_batch_bytes: 1,
+            ..crate::DiscoveryLimits::default()
+        };
 
         assert_eq!(prepare_batch_end(&candidates, 0, file_limited), 2);
         assert_eq!(prepare_batch_end(&candidates, 2, file_limited), 3);
         assert_eq!(prepare_batch_end(&candidates, 0, byte_limited), 1);
         assert_eq!(prepare_batch_end(&candidates, 1, byte_limited), 2);
+        assert_eq!(prepare_batch_end(&candidates, 0, oversized_first_file), 1);
+        assert_eq!(prepare_batch_end(&candidates, 1, oversized_first_file), 2);
+    }
 
-        let oversized_candidate = [DiscoveredFile {
-            absolute_path: "grown.rs".into(),
-            relative_path: "grown.rs".into(),
-            size_bytes: 4,
-            modified_ns: None,
-        }];
-        assert_eq!(
-            prepare_batch_end(&oversized_candidate, 0, byte_limited),
-            1,
-            "a single over-budget candidate must not stall batch preparation"
-        );
+    #[test]
+    fn preparation_batches_terminate_with_an_oversized_first_candidate() {
+        let root = tempfile::tempdir().expect("root");
+        let paths = [
+            root.path().join("oversized.rs"),
+            root.path().join("next.rs"),
+        ];
+        for path in &paths {
+            fs::write(path, "x").expect("fixture");
+        }
+
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.max_file_bytes = 2;
+        config.max_prepare_batch_files = 2;
+        config.max_prepare_batch_bytes = 2;
+        let storage = Storage::open(&config.database_path).expect("storage");
+        let indexer = Indexer::new(Arc::new(config), storage).expect("indexer");
+        let candidates = paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| DiscoveredFile {
+                absolute_path: path.clone(),
+                relative_path: path
+                    .file_name()
+                    .expect("file name")
+                    .to_string_lossy()
+                    .into_owned(),
+                size_bytes: if index == 0 { 3 } else { 1 },
+                modified_ns: None,
+            })
+            .collect::<Vec<_>>();
+        let mut batches = 0usize;
+        let mut consumed = 0usize;
+
+        let metrics = indexer
+            .prepare_candidate_batches(&candidates, &CancellationToken::new(), |prepared| {
+                batches += 1;
+                consumed += prepared.len();
+                Ok(())
+            })
+            .expect("oversized first candidate must not stall preparation");
+
+        assert_eq!(batches, 2);
+        assert_eq!(consumed, candidates.len());
+        assert_eq!(metrics.batches, 2);
     }
 
     #[test]
