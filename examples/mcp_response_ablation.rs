@@ -41,6 +41,7 @@ struct Manifest {
     experiment: String,
     fixture: FixtureManifest,
     host_compatibility_evidence: HostEvidence,
+    checked_report: ArtifactCommitment,
     candidates: Vec<String>,
     acceptance: Acceptance,
 }
@@ -60,6 +61,12 @@ struct HostEvidence {
     path: PathBuf,
     blake3: String,
     global_default: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArtifactCommitment {
+    path: PathBuf,
+    blake3: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -815,6 +822,7 @@ fn validate_manifest(manifest: &Manifest) -> AnyResult<()> {
         || manifest.fixture.tokenizer != "cl100k_base"
         || !manifest.fixture.canonicalize_line_endings
         || manifest.host_compatibility_evidence.path.is_absolute()
+        || manifest.checked_report.path.is_absolute()
         || manifest.host_compatibility_evidence.global_default != "dual"
     {
         return Err(invalid_data("invalid MCP response ablation manifest"));
@@ -822,6 +830,7 @@ fn validate_manifest(manifest: &Manifest) -> AnyResult<()> {
     for hash in [
         &manifest.fixture.tree_blake3,
         &manifest.host_compatibility_evidence.blake3,
+        &manifest.checked_report.blake3,
     ] {
         if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(invalid_data("manifest commitments must be BLAKE3 hex"));
@@ -1476,23 +1485,55 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn checked_report_matches_frozen_manifest_and_runtime() {
+    async fn current_runtime_preserves_frozen_acceptance_invariants() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let manifest: Manifest = read_json(&root.join("benchmarks/mcp_response_ablation.json"))
             .expect("frozen manifest");
         let report = generate(&manifest, &root).await.expect("valid report");
-        let checked_report: Value =
-            read_json(&root.join("benchmarks/reports/mcp-response-ablation-v1-2026-07-21.json"))
-                .expect("checked report");
 
         assert_eq!(report.candidates.len(), manifest.candidates.len());
         assert_eq!(report.decision.global_result_mode, "dual");
         assert_eq!(report.decision.accepted_new_runtime_change.len(), 1);
         assert_eq!(report.follow_up.exact_resend_source_tokens, 0);
         assert_eq!(report.follow_up.overlapping_source_tokens, 14);
+    }
+
+    #[test]
+    fn checked_report_matches_its_manifest_commitment() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let manifest: Manifest = read_json(&root.join("benchmarks/mcp_response_ablation.json"))
+            .expect("frozen manifest");
+        validate_manifest(&manifest).expect("valid manifest");
+        let report_bytes =
+            fs::read(root.join(&manifest.checked_report.path)).expect("checked report");
         assert_eq!(
-            serde_json::to_value(report).expect("serialize generated report"),
-            checked_report
+            blake3::hash(&report_bytes).to_hex().as_str(),
+            manifest.checked_report.blake3
+        );
+
+        let report: Value = serde_json::from_slice(&report_bytes).expect("valid report JSON");
+        assert_eq!(report["schema_version"], manifest.schema_version);
+        assert_eq!(report["experiment"], manifest.experiment);
+        assert_eq!(
+            report["fixture"]["tree_blake3"],
+            manifest.fixture.tree_blake3
+        );
+        assert_eq!(
+            report["fixture"]["host_compatibility_blake3"],
+            manifest.host_compatibility_evidence.blake3
+        );
+        assert_eq!(
+            report["candidates"]
+                .as_array()
+                .expect("candidate array")
+                .iter()
+                .map(|candidate| candidate["id"].as_str().expect("candidate id"))
+                .collect::<Vec<_>>(),
+            manifest
+                .candidates
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
         );
     }
 

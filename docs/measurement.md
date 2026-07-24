@@ -972,9 +972,10 @@ The checked
 [`mcp-response-ablation-v1`](../benchmarks/mcp_response_ablation.json) manifest
 binds the canonical `fixtures/sample_repo` tree, one 500-source-token task,
 exact `cl100k_base` counting, the host compatibility matrix above, 12
-candidates, and zero-additional-reread acceptance gates. Regenerate the
-[machine-readable result](../benchmarks/reports/mcp-response-ablation-v1-2026-07-21.json)
-with:
+candidates, and zero-additional-reread acceptance gates. The manifest binds the
+historical [machine-readable result](../benchmarks/reports/mcp-response-ablation-v1-2026-07-21.json)
+by BLAKE3. Run the same experiment against the current runtime without
+overwriting that evidence with:
 
 ```bash
 cargo run --release --example mcp_response_ablation -- \

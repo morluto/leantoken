@@ -20,8 +20,9 @@ cargo run --release --example mcp_response_ablation -- \
 
 The example verifies the canonical-LF fixture-tree BLAKE3, exact
 `cl100k_base` counting, the bound host-compatibility matrix, every candidate in
-the frozen manifest, and the acceptance gates. Its unit test regenerates the
-report and compares it with the checked JSON value.
+the frozen manifest, and the acceptance gates. The manifest binds this
+historical JSON report by BLAKE3. A separate unit test runs the current runtime
+against the frozen acceptance invariants without rewriting historical totals.
 
 ## Scope
 
