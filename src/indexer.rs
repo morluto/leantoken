@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
-use cap_std_ext::RootDir;
+use cap_std::fs::Dir;
 use rayon::ThreadPool;
 use rayon::prelude::*;
 use tokio_util::sync::CancellationToken;
@@ -36,7 +36,7 @@ pub struct Indexer {
     config: Arc<Config>,
     storage: Storage,
     pool: Arc<LazyWorkerPool>,
-    repository_root: Arc<RootDir>,
+    repository_root: Arc<Dir>,
 }
 
 /// Phase and batch high-water diagnostics for one full reconciliation.
@@ -200,9 +200,9 @@ impl Indexer {
     /// Construct an indexer whose dedicated worker pool is created on demand.
     pub fn new(config: Arc<Config>, storage: Storage) -> Result<Self> {
         Self::validate_config(&config)?;
-        let repository_root = Arc::new(RootDir::open_ambient_root(
+        let repository_root = Arc::new(Dir::open_ambient_dir(
             &config.root,
-            cap_std_ext::cap_std::ambient_authority(),
+            cap_std::ambient_authority(),
         )?);
         Ok(Self {
             config,
@@ -212,7 +212,7 @@ impl Indexer {
         })
     }
 
-    pub(crate) fn repository_root(&self) -> Arc<RootDir> {
+    pub(crate) fn repository_root(&self) -> Arc<Dir> {
         Arc::clone(&self.repository_root)
     }
 
@@ -1118,7 +1118,7 @@ impl PublishedSourceBytes {
 }
 
 fn prepare_file(
-    root: &RootDir,
+    root: &Dir,
     file: &DiscoveredFile,
     chunk_lines: usize,
     chunk_bytes: usize,
@@ -1231,8 +1231,8 @@ fn prepare_file(
     ))
 }
 
-fn read_bounded(root: &RootDir, path: &str, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
-    read_bounded_file(root.open(path)?, max_bytes)
+fn read_bounded(root: &Dir, path: &str, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
+    read_bounded_file(root.open(path)?.into_std(), max_bytes)
 }
 
 #[cfg(test)]
@@ -1263,7 +1263,7 @@ fn push_warning(warnings: &mut Vec<String>, warning: String) {
 ///
 /// Used when size and mtime look unchanged so full reconcile cannot skip a
 /// content rewrite that preserved those metadata fields.
-fn content_unchanged(root: &RootDir, path: &str, expected_hash: &str, max_file_bytes: u64) -> bool {
+fn content_unchanged(root: &Dir, path: &str, expected_hash: &str, max_file_bytes: u64) -> bool {
     match read_bounded(root, path, max_file_bytes) {
         Ok(Some(bytes)) => hash_bytes(&bytes) == expected_hash,
         Err(_) => false,
@@ -1871,9 +1871,8 @@ mod tests {
         };
         let cancellation = CancellationToken::new();
         cancellation.cancel();
-        let repository_root =
-            RootDir::open_ambient_root(root.path(), cap_std_ext::cap_std::ambient_authority())
-                .expect("repository root");
+        let repository_root = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority())
+            .expect("repository root");
 
         assert!(matches!(
             prepare_file(

@@ -6,7 +6,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
-use cap_std_ext::RootDir;
+use cap_std::fs::Dir;
 use tokio_util::sync::CancellationToken;
 
 use crate::coordination::{CacheLease, IndexCoordination, IndexLeadership};
@@ -69,7 +69,7 @@ pub struct Services {
     config: Arc<Config>,
     storage: Storage,
     indexer: Indexer,
-    repository_root: Arc<RootDir>,
+    repository_root: Arc<Dir>,
     coordination: IndexCoordination,
     _cache_lease: CacheLease,
     active_reconciliations: Arc<AtomicUsize>,

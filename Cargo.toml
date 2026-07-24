@@ -16,7 +16,7 @@ path = "tests/integration.rs"
 
 [dependencies]
 blake3 = "1.8.2"
-cap-std-ext = "5.1.2"
+cap-std = "4.0.2"
 clap = { version = "4.5.51", features = ["derive"] }
 directories = "6.0.0"
 dialoguer = { version = "0.12.0", default-features = false }

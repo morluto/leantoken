@@ -430,14 +430,18 @@ impl Services {
 }
 
 fn open_live_file(services: &Services, path: &str) -> Result<File> {
-    services.repository_root.open(path).map_err(|open_error| {
-        // The capability open is authoritative for access. Canonicalization is
-        // only used after refusal to preserve the public escape classification.
-        match resolve_existing(&services.config.root, path) {
-            Err(Error::PathOutsideRoot(external)) => Error::PathOutsideRoot(external),
-            _ => Error::Io(open_error),
-        }
-    })
+    services
+        .repository_root
+        .open(path)
+        .map(cap_std::fs::File::into_std)
+        .map_err(|open_error| {
+            // The capability open is authoritative for access. Canonicalization is
+            // only used after refusal to preserve the public escape classification.
+            match resolve_existing(&services.config.root, path) {
+                Err(Error::PathOutsideRoot(external)) => Error::PathOutsideRoot(external),
+                _ => Error::Io(open_error),
+            }
+        })
 }
 
 fn resolve_read_target(
