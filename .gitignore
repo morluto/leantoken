@@ -4,6 +4,9 @@
 *.sqlite-shm
 *.sqlite-wal
 
+codedb.snapshot
+.codex/index-performance-design/
+
 # Environment files (keep .env.example)
 .env
 .env.*

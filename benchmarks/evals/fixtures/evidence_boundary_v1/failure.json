@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "fixture_id": "rea-packaged-mcp-macos-identity",
+  "provenance": {
+    "repository": "https://github.com/morluto/rea",
+    "revision": "9c3aec81317cd6caf627f13ebb0c6dc0f6735516",
+    "workflow_run_url": "https://github.com/morluto/rea/actions/runs/30064737090",
+    "job_url": "https://github.com/morluto/rea/actions/runs/30064737090/job/89393398416"
+  },
+  "environment": {
+    "runner": "macos-14",
+    "architecture": "arm64",
+    "node": "24.18.0"
+  },
+  "observations": [
+    {
+      "stage": "owned-shutdown",
+      "status": "incomplete",
+      "message": "owned launcher command identity did not match"
+    },
+    {
+      "stage": "close_binary",
+      "status": "error",
+      "message": "packaged MCP could not close its binary"
+    },
+    {
+      "stage": "package_e2e",
+      "status": "failed",
+      "exit_code": 1
+    }
+  ],
+  "evidence_limits": [
+    "The log does not expose the live process table.",
+    "The source checkout does not prove the contents of generated dist files.",
+    "The failed run does not prove that a proposed change succeeds.",
+    "No later source revision or workflow result is candidate-visible."
+  ]
+}

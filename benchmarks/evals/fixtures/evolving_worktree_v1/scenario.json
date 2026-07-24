@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "fixture_id": "jacobian-m3-m4-evolving-worktree",
+  "status": "private_trace_extraction_required",
+  "source": {
+    "repository": "https://github.com/morluto/jacobian",
+    "pull_request": "https://github.com/morluto/jacobian/pull/13",
+    "base_revision": "ecb1e56831d1842643acfeb52e94172ff2141a91",
+    "checkpoints": [
+      {
+        "name": "implementation",
+        "revision": "2d2a990e9e04b4440dbb4db5dd143bc91580c8b3"
+      },
+      {
+        "name": "documentation",
+        "revision": "fc51e5d75742dd8d36233190b9cf57cabfb9446e"
+      },
+      {
+        "name": "merged",
+        "revision": "8d65b29e4cc4afc3649748f1978b6d02c1769739"
+      }
+    ]
+  },
+  "task_scope": {
+    "summary": "Harden provisional M3 search and M4 parameter-region workflows, add adversarial plugin conformance coverage, expose the workflows through CLI and MCP, and reorganize documentation without changing the v0.2 release contract.",
+    "excluded_outcomes": [
+      "distributed scheduler",
+      "hostile-plugin sandbox",
+      "v0.2 conformance-contract change"
+    ]
+  },
+  "expected_trace_summary": {
+    "tool_calls": 361,
+    "tools": {
+      "files": 6,
+      "outline": 27,
+      "search": 109,
+      "read": 219,
+      "context": 0
+    },
+    "distinct_paths": 60,
+    "requested_line_spans": 24369,
+    "reads_over_100_lines": 99,
+    "unbounded_whole_file_reads": 0,
+    "expected_hash_uses": 0,
+    "known_hashes_uses": 0
+  },
+  "validation_commands": [
+    "uv run pytest",
+    "uv run ruff check .",
+    "uv run ruff format --check .",
+    "uv run mypy",
+    "uv run deptry .",
+    "npx --yes jscpd@5.0.12 --config .jscpd.json .",
+    "uv build",
+    "git diff --check"
+  ],
+  "reported_validation": {
+    "pytest": "207 passed",
+    "ruff_check": "passed",
+    "ruff_format": "102 files already formatted",
+    "mypy": "no issues in 57 source files",
+    "deptry": "no dependency issues",
+    "jscpd": "0 clones",
+    "build": "sdist and wheel built",
+    "diff_check": "passed"
+  },
+  "private_inputs_required": [
+    "sanitized trajectory JSONL",
+    "sanitizer manifest and hashes",
+    "model and host identity",
+    "exact model-facing tool projection",
+    "token and call budgets",
+    "checkpoint-to-call mapping",
+    "versioned oracle",
+    "known-good and known-bad handoff labels"
+  ]
+}

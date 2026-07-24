@@ -1784,8 +1784,9 @@ impl ReadSession {
             .query_row(
                 "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
                      FROM symbols
-                     WHERE file_id = ?1 AND name = ?2
-                     ORDER BY start_byte
+                     WHERE file_id = ?1
+                       AND (name = ?2 OR (parent IS NOT NULL AND parent || '.' || name = ?2))
+                     ORDER BY CASE WHEN name = ?2 THEN 0 ELSE 1 END, start_byte
                      LIMIT 1",
                 params![file_id, name],
                 Storage::map_symbol,

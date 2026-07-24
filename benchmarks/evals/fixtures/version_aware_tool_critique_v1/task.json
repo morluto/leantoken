@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "fixture_id": "version-aware-tool-critique",
+  "prompt": "Review how the source-retrieval tool affected this completed coding workflow. Rank confirmed product defects, deployment or version-freshness problems, routing or discoverability gaps, capabilities already present, and follow-up evaluations. For every claim, record evidence type, exact version or revision, confidence, affected boundary, a counterfactual intervention, and what would disprove the claim. Recommend upstream product changes only where supplied evidence supports them.",
+  "required_claim_fields": [
+    "classification",
+    "evidence_type",
+    "version_or_revision",
+    "confidence",
+    "affected_boundary",
+    "counterfactual_intervention",
+    "disconfirming_condition"
+  ],
+  "allowed_classifications": [
+    "current_product_defect",
+    "version_bounded_observation",
+    "deployment_freshness",
+    "routing_or_discoverability",
+    "already_available",
+    "unsupported_proposal",
+    "evaluation_candidate",
+    "unresolved"
+  ],
+  "semantic_gate": "A behavior seen only on an older pinned runtime cannot be labeled a current product defect without current-version evidence."
+}
