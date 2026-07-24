@@ -28,6 +28,9 @@ Antigravity:
 npx leantoken setup
 ```
 
+If `npx` reuses a stale project-local or ancestor install, run
+`npx leantoken@latest setup` once to bootstrap the newest published release.
+
 The setup wizard labels supported clients it detects, but leaves every client
 unselected so you choose exactly which coding agents receive LeanToken. Before
 writing anything, it shows the exact configuration paths and MCP launcher and
