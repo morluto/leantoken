@@ -889,19 +889,19 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn discovery_rejects_non_utf8_paths_without_lossy_aliases() {
+    fn checked_slash_path_rejects_non_utf8_paths_without_lossy_aliases() {
         use std::ffi::OsString;
         use std::os::unix::ffi::OsStringExt;
 
-        let directory = tempfile::tempdir().expect("directory");
         for name in [b"\x80.rs".to_vec(), b"\x81.rs".to_vec()] {
-            fs::write(directory.path().join(OsString::from_vec(name)), "fn f() {}")
-                .expect("fixture");
+            let path = PathBuf::from(OsString::from_vec(name));
+            let error = checked_slash_path(&path).expect_err("non-UTF-8 path must be rejected");
+
+            match error {
+                Error::UnsupportedPathEncoding(rejected) => assert_eq!(rejected, path),
+                other => panic!("unexpected error: {other}"),
+            }
         }
-
-        let error = discover_files(directory.path(), 1024).expect_err("non-UTF-8 path must fail");
-
-        assert!(matches!(error, Error::UnsupportedPathEncoding(_)));
     }
 
     #[test]
