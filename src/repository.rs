@@ -533,9 +533,11 @@ pub struct GitDiffResult {
 pub struct GitHunkRange {
     /// Repository-relative target path.
     pub path: String,
-    /// First target line touched by the hunk.
+    /// First target line touched by the hunk, or the line after an empty hunk boundary.
     pub start_line: usize,
     /// Last target line touched by the hunk, inclusive.
+    ///
+    /// An empty target-side hunk has `end_line < start_line`.
     pub end_line: usize,
 }
 
@@ -645,17 +647,30 @@ fn parse_git_diff_hunks<R: BufRead>(
         let (start, length) = target
             .split_once(',')
             .map_or((target, "1"), |(start, length)| (start, length));
-        let start_line = start
+        let raw_start = start
             .parse::<usize>()
-            .map_err(|error| Error::InternalFailure(error.to_string()))?
-            .max(1);
+            .map_err(|error| Error::InternalFailure(error.to_string()))?;
         let length = length
             .parse::<usize>()
             .map_err(|error| Error::InternalFailure(error.to_string()))?;
+        let (start_line, end_line) = if length == 0 {
+            (
+                raw_start
+                    .checked_add(1)
+                    .ok_or_else(|| Error::InternalFailure("git diff hunk range overflow".into()))?,
+                raw_start,
+            )
+        } else {
+            let start_line = raw_start.max(1);
+            let end_line = start_line
+                .checked_add(length - 1)
+                .ok_or_else(|| Error::InternalFailure("git diff hunk range overflow".into()))?;
+            (start_line, end_line)
+        };
         ranges.push(GitHunkRange {
             path: path.clone(),
             start_line,
-            end_line: start_line + length.saturating_sub(1),
+            end_line,
         });
     }
     Ok(ranges)
@@ -878,6 +893,29 @@ mod tests {
                     path: "second.rs".into(),
                     start_line: 10,
                     end_line: 12,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn diff_hunk_parser_preserves_empty_target_boundaries() {
+        let diff = "+++ b/first.rs\n@@ -1 +0,0 @@\n+++ b/later.rs\n@@ -4 +3,0 @@\n";
+
+        let ranges = parse_git_diff_hunks(Cursor::new(diff), 10, "").expect("diff hunks");
+
+        assert_eq!(
+            ranges,
+            vec![
+                GitHunkRange {
+                    path: "first.rs".into(),
+                    start_line: 1,
+                    end_line: 0,
+                },
+                GitHunkRange {
+                    path: "later.rs".into(),
+                    start_line: 4,
+                    end_line: 3,
                 },
             ]
         );

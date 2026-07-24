@@ -693,6 +693,25 @@ fn git_diff_hunks_reports_target_line_ranges() {
 }
 
 #[test]
+fn git_diff_hunks_reports_first_line_deletion_as_empty_target_range() {
+    if !git_available() {
+        return;
+    }
+    let root = tempfile::tempdir().expect("root");
+    init_git_repo(root.path());
+    fs::write(root.path().join("changed.rs"), "removed\n").expect("write");
+    run_git(root.path(), &["add", "."]);
+    run_git(root.path(), &["commit", "-m", "initial"]);
+
+    fs::write(root.path().join("changed.rs"), "").expect("delete first line");
+
+    let hunks = git_diff_hunks(root.path(), "HEAD", 64).expect("diff hunks");
+    assert_eq!(hunks.len(), 1);
+    assert_eq!(hunks[0].path, "changed.rs");
+    assert_eq!((hunks[0].start_line, hunks[0].end_line), (1, 0));
+}
+
+#[test]
 fn git_diff_paths_resolves_origin_main_ref_name() {
     if !git_available() {
         return;

@@ -1030,7 +1030,9 @@ impl Services {
                 .filter(|symbol| {
                     path_hunks.is_empty()
                         || path_hunks.iter().any(|hunk| {
-                            symbol.start_line <= hunk.end_line && symbol.end_line >= hunk.start_line
+                            hunk.start_line <= hunk.end_line
+                                && symbol.start_line <= hunk.end_line
+                                && symbol.end_line >= hunk.start_line
                         })
                 })
                 .collect::<Vec<_>>();
