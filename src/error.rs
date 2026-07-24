@@ -71,6 +71,14 @@ pub enum Error {
     PathOutsideRoot(PathBuf),
     #[error("path is not indexed: {0}")]
     NotIndexed(String),
+    /// Requested symbol was absent from an indexed file.
+    #[error("symbol is not indexed in {path}: {symbol}")]
+    SymbolNotFound {
+        /// Repository-relative indexed file.
+        path: String,
+        /// Exact symbol identity requested by the caller.
+        symbol: String,
+    },
     #[error("requested content exceeds the configured limit")]
     LimitExceeded,
     /// Caller-controlled response limit crossed its configured maximum.

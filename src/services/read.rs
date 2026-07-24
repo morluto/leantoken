@@ -436,9 +436,13 @@ fn resolve_read_target(
     request: &ReadRequest,
 ) -> Result<ResolvedReadTarget> {
     let target = if let Some(symbol_name) = &request.symbol {
-        let symbol = session
-            .find_symbol(file_id, symbol_name)?
-            .ok_or_else(|| Error::NotIndexed(format!("{}::{symbol_name}", request.path)))?;
+        let symbol =
+            session
+                .find_symbol(file_id, symbol_name)?
+                .ok_or_else(|| Error::SymbolNotFound {
+                    path: request.path.clone(),
+                    symbol: symbol_name.clone(),
+                })?;
         ResolvedReadTarget {
             start_line: symbol.start_line,
             end_line: Some(symbol.end_line),

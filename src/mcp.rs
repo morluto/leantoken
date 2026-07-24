@@ -972,8 +972,12 @@ fn into_mcp_error(error: crate::Error) -> ErrorData {
             )
         }
         crate::Error::NotIndexed(_) => ErrorData::invalid_params(
-            "requested path or symbol is not indexed",
+            "requested path is not indexed",
             mcp_error_data("not_indexed"),
+        ),
+        crate::Error::SymbolNotFound { .. } => ErrorData::invalid_params(
+            "requested symbol is not indexed",
+            mcp_error_data("symbol_not_found"),
         ),
         crate::Error::RepositoryIdentityMismatch { expected, actual } => ErrorData::invalid_params(
             "repository identity does not match this server",
@@ -1294,6 +1298,10 @@ mod tests {
             crate::Error::PathOutsideRoot(unix_secret.into()),
             crate::Error::PathOutsideRoot(windows_secret.into()),
             crate::Error::NotIndexed(unix_secret.into()),
+            crate::Error::SymbolNotFound {
+                path: unix_secret.into(),
+                symbol: "private-secret".into(),
+            },
             crate::Error::UnsupportedLanguage(unix_secret.into()),
             crate::Error::InvalidRequest(format!("invalid path: {unix_secret}")),
             crate::Error::InternalFailure(format!("failed at {unix_secret}")),

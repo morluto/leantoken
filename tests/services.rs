@@ -2675,6 +2675,62 @@ async fn read_rejects_ignored_files() {
 }
 
 #[tokio::test]
+async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed() {
+    let source = b"class Service:\n    def run(self):\n        return 1\n";
+    let (_root, services) = indexed_source("service.py", source).await;
+
+    let outline = services
+        .outline(OutlineRequest {
+            paths: vec!["service.py".into()],
+            symbol_name: Some("run".into()),
+            symbol_kind: Some("function".into()),
+            max_results: Some(10),
+            max_tokens: Some(100),
+        })
+        .await
+        .expect("outline method");
+    let method = &outline.files[0].symbols[0];
+    assert_eq!(method.name, "run");
+    assert_eq!(method.parent.as_deref(), Some("Service"));
+
+    let response = services
+        .read(ReadRequest {
+            path: "service.py".into(),
+            start_line: None,
+            end_line: None,
+            symbol: Some("Service.run".into()),
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("qualified symbol");
+    assert_eq!((response.start_line, response.end_line), (2, 3));
+    assert!(
+        response
+            .content
+            .as_deref()
+            .is_some_and(|content| content.contains("def run"))
+    );
+
+    let error = services
+        .read(ReadRequest {
+            path: "service.py".into(),
+            start_line: None,
+            end_line: None,
+            symbol: Some("Service.missing".into()),
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect_err("missing qualified symbol");
+    assert!(matches!(
+        error,
+        Error::SymbolNotFound { path, symbol }
+            if path == "service.py" && symbol == "Service.missing"
+    ));
+}
+
+#[tokio::test]
 async fn symbol_reads_and_outline_filters_search_beyond_result_caps() {
     let root = tempfile::tempdir().expect("temporary repository");
     let source = (0..130)
