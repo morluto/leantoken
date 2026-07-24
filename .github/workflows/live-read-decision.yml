@@ -54,6 +54,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: live-read-profile-${{ matrix.os }}
+          cache-workspace-crates: true
 
       - name: Fetch pinned corpus
         run: |
@@ -185,6 +186,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: live-read-profile-aggregate
+          cache-workspace-crates: true
 
       - name: Download raw profiles
         uses: actions/download-artifact@v8

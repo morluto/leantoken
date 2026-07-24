@@ -942,7 +942,9 @@ fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation() {
     assert_eq!(initial["repository_generation"], 1);
     assert_eq!(database_state(&database).map(|state| state.1), Some(1));
 
-    write_rust_fixture_set(root.path(), "new", 40, 150);
+    // Keep reconciliation large enough to kill the leader mid-flight without
+    // making every product-loop run parse thousands of unnecessary symbols.
+    write_rust_fixture_set(root.path(), "new", 20, 150);
 
     let coordination =
         leantoken::coordination::IndexCoordination::for_database(&database);
@@ -978,7 +980,7 @@ fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation() {
     });
     wait_until(Duration::from_secs(20), || {
         database_state(&database).is_some_and(|(generation, files, _)| {
-            generation == 2 && files == 41
+            generation == 2 && files == 21
         })
     });
     follower.wait_until_ready(Duration::from_secs(5));
