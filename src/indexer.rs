@@ -1007,7 +1007,11 @@ fn prepare_batch_end(
         batch_bytes = observed;
         end += 1;
     }
-    end
+    if end == start && start < candidates.len() {
+        start + 1
+    } else {
+        end
+    }
 }
 
 fn duration_ms(duration: Duration) -> f64 {
@@ -1764,6 +1768,18 @@ mod tests {
         assert_eq!(prepare_batch_end(&candidates, 2, file_limited), 3);
         assert_eq!(prepare_batch_end(&candidates, 0, byte_limited), 1);
         assert_eq!(prepare_batch_end(&candidates, 1, byte_limited), 2);
+
+        let oversized_candidate = [DiscoveredFile {
+            absolute_path: "grown.rs".into(),
+            relative_path: "grown.rs".into(),
+            size_bytes: 4,
+            modified_ns: None,
+        }];
+        assert_eq!(
+            prepare_batch_end(&oversized_candidate, 0, byte_limited),
+            1,
+            "a single over-budget candidate must not stall batch preparation"
+        );
     }
 
     #[test]
