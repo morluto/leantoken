@@ -420,6 +420,38 @@ fn doctor_verifies_identity_catalog_and_first_retrieval() {
 }
 
 #[test]
+fn doctor_surfaces_bounded_redacted_child_diagnostics() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write fixture");
+    let blocked_parent = root.path().join("blocked");
+    std::fs::write(&blocked_parent, "not a directory").expect("blocked parent");
+    let database = blocked_parent.join("index.sqlite");
+
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .args([
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--database",
+            database.to_str().expect("database UTF-8"),
+            "--json",
+            "doctor",
+        ])
+        .output()
+        .expect("run doctor");
+
+    assert!(!output.status.success());
+    let error: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("structured error");
+    let message = error["error"].as_str().expect("error message");
+    assert_eq!(error["category"], "doctor_failure");
+    assert!(message.contains("child diagnostics:"), "{message}");
+    assert!(message.contains("MCP indexing runtime failed"), "{message}");
+    assert!(!message.contains(database.to_str().unwrap()), "{message}");
+    assert!(message.len() < 5_000, "diagnostic must remain bounded");
+}
+
+#[test]
 fn doctor_human_output_uses_context_distillery_handoff() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write fixture");
@@ -989,15 +1021,13 @@ fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation() {
 #[test]
 fn setup_and_remove_do_not_require_a_repository() {
     let temp = tempfile::tempdir().expect("temporary home");
-    let missing_root = temp.path().join("not-a-repository");
 
     let setup = Command::cargo_bin("leantoken")
         .expect("binary")
         .env("HOME", temp.path())
         .env("USERPROFILE", temp.path())
+        .current_dir(temp.path())
         .args([
-            "--root",
-            missing_root.to_str().expect("root UTF-8"),
             "--json",
             "setup",
             "--claude",
@@ -1022,6 +1052,7 @@ fn setup_and_remove_do_not_require_a_repository() {
         .expect("binary")
         .env("HOME", temp.path())
         .env("USERPROFILE", temp.path())
+        .current_dir(temp.path())
         .args(["--json", "remove", "--claude", "--yes"])
         .output()
         .expect("run remove");
@@ -1033,6 +1064,32 @@ fn setup_and_remove_do_not_require_a_repository() {
     let config = std::fs::read_to_string(temp.path().join(".claude.json"))
         .expect("Claude configuration after removal");
     assert!(!config.contains("\"leantoken\""));
+}
+
+#[test]
+fn repository_options_are_rejected_by_repository_free_commands() {
+    for arguments in [
+        vec!["--json", "--root", ".", "setup", "--all", "--dry-run"],
+        vec!["--json", "--root", ".", "remove", "--all", "--dry-run"],
+        vec!["--json", "cache", "list", "--max-file-bytes", "1"],
+        vec!["--json", "upgrade", "--tokenizer", "cl100k_base", "--check"],
+    ] {
+        let output = Command::cargo_bin("leantoken")
+            .expect("binary")
+            .args(arguments)
+            .output()
+            .expect("run command");
+        assert!(!output.status.success());
+        let error: serde_json::Value =
+            serde_json::from_slice(&output.stderr).expect("structured parse error");
+        assert_eq!(error["category"], "invalid_input");
+        assert!(
+            error["error"]
+                .as_str()
+                .is_some_and(|message| message.contains("repository option")),
+            "{error}"
+        );
+    }
 }
 
 #[test]

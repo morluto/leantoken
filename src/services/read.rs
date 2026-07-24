@@ -1,6 +1,6 @@
 //! Bounded live reads, outlines, and index-backed excerpts.
 
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
 use tokio_util::sync::CancellationToken;
@@ -379,13 +379,12 @@ impl Services {
         let indexed = session
             .find_file(&request.path)?
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
-        let path = resolve_existing(&self.config.root, &request.path)?;
         let target = resolve_read_target(session, indexed.id, request)?;
 
         // Stream the file through a BufReader for the full-file hash so the
         // entire file does not need to be held in memory simultaneously. The
         // content range is extracted by a bounded line-oriented reader.
-        let file = fs::File::open(&path)?;
+        let file = open_live_file(self, &request.path)?;
         let full_hash = stream_hash(&file)?;
         let range = read_live_range(&file, target, max_tokens, self.config.tokenizer)?;
         let baseline_source_tokens = self.config.tokenizer.count(&range.content);
@@ -428,6 +427,17 @@ impl Services {
             baseline_source_tokens,
         ))
     }
+}
+
+fn open_live_file(services: &Services, path: &str) -> Result<File> {
+    services.repository_root.open(path).map_err(|open_error| {
+        // The capability open is authoritative for access. Canonicalization is
+        // only used after refusal to preserve the public escape classification.
+        match resolve_existing(&services.config.root, path) {
+            Err(Error::PathOutsideRoot(external)) => Error::PathOutsideRoot(external),
+            _ => Error::Io(open_error),
+        }
+    })
 }
 
 fn resolve_read_target(

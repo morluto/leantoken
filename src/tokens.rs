@@ -159,17 +159,16 @@ impl Tokenizer {
     }
 
     fn bpe_boundary(&self, bpe: &tiktoken_rs::CoreBPE, text: &str, max_tokens: usize) -> usize {
-        let mut offset = 0usize;
-        for (_, token) in bpe
-            .split_by_token_ordinary_iter(text)
-            .enumerate()
-            .take(max_tokens)
-        {
-            if let Ok(token) = token {
-                offset += token.len();
-            }
+        let tokens = bpe.encode_ordinary(text);
+        let selected = &tokens[..tokens.len().min(max_tokens)];
+        let Ok(bytes) = bpe.decode_bytes(selected) else {
+            return 0;
+        };
+        let mut offset = bytes.len().min(text.len());
+        while !text.is_char_boundary(offset) {
+            offset -= 1;
         }
-        offset.min(text.len())
+        offset
     }
 }
 
@@ -293,6 +292,29 @@ mod tests {
             assert!(source.starts_with(prefix));
             assert!(tokens <= 12);
             assert!(std::str::from_utf8(prefix.as_bytes()).is_ok());
+        }
+    }
+
+    #[test]
+    fn exact_truncation_preserves_utf8_boundaries() {
+        for tokenizer in [
+            Tokenizer::Cl100kBase,
+            Tokenizer::O200kBase,
+            Tokenizer::O200kHarmony,
+            Tokenizer::P50kBase,
+            Tokenizer::R50kBase,
+            Tokenizer::Gpt2,
+            Tokenizer::P50kEdit,
+        ] {
+            for source in ["Ā", "𐀀", "aĀb𐀀c"] {
+                for budget in 1..=tokenizer.count(source) {
+                    let (prefix, count) = tokenizer.truncate(source, budget);
+                    assert!(source.starts_with(prefix), "{tokenizer:?}: {source:?}");
+                    assert!(source.is_char_boundary(prefix.len()));
+                    assert_eq!(count, tokenizer.count(prefix));
+                    assert!(count <= budget, "{tokenizer:?}: {source:?}");
+                }
+            }
         }
     }
 

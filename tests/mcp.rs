@@ -129,7 +129,7 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
     assert_mcp_limit_contract(
         client.peer(),
         "leantoken_files",
-        serde_json::json!({"operation": {"kind": "tree", "depth": 0}}),
+        serde_json::json!({"operation": "tree", "depth": 0}),
         "max_results",
         100,
         false,
@@ -239,7 +239,7 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
     let files = call_tool(
         client.peer(),
         "leantoken_files",
-        serde_json::json!({"operation": {"kind": "tree"}}),
+        serde_json::json!({"operation": "tree"}),
     )
     .await
     .expect("files with configured default");
@@ -366,7 +366,7 @@ async fn customized_mcp_limits_apply_while_starting_and_after_failure() {
     let cases = [
         (
             "leantoken_files",
-            serde_json::json!({"operation": {"kind": "tree"}}),
+            serde_json::json!({"operation": "tree"}),
             "max_results",
             2,
             1,
@@ -433,7 +433,7 @@ async fn customized_mcp_limits_apply_while_starting_and_after_failure() {
     let starting = call_tool(
         client.peer(),
         "leantoken_files",
-        serde_json::json!({"operation": {"kind": "tree"}, "max_results": 1}),
+        serde_json::json!({"operation": "tree", "max_results": 1}),
     )
     .await
     .expect("valid starting request");
@@ -458,7 +458,7 @@ async fn customized_mcp_limits_apply_while_starting_and_after_failure() {
     let failed = call_tool(
         client.peer(),
         "leantoken_files",
-        serde_json::json!({"operation": {"kind": "tree"}, "max_results": 1}),
+        serde_json::json!({"operation": "tree", "max_results": 1}),
     )
     .await
     .expect("valid failed-state request");
@@ -529,7 +529,8 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     }
 
     let files_arguments = serde_json::json!({
-        "operation": {"kind": "tree", "depth": 2},
+        "operation": "tree",
+        "depth": 2,
         "max_results": 10
     })
         .as_object()
@@ -546,22 +547,47 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let structured = response.structured_content.expect("structured response");
     assert_eq!(structured["entries"][0]["path"], "lib.rs");
 
-    let legacy_files_arguments = serde_json::json!({"operation": "tree"})
+    for (arguments, expected_path) in [
+        (
+            serde_json::json!({"operation": "find", "query": "many"}),
+            "many.rs",
+        ),
+        (
+            serde_json::json!({"operation": "glob", "pattern": "lib.rs"}),
+            "lib.rs",
+        ),
+    ] {
+        let response = call_tool(client.peer(), "leantoken_files", arguments)
+            .await
+            .expect("call documented files operation");
+        assert_ne!(response.is_error, Some(true));
+        let entries = response
+            .structured_content
+            .and_then(|value| value["entries"].as_array().cloned())
+            .expect("files entries");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["path"], expected_path);
+    }
+
+    let nested_files_arguments =
+        serde_json::json!({"operation": {"kind": "find", "query": "many"}})
         .as_object()
         .expect("legacy files arguments")
         .clone();
     let legacy_result = client
         .peer()
         .call_tool(
-            CallToolRequestParams::new("leantoken_files")
-                .with_arguments(legacy_files_arguments),
+            CallToolRequestParams::new("leantoken_files").with_arguments(nested_files_arguments),
         )
         .await
-        .expect("legacy arguments receive an MCP tool result");
-    assert_eq!(legacy_result.is_error, Some(true));
-    assert!(legacy_result.content[0]
-        .as_text()
-        .is_some_and(|text| text.text.contains("failed to deserialize parameters")));
+        .expect("nested arguments receive an MCP tool result");
+    assert_ne!(legacy_result.is_error, Some(true));
+    let entries = legacy_result
+        .structured_content
+        .and_then(|value| value["entries"].as_array().cloned())
+        .expect("legacy files entries");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["path"], "many.rs");
 
     std::fs::write(
         root.path().join("new_package.rs"),
@@ -632,6 +658,82 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
             if data.code == ErrorCode::INVALID_PARAMS
                 && data.data.as_ref().and_then(|value| value["category"].as_str())
                     == Some("input_too_long")
+    ));
+
+    let boundary_id = "x".repeat(128);
+    let boundary_error = call_tool(
+        client.peer(),
+        "leantoken_files",
+        serde_json::json!({
+            "operation": "tree",
+            "expected_repository_id": boundary_id
+        }),
+    )
+    .await
+    .expect_err("128-byte mismatched identity should reach identity validation");
+    assert!(matches!(
+        boundary_error,
+        ServiceError::McpError(data)
+            if data.data.as_ref().and_then(|value| value["category"].as_str())
+                == Some("repository_identity_mismatch")
+    ));
+
+    let oversized_id = "x".repeat(129);
+    let oversized_error = call_tool(
+        client.peer(),
+        "leantoken_files",
+        serde_json::json!({
+            "operation": "tree",
+            "expected_repository_id": oversized_id
+        }),
+    )
+    .await
+    .expect_err("oversized repository identity should be rejected");
+    let ServiceError::McpError(data) = oversized_error else {
+        panic!("expected MCP invalid-parameter error");
+    };
+    assert_eq!(data.code, ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        data.data
+            .as_ref()
+            .and_then(|value| value["category"].as_str()),
+        Some("input_too_long")
+    );
+    assert!(!serde_json::to_string(&data)
+        .expect("serialize bounded MCP error")
+        .contains(&oversized_id));
+
+    let multibyte_boundary_error = call_tool(
+        client.peer(),
+        "leantoken_files",
+        serde_json::json!({
+            "operation": "tree",
+            "expected_repository_id": "é".repeat(64)
+        }),
+    )
+    .await
+    .expect_err("128-byte multibyte identity should reach identity validation");
+    assert!(matches!(
+        multibyte_boundary_error,
+        ServiceError::McpError(data)
+            if data.data.as_ref().and_then(|value| value["category"].as_str())
+                == Some("repository_identity_mismatch")
+    ));
+    let multibyte_oversized_error = call_tool(
+        client.peer(),
+        "leantoken_files",
+        serde_json::json!({
+            "operation": "tree",
+            "expected_repository_id": "é".repeat(65)
+        }),
+    )
+    .await
+    .expect_err("130-byte multibyte identity should be rejected");
+    assert!(matches!(
+        multibyte_oversized_error,
+        ServiceError::McpError(data)
+            if data.data.as_ref().and_then(|value| value["category"].as_str())
+                == Some("input_too_long")
     ));
 
     let bounded_arguments = serde_json::json!({
@@ -767,9 +869,9 @@ async fn mcp_path_errors_redact_external_and_absolute_paths() {
     let root = tempfile::tempdir().expect("temporary repository");
     let outside = tempfile::tempdir().expect("external directory");
     let indexed_path = root.path().join("escape.rs");
-    let external_path = outside.path().join("private-secret-target.rs");
+    let external_path = outside.path().join("sensitive-marker-target.rs");
     std::fs::write(&indexed_path, "fn indexed_before_escape() {}\n").expect("indexed fixture");
-    std::fs::write(&external_path, "fn private_secret() {}\n").expect("external fixture");
+    std::fs::write(&external_path, "fn external_marker() {}\n").expect("external fixture");
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Arc::new(Services::open(config).expect("services"));
@@ -791,8 +893,8 @@ async fn mcp_path_errors_redact_external_and_absolute_paths() {
 
     for requested in [
         "escape.rs",
-        "/home/alice/private-secret.rs",
-        r"C:\Users\alice\private-secret.rs",
+        "/home/example/sensitive-marker.rs",
+        r"C:\Users\example\sensitive-marker.rs",
     ] {
         let arguments = serde_json::json!({
             "path": requested,
@@ -817,14 +919,14 @@ async fn mcp_path_errors_redact_external_and_absolute_paths() {
             Some("path_outside_root")
         );
         let wire = serde_json::to_string(&data).expect("serialize error");
-        for secret in [
+        for marker in [
             requested,
             external_path.to_str().expect("external UTF-8"),
-            "private-secret",
-            "/home/alice",
-            r"C:\Users\alice",
+            "sensitive-marker",
+            "/home/example",
+            r"C:\Users\example",
         ] {
-            assert!(!wire.contains(secret), "MCP error leaked {secret}: {wire}");
+            assert!(!wire.contains(marker), "MCP error leaked {marker}: {wire}");
         }
     }
 
@@ -855,7 +957,7 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
     for (tool, arguments, field, limit, zero_is_valid) in [
         (
             "leantoken_files",
-            serde_json::json!({"operation": {"kind": "tree", "depth": 0}}),
+            serde_json::json!({"operation": "tree", "depth": 0}),
             "max_results",
             100,
             false,
@@ -925,7 +1027,7 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
     }
 
     let request = || {
-        let arguments = serde_json::json!({ "operation": {"kind": "tree"} })
+        let arguments = serde_json::json!({ "operation": "tree" })
             .as_object()
             .expect("arguments")
             .clone();

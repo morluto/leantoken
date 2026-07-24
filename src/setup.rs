@@ -1106,7 +1106,7 @@ fn discovery_skill(launcher: &McpLauncher) -> Result<String> {
         "leantoken doctor --json".into()
     };
     Ok(format!(
-        "---\nname: leantoken\ndescription: Use LeanToken for token-bounded repository exploration, code search, symbol outlines, exact source reads, or when the user explicitly asks to use LeanToken.\n---\n\n{DISCOVERY_SKILL_MARKER}\n\nBefore repository exploration, discover the deferred `leantoken` MCP server and its tools. Route progressively:\n\n- `leantoken_files`: find paths or inspect a compact tree.\n- `leantoken_outline`: inspect definitions and imports before reading source.\n- `leantoken_search`: locate symbols, references, identifiers, text, or regex matches.\n- `leantoken_read`: read an exact symbol or narrow line range.\n- `leantoken_context`: use bounded task-shaped retrieval only while scope remains uncertain.\n- `leantoken_savings`: inspect cumulative repository-local source-token savings.\n\nUse native workspace tools for edits, commands, tests, and Git operations. If the server or tools cannot be discovered, run `{doctor}` and report its structured registration, launch, handshake, and catalog status instead of silently claiming LeanToken was used.\n"
+        "---\nname: leantoken\ndescription: Use LeanToken for token-bounded repository exploration, audits, codebase investigations, architecture reviews, source archaeology, code search, symbol outlines, and exact source reads.\n---\n\n{DISCOVERY_SKILL_MARKER}\n\nBefore retrieving repository source, including for audits and code archaeology, discover the deferred `leantoken` MCP server and route progressively:\n\n1. `leantoken_files` finds paths or returns a compact tree.\n2. `leantoken_outline` maps definitions and imports; `leantoken_search` locates symbols, references, identifiers, text, or regex matches.\n3. `leantoken_read` returns only the exact symbol or narrow line range needed.\n\nUse `leantoken_context` only while scope remains uncertain and `leantoken_savings` for repository-local savings. Use native workspace tools for edits, commands, tests, runtime probes, Git operations, and evidence that is not source retrieval. If the server or tools cannot be discovered, run `{doctor}` and report its structured registration, launch, handshake, and catalog status instead of silently claiming LeanToken was used.\n"
     ))
 }
 
@@ -2729,6 +2729,14 @@ mod tests {
             assert!(skill.contains(DISCOVERY_SKILL_MARKER));
             assert!(skill.contains("leantoken_context"));
             assert!(skill.contains("leantoken_savings"));
+            assert!(skill.contains("audits and code archaeology"));
+            assert!(skill.contains("runtime probes"));
+            assert!(
+                skill.find("leantoken_files").unwrap() < skill.find("leantoken_outline").unwrap()
+            );
+            assert!(
+                skill.find("leantoken_outline").unwrap() < skill.find("leantoken_read").unwrap()
+            );
             assert!(skill.contains("leantoken doctor --json"));
             assert!(!skill.contains("inputSchema"));
             assert_eq!(

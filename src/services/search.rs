@@ -22,6 +22,40 @@ const MAX_REGEX_CANDIDATES: usize = 2_000;
 const MAX_REGEX_FILES_SCANNED: usize = 10_000;
 /// Maximum chunks examined per file during a regex scan.
 const MAX_REGEX_CHUNKS_PER_FILE: usize = 256;
+const FILTER_SCAN_PAGE_SIZE: usize = 256;
+const MAX_FILTER_SCAN_ROWS: usize = 10_000;
+
+fn collect_filtered_hits<T>(
+    request: &SearchRequest,
+    max_candidates: usize,
+    cancellation: &CancellationToken,
+    mut fetch_page: impl FnMut(usize, usize) -> Result<Vec<T>>,
+    path: impl Fn(&T) -> &str,
+) -> Result<Vec<T>> {
+    let mut selected = Vec::new();
+    let mut offset = 0usize;
+    while selected.len() < max_candidates && offset < MAX_FILTER_SCAN_ROWS {
+        check_cancelled(cancellation)?;
+        let page_limit = FILTER_SCAN_PAGE_SIZE.min(MAX_FILTER_SCAN_ROWS - offset);
+        let page = fetch_page(offset, page_limit)?;
+        let page_len = page.len();
+        for hit in page {
+            check_cancelled(cancellation)?;
+            if path_allowed(path(&hit), &request.include_paths, &request.exclude_paths)? {
+                selected.push(hit);
+                if selected.len() == max_candidates {
+                    break;
+                }
+            }
+        }
+        offset = offset.saturating_add(page_len);
+        if page_len < page_limit {
+            break;
+        }
+    }
+    Ok(selected)
+}
+
 pub(super) fn chunk_search_hit(
     hit: ChunkHit,
     query: &str,
@@ -224,17 +258,20 @@ impl Services {
                 request.mode,
                 SearchMode::Auto | SearchMode::Identifier | SearchMode::Symbol
             ) {
-                let mut symbol_hits = Vec::new();
-                for hit in session.search_symbols(
-                    &request.query,
-                    request.case_sensitive,
+                let symbol_hits = collect_filtered_hits(
+                    &request,
                     limit.saturating_mul(4),
-                )? {
-                    check_cancelled(cancellation)?;
-                    if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)? {
-                        symbol_hits.push(hit);
-                    }
-                }
+                    cancellation,
+                    |offset, page_limit| {
+                        session.search_symbols_page(
+                            &request.query,
+                            request.case_sensitive,
+                            page_limit,
+                            offset,
+                        )
+                    },
+                    |hit: &SymbolHit| &hit.path,
+                )?;
                 let excerpt_requests = symbol_hits
                     .iter()
                     .map(|hit| StoredExcerptRequest {
@@ -263,17 +300,20 @@ impl Services {
                 request.mode,
                 SearchMode::Auto | SearchMode::Identifier | SearchMode::Reference
             ) {
-                let mut reference_hits = Vec::new();
-                for hit in session.search_references(
-                    &request.query,
-                    request.case_sensitive,
+                let reference_hits = collect_filtered_hits(
+                    &request,
                     limit.saturating_mul(4),
-                )? {
-                    check_cancelled(cancellation)?;
-                    if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)? {
-                        reference_hits.push(hit);
-                    }
-                }
+                    cancellation,
+                    |offset, page_limit| {
+                        session.search_references_page(
+                            &request.query,
+                            request.case_sensitive,
+                            page_limit,
+                            offset,
+                        )
+                    },
+                    |hit: &ReferenceHit| &hit.path,
+                )?;
                 let excerpt_requests = reference_hits
                     .iter()
                     .map(|hit| StoredExcerptRequest {
@@ -307,31 +347,40 @@ impl Services {
                     limit.saturating_mul(20),
                     cancellation,
                 )?,
-                SearchMode::Text | SearchMode::Auto => {
-                    if request.query.chars().count() >= 3 {
-                        session.search_trigram(&request.query, limit.saturating_mul(8))?
-                    } else {
-                        session.search_word(&fts_quote(&request.query), limit.saturating_mul(8))?
-                    }
-                }
-                SearchMode::Identifier => {
-                    session.search_word(&fts_quote(&request.query), limit.saturating_mul(8))?
+                SearchMode::Text | SearchMode::Auto | SearchMode::Identifier => {
+                    collect_filtered_hits(
+                        &request,
+                        limit.saturating_mul(8),
+                        cancellation,
+                        |offset, page_limit| {
+                            if matches!(request.mode, SearchMode::Identifier)
+                                || request.query.chars().count() < 3
+                            {
+                                session.search_word_page(
+                                    &fts_quote(&request.query),
+                                    page_limit,
+                                    offset,
+                                )
+                            } else {
+                                session.search_trigram_page(&request.query, page_limit, offset)
+                            }
+                        },
+                        |hit: &ChunkHit| &hit.path,
+                    )?
                 }
                 SearchMode::Symbol | SearchMode::Reference => Vec::new(),
             };
             let mut lexical_hits = Vec::new();
             for hit in lexical {
                 check_cancelled(cancellation)?;
-                if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)?
-                    && let Some(search_hit) = chunk_search_hit(
-                        hit.clone(),
-                        &request.query,
-                        request.case_sensitive,
-                        context_lines,
-                        regex.as_ref().or(literal_regex.as_ref()),
-                        matches!(request.mode, SearchMode::Regex),
-                    )?
-                {
+                if let Some(search_hit) = chunk_search_hit(
+                    hit.clone(),
+                    &request.query,
+                    request.case_sensitive,
+                    context_lines,
+                    regex.as_ref().or(literal_regex.as_ref()),
+                    matches!(request.mode, SearchMode::Regex),
+                )? {
                     let matched_line = matching_line(
                         &hit,
                         &request.query,

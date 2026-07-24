@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
+use cap_std_ext::RootDir;
 use rayon::ThreadPool;
 use rayon::prelude::*;
 use tokio_util::sync::CancellationToken;
@@ -35,6 +36,7 @@ pub struct Indexer {
     config: Arc<Config>,
     storage: Storage,
     pool: Arc<LazyWorkerPool>,
+    repository_root: Arc<RootDir>,
 }
 
 /// Phase and batch high-water diagnostics for one full reconciliation.
@@ -198,11 +200,20 @@ impl Indexer {
     /// Construct an indexer whose dedicated worker pool is created on demand.
     pub fn new(config: Arc<Config>, storage: Storage) -> Result<Self> {
         Self::validate_config(&config)?;
+        let repository_root = Arc::new(RootDir::open_ambient_root(
+            &config.root,
+            cap_std_ext::cap_std::ambient_authority(),
+        )?);
         Ok(Self {
             config,
             storage,
             pool: Arc::new(LazyWorkerPool::new()),
+            repository_root,
         })
+    }
+
+    pub(crate) fn repository_root(&self) -> Arc<RootDir> {
+        Arc::clone(&self.repository_root)
     }
 
     /// Reconcile filesystem state into one committed repository generation.
@@ -345,7 +356,8 @@ impl Indexer {
                 && record.size_bytes == file.size_bytes
                 && record.modified_ns == file.modified_ns
                 && content_unchanged(
-                    &file.absolute_path,
+                    &self.repository_root,
+                    &file.relative_path,
                     &record.content_hash,
                     self.config.max_file_bytes,
                 )
@@ -358,6 +370,11 @@ impl Indexer {
         let planning_elapsed = planning_started.elapsed();
 
         let mut removed_paths = deletions.into_iter().collect::<HashSet<_>>();
+        let mut source_bytes = PublishedSourceBytes::new(
+            &existing,
+            &removed_paths,
+            self.config.max_total_source_bytes,
+        );
         let mut warnings = Vec::new();
         let mut skip_reasons = IndexSkipReasonCounts::default();
         let mut files_indexed = 0usize;
@@ -369,58 +386,64 @@ impl Indexer {
                     for path in &removed_paths {
                         writer.delete(path)?;
                     }
-                    self.prepare_candidate_batches(&candidates, cancellation, |prepared| {
-                        let mut indexed = Vec::with_capacity(prepared.len());
-                        let mut source_token_counts = HashMap::with_capacity(prepared.len());
-                        for result in prepared {
-                            check_cancelled(cancellation)?;
-                            match result {
-                                PreparedFile::Indexed(file, source_token_count, warning) => {
-                                    source_token_counts
-                                        .insert(file.path.clone(), source_token_count);
-                                    indexed.push(*file);
-                                    if let Some(warning) = warning {
-                                        push_warning(&mut warnings, warning);
+                    let preparation =
+                        self.prepare_candidate_batches(&candidates, cancellation, |prepared| {
+                            let mut indexed = Vec::with_capacity(prepared.len());
+                            let mut source_token_counts = HashMap::with_capacity(prepared.len());
+                            for result in prepared {
+                                check_cancelled(cancellation)?;
+                                match result {
+                                    PreparedFile::Indexed(file, source_token_count, warning) => {
+                                        source_bytes.replace(&file.path, file.size_bytes);
+                                        source_token_counts
+                                            .insert(file.path.clone(), source_token_count);
+                                        indexed.push(*file);
+                                        if let Some(warning) = warning {
+                                            push_warning(&mut warnings, warning);
+                                        }
                                     }
-                                }
-                                PreparedFile::Binary(path) => {
-                                    skip_reasons.binary = skip_reasons.binary.saturating_add(1);
-                                    if existing.contains_key(&path)
-                                        && removed_paths.insert(path.clone())
-                                    {
-                                        writer.delete(&path)?;
+                                    PreparedFile::Binary(path) => {
+                                        source_bytes.remove(&path);
+                                        skip_reasons.binary = skip_reasons.binary.saturating_add(1);
+                                        if existing.contains_key(&path)
+                                            && removed_paths.insert(path.clone())
+                                        {
+                                            writer.delete(&path)?;
+                                        }
                                     }
-                                }
-                                PreparedFile::Oversized(path) => {
-                                    skip_reasons.oversized_during_read =
-                                        skip_reasons.oversized_during_read.saturating_add(1);
-                                    if existing.contains_key(&path)
-                                        && removed_paths.insert(path.clone())
-                                    {
-                                        writer.delete(&path)?;
+                                    PreparedFile::Oversized(path) => {
+                                        source_bytes.remove(&path);
+                                        skip_reasons.oversized_during_read =
+                                            skip_reasons.oversized_during_read.saturating_add(1);
+                                        if existing.contains_key(&path)
+                                            && removed_paths.insert(path.clone())
+                                        {
+                                            writer.delete(&path)?;
+                                        }
                                     }
-                                }
-                                PreparedFile::Failed(path, error) => {
-                                    skip_reasons.failed = skip_reasons.failed.saturating_add(1);
-                                    push_warning(&mut warnings, format!("{path}: {error}"));
+                                    PreparedFile::Failed(path, error) => {
+                                        skip_reasons.failed = skip_reasons.failed.saturating_add(1);
+                                        push_warning(&mut warnings, format!("{path}: {error}"));
+                                    }
                                 }
                             }
-                        }
-                        resolve_imports(&mut indexed, &repository_paths, cancellation)?;
-                        files_indexed = files_indexed.saturating_add(indexed.len());
-                        for file in indexed {
-                            check_cancelled(cancellation)?;
-                            let source_token_count = source_token_counts
-                                .remove(&file.path)
-                                .expect("prepared file has a source token count");
-                            writer.replace_with_source_tokens(
-                                file,
-                                self.config.tokenizer.name(),
-                                source_token_count,
-                            )?;
-                        }
-                        Ok(())
-                    })
+                            resolve_imports(&mut indexed, &repository_paths, cancellation)?;
+                            files_indexed = files_indexed.saturating_add(indexed.len());
+                            for file in indexed {
+                                check_cancelled(cancellation)?;
+                                let source_token_count = source_token_counts
+                                    .remove(&file.path)
+                                    .expect("prepared file has a source token count");
+                                writer.replace_with_source_tokens(
+                                    file,
+                                    self.config.tokenizer.name(),
+                                    source_token_count,
+                                )?;
+                            }
+                            Ok(())
+                        })?;
+                    source_bytes.enforce()?;
+                    Ok(preparation)
                 })?;
         let publication_elapsed = publication_started.elapsed();
 
@@ -718,6 +741,8 @@ impl Indexer {
 
         let files_seen = candidates.len() + directly_observed_deletions.len();
         let candidates = candidates.into_values().collect::<Vec<_>>();
+        let mut source_bytes =
+            PublishedSourceBytes::new(&existing, &deletions, self.config.max_total_source_bytes);
         let mut warnings = Vec::new();
         let mut skip_reasons = IndexSkipReasonCounts::default();
         let mut files_indexed = 0usize;
@@ -728,67 +753,73 @@ impl Indexer {
                     for path in &deletions {
                         writer.delete(path)?;
                     }
-                    self.prepare_candidate_batches(&candidates, cancellation, |prepared| {
-                        let mut indexed = Vec::with_capacity(prepared.len());
-                        let mut source_token_counts = HashMap::with_capacity(prepared.len());
-                        for result in prepared {
-                            check_cancelled(cancellation)?;
-                            match result {
-                                PreparedFile::Indexed(file, source_token_count, warning) => {
-                                    let same = existing.get(&file.path).is_some_and(|record| {
-                                        record.content_hash == file.content_hash
-                                            && record.size_bytes == file.size_bytes
-                                            && record.modified_ns == file.modified_ns
-                                    });
-                                    if same && !forced_importers.contains(&file.path) {
-                                        unchanged += 1;
-                                        continue;
+                    let preparation =
+                        self.prepare_candidate_batches(&candidates, cancellation, |prepared| {
+                            let mut indexed = Vec::with_capacity(prepared.len());
+                            let mut source_token_counts = HashMap::with_capacity(prepared.len());
+                            for result in prepared {
+                                check_cancelled(cancellation)?;
+                                match result {
+                                    PreparedFile::Indexed(file, source_token_count, warning) => {
+                                        source_bytes.replace(&file.path, file.size_bytes);
+                                        let same = existing.get(&file.path).is_some_and(|record| {
+                                            record.content_hash == file.content_hash
+                                                && record.size_bytes == file.size_bytes
+                                                && record.modified_ns == file.modified_ns
+                                        });
+                                        if same && !forced_importers.contains(&file.path) {
+                                            unchanged += 1;
+                                            continue;
+                                        }
+                                        source_token_counts
+                                            .insert(file.path.clone(), source_token_count);
+                                        indexed.push(*file);
+                                        if let Some(warning) = warning {
+                                            push_warning(&mut warnings, warning);
+                                        }
                                     }
-                                    source_token_counts
-                                        .insert(file.path.clone(), source_token_count);
-                                    indexed.push(*file);
-                                    if let Some(warning) = warning {
-                                        push_warning(&mut warnings, warning);
+                                    PreparedFile::Binary(path) => {
+                                        source_bytes.remove(&path);
+                                        skip_reasons.binary = skip_reasons.binary.saturating_add(1);
+                                        if existing.contains_key(&path)
+                                            && deletions.insert(path.clone())
+                                        {
+                                            writer.delete(&path)?;
+                                        }
                                     }
-                                }
-                                PreparedFile::Binary(path) => {
-                                    skip_reasons.binary = skip_reasons.binary.saturating_add(1);
-                                    if existing.contains_key(&path)
-                                        && deletions.insert(path.clone())
-                                    {
-                                        writer.delete(&path)?;
+                                    PreparedFile::Oversized(path) => {
+                                        source_bytes.remove(&path);
+                                        skip_reasons.oversized_during_read =
+                                            skip_reasons.oversized_during_read.saturating_add(1);
+                                        if existing.contains_key(&path)
+                                            && deletions.insert(path.clone())
+                                        {
+                                            writer.delete(&path)?;
+                                        }
                                     }
-                                }
-                                PreparedFile::Oversized(path) => {
-                                    skip_reasons.oversized_during_read =
-                                        skip_reasons.oversized_during_read.saturating_add(1);
-                                    if existing.contains_key(&path)
-                                        && deletions.insert(path.clone())
-                                    {
-                                        writer.delete(&path)?;
+                                    PreparedFile::Failed(path, error) => {
+                                        skip_reasons.failed = skip_reasons.failed.saturating_add(1);
+                                        push_warning(&mut warnings, format!("{path}: {error}"));
                                     }
-                                }
-                                PreparedFile::Failed(path, error) => {
-                                    skip_reasons.failed = skip_reasons.failed.saturating_add(1);
-                                    push_warning(&mut warnings, format!("{path}: {error}"));
                                 }
                             }
-                        }
-                        resolve_imports(&mut indexed, &repository_paths, cancellation)?;
-                        files_indexed = files_indexed.saturating_add(indexed.len());
-                        for file in indexed {
-                            check_cancelled(cancellation)?;
-                            let source_token_count = source_token_counts
-                                .remove(&file.path)
-                                .expect("prepared file has a source token count");
-                            writer.replace_with_source_tokens(
-                                file,
-                                self.config.tokenizer.name(),
-                                source_token_count,
-                            )?;
-                        }
-                        Ok(())
-                    })
+                            resolve_imports(&mut indexed, &repository_paths, cancellation)?;
+                            files_indexed = files_indexed.saturating_add(indexed.len());
+                            for file in indexed {
+                                check_cancelled(cancellation)?;
+                                let source_token_count = source_token_counts
+                                    .remove(&file.path)
+                                    .expect("prepared file has a source token count");
+                                writer.replace_with_source_tokens(
+                                    file,
+                                    self.config.tokenizer.name(),
+                                    source_token_count,
+                                )?;
+                            }
+                            Ok(())
+                        })?;
+                    source_bytes.enforce()?;
+                    Ok(preparation)
                 })?;
         check_cancelled(cancellation)?;
         let files_removed = deletions.len();
@@ -853,6 +884,7 @@ impl Indexer {
                     .map(|file| {
                         check_cancelled(cancellation)?;
                         let prepared = prepare_file(
+                            &self.repository_root,
                             file,
                             chunk_lines,
                             chunk_bytes,
@@ -1037,7 +1069,56 @@ enum PreparedFile {
     Failed(String, String),
 }
 
+struct PublishedSourceBytes {
+    sizes: HashMap<String, u64>,
+    total: u64,
+    limit: u64,
+}
+
+impl PublishedSourceBytes {
+    fn new(
+        existing: &HashMap<String, crate::storage::FileRecord>,
+        deletions: &HashSet<String>,
+        limit: u64,
+    ) -> Self {
+        let sizes = existing
+            .iter()
+            .filter(|(path, _)| !deletions.contains(*path))
+            .map(|(path, record)| (path.clone(), record.size_bytes))
+            .collect::<HashMap<_, _>>();
+        let total = sizes
+            .values()
+            .fold(0u64, |total, size| total.saturating_add(*size));
+        Self {
+            sizes,
+            total,
+            limit,
+        }
+    }
+
+    fn replace(&mut self, path: &str, size: u64) {
+        let old = self.sizes.get(path).copied().unwrap_or(0);
+        self.total = self.total.saturating_sub(old).saturating_add(size);
+        self.sizes.insert(path.to_string(), size);
+    }
+
+    fn remove(&mut self, path: &str) {
+        if let Some(size) = self.sizes.remove(path) {
+            self.total = self.total.saturating_sub(size);
+        }
+    }
+
+    fn enforce(&self) -> Result<()> {
+        enforce_limit(
+            crate::IndexLimitKind::TotalSourceBytes,
+            self.total,
+            self.limit,
+        )
+    }
+}
+
 fn prepare_file(
+    root: &RootDir,
     file: &DiscoveredFile,
     chunk_lines: usize,
     chunk_bytes: usize,
@@ -1045,7 +1126,7 @@ fn prepare_file(
     max_file_bytes: u64,
     cancellation: &CancellationToken,
 ) -> Result<PreparedFile> {
-    let bytes = match read_bounded(&file.absolute_path, max_file_bytes) {
+    let bytes = match read_bounded(root, &file.relative_path, max_file_bytes) {
         Ok(Some(bytes)) => bytes,
         Ok(None) => return Ok(PreparedFile::Oversized(file.relative_path.clone())),
         Err(error) => {
@@ -1137,7 +1218,7 @@ fn prepare_file(
             path: file.relative_path.clone(),
             language: parsed.language,
             structurally_complete: parsed.structurally_complete,
-            size_bytes: file.size_bytes,
+            size_bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
             modified_ns: file.modified_ns,
             content_hash: hash_bytes(&bytes),
             chunks,
@@ -1150,8 +1231,16 @@ fn prepare_file(
     ))
 }
 
-fn read_bounded(path: &Path, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
-    let file = fs::File::open(path)?;
+fn read_bounded(root: &RootDir, path: &str, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
+    read_bounded_file(root.open(path)?, max_bytes)
+}
+
+#[cfg(test)]
+fn read_bounded_path(path: &Path, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
+    read_bounded_file(fs::File::open(path)?, max_bytes)
+}
+
+fn read_bounded_file(file: fs::File, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
     let mut bytes =
         Vec::with_capacity(usize::try_from(max_bytes.min(64 * 1024)).unwrap_or(64 * 1024));
     file.take(max_bytes.saturating_add(1))
@@ -1174,8 +1263,8 @@ fn push_warning(warnings: &mut Vec<String>, warning: String) {
 ///
 /// Used when size and mtime look unchanged so full reconcile cannot skip a
 /// content rewrite that preserved those metadata fields.
-fn content_unchanged(path: &Path, expected_hash: &str, max_file_bytes: u64) -> bool {
-    match read_bounded(path, max_file_bytes) {
+fn content_unchanged(root: &RootDir, path: &str, expected_hash: &str, max_file_bytes: u64) -> bool {
+    match read_bounded(root, path, max_file_bytes) {
         Ok(Some(bytes)) => hash_bytes(&bytes) == expected_hash,
         Err(_) => false,
         Ok(None) => false,
@@ -1216,15 +1305,15 @@ fn import_candidates(source_path: &str, raw_target: &str) -> Vec<String> {
     let parent = source.parent().unwrap_or_else(|| std::path::Path::new(""));
     let mut bases = Vec::new();
 
-    if raw_target.starts_with('.') {
-        bases.push(parent.join(raw_target));
-    } else if matches!(
+    if matches!(
         source.extension().and_then(|ext| ext.to_str()),
         Some("py" | "pyi")
     ) {
-        bases.push(parent.join(raw_target.replace('.', "/")));
+        bases.extend(python_module_paths(source, raw_target));
+    } else if raw_target.starts_with('.') {
+        bases.push(parent.join(raw_target));
     } else if source.extension().and_then(|ext| ext.to_str()) == Some("rs") {
-        bases.extend(rust_module_paths(raw_target));
+        bases.extend(rust_module_paths(source, raw_target));
     } else {
         return Vec::new();
     }
@@ -1275,6 +1364,28 @@ fn import_candidates(source_path: &str, raw_target: &str) -> Vec<String> {
     matches
 }
 
+fn python_module_paths(source: &std::path::Path, raw_target: &str) -> Vec<std::path::PathBuf> {
+    let level = raw_target.bytes().take_while(|byte| *byte == b'.').count();
+    let module = raw_target[level..].replace('.', "/");
+    if level == 0 {
+        return vec![std::path::PathBuf::from(module)];
+    }
+
+    let mut base = source
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new(""))
+        .to_path_buf();
+    for _ in 1..level {
+        if !base.pop() {
+            return Vec::new();
+        }
+    }
+    if !module.is_empty() {
+        base.push(module);
+    }
+    vec![base]
+}
+
 /// Decompose a raw Rust `use` target into candidate module paths.
 ///
 /// Handles grouped imports (`a::{b, c}`), aliases (`a::b as c`), and
@@ -1282,13 +1393,25 @@ fn import_candidates(source_path: &str, raw_target: &str) -> Vec<String> {
 /// target, all module prefixes are tried from longest to shortest so that
 /// `module::symbol` resolves to `module` when the full `module/symbol`
 /// path does not exist.
-fn rust_module_paths(raw_target: &str) -> Vec<std::path::PathBuf> {
+fn rust_module_paths(source: &std::path::Path, raw_target: &str) -> Vec<std::path::PathBuf> {
     let trimmed = raw_target.trim();
-    let stripped = trimmed
-        .strip_prefix("crate::")
-        .or_else(|| trimmed.strip_prefix("self::"))
-        .or_else(|| trimmed.strip_prefix("super::"))
-        .unwrap_or(trimmed);
+    let (stripped, roots) = if let Some(target) = trimmed.strip_prefix("crate::") {
+        (target, rust_crate_roots(source))
+    } else if let Some(target) = trimmed.strip_prefix("self::") {
+        (target, vec![rust_source_module_dir(source)])
+    } else if trimmed.starts_with("super::") {
+        let mut target = trimmed;
+        let mut root = rust_source_module_dir(source);
+        while let Some(rest) = target.strip_prefix("super::") {
+            if !root.pop() {
+                return Vec::new();
+            }
+            target = rest;
+        }
+        (target, vec![root])
+    } else {
+        (trimmed, rust_crate_roots(source))
+    };
 
     let mut targets = Vec::new();
     let before_brace = stripped
@@ -1333,11 +1456,28 @@ fn rust_module_paths(raw_target: &str) -> Vec<std::path::PathBuf> {
         }
         for prefix_len in (1..=segments.len()).rev() {
             let path_str = segments[..prefix_len].join("/");
-            bases.push(std::path::PathBuf::from(&path_str));
-            bases.push(std::path::PathBuf::from("src").join(path_str));
+            for root in &roots {
+                bases.push(root.join(&path_str));
+            }
         }
     }
     bases
+}
+
+fn rust_source_module_dir(source: &std::path::Path) -> std::path::PathBuf {
+    let parent = source.parent().unwrap_or_else(|| std::path::Path::new(""));
+    match source.file_stem().and_then(|stem| stem.to_str()) {
+        Some("lib" | "main" | "mod") | None => parent.to_path_buf(),
+        Some(stem) => parent.join(stem),
+    }
+}
+
+fn rust_crate_roots(source: &std::path::Path) -> Vec<std::path::PathBuf> {
+    if source.starts_with("src") {
+        vec![std::path::PathBuf::from("src"), std::path::PathBuf::new()]
+    } else {
+        vec![std::path::PathBuf::new(), std::path::PathBuf::from("src")]
+    }
 }
 
 fn resolve_import_candidates(
@@ -1529,7 +1669,7 @@ mod tests {
             "src/app.ts".to_string(),
             "src/lib.ts".to_string(),
             "src/pkg/index.ts".to_string(),
-            "pkg/helpers.py".to_string(),
+            "helpers.py".to_string(),
             "pkg/main.py".to_string(),
         ]
         .into_iter()
@@ -1540,7 +1680,7 @@ mod tests {
         );
         assert_eq!(
             resolve_import("pkg/main.py", "helpers", &paths).as_deref(),
-            Some("pkg/helpers.py")
+            Some("helpers.py")
         );
         assert_eq!(
             resolve_import("src/app.ts", "./pkg", &paths).as_deref(),
@@ -1617,6 +1757,76 @@ mod tests {
     }
 
     #[test]
+    fn python_imports_resolve_by_package_semantics() {
+        let paths = [
+            "tests/service_test.py",
+            "src/service.py",
+            "pkg/mod.py",
+            "thing.py",
+            "other.py",
+            "pkg/sub/module.py",
+            "pkg/sub/helpers.py",
+            "pkg/core.py",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+
+        assert_eq!(
+            resolve_import("tests/service_test.py", "src.service", &paths).as_deref(),
+            Some("src/service.py")
+        );
+        assert_eq!(
+            resolve_import("pkg/sub/module.py", "pkg.mod", &paths).as_deref(),
+            Some("pkg/mod.py")
+        );
+        assert_eq!(
+            resolve_import("pkg/sub/module.py", ".helpers", &paths).as_deref(),
+            Some("pkg/sub/helpers.py")
+        );
+        assert_eq!(
+            resolve_import("pkg/sub/module.py", "..core", &paths).as_deref(),
+            Some("pkg/core.py")
+        );
+    }
+
+    #[test]
+    fn rust_qualified_imports_resolve_from_the_source_module() {
+        let paths = [
+            "src/foo/bar.rs",
+            "src/foo/baz.rs",
+            "src/foo/qux.rs",
+            "src/foo/mod.rs",
+            "src/top.rs",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+
+        assert_eq!(
+            resolve_import("src/foo/bar.rs", "super::baz::Item", &paths).as_deref(),
+            Some("src/foo/baz.rs")
+        );
+        assert_eq!(
+            resolve_import("src/foo/mod.rs", "self::qux::Item", &paths).as_deref(),
+            Some("src/foo/qux.rs")
+        );
+        assert_eq!(
+            resolve_import(
+                "src/foo/nested/module.rs",
+                "super::super::super::top::Item",
+                &paths
+            )
+            .as_deref(),
+            Some("src/top.rs")
+        );
+        assert_eq!(
+            resolve_import("src/foo/bar.rs", "crate::top::Item", &paths).as_deref(),
+            Some("src/top.rs")
+        );
+    }
+
+    #[test]
     fn import_resolution_honors_cancellation() {
         let mut files = vec![IndexedFile {
             path: "src/app.ts".into(),
@@ -1661,9 +1871,13 @@ mod tests {
         };
         let cancellation = CancellationToken::new();
         cancellation.cancel();
+        let repository_root =
+            RootDir::open_ambient_root(root.path(), cap_std_ext::cap_std::ambient_authority())
+                .expect("repository root");
 
         assert!(matches!(
             prepare_file(
+                &repository_root,
                 &file,
                 80,
                 32 * 1024,
@@ -1739,10 +1953,224 @@ mod tests {
         std::fs::write(&path, "12345").expect("source");
 
         assert_eq!(
-            read_bounded(&path, 5).expect("boundary"),
+            read_bounded_path(&path, 5).expect("boundary"),
             Some(b"12345".to_vec())
         );
-        assert_eq!(read_bounded(&path, 4).expect("limit plus one"), None);
+        assert_eq!(read_bounded_path(&path, 4).expect("limit plus one"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preparation_never_publishes_external_symlink_targets() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("root");
+        let outside = tempfile::tempdir().expect("outside");
+        let inside_path = root.path().join("inside.rs");
+        let external_path = outside.path().join("external.rs");
+        fs::write(&inside_path, "fn inside_original() {}\n").expect("inside");
+        fs::write(&external_path, "fn external_marker_needle() {}\n").expect("external");
+        let config = Arc::new(
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+        );
+        let storage = Storage::open(&config.database_path).expect("storage");
+        let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+
+        let inside_for_full = inside_path.clone();
+        let external_for_full = external_path.clone();
+        indexer
+            .reconcile_once_with_preparation_hook(false, &CancellationToken::new(), move || {
+                fs::remove_file(&inside_for_full).expect("remove discovered file");
+                symlink(external_for_full, inside_for_full).expect("replace with symlink");
+            })
+            .expect("bounded full reconcile");
+        assert!(storage.find_file("inside.rs").expect("lookup").is_none());
+
+        fs::remove_file(&inside_path).expect("remove symlink");
+        fs::write(&inside_path, "fn inside_original() {}\n").expect("restore inside");
+        indexer.reconcile(false).expect("initial safe index");
+        let original = storage
+            .find_file("inside.rs")
+            .expect("lookup")
+            .expect("indexed inside");
+        let inside_for_targeted = inside_path.clone();
+        let external_for_targeted = external_path.clone();
+        indexer
+            .reconcile_paths_once_with_preparation_hook(
+                &["inside.rs".into()],
+                &CancellationToken::new(),
+                move || {
+                    fs::remove_file(&inside_for_targeted).expect("remove discovered file");
+                    symlink(external_for_targeted, inside_for_targeted)
+                        .expect("replace with symlink");
+                },
+            )
+            .expect("bounded targeted reconcile");
+        let preserved = storage
+            .find_file("inside.rs")
+            .expect("lookup")
+            .expect("preserved inside");
+        assert_eq!(preserved.content_hash, original.content_hash);
+    }
+
+    #[test]
+    fn actual_prepared_bytes_drive_aggregate_limit_and_stored_size() {
+        let root = tempfile::tempdir().expect("root");
+        let path = root.path().join("growing.rs");
+        fs::write(&path, "x").expect("source");
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.max_file_bytes = 64;
+        config.max_prepare_batch_bytes = 64;
+        config.max_total_source_bytes = 16;
+        let storage = Storage::open(&config.database_path).expect("storage");
+        let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
+        let generation = storage.meta().expect("metadata").repository_generation;
+        let growing = path.clone();
+
+        let error = indexer
+            .reconcile_once_with_preparation_hook(false, &CancellationToken::new(), move || {
+                fs::write(growing, vec![b'x'; 32]).expect("grow after discovery")
+            })
+            .expect_err("actual bytes must cross aggregate limit");
+        assert!(matches!(
+            error,
+            Error::IndexLimitExceeded {
+                kind: crate::IndexLimitKind::TotalSourceBytes,
+                observed: 32,
+                limit: 16
+            }
+        ));
+        assert_eq!(
+            storage.meta().expect("metadata").repository_generation,
+            generation
+        );
+        assert!(storage.find_file("growing.rs").expect("lookup").is_none());
+
+        fs::write(&path, "x").expect("reset source");
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.max_file_bytes = 64;
+        config.max_prepare_batch_bytes = 64;
+        config.max_total_source_bytes = 48;
+        let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
+        indexer
+            .reconcile_once_with_preparation_hook(false, &CancellationToken::new(), move || {
+                fs::write(path, vec![b'x'; 32]).expect("grow within limit")
+            })
+            .expect("reconcile");
+        assert_eq!(
+            storage
+                .find_file("growing.rs")
+                .expect("lookup")
+                .expect("indexed")
+                .size_bytes,
+            32
+        );
+
+        let generation = storage.meta().expect("metadata").repository_generation;
+        fs::write(root.path().join("growing.rs"), "x").expect("reset for targeted");
+        let targeted_path = root.path().join("growing.rs");
+        let error = indexer
+            .reconcile_paths_once_with_preparation_hook(
+                &["growing.rs".into()],
+                &CancellationToken::new(),
+                move || fs::write(targeted_path, vec![b'x'; 64]).expect("grow after discovery"),
+            )
+            .expect_err("targeted actual bytes must cross aggregate limit");
+        assert!(matches!(
+            error,
+            Error::IndexLimitExceeded {
+                kind: crate::IndexLimitKind::TotalSourceBytes,
+                observed: 64,
+                limit: 48
+            }
+        ));
+        assert_eq!(
+            storage.meta().expect("metadata").repository_generation,
+            generation
+        );
+        assert_eq!(
+            storage
+                .find_file("growing.rs")
+                .expect("lookup")
+                .expect("preserved")
+                .size_bytes,
+            32
+        );
+    }
+
+    #[test]
+    fn aggregate_limit_is_enforced_on_final_state_not_candidate_order() {
+        let root = tempfile::tempdir().expect("root");
+        let growing = root.path().join("a_growing.rs");
+        let shrinking = root.path().join("z_shrinking.rs");
+        fs::write(&growing, vec![b' '; 40]).expect("growing source");
+        fs::write(&shrinking, vec![b' '; 10]).expect("shrinking source");
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.max_file_bytes = 64;
+        config.max_prepare_batch_bytes = 64;
+        config.max_total_source_bytes = 50;
+        let storage = Storage::open(&config.database_path).expect("storage");
+        let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
+        indexer.reconcile(false).expect("initial index");
+
+        fs::write(&growing, vec![b' '; 45]).expect("grow source");
+        fs::write(&shrinking, vec![b' '; 5]).expect("shrink source");
+        indexer
+            .reconcile(false)
+            .expect("final aggregate remains within limit");
+
+        assert_eq!(
+            storage
+                .find_file("a_growing.rs")
+                .expect("lookup")
+                .expect("growing")
+                .size_bytes
+                + storage
+                    .find_file("z_shrinking.rs")
+                    .expect("lookup")
+                    .expect("shrinking")
+                    .size_bytes,
+            50
+        );
+    }
+
+    #[test]
+    fn reconciliation_can_reduce_an_existing_generation_below_a_new_limit() {
+        let root = tempfile::tempdir().expect("root");
+        let path = root.path().join("source.rs");
+        fs::write(&path, vec![b' '; 60]).expect("source");
+        let database = root.path().join("index.sqlite");
+        let mut initial = Config::discover(root.path(), Some(database.clone())).expect("config");
+        initial.max_file_bytes = 64;
+        initial.max_prepare_batch_bytes = 64;
+        initial.max_total_source_bytes = 64;
+        let storage = Storage::open(&database).expect("storage");
+        Indexer::new(Arc::new(initial), storage.clone())
+            .expect("indexer")
+            .reconcile(false)
+            .expect("initial index");
+
+        fs::write(&path, vec![b' '; 40]).expect("shrink source");
+        let mut tightened = Config::discover(root.path(), Some(database)).expect("config");
+        tightened.max_file_bytes = 64;
+        tightened.max_prepare_batch_bytes = 64;
+        tightened.max_total_source_bytes = 50;
+        Indexer::new(Arc::new(tightened), storage.clone())
+            .expect("indexer")
+            .reconcile(false)
+            .expect("reduce stored aggregate");
+
+        assert_eq!(
+            storage
+                .find_file("source.rs")
+                .expect("lookup")
+                .expect("source")
+                .size_bytes,
+            40
+        );
     }
 
     #[test]
