@@ -2463,7 +2463,9 @@ async fn symbol_read_after_first_line_returns_the_complete_definition() {
 
 #[tokio::test]
 async fn open_ended_read_bounds_live_suffix_before_returning_content() {
-    let source = (0..50_000)
+    // Stay above the live-read token-check window while keeping this focused
+    // regression test cheap enough for the normal product loop.
+    let source = (0..10_000)
         .map(|line| format!("fn generated_{line}() {{}}\n"))
         .collect::<String>();
     let (_root, services) = indexed_source("large.rs", source.as_bytes()).await;
@@ -2471,7 +2473,7 @@ async fn open_ended_read_bounds_live_suffix_before_returning_content() {
     let response = services
         .read(ReadRequest {
             path: "large.rs".into(),
-            start_line: Some(25_000),
+            start_line: Some(5_000),
             end_line: None,
             symbol: None,
             max_tokens: Some(12),
@@ -2482,8 +2484,8 @@ async fn open_ended_read_bounds_live_suffix_before_returning_content() {
 
     let content = response.content.as_deref().expect("content");
     assert!(content.len() <= 12 * 32);
-    assert!(content.contains("generated_25000"));
-    assert!(response.start_line >= 25_000);
+    assert!(content.contains("generated_5000"));
+    assert!(response.start_line >= 5_000);
     assert!(response.meta.emitted_tokens <= 12);
 }
 
