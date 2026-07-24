@@ -1007,7 +1007,11 @@ fn prepare_batch_end(
         batch_bytes = observed;
         end += 1;
     }
-    end
+    if end == start && start < candidates.len() {
+        start + 1
+    } else {
+        end
+    }
 }
 
 fn duration_ms(duration: Duration) -> f64 {
@@ -1759,11 +1763,19 @@ mod tests {
             max_prepare_batch_bytes: 3,
             ..crate::DiscoveryLimits::default()
         };
+        let oversized_first_file = crate::DiscoveryLimits {
+            max_file_bytes: 2,
+            max_prepare_batch_files: 3,
+            max_prepare_batch_bytes: 1,
+            ..crate::DiscoveryLimits::default()
+        };
 
         assert_eq!(prepare_batch_end(&candidates, 0, file_limited), 2);
         assert_eq!(prepare_batch_end(&candidates, 2, file_limited), 3);
         assert_eq!(prepare_batch_end(&candidates, 0, byte_limited), 1);
         assert_eq!(prepare_batch_end(&candidates, 1, byte_limited), 2);
+        assert_eq!(prepare_batch_end(&candidates, 0, oversized_first_file), 1);
+        assert_eq!(prepare_batch_end(&candidates, 1, oversized_first_file), 2);
     }
 
     #[test]
