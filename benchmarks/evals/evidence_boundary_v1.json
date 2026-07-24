@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "eval_id": "evidence-boundary-v1",
+  "class": "validation",
+  "status": "fixture_inputs_required",
+  "origin": {
+    "issues": [196, 198],
+    "scenario": "cross-platform package and cleanup investigation"
+  },
+  "learning_objective": "Use bounded source retrieval, then identify when generated-artifact, subprocess, runtime, or remote-CI evidence is still required.",
+  "public_task": {
+    "prompt": "Diagnose the supplied cross-platform package and cleanup failure. Identify what the repository source establishes, what remains unproven, and the next evidence or validation needed for a supportable fix.",
+    "deliverable": "A diagnosis and evidence ledger that separates observations, inferences, unknowns, and required validation."
+  },
+  "conditions": [
+    {
+      "name": "native",
+      "evidence_surface": "native repository source discovery only",
+      "purpose": "Measure evidence-boundary reasoning without LeanToken."
+    },
+    {
+      "name": "current",
+      "evidence_surface": "current LeanToken MCP contract",
+      "purpose": "Measure the current retrieval route."
+    },
+    {
+      "name": "candidate",
+      "evidence_surface": "current LeanToken MCP plus additive source provenance and stable capability-boundary metadata",
+      "purpose": "Test the contract proposed by issue 196 before changing production responses."
+    }
+  ],
+  "candidate_contract": {
+    "source_identity": [
+      "repository_id",
+      "repository_generation",
+      "source_revision"
+    ],
+    "consistency": [
+      "committed",
+      "working_tree"
+    ],
+    "scope": "repository_source",
+    "cannot_prove": [
+      "generated_artifacts",
+      "runtime_behavior",
+      "remote_ci"
+    ],
+    "constraints": [
+      "Fields are additive, bounded, stable, and task-independent.",
+      "Metadata must not claim that working-tree reconciliation validates generated artifacts or runtime behavior.",
+      "Model-facing token cost is measured from the actual MCP result envelope."
+    ]
+  },
+  "controlled_variables": [
+    "model and reasoning effort",
+    "natural public prompt",
+    "repository and worktree revisions",
+    "failure artifact",
+    "tool projection",
+    "time and token budgets",
+    "validation environment"
+  ],
+  "hidden_oracle": {
+    "required_evidence": [
+      "relevant source and owner tests",
+      "failing lane derived from supplied evidence",
+      "source revision and consistency",
+      "generated-artifact or runtime observation where source is insufficient",
+      "authoritative candidate-side validation result"
+    ],
+    "critical_discriminator": "A correct source-level hypothesis is not runtime proof when the decisive observation belongs to generated output, subprocess state, or remote CI.",
+    "tempting_wrong_paths": [
+      "infer the failing lane from its name",
+      "treat empty or current source retrieval as proof of absence",
+      "weaken a safety check using source evidence alone",
+      "treat one green rerun as causal proof"
+    ],
+    "known_uncertainty": "Remote validation unavailability remains an explicit proof gap rather than a failed or passed result."
+  },
+  "rubric": [
+    {
+      "dimension": "semantic_correctness",
+      "weight": 30,
+      "gate": true
+    },
+    {
+      "dimension": "evidence_grounding",
+      "weight": 25,
+      "gate": true
+    },
+    {
+      "dimension": "boundary_classification",
+      "weight": 20,
+      "gate": true
+    },
+    {
+      "dimension": "validation_integrity",
+      "weight": 10,
+      "gate": false
+    },
+    {
+      "dimension": "reviewer_handoff",
+      "weight": 10,
+      "gate": false
+    },
+    {
+      "dimension": "efficiency_among_correct_runs",
+      "weight": 5,
+      "gate": false
+    }
+  ],
+  "failure_classes": [
+    "source retrieval treated as runtime validation",
+    "correct conclusion reached through leaked or unsupported information",
+    "unrelated failure counted as regression proof",
+    "green rerun counted as root-cause proof",
+    "decisive proof gap omitted from handoff"
+  ],
+  "handoff": {
+    "reviewer_visible": [
+      "candidate evidence ledger",
+      "declared retrieval receipt",
+      "claimed validation results"
+    ],
+    "success": "Reviewer can identify source revision, consistency, observations, inferences, and remaining proof gaps without the first-agent transcript."
+  },
+  "required_private_artifacts": [
+    "pre-conclusion source fixture and owner tests",
+    "bounded failure artifact",
+    "generated-artifact mismatch variant",
+    "stale source/index/worktree variant",
+    "runtime-required variant",
+    "remote-validation-unavailable variant",
+    "hidden evidence ledger and randomized holdouts"
+  ],
+  "acceptance": [
+    "Known-good trajectory passes every semantic gate.",
+    "Known-bad source-only diagnosis fails the critical discriminator.",
+    "Alternate evidence-backed inspection orders can pass.",
+    "Repeated trials report variance.",
+    "Candidate metadata improves grounded boundary classification without unacceptable token or latency cost."
+  ],
+  "product_decision": "Issue 196 remains experimental until this evaluation has complete frozen inputs and passes its acceptance criteria."
+}

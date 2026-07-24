@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-07-24T05:17:35Z",
+  "releases": [
+    {
+      "version": "0.1.1",
+      "git": {
+        "tag": "v0.1.1",
+        "commit": "b33762daaef9714b140c27dd8a3754e80d619559"
+      },
+      "npm": {
+        "status": "published",
+        "dist_integrity": "sha512-bA9oP4plHVDfObN7+jRSskTUvDpGlztwvgrDOAim6dQbWgxNXgPCqObTXP2o8IqqkeDzpxl7mrvisNphpvkY8A==",
+        "dist_shasum": "04c5cc354a2c3121c936db5aeddee6acbb78ceb0"
+      },
+      "github_release": {
+        "url": "https://github.com/morluto/leantoken/releases/tag/v0.1.1"
+      }
+    },
+    {
+      "version": "0.1.12",
+      "git": {
+        "tag": "v0.1.12",
+        "commit": "9ba3ce3607a2f0af237ae2350105e2d6d6cca3d6"
+      },
+      "npm": {
+        "status": "not_found",
+        "registry_result": "E404"
+      },
+      "github_release": {
+        "url": "https://github.com/morluto/leantoken/releases/tag/v0.1.12",
+        "published_at": "2026-07-23T16:06:40Z",
+        "source_archive": {
+          "name": "source.tar.gz",
+          "sha256": "04768c41d74acaaaabbc6b1a13b17a333c8950bf5f6583a9634135d567e6436f"
+        },
+        "bundled_npm_archive": {
+          "name": "leantoken-0.1.12.tgz",
+          "sha256": "eb18b4fae8919d9b8cfdf55cd35fc0be404303659e89f7ee1e5ec21149139baf"
+        },
+        "linux_x86_64_binary": {
+          "name": "leantoken-x86_64-unknown-linux-gnu.tar.xz",
+          "sha256": "f1d44906509c4e86bf8e624823762abd8071d8cd81ad68c4ca81e3d852286380"
+        }
+      }
+    }
+  ],
+  "registry_versions_observed": [
+    "0.1.0",
+    "0.1.1",
+    "0.1.4",
+    "0.1.5",
+    "0.1.6",
+    "0.1.8",
+    "0.1.10"
+  ],
+  "interpretation_constraints": [
+    "GitHub release availability does not imply npm registry publication.",
+    "An exact-version npm launcher intentionally remains pinned.",
+    "A result observed on 0.1.1 does not establish behavior on 0.1.12.",
+    "A source snapshot does not establish behavior of a packaged native binary."
+  ]
+}

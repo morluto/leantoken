@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "eval_id": "version-aware-tool-critique-v1",
+  "class": "tool_skill_critique",
+  "status": "extractor_ready_private_fixture_not_generated",
+  "origin": {
+    "issue": 202,
+    "related_issues": [14, 125, 198, 200, 201]
+  },
+  "learning_objective": "Classify current defects, stale-version observations, integration routing gaps, already-available capabilities, reasoning errors, and unsupported feature speculation using version-bounded evidence.",
+  "public_task": {
+    "prompt": "Review how LeanToken affected the completed coding workflow. Identify confirmed product defects, workflow or integration problems, capabilities that already exist, and follow-up evaluations supported by the evidence.",
+    "deliverable": "A ranked critique whose claims state evidence type, version or revision, confidence, affected boundary, counterfactual intervention, and disconfirming condition."
+  },
+  "conditions": [
+    {
+      "name": "baseline",
+      "evidence_surface": "observed outputs plus native source inspection"
+    },
+    {
+      "name": "pinned",
+      "evidence_surface": "LeanToken 0.1.1 tool contract and documentation"
+    },
+    {
+      "name": "version_aware",
+      "evidence_surface": "pinned evidence plus current release, source, release, and upgrade contracts"
+    },
+    {
+      "name": "current",
+      "evidence_surface": "replayed probes against the current stable release"
+    },
+    {
+      "name": "unavailable",
+      "evidence_surface": "runtime unavailable; frozen source and documentation remain readable"
+    }
+  ],
+  "required_classifications": [
+    "current_product_defect",
+    "stale_version_observation",
+    "routing_or_discoverability_gap",
+    "already_available_capability",
+    "reasoning_or_proof_error",
+    "unsupported_product_speculation"
+  ],
+  "critical_discriminator": "An older pinned-runtime observation is not a current product defect until current source, contract, or reproduction establishes that it persists.",
+  "tempting_wrong_paths": [
+    "turn every inefficient call into a feature request",
+    "recommend silent automatic upgrades",
+    "claim a newer release fixes behavior without checking",
+    "treat absent hash fields or context calls as schema defects",
+    "assume overlapping reads were exact reusable reads",
+    "ignore prior no-go evaluations in issues 14 and 125",
+    "treat source retrieval as final runtime validation"
+  ],
+  "rubric": [
+    {
+      "dimension": "classification_correctness",
+      "weight": 35,
+      "gate": true
+    },
+    {
+      "dimension": "evidence_and_version_precision",
+      "weight": 25,
+      "gate": true
+    },
+    {
+      "dimension": "critical_discriminator",
+      "weight": 15,
+      "gate": true
+    },
+    {
+      "dimension": "duplicate_and_existing_work_awareness",
+      "weight": 10,
+      "gate": false
+    },
+    {
+      "dimension": "counterfactuals_and_proof_gaps",
+      "weight": 10,
+      "gate": false
+    },
+    {
+      "dimension": "reviewer_handoff",
+      "weight": 5,
+      "gate": false
+    }
+  ],
+  "evidence_ledger_statuses": [
+    "confirmed",
+    "plausible",
+    "unresolved",
+    "not_run"
+  ],
+  "failure_classes": [
+    "old behavior labeled current without current evidence",
+    "upgrade assumed to fix an observation",
+    "existing capability recommended as missing",
+    "session state or receipt fields proposed without prior-evidence analysis",
+    "source retrieval treated as runtime validation",
+    "issue conclusions leaked into candidate condition",
+    "decisive version or validation fact omitted from handoff"
+  ],
+  "handoff": {
+    "reviewer_visible": [
+      "critique evidence ledger",
+      "proposed issues or evaluations",
+      "public task"
+    ],
+    "success": "Reviewer can reject unsupported upstream recommendations without the first-agent transcript."
+  },
+  "required_private_artifacts": [
+    "sanitized 361-call trajectory with outcome receipts",
+    "LeanToken 0.1.1 binary, checksum, docs, and exact tool projection",
+    "current stable binary, checksum, source, release, docs, and tool projection",
+    "current-version replay of qualified-symbol and selected hash/range probes",
+    "private randomized oracle variants",
+    "known-good and known-bad calibration trajectories"
+  ],
+  "acceptance": [
+    "Known-good run separates one real defect, stale observation, routing gap, existing capability, and unsupported proposal.",
+    "Known-bad generic critique fails the critical discriminator.",
+    "Alternate evidence-backed routes can pass.",
+    "Repeated trials report variance.",
+    "Correctness and recommendation quality are reported before efficiency."
+  ]
+}
