@@ -358,7 +358,7 @@ pub(crate) fn managed_cache_root() -> Option<PathBuf> {
 }
 
 pub(crate) fn managed_cache_id(root: &Path) -> String {
-    blake3::hash(root.to_string_lossy().as_bytes()).to_hex()[..16].to_string()
+    blake3::hash(root.as_os_str().as_encoded_bytes()).to_hex()[..16].to_string()
 }
 
 fn default_database_path(root: &Path) -> PathBuf {
@@ -371,6 +371,18 @@ fn default_database_path(root: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_cache_ids_distinguish_non_utf8_roots() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let first = PathBuf::from(OsString::from_vec(b"/tmp/repository-\x80".to_vec()));
+        let second = PathBuf::from(OsString::from_vec(b"/tmp/repository-\x81".to_vec()));
+
+        assert_ne!(managed_cache_id(&first), managed_cache_id(&second));
+    }
 
     #[test]
     fn unsafe_root_policy_rejects_home_and_its_ancestors() {

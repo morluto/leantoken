@@ -1,6 +1,5 @@
 ---
 source: src/mcp.rs
-assertion_line: 1601
 expression: tools
 ---
 [
@@ -158,91 +157,119 @@ expression: tools
   },
   {
     "name": "leantoken_files",
-    "description": "Preferred repository path discovery instead of find, ls, or glob. Use tree for hierarchy, find for fuzzy filenames, and glob for path patterns; returns paths, not source. Example: {\"operation\":{\"kind\":\"find\",\"query\":\"mcp\"}}.",
+    "description": "Preferred repository path discovery instead of find, ls, or glob. Use tree for hierarchy, find for fuzzy filenames, and glob for path patterns; returns paths, not source. Example: {\"operation\":\"find\",\"query\":\"mcp\"}.",
     "inputSchema": {
       "$defs": {
-        "FilesMcpOperation": {
+        "FileOperation": {
+          "description": "Repository path-discovery operation.",
           "oneOf": [
             {
-              "additionalProperties": false,
-              "description": "Return a compact hierarchy, optionally below one repository-relative directory.",
-              "properties": {
-                "depth": {
-                  "default": null,
-                  "description": "Maximum hierarchy depth below `path`.",
-                  "format": "uint",
-                  "minimum": 0,
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "kind": {
-                  "const": "tree",
-                  "type": "string"
-                },
-                "path": {
-                  "default": null,
-                  "description": "Optional repository-relative directory.",
-                  "maxLength": 4096,
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "kind"
-              ],
-              "type": "object"
+              "const": "tree",
+              "description": "Return a compact hierarchy.",
+              "type": "string"
             },
             {
-              "additionalProperties": false,
-              "description": "Fuzzy-match repository paths and basenames.",
-              "properties": {
-                "kind": {
-                  "const": "find",
-                  "type": "string"
-                },
-                "query": {
-                  "description": "Non-empty fuzzy filename or path query.",
-                  "maxLength": 65536,
-                  "minLength": 1,
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "query"
-              ],
-              "type": "object"
+              "const": "find",
+              "description": "Fuzzy-match paths and basenames.",
+              "type": "string"
             },
             {
-              "additionalProperties": false,
-              "description": "Match indexed repository paths with a glob.",
-              "properties": {
-                "kind": {
-                  "const": "glob",
-                  "type": "string"
-                },
-                "pattern": {
-                  "description": "Non-empty glob pattern such as `src/**/*.rs`.",
-                  "maxLength": 4096,
-                  "minLength": 1,
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "pattern"
-              ],
-              "type": "object"
+              "const": "glob",
+              "description": "Match indexed paths with a glob.",
+              "type": "string"
             }
           ]
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
+      "oneOf": [
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "query"
+                ]
+              },
+              {
+                "required": [
+                  "pattern"
+                ]
+              }
+            ]
+          },
+          "properties": {
+            "operation": {
+              "const": "tree"
+            }
+          }
+        },
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "pattern"
+                ]
+              },
+              {
+                "required": [
+                  "depth"
+                ]
+              }
+            ]
+          },
+          "properties": {
+            "operation": {
+              "const": "find"
+            },
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        },
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "query"
+                ]
+              },
+              {
+                "required": [
+                  "depth"
+                ]
+              }
+            ]
+          },
+          "properties": {
+            "operation": {
+              "const": "glob"
+            },
+            "pattern": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pattern"
+          ]
+        }
+      ],
       "properties": {
         "consistency": {
           "default": "committed",
@@ -259,6 +286,16 @@ expression: tools
           "maxLength": 4096,
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "depth": {
+          "default": null,
+          "description": "Maximum hierarchy depth below `path` for `tree`.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
             "null"
           ]
         },
@@ -280,8 +317,37 @@ expression: tools
           "type": "integer"
         },
         "operation": {
-          "$ref": "#/$defs/FilesMcpOperation",
-          "description": "Path operation and its operation-specific arguments."
+          "$ref": "#/$defs/FileOperation",
+          "description": "Path operation to perform."
+        },
+        "path": {
+          "default": null,
+          "description": "Optional repository-relative directory for `tree`.",
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pattern": {
+          "default": null,
+          "description": "Non-empty glob pattern for `glob`.",
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "default": null,
+          "description": "Non-empty fuzzy filename or path query for `find`.",
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

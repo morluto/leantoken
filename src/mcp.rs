@@ -32,13 +32,27 @@ struct SavingsMcpRequest {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = add_files_operation_constraints)]
 struct FilesMcpRequest {
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
-    #[schemars(length(max = 128))]
+    #[schemars(schema_with = "expected_repository_id_schema")]
     expected_repository_id: Option<String>,
-    /// Path operation and its operation-specific arguments.
-    operation: FilesMcpOperation,
+    /// Path operation to perform.
+    #[schemars(schema_with = "file_operation_schema")]
+    operation: FilesMcpOperationInput,
+    /// Optional repository-relative directory for `tree`.
+    #[serde(default)]
+    #[schemars(length(max = 4096))]
+    path: Option<String>,
+    /// Non-empty fuzzy filename or path query for `find`.
+    #[serde(default)]
+    #[schemars(length(min = 1, max = 65536))]
+    query: Option<String>,
+    /// Non-empty glob pattern for `glob`.
+    #[serde(default)]
+    #[schemars(length(min = 1, max = 4096))]
+    pattern: Option<String>,
     /// Maximum entries to return (default 20, maximum 100).
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
     #[schemars(schema_with = "result_limit_schema", default = "default_result_option")]
@@ -51,6 +65,33 @@ struct FilesMcpRequest {
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
+    /// Maximum hierarchy depth below `path` for `tree`.
+    #[serde(default)]
+    depth: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum FilesMcpOperationInput {
+    Flat(FileOperation),
+    Nested(LegacyFilesMcpOperation),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum LegacyFilesMcpOperation {
+    Tree {
+        #[serde(default)]
+        path: Option<String>,
+        #[serde(default)]
+        depth: Option<usize>,
+    },
+    Find {
+        query: String,
+    },
+    Glob {
+        pattern: String,
+    },
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -58,7 +99,7 @@ struct FilesMcpRequest {
 struct SearchMcpRequest {
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
-    #[schemars(length(max = 128))]
+    #[schemars(schema_with = "expected_repository_id_schema")]
     expected_repository_id: Option<String>,
     /// Non-empty text, identifier, symbol, or Rust regular expression to find.
     #[schemars(length(min = 1, max = 65536))]
@@ -142,7 +183,7 @@ impl SearchMcpRequest {
 struct OutlineMcpRequest {
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
-    #[schemars(length(max = 128))]
+    #[schemars(schema_with = "expected_repository_id_schema")]
     expected_repository_id: Option<String>,
     /// One to 256 repository-relative source files to outline.
     #[schemars(length(min = 1, max = 256), inner(length(max = 4096)))]
@@ -190,47 +231,72 @@ impl OutlineMcpRequest {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum FilesMcpOperation {
-    /// Return a compact hierarchy, optionally below one repository-relative directory.
-    Tree {
-        /// Optional repository-relative directory.
-        #[serde(default)]
-        #[schemars(length(max = 4096))]
-        path: Option<String>,
-        /// Maximum hierarchy depth below `path`.
-        #[serde(default)]
-        depth: Option<usize>,
-    },
-    /// Fuzzy-match repository paths and basenames.
-    Find {
-        /// Non-empty fuzzy filename or path query.
-        #[schemars(length(min = 1, max = 65536))]
-        query: String,
-    },
-    /// Match indexed repository paths with a glob.
-    Glob {
-        /// Non-empty glob pattern such as `src/**/*.rs`.
-        #[schemars(length(min = 1, max = 4096))]
-        pattern: String,
-    },
-}
-
 impl FilesMcpRequest {
     fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
-        validate_optional_positive_limit("max_results", self.max_results, limits.max_results)
+        validate_optional_positive_limit("max_results", self.max_results, limits.max_results)?;
+        if matches!(self.operation, FilesMcpOperationInput::Nested(_))
+            && (self.path.is_some()
+                || self.query.is_some()
+                || self.pattern.is_some()
+                || self.depth.is_some())
+        {
+            return Err(crate::Error::InvalidInput {
+                field: "operation",
+                reason: "nested compatibility arguments cannot be mixed with flat arguments",
+            });
+        }
+        let (operation, path, query, pattern, depth) = match &self.operation {
+            FilesMcpOperationInput::Flat(operation) => (
+                operation.clone(),
+                self.path.as_ref(),
+                self.query.as_ref(),
+                self.pattern.as_ref(),
+                self.depth,
+            ),
+            FilesMcpOperationInput::Nested(LegacyFilesMcpOperation::Tree { path, depth }) => {
+                (FileOperation::Tree, path.as_ref(), None, None, *depth)
+            }
+            FilesMcpOperationInput::Nested(LegacyFilesMcpOperation::Find { query }) => {
+                (FileOperation::Find, None, Some(query), None, None)
+            }
+            FilesMcpOperationInput::Nested(LegacyFilesMcpOperation::Glob { pattern }) => {
+                (FileOperation::Glob, None, None, Some(pattern), None)
+            }
+        };
+        let invalid = match operation {
+            FileOperation::Tree => query
+                .map(|_| "query")
+                .or_else(|| pattern.map(|_| "pattern")),
+            FileOperation::Find => path
+                .map(|_| "path")
+                .or_else(|| pattern.map(|_| "pattern"))
+                .or(depth.map(|_| "depth")),
+            FileOperation::Glob => path
+                .map(|_| "path")
+                .or_else(|| query.map(|_| "query"))
+                .or(depth.map(|_| "depth")),
+        };
+        if let Some(field) = invalid {
+            return Err(crate::Error::InvalidInput {
+                field,
+                reason: "does not apply to the selected file operation",
+            });
+        }
+        Ok(())
     }
 
     fn into_parts(self) -> (FilesRequest, IndexConsistency, Option<String>) {
         let (operation, path, query, pattern, depth) = match self.operation {
-            FilesMcpOperation::Tree { path, depth } => {
+            FilesMcpOperationInput::Flat(operation) => {
+                (operation, self.path, self.query, self.pattern, self.depth)
+            }
+            FilesMcpOperationInput::Nested(LegacyFilesMcpOperation::Tree { path, depth }) => {
                 (FileOperation::Tree, path, None, None, depth)
             }
-            FilesMcpOperation::Find { query } => {
+            FilesMcpOperationInput::Nested(LegacyFilesMcpOperation::Find { query }) => {
                 (FileOperation::Find, None, Some(query), None, None)
             }
-            FilesMcpOperation::Glob { pattern } => {
+            FilesMcpOperationInput::Nested(LegacyFilesMcpOperation::Glob { pattern }) => {
                 (FileOperation::Glob, None, None, Some(pattern), None)
             }
         };
@@ -255,7 +321,7 @@ impl FilesMcpRequest {
 struct ReadMcpRequest {
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
-    #[schemars(length(max = 128))]
+    #[schemars(schema_with = "expected_repository_id_schema")]
     expected_repository_id: Option<String>,
     /// Repository-relative UTF-8 source file.
     #[schemars(length(min = 1, max = 4096))]
@@ -268,7 +334,7 @@ struct ReadMcpRequest {
     max_tokens: Option<usize>,
     /// Hash from the same prior target; matching content returns `not_modified`.
     #[serde(default)]
-    #[schemars(length(max = 128))]
+    #[schemars(schema_with = "expected_repository_id_schema")]
     expected_hash: Option<String>,
     /// Use `working_tree` after edits; otherwise `committed`.
     #[serde(default)]
@@ -468,6 +534,56 @@ fn context_line_limit_schema(_: &mut SchemaGenerator) -> Schema {
         "maximum": MAX_CONTEXT_LINES,
         "default": DEFAULT_CONTEXT_LINES
     })
+}
+
+fn expected_repository_id_schema(_: &mut SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "type": ["string", "null"],
+        "maxLength": crate::services::MAX_EXPECTED_REPOSITORY_ID_BYTES
+    })
+}
+
+fn file_operation_schema(generator: &mut SchemaGenerator) -> Schema {
+    generator.subschema_for::<FileOperation>()
+}
+
+fn add_files_operation_constraints(schema: &mut Schema) {
+    schema.insert(
+        "oneOf".into(),
+        serde_json::json!([
+            {
+                "properties": {"operation": {"const": "tree"}},
+                "not": {"anyOf": [
+                    {"required": ["query"]},
+                    {"required": ["pattern"]}
+                ]}
+            },
+            {
+                "properties": {
+                    "operation": {"const": "find"},
+                    "query": {"type": "string"}
+                },
+                "required": ["query"],
+                "not": {"anyOf": [
+                    {"required": ["path"]},
+                    {"required": ["pattern"]},
+                    {"required": ["depth"]}
+                ]}
+            },
+            {
+                "properties": {
+                    "operation": {"const": "glob"},
+                    "pattern": {"type": "string"}
+                },
+                "required": ["pattern"],
+                "not": {"anyOf": [
+                    {"required": ["path"]},
+                    {"required": ["query"]},
+                    {"required": ["depth"]}
+                ]}
+            }
+        ]),
+    );
 }
 
 fn validate_optional_positive_limit(
@@ -766,7 +882,7 @@ impl McpServices {
 impl LeanTokenMcp {
     #[tool(
         name = "leantoken_files",
-        description = "Preferred repository path discovery instead of find, ls, or glob. Use tree for hierarchy, find for fuzzy filenames, and glob for path patterns; returns paths, not source. Example: {\"operation\":{\"kind\":\"find\",\"query\":\"mcp\"}}."
+        description = "Preferred repository path discovery instead of find, ls, or glob. Use tree for hierarchy, find for fuzzy filenames, and glob for path patterns; returns paths, not source. Example: {\"operation\":\"find\",\"query\":\"mcp\"}."
     )]
     async fn leantoken_files(
         &self,
@@ -971,6 +1087,10 @@ fn into_mcp_error(error: crate::Error) -> ErrorData {
                 mcp_error_data("path_outside_root"),
             )
         }
+        crate::Error::UnsupportedPathEncoding(_) => ErrorData::invalid_params(
+            "repository path is not valid UTF-8",
+            mcp_error_data("unsupported_path_encoding"),
+        ),
         crate::Error::NotIndexed(_) => ErrorData::invalid_params(
             "requested path is not indexed",
             mcp_error_data("not_indexed"),
@@ -1052,6 +1172,13 @@ fn into_mcp_error(error: crate::Error) -> ErrorData {
             ErrorData::internal_error(
                 "repository indexing limit exceeded",
                 mcp_error_data("repository_index_limit"),
+            )
+        }
+        crate::Error::RepositoryTraversal(_) => {
+            tracing::error!(%error, "repository traversal failed");
+            ErrorData::internal_error(
+                "repository traversal failed",
+                mcp_error_data("repository_traversal"),
             )
         }
         crate::Error::RuntimeCapabilityUnavailable { .. } => {
@@ -1289,48 +1416,48 @@ mod tests {
 
     #[test]
     fn mcp_error_mapping_never_serializes_internal_or_input_paths() {
-        let unix_secret = "/home/alice/private-secret/.ssh/id_ed25519";
-        let windows_secret = r"C:\Users\alice\private-secret\index.sqlite";
-        let invalid_regex = ["(?P<", "private-secret", ">"].concat();
+        let unix_marker = "/home/example/sensitive-marker/external.sqlite";
+        let windows_marker = r"C:\Users\example\sensitive-marker\external.sqlite";
+        let invalid_regex = ["(?P<", "sensitive-marker", ">"].concat();
         let errors = [
-            crate::Error::RootNotFound(unix_secret.into()),
-            crate::Error::UnsafeRepositoryRoot(unix_secret.into()),
-            crate::Error::PathOutsideRoot(unix_secret.into()),
-            crate::Error::PathOutsideRoot(windows_secret.into()),
-            crate::Error::NotIndexed(unix_secret.into()),
+            crate::Error::RootNotFound(unix_marker.into()),
+            crate::Error::UnsafeRepositoryRoot(unix_marker.into()),
+            crate::Error::PathOutsideRoot(unix_marker.into()),
+            crate::Error::PathOutsideRoot(windows_marker.into()),
+            crate::Error::NotIndexed(unix_marker.into()),
             crate::Error::SymbolNotFound {
-                path: unix_secret.into(),
-                symbol: "private-secret".into(),
+                path: unix_marker.into(),
+                symbol: "sensitive-marker".into(),
             },
-            crate::Error::UnsupportedLanguage(unix_secret.into()),
-            crate::Error::InvalidRequest(format!("invalid path: {unix_secret}")),
-            crate::Error::InternalFailure(format!("failed at {unix_secret}")),
+            crate::Error::UnsupportedLanguage(unix_marker.into()),
+            crate::Error::InvalidRequest(format!("invalid path: {unix_marker}")),
+            crate::Error::InternalFailure(format!("failed at {unix_marker}")),
             crate::Error::RepositoryMismatch {
-                database: windows_secret.into(),
-                expected_repository: unix_secret.into(),
-                actual_repository: unix_secret.into(),
+                database: windows_marker.into(),
+                expected_repository: unix_marker.into(),
+                actual_repository: unix_marker.into(),
             },
             crate::Error::Io(std::io::Error::other(format!(
-                "permission denied at {unix_secret}"
+                "permission denied at {unix_marker}"
             ))),
-            crate::Error::Sqlite(rusqlite::Error::InvalidPath(windows_secret.into())),
+            crate::Error::Sqlite(rusqlite::Error::InvalidPath(windows_marker.into())),
             crate::Error::Regex(regex::Regex::new(&invalid_regex).expect_err("regex")),
-            crate::Error::Glob(globset::Glob::new("[private-secret").expect_err("glob")),
+            crate::Error::Glob(globset::Glob::new("[sensitive-marker").expect_err("glob")),
         ];
 
         for error in errors {
             let response = into_mcp_error(error);
             let wire = serde_json::to_string(&response).expect("serialize public error");
-            for secret in [
-                unix_secret,
-                windows_secret,
-                "private-secret",
-                ".ssh",
-                "alice",
+            for marker in [
+                unix_marker,
+                windows_marker,
+                "sensitive-marker",
+                "external.sqlite",
+                "example",
             ] {
                 assert!(
-                    !wire.contains(secret),
-                    "public error leaked {secret}: {wire}"
+                    !wire.contains(marker),
+                    "public error leaked {marker}: {wire}"
                 );
             }
             assert!(
@@ -1348,7 +1475,7 @@ mod tests {
     fn explicit_null_limits_are_not_treated_as_omitted() {
         assert!(
             serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
-                "operation": {"kind": "tree"},
+                "operation": "tree",
                 "max_results": null
             }))
             .is_err()
@@ -1454,6 +1581,27 @@ mod tests {
     }
 
     #[test]
+    fn files_schema_matches_operation_specific_runtime_requirements() {
+        let tool = LeanTokenMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|tool| tool.name == "leantoken_files")
+            .expect("files tool");
+        let schema = serde_json::Value::Object((*tool.input_schema).clone());
+        let variants = schema["oneOf"].as_array().expect("operation variants");
+        assert_eq!(variants.len(), 3);
+        assert_eq!(variants[0]["properties"]["operation"]["const"], "tree");
+        assert_eq!(variants[1]["properties"]["operation"]["const"], "find");
+        assert_eq!(variants[1]["properties"]["query"]["type"], "string");
+        assert_eq!(variants[1]["required"], serde_json::json!(["query"]));
+        assert_eq!(variants[2]["properties"]["operation"]["const"], "glob");
+        assert_eq!(variants[2]["properties"]["pattern"]["type"], "string");
+        assert_eq!(variants[2]["required"], serde_json::json!(["pattern"]));
+        assert_eq!(schema["properties"]["query"]["minLength"], 1);
+        assert_eq!(schema["properties"]["pattern"]["minLength"], 1);
+    }
+
+    #[test]
     fn retrieval_tools_expose_consistency_boundary() {
         for tool in LeanTokenMcp::tool_router()
             .list_all()
@@ -1552,12 +1700,12 @@ mod tests {
         assert!(
             tools["leantoken_files"]
                 .pointer("/properties/query")
-                .is_none()
+                .is_some()
         );
         assert!(
             tools["leantoken_files"]
                 .pointer("/properties/pattern")
-                .is_none()
+                .is_some()
         );
         assert!(
             tools["leantoken_read"]
@@ -1575,12 +1723,13 @@ mod tests {
                 .is_some()
         );
 
-        assert!(
-            serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
-                "operation": {"kind": "find", "query": "mcp", "pattern": "*.rs"}
-            }))
-            .is_err()
-        );
+        let request = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
+            "operation": "find",
+            "query": "mcp",
+            "pattern": "*.rs"
+        }))
+        .expect("flat files request shape");
+        assert!(request.validate_limits(McpLimitPolicy::DEFAULT).is_err());
         assert!(
             serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
                 "path": "src/mcp.rs",

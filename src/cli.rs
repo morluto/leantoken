@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsString,
     num::{NonZeroU64, NonZeroUsize},
     path::PathBuf,
     str::FromStr,
@@ -137,6 +138,69 @@ pub struct Cli {
 }
 
 impl Cli {
+    /// Reject repository-scoped global options for repository-free commands.
+    ///
+    /// Clap propagates global arguments to every subcommand. Checking the
+    /// original argument tokens preserves before/after-subcommand placement
+    /// for repository commands while distinguishing an explicit default value
+    /// such as `--root .` from an omitted option.
+    pub fn validate_option_scope(
+        &self,
+        arguments: &[OsString],
+    ) -> std::result::Result<(), clap::Error> {
+        if !matches!(
+            self.command,
+            Commands::Setup(_)
+                | Commands::Remove(_)
+                | Commands::Cache(_)
+                | Commands::Update(_)
+                | Commands::Upgrade(_)
+        ) {
+            return Ok(());
+        }
+        const REPOSITORY_OPTIONS: [&str; 11] = [
+            "--root",
+            "--allow-broad-root",
+            "--include-generated",
+            "--max-walk-entries",
+            "--max-files",
+            "--max-total-source-bytes",
+            "--max-depth",
+            "--max-file-bytes",
+            "--max-prepare-batch-files",
+            "--max-prepare-batch-bytes",
+            "--max-index-workers",
+        ];
+        const TOKENIZER: &str = "--tokenizer";
+        let supplied = arguments.iter().skip(1).find_map(|argument| {
+            let argument = argument.as_os_str().as_encoded_bytes();
+            REPOSITORY_OPTIONS
+                .into_iter()
+                .chain(std::iter::once(TOKENIZER))
+                .find(|option| {
+                    argument == option.as_bytes()
+                        || argument
+                            .strip_prefix(option.as_bytes())
+                            .is_some_and(|suffix| suffix.starts_with(b"="))
+                })
+        });
+        let Some(option) = supplied else {
+            return Ok(());
+        };
+        let command = match self.command {
+            Commands::Setup(_) => "setup",
+            Commands::Remove(_) => "remove",
+            Commands::Cache(_) => "cache",
+            Commands::Update(_) => "update",
+            Commands::Upgrade(_) => "upgrade",
+            _ => unreachable!("repository-free commands checked above"),
+        };
+        Err(clap::Error::raw(
+            clap::error::ErrorKind::ArgumentConflict,
+            format!("repository option {option} cannot be used with `{command}`"),
+        ))
+    }
+
     /// Resolve global options into a [`Config`].
     ///
     /// # Errors

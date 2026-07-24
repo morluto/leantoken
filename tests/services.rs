@@ -49,6 +49,178 @@ async fn retrieval_receipt_identifies_bound_repository_and_rejects_mismatch() {
         Err(Error::RepositoryIdentityMismatch { expected, actual })
             if expected == "different-repository" && actual == expected_repository
     ));
+    assert!(matches!(
+        services.validate_repository_id(Some(&"x".repeat(128))),
+        Err(Error::RepositoryIdentityMismatch { expected, .. }) if expected.len() == 128
+    ));
+    assert!(matches!(
+        services.validate_repository_id(Some(&"x".repeat(129))),
+        Err(Error::InputTooLong {
+            field: "expected_repository_id",
+            max_bytes: 128
+        })
+    ));
+    assert!(matches!(
+        services.validate_repository_id(Some(&"é".repeat(64))),
+        Err(Error::RepositoryIdentityMismatch { expected, .. })
+            if expected.len() == 128
+    ));
+    assert!(matches!(
+        services.validate_repository_id(Some(&"é".repeat(65))),
+        Err(Error::InputTooLong {
+            field: "expected_repository_id",
+            max_bytes: 128
+        })
+    ));
+}
+
+#[tokio::test]
+async fn search_applies_path_filters_before_candidate_limits() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let source = "pub fn shared_target() {\n    let shared_lexical_needle = 1;\n}\npub fn caller() { shared_target(); }\n";
+    for index in 0..10 {
+        std::fs::write(root.path().join(format!("a{index:02}.rs")), source)
+            .expect("write excluded source");
+    }
+    std::fs::write(root.path().join("z_included.rs"), source).expect("write included source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    for (mode, query) in [
+        (SearchMode::Symbol, "shared_target"),
+        (SearchMode::Reference, "shared_target"),
+        (SearchMode::Text, "shared_lexical_needle"),
+    ] {
+        let response = services
+            .search(SearchRequest {
+                query: query.into(),
+                mode,
+                case_sensitive: true,
+                include_paths: vec!["z_included.rs".into()],
+                exclude_paths: Vec::new(),
+                focus_paths: Vec::new(),
+                max_results: Some(1),
+                max_tokens: Some(200),
+                context_lines: Some(0),
+                cursor: None,
+            })
+            .await
+            .expect("filtered search");
+        assert_eq!(response.hits.len(), 1, "{mode:?}");
+        assert_eq!(response.hits[0].path, "z_included.rs", "{mode:?}");
+
+        let response = services
+            .search(SearchRequest {
+                query: query.into(),
+                mode,
+                case_sensitive: true,
+                include_paths: Vec::new(),
+                exclude_paths: vec!["a*.rs".into()],
+                focus_paths: Vec::new(),
+                max_results: Some(1),
+                max_tokens: Some(200),
+                context_lines: Some(0),
+                cursor: None,
+            })
+            .await
+            .expect("exclusion-filtered search");
+        assert_eq!(response.hits.len(), 1, "{mode:?}");
+        assert_eq!(response.hits[0].path, "z_included.rs", "{mode:?}");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn live_read_cannot_escape_through_replaced_path_components() {
+    use std::os::unix::fs::symlink;
+
+    let root = tempfile::tempdir().expect("root");
+    let outside = tempfile::tempdir().expect("outside");
+    std::fs::create_dir(root.path().join("src")).expect("source directory");
+    std::fs::write(
+        root.path().join("src/module.rs"),
+        "pub fn contained_source() {}\n",
+    )
+    .expect("contained source");
+    std::fs::write(
+        outside.path().join("module.rs"),
+        "pub fn external_marker_needle() {}\n",
+    )
+    .expect("external source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    std::fs::rename(root.path().join("src"), root.path().join("src.original"))
+        .expect("move indexed directory");
+    symlink(outside.path(), root.path().join("src")).expect("replace directory with symlink");
+
+    assert!(
+        services
+            .read(ReadRequest {
+                path: "src/module.rs".into(),
+                symbol: None,
+                start_line: None,
+                end_line: None,
+                max_tokens: Some(100),
+                expected_hash: None,
+            })
+            .await
+            .is_err()
+    );
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn live_read_cannot_escape_through_replaced_path_components() {
+    let root = tempfile::tempdir().expect("root");
+    let outside = tempfile::tempdir().expect("outside");
+    std::fs::create_dir(root.path().join("src")).expect("source directory");
+    std::fs::write(
+        root.path().join("src/module.rs"),
+        "pub fn contained_source() {}\n",
+    )
+    .expect("contained source");
+    std::fs::write(
+        outside.path().join("module.rs"),
+        "pub fn external_marker_needle() {}\n",
+    )
+    .expect("external source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    std::fs::rename(root.path().join("src"), root.path().join("src.original"))
+        .expect("move indexed directory");
+    let junction = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(root.path().join("src"))
+        .arg(outside.path())
+        .output()
+        .expect("create junction");
+    assert!(
+        junction.status.success(),
+        "junction creation failed: {}",
+        String::from_utf8_lossy(&junction.stderr)
+    );
+
+    assert!(
+        services
+            .read(ReadRequest {
+                path: "src/module.rs".into(),
+                symbol: None,
+                start_line: None,
+                end_line: None,
+                max_tokens: Some(100),
+                expected_hash: None,
+            })
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -2676,7 +2848,7 @@ async fn read_rejects_ignored_files() {
 
 #[tokio::test]
 async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed() {
-    let source = b"class Service:\n    def run(self):\n        return 1\n";
+    let source = b"class Other:\n    def run(self):\n        return 0\n\nclass Service:\n    def run(self):\n        return 1\n";
     let (_root, services) = indexed_source("service.py", source).await;
 
     let outline = services
@@ -2689,7 +2861,11 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
         })
         .await
         .expect("outline method");
-    let method = &outline.files[0].symbols[0];
+    let method = outline.files[0]
+        .symbols
+        .iter()
+        .find(|symbol| symbol.parent.as_deref() == Some("Service"))
+        .expect("Service.run outline");
     assert_eq!(method.name, "run");
     assert_eq!(method.parent.as_deref(), Some("Service"));
 
@@ -2704,12 +2880,12 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
         })
         .await
         .expect("qualified symbol");
-    assert_eq!((response.start_line, response.end_line), (2, 3));
+    assert_eq!((response.start_line, response.end_line), (6, 7));
     assert!(
         response
             .content
             .as_deref()
-            .is_some_and(|content| content.contains("def run"))
+            .is_some_and(|content| content.contains("return 1") && !content.contains("return 0"))
     );
 
     let error = services

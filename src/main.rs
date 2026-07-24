@@ -61,15 +61,11 @@ impl RetryBackoff {
 async fn main() {
     let arguments = std::env::args_os().collect::<Vec<_>>();
     let json_requested = cli_json_requested(&arguments);
-    let cli = match Cli::try_parse_from(arguments) {
-        Ok(cli) => cli,
-        Err(error) if json_requested && error.use_stderr() => {
-            let exit_code = error.exit_code();
-            eprintln!("{}", serde_json::json!(cli_parse_error_response(&error)));
-            std::process::exit(exit_code);
-        }
-        Err(error) => error.exit(),
-    };
+    let cli = Cli::try_parse_from(arguments.clone())
+        .unwrap_or_else(|error| exit_cli_error(error, json_requested));
+    if let Err(error) = cli.validate_option_scope(&arguments) {
+        exit_cli_error(error, json_requested);
+    }
     let json = cli.json;
     init_tracing(json);
     if let Err(error) = run(cli).await {
@@ -81,6 +77,15 @@ async fn main() {
         }
         std::process::exit(1);
     }
+}
+
+fn exit_cli_error(error: clap::Error, json_requested: bool) -> ! {
+    if json_requested && error.use_stderr() {
+        let exit_code = error.exit_code();
+        eprintln!("{}", serde_json::json!(cli_parse_error_response(&error)));
+        std::process::exit(exit_code);
+    }
+    error.exit()
 }
 
 async fn run(cli: Cli) -> Result<()> {
@@ -595,10 +600,14 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         ),
         leantoken::Error::LimitExceeded => ("request_limit_exceeded", None, None, None, None),
         leantoken::Error::NotIndexed(_) => ("not_indexed", None, None, None, None),
+        leantoken::Error::SymbolNotFound { .. } => ("symbol_not_found", None, None, None, None),
         leantoken::Error::IndexNotReady => ("index_not_ready", None, None, None, None),
         leantoken::Error::StaleCursor => ("stale_cursor", None, None, None, None),
         leantoken::Error::Cancelled => ("request_cancelled", None, None, None, None),
         leantoken::Error::PathOutsideRoot(_) => ("path_outside_root", None, None, None, None),
+        leantoken::Error::UnsupportedPathEncoding(_) => {
+            ("unsupported_path_encoding", None, None, None, None)
+        }
         leantoken::Error::UnsupportedLanguage(_) => {
             ("unsupported_language", None, None, None, None)
         }
@@ -613,6 +622,9 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         }
         leantoken::Error::IndexLimitExceeded { .. } => {
             ("repository_index_limit", None, None, None, None)
+        }
+        leantoken::Error::RepositoryTraversal(_) => {
+            ("repository_traversal", None, None, None, None)
         }
         leantoken::Error::RuntimeCapabilityUnavailable { .. } => {
             ("runtime_unavailable", None, None, None, None)
@@ -764,6 +776,16 @@ mod tests {
                 serde_json::json!({
                     "error": "path is not indexed: missing.rs",
                     "category": "not_indexed"
+                }),
+            ),
+            (
+                leantoken::Error::SymbolNotFound {
+                    path: "lib.rs".into(),
+                    symbol: "missing".into(),
+                },
+                serde_json::json!({
+                    "error": "symbol is not indexed in lib.rs: missing",
+                    "category": "symbol_not_found"
                 }),
             ),
             (

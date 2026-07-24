@@ -17,7 +17,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::repository::{DiscoveryPolicy, slash_path};
+use crate::repository::{DiscoveryPolicy, checked_slash_path};
 use crate::{Error, Result};
 
 const MAX_SCHEDULED_PATHS: usize = 4_096;
@@ -27,6 +27,15 @@ const RECONCILE_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 const FULL_RECONCILE_INITIAL_DELAY: Duration = Duration::from_secs(1);
 const FULL_RECONCILE_MAX_DELAY: Duration = Duration::from_secs(30);
 const FULL_RECONCILE_RESET_AFTER: Duration = Duration::from_secs(60);
+const WATCHER_POLL_INTERVAL: Duration = Duration::from_secs(30);
+
+type EventCallback = Box<dyn FnMut(notify::Result<Event>) + Send>;
+type NativeWatcher = Box<dyn Watcher + Send>;
+type WatcherFactory = fn(EventCallback, Config) -> notify::Result<NativeWatcher>;
+
+fn recommended_watcher(callback: EventCallback, config: Config) -> notify::Result<NativeWatcher> {
+    RecommendedWatcher::new(callback, config).map(|watcher| Box::new(watcher) as NativeWatcher)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Debounced repository change delivered to the reconciliation loop.
@@ -249,6 +258,27 @@ impl RepositoryWatcher {
         policy: DiscoveryPolicy,
         token: CancellationToken,
     ) -> Result<(Self, mpsc::Receiver<WatcherMessage>)> {
+        Self::start_with_factory(
+            root,
+            capacity,
+            debounce,
+            policy,
+            token,
+            recommended_watcher,
+            WATCHER_POLL_INTERVAL,
+        )
+        .await
+    }
+
+    async fn start_with_factory(
+        root: impl AsRef<Path>,
+        capacity: usize,
+        debounce: Duration,
+        policy: DiscoveryPolicy,
+        cancellation: CancellationToken,
+        watcher_factory: WatcherFactory,
+        poll_interval: Duration,
+    ) -> Result<(Self, mpsc::Receiver<WatcherMessage>)> {
         let root = root.as_ref().canonicalize().map_err(Error::Io)?;
         if !root.is_dir() {
             return Err(Error::InvalidConfiguration(format!(
@@ -258,8 +288,8 @@ impl RepositoryWatcher {
         }
 
         let (tx, rx) = mpsc::channel::<WatcherMessage>(capacity.max(1));
-        let (ready_tx, ready_rx) = oneshot::channel::<Result<()>>();
-        let task_token = token.clone();
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let task_token = cancellation.clone();
         let raw_capacity = capacity.saturating_mul(4).max(64);
         let watched_root = root.clone();
 
@@ -269,8 +299,11 @@ impl RepositoryWatcher {
             let config = Config::default().with_follow_symlinks(false);
             let callback_root = watched_root.clone();
 
-            let mut watcher = match RecommendedWatcher::new(
-                {
+            let directory_count = count_watch_directories(&watched_root, MAX_WATCHED_DIRECTORIES);
+            let mut watcher = None;
+            let mut watch_enabled = false;
+            if directory_count <= MAX_WATCHED_DIRECTORIES {
+                let callback: EventCallback = Box::new({
                     let overflowed = Arc::clone(&overflowed);
                     move |event: notify::Result<Event>| {
                         if !raw_event_is_relevant(&event, &callback_root, policy) {
@@ -280,31 +313,40 @@ impl RepositoryWatcher {
                             overflowed.store(true, Ordering::Release);
                         }
                     }
-                },
-                config,
-            ) {
-                Ok(w) => w,
-                Err(err) => {
-                    let _ = ready_tx.send(Err(into_error(err)));
-                    return;
-                }
-            };
-
-            let directory_count = count_watch_directories(&watched_root, MAX_WATCHED_DIRECTORIES);
-            let watch_enabled = directory_count <= MAX_WATCHED_DIRECTORIES;
-            if watch_enabled {
-                if let Err(err) = watcher.watch(&watched_root, RecursiveMode::Recursive) {
-                    let _ = ready_tx.send(Err(into_error(err)));
-                    return;
+                });
+                match watcher_factory(callback, config) {
+                    Ok(mut candidate) => {
+                        match candidate.watch(&watched_root, RecursiveMode::Recursive) {
+                            Ok(()) => {
+                                watch_enabled = true;
+                                watcher = Some(candidate);
+                            }
+                            Err(error) => {
+                                tracing::warn!(
+                                    %error,
+                                    "filesystem watcher registration failed; \
+                                     falling back to periodic full reconciliation"
+                                );
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            %error,
+                            "filesystem watcher creation failed; \
+                             falling back to periodic full reconciliation"
+                        );
+                    }
                 }
             } else {
                 tracing::warn!(
                     directories = directory_count,
                     cap = MAX_WATCHED_DIRECTORIES,
-                    "root has too many directories for recursive inotify;                      falling back to periodic full reconciliation"
+                    "root has too many directories for recursive watching; \
+                     falling back to periodic full reconciliation"
                 );
             }
-            let _ = ready_tx.send(Ok(()));
+            let _ = ready_tx.send(());
 
             let long_sleep = Duration::from_secs(60 * 60 * 24 * 365 * 10);
             let mut sleep = Box::pin(sleep(long_sleep));
@@ -312,7 +354,6 @@ impl RepositoryWatcher {
             let mut rename_from = HashMap::<usize, String>::new();
             let mut rename_to = HashMap::<usize, String>::new();
             let mut reconcile = false;
-            let poll_interval = Duration::from_secs(30);
             let mut poll_timer = if !watch_enabled {
                 tokio::time::interval(poll_interval)
             } else {
@@ -333,7 +374,7 @@ impl RepositoryWatcher {
 
                 tokio::select! {
                     biased;
-                    _ = token.cancelled() => break,
+                    _ = cancellation.cancelled() => break,
                     Some(raw) = raw_rx.recv() => {
                         if !reconcile {
                             process_raw_event(
@@ -399,10 +440,11 @@ impl RepositoryWatcher {
                 &mut reconcile,
                 &tx,
             );
+            drop(watcher);
         });
 
         match ready_rx.await {
-            Ok(Ok(())) => Ok((
+            Ok(()) => Ok((
                 Self {
                     root,
                     token: task_token,
@@ -410,7 +452,6 @@ impl RepositoryWatcher {
                 },
                 rx,
             )),
-            Ok(Err(err)) => Err(err),
             Err(_) => {
                 let _ = handle.await;
                 Err(Error::InternalFailure(
@@ -431,10 +472,6 @@ impl RepositoryWatcher {
         self.handle.await?;
         Ok(())
     }
-}
-
-fn into_error(err: notify::Error) -> Error {
-    Error::Io(std::io::Error::other(err.to_string()))
 }
 
 /// Count every directory that a recursive backend may register before
@@ -475,20 +512,20 @@ fn relative_path(
     path: &Path,
     policy: DiscoveryPolicy,
     directory_hint: bool,
-) -> Option<String> {
+) -> std::result::Result<Option<String>, ()> {
     if !path.starts_with(root) {
-        return None;
+        return Ok(None);
     }
-    let rel = path.strip_prefix(root).ok()?;
-    let s = slash_path(rel);
+    let rel = path.strip_prefix(root).map_err(|_| ())?;
+    let s = checked_slash_path(rel).map_err(|_| ())?;
     if s.is_empty()
         || s.starts_with(".git/")
         || s == ".git"
         || !policy.includes_path(&s, directory_hint || path.is_dir())
     {
-        None
+        Ok(None)
     } else {
-        Some(s)
+        Ok(Some(s))
     }
 }
 
@@ -529,10 +566,14 @@ fn process_raw_event(
     let mut outside = false;
     for path in &event.paths {
         match relative_path(root, path, policy, event_path_is_directory(&event)) {
-            Some(rel) => inside.push(rel),
-            None => {
+            Ok(Some(rel)) => inside.push(rel),
+            Ok(None) => {
                 outside = true;
                 tracing::warn!(path = %path.display(), "watcher event outside root");
+            }
+            Err(()) => {
+                *reconcile = true;
+                tracing::warn!("non-UTF-8 watcher path requires full reconciliation");
             }
         }
     }
@@ -584,7 +625,10 @@ fn raw_event_is_relevant(
     match event {
         Ok(event) if event.need_rescan() => true,
         Ok(event) if !event.paths.is_empty() => event.paths.iter().any(|path| {
-            relative_path(root, path, policy, event_path_is_directory(event)).is_some()
+            !matches!(
+                relative_path(root, path, policy, event_path_is_directory(event)),
+                Ok(None)
+            )
         }),
         Ok(_) | Err(_) => true,
     }
@@ -708,6 +752,86 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
+
+    fn creation_failure(
+        _callback: EventCallback,
+        _config: Config,
+    ) -> notify::Result<NativeWatcher> {
+        Err(notify::Error::generic("creation unavailable"))
+    }
+
+    struct RegistrationFailure;
+
+    impl Watcher for RegistrationFailure {
+        fn kind() -> notify::WatcherKind
+        where
+            Self: Sized,
+        {
+            notify::WatcherKind::PollWatcher
+        }
+
+        fn new<F: notify::EventHandler>(_event_handler: F, _config: Config) -> notify::Result<Self>
+        where
+            Self: Sized,
+        {
+            Ok(Self)
+        }
+
+        fn watch(&mut self, _path: &Path, _recursive_mode: RecursiveMode) -> notify::Result<()> {
+            Err(notify::Error::generic("registration unavailable"))
+        }
+
+        fn unwatch(&mut self, _path: &Path) -> notify::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn registration_failure(
+        _callback: EventCallback,
+        _config: Config,
+    ) -> notify::Result<NativeWatcher> {
+        Ok(Box::new(RegistrationFailure))
+    }
+
+    async fn assert_backend_failure_uses_polling(factory: WatcherFactory) {
+        let directory = tempfile::tempdir().expect("directory");
+        let cancellation = CancellationToken::new();
+        let (watcher, mut messages) = RepositoryWatcher::start_with_factory(
+            directory.path(),
+            4,
+            Duration::from_millis(10),
+            DiscoveryPolicy::default(),
+            cancellation,
+            factory,
+            Duration::from_secs(30),
+        )
+        .await
+        .expect("polling watcher");
+
+        assert_eq!(
+            messages.recv().await,
+            Some(WatcherMessage::ReconcileRequired)
+        );
+        advance(Duration::from_secs(30)).await;
+        assert_eq!(
+            messages.recv().await,
+            Some(WatcherMessage::ReconcileRequired)
+        );
+        timeout(Duration::from_secs(1), watcher.shutdown())
+            .await
+            .expect("shutdown timeout")
+            .expect("shutdown");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn watcher_creation_failure_falls_back_to_polling() {
+        assert_backend_failure_uses_polling(creation_failure).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn watcher_registration_failure_falls_back_to_polling() {
+        assert_backend_failure_uses_polling(registration_failure).await;
+    }
 
     fn test_schedule_policy() -> ReconciliationSchedulePolicy {
         ReconciliationSchedulePolicy {
@@ -935,6 +1059,7 @@ mod tests {
                 DiscoveryPolicy::default(),
                 false,
             )
+            .expect("UTF-8 relative path")
             .as_deref(),
             Some("nested/b.txt")
         );

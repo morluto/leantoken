@@ -6,6 +6,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
+use cap_std::fs::Dir;
 use tokio_util::sync::CancellationToken;
 
 use crate::coordination::{CacheLease, IndexCoordination, IndexLeadership};
@@ -25,6 +26,7 @@ const STARTUP_BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 const STARTUP_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(25);
 const STARTUP_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
+pub(crate) const MAX_EXPECTED_REPOSITORY_ID_BYTES: usize = 128;
 const TOKEN_SAVINGS_ESTIMATE_BASIS: &str =
     "requested read ranges or whole source files represented in each response";
 
@@ -67,6 +69,7 @@ pub struct Services {
     config: Arc<Config>,
     storage: Storage,
     indexer: Indexer,
+    repository_root: Arc<Dir>,
     coordination: IndexCoordination,
     _cache_lease: CacheLease,
     active_reconciliations: Arc<AtomicUsize>,
@@ -143,11 +146,13 @@ impl Services {
 
     fn from_parts(config: Arc<Config>, storage: Storage, cache_lease: CacheLease) -> Result<Self> {
         let indexer = Indexer::new(Arc::clone(&config), storage.clone())?;
+        let repository_root = indexer.repository_root();
         let coordination = IndexCoordination::for_database(&config.database_path);
         Ok(Self {
             config,
             storage,
             indexer,
+            repository_root,
             coordination,
             _cache_lease: cache_lease,
             active_reconciliations: Arc::new(AtomicUsize::new(0)),
@@ -473,6 +478,13 @@ impl Services {
 
     /// Rejects retrieval bound to a different repository/worktree.
     pub fn validate_repository_id(&self, expected: Option<&str>) -> Result<()> {
+        if let Some(expected) = expected {
+            validation::validate_input(
+                expected,
+                "expected_repository_id",
+                MAX_EXPECTED_REPOSITORY_ID_BYTES,
+            )?;
+        }
         let actual = self.repository_id();
         if expected.is_none_or(|expected| expected == actual) {
             return Ok(());

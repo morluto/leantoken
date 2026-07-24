@@ -200,7 +200,9 @@ pub(crate) fn discover_files_with_limits_policy_and_filter(
             let Ok(relative) = entry.path().strip_prefix(&filter_root) else {
                 return false;
             };
-            let relative_path = slash_path(relative);
+            let Ok(relative_path) = checked_slash_path(relative) else {
+                return true;
+            };
             let is_directory = entry.file_type().is_some_and(|kind| kind.is_dir());
             policy.includes_path(&relative_path, is_directory)
         });
@@ -216,13 +218,7 @@ pub(crate) fn discover_files_with_limits_policy_and_filter(
             limits.max_walk_entries,
             IndexLimitKind::WalkEntries,
         )?;
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) => {
-                tracing::warn!(%error, "repository walk entry skipped");
-                continue;
-            }
-        };
+        let entry = entry.map_err(Error::RepositoryTraversal)?;
         stats.max_depth = stats.max_depth.max(entry.depth());
         enforce_limit(
             IndexLimitKind::Depth,
@@ -235,13 +231,7 @@ pub(crate) fn discover_files_with_limits_policy_and_filter(
         if !file_type.is_file() {
             continue;
         }
-        let metadata = match entry.metadata() {
-            Ok(metadata) => metadata,
-            Err(error) => {
-                tracing::warn!(path = %entry.path().display(), %error, "file metadata skipped");
-                continue;
-            }
-        };
+        let metadata = entry_metadata(&entry)?;
         if metadata.len() > limits.max_file_bytes {
             continue;
         }
@@ -252,7 +242,7 @@ pub(crate) fn discover_files_with_limits_policy_and_filter(
             .path()
             .strip_prefix(root)
             .map_err(|_| Error::PathOutsideRoot(entry.path().to_path_buf()))?;
-        let relative_path = slash_path(relative);
+        let relative_path = checked_slash_path(relative)?;
         if relative_path.is_empty() || is_git_metadata_path(&relative_path) {
             continue;
         }
@@ -277,6 +267,10 @@ pub(crate) fn discover_files_with_limits_policy_and_filter(
     }
     files.sort_unstable_by(|left, right| left.relative_path.cmp(&right.relative_path));
     Ok(DiscoveryResult { files, stats })
+}
+
+fn entry_metadata(entry: &ignore::DirEntry) -> Result<std::fs::Metadata> {
+    entry.metadata().map_err(Error::RepositoryTraversal)
 }
 
 fn is_generated_path(relative_path: &str, path_is_directory: bool) -> bool {
@@ -515,6 +509,21 @@ pub fn slash_path(path: &Path) -> String {
         })
         .collect::<Vec<_>>()
         .join("/")
+}
+
+pub(crate) fn checked_slash_path(path: &Path) -> Result<String> {
+    path.components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(
+                value
+                    .to_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| Error::UnsupportedPathEncoding(path.to_path_buf())),
+            ),
+            _ => None,
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(|components| components.join("/"))
 }
 
 /// Resolved diff scope: base/head short SHAs and the changed paths between them.
@@ -850,6 +859,50 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+
+    #[test]
+    fn discovery_reports_walker_errors_instead_of_returning_partial_results() {
+        let directory = tempfile::tempdir().expect("directory");
+        let missing = directory.path().join("missing");
+
+        let error = discover_files(&missing, 1024).expect_err("missing root must fail");
+
+        assert!(matches!(error, Error::RepositoryTraversal(_)));
+    }
+
+    #[test]
+    fn discovery_reports_metadata_errors_instead_of_skipping_entries() {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("vanishing.rs");
+        fs::write(&path, "fn vanishing() {}").expect("fixture");
+        let entry = WalkBuilder::new(directory.path())
+            .build()
+            .filter_map(std::result::Result::ok)
+            .find(|entry| entry.path() == path)
+            .expect("file entry");
+        fs::remove_file(&path).expect("remove fixture");
+
+        let error = entry_metadata(&entry).expect_err("missing metadata must fail");
+
+        assert!(matches!(error, Error::RepositoryTraversal(_)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_slash_path_rejects_non_utf8_paths_without_lossy_aliases() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        for name in [b"\x80.rs".to_vec(), b"\x81.rs".to_vec()] {
+            let path = PathBuf::from(OsString::from_vec(name));
+            let error = checked_slash_path(&path).expect_err("non-UTF-8 path must be rejected");
+
+            match error {
+                Error::UnsupportedPathEncoding(rejected) => assert_eq!(rejected, path),
+                other => panic!("unexpected error: {other}"),
+            }
+        }
+    }
 
     #[test]
     fn git_status_parser_stops_after_collecting_max_paths() {

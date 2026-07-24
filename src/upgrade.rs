@@ -8,6 +8,7 @@ use std::{
 };
 
 use dialoguer::Confirm;
+use semver::Version;
 use serde::Serialize;
 
 use crate::{Error, Result};
@@ -91,8 +92,6 @@ pub fn run(options: UpgradeOptions) -> Result<()> {
     let executable = env::current_exe()?.canonicalize()?;
     let context = detect_current_context(&executable);
     let latest = latest_version(context);
-    let command = upgrade_command(context, latest.as_deref());
-
     let Some(latest) = latest else {
         return print_report(
             UpgradeReport {
@@ -100,13 +99,27 @@ pub fn run(options: UpgradeOptions) -> Result<()> {
                 context,
                 current_version: env!("CARGO_PKG_VERSION"),
                 latest_version: None,
-                command: command.as_ref().map(CommandSpec::display),
+                command: None,
             },
             options.json,
         );
     };
 
-    if latest == env!("CARGO_PKG_VERSION") {
+    let Some(update_available) = version_update_available(env!("CARGO_PKG_VERSION"), &latest)
+    else {
+        return print_report(
+            UpgradeReport {
+                status: UpgradeStatus::CheckFailed,
+                context,
+                current_version: env!("CARGO_PKG_VERSION"),
+                latest_version: Some(latest),
+                command: None,
+            },
+            options.json,
+        );
+    };
+
+    if !update_available {
         return print_report(
             UpgradeReport {
                 status: UpgradeStatus::UpToDate,
@@ -118,6 +131,8 @@ pub fn run(options: UpgradeOptions) -> Result<()> {
             options.json,
         );
     }
+
+    let command = upgrade_command(context, Some(&latest));
 
     if context == InstallContext::Npx {
         let refresh_command = npx_refresh_command(&latest);
@@ -191,6 +206,12 @@ pub fn run(options: UpgradeOptions) -> Result<()> {
         },
         options.json,
     )
+}
+
+fn version_update_available(current: &str, latest: &str) -> Option<bool> {
+    let current = Version::parse(current).ok()?;
+    let latest = Version::parse(latest).ok()?;
+    Some(current.cmp_precedence(&latest).is_lt())
 }
 
 fn detect_current_context(executable: &Path) -> InstallContext {
@@ -430,5 +451,24 @@ mod tests {
             "npx --yes leantoken@1.2.3 setup --refresh --yes"
         );
         assert!(!npx_refresh_command("1.2.3").contains("@latest"));
+    }
+
+    #[test]
+    fn upgrade_requires_a_newer_semantic_version() {
+        assert_eq!(version_update_available("0.1.12", "0.1.12"), Some(false));
+        assert_eq!(version_update_available("0.1.12", "0.1.13"), Some(true));
+        assert_eq!(
+            version_update_available("0.2.0-beta.1", "0.1.12"),
+            Some(false)
+        );
+        assert_eq!(
+            version_update_available("0.2.0-beta.1", "0.2.0"),
+            Some(true)
+        );
+        assert_eq!(
+            version_update_available("0.1.12+local", "0.1.12+remote"),
+            Some(false)
+        );
+        assert_eq!(version_update_available("0.1.12", "not-semver"), None);
     }
 }

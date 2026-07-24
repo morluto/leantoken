@@ -185,6 +185,24 @@ fn cli_global_json_works_before_or_after_subcommand() {
     assert!(parse(&["status", "--json"]).json);
 }
 
+#[cfg(unix)]
+#[test]
+fn repository_scope_validation_detects_non_utf8_option_values() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let arguments = vec![
+        OsString::from("leantoken"),
+        OsString::from_vec(b"--root=\x80".to_vec()),
+        OsString::from("setup"),
+        OsString::from("--all"),
+        OsString::from("--dry-run"),
+    ];
+    let cli = Cli::try_parse_from(arguments.clone()).expect("non-UTF-8 path argument");
+
+    assert!(cli.validate_option_scope(&arguments).is_err());
+}
+
 #[test]
 fn cli_tokenizer_global_option() {
     let cli = parse(&["--tokenizer", "o200k_base", "status"]);

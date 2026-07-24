@@ -14,6 +14,10 @@
     "blake3": "ed5834a883174ae3dda9604ae634cc8a8e0d04941a511c268060db04f45ff012",
     "global_default": "dual"
   },
+  "checked_report": {
+    "path": "benchmarks/reports/mcp-response-ablation-v1-2026-07-21.json",
+    "blake3": "bc0811e31cbe2a224dfc7409057d13f4a78fd80692c60bf74fa1b9732bd64261"
+  },
   "candidates": [
     "structured_mode",
     "text_mode",

@@ -1908,16 +1908,34 @@ impl ReadSession {
     }
 
     pub fn search_word(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
-        self.search_fts(FtsTable::Word, query, max_results)
+        self.search_word_page(query, max_results, 0)
+    }
+
+    pub(crate) fn search_word_page(
+        &self,
+        query: &str,
+        max_results: usize,
+        offset: usize,
+    ) -> Result<Vec<ChunkHit>> {
+        self.search_fts(FtsTable::Word, query, max_results, offset)
     }
 
     pub fn search_trigram(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
+        self.search_trigram_page(query, max_results, 0)
+    }
+
+    pub(crate) fn search_trigram_page(
+        &self,
+        query: &str,
+        max_results: usize,
+        offset: usize,
+    ) -> Result<Vec<ChunkHit>> {
         if query.chars().count() < 3 {
             return Ok(Vec::new());
         }
         let escaped = query.replace('"', "\"\"");
         let quoted = format!("\"{escaped}\"");
-        self.search_fts(FtsTable::Trigram, &quoted, max_results)
+        self.search_fts(FtsTable::Trigram, &quoted, max_results, offset)
     }
 
     pub fn search_symbols(
@@ -1926,16 +1944,27 @@ impl ReadSession {
         case_sensitive: bool,
         max_results: usize,
     ) -> Result<Vec<SymbolHit>> {
+        self.search_symbols_page(query, case_sensitive, max_results, 0)
+    }
+
+    pub(crate) fn search_symbols_page(
+        &self,
+        query: &str,
+        case_sensitive: bool,
+        max_results: usize,
+        offset: usize,
+    ) -> Result<Vec<SymbolHit>> {
         let limit = bounded_limit(max_results);
+        let offset = i64::try_from(offset).unwrap_or(i64::MAX);
         let mut stmt = self.conn.prepare_cached(
             "SELECT f.path, f.content_hash, f.generation, s.id, s.file_id, s.name, s.kind, s.parent, s.signature, s.start_line, s.end_line, s.start_byte, s.end_byte
                  FROM symbols s JOIN files f ON f.id = s.file_id
                  WHERE CASE WHEN ?2 THEN instr(s.name, ?1) > 0 ELSE instr(lower(s.name), lower(?1)) > 0 END
                  ORDER BY CASE WHEN CASE WHEN ?2 THEN s.name = ?1 ELSE lower(s.name) = lower(?1) END THEN 0 ELSE 1 END,
                           length(s.name), f.path, s.start_byte
-                 LIMIT ?3",
+                 LIMIT ?3 OFFSET ?4",
         )?;
-        let rows = stmt.query_map(params![query, case_sensitive, limit], |row| {
+        let rows = stmt.query_map(params![query, case_sensitive, limit, offset], |row| {
             Ok(SymbolHit {
                 path: row.get(0)?,
                 content_hash: row.get(1)?,
@@ -1963,16 +1992,27 @@ impl ReadSession {
         case_sensitive: bool,
         max_results: usize,
     ) -> Result<Vec<ReferenceHit>> {
+        self.search_references_page(query, case_sensitive, max_results, 0)
+    }
+
+    pub(crate) fn search_references_page(
+        &self,
+        query: &str,
+        case_sensitive: bool,
+        max_results: usize,
+        offset: usize,
+    ) -> Result<Vec<ReferenceHit>> {
         let limit = bounded_limit(max_results);
+        let offset = i64::try_from(offset).unwrap_or(i64::MAX);
         let mut stmt = self.conn.prepare_cached(
             "SELECT f.path, f.content_hash, f.generation, r.id, r.file_id, r.name, r.kind, r.role, r.enclosing_symbol, r.start_line, r.end_line, r.start_byte, r.end_byte
                  FROM symbol_refs r JOIN files f ON f.id = r.file_id
                  WHERE CASE WHEN ?2 THEN instr(r.name, ?1) > 0 ELSE instr(lower(r.name), lower(?1)) > 0 END
                  ORDER BY CASE WHEN CASE WHEN ?2 THEN r.name = ?1 ELSE lower(r.name) = lower(?1) END THEN 0 ELSE 1 END,
                           length(r.name), f.path, r.start_byte
-                 LIMIT ?3",
+                 LIMIT ?3 OFFSET ?4",
         )?;
-        let rows = stmt.query_map(params![query, case_sensitive, limit], |row| {
+        let rows = stmt.query_map(params![query, case_sensitive, limit, offset], |row| {
             Ok(ReferenceHit {
                 path: row.get(0)?,
                 content_hash: row.get(1)?,
@@ -2028,8 +2068,10 @@ impl ReadSession {
         table: FtsTable,
         query: &str,
         max_results: usize,
+        offset: usize,
     ) -> Result<Vec<ChunkHit>> {
         let limit = bounded_limit(max_results);
+        let offset = i64::try_from(offset).unwrap_or(i64::MAX);
         let table_name = table.as_str();
         let sql = format!(
             "SELECT c.id, c.file_id, f.path, c.content, c.start_line, c.end_line, c.start_byte, c.end_byte, c.token_count, f.generation, bm25({table_name}) as score \
@@ -2038,10 +2080,10 @@ impl ReadSession {
              JOIN files f ON c.file_id = f.id \
              WHERE {table_name} MATCH ?1 \
              ORDER BY bm25({table_name}), f.path, c.start_byte \
-             LIMIT ?2"
+             LIMIT ?2 OFFSET ?3"
         );
         let mut stmt = self.conn.prepare_cached(&sql)?;
-        let rows = stmt.query_map(params![query, limit], Storage::map_chunk_hit)?;
+        let rows = stmt.query_map(params![query, limit, offset], Storage::map_chunk_hit)?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 }

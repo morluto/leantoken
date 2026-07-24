@@ -43,10 +43,12 @@ const PYTHON_IMPORT_QUERY: &str = r#"
   name: (_) @raw) @import
 
 (import_from_statement
-  module_name: (_) @raw) @import
+  module_name: (_) @python_module
+  name: (_) @python_member) @import
 
 (import_from_statement
-  name: (_) @raw) @import
+  module_name: (_) @python_module
+  (wildcard_import) @python_wildcard) @import
 "#;
 
 const JS_IMPORT_QUERY: &str = r#"
@@ -543,22 +545,55 @@ fn first_body_start(node: Node<'_>) -> Option<usize> {
 
 fn process_imports_match(source: &str, query: &Query, qm: &QueryMatch, imports: &mut Vec<Import>) {
     let capture_names = query.capture_names();
+    let mut python_module = None;
+    let mut python_members = Vec::new();
+    let mut python_wildcard = false;
     for cap in qm.captures {
         let cap_name = capture_names[cap.index as usize];
-        if cap_name != "raw" {
-            continue;
-        }
         let raw = node_text(source, cap.node);
         let raw = unquote(&raw);
-        if !raw.is_empty() {
-            let line = cap.node.start_position().row + 1;
-            imports.push(Import {
-                raw_target: raw.to_string(),
-                resolved_path: None,
-                line,
-            });
+        if raw.is_empty() {
+            continue;
+        }
+        match cap_name {
+            "raw" => push_import(imports, raw, cap.node.start_position().row + 1),
+            "python_module" => {
+                python_module = Some((raw.to_string(), cap.node.start_position().row + 1));
+            }
+            "python_member" => {
+                let member = cap.node.child_by_field_name("name").unwrap_or(cap.node);
+                python_members.push((node_text(source, member), member.start_position().row + 1));
+            }
+            "python_wildcard" => python_wildcard = true,
+            _ => {}
         }
     }
+
+    if let Some((module, line)) = python_module {
+        if python_wildcard {
+            push_import(imports, &module, line);
+        } else if module.bytes().all(|byte| byte == b'.') {
+            for (member, member_line) in python_members {
+                push_import(imports, &format!("{module}{member}"), member_line);
+            }
+        } else {
+            push_import(imports, &module, line);
+        }
+    }
+}
+
+fn push_import(imports: &mut Vec<Import>, raw_target: &str, line: usize) {
+    if imports
+        .iter()
+        .any(|import| import.line == line && import.raw_target == raw_target)
+    {
+        return;
+    }
+    imports.push(Import {
+        raw_target: raw_target.to_string(),
+        resolved_path: None,
+        line,
+    });
 }
 
 fn compute_symbol_parents(symbols: &mut [Symbol]) {
@@ -1072,6 +1107,7 @@ impl Local for u32 {
         let imports = import_targets(&out);
         assert!(imports.contains(&"os"), "imports: {imports:?}");
         assert!(imports.contains(&"collections"), "imports: {imports:?}");
+        assert!(!imports.contains(&"defaultdict"), "imports: {imports:?}");
 
         let init = out.symbols.iter().find(|s| s.name == "__init__").unwrap();
         assert_eq!(init.parent.as_deref(), Some("Greeter"));
@@ -1079,6 +1115,39 @@ impl Local for u32 {
             init.signature
                 .as_deref()
                 .is_some_and(|value| value.starts_with("def __init__"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn python_imports_preserve_module_semantics() -> Result<()> {
+        let out = parse_language(
+            "python",
+            "from pkg.mod import thing, other\nfrom . import helpers, tools, aliased\tas\tlocal\nfrom ..core import api\n",
+        )?;
+        assert_eq!(
+            import_targets(&out),
+            vec!["pkg.mod", ".helpers", ".tools", ".aliased", "..core"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn python_wildcard_imports_preserve_their_module() -> Result<()> {
+        let out = parse_language("python", "from pkg.mod import *\nfrom . import *\n")?;
+        assert_eq!(import_targets(&out), vec!["pkg.mod", "."]);
+        Ok(())
+    }
+
+    #[test]
+    fn python_relative_import_members_preserve_their_source_lines() -> Result<()> {
+        let out = parse_language("python", "from . import (\n    helpers,\n    tools,\n)\n")?;
+        assert_eq!(
+            out.imports
+                .iter()
+                .map(|import| (import.raw_target.as_str(), import.line))
+                .collect::<Vec<_>>(),
+            vec![(".helpers", 2), (".tools", 3)]
         );
         Ok(())
     }

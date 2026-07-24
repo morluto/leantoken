@@ -486,8 +486,10 @@ change the global `dual` default.
 
 The frozen
 [`mcp-response-ablation-v1`](mcp_response_ablation.json) experiment and its
-[2026-07-21 report](reports/mcp-response-ablation-v1-2026-07-21.md) then compare
-12 response and catalog representations against that compatibility matrix.
+[2026-07-21 report](reports/mcp-response-ablation-v1-2026-07-21.md) compare 12
+response and catalog representations against that compatibility matrix. The
+manifest binds the historical JSON report by BLAKE3; current-runtime tests
+check its acceptance invariants without rewriting the historical token totals.
 The one new runtime change omits the internal task fingerprint from the
 serialized receipt: response JSON falls from 574 to 556 exact local tokens and
 the complete modeled dual handoff from 4,345 to 4,306. The fixed follow-up adds

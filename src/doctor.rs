@@ -1,10 +1,10 @@
 //! Executable MCP readiness diagnostics for the current repository.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, VecDeque},
     io::{BufRead, BufReader, Write},
     process::{Child, ChildStdin, Stdio},
-    sync::mpsc,
+    sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},
 };
 
@@ -24,6 +24,9 @@ const EXPECTED_TOOLS: [&str; 6] = [
 ];
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
+const MAX_DIAGNOSTIC_LINES: usize = 8;
+const MAX_DIAGNOSTIC_LINE_CHARS: usize = 512;
+const MAX_DIAGNOSTIC_LINE_BYTES: usize = MAX_DIAGNOSTIC_LINE_CHARS * 4;
 
 /// Successful MCP self-diagnostic report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -217,7 +220,11 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
         if call.get("isError").and_then(Value::as_bool) == Some(true) {
             return Err(doctor_error(
                 "first_retrieval",
-                format!("first retrieval failed: {}", tool_message(call)),
+                format!(
+                    "first retrieval failed: {}{}",
+                    tool_message(call),
+                    transport.diagnostic_context()
+                ),
             ));
         }
         let structured = call.get("structuredContent").ok_or_else(|| {
@@ -391,6 +398,7 @@ struct DoctorTransport {
     child: Child,
     stdin: Option<ChildStdin>,
     lines: mpsc::Receiver<String>,
+    diagnostics: Arc<Mutex<VecDeque<String>>>,
 }
 
 impl DoctorTransport {
@@ -408,7 +416,7 @@ impl DoctorTransport {
             .arg("mcp")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| doctor_error("launch", error.to_string()))?;
         let stdin = child
@@ -419,6 +427,10 @@ impl DoctorTransport {
             .stdout
             .take()
             .ok_or_else(|| doctor_error("launch", "could not open MCP stdout"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| doctor_error("launch", "could not open MCP stderr"))?;
         let (sender, lines) = mpsc::channel();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
@@ -428,10 +440,33 @@ impl DoctorTransport {
                 }
             }
         });
+        let diagnostics = Arc::new(Mutex::new(VecDeque::new()));
+        let diagnostic_lines = Arc::clone(&diagnostics);
+        let redactions = [
+            config.root.to_string_lossy().into_owned(),
+            config.database_path.to_string_lossy().into_owned(),
+        ];
+        std::thread::spawn(move || {
+            let _ = read_bounded_diagnostic_lines(BufReader::new(stderr), |bytes| {
+                let line = String::from_utf8_lossy(bytes);
+                let line = sanitize_diagnostic_line(&line, &redactions);
+                if line.is_empty() {
+                    return;
+                }
+                let Ok(mut lines) = diagnostic_lines.lock() else {
+                    return;
+                };
+                if lines.len() == MAX_DIAGNOSTIC_LINES {
+                    lines.pop_front();
+                }
+                lines.push_back(line);
+            });
+        });
         Ok(Self {
             child,
             stdin: Some(stdin),
             lines,
+            diagnostics,
         })
     }
 
@@ -460,13 +495,33 @@ impl DoctorTransport {
                 ));
             }
             let line = self.lines.recv_timeout(remaining).map_err(|error| {
-                doctor_error(stage, format!("MCP response {id} was unavailable: {error}"))
+                doctor_error(
+                    stage,
+                    format!(
+                        "MCP response {id} was unavailable: {error}{}",
+                        self.diagnostic_context()
+                    ),
+                )
             })?;
             let message: Value = serde_json::from_str(&line)
                 .map_err(|error| doctor_error(stage, error.to_string()))?;
             if message.get("id").and_then(Value::as_u64) == Some(id) {
                 return Ok(message);
             }
+        }
+    }
+
+    fn diagnostic_context(&self) -> String {
+        let Ok(lines) = self.diagnostics.lock() else {
+            return String::new();
+        };
+        if lines.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "; child diagnostics: {}",
+                lines.iter().cloned().collect::<Vec<_>>().join(" | ")
+            )
         }
     }
 
@@ -484,6 +539,60 @@ impl DoctorTransport {
     }
 }
 
+fn read_bounded_diagnostic_lines(
+    mut reader: impl BufRead,
+    mut consume_line: impl FnMut(&[u8]),
+) -> std::io::Result<()> {
+    let mut line = Vec::with_capacity(MAX_DIAGNOSTIC_LINE_BYTES);
+    loop {
+        let (consumed, line_ended) = {
+            let available = reader.fill_buf()?;
+            if available.is_empty() {
+                if !line.is_empty() {
+                    consume_line(&line);
+                }
+                return Ok(());
+            }
+            let newline = available.iter().position(|byte| *byte == b'\n');
+            let content_end = newline.unwrap_or(available.len());
+            let retained = (MAX_DIAGNOSTIC_LINE_BYTES - line.len()).min(content_end);
+            line.extend_from_slice(&available[..retained]);
+            (
+                newline.map_or(available.len(), |index| index + 1),
+                newline.is_some(),
+            )
+        };
+        reader.consume(consumed);
+        if line_ended {
+            consume_line(&line);
+            line.clear();
+        }
+    }
+}
+
+fn sanitize_diagnostic_line(line: &str, redactions: &[String]) -> String {
+    let mut sanitized = line
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    for value in redactions.iter().filter(|value| !value.is_empty()) {
+        sanitized = sanitized.replace(value, "<redacted-path>");
+    }
+    sanitized
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(MAX_DIAGNOSTIC_LINE_CHARS)
+        .collect()
+}
+
 impl Drop for DoctorTransport {
     fn drop(&mut self) {
         self.stdin.take();
@@ -491,5 +600,38 @@ impl Drop for DoctorTransport {
             let _ = self.child.kill();
         }
         let _ = self.child.wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::*;
+
+    #[test]
+    fn child_diagnostics_are_bounded_and_redact_configured_paths() {
+        let path = "/private/repository";
+        let line = format!("error opening {path}: {}", "x".repeat(1_000));
+
+        let sanitized = sanitize_diagnostic_line(&line, &[path.to_string()]);
+
+        assert!(sanitized.contains("<redacted-path>"));
+        assert!(!sanitized.contains(path));
+        assert_eq!(sanitized.chars().count(), MAX_DIAGNOSTIC_LINE_CHARS);
+    }
+
+    #[test]
+    fn child_diagnostic_reader_discards_oversized_line_remainders() {
+        let mut input = vec![b'x'; MAX_DIAGNOSTIC_LINE_BYTES * 4];
+        input.extend_from_slice(b"\nnext\n");
+        let mut lines = Vec::new();
+
+        read_bounded_diagnostic_lines(Cursor::new(input), |line| lines.push(line.to_vec()))
+            .expect("read diagnostics");
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].len(), MAX_DIAGNOSTIC_LINE_BYTES);
+        assert_eq!(lines[1], b"next");
     }
 }

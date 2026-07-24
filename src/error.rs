@@ -69,6 +69,12 @@ pub enum Error {
     },
     #[error("path escapes repository root: {0}")]
     PathOutsideRoot(PathBuf),
+    /// Filesystem path cannot be represented by the UTF-8 retrieval API.
+    #[error("repository path is not valid UTF-8: {0}")]
+    UnsupportedPathEncoding(PathBuf),
+    /// Ignore-aware traversal failed before complete membership was known.
+    #[error("repository traversal failed: {0}")]
+    RepositoryTraversal(#[from] ignore::Error),
     #[error("path is not indexed: {0}")]
     NotIndexed(String),
     /// Requested symbol was absent from an indexed file.
