@@ -18,7 +18,9 @@ use crate::repository::{
     DiscoveredFile, discover_files_with_limits_policy_and_filter, enforce_limit, slash_path,
     validate_relative,
 };
-use crate::storage::{ChunkInput, ImportInput, IndexedFile, ReferenceInput, Storage, SymbolInput};
+use crate::storage::{
+    ChunkInput, ImportInput, ImportProjection, IndexedFile, ReferenceInput, Storage, SymbolInput,
+};
 use crate::text::{PreparedText, TextKind, hash_bytes};
 use crate::{Config, Error, Result};
 
@@ -110,6 +112,20 @@ struct ChangeSet {
     modified: Vec<String>,
     deleted: Vec<String>,
     visibility_recomputed: bool,
+}
+
+#[derive(Debug)]
+struct RelocationPlan {
+    old_path: String,
+    new_file: DiscoveredFile,
+    expected_hash: String,
+}
+
+#[derive(Debug, Eq, Hash, PartialEq)]
+struct RelocationKey {
+    content_hash: String,
+    size_bytes: u64,
+    language: Option<String>,
 }
 
 impl ChangeSet {
@@ -733,26 +749,82 @@ impl Indexer {
             repository_paths.remove(deletion);
         }
         repository_paths.extend(candidates.keys().cloned());
-        let forced_importers =
-            self.add_affected_importers(&mut candidates, &deletions, &change_set, cancellation)?;
+        let relocations =
+            self.plan_relocations(&existing, &candidates, &change_set, cancellation)?;
+        let affected_importers = self.affected_importers(&deletions, &change_set, cancellation)?;
         self.validate_membership_limits(&existing, &candidates, &deletions, cancellation)?;
         directly_observed_deletions.retain(|path| deletions.contains(path));
         debug_assert!(directly_observed_deletions.is_subset(&deletions));
 
         let files_seen = candidates.len() + directly_observed_deletions.len();
-        let candidates = candidates.into_values().collect::<Vec<_>>();
+        let relocation_old_paths = relocations
+            .iter()
+            .map(|relocation| relocation.old_path.clone())
+            .collect::<HashSet<_>>();
+        let relocation_new_paths = relocations
+            .iter()
+            .map(|relocation| relocation.new_file.relative_path.clone())
+            .collect::<HashSet<_>>();
+        let mut import_refresh_paths = affected_importers;
+        import_refresh_paths.extend(relocation_old_paths.iter().cloned());
+        let source_path_overrides = relocations
+            .iter()
+            .map(|relocation| {
+                (
+                    relocation.old_path.clone(),
+                    relocation.new_file.relative_path.clone(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let import_projections = self.import_projections(
+            &import_refresh_paths,
+            &source_path_overrides,
+            &repository_paths,
+            cancellation,
+        )?;
+        let mut updated_paths = import_refresh_paths
+            .iter()
+            .filter(|path| !deletions.contains(*path))
+            .cloned()
+            .collect::<HashSet<_>>();
+        for relocation in &relocations {
+            updated_paths.remove(&relocation.old_path);
+            updated_paths.insert(relocation.new_file.relative_path.clone());
+        }
+        let candidates = candidates
+            .into_iter()
+            .filter_map(|(path, file)| (!relocation_new_paths.contains(&path)).then_some(file))
+            .collect::<Vec<_>>();
         let mut source_bytes =
             PublishedSourceBytes::new(&existing, &deletions, self.config.max_total_source_bytes);
+        for relocation in &relocations {
+            source_bytes.replace(
+                &relocation.new_file.relative_path,
+                relocation.new_file.size_bytes,
+            );
+        }
         let mut warnings = Vec::new();
         let mut skip_reasons = IndexSkipReasonCounts::default();
-        let mut files_indexed = 0usize;
         before_preparation();
         let (generation, _preparation) =
             self.storage
                 .publish_reconciliation_at(&baseline, &config_hash, false, |writer| {
                     for path in &deletions {
+                        if relocation_old_paths.contains(path) {
+                            continue;
+                        }
                         writer.delete(path)?;
                     }
+                    for relocation in &relocations {
+                        writer.relocate(
+                            &relocation.old_path,
+                            &relocation.new_file.relative_path,
+                            relocation.new_file.size_bytes,
+                            relocation.new_file.modified_ns,
+                            &relocation.expected_hash,
+                        )?;
+                    }
+                    writer.refresh_import_projections(&import_projections)?;
                     let preparation =
                         self.prepare_candidate_batches(&candidates, cancellation, |prepared| {
                             let mut indexed = Vec::with_capacity(prepared.len());
@@ -767,7 +839,7 @@ impl Indexer {
                                                 && record.size_bytes == file.size_bytes
                                                 && record.modified_ns == file.modified_ns
                                         });
-                                        if same && !forced_importers.contains(&file.path) {
+                                        if same {
                                             unchanged += 1;
                                             continue;
                                         }
@@ -804,9 +876,9 @@ impl Indexer {
                                 }
                             }
                             resolve_imports(&mut indexed, &repository_paths, cancellation)?;
-                            files_indexed = files_indexed.saturating_add(indexed.len());
                             for file in indexed {
                                 check_cancelled(cancellation)?;
+                                updated_paths.insert(file.path.clone());
                                 let source_token_count = source_token_counts
                                     .remove(&file.path)
                                     .expect("prepared file has a source token count");
@@ -823,6 +895,7 @@ impl Indexer {
                 })?;
         check_cancelled(cancellation)?;
         let files_removed = deletions.len();
+        let files_indexed = updated_paths.len();
         let files_skipped = skip_reasons.total();
 
         let response = IndexResponse {
@@ -906,45 +979,123 @@ impl Indexer {
         Ok(metrics)
     }
 
-    fn add_affected_importers(
+    fn plan_relocations(
         &self,
-        candidates: &mut HashMap<String, DiscoveredFile>,
+        existing: &HashMap<String, crate::storage::FileRecord>,
+        candidates: &HashMap<String, DiscoveredFile>,
+        change_set: &ChangeSet,
+        cancellation: &CancellationToken,
+    ) -> Result<Vec<RelocationPlan>> {
+        if change_set.created.is_empty() || change_set.deleted.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut old_by_key = HashMap::<RelocationKey, Vec<String>>::new();
+        for path in &change_set.deleted {
+            check_cancelled(cancellation)?;
+            let Some(record) = existing.get(path) else {
+                continue;
+            };
+            old_by_key
+                .entry(RelocationKey {
+                    content_hash: record.content_hash.clone(),
+                    size_bytes: record.size_bytes,
+                    language: record.language.clone(),
+                })
+                .or_default()
+                .push(path.clone());
+        }
+
+        let mut new_by_key = HashMap::<RelocationKey, Vec<DiscoveredFile>>::new();
+        for path in &change_set.created {
+            check_cancelled(cancellation)?;
+            let Some(file) = candidates.get(path) else {
+                continue;
+            };
+            let bytes = match read_bounded(
+                &self.repository_root,
+                &file.relative_path,
+                self.config.max_file_bytes,
+            ) {
+                Ok(Some(bytes)) => bytes,
+                Ok(None) | Err(_) => continue,
+            };
+            new_by_key
+                .entry(RelocationKey {
+                    content_hash: hash_bytes(&bytes),
+                    size_bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+                    language: parser::language_by_path(&file.relative_path),
+                })
+                .or_default()
+                .push(file.clone());
+        }
+
+        let mut relocations = Vec::new();
+        for (key, old_paths) in old_by_key {
+            let Some(new_files) = new_by_key.get(&key) else {
+                continue;
+            };
+            if old_paths.len() != 1 || new_files.len() != 1 {
+                continue;
+            }
+            relocations.push(RelocationPlan {
+                old_path: old_paths[0].clone(),
+                new_file: new_files[0].clone(),
+                expected_hash: key.content_hash,
+            });
+        }
+        relocations.sort_unstable_by(|left, right| {
+            left.new_file
+                .relative_path
+                .cmp(&right.new_file.relative_path)
+        });
+        Ok(relocations)
+    }
+
+    fn import_projections(
+        &self,
+        paths: &HashSet<String>,
+        source_path_overrides: &HashMap<String, String>,
+        repository_paths: &HashSet<String>,
+        cancellation: &CancellationToken,
+    ) -> Result<Vec<ImportProjection>> {
+        let mut paths = paths.iter().cloned().collect::<Vec<_>>();
+        paths.sort_unstable();
+        let seeds = self.storage.import_seeds_for_paths(&paths)?;
+        let mut projections = Vec::with_capacity(seeds.len());
+        for seed in seeds {
+            check_cancelled(cancellation)?;
+            let source_path = source_path_overrides
+                .get(&seed.source_path)
+                .map_or(seed.source_path.as_str(), String::as_str);
+            let candidate_paths = import_candidates(source_path, &seed.raw_target);
+            let resolved_path = resolve_import_candidates(&candidate_paths, repository_paths);
+            projections.push(ImportProjection {
+                id: seed.id,
+                file_id: seed.file_id,
+                resolved_path,
+                candidate_paths,
+            });
+        }
+        Ok(projections)
+    }
+
+    fn affected_importers(
+        &self,
         deletions: &HashSet<String>,
         change_set: &ChangeSet,
         cancellation: &CancellationToken,
     ) -> Result<HashSet<String>> {
         let membership_changes = change_set.membership_changes();
-        let mut forced_importers = HashSet::new();
+        let mut affected = HashSet::new();
         for importer_path in self.storage.affected_importers(&membership_changes)? {
             check_cancelled(cancellation)?;
             if deletions.contains(&importer_path) {
                 continue;
             }
-            forced_importers.insert(importer_path.clone());
-            if candidates.contains_key(&importer_path) {
-                continue;
-            }
-            let absolute_path = self.config.root.join(&importer_path);
-            let metadata = fs::symlink_metadata(&absolute_path)?;
-            if !metadata.file_type().is_file() || metadata.len() > self.config.max_file_bytes {
-                continue;
-            }
-            let modified_ns = metadata
-                .modified()
-                .ok()
-                .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
-                .map(|duration| duration.as_nanos());
-            candidates.insert(
-                importer_path.clone(),
-                DiscoveredFile {
-                    absolute_path,
-                    relative_path: importer_path,
-                    size_bytes: metadata.len(),
-                    modified_ns,
-                },
-            );
+            affected.insert(importer_path);
         }
-        Ok(forced_importers)
+        Ok(affected)
     }
 
     fn validate_membership_limits(

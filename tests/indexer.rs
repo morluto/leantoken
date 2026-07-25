@@ -583,6 +583,169 @@ fn targeted_reconcile_applies_deleted_directory_delta() {
 }
 
 #[test]
+fn targeted_directory_rename_preserves_content_rows_and_refreshes_import_paths() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir_all(root.path().join("src/moved")).expect("directory");
+    std::fs::write(
+        root.path().join("src/moved/mod.rs"),
+        "use self::child::item;\npub fn call() { item(); }\n",
+    )
+    .expect("module");
+    std::fs::write(
+        root.path().join("src/moved/child.rs"),
+        "pub fn item() {}\n",
+    )
+    .expect("child");
+    std::fs::write(
+        root.path().join("src/consumer.rs"),
+        "use moved::child::item;\npub fn consume() { item(); }\n",
+    )
+    .expect("consumer");
+    let config = Arc::new(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    );
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+    indexer.reconcile(false).expect("initial reconcile");
+
+    let module = storage
+        .find_file("src/moved/mod.rs")
+        .expect("module lookup")
+        .expect("module");
+    let module_chunk = storage
+        .get_chunks_for_file(module.id, 10)
+        .expect("module chunks")[0]
+        .id;
+    let module_symbol = storage
+        .get_symbols_for_file(module.id, 10)
+        .expect("module symbols")
+        .into_iter()
+        .find(|symbol| symbol.name == "call")
+        .expect("call symbol")
+        .id;
+    let consumer = storage
+        .find_file("src/consumer.rs")
+        .expect("consumer lookup")
+        .expect("consumer");
+    let consumer_chunk = storage
+        .get_chunks_for_file(consumer.id, 10)
+        .expect("consumer chunks")[0]
+        .id;
+
+    std::fs::rename(root.path().join("src/moved"), root.path().join("src/renamed"))
+        .expect("rename directory");
+    let response = indexer
+        .reconcile_paths(&["src/moved".into(), "src/renamed".into()])
+        .expect("targeted rename");
+
+    assert_eq!(response.files_removed, 2);
+    assert_eq!(response.files_indexed, 3);
+    let relocated = storage
+        .find_file("src/renamed/mod.rs")
+        .expect("relocated lookup")
+        .expect("relocated module");
+    assert_eq!(relocated.id, module.id);
+    assert_eq!(
+        storage
+            .get_chunks_for_file(relocated.id, 10)
+            .expect("relocated chunks")[0]
+            .id,
+        module_chunk
+    );
+    assert_eq!(
+        storage
+            .get_symbols_for_file(relocated.id, 10)
+            .expect("relocated symbols")
+            .into_iter()
+            .find(|symbol| symbol.name == "call")
+            .expect("relocated call symbol")
+            .id,
+        module_symbol
+    );
+    assert_eq!(
+        storage.search_word("call", 10).expect("relocated search")[0].path,
+        "src/renamed/mod.rs"
+    );
+    assert_eq!(
+        storage
+            .get_imports_for_file(relocated.id, 10)
+            .expect("relocated imports")[0]
+            .resolved_path
+            .as_deref(),
+        Some("src/renamed/child.rs")
+    );
+    let refreshed_consumer = storage
+        .find_file("src/consumer.rs")
+        .expect("refreshed consumer lookup")
+        .expect("refreshed consumer");
+    assert_eq!(refreshed_consumer.id, consumer.id);
+    assert_eq!(
+        storage
+            .get_chunks_for_file(refreshed_consumer.id, 10)
+            .expect("refreshed consumer chunks")[0]
+            .id,
+        consumer_chunk
+    );
+    assert_eq!(
+        storage
+            .get_imports_for_file(refreshed_consumer.id, 10)
+            .expect("refreshed consumer imports")[0]
+            .resolved_path,
+        None
+    );
+}
+
+#[test]
+fn targeted_rename_with_ambiguous_duplicate_content_uses_replacement_path() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("old")).expect("old directory");
+    for name in ["first.rs", "second.rs"] {
+        std::fs::write(root.path().join("old").join(name), "pub fn duplicate() {}\n")
+            .expect("fixture");
+    }
+    std::fs::write(root.path().join("zz_keep.rs"), "pub fn keep() {}\n").expect("keep fixture");
+    let config = Arc::new(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    );
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+    indexer.reconcile(false).expect("initial reconcile");
+    let old_ids = ["old/first.rs", "old/second.rs"]
+        .into_iter()
+        .map(|path| {
+            storage
+                .find_file(path)
+                .expect("old lookup")
+                .expect("old file")
+                .id
+        })
+        .collect::<Vec<_>>();
+    let keep_id = storage
+        .find_file("zz_keep.rs")
+        .expect("keep lookup")
+        .expect("keep file")
+        .id;
+    assert!(old_ids.iter().all(|id| *id < keep_id));
+
+    std::fs::rename(root.path().join("old"), root.path().join("new")).expect("rename directory");
+    let response = indexer
+        .reconcile_paths(&["old".into(), "new".into()])
+        .expect("targeted rename");
+
+    assert_eq!(response.files_indexed, 2);
+    assert_eq!(response.files_removed, 2);
+    for path in ["new/first.rs", "new/second.rs"] {
+        let new_id = storage
+            .find_file(path)
+            .expect("new lookup")
+            .expect("new file")
+            .id;
+        assert!(!old_ids.contains(&new_id));
+        assert!(new_id > keep_id);
+    }
+}
+
+#[test]
 fn targeted_reconcile_applies_new_file_and_ignore_deltas() {
     let root = tempfile::tempdir().expect("root");
     std::fs::create_dir(root.path().join(".git")).expect("git marker");
@@ -782,6 +945,11 @@ fn new_file_delta_resolves_existing_importers() {
         .find_file("consumer.rs")
         .expect("find consumer")
         .expect("consumer");
+    let consumer_id = consumer.id;
+    let consumer_chunk = storage
+        .get_chunks_for_file(consumer.id, 10)
+        .expect("consumer chunks")[0]
+        .id;
     assert_eq!(
         storage
             .get_imports_for_file(consumer.id, 10)
@@ -792,7 +960,7 @@ fn new_file_delta_resolves_existing_importers() {
 
     std::fs::write(root.path().join("target.rs"), "pub fn item() {}\n").expect("target");
     let response = indexer
-        .reconcile_paths(&["target.rs".into(), "consumer.rs".into()])
+        .reconcile_paths(&["target.rs".into()])
         .expect("new target delta");
     assert_eq!(response.files_indexed, 2);
 
@@ -800,6 +968,14 @@ fn new_file_delta_resolves_existing_importers() {
         .find_file("consumer.rs")
         .expect("find consumer")
         .expect("consumer after rebuild");
+    assert_eq!(consumer.id, consumer_id);
+    assert_eq!(
+        storage
+            .get_chunks_for_file(consumer.id, 10)
+            .expect("consumer chunks")[0]
+            .id,
+        consumer_chunk
+    );
     assert_eq!(
         storage
             .get_imports_for_file(consumer.id, 10)
