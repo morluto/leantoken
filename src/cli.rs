@@ -635,6 +635,10 @@ pub struct SearchArgs {
     #[arg(long)]
     pub all_occurrences: bool,
 
+    /// Prefer structural definitions when identifier channels find the same definition.
+    #[arg(long)]
+    pub prefer_structural: bool,
+
     /// Pagination cursor.
     #[arg(long)]
     pub cursor: Option<String>,
@@ -653,6 +657,7 @@ impl From<SearchArgs> for SearchRequest {
             context_lines: args.context_lines,
             case_sensitive: args.case_sensitive,
             all_occurrences: args.all_occurrences,
+            prefer_structural: args.prefer_structural,
             cursor: args.cursor,
         }
     }

@@ -140,6 +140,9 @@ struct SearchMcpRequest {
     /// Return every text or regex occurrence with exact coordinates and counts.
     #[serde(default)]
     all_occurrences: bool,
+    /// Prefer structural definitions when identifier channels find the same definition.
+    #[serde(default)]
+    prefer_structural: bool,
     /// Cursor returned by the same search and repository generation.
     #[serde(default)]
     #[schemars(length(max = 4096))]
@@ -174,6 +177,7 @@ impl SearchMcpRequest {
                 context_lines: self.context_lines,
                 case_sensitive: self.case_sensitive,
                 all_occurrences: self.all_occurrences,
+                prefer_structural: self.prefer_structural,
                 cursor: self.cursor,
             },
             self.consistency,

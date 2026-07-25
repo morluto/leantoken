@@ -200,6 +200,9 @@ pub struct SearchRequest {
     /// Return every text or regex occurrence instead of one hit per indexed chunk.
     #[serde(default)]
     pub all_occurrences: bool,
+    /// Prefer a structural definition when lexical and structural channels find the same definition.
+    #[serde(default)]
+    pub prefer_structural: bool,
     /// Cursor returned by an earlier response from the same generation.
     #[serde(default)]
     pub cursor: Option<String>,
@@ -225,6 +228,9 @@ pub struct SearchHit {
     pub end_line: usize,
     pub excerpt: String,
     pub match_kind: String,
+    /// Search channels represented by this possibly merged hit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub match_kinds: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<ReferenceRole>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -235,13 +241,41 @@ pub struct SearchHit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occurrence: Option<SearchOccurrence>,
     pub score: f64,
+    /// Score normalized against the strongest candidate in this response query.
+    #[serde(default)]
+    pub normalized_score: f64,
     pub score_reasons: Vec<String>,
     pub content_hash: String,
+}
+
+/// Returned and omitted hit counts for one search channel.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SearchCoverageCount {
+    /// Deduplicated hits available before pagination and token limits.
+    pub total: usize,
+    /// Hits from this channel returned in the current response.
+    pub returned: usize,
+    /// Available hits from this channel not returned in the current response.
+    pub truncated: usize,
+}
+
+/// Search coverage separated by evidence channel.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SearchCoverage {
+    /// Structural definition hits.
+    pub definitions: SearchCoverageCount,
+    /// Structural reference hits.
+    pub references: SearchCoverageCount,
+    /// Lexical text and regex hits.
+    pub text_matches: SearchCoverageCount,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SearchResponse {
     pub hits: Vec<SearchHit>,
+    /// Per-channel availability and current-page coverage.
+    #[serde(default)]
+    pub coverage: SearchCoverage,
     /// Occurrences returned in this response page after token limits.
     #[serde(default)]
     pub occurrences_returned: usize,
