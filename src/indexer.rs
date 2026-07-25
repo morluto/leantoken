@@ -1136,10 +1136,12 @@ fn prepare_file(
             ));
         }
     };
-    let prepared = PreparedText::from_bytes(&bytes, chunk_lines, chunk_bytes);
+    let size_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let prepared = PreparedText::from_vec(bytes, chunk_lines, chunk_bytes);
     if prepared.kind == TextKind::Binary {
         return Ok(PreparedFile::Binary(file.relative_path.clone()));
     }
+    let content_hash = hash_bytes(prepared.content.as_bytes());
 
     let (parsed, warning) =
         match parser::parse_with_cancellation(&file.relative_path, &prepared.content, cancellation)
@@ -1218,9 +1220,9 @@ fn prepare_file(
             path: file.relative_path.clone(),
             language: parsed.language,
             structurally_complete: parsed.structurally_complete,
-            size_bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+            size_bytes,
             modified_ns: file.modified_ns,
-            content_hash: hash_bytes(&bytes),
+            content_hash,
             chunks,
             symbols,
             references,

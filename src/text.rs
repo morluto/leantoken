@@ -33,10 +33,20 @@ impl PreparedText {
     /// Panics if `max_chunk_lines` or `max_chunk_bytes` is zero.
     #[must_use]
     pub fn from_bytes(bytes: &[u8], max_chunk_lines: usize, max_chunk_bytes: usize) -> Self {
+        Self::from_vec(bytes.to_vec(), max_chunk_lines, max_chunk_bytes)
+    }
+
+    /// Decode an owned byte buffer without copying valid UTF-8 source.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `max_chunk_lines` or `max_chunk_bytes` is zero.
+    #[must_use]
+    pub fn from_vec(bytes: Vec<u8>, max_chunk_lines: usize, max_chunk_bytes: usize) -> Self {
         assert!(max_chunk_lines > 0, "max_chunk_lines must be positive");
         assert!(max_chunk_bytes > 0, "max_chunk_bytes must be positive");
 
-        let kind = detect_kind(bytes);
+        let kind = detect_kind(&bytes);
         if kind == TextKind::Binary {
             return Self {
                 kind,
@@ -47,11 +57,9 @@ impl PreparedText {
         }
 
         // `detect_kind` already verified valid UTF-8.
-        let content = std::str::from_utf8(bytes)
-            .expect("utf8 verified")
-            .to_string();
+        let content = String::from_utf8(bytes).expect("utf8 verified");
         let chunks = chunk_text(&content, max_chunk_lines, max_chunk_bytes);
-        let line_count = line_starts(&content).len();
+        let line_count = chunks.last().map_or(0, |chunk| chunk.end_line);
 
         Self {
             kind,
