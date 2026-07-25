@@ -272,5 +272,12 @@ exact MCP wire proxy are documented in [`measurement.md`](measurement.md).
 The same guide documents the synthetic indexing and file-read profile used to
 gate targeted reconciliation and any future hot-file cache.
 
+For same-host regression checks, use the opt-in paired performance runner
+documented in the benchmark guide. It builds clean base/head worktrees with the
+pinned Rust toolchain, alternates AB/BA order, validates observable-response
+parity, and delegates statistical comparison to pinned Benchstat. Its
+comparator contract is part of the normal example-test CI group; the expensive
+timing workflow runs only by manual dispatch.
+
 Keep negative results. Do not tune prompts, labels, or budgets after seeing a
 result without recording a new manifest version.
