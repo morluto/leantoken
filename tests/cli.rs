@@ -111,6 +111,23 @@ fn cli_search_request() {
 }
 
 #[test]
+fn cli_identifier_search_prefers_structural_hits() {
+    let cli = parse(&[
+        "search",
+        "target",
+        "--mode",
+        "identifier",
+        "--prefer-structural",
+    ]);
+    let AppRequest::Search(request) = cli.app_request() else {
+        panic!("expected search request");
+    };
+
+    assert_eq!(request.mode, SearchMode::Identifier);
+    assert!(request.prefer_structural);
+}
+
+#[test]
 fn cli_search_default_mode_is_auto() {
     let cli = parse(&["search", "bar"]);
     let AppRequest::Search(request) = cli.app_request() else {

@@ -813,6 +813,11 @@ expression: tools
           "default": "auto",
           "description": "Candidate source to search (default `auto`)."
         },
+        "prefer_structural": {
+          "default": false,
+          "description": "Prefer structural definitions when identifier channels find the same definition.",
+          "type": "boolean"
+        },
         "query": {
           "description": "Non-empty text, identifier, symbol, or Rust regular expression to find.",
           "maxLength": 65536,

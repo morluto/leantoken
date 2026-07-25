@@ -319,8 +319,18 @@ Returns ranked source excerpts. Modes are `auto`, `text`, `regex`,
 Inputs include path filters, focus paths, result and token limits, context-line
 count, case sensitivity, and a generation-bound cursor. Defaults are 20 results,
 8,000 source tokens, and two context lines. Each hit includes its
-path, one-based returned line range, excerpt, match kind, score reasons, and
-content hash. Structural fields appear only when syntax supports them.
+path, one-based returned line range, excerpt, primary `match_kind`, all merged
+`match_kinds`, score reasons, content hash, raw score, and a `normalized_score`
+from 0 to 1 relative to the strongest candidate in the query. Structural fields
+appear only when syntax supports them.
+
+`auto` and `identifier` searches merge lexical and structural hits that resolve
+to the same indexed definition coordinates. Set `prefer_structural=true` to
+retain the structural definition excerpt as the primary hit when channels are
+merged; merged channel and score-reason diagnostics are preserved either way.
+The response `coverage` reports `total`, current-page `returned`, and
+`truncated` counts separately for definitions, references, and text/regex
+matches. One merged hit can represent more than one channel.
 
 Set `all_occurrences` in `text` or `regex` mode to return one hit for every
 non-overlapping match, including repeated matches in one indexed chunk or line.

@@ -222,6 +222,7 @@ async fn compare_context_representations() {
                 context_lines: Some(2),
                 case_sensitive: false,
                 all_occurrences: false,
+                prefer_structural: false,
                 cursor: None,
             })
             .await

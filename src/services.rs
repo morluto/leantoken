@@ -690,6 +690,7 @@ mod tests {
                 context_lines: Some(1),
                 case_sensitive: false,
                 all_occurrences: false,
+                prefer_structural: false,
                 cursor: None,
             })
             .await
@@ -822,6 +823,7 @@ mod tests {
             context_lines: Some(0),
             case_sensitive: false,
             all_occurrences: false,
+            prefer_structural: false,
             cursor: None,
         };
         let response = services.search(request.clone()).await.expect("search");
@@ -983,6 +985,7 @@ mod tests {
                 context_lines: Some(0),
                 case_sensitive: true,
                 all_occurrences: false,
+                prefer_structural: false,
                 cursor: None,
             })
             .await
