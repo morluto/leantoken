@@ -2,9 +2,9 @@ use std::time::Instant;
 
 use leantoken::{
     Config, ContextRequest, ContextSignalPolicy, ContextWorkflow, Error, FileOperation, FilesRequest,
-    Freshness, IndexConsistency, IndexState, OutlineRequest, ReadRequest, ReadStatus, SearchMode,
-    SearchRequest, TokenSavingsOperation, coordination::IndexCoordination, services::Services,
-    tokens::Tokenizer,
+    Freshness, HistoryOperation, HistoryRequest, IndexConsistency, IndexState, OutlineRequest,
+    ReadRequest, ReadStatus, SearchMode, SearchRequest, TokenSavingsOperation,
+    coordination::IndexCoordination, services::Services, tokens::Tokenizer,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -5255,6 +5255,184 @@ fn init_git_repo(root: &std::path::Path) {
     run(&["config", "user.name", "Test"]);
     run(&["add", "-A"]);
     run(&["commit", "-m", "init"]);
+}
+
+#[tokio::test]
+async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
+    if !git_available() {
+        return;
+    }
+
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("src")).expect("source directory");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn tracked() -> u32 { 1 }\n\npub fn unrelated() -> u32 { 10 }\n",
+    )
+    .expect("base source");
+    init_git_repo(root.path());
+    let revision = |name: &str| {
+        String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", name])
+                .current_dir(root.path())
+                .output()
+                .expect("resolve revision")
+                .stdout,
+        )
+        .expect("UTF-8 revision")
+        .trim()
+        .to_owned()
+    };
+    let commit = |message: &str| {
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-m", message],
+        ] {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(root.path())
+                .output()
+                .expect("git commit command");
+            assert!(output.status.success());
+        }
+    };
+    let base = revision("HEAD");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn tracked() -> u32 { 2 }\n\npub fn unrelated() -> u32 { 10 }\n",
+    )
+    .expect("updated symbol");
+    commit("update tracked");
+    let changed = revision("HEAD");
+    std::fs::write(
+        root.path().join("src/other.rs"),
+        "pub fn later_change() -> u32 { 11 }\n",
+    )
+    .expect("unrelated update");
+    commit("update unrelated");
+
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let read = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::ReadSymbol {
+                path: "src/lib.rs".into(),
+                symbol: "tracked".into(),
+                revision: base.clone(),
+            },
+            max_results: None,
+            max_tokens: Some(100),
+        })
+        .await
+        .expect("historical read");
+    let historical = read.symbol.as_ref().expect("historical symbol");
+    assert_eq!(
+        historical.content.as_deref(),
+        Some("pub fn tracked() -> u32 { 1 }")
+    );
+    assert!(!historical.truncated);
+    assert_response_token_accounting!(read, Tokenizer::default());
+
+    let truncated = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::ReadSymbol {
+                path: "src/lib.rs".into(),
+                symbol: "tracked".into(),
+                revision: historical.revision.clone(),
+            },
+            max_results: None,
+            max_tokens: Some(1),
+        })
+        .await
+        .expect("truncated historical read");
+    assert!(!truncated.result_complete);
+    assert!(truncated.symbol.as_ref().expect("symbol").truncated);
+
+    let diff = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::DiffSymbol {
+                path: "src/lib.rs".into(),
+                symbol: "tracked".into(),
+                base_revision: base.clone(),
+                head_revision: changed.clone(),
+            },
+            max_results: None,
+            max_tokens: Some(100),
+        })
+        .await
+        .expect("historical diff");
+    let patch = diff.diff.as_deref().expect("symbol diff");
+    assert!(patch.contains("-pub fn tracked() -> u32 { 1 }"));
+    assert!(patch.contains("+pub fn tracked() -> u32 { 2 }"));
+    assert!(diff.result_complete);
+    assert_response_token_accounting!(diff, Tokenizer::default());
+
+    let log = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::SymbolLog {
+                path: "src/lib.rs".into(),
+                symbol: "tracked".into(),
+                revision: None,
+            },
+            max_results: Some(1),
+            max_tokens: None,
+        })
+        .await
+        .expect("symbol history");
+    assert!(!log.result_complete);
+    assert_eq!(log.commits.len(), 1);
+    assert_eq!(log.commits[0].subject, "update tracked");
+    assert!(
+        log.commits
+            .iter()
+            .all(|commit| commit.subject != "update unrelated")
+    );
+    assert_response_token_accounting!(log, Tokenizer::default());
+
+    let context = services
+        .context(ContextRequest {
+            task: "review tracked".into(),
+            token_budget: 500,
+            include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
+            focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
+            focus_symbols: vec!["tracked".into()],
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            receipt_id: None,
+            prior_repository_generation: None,
+            base_revision: Some(format!("{base}..{changed}")),
+            changed_paths: Vec::new(),
+            strict_changed_paths: true,
+        })
+        .await
+        .expect("immutable range context");
+    let scope = context.diff_scope.expect("immutable range scope");
+    assert_eq!(scope.base_revision.as_deref(), Some(&base[..12]));
+    assert_eq!(scope.head_revision.as_deref(), Some(&changed[..12]));
+    assert_eq!(scope.changed_paths, vec!["src/lib.rs"]);
+    assert!(
+        context
+            .fragments
+            .iter()
+            .all(|fragment| fragment.path == "src/lib.rs")
+    );
+    assert!(
+        scope
+            .evidence
+            .expect("range evidence")
+            .changed_hunks
+            .iter()
+            .all(|hunk| hunk.path == "src/lib.rs")
+    );
 }
 
 #[tokio::test]

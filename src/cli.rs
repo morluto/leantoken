@@ -13,8 +13,8 @@ use crate::cache::CachePruneRequest;
 use crate::config::DEFAULT_CONTEXT_TOKENS;
 use crate::mcp::McpResultMode;
 use crate::model::{
-    ContextRequest, FileOperation, FilesRequest, OutlineRequest, ReadRequest, SearchMode,
-    SearchRequest,
+    ContextRequest, FileOperation, FilesRequest, HistoryOperation, HistoryRequest, OutlineRequest,
+    ReadRequest, SearchMode, SearchRequest,
 };
 use crate::setup::{SetupClient, SetupRequest};
 use crate::tokens::Tokenizer;
@@ -253,6 +253,7 @@ impl Cli {
             Commands::Search(args) => AppRequest::Search(args.into()),
             Commands::Outline(args) => AppRequest::Outline(args.into()),
             Commands::Read(args) => AppRequest::Read(args.into()),
+            Commands::History(args) => AppRequest::History(args.into()),
             Commands::Context(args) => {
                 let workflow = args.workflow.into();
                 AppRequest::Context {
@@ -290,6 +291,7 @@ pub enum AppRequest {
     Search(SearchRequest),
     Outline(OutlineRequest),
     Read(ReadRequest),
+    History(HistoryRequest),
     Context {
         request: ContextRequest,
         workflow: crate::model::ContextWorkflow,
@@ -334,6 +336,9 @@ pub enum Commands {
 
     /// Read a bounded source range.
     Read(ReadArgs),
+
+    /// Read, diff, or trace a symbol across Git revisions.
+    History(HistoryArgs),
 
     /// Retrieve ranked task context within a token budget.
     Context(ContextArgs),
@@ -835,6 +840,86 @@ impl From<ReadArgs> for ReadRequest {
 }
 
 #[derive(Debug, Clone, Parser)]
+pub struct HistoryArgs {
+    #[command(subcommand)]
+    pub operation: HistoryCommand,
+
+    /// Maximum commits returned by symbol-log.
+    #[arg(long, value_parser = parse_positive_usize)]
+    pub max_results: Option<usize>,
+
+    /// Maximum source or diff tokens to return.
+    #[arg(long, value_parser = parse_positive_usize)]
+    pub max_tokens: Option<usize>,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum HistoryCommand {
+    /// Read one parsed symbol from a Git revision.
+    ReadSymbol {
+        path: String,
+        symbol: String,
+        revision: String,
+    },
+    /// Diff one parsed symbol between two Git revisions.
+    DiffSymbol {
+        path: String,
+        symbol: String,
+        base_revision: String,
+        head_revision: String,
+    },
+    /// List recent commits that touched a symbol's tracked lines.
+    SymbolLog {
+        path: String,
+        symbol: String,
+        /// Revision from which history starts.
+        #[arg(long)]
+        revision: Option<String>,
+    },
+}
+
+impl From<HistoryArgs> for HistoryRequest {
+    fn from(args: HistoryArgs) -> Self {
+        let operation = match args.operation {
+            HistoryCommand::ReadSymbol {
+                path,
+                symbol,
+                revision,
+            } => HistoryOperation::ReadSymbol {
+                path,
+                symbol,
+                revision,
+            },
+            HistoryCommand::DiffSymbol {
+                path,
+                symbol,
+                base_revision,
+                head_revision,
+            } => HistoryOperation::DiffSymbol {
+                path,
+                symbol,
+                base_revision,
+                head_revision,
+            },
+            HistoryCommand::SymbolLog {
+                path,
+                symbol,
+                revision,
+            } => HistoryOperation::SymbolLog {
+                path,
+                symbol,
+                revision,
+            },
+        };
+        Self {
+            operation,
+            max_results: args.max_results,
+            max_tokens: args.max_tokens,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Parser)]
 pub struct ContextArgs {
     /// Task description.
     #[arg(short, long)]
@@ -897,7 +982,7 @@ pub struct ContextArgs {
     #[arg(long = "prior-generation")]
     pub prior_repository_generation: Option<u64>,
 
-    /// Base revision for diff-scoped context (e.g. "origin/main").
+    /// Base revision or immutable range (e.g. "origin/main" or "BASE..HEAD").
     #[arg(long = "base-revision")]
     pub base_revision: Option<String>,
 

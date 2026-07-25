@@ -172,6 +172,7 @@ async fn run(cli: Cli) -> Result<()> {
         AppRequest::Search(request) => print(&services.search(request).await?, json),
         AppRequest::Outline(request) => print(&services.outline(request).await?, json),
         AppRequest::Read(request) => print(&services.read(request).await?, json),
+        AppRequest::History(request) => print(&services.history(request).await?, json),
         AppRequest::Context { request, workflow } => print(
             &services
                 .context_with_workflow_consistency_cancellable(

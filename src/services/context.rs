@@ -21,7 +21,8 @@ use super::validation::{
 use crate::model::*;
 use crate::ranking::{self, Candidate};
 use crate::repository::{
-    git_changed_paths, git_diff_hunks, git_diff_paths, normalize_relative, validate_relative,
+    git_changed_paths, git_diff_hunks, git_diff_hunks_between, git_diff_paths,
+    git_diff_paths_between, normalize_relative, validate_relative,
 };
 use crate::storage::{FileRecord, ReadSession, SymbolHit, SymbolRecord};
 use crate::text::{expand_terms, identifier_words};
@@ -55,6 +56,24 @@ const OVERSIZED_CHANGE_PATHS: usize = 32;
 const MIN_OVERSIZED_PATH_GROUPS: usize = 3;
 const MAX_ROUTING_GROUPS: usize = 5;
 const MAX_ROUTING_SUGGESTIONS: usize = 3;
+
+fn parse_revision_range(revision: &str) -> Result<Option<(&str, &str)>> {
+    let Some((base, head)) = revision.split_once("..") else {
+        return Ok(None);
+    };
+    if base.trim().is_empty()
+        || head.trim().is_empty()
+        || base.ends_with('.')
+        || head.starts_with('.')
+        || head.contains("..")
+    {
+        return Err(Error::InvalidInput {
+            field: "base revision",
+            reason: "revision range must be BASE..HEAD",
+        });
+    }
+    Ok(Some((base, head)))
+}
 
 #[derive(Clone, Copy)]
 enum ContextExcerptKind {
@@ -726,6 +745,7 @@ impl Services {
             .filter(|revision| !revision.trim().is_empty())
         {
             validate_input(revision, "base revision", MAX_BASE_REVISION_BYTES)?;
+            parse_revision_range(revision)?;
         }
         for query in facets::plan(&request.task, MAX_CONTEXT_QUERIES)
             .queries
@@ -1150,11 +1170,12 @@ impl Services {
 
     /// Resolve a diff scope from the request into a receipt, if one is supplied.
     ///
-    /// When `base_revision` is set, committed and working-tree paths since that
-    /// revision are resolved from the repository, including untracked files.
-    /// Explicit `changed_paths` are merged with that result. When neither input
-    /// is supplied, strict changed-path requests use the current working tree;
-    /// otherwise `None` preserves task-only behavior.
+    /// A single `base_revision` resolves committed and working-tree paths since
+    /// that revision, including untracked files. `BASE..HEAD` instead resolves
+    /// an immutable revision range. Explicit `changed_paths` are merged with
+    /// either result. When neither input is supplied, strict changed-path
+    /// requests use the current working tree; otherwise `None` preserves
+    /// task-only behavior.
     fn resolve_diff_scope(
         &self,
         request: &ContextRequest,
@@ -1164,12 +1185,26 @@ impl Services {
             .as_deref()
             .is_some_and(|rev| !rev.trim().is_empty());
         let has_paths = !request.changed_paths.is_empty();
-        let git_result = request
+        let revision = request
             .base_revision
             .as_deref()
-            .filter(|revision| !revision.trim().is_empty())
-            .map(|revision| git_diff_paths(&self.config.root, revision, MAX_DIFF_CHANGED_PATHS))
-            .transpose()?;
+            .filter(|revision| !revision.trim().is_empty());
+        let immutable_range = revision.map(parse_revision_range).transpose()?.flatten();
+        let git_result = match (revision, immutable_range) {
+            (Some(_), Some((base, head))) => Some(git_diff_paths_between(
+                &self.config.root,
+                base,
+                head,
+                MAX_DIFF_CHANGED_PATHS,
+            )?),
+            (Some(revision), None) => Some(git_diff_paths(
+                &self.config.root,
+                revision,
+                MAX_DIFF_CHANGED_PATHS,
+            )?),
+            (None, None) => None,
+            (None, Some(_)) => unreachable!("a range comes from a revision"),
+        };
         let working_tree_paths = git_changed_paths(&self.config.root, GIT_CHANGED_PATHS_MAX)
             .unwrap_or_else(|error| {
                 tracing::debug!(%error, "working-tree signal unavailable");
@@ -1181,7 +1216,9 @@ impl Services {
         if let Some(git_result) = git_result {
             let mut changed_paths = request.changed_paths.clone();
             let mut resolved_paths = git_result.changed_paths;
-            resolved_paths.extend(working_tree_paths.iter().cloned());
+            if immutable_range.is_none() {
+                resolved_paths.extend(working_tree_paths.iter().cloned());
+            }
             resolved_paths.sort();
             resolved_paths.dedup();
             for path in resolved_paths {
@@ -1481,11 +1518,28 @@ impl Services {
         let mut relationships = BTreeSet::new();
         let mut gaps = Vec::new();
         let changed_hunks = if let Some(base_revision) = &scope.base_revision {
-            let mut hunks = git_diff_hunks(
-                &self.config.root,
-                base_revision,
-                MAX_DIFF_EVIDENCE_SYMBOLS + 1,
-            )?;
+            let immutable_range = request
+                .base_revision
+                .as_deref()
+                .and_then(|revision| parse_revision_range(revision).ok().flatten())
+                .is_some();
+            let mut hunks = if immutable_range {
+                let head_revision = scope.head_revision.as_deref().ok_or_else(|| {
+                    Error::InternalFailure("immutable diff scope has no head revision".into())
+                })?;
+                git_diff_hunks_between(
+                    &self.config.root,
+                    base_revision,
+                    head_revision,
+                    MAX_DIFF_EVIDENCE_SYMBOLS + 1,
+                )?
+            } else {
+                git_diff_hunks(
+                    &self.config.root,
+                    base_revision,
+                    MAX_DIFF_EVIDENCE_SYMBOLS + 1,
+                )?
+            };
             if hunks.len() > MAX_DIFF_EVIDENCE_SYMBOLS {
                 gaps.push("changed_hunk_evidence_truncated".into());
                 hunks.truncate(MAX_DIFF_EVIDENCE_SYMBOLS);
@@ -2241,6 +2295,21 @@ fn set_routing_consistency(response: &mut ContextResponse, consistency: IndexCon
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn revision_ranges_require_two_explicit_endpoints() {
+        assert_eq!(
+            parse_revision_range("main~1..main").expect("valid range"),
+            Some(("main~1", "main"))
+        );
+        assert_eq!(
+            parse_revision_range("origin/main").expect("single revision"),
+            None
+        );
+        for invalid in ["..main", "main..", "main...head"] {
+            assert!(parse_revision_range(invalid).is_err(), "{invalid}");
+        }
+    }
 
     #[test]
     fn workflow_auto_detection_requires_high_confidence_language() {

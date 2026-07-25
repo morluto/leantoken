@@ -21,8 +21,8 @@ use crate::config::{
     DEFAULT_RESULTS, MAX_CONTEXT_LINES, MAX_OUTPUT_TOKENS, MAX_RESULTS,
 };
 use crate::model::{
-    ContextRequest, ContextWorkflow, FileOperation, FilesRequest, IndexConsistency, OutlineRequest,
-    ReadRequest, SearchMode, SearchRequest,
+    ContextRequest, ContextWorkflow, FileOperation, FilesRequest, HistoryOperation, HistoryRequest,
+    IndexConsistency, OutlineRequest, ReadRequest, SearchMode, SearchRequest,
 };
 use crate::services::{Services, validate_positive_request_limit, validate_request_limit};
 
@@ -455,6 +455,109 @@ impl ReadMcpRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct HistoryMcpRequest {
+    /// Expected opaque repository identity from an earlier response.
+    #[serde(default)]
+    #[schemars(schema_with = "expected_repository_id_schema")]
+    expected_repository_id: Option<String>,
+    /// Git-backed symbol history operation.
+    operation: HistoryMcpOperation,
+    /// Maximum commits returned by `symbol_log` (default 20, maximum 100).
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(schema_with = "result_limit_schema", default = "default_result_option")]
+    max_results: Option<usize>,
+    /// Maximum source or diff tokens to return (default 8000, maximum 32000).
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
+    max_tokens: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum HistoryMcpOperation {
+    /// Read one parsed symbol from an immutable Git revision.
+    ReadSymbol {
+        #[schemars(length(min = 1, max = 4096))]
+        path: String,
+        #[schemars(length(min = 1, max = 4096))]
+        symbol: String,
+        #[schemars(length(min = 1, max = 4096))]
+        revision: String,
+    },
+    /// Compare one parsed symbol between two immutable Git revisions.
+    DiffSymbol {
+        #[schemars(length(min = 1, max = 4096))]
+        path: String,
+        #[schemars(length(min = 1, max = 4096))]
+        symbol: String,
+        #[schemars(length(min = 1, max = 4096))]
+        base_revision: String,
+        #[schemars(length(min = 1, max = 4096))]
+        head_revision: String,
+    },
+    /// List commits that touched the symbol's tracked historical lines.
+    SymbolLog {
+        #[schemars(length(min = 1, max = 4096))]
+        path: String,
+        #[schemars(length(min = 1, max = 4096))]
+        symbol: String,
+        #[serde(default)]
+        #[schemars(length(min = 1, max = 4096))]
+        revision: Option<String>,
+    },
+}
+
+impl HistoryMcpRequest {
+    fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
+        validate_optional_positive_limit("max_results", self.max_results, MAX_RESULTS)?;
+        validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)
+    }
+
+    fn into_parts(self) -> (HistoryRequest, Option<String>) {
+        let operation = match self.operation {
+            HistoryMcpOperation::ReadSymbol {
+                path,
+                symbol,
+                revision,
+            } => HistoryOperation::ReadSymbol {
+                path,
+                symbol,
+                revision,
+            },
+            HistoryMcpOperation::DiffSymbol {
+                path,
+                symbol,
+                base_revision,
+                head_revision,
+            } => HistoryOperation::DiffSymbol {
+                path,
+                symbol,
+                base_revision,
+                head_revision,
+            },
+            HistoryMcpOperation::SymbolLog {
+                path,
+                symbol,
+                revision,
+            } => HistoryOperation::SymbolLog {
+                path,
+                symbol,
+                revision,
+            },
+        };
+        (
+            HistoryRequest {
+                operation,
+                max_results: self.max_results,
+                max_tokens: self.max_tokens,
+            },
+            self.expected_repository_id,
+        )
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ContextMcpRequest {
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
@@ -522,7 +625,7 @@ struct ContextMcpRequest {
     /// Earlier generation used to boost files indexed since that response.
     #[serde(default)]
     prior_repository_generation: Option<u64>,
-    /// Base revision for diff-scoped context.
+    /// Base revision or `BASE..HEAD` range for diff-scoped context.
     #[serde(default)]
     #[schemars(length(max = 256))]
     base_revision: Option<String>,
@@ -1112,8 +1215,34 @@ impl LeanTokenMcp {
     }
 
     #[tool(
+        name = "history",
+        description = "Read, diff, or trace one parsed symbol across immutable Git revisions. Use read_symbol for historical source, diff_symbol for a bounded unified diff, and symbol_log for commits touching the symbol's tracked lines. For immutable range-scoped context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbol\",\"path\":\"src/services.rs\",\"symbol\":\"meta\",\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}."
+    )]
+    async fn leantoken_history(
+        &self,
+        Parameters(req): Parameters<HistoryMcpRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let state = self.services.get();
+        req.validate_limits(state.limits())
+            .map_err(into_mcp_error)?;
+        let services = match self.services(&state) {
+            Ok(services) => services,
+            Err(result) => return Ok(result),
+        };
+        let (request, expected_repository_id) = req.into_parts();
+        services
+            .validate_repository_id(expected_repository_id.as_deref())
+            .map_err(into_mcp_error)?;
+        let resp = services
+            .history_cancellable(request, context.ct.clone())
+            .await;
+        self.service_result(resp)
+    }
+
+    #[tool(
         name = "context",
-        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; use minimum_fragments_per_focus_path and must-include constraints for required evidence. Coverage diagnostics fail loud when strict scopes are empty or underfilled. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}."
+        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required evidence. Coverage diagnostics fail loud when strict scopes are empty or underfilled. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}."
     )]
     async fn leantoken_context(
         &self,
@@ -1163,7 +1292,7 @@ impl LeanTokenMcp {
 
 #[tool_handler(
     name = "leantoken",
-    instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken.context first with the user's task. PREFER leantoken.search over grep or rg for source search; leantoken.files over find, ls, or glob for paths; leantoken.outline over opening whole files to discover structure; and leantoken.read over cat, head, or sed for exact symbols and ranges. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=reconcile_working_tree after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, generated artifacts, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
+    instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken.context first with the user's task. PREFER leantoken.search over grep or rg for source search; leantoken.files over find, ls, or glob for paths; leantoken.outline over opening whole files to discover structure; leantoken.read over cat, head, or sed for exact current symbols and ranges; and leantoken.history over git show, diff, or log -L for one symbol across immutable revisions. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=reconcile_working_tree on index-backed tools after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, generated artifacts, non-symbol Git operations, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
 )]
 impl ServerHandler for LeanTokenMcp {
     fn on_initialized(
@@ -1403,13 +1532,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mcp_exposes_six_tools() {
+    fn mcp_exposes_seven_tools() {
         let router = LeanTokenMcp::tool_router();
         let tools = router.list_all();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 7);
 
         let names: std::collections::HashSet<_> = tools.iter().map(|t| t.name.as_ref()).collect();
-        for name in ["files", "search", "outline", "read", "context", "savings"] {
+        for name in [
+            "files", "search", "outline", "read", "history", "context", "savings",
+        ] {
             assert!(names.contains(name), "missing tool {name}");
         }
     }
@@ -1773,7 +1904,7 @@ mod tests {
         for tool in LeanTokenMcp::tool_router()
             .list_all()
             .into_iter()
-            .filter(|tool| tool.name != "savings")
+            .filter(|tool| tool.name != "savings" && tool.name != "history")
         {
             let consistency = tool
                 .input_schema
@@ -1804,6 +1935,18 @@ mod tests {
                 tool.name
             );
         }
+        let history = LeanTokenMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|tool| tool.name == "history")
+            .expect("history tool");
+        assert!(
+            history
+                .input_schema
+                .get("properties")
+                .and_then(serde_json::Value::as_object)
+                .is_none_or(|properties| !properties.contains_key("consistency"))
+        );
     }
 
     #[test]
@@ -1945,6 +2088,38 @@ mod tests {
         .expect("read request with receipt");
         let (request, _, _) = request.into_parts();
         assert_eq!(request.receipt_id.as_deref(), Some("r0000000000000001"));
+    }
+
+    #[test]
+    fn history_operation_maps_to_the_service_request() {
+        let request = serde_json::from_value::<HistoryMcpRequest>(serde_json::json!({
+            "operation": {
+                "kind": "diff_symbol",
+                "path": "src/lib.rs",
+                "symbol": "Services",
+                "base_revision": "main~1",
+                "head_revision": "main"
+            },
+            "max_tokens": 500
+        }))
+        .expect("history request");
+        request
+            .validate_limits(McpLimitPolicy::DEFAULT)
+            .expect("history limits");
+        let (request, _) = request.into_parts();
+        assert_eq!(request.max_tokens, Some(500));
+        assert!(matches!(
+            request.operation,
+            HistoryOperation::DiffSymbol {
+                path,
+                symbol,
+                base_revision,
+                head_revision,
+            } if path == "src/lib.rs"
+                && symbol == "Services"
+                && base_revision == "main~1"
+                && head_revision == "main"
+        ));
     }
 
     #[test]

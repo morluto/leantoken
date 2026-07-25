@@ -986,6 +986,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shell-words",
+ "similar",
  "statrs",
  "tempfile",
  "thiserror",

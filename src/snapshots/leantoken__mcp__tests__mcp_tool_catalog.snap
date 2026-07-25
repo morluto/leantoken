@@ -1,12 +1,12 @@
 ---
 source: src/mcp.rs
-assertion_line: 1953
+assertion_line: 2096
 expression: tools
 ---
 [
   {
     "name": "context",
-    "description": "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; use minimum_fragments_per_focus_path and must-include constraints for required evidence. Coverage diagnostics fail loud when strict scopes are empty or underfilled. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}.",
+    "description": "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required evidence. Coverage diagnostics fail loud when strict scopes are empty or underfilled. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}.",
     "inputSchema": {
       "$defs": {
         "ContextWorkflow": {
@@ -45,7 +45,7 @@ expression: tools
       "properties": {
         "base_revision": {
           "default": null,
-          "description": "Base revision for diff-scoped context.",
+          "description": "Base revision or `BASE..HEAD` range for diff-scoped context.",
           "maxLength": 256,
           "type": [
             "string",
@@ -412,6 +412,160 @@ expression: tools
             "string",
             "null"
           ]
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "history",
+    "description": "Read, diff, or trace one parsed symbol across immutable Git revisions. Use read_symbol for historical source, diff_symbol for a bounded unified diff, and symbol_log for commits touching the symbol's tracked lines. For immutable range-scoped context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbol\",\"path\":\"src/services.rs\",\"symbol\":\"meta\",\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}.",
+    "inputSchema": {
+      "$defs": {
+        "HistoryMcpOperation": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Read one parsed symbol from an immutable Git revision.",
+              "properties": {
+                "kind": {
+                  "const": "read_symbol",
+                  "type": "string"
+                },
+                "path": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "revision": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "symbol": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "path",
+                "symbol",
+                "revision"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Compare one parsed symbol between two immutable Git revisions.",
+              "properties": {
+                "base_revision": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "head_revision": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "diff_symbol",
+                  "type": "string"
+                },
+                "path": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "symbol": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "path",
+                "symbol",
+                "base_revision",
+                "head_revision"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "List commits that touched the symbol's tracked historical lines.",
+              "properties": {
+                "kind": {
+                  "const": "symbol_log",
+                  "type": "string"
+                },
+                "path": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "revision": {
+                  "default": null,
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "symbol": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "path",
+                "symbol"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "expected_repository_id": {
+          "default": null,
+          "description": "Expected opaque repository identity from an earlier response.",
+          "maxLength": 128,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_results": {
+          "default": 20,
+          "description": "Maximum commits returned by `symbol_log` (default 20, maximum 100).",
+          "format": "uint",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_tokens": {
+          "default": 8000,
+          "description": "Maximum source or diff tokens to return (default 8000, maximum 32000).",
+          "format": "uint",
+          "maximum": 32000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "operation": {
+          "$ref": "#/$defs/HistoryMcpOperation",
+          "description": "Git-backed symbol history operation."
         }
       },
       "required": [
