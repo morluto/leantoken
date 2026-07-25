@@ -98,6 +98,8 @@ pub fn language_by_path(path: impl AsRef<Path>) -> Option<String> {
         "ts" | "mts" | "cts" => "typescript".to_string(),
         "tsx" => "tsx".to_string(),
         "go" => "go".to_string(),
+        "html" | "htm" => "html".to_string(),
+        "css" => "css".to_string(),
         _ => return None,
     })
 }
@@ -145,7 +147,7 @@ struct ParserCache {
 }
 
 struct CompiledQueries {
-    tags_query: Query,
+    tags_query: Option<Query>,
     import_query: Option<Query>,
 }
 
@@ -195,16 +197,18 @@ fn parse_language_with_cancellation(
         let mut references = Vec::new();
         let mut imports = Vec::new();
 
-        run_query(source, &queries.tags_query, root, &mut is_cancelled, |qm| {
-            process_tags_match(
-                language,
-                source,
-                &queries.tags_query,
-                qm,
-                &mut symbols,
-                &mut references,
-            );
-        })?;
+        if let Some(tags_query) = &queries.tags_query {
+            run_query(source, tags_query, root, &mut is_cancelled, |qm| {
+                process_tags_match(
+                    language,
+                    source,
+                    tags_query,
+                    qm,
+                    &mut symbols,
+                    &mut references,
+                );
+            })?;
+        }
         if let Some(import_query) = &queries.import_query {
             run_query(source, import_query, root, &mut is_cancelled, |qm| {
                 process_imports_match(source, import_query, qm, &mut imports);
@@ -212,6 +216,31 @@ fn parse_language_with_cancellation(
         }
         if matches!(language, "javascript" | "typescript" | "tsx") {
             append_javascript_bindings(source, root, &mut symbols, &mut is_cancelled)?;
+        }
+        match language {
+            "css" => append_css_structure(
+                source,
+                root,
+                &mut symbols,
+                &mut references,
+                &mut is_cancelled,
+            )?,
+            "html" => {
+                append_html_structure(
+                    source,
+                    root,
+                    &mut symbols,
+                    &mut references,
+                    &mut imports,
+                    &mut is_cancelled,
+                )?;
+                imports.sort_by(|a, b| {
+                    a.line
+                        .cmp(&b.line)
+                        .then_with(|| a.raw_target.cmp(&b.raw_target))
+                });
+            }
+            _ => {}
         }
 
         if is_cancelled() {
@@ -285,11 +314,13 @@ fn language_object(name: &str) -> Option<Language> {
         "typescript" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         "tsx" => tree_sitter_typescript::LANGUAGE_TSX.into(),
         "go" => tree_sitter_go::LANGUAGE.into(),
+        "html" => tree_sitter_html::LANGUAGE.into(),
+        "css" => tree_sitter_css::LANGUAGE.into(),
         _ => return None,
     })
 }
 
-fn build_tags_query(language: &str, lang: &Language) -> Result<Query> {
+fn build_tags_query(language: &str, lang: &Language) -> Result<Option<Query>> {
     let base = match language {
         "c" => tree_sitter_c::TAGS_QUERY,
         "cpp" => tree_sitter_cpp::TAGS_QUERY,
@@ -304,6 +335,7 @@ fn build_tags_query(language: &str, lang: &Language) -> Result<Query> {
         // query sets are required.
         "typescript" | "tsx" => tree_sitter_javascript::TAGS_QUERY,
         "go" => tree_sitter_go::TAGS_QUERY,
+        "html" | "css" => return Ok(None),
         _ => return Err(Error::UnsupportedLanguage(language.to_string())),
     };
 
@@ -316,7 +348,9 @@ fn build_tags_query(language: &str, lang: &Language) -> Result<Query> {
         _ => {}
     }
 
-    Query::new(lang, &source).map_err(Error::TreeSitterQuery)
+    Query::new(lang, &source)
+        .map(Some)
+        .map_err(Error::TreeSitterQuery)
 }
 
 fn build_import_query(language: &str, lang: &Language) -> Result<Option<Query>> {
@@ -325,7 +359,7 @@ fn build_import_query(language: &str, lang: &Language) -> Result<Option<Query>> 
         "python" => PYTHON_IMPORT_QUERY,
         "javascript" | "typescript" | "tsx" => JS_IMPORT_QUERY,
         "go" => GO_IMPORT_QUERY,
-        "c" | "cpp" | "java" | "php" | "ruby" => return Ok(None),
+        "c" | "cpp" | "java" | "php" | "ruby" | "html" | "css" => return Ok(None),
         _ => return Err(Error::UnsupportedLanguage(language.to_string())),
     };
 
@@ -568,6 +602,425 @@ fn push_javascript_symbol(
         kind: kind.into(),
         parent: None,
         signature: signature_from_node(source, node),
+        start_line,
+        end_line,
+        start_byte,
+        end_byte,
+    });
+}
+
+fn append_css_structure(
+    source: &str,
+    root: Node<'_>,
+    symbols: &mut Vec<Symbol>,
+    references: &mut Vec<Reference>,
+    is_cancelled: &mut impl FnMut() -> bool,
+) -> Result<()> {
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        if is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+
+        match node.kind() {
+            "rule_set" => {
+                let mut cursor = node.walk();
+                if let Some(selectors) = node
+                    .named_children(&mut cursor)
+                    .find(|child| child.kind() == "selectors")
+                {
+                    let name = node_text(source, selectors).trim().to_string();
+                    push_structural_symbol(
+                        source,
+                        node,
+                        name.clone(),
+                        "css_selector",
+                        Some(name),
+                        symbols,
+                    );
+                    append_css_selector_references(source, selectors, references, is_cancelled)?;
+                }
+            }
+            "declaration" => {
+                let mut cursor = node.walk();
+                if let Some(property) = node
+                    .named_children(&mut cursor)
+                    .find(|child| child.kind() == "property_name")
+                {
+                    let name = node_text(source, property);
+                    if name.starts_with("--") {
+                        push_structural_symbol(
+                            source,
+                            node,
+                            name,
+                            "css_custom_property",
+                            signature_from_node(source, node),
+                            symbols,
+                        );
+                    }
+                }
+            }
+            "media_statement" => {
+                push_css_at_rule(source, node, "css_media", symbols);
+            }
+            "supports_statement" => {
+                push_css_at_rule(source, node, "css_supports", symbols);
+            }
+            "at_rule"
+                if node_text(source, node)
+                    .trim_start()
+                    .to_ascii_lowercase()
+                    .starts_with("@container") =>
+            {
+                push_css_at_rule(source, node, "css_container", symbols);
+            }
+            "keyframes_statement" => {
+                let mut cursor = node.walk();
+                if let Some(name) = node
+                    .named_children(&mut cursor)
+                    .find(|child| child.kind() == "keyframes_name")
+                    .map(|child| node_text(source, child))
+                {
+                    push_structural_symbol(
+                        source,
+                        node,
+                        name,
+                        "css_keyframes",
+                        Some(css_header(source, node)),
+                        symbols,
+                    );
+                }
+            }
+            _ => {}
+        }
+
+        let mut cursor = node.walk();
+        pending.extend(node.named_children(&mut cursor));
+    }
+    Ok(())
+}
+
+fn append_css_selector_references(
+    source: &str,
+    selectors: Node<'_>,
+    references: &mut Vec<Reference>,
+    is_cancelled: &mut impl FnMut() -> bool,
+) -> Result<()> {
+    let mut pending = vec![selectors];
+    while let Some(node) = pending.pop() {
+        if is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        if matches!(
+            node.kind(),
+            "class_selector"
+                | "id_selector"
+                | "attribute_selector"
+                | "pseudo_class_selector"
+                | "pseudo_element_selector"
+                | "tag_name"
+        ) {
+            push_structural_reference(
+                node_text(source, node),
+                "css_selector",
+                ReferenceRole::Definition,
+                node,
+                references,
+            );
+        }
+        let mut cursor = node.walk();
+        pending.extend(node.named_children(&mut cursor));
+    }
+    Ok(())
+}
+
+fn push_css_at_rule(source: &str, node: Node<'_>, kind: &str, symbols: &mut Vec<Symbol>) {
+    let header = css_header(source, node);
+    push_structural_symbol(source, node, header.clone(), kind, Some(header), symbols);
+}
+
+fn css_header(source: &str, node: Node<'_>) -> String {
+    node_text(source, node)
+        .split_once('{')
+        .map_or_else(|| node_text(source, node), |(header, _)| header.to_string())
+        .trim()
+        .to_string()
+}
+
+#[derive(Clone)]
+struct HtmlAttribute<'tree> {
+    name: String,
+    value: String,
+    value_node: Node<'tree>,
+}
+
+fn append_html_structure(
+    source: &str,
+    root: Node<'_>,
+    symbols: &mut Vec<Symbol>,
+    references: &mut Vec<Reference>,
+    imports: &mut Vec<Import>,
+    is_cancelled: &mut impl FnMut() -> bool,
+) -> Result<()> {
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        if is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+
+        if matches!(node.kind(), "element" | "script_element" | "style_element")
+            && let Some((tag_node, tag_name)) = html_tag(source, node)
+        {
+            let attributes = html_attributes(source, tag_node);
+            append_html_element(
+                source,
+                node,
+                tag_node,
+                &tag_name,
+                &attributes,
+                symbols,
+                references,
+                imports,
+            );
+        }
+
+        let mut cursor = node.walk();
+        pending.extend(node.named_children(&mut cursor));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_html_element(
+    source: &str,
+    owner: Node<'_>,
+    tag_node: Node<'_>,
+    tag_name: &str,
+    attributes: &[HtmlAttribute<'_>],
+    symbols: &mut Vec<Symbol>,
+    references: &mut Vec<Reference>,
+    imports: &mut Vec<Import>,
+) {
+    let id = html_attribute(attributes, "id");
+    let data_attribute = attributes
+        .iter()
+        .find(|attribute| attribute.name.starts_with("data-") && !attribute.value.is_empty());
+    let href = html_attribute(attributes, "href");
+    let name = html_attribute(attributes, "name");
+
+    if let Some(id) = id {
+        push_structural_symbol(
+            source,
+            owner,
+            format!("#{}", id.value),
+            "html_id",
+            signature_from_node(source, tag_node),
+            symbols,
+        );
+        push_structural_reference(
+            format!("#{}", id.value),
+            "html_id",
+            ReferenceRole::Definition,
+            id.value_node,
+            references,
+        );
+    } else if html_outline_tag(tag_name) {
+        let element_name = if let Some(attribute) = data_attribute {
+            format!("{tag_name}[{}={}]", attribute.name, attribute.value)
+        } else if let Some(attribute) = name {
+            format!("{tag_name}[name={}]", attribute.value)
+        } else if let Some(attribute) = href {
+            format!("{tag_name}[href={}]", attribute.value)
+        } else {
+            format!("<{tag_name}>")
+        };
+        let kind = if html_section_tag(tag_name) {
+            "html_section"
+        } else if matches!(tag_name, "script" | "style" | "link") {
+            "html_resource"
+        } else {
+            "html_element"
+        };
+        push_structural_symbol(
+            source,
+            owner,
+            element_name,
+            kind,
+            signature_from_node(source, tag_node),
+            symbols,
+        );
+    }
+
+    for attribute in attributes {
+        if attribute.name.starts_with("data-") && !attribute.value.is_empty() {
+            push_structural_reference(
+                format!("{}={}", attribute.name, attribute.value),
+                "html_data_attribute",
+                ReferenceRole::Reference,
+                attribute.value_node,
+                references,
+            );
+        }
+        if attribute.name == "href" && attribute.value.starts_with('#') && attribute.value.len() > 1
+        {
+            push_structural_reference(
+                attribute.value.clone(),
+                "html_anchor",
+                ReferenceRole::Reference,
+                attribute.value_node,
+                references,
+            );
+        }
+        if attribute.name == "for" && !attribute.value.is_empty() {
+            push_structural_reference(
+                format!("#{}", attribute.value),
+                "html_id",
+                ReferenceRole::Reference,
+                attribute.value_node,
+                references,
+            );
+        }
+    }
+
+    match tag_name {
+        "script" => {
+            if let Some(src) = html_attribute(attributes, "src") {
+                push_import(imports, &src.value, src.value_node.start_position().row + 1);
+            }
+        }
+        "link" => {
+            let rel = html_attribute(attributes, "rel")
+                .map(|attribute| attribute.value.to_ascii_lowercase());
+            if rel.as_deref().is_some_and(|rel| {
+                rel.split_ascii_whitespace()
+                    .any(|value| matches!(value, "stylesheet" | "modulepreload" | "preload"))
+            }) && let Some(href) = href
+            {
+                push_import(
+                    imports,
+                    &href.value,
+                    href.value_node.start_position().row + 1,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn html_tag<'tree>(source: &str, owner: Node<'tree>) -> Option<(Node<'tree>, String)> {
+    let mut cursor = owner.walk();
+    let tag = owner
+        .named_children(&mut cursor)
+        .find(|child| matches!(child.kind(), "start_tag" | "self_closing_tag"))?;
+    let mut cursor = tag.walk();
+    let name = tag
+        .named_children(&mut cursor)
+        .find(|child| child.kind() == "tag_name")
+        .map(|child| node_text(source, child).to_ascii_lowercase())?;
+    Some((tag, name))
+}
+
+fn html_attributes<'tree>(source: &str, tag: Node<'tree>) -> Vec<HtmlAttribute<'tree>> {
+    let mut cursor = tag.walk();
+    tag.named_children(&mut cursor)
+        .filter(|child| child.kind() == "attribute")
+        .filter_map(|attribute| {
+            let mut cursor = attribute.walk();
+            let mut children = attribute.named_children(&mut cursor);
+            let name = children.next()?;
+            let value = children.next()?;
+            let value_node = if value.kind() == "quoted_attribute_value" {
+                let mut cursor = value.walk();
+                value
+                    .named_children(&mut cursor)
+                    .find(|child| child.kind() == "attribute_value")
+                    .unwrap_or(value)
+            } else {
+                value
+            };
+            Some(HtmlAttribute {
+                name: node_text(source, name).to_ascii_lowercase(),
+                value: node_text(source, value_node)
+                    .trim_matches(['\'', '"'])
+                    .to_string(),
+                value_node,
+            })
+        })
+        .collect()
+}
+
+fn html_attribute<'attributes, 'tree>(
+    attributes: &'attributes [HtmlAttribute<'tree>],
+    name: &str,
+) -> Option<&'attributes HtmlAttribute<'tree>> {
+    attributes
+        .iter()
+        .find(|attribute| attribute.name == name && !attribute.value.is_empty())
+}
+
+fn html_section_tag(tag: &str) -> bool {
+    matches!(
+        tag,
+        "main" | "nav" | "section" | "article" | "aside" | "header" | "footer"
+    )
+}
+
+fn html_outline_tag(tag: &str) -> bool {
+    html_section_tag(tag)
+        || matches!(
+            tag,
+            "a" | "button"
+                | "dialog"
+                | "form"
+                | "input"
+                | "select"
+                | "textarea"
+                | "script"
+                | "style"
+                | "link"
+        )
+}
+
+fn push_structural_symbol(
+    source: &str,
+    node: Node<'_>,
+    name: String,
+    kind: &str,
+    signature: Option<String>,
+    symbols: &mut Vec<Symbol>,
+) {
+    if name.is_empty() {
+        return;
+    }
+    let (start_line, end_line, start_byte, end_byte) = range_from_node(node);
+    symbols.push(Symbol {
+        name,
+        kind: kind.into(),
+        parent: None,
+        signature: signature.or_else(|| signature_from_node(source, node)),
+        start_line,
+        end_line,
+        start_byte,
+        end_byte,
+    });
+}
+
+fn push_structural_reference(
+    name: String,
+    kind: &str,
+    role: ReferenceRole,
+    node: Node<'_>,
+    references: &mut Vec<Reference>,
+) {
+    if name.is_empty() {
+        return;
+    }
+    let (start_line, end_line, start_byte, end_byte) = range_from_node(node);
+    references.push(Reference {
+        name,
+        kind: kind.into(),
+        role,
+        enclosing_symbol: None,
         start_line,
         end_line,
         start_byte,
@@ -1088,9 +1541,180 @@ end
             ("src/Value.java", "java"),
             ("src/value.php", "php"),
             ("lib/value.rb", "ruby"),
+            ("src/index.html", "html"),
+            ("src/partial.htm", "html"),
+            ("src/styles.css", "css"),
         ] {
             assert_eq!(language_by_path(path).as_deref(), Some(expected), "{path}");
         }
+    }
+
+    #[test]
+    fn css_indexes_selectors_custom_properties_conditions_and_keyframes() -> Result<()> {
+        let source = r#"
+:root {
+  --clinic-accent: #0b6;
+}
+.clinic-hero {
+  color: var(--clinic-accent);
+}
+.clinic-card, #clinic-panel > .clinic-title {
+  display: grid;
+}
+@media (max-width: 720px) {
+  .clinic-hero { display: block; }
+}
+@supports (display: grid) {
+  .clinic-grid { display: grid; }
+}
+@container (min-width: 40rem) {
+  .clinic-card { grid-template-columns: 1fr 1fr; }
+}
+@keyframes clinic-pulse {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+"#;
+        let output = parse_language("css", source)?;
+
+        for (name, kind) in [
+            (":root", "css_selector"),
+            (".clinic-hero", "css_selector"),
+            (
+                ".clinic-card, #clinic-panel > .clinic-title",
+                "css_selector",
+            ),
+            ("--clinic-accent", "css_custom_property"),
+            ("clinic-pulse", "css_keyframes"),
+        ] {
+            assert!(
+                output
+                    .symbols
+                    .iter()
+                    .any(|symbol| symbol.name == name && symbol.kind == kind),
+                "missing {kind} {name}: {:?}",
+                output.symbols
+            );
+        }
+        for kind in ["css_media", "css_supports", "css_container"] {
+            assert!(
+                output.symbols.iter().any(|symbol| symbol.kind == kind),
+                "missing {kind}: {:?}",
+                output.symbols
+            );
+        }
+        for name in [".clinic-card", "#clinic-panel", ".clinic-title"] {
+            assert!(
+                output
+                    .references
+                    .iter()
+                    .any(|reference| reference.name == name),
+                "missing selector reference {name}: {:?}",
+                output.references
+            );
+        }
+        let hero = output
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == ".clinic-hero" && symbol.parent.is_none())
+            .expect("top-level hero selector");
+        assert!(source[hero.start_byte..hero.end_byte].contains("color: var(--clinic-accent)"));
+        let responsive_hero = output
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == ".clinic-hero" && symbol.parent.is_some())
+            .expect("nested hero selector");
+        assert!(
+            responsive_hero
+                .parent
+                .as_deref()
+                .is_some_and(|parent| parent.starts_with("@media"))
+        );
+        assert!(output.structurally_complete);
+        Ok(())
+    }
+
+    #[test]
+    fn html_indexes_sections_controls_actions_anchors_and_resources() -> Result<()> {
+        let source = r##"
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="./styles/clinic.css">
+</head>
+<body>
+  <nav id="mobile-nav" data-action="toggle-nav">
+    <a href="#clinic">Clinic</a>
+  </nav>
+  <main>
+    <section id="clinic">
+      <form id="clinic-form">
+        <label for="therapy">Therapy</label>
+        <select name="therapy" id="therapy"></select>
+        <input name="query">
+        <button data-action="book-therapy">Book</button>
+      </form>
+      <dialog id="clinic-dialog"></dialog>
+    </section>
+  </main>
+  <script type="module" src="./js/clinic.js"></script>
+</body>
+</html>
+"##;
+        let output = parse_language("html", source)?;
+
+        for name in [
+            "#mobile-nav",
+            "#clinic",
+            "#clinic-form",
+            "#therapy",
+            "#clinic-dialog",
+            "input[name=query]",
+            "button[data-action=book-therapy]",
+            "<script>",
+            "link[href=./styles/clinic.css]",
+        ] {
+            assert!(
+                output.symbols.iter().any(|symbol| symbol.name == name),
+                "missing HTML symbol {name}: {:?}",
+                output.symbols
+            );
+        }
+        assert_eq!(
+            output
+                .symbols
+                .iter()
+                .find(|symbol| symbol.name == "#clinic-form")
+                .and_then(|symbol| symbol.parent.as_deref()),
+            Some("#clinic")
+        );
+        for (name, role) in [
+            ("#clinic", ReferenceRole::Reference),
+            ("data-action=toggle-nav", ReferenceRole::Reference),
+            ("data-action=book-therapy", ReferenceRole::Reference),
+            ("#therapy", ReferenceRole::Reference),
+        ] {
+            assert!(
+                output
+                    .references
+                    .iter()
+                    .any(|reference| reference.name == name && reference.role == role),
+                "missing HTML reference {name}: {:?}",
+                output.references
+            );
+        }
+        assert_eq!(
+            import_targets(&output),
+            vec!["./styles/clinic.css", "./js/clinic.js"]
+        );
+        let clinic = output
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "#clinic")
+            .expect("clinic section");
+        assert!(source[clinic.start_byte..clinic.end_byte].contains("clinic-dialog"));
+        assert!(output.structurally_complete);
+        Ok(())
     }
 
     #[test]

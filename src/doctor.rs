@@ -4,7 +4,7 @@ use std::{
     collections::{BTreeSet, VecDeque},
     io::{BufRead, BufReader, Write},
     process::{Child, ChildStdin, Stdio},
-    sync::{Arc, Mutex, mpsc},
+    sync::{Arc, Condvar, Mutex, mpsc},
     time::{Duration, Instant},
 };
 
@@ -17,6 +17,7 @@ use crate::{Config, Error, Result};
 const EXPECTED_TOOLS: [&str; 6] = ["context", "files", "outline", "read", "savings", "search"];
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
+const DIAGNOSTIC_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_DIAGNOSTIC_LINES: usize = 8;
 const MAX_DIAGNOSTIC_LINE_CHARS: usize = 512;
 const MAX_DIAGNOSTIC_LINE_BYTES: usize = MAX_DIAGNOSTIC_LINE_CHARS * 4;
@@ -216,7 +217,7 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
                 format!(
                     "first retrieval failed: {}{}",
                     tool_message(call),
-                    transport.diagnostic_context()
+                    transport.diagnostic_context_wait(DIAGNOSTIC_WAIT_TIMEOUT)
                 ),
             ));
         }
@@ -391,7 +392,57 @@ struct DoctorTransport {
     child: Child,
     stdin: Option<ChildStdin>,
     lines: mpsc::Receiver<String>,
-    diagnostics: Arc<Mutex<VecDeque<String>>>,
+    diagnostics: Arc<DiagnosticBuffer>,
+}
+
+#[derive(Default)]
+struct DiagnosticBuffer {
+    lines: Mutex<VecDeque<String>>,
+    available: Condvar,
+}
+
+impl DiagnosticBuffer {
+    fn push(&self, line: String) {
+        let Ok(mut lines) = self.lines.lock() else {
+            return;
+        };
+        if lines.len() == MAX_DIAGNOSTIC_LINES {
+            lines.pop_front();
+        }
+        lines.push_back(line);
+        self.available.notify_all();
+    }
+
+    fn context(&self) -> String {
+        let Ok(lines) = self.lines.lock() else {
+            return String::new();
+        };
+        diagnostic_context(&lines)
+    }
+
+    fn wait_context(&self, timeout: Duration) -> String {
+        let Ok(lines) = self.lines.lock() else {
+            return String::new();
+        };
+        let Ok((lines, _)) = self
+            .available
+            .wait_timeout_while(lines, timeout, |lines| lines.is_empty())
+        else {
+            return String::new();
+        };
+        diagnostic_context(&lines)
+    }
+}
+
+fn diagnostic_context(lines: &VecDeque<String>) -> String {
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; child diagnostics: {}",
+            lines.iter().cloned().collect::<Vec<_>>().join(" | ")
+        )
+    }
 }
 
 impl DoctorTransport {
@@ -433,7 +484,7 @@ impl DoctorTransport {
                 }
             }
         });
-        let diagnostics = Arc::new(Mutex::new(VecDeque::new()));
+        let diagnostics = Arc::new(DiagnosticBuffer::default());
         let diagnostic_lines = Arc::clone(&diagnostics);
         let redactions = [
             config.root.to_string_lossy().into_owned(),
@@ -446,13 +497,7 @@ impl DoctorTransport {
                 if line.is_empty() {
                     return;
                 }
-                let Ok(mut lines) = diagnostic_lines.lock() else {
-                    return;
-                };
-                if lines.len() == MAX_DIAGNOSTIC_LINES {
-                    lines.pop_front();
-                }
-                lines.push_back(line);
+                diagnostic_lines.push(line);
             });
         });
         Ok(Self {
@@ -505,17 +550,11 @@ impl DoctorTransport {
     }
 
     fn diagnostic_context(&self) -> String {
-        let Ok(lines) = self.diagnostics.lock() else {
-            return String::new();
-        };
-        if lines.is_empty() {
-            String::new()
-        } else {
-            format!(
-                "; child diagnostics: {}",
-                lines.iter().cloned().collect::<Vec<_>>().join(" | ")
-            )
-        }
+        self.diagnostics.context()
+    }
+
+    fn diagnostic_context_wait(&self, timeout: Duration) -> String {
+        self.diagnostics.wait_context(timeout)
     }
 
     fn close(&mut self) {
@@ -626,5 +665,29 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].len(), MAX_DIAGNOSTIC_LINE_BYTES);
         assert_eq!(lines[1], b"next");
+    }
+
+    #[test]
+    fn diagnostic_buffer_waits_for_delayed_child_failure_and_remains_bounded() {
+        let delayed = Arc::new(DiagnosticBuffer::default());
+        let writer_buffer = Arc::clone(&delayed);
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            writer_buffer.push("MCP indexing runtime failed".into());
+        });
+
+        let context = delayed.wait_context(Duration::from_secs(1));
+        writer.join().expect("diagnostic writer");
+        assert!(context.contains("MCP indexing runtime failed"));
+
+        let bounded = DiagnosticBuffer::default();
+        for index in 0..=MAX_DIAGNOSTIC_LINES {
+            bounded.push(format!("earlier diagnostic {index}"));
+        }
+        let settled = bounded.context();
+
+        assert!(settled.contains(&format!("earlier diagnostic {MAX_DIAGNOSTIC_LINES}")));
+        assert!(!settled.contains("earlier diagnostic 0"));
+        assert_eq!(settled.matches(" | ").count(), MAX_DIAGNOSTIC_LINES - 1);
     }
 }

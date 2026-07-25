@@ -2204,6 +2204,166 @@ function helper() {
 }
 
 #[tokio::test]
+async fn html_and_css_structure_support_outline_search_reference_and_read() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("styles")).expect("styles directory");
+    std::fs::create_dir(root.path().join("js")).expect("JavaScript directory");
+    std::fs::write(
+        root.path().join("styles/clinic.css"),
+        r#":root {
+  --clinic-accent: #087;
+}
+.clinic-hero {
+  color: var(--clinic-accent);
+}
+.clinic-card, #clinic-panel > .clinic-title {
+  display: grid;
+}
+@media (max-width: 720px) {
+  .clinic-hero { display: block; }
+}
+"#,
+    )
+    .expect("CSS source");
+    std::fs::write(
+        root.path().join("index.html"),
+        r##"<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="./styles/clinic.css">
+</head>
+<body>
+  <nav id="mobile-nav" data-action="toggle-nav">
+    <a href="#clinic">Clinic</a>
+  </nav>
+  <section id="clinic">
+    <form id="clinic-form">
+      <button data-action="book-therapy">Book</button>
+    </form>
+  </section>
+  <script type="module" src="./js/clinic.js"></script>
+</body>
+</html>
+"##,
+    )
+    .expect("HTML source");
+    std::fs::write(root.path().join("js/clinic.js"), "export const clinic = {};\n")
+        .expect("JavaScript source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    let outline = services
+        .outline(OutlineRequest {
+            paths: vec!["styles/clinic.css".into(), "index.html".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(100),
+            max_tokens: Some(4_000),
+        })
+        .await
+        .expect("frontend outlines");
+    let css = outline
+        .files
+        .iter()
+        .find(|file| file.path == "styles/clinic.css")
+        .expect("CSS outline");
+    assert!(css.structurally_complete);
+    assert!(
+        css.symbols
+            .iter()
+            .any(|symbol| symbol.name == ".clinic-hero" && symbol.kind == "css_selector")
+    );
+    assert!(
+        css.symbols.iter().any(
+            |symbol| symbol.name == "--clinic-accent" && symbol.kind == "css_custom_property"
+        )
+    );
+    let html = outline
+        .files
+        .iter()
+        .find(|file| file.path == "index.html")
+        .expect("HTML outline");
+    assert!(html.structurally_complete);
+    assert!(
+        html.symbols
+            .iter()
+            .any(|symbol| symbol.name == "#clinic" && symbol.kind == "html_id")
+    );
+    assert_eq!(
+        html.imports
+            .iter()
+            .map(|import| (
+                import.raw_target.as_str(),
+                import.resolved_path.as_deref()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("./styles/clinic.css", Some("styles/clinic.css")),
+            ("./js/clinic.js", Some("js/clinic.js"))
+        ]
+    );
+
+    for (query, mode, path) in [
+        (".clinic-hero", SearchMode::Symbol, "styles/clinic.css"),
+        (".clinic-title", SearchMode::Reference, "styles/clinic.css"),
+        ("#clinic", SearchMode::Reference, "index.html"),
+        (
+            "data-action=book-therapy",
+            SearchMode::Reference,
+            "index.html",
+        ),
+    ] {
+        let search = services
+            .search(SearchRequest {
+                query: query.into(),
+                mode,
+                include_paths: vec![path.into()],
+                exclude_paths: Vec::new(),
+                focus_paths: Vec::new(),
+                max_results: Some(10),
+                max_tokens: Some(2_000),
+                context_lines: Some(0),
+                case_sensitive: true,
+                all_occurrences: false,
+                cursor: None,
+            })
+            .await
+            .expect("structural search");
+        assert!(!search.hits.is_empty(), "missing {mode:?} search for {query}");
+    }
+
+    for (path, symbol, marker) in [
+        (
+            "styles/clinic.css",
+            ".clinic-hero",
+            "color: var(--clinic-accent)",
+        ),
+        ("index.html", "#clinic", "data-action=\"book-therapy\""),
+    ] {
+        let read = services
+            .read(ReadRequest {
+                path: path.into(),
+                start_line: None,
+                end_line: None,
+                symbol: Some(symbol.into()),
+                max_tokens: Some(2_000),
+                expected_hash: None,
+            })
+            .await
+            .expect("structural symbol read");
+        assert!(
+            read.content
+                .as_deref()
+                .is_some_and(|content| content.contains(marker)),
+            "missing {marker} from {symbol} read: {:?}",
+            read.content
+        );
+    }
+}
+
+#[tokio::test]
 async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
     let root = tempfile::tempdir().expect("root");
     std::fs::create_dir(root.path().join("src")).expect("src");
