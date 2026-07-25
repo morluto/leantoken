@@ -210,6 +210,9 @@ fn parse_language_with_cancellation(
                 process_imports_match(source, import_query, qm, &mut imports);
             })?;
         }
+        if matches!(language, "javascript" | "typescript" | "tsx") {
+            append_javascript_bindings(source, root, &mut symbols, &mut is_cancelled)?;
+        }
 
         if is_cancelled() {
             return Err(Error::Cancelled);
@@ -426,6 +429,150 @@ fn process_tags_match(
             });
         }
     }
+}
+
+fn append_javascript_bindings(
+    source: &str,
+    root: Node<'_>,
+    symbols: &mut Vec<Symbol>,
+    is_cancelled: &mut impl FnMut() -> bool,
+) -> Result<()> {
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        if is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        match child.kind() {
+            "lexical_declaration" | "variable_declaration" => {
+                append_javascript_declaration(source, child, symbols);
+            }
+            "export_statement" => {
+                if let Some(declaration) = child.child_by_field_name("declaration")
+                    && matches!(
+                        declaration.kind(),
+                        "lexical_declaration" | "variable_declaration"
+                    )
+                {
+                    append_javascript_declaration(source, declaration, symbols);
+                }
+                if javascript_export_is_default(child)
+                    && child
+                        .child_by_field_name("value")
+                        .is_some_and(javascript_is_data_expression)
+                {
+                    push_javascript_symbol(source, child, "default".into(), "constant", symbols);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        if is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        if matches!(node.kind(), "field_definition" | "public_field_definition") {
+            let name = node
+                .child_by_field_name("property")
+                .or_else(|| node.child_by_field_name("name"));
+            if let Some(name) = name {
+                let raw_name = node_text(source, name);
+                let name = if name.kind() == "string" {
+                    unquote(&raw_name).to_string()
+                } else {
+                    raw_name
+                };
+                push_javascript_symbol(source, node, name, "field", symbols);
+            }
+        }
+        let mut cursor = node.walk();
+        pending.extend(node.named_children(&mut cursor));
+    }
+    Ok(())
+}
+
+fn append_javascript_declaration(source: &str, declaration: Node<'_>, symbols: &mut Vec<Symbol>) {
+    let is_const = {
+        let mut cursor = declaration.walk();
+        declaration
+            .children(&mut cursor)
+            .any(|child| child.kind() == "const")
+    };
+    let kind = if declaration.kind() == "variable_declaration" {
+        "variable"
+    } else if is_const {
+        "constant"
+    } else {
+        "variable"
+    };
+
+    let mut cursor = declaration.walk();
+    for declarator in declaration.named_children(&mut cursor) {
+        if declarator.kind() != "variable_declarator" {
+            continue;
+        }
+        let Some(name_node) = declarator.child_by_field_name("name") else {
+            continue;
+        };
+        if name_node.kind() != "identifier" {
+            continue;
+        }
+        let name = node_text(source, name_node);
+        if symbols.iter().any(|symbol| {
+            symbol.name == name
+                && symbol.start_byte == declarator.start_byte()
+                && symbol.end_byte == declarator.end_byte()
+        }) {
+            continue;
+        }
+        push_javascript_symbol(source, declarator, name, kind, symbols);
+    }
+}
+
+fn javascript_export_is_default(node: Node<'_>) -> bool {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .any(|child| child.kind() == "default")
+}
+
+fn javascript_is_data_expression(node: Node<'_>) -> bool {
+    match node.kind() {
+        "object" | "array" => true,
+        "parenthesized_expression"
+        | "as_expression"
+        | "satisfies_expression"
+        | "type_assertion"
+        | "non_null_expression" => {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor)
+                .any(javascript_is_data_expression)
+        }
+        _ => false,
+    }
+}
+
+fn push_javascript_symbol(
+    source: &str,
+    node: Node<'_>,
+    name: String,
+    kind: &str,
+    symbols: &mut Vec<Symbol>,
+) {
+    if name.is_empty() {
+        return;
+    }
+    let (start_line, end_line, start_byte, end_byte) = range_from_node(node);
+    symbols.push(Symbol {
+        name,
+        kind: kind.into(),
+        parent: None,
+        signature: signature_from_node(source, node),
+        start_line,
+        end_line,
+        start_byte,
+        end_byte,
+    });
 }
 
 fn canonical_definition(
@@ -1194,6 +1341,138 @@ impl Local for u32 {
         assert_eq!(
             render.signature.as_deref(),
             Some("app.render = function render(name)")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn javascript_indexes_top_level_data_bindings_without_local_noise() -> Result<()> {
+        let source = r#"
+export const CLINIC_KEYS = { medicines: "clinic:medicines" };
+const clinicMedicines = [{ id: "moon-rabbit-saline", labels: ["en", "ja", "zh"] }];
+let copy = { en: { title: "Clinic" }, ja: {}, zh: {} };
+var legacyRows = [1, 2, 3];
+const primary = 1, secondary = { enabled: true };
+export const handler = () => true;
+function scoped() {
+  const localOnly = { hidden: true };
+}
+class Catalog {
+  entries = [{ id: "entry" }];
+  static settings = { pageSize: 20 };
+}
+export default { clinicMedicines, copy };
+"#;
+        let output = parse_language("javascript", source)?;
+
+        for (name, kind) in [
+            ("CLINIC_KEYS", "constant"),
+            ("clinicMedicines", "constant"),
+            ("copy", "variable"),
+            ("legacyRows", "variable"),
+            ("primary", "constant"),
+            ("secondary", "constant"),
+            ("default", "constant"),
+            ("entries", "field"),
+            ("settings", "field"),
+        ] {
+            assert!(
+                output
+                    .symbols
+                    .iter()
+                    .any(|symbol| symbol.name == name && symbol.kind == kind),
+                "missing {kind} {name}: {:?}",
+                output.symbols
+            );
+        }
+        assert!(
+            !output
+                .symbols
+                .iter()
+                .any(|symbol| symbol.name == "localOnly")
+        );
+        assert_eq!(
+            output
+                .symbols
+                .iter()
+                .filter(|symbol| symbol.name == "handler")
+                .count(),
+            1
+        );
+        let medicines = output
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "clinicMedicines")
+            .expect("medicine data symbol");
+        assert!(
+            source[medicines.start_byte..medicines.end_byte].starts_with("clinicMedicines = [")
+        );
+        let entries = output
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "entries")
+            .expect("class field");
+        assert_eq!(entries.parent.as_deref(), Some("Catalog"));
+
+        let array_default = parse_language(
+            "javascript",
+            "export default [{ id: \"default-array-item\" }];\n",
+        )?;
+        assert!(
+            array_default
+                .symbols
+                .iter()
+                .any(|symbol| symbol.name == "default" && symbol.kind == "constant")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn typescript_indexes_annotated_and_wrapped_data_bindings() -> Result<()> {
+        let source = r#"
+type Therapy = { id: string };
+export const therapies: readonly Therapy[] = [{ id: "boundary-anchor" }] as const;
+const copy = { en: "Clinic", ja: "診療所", zh: "診所" } satisfies Record<string, string>;
+class Store {
+  public entries: Therapy[] = [];
+  private settings = { pageSize: 20 };
+}
+export default ({ therapies, copy } satisfies Record<string, unknown>);
+"#;
+        let output = parse_language("typescript", source)?;
+
+        for name in ["therapies", "copy", "entries", "settings", "default"] {
+            assert!(
+                output.symbols.iter().any(|symbol| symbol.name == name),
+                "missing {name}: {:?}",
+                output.symbols
+            );
+        }
+        let therapies = output
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "therapies")
+            .expect("therapies data symbol");
+        assert_eq!(therapies.kind, "constant");
+        assert!(source[therapies.start_byte..therapies.end_byte].contains("as const"));
+        for field in ["entries", "settings"] {
+            assert_eq!(
+                output
+                    .symbols
+                    .iter()
+                    .find(|symbol| symbol.name == field)
+                    .and_then(|symbol| symbol.parent.as_deref()),
+                Some("Store")
+            );
+        }
+        let tsx = parse_language(
+            "tsx",
+            "export const labels = { title: <span>Clinic</span> };\n",
+        )?;
+        assert!(
+            tsx.symbols
+                .iter()
+                .any(|symbol| symbol.name == "labels" && symbol.kind == "constant")
         );
         Ok(())
     }

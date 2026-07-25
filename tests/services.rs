@@ -2100,6 +2100,110 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
 }
 
 #[tokio::test]
+async fn javascript_and_typescript_data_bindings_support_outline_search_and_read() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(
+        root.path().join("clinic.js"),
+        r#"export const clinicMedicines = [
+  { id: "moon-rabbit-saline", labels: { en: "Saline", ja: "生理食塩水" } },
+  { id: "boundary-anchor-patch", labels: { en: "Patch", zh: "貼片" } }
+];
+function helper() {
+  const localOnly = { hidden: true };
+  return localOnly;
+}
+"#,
+    )
+    .expect("JavaScript data");
+    std::fs::write(
+        root.path().join("copy.ts"),
+        r#"export const copy: Record<string, string> = {
+  en: "Campus clinic",
+  ja: "キャンパス診療所",
+  zh: "校園診所"
+} satisfies Record<string, string>;
+"#,
+    )
+    .expect("TypeScript data");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    for (path, symbol, marker) in [
+        ("clinic.js", "clinicMedicines", "boundary-anchor-patch"),
+        ("copy.ts", "copy", "校園診所"),
+    ] {
+        let outline = services
+            .outline(OutlineRequest {
+                paths: vec![path.into()],
+                symbol_name: None,
+                symbol_kind: None,
+                max_results: Some(20),
+                max_tokens: Some(2_000),
+            })
+            .await
+            .expect("outline data file");
+        assert!(
+            outline.files[0]
+                .symbols
+                .iter()
+                .any(|item| item.name == symbol && item.kind == "constant"),
+            "missing {symbol}: {:?}",
+            outline.files[0].symbols
+        );
+        assert!(
+            !outline.files[0]
+                .symbols
+                .iter()
+                .any(|item| item.name == "localOnly")
+        );
+
+        let search = services
+            .search(SearchRequest {
+                query: symbol.into(),
+                mode: SearchMode::Symbol,
+                include_paths: vec![path.into()],
+                exclude_paths: Vec::new(),
+                focus_paths: Vec::new(),
+                max_results: Some(10),
+                max_tokens: Some(2_000),
+                context_lines: Some(0),
+                case_sensitive: true,
+                all_occurrences: false,
+                cursor: None,
+            })
+            .await
+            .expect("symbol search");
+        assert!(
+            search
+                .hits
+                .iter()
+                .any(|hit| hit.symbol.as_deref() == Some(symbol))
+        );
+
+        let read = services
+            .read(ReadRequest {
+                path: path.into(),
+                start_line: None,
+                end_line: None,
+                symbol: Some(symbol.into()),
+                max_tokens: Some(2_000),
+                expected_hash: None,
+            })
+            .await
+            .expect("symbol read");
+        assert!(
+            read.content
+                .as_deref()
+                .is_some_and(|content| content.contains(marker)),
+            "missing {marker} in {symbol} read: {:?}",
+            read.content
+        );
+    }
+}
+
+#[tokio::test]
 async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
     let root = tempfile::tempdir().expect("root");
     std::fs::create_dir(root.path().join("src")).expect("src");
