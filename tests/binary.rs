@@ -25,6 +25,20 @@ fn cli_indexes_statuses_and_searches_as_json() {
 
     let status = run(root.path(), &database, &["status"]);
     assert_eq!(status["file_count"], 1);
+    assert_eq!(
+        status["indexed_source_bytes"],
+        "pub fn answer() -> u8 { 42 }\n".len()
+    );
+    assert!(
+        status["index_storage_bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes > 0)
+    );
+    assert!(
+        status["index_amplification_ratio"]
+            .as_f64()
+            .is_some_and(|ratio| ratio > 1.0)
+    );
 
     let search = run(
         root.path(),

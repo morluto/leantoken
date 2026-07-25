@@ -1284,6 +1284,16 @@ pub struct StatusResponse {
     pub file_count: usize,
     pub chunk_count: usize,
     pub symbol_count: usize,
+    /// Bytes occupied by the SQLite main, WAL, and shared-memory files.
+    pub index_storage_bytes: u64,
+    /// Sum of complete source bytes represented by indexed files.
+    pub indexed_source_bytes: u64,
+    /// Index storage divided by indexed source bytes, when source is non-empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_amplification_ratio: Option<f64>,
+    /// Resident memory for the current LeanToken process when the platform exposes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_rss_bytes: Option<u64>,
     pub languages: Vec<LanguageCount>,
     pub warnings: Vec<String>,
 }
@@ -1467,6 +1477,10 @@ mod tests {
                 file_count: 0,
                 chunk_count: 0,
                 symbol_count: 0,
+                index_storage_bytes: 0,
+                indexed_source_bytes: 0,
+                index_amplification_ratio: None,
+                process_rss_bytes: None,
                 languages: Vec::new(),
                 warnings: Vec::new(),
             };

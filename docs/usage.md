@@ -50,7 +50,10 @@ afterward. `freshness` is `current` while idle and `reconciling` while an index
 operation is active, so a cold idle repository reports
 `uninitialized`/`current`. Before the first generation, direct CLI retrieval
 exits with guidance to run `leantoken index`; use `leantoken doctor` to verify
-the complete MCP startup and first-retrieval flow.
+the complete MCP startup and first-retrieval flow. Status also reports SQLite
+main/WAL/SHM bytes, indexed source bytes, their amplification ratio, and current
+process RSS when the platform exposes it. RSS is per process, not a claim about
+all clients sharing the repository cache.
 
 `leantoken savings` reports a persistent, repository-local estimate for
 successful `search`, `outline`, `read`, and `context` responses. Search,
