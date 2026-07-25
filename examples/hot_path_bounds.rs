@@ -7,6 +7,7 @@
 //! cargo run --example hot_path_bounds --release -- --files 10000 --iterations 20
 //! ```
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
@@ -19,6 +20,9 @@ use leantoken::{
 #[derive(Debug, Parser)]
 #[command(about = "Measure bounded regex and context retrieval paths")]
 struct Args {
+    /// Nonexistent repository root to use instead of an anonymous temporary directory.
+    #[arg(long, value_name = "PATH")]
+    repository_root: Option<PathBuf>,
     /// Number of synthetic Rust source files.
     #[arg(long, default_value_t = 2_000)]
     files: usize,
@@ -43,9 +47,29 @@ async fn main() -> leantoken::Result<()> {
         ));
     }
 
-    let root = tempfile::tempdir()?;
+    let temporary_root = args
+        .repository_root
+        .is_none()
+        .then(tempfile::tempdir)
+        .transpose()?;
+    let root = if let Some(root) = args.repository_root.as_deref() {
+        if let Err(error) = std::fs::create_dir(root) {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                return Err(leantoken::Error::InvalidRequest(
+                    "repository-root must not already exist".into(),
+                ));
+            }
+            return Err(error.into());
+        }
+        root
+    } else {
+        temporary_root
+            .as_ref()
+            .expect("anonymous roots create a temporary directory")
+            .path()
+    };
     for index in 0..args.files {
-        let directory = root.path().join(format!("crate_{:03}", index % 64));
+        let directory = root.join(format!("crate_{:03}", index % 64));
         std::fs::create_dir_all(&directory)?;
         let filler = (0..args.file_lines.saturating_sub(4))
             .map(|line| format!("    let value_{line} = {line};\n"))
@@ -55,8 +79,8 @@ async fn main() -> leantoken::Result<()> {
         );
         std::fs::write(directory.join(format!("f{index:05}.rs")), body)?;
     }
-    let database = root.path().join("index.sqlite");
-    let config = Config::discover(root.path(), Some(database))?;
+    let database = root.join("index.sqlite");
+    let config = Config::discover(root, Some(database))?;
     let services = Services::open(config)?;
 
     let index_started = Instant::now();
@@ -111,19 +135,25 @@ async fn main() -> leantoken::Result<()> {
     services.files(tree_request.clone()).await?;
 
     let mut regex_durations = Vec::with_capacity(args.iterations);
-    let mut regex_hits = 0usize;
+    let mut regex_response = None;
     for _ in 0..args.iterations {
         let started = Instant::now();
-        regex_hits = services.search(regex_request.clone()).await?.hits.len();
+        let response = services.search(regex_request.clone()).await?;
         regex_durations.push(started.elapsed());
+        regex_response = Some(response);
     }
+    let regex_response = regex_response.expect("iterations are validated as positive");
+    let regex_hits = regex_response.hits.len();
 
     let mut tree_first_durations = Vec::with_capacity(args.iterations);
+    let mut tree_first_response = None;
     for _ in 0..args.iterations {
         let started = Instant::now();
-        services.files(tree_request.clone()).await?;
+        let response = services.files(tree_request.clone()).await?;
         tree_first_durations.push(started.elapsed());
+        tree_first_response = Some(response);
     }
+    let tree_first_response = tree_first_response.expect("iterations are validated as positive");
     let mut deep_request = tree_request.clone();
     for _ in 0..(args.files / 200).max(1) {
         let page = services.files(deep_request.clone()).await?;
@@ -133,11 +163,14 @@ async fn main() -> leantoken::Result<()> {
         deep_request.cursor = Some(cursor);
     }
     let mut tree_deep_durations = Vec::with_capacity(args.iterations);
+    let mut tree_deep_response = None;
     for _ in 0..args.iterations {
         let started = Instant::now();
-        services.files(deep_request.clone()).await?;
+        let response = services.files(deep_request.clone()).await?;
         tree_deep_durations.push(started.elapsed());
+        tree_deep_response = Some(response);
     }
+    let tree_deep_response = tree_deep_response.expect("iterations are validated as positive");
 
     let same_path = (0..args.dedup_candidates)
         .map(|index| {
@@ -175,16 +208,15 @@ async fn main() -> leantoken::Result<()> {
     }
 
     let mut context_durations = Vec::with_capacity(args.iterations);
-    let mut context_fragments = 0usize;
+    let mut context_response = None;
     for _ in 0..args.iterations {
         let started = Instant::now();
-        context_fragments = services
-            .context(context_request.clone())
-            .await?
-            .fragments
-            .len();
+        let response = services.context(context_request.clone()).await?;
         context_durations.push(started.elapsed());
+        context_response = Some(response);
     }
+    let context_response = context_response.expect("iterations are validated as positive");
+    let context_fragments = context_response.fragments.len();
 
     let report = serde_json::json!({
         "schema_version": 2,
@@ -196,6 +228,7 @@ async fn main() -> leantoken::Result<()> {
             "approximate_lines_per_file": args.file_lines,
             "iterations": args.iterations,
             "dedup_candidates": args.dedup_candidates,
+            "caller_provided_root": args.repository_root.is_some(),
         },
         "index": {
             "generation": indexed.repository_generation,
@@ -224,6 +257,12 @@ async fn main() -> leantoken::Result<()> {
         "deduplication": {
             "same_path_timing_ms": timing_stats(same_path_durations),
             "many_paths_timing_ms": timing_stats(many_paths_durations),
+        },
+        "response_blake3": {
+            "regex": json_blake3(&regex_response)?,
+            "context": json_blake3(&context_response)?,
+            "tree_first": json_blake3(&tree_first_response)?,
+            "tree_deep": json_blake3(&tree_deep_response)?,
         },
         "limitations": [
             "Synthetic Rust controls file count and size but not real monorepo language mix or directory shape.",
@@ -257,4 +296,10 @@ fn timing_stats(mut durations: Vec<Duration>) -> serde_json::Value {
 
 fn milliseconds(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1_000.0
+}
+
+fn json_blake3(value: &impl serde::Serialize) -> leantoken::Result<String> {
+    Ok(blake3::hash(&serde_json::to_vec(value)?)
+        .to_hex()
+        .to_string())
 }

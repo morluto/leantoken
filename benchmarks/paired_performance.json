@@ -1,0 +1,213 @@
+{
+  "schema_version": 1,
+  "rustc_version_prefix": "rustc 1.95.0 ",
+  "benchstat_version": "v0.0.0-20260709024250-82a0b07e230d",
+  "default_pairs": 10,
+  "runner": {
+    "hot_path_args": [
+      "--files",
+      "2000",
+      "--iterations",
+      "20",
+      "--file-lines",
+      "64",
+      "--dedup-candidates",
+      "2000"
+    ],
+    "indexing_profile_args": [
+      "--files",
+      "2000",
+      "--file-bytes",
+      "8192",
+      "--iterations",
+      "20",
+      "--read-samples",
+      "1",
+      "--hot-set",
+      "8",
+      "--watcher-debounce-ms",
+      "50"
+    ]
+  },
+  "reports": {
+    "hot_path": {
+      "file": "hot-path.json",
+      "required": {
+        "/schema_version": 2,
+        "/release_build": true,
+        "/fixture/caller_provided_root": true
+      },
+      "parity": [
+        "/fixture",
+        "/index/files_indexed",
+        "/regex/hits",
+        "/context/fragments",
+        "/response_blake3"
+      ]
+    },
+    "indexing_profile": {
+      "file": "indexing-profile.json",
+      "required": {
+        "/schema_version": 8,
+        "/release_build": true
+      },
+      "parity": [
+        "/corpus",
+        "/full_noop/files_seen_per_sample",
+        "/full_noop/files_indexed_per_sample",
+        "/full_noop/files_removed_per_sample",
+        "/targeted_changed/files_seen_per_sample",
+        "/targeted_changed/files_indexed_per_sample",
+        "/targeted_changed/files_removed_per_sample",
+        "/watcher_modify_delivery/changed_messages",
+        "/watcher_modify_delivery/full_reconciliation_messages"
+      ]
+    }
+  },
+  "metrics": [
+    {
+      "benchmark": "HotPathRegexP50",
+      "report": "hot_path",
+      "pointer": "/regex/timing_ms/p50",
+      "source_unit": "ms",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 500000
+    },
+    {
+      "benchmark": "HotPathRegexP95",
+      "report": "hot_path",
+      "pointer": "/regex/timing_ms/p95",
+      "source_unit": "ms",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 500000
+    },
+    {
+      "benchmark": "HotPathContextP50",
+      "report": "hot_path",
+      "pointer": "/context/timing_ms/p50",
+      "source_unit": "ms",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 500000
+    },
+    {
+      "benchmark": "HotPathContextP95",
+      "report": "hot_path",
+      "pointer": "/context/timing_ms/p95",
+      "source_unit": "ms",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 500000
+    },
+    {
+      "benchmark": "HotPathTreeFirstP50",
+      "report": "hot_path",
+      "pointer": "/tree/first_page_timing_ms/p50",
+      "source_unit": "ms",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 250000
+    },
+    {
+      "benchmark": "HotPathTreeFirstP95",
+      "report": "hot_path",
+      "pointer": "/tree/first_page_timing_ms/p95",
+      "source_unit": "ms",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 250000
+    },
+    {
+      "benchmark": "HotPathTreeDeepP50",
+      "report": "hot_path",
+      "pointer": "/tree/deep_page_timing_ms/p50",
+      "source_unit": "ms",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 250000
+    },
+    {
+      "benchmark": "HotPathTreeDeepP95",
+      "report": "hot_path",
+      "pointer": "/tree/deep_page_timing_ms/p95",
+      "source_unit": "ms",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 250000
+    },
+    {
+      "benchmark": "HotPathDedupSamePathP50",
+      "report": "hot_path",
+      "pointer": "/deduplication/same_path_timing_ms/p50",
+      "source_unit": "ms",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 100000
+    },
+    {
+      "benchmark": "HotPathDedupSamePathP95",
+      "report": "hot_path",
+      "pointer": "/deduplication/same_path_timing_ms/p95",
+      "source_unit": "ms",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 100000
+    },
+    {
+      "benchmark": "HotPathDedupManyPathsP50",
+      "report": "hot_path",
+      "pointer": "/deduplication/many_paths_timing_ms/p50",
+      "source_unit": "ms",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 100000
+    },
+    {
+      "benchmark": "HotPathDedupManyPathsP95",
+      "report": "hot_path",
+      "pointer": "/deduplication/many_paths_timing_ms/p95",
+      "source_unit": "ms",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 100000
+    },
+    {
+      "benchmark": "IndexFullNoopP50",
+      "report": "indexing_profile",
+      "pointer": "/full_noop/timing/p50_us",
+      "source_unit": "us",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 2000000
+    },
+    {
+      "benchmark": "IndexFullNoopP95",
+      "report": "indexing_profile",
+      "pointer": "/full_noop/timing/p95_us",
+      "source_unit": "us",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 2000000
+    },
+    {
+      "benchmark": "IndexTargetedChangedP50",
+      "report": "indexing_profile",
+      "pointer": "/targeted_changed/timing/p50_us",
+      "source_unit": "us",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 1000000
+    },
+    {
+      "benchmark": "IndexTargetedChangedP95",
+      "report": "indexing_profile",
+      "pointer": "/targeted_changed/timing/p95_us",
+      "source_unit": "us",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 1000000
+    },
+    {
+      "benchmark": "IndexWatcherModifyP50",
+      "report": "indexing_profile",
+      "pointer": "/watcher_modify_delivery/timing/p50_us",
+      "source_unit": "us",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 5000000
+    },
+    {
+      "benchmark": "IndexWatcherModifyP95",
+      "report": "indexing_profile",
+      "pointer": "/watcher_modify_delivery/timing/p95_us",
+      "source_unit": "us",
+      "max_regression_percent": 10.0,
+      "min_absolute_regression_ns": 5000000
+    }
+  ]
+}

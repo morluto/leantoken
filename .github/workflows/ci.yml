@@ -49,6 +49,9 @@ jobs:
               - 'fixtures/**'
               - 'benchmarks/**/*.json'
               - 'benchmarks/**/*.jsonl'
+              - 'benchmarks/run_paired_performance.sh'
+              - 'scripts/paired_performance.py'
+              - 'scripts/test_paired_performance.py'
               - 'README.md'
               - 'docs/usage.md'
               - '**/Cargo.toml'
@@ -56,6 +59,7 @@ jobs:
               - 'rust-toolchain.toml'
               - '.cargo/**'
               - '.github/workflows/ci.yml'
+              - '.github/workflows/paired-performance.yml'
             npm:
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -284,6 +288,9 @@ jobs:
         run: |
           cargo test --all-features --examples
           cargo test --all-features --doc
+
+      - name: Test paired performance comparator
+        run: python3 -m unittest scripts/test_paired_performance.py
 
   coverage:
     name: Test coverage

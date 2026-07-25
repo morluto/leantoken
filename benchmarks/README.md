@@ -549,6 +549,55 @@ to an immutable tool trace, trajectory, raw provider-usage receipt, and
 harness-captured Git patch; report schema v5 records their BLAKE3 identities and
 the frozen task definitions plus post-validation receipts.
 
+## Paired performance regression runner
+
+[`paired_performance.json`](paired_performance.json) defines an opt-in,
+same-host comparison for the retrieval hot paths and selected indexing
+operations. The runner checks out the requested base and the current `HEAD`
+into clean detached worktrees, builds both with Rust 1.95 in release mode, and
+alternates execution order as AB/BA. Ten pairs are the default; use 20 when a
+performance result will support a release or design claim.
+
+The orchestration deliberately delegates statistical comparison to
+[`benchstat`](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat). Benchstat
+computes the across-run medians, confidence intervals, and Mann-Whitney A/B
+comparison. The samples are collected in counterbalanced pairs to reduce order
+bias, but the statistical test itself is Benchstat's independent-sample test,
+not a custom paired test.
+
+Install the version pinned by the manifest, then run from a clean committed
+checkout:
+
+```bash
+go install golang.org/x/perf/cmd/benchstat@v0.0.0-20260709024250-82a0b07e230d
+
+benchmarks/run_paired_performance.sh \
+  BASE_REVISION \
+  target/paired-performance \
+  10
+```
+
+The base revision must already implement the same benchmark report schemas.
+This prevents an older or incompatible harness from being mistaken for
+performance evidence. The `Paired performance` workflow exposes the same
+runner through a manual dispatch; it is intentionally absent from ordinary
+pull-request CI.
+
+Each sample directory retains the two raw JSON reports, stdout/stderr, and a
+provenance record containing the commit, tree, Rust, Benchstat, host, pair, and
+execution order. Before timing is compared, the adapter verifies the frozen
+fixture and operation counts plus hashes of the complete observable hot-path
+responses. A parity mismatch invalidates the run.
+
+Benchstat's CSV is the statistical result of record. The small repository
+adapter converts the existing reports to Benchstat input and applies the
+manifest's per-operation materiality thresholds. A regression fails only when
+the head median exceeds both the relative and absolute thresholds and
+Benchstat reports a significant difference. A percentage-only change is
+`NOISE`; a material but statistically insignificant change is
+`INCONCLUSIVE`. Both remain visible without failing the gate. Do not compare
+artifacts from different hosts or edit thresholds after seeing a run.
+
 ## Indexing and file-read profile
 
 The indexing profile answers two narrower implementation questions:
