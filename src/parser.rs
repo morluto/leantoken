@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
 use std::path::Path;
 
@@ -139,8 +139,12 @@ thread_local! {
 }
 
 struct ParserCache {
-    language: String,
     parser: Parser,
+    language: Option<String>,
+    queries: HashMap<String, CompiledQueries>,
+}
+
+struct CompiledQueries {
     tags_query: Query,
     import_query: Option<Query>,
 }
@@ -155,45 +159,53 @@ fn parse_language_with_cancellation(
 
     PARSER_CACHE.with(|cell| {
         let mut cache = cell.borrow_mut();
-        let needs_init = match &*cache {
-            Some(c) => c.language != language,
-            None => true,
-        };
-        if needs_init {
-            let mut parser = Parser::new();
-            parser
-                .set_language(&lang)
-                .map_err(Error::TreeSitterLanguage)?;
+        let cache = cache.get_or_insert_with(|| ParserCache {
+            parser: Parser::new(),
+            language: None,
+            queries: HashMap::new(),
+        });
+        if !cache.queries.contains_key(language) {
             let tags_query = build_tags_query(language, &lang)?;
             let import_query = build_import_query(language, &lang)?;
-            *cache = Some(ParserCache {
-                language: language.to_string(),
-                parser,
-                tags_query,
-                import_query,
-            });
+            cache.queries.insert(
+                language.to_string(),
+                CompiledQueries {
+                    tags_query,
+                    import_query,
+                },
+            );
         }
-        let cache = cache.as_mut().expect("cache was just initialized");
+        if cache.language.as_deref() != Some(language) {
+            cache
+                .parser
+                .set_language(&lang)
+                .map_err(Error::TreeSitterLanguage)?;
+            cache.language = Some(language.to_string());
+        }
 
         let tree = parse_tree(&mut cache.parser, source, &mut is_cancelled)?;
         let root = tree.root_node();
         let structurally_complete = !root.has_error();
 
+        let queries = cache
+            .queries
+            .get(language)
+            .expect("queries were just initialized");
         let mut symbols = Vec::new();
         let mut references = Vec::new();
         let mut imports = Vec::new();
 
-        run_query(source, &cache.tags_query, root, &mut is_cancelled, |qm| {
+        run_query(source, &queries.tags_query, root, &mut is_cancelled, |qm| {
             process_tags_match(
                 language,
                 source,
-                &cache.tags_query,
+                &queries.tags_query,
                 qm,
                 &mut symbols,
                 &mut references,
             );
         })?;
-        if let Some(import_query) = &cache.import_query {
+        if let Some(import_query) = &queries.import_query {
             run_query(source, import_query, root, &mut is_cancelled, |qm| {
                 process_imports_match(source, import_query, qm, &mut imports);
             })?;

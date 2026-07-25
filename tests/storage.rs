@@ -69,7 +69,7 @@ fn storage_opens_and_validates_fts5_support() {
     let db = dir.path().join("index.sqlite");
     let storage = Storage::open(&db).expect("open");
     let meta = storage.meta().expect("meta");
-    assert_eq!(meta.schema_version, 5);
+    assert_eq!(meta.schema_version, 6);
     assert_eq!(meta.repository_generation, 0);
     assert!(db.exists());
 }
@@ -168,7 +168,7 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
     drop(connection);
 
     let storage = Storage::open(&db).expect("migrate");
-    assert_eq!(storage.meta().expect("metadata").schema_version, 5);
+    assert_eq!(storage.meta().expect("metadata").schema_version, 6);
     let connection = rusqlite::Connection::open(&db).expect("inspect");
     let last_access: i64 = connection
         .query_row(
@@ -205,7 +205,117 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
     let migration_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("migration version");
-    assert_eq!(migration_version, 6);
+    assert_eq!(migration_version, 7);
+}
+
+#[test]
+fn structural_search_preserves_substring_case_and_short_query_behavior() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");
+    let mut file = sample_file("src/lib.rs", "fn MainHandler() { PrintLine(); }\n");
+    file.symbols[0].name = "MainHandler".into();
+    file.references[0].name = "PrintLine".into();
+    storage
+        .full_reconcile("hash", vec![file])
+        .expect("reconcile");
+
+    assert_eq!(
+        storage
+            .search_symbols("handler", false, 10)
+            .expect("case-insensitive symbol search")[0]
+            .symbol
+            .name,
+        "MainHandler"
+    );
+    assert!(
+        storage
+            .search_symbols("handler", true, 10)
+            .expect("case-sensitive symbol search")
+            .is_empty()
+    );
+    assert_eq!(
+        storage
+            .search_references("intL", true, 10)
+            .expect("case-sensitive reference search")[0]
+            .reference
+            .name,
+        "PrintLine"
+    );
+    assert_eq!(
+        storage
+            .search_symbols("Ma", true, 10)
+            .expect("short symbol search")[0]
+            .symbol
+            .name,
+        "MainHandler"
+    );
+
+    let mut replacement = sample_file("src/lib.rs", "fn NextHandler() { EmitLine(); }\n");
+    replacement.symbols[0].name = "NextHandler".into();
+    replacement.references[0].name = "EmitLine".into();
+    storage
+        .reconcile_files("hash", vec![replacement], &[])
+        .expect("incremental replacement");
+    assert!(
+        storage
+            .search_symbols("MainHandler", true, 10)
+            .expect("removed symbol search")
+            .is_empty()
+    );
+    assert_eq!(
+        storage
+            .search_references("EmitLine", true, 10)
+            .expect("replacement reference search")[0]
+            .reference
+            .name,
+        "EmitLine"
+    );
+}
+
+#[test]
+fn structural_search_migration_rebuilds_existing_rows() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("index.sqlite");
+    let storage = Storage::open(&db).expect("open");
+    storage
+        .full_reconcile("hash", vec![sample_file("src/lib.rs", "fn main() {}\n")])
+        .expect("reconcile");
+    drop(storage);
+
+    let connection = rusqlite::Connection::open(&db).expect("raw connection");
+    connection
+        .execute_batch(
+            "DROP TRIGGER symbols_ai_trigram;
+             DROP TRIGGER symbols_ad_trigram;
+             DROP TRIGGER symbols_au_trigram;
+             DROP TRIGGER symbol_refs_ai_trigram;
+             DROP TRIGGER symbol_refs_ad_trigram;
+             DROP TRIGGER symbol_refs_au_trigram;
+             DROP TABLE symbols_fts_trigram;
+             DROP TABLE symbol_refs_fts_trigram;
+             UPDATE meta SET schema_version = 5 WHERE id = 1;
+             PRAGMA user_version = 6;",
+        )
+        .expect("simulate pre-structural-search database");
+    drop(connection);
+
+    let migrated = Storage::open(&db).expect("migrate");
+    assert_eq!(
+        migrated
+            .search_symbols("main", true, 10)
+            .expect("migrated symbol search")[0]
+            .symbol
+            .name,
+        "main"
+    );
+    assert_eq!(
+        migrated
+            .search_references("println", true, 10)
+            .expect("migrated reference search")[0]
+            .reference
+            .name,
+        "println"
+    );
 }
 
 #[test]

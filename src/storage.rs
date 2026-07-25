@@ -8,7 +8,8 @@ use std::{
 
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{
-    Connection, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior, params,
+    Connection, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior,
+    config::DbConfig, params,
 };
 use rusqlite_migration::{M, Migrations};
 
@@ -20,7 +21,7 @@ use crate::{Error, Result};
 // disk footprint after a large initial publication.
 const WAL_JOURNAL_SIZE_LIMIT_BYTES: i64 = 16 * 1024 * 1024;
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 5;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 6;
 
 /// Default row limit used by callers that do not provide a tighter bound.
 pub const DEFAULT_MAX_RESULTS: usize = 100;
@@ -29,6 +30,42 @@ pub const HARD_MAX_RESULTS: usize = 10_000;
 
 const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_millis(5_000);
 const READ_ONLY_STATUS_BUSY_TIMEOUT: Duration = Duration::from_millis(100);
+
+struct DatabaseTriggerGuard<'connection> {
+    connection: &'connection Connection,
+    previous: Option<bool>,
+}
+
+impl<'connection> DatabaseTriggerGuard<'connection> {
+    fn disable(connection: &'connection Connection) -> rusqlite::Result<Self> {
+        let previous = connection.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER)?;
+        connection.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER, false)?;
+        Ok(Self {
+            connection,
+            previous: Some(previous),
+        })
+    }
+
+    fn restore(mut self) -> rusqlite::Result<()> {
+        self.restore_inner()
+    }
+
+    fn restore_inner(&mut self) -> rusqlite::Result<()> {
+        let Some(previous) = self.previous else {
+            return Ok(());
+        };
+        self.connection
+            .set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER, previous)?;
+        self.previous = None;
+        Ok(())
+    }
+}
+
+impl Drop for DatabaseTriggerGuard<'_> {
+    fn drop(&mut self) {
+        let _ = self.restore_inner();
+    }
+}
 
 const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -211,6 +248,68 @@ SET last_access_unix_seconds = CAST(strftime('%s', 'now') AS INTEGER),
 WHERE id = 1;
 "#;
 
+const STRUCTURAL_SEARCH_SQL: &str = r#"
+CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts_trigram USING fts5(
+    name,
+    content='symbols',
+    content_rowid='rowid',
+    tokenize='trigram'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS symbol_refs_fts_trigram USING fts5(
+    name,
+    content='symbol_refs',
+    content_rowid='rowid',
+    tokenize='trigram'
+);
+
+CREATE TRIGGER IF NOT EXISTS symbols_ai_trigram
+AFTER INSERT ON symbols
+BEGIN
+    INSERT INTO symbols_fts_trigram(rowid, name) VALUES (new.rowid, new.name);
+END;
+
+CREATE TRIGGER IF NOT EXISTS symbols_ad_trigram
+AFTER DELETE ON symbols
+BEGIN
+    INSERT INTO symbols_fts_trigram(symbols_fts_trigram, rowid, name)
+    VALUES ('delete', old.rowid, old.name);
+END;
+
+CREATE TRIGGER IF NOT EXISTS symbols_au_trigram
+AFTER UPDATE ON symbols
+BEGIN
+    INSERT INTO symbols_fts_trigram(symbols_fts_trigram, rowid, name)
+    VALUES ('delete', old.rowid, old.name);
+    INSERT INTO symbols_fts_trigram(rowid, name) VALUES (new.rowid, new.name);
+END;
+
+CREATE TRIGGER IF NOT EXISTS symbol_refs_ai_trigram
+AFTER INSERT ON symbol_refs
+BEGIN
+    INSERT INTO symbol_refs_fts_trigram(rowid, name) VALUES (new.rowid, new.name);
+END;
+
+CREATE TRIGGER IF NOT EXISTS symbol_refs_ad_trigram
+AFTER DELETE ON symbol_refs
+BEGIN
+    INSERT INTO symbol_refs_fts_trigram(symbol_refs_fts_trigram, rowid, name)
+    VALUES ('delete', old.rowid, old.name);
+END;
+
+CREATE TRIGGER IF NOT EXISTS symbol_refs_au_trigram
+AFTER UPDATE ON symbol_refs
+BEGIN
+    INSERT INTO symbol_refs_fts_trigram(symbol_refs_fts_trigram, rowid, name)
+    VALUES ('delete', old.rowid, old.name);
+    INSERT INTO symbol_refs_fts_trigram(rowid, name) VALUES (new.rowid, new.name);
+END;
+
+INSERT INTO symbols_fts_trigram(symbols_fts_trigram) VALUES('rebuild');
+INSERT INTO symbol_refs_fts_trigram(symbol_refs_fts_trigram) VALUES('rebuild');
+UPDATE meta SET schema_version = 6 WHERE id = 1;
+"#;
+
 const TOKEN_SAVINGS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS token_savings (
     tokenizer TEXT NOT NULL,
@@ -230,8 +329,9 @@ const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(IMPORT_CANDIDATES_SQL),
     M::up(PATH_PROJECTION_SQL),
     M::up(CACHE_ACCESS_SQL),
+    M::up(STRUCTURAL_SEARCH_SQL),
 ];
-pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 6;
+pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 7;
 const _: () = assert!(MIGRATIONS_SLICE.len() == CURRENT_MIGRATION_VERSION as usize);
 const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
 
@@ -938,6 +1038,13 @@ impl Storage {
         )?;
         verify_baseline(baseline, current_generation, &current_config)?;
 
+        // Initial and replacement publications can build the external-content
+        // FTS indexes once instead of maintaining them for every chunk mutation.
+        let bulk_fts = rebuild || current_generation == 0;
+        let mut trigger_guard = bulk_fts
+            .then(|| DatabaseTriggerGuard::disable(&tx))
+            .transpose()?;
+
         if rebuild {
             tx.execute("DELETE FROM files", [])?;
             tx.execute("DELETE FROM path_entries", [])?;
@@ -962,13 +1069,39 @@ impl Storage {
         drop(writer);
 
         if !changed {
+            if let Some(guard) = trigger_guard.take() {
+                guard.restore()?;
+            }
+            drop(trigger_guard);
             tx.commit()?;
             return Ok((i64_to_u64(current_generation), output));
+        }
+        if bulk_fts {
+            tx.execute(
+                "INSERT INTO chunks_fts_word(chunks_fts_word) VALUES('rebuild')",
+                [],
+            )?;
+            tx.execute(
+                "INSERT INTO chunks_fts_trigram(chunks_fts_trigram) VALUES('rebuild')",
+                [],
+            )?;
+            tx.execute(
+                "INSERT INTO symbols_fts_trigram(symbols_fts_trigram) VALUES('rebuild')",
+                [],
+            )?;
+            tx.execute(
+                "INSERT INTO symbol_refs_fts_trigram(symbol_refs_fts_trigram) VALUES('rebuild')",
+                [],
+            )?;
         }
         tx.execute(
             "UPDATE meta SET config_hash = ?1, repository_generation = ?2, index_version = index_version + 1 WHERE id = 1",
             params![config_hash, next_generation],
         )?;
+        if let Some(guard) = trigger_guard.take() {
+            guard.restore()?;
+        }
+        drop(trigger_guard);
         tx.commit()?;
         Ok((i64_to_u64(next_generation), output))
     }
@@ -980,9 +1113,10 @@ impl Storage {
         source_tokens: Option<(&str, usize)>,
     ) -> Result<()> {
         let (source_tokenizer, source_token_count) = source_tokens.unwrap_or(("", 0));
-        tx.execute(
+        tx.prepare_cached(
             "INSERT INTO files(path, language, structurally_complete, size_bytes, modified_ns, content_hash, generation, source_token_count, source_tokenizer) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
+        )?
+        .execute(params![
                 &file.path,
                 file.language.as_deref(),
                 file.structurally_complete,
@@ -992,76 +1126,82 @@ impl Storage {
                 generation,
                 usize_to_i64(source_token_count)?,
                 source_tokenizer,
-            ],
-        )?;
+            ])?;
         let file_id = tx.last_insert_rowid();
         Self::insert_path_projection(tx, &file.path, file_id)?;
 
+        let mut insert_chunk = tx.prepare_cached(
+            "INSERT INTO chunks(file_id, content, start_line, end_line, start_byte, end_byte, token_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?;
         for chunk in &file.chunks {
-            tx.execute(
-                "INSERT INTO chunks(file_id, content, start_line, end_line, start_byte, end_byte, token_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    file_id,
-                    &chunk.content,
-                    usize_to_i64(chunk.start_line)?,
-                    usize_to_i64(chunk.end_line)?,
-                    usize_to_i64(chunk.start_byte)?,
-                    usize_to_i64(chunk.end_byte)?,
-                    usize_to_i64(chunk.token_count)?,
-                ],
-            )?;
+            insert_chunk.execute(params![
+                file_id,
+                &chunk.content,
+                usize_to_i64(chunk.start_line)?,
+                usize_to_i64(chunk.end_line)?,
+                usize_to_i64(chunk.start_byte)?,
+                usize_to_i64(chunk.end_byte)?,
+                usize_to_i64(chunk.token_count)?,
+            ])?;
         }
+        drop(insert_chunk);
 
+        let mut insert_symbol = tx.prepare_cached(
+            "INSERT INTO symbols(file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        )?;
         for symbol in &file.symbols {
-            tx.execute(
-                "INSERT INTO symbols(file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![
-                    file_id,
-                    &symbol.name,
-                    &symbol.kind,
-                    symbol.parent.as_deref(),
-                    symbol.signature.as_deref(),
-                    usize_to_i64(symbol.start_line)?,
-                    usize_to_i64(symbol.end_line)?,
-                    usize_to_i64(symbol.start_byte)?,
-                    usize_to_i64(symbol.end_byte)?,
-                ],
-            )?;
+            insert_symbol.execute(params![
+                file_id,
+                &symbol.name,
+                &symbol.kind,
+                symbol.parent.as_deref(),
+                symbol.signature.as_deref(),
+                usize_to_i64(symbol.start_line)?,
+                usize_to_i64(symbol.end_line)?,
+                usize_to_i64(symbol.start_byte)?,
+                usize_to_i64(symbol.end_byte)?,
+            ])?;
         }
+        drop(insert_symbol);
 
+        let mut insert_reference = tx.prepare_cached(
+            "INSERT INTO symbol_refs(file_id, name, kind, role, enclosing_symbol, start_line, end_line, start_byte, end_byte) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        )?;
         for reference in &file.references {
-            tx.execute(
-                "INSERT INTO symbol_refs(file_id, name, kind, role, enclosing_symbol, start_line, end_line, start_byte, end_byte) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![
-                    file_id,
-                    &reference.name,
-                    &reference.kind,
-                    role_to_str(reference.role),
-                    reference.enclosing_symbol.as_deref(),
-                    usize_to_i64(reference.start_line)?,
-                    usize_to_i64(reference.end_line)?,
-                    usize_to_i64(reference.start_byte)?,
-                    usize_to_i64(reference.end_byte)?,
-                ],
-            )?;
+            insert_reference.execute(params![
+                file_id,
+                &reference.name,
+                &reference.kind,
+                role_to_str(reference.role),
+                reference.enclosing_symbol.as_deref(),
+                usize_to_i64(reference.start_line)?,
+                usize_to_i64(reference.end_line)?,
+                usize_to_i64(reference.start_byte)?,
+                usize_to_i64(reference.end_byte)?,
+            ])?;
         }
+        drop(insert_reference);
 
+        let mut insert_import = tx.prepare_cached(
+            "INSERT INTO imports(file_id, raw_target, resolved_path, line) VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        let mut insert_import_candidate = tx.prepare_cached(
+            "INSERT INTO import_candidates(import_id, candidate_path, priority) VALUES (?1, ?2, ?3)",
+        )?;
         for import in &file.imports {
-            tx.execute(
-                "INSERT INTO imports(file_id, raw_target, resolved_path, line) VALUES (?1, ?2, ?3, ?4)",
-                params![
-                    file_id,
-                    &import.raw_target,
-                    import.resolved_path.as_deref(),
-                    usize_to_i64(import.line)?,
-                ],
-            )?;
+            insert_import.execute(params![
+                file_id,
+                &import.raw_target,
+                import.resolved_path.as_deref(),
+                usize_to_i64(import.line)?,
+            ])?;
             let import_id = tx.last_insert_rowid();
             for (priority, candidate_path) in import.candidate_paths.iter().enumerate() {
-                tx.execute(
-                    "INSERT INTO import_candidates(import_id, candidate_path, priority) VALUES (?1, ?2, ?3)",
-                    params![import_id, candidate_path, usize_to_i64(priority)?],
-                )?;
+                insert_import_candidate.execute(params![
+                    import_id,
+                    candidate_path,
+                    usize_to_i64(priority)?
+                ])?;
             }
         }
 
@@ -1070,17 +1210,18 @@ impl Storage {
 
     fn insert_path_projection(tx: &Transaction, path: &str, file_id: i64) -> Result<()> {
         let parts = path.split('/').collect::<Vec<_>>();
+        let mut insert_directory = tx.prepare_cached(
+            "INSERT OR IGNORE INTO path_entries(path, depth, kind, file_id) VALUES (?1, ?2, 0, NULL)",
+        )?;
         for index in 1..parts.len() {
             let directory = parts[..index].join("/");
-            tx.execute(
-                "INSERT OR IGNORE INTO path_entries(path, depth, kind, file_id) VALUES (?1, ?2, 0, NULL)",
-                params![directory, usize_to_i64(index)?],
-            )?;
+            insert_directory.execute(params![directory, usize_to_i64(index)?])?;
         }
-        tx.execute(
+        drop(insert_directory);
+        tx.prepare_cached(
             "INSERT OR REPLACE INTO path_entries(path, depth, kind, file_id) VALUES (?1, ?2, 1, ?3)",
-            params![path, usize_to_i64(parts.len())?, file_id],
-        )?;
+        )?
+        .execute(params![path, usize_to_i64(parts.len())?, file_id])?;
         Ok(())
     }
 
@@ -1354,6 +1495,46 @@ impl Storage {
             token_count: i64_to_usize(row.get(8)?),
             generation: i64_to_u64(row.get(9)?),
             score: row.get::<_, f64>(10)?,
+        })
+    }
+
+    fn map_symbol_hit(row: &Row) -> std::result::Result<SymbolHit, rusqlite::Error> {
+        Ok(SymbolHit {
+            path: row.get(0)?,
+            content_hash: row.get(1)?,
+            generation: i64_to_u64(row.get(2)?),
+            symbol: SymbolRecord {
+                id: row.get(3)?,
+                file_id: row.get(4)?,
+                name: row.get(5)?,
+                kind: row.get(6)?,
+                parent: row.get(7)?,
+                signature: row.get(8)?,
+                start_line: i64_to_usize(row.get(9)?),
+                end_line: i64_to_usize(row.get(10)?),
+                start_byte: i64_to_usize(row.get(11)?),
+                end_byte: i64_to_usize(row.get(12)?),
+            },
+        })
+    }
+
+    fn map_reference_hit(row: &Row) -> std::result::Result<ReferenceHit, rusqlite::Error> {
+        Ok(ReferenceHit {
+            path: row.get(0)?,
+            content_hash: row.get(1)?,
+            generation: i64_to_u64(row.get(2)?),
+            reference: ReferenceRecord {
+                id: row.get(3)?,
+                file_id: row.get(4)?,
+                name: row.get(5)?,
+                kind: row.get(6)?,
+                role: role_from_str(&row.get::<_, String>(7)?),
+                enclosing_symbol: row.get(8)?,
+                start_line: i64_to_usize(row.get(9)?),
+                end_line: i64_to_usize(row.get(10)?),
+                start_byte: i64_to_usize(row.get(11)?),
+                end_byte: i64_to_usize(row.get(12)?),
+            },
         })
     }
 }
@@ -1933,8 +2114,7 @@ impl ReadSession {
         if query.chars().count() < 3 {
             return Ok(Vec::new());
         }
-        let escaped = query.replace('"', "\"\"");
-        let quoted = format!("\"{escaped}\"");
+        let quoted = quoted_fts_phrase(query);
         self.search_fts(FtsTable::Trigram, &quoted, max_results, offset)
     }
 
@@ -1956,33 +2136,32 @@ impl ReadSession {
     ) -> Result<Vec<SymbolHit>> {
         let limit = bounded_limit(max_results);
         let offset = i64::try_from(offset).unwrap_or(i64::MAX);
-        let mut stmt = self.conn.prepare_cached(
+        let indexed = query.chars().count() >= 3;
+        let sql = if indexed {
             "SELECT f.path, f.content_hash, f.generation, s.id, s.file_id, s.name, s.kind, s.parent, s.signature, s.start_line, s.end_line, s.start_byte, s.end_byte
-                 FROM symbols s JOIN files f ON f.id = s.file_id
-                 WHERE CASE WHEN ?2 THEN instr(s.name, ?1) > 0 ELSE instr(lower(s.name), lower(?1)) > 0 END
+                 FROM symbols_fts_trigram
+                 JOIN symbols s ON s.rowid = symbols_fts_trigram.rowid
+                 JOIN files f ON f.id = s.file_id
+                 WHERE symbols_fts_trigram MATCH ?5
+                   AND CASE WHEN ?2 THEN instr(s.name, ?1) > 0 ELSE instr(lower(s.name), lower(?1)) > 0 END
                  ORDER BY CASE WHEN CASE WHEN ?2 THEN s.name = ?1 ELSE lower(s.name) = lower(?1) END THEN 0 ELSE 1 END,
                           length(s.name), f.path, s.start_byte
-                 LIMIT ?3 OFFSET ?4",
+                 LIMIT ?3 OFFSET ?4"
+        } else {
+            "SELECT f.path, f.content_hash, f.generation, s.id, s.file_id, s.name, s.kind, s.parent, s.signature, s.start_line, s.end_line, s.start_byte, s.end_byte
+                 FROM symbols s JOIN files f ON f.id = s.file_id
+                 WHERE ?5 IS NULL
+                   AND CASE WHEN ?2 THEN instr(s.name, ?1) > 0 ELSE instr(lower(s.name), lower(?1)) > 0 END
+                 ORDER BY CASE WHEN CASE WHEN ?2 THEN s.name = ?1 ELSE lower(s.name) = lower(?1) END THEN 0 ELSE 1 END,
+                          length(s.name), f.path, s.start_byte
+                 LIMIT ?3 OFFSET ?4"
+        };
+        let quoted = indexed.then(|| quoted_fts_phrase(query));
+        let mut stmt = self.conn.prepare_cached(sql)?;
+        let rows = stmt.query_map(
+            params![query, case_sensitive, limit, offset, quoted],
+            Storage::map_symbol_hit,
         )?;
-        let rows = stmt.query_map(params![query, case_sensitive, limit, offset], |row| {
-            Ok(SymbolHit {
-                path: row.get(0)?,
-                content_hash: row.get(1)?,
-                generation: i64_to_u64(row.get(2)?),
-                symbol: SymbolRecord {
-                    id: row.get(3)?,
-                    file_id: row.get(4)?,
-                    name: row.get(5)?,
-                    kind: row.get(6)?,
-                    parent: row.get(7)?,
-                    signature: row.get(8)?,
-                    start_line: i64_to_usize(row.get(9)?),
-                    end_line: i64_to_usize(row.get(10)?),
-                    start_byte: i64_to_usize(row.get(11)?),
-                    end_byte: i64_to_usize(row.get(12)?),
-                },
-            })
-        })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
@@ -2004,33 +2183,32 @@ impl ReadSession {
     ) -> Result<Vec<ReferenceHit>> {
         let limit = bounded_limit(max_results);
         let offset = i64::try_from(offset).unwrap_or(i64::MAX);
-        let mut stmt = self.conn.prepare_cached(
+        let indexed = query.chars().count() >= 3;
+        let sql = if indexed {
             "SELECT f.path, f.content_hash, f.generation, r.id, r.file_id, r.name, r.kind, r.role, r.enclosing_symbol, r.start_line, r.end_line, r.start_byte, r.end_byte
-                 FROM symbol_refs r JOIN files f ON f.id = r.file_id
-                 WHERE CASE WHEN ?2 THEN instr(r.name, ?1) > 0 ELSE instr(lower(r.name), lower(?1)) > 0 END
+                 FROM symbol_refs_fts_trigram
+                 JOIN symbol_refs r ON r.rowid = symbol_refs_fts_trigram.rowid
+                 JOIN files f ON f.id = r.file_id
+                 WHERE symbol_refs_fts_trigram MATCH ?5
+                   AND CASE WHEN ?2 THEN instr(r.name, ?1) > 0 ELSE instr(lower(r.name), lower(?1)) > 0 END
                  ORDER BY CASE WHEN CASE WHEN ?2 THEN r.name = ?1 ELSE lower(r.name) = lower(?1) END THEN 0 ELSE 1 END,
                           length(r.name), f.path, r.start_byte
-                 LIMIT ?3 OFFSET ?4",
+                 LIMIT ?3 OFFSET ?4"
+        } else {
+            "SELECT f.path, f.content_hash, f.generation, r.id, r.file_id, r.name, r.kind, r.role, r.enclosing_symbol, r.start_line, r.end_line, r.start_byte, r.end_byte
+                 FROM symbol_refs r JOIN files f ON f.id = r.file_id
+                 WHERE ?5 IS NULL
+                   AND CASE WHEN ?2 THEN instr(r.name, ?1) > 0 ELSE instr(lower(r.name), lower(?1)) > 0 END
+                 ORDER BY CASE WHEN CASE WHEN ?2 THEN r.name = ?1 ELSE lower(r.name) = lower(?1) END THEN 0 ELSE 1 END,
+                          length(r.name), f.path, r.start_byte
+                 LIMIT ?3 OFFSET ?4"
+        };
+        let quoted = indexed.then(|| quoted_fts_phrase(query));
+        let mut stmt = self.conn.prepare_cached(sql)?;
+        let rows = stmt.query_map(
+            params![query, case_sensitive, limit, offset, quoted],
+            Storage::map_reference_hit,
         )?;
-        let rows = stmt.query_map(params![query, case_sensitive, limit, offset], |row| {
-            Ok(ReferenceHit {
-                path: row.get(0)?,
-                content_hash: row.get(1)?,
-                generation: i64_to_u64(row.get(2)?),
-                reference: ReferenceRecord {
-                    id: row.get(3)?,
-                    file_id: row.get(4)?,
-                    name: row.get(5)?,
-                    kind: row.get(6)?,
-                    role: role_from_str(&row.get::<_, String>(7)?),
-                    enclosing_symbol: row.get(8)?,
-                    start_line: i64_to_usize(row.get(9)?),
-                    end_line: i64_to_usize(row.get(10)?),
-                    start_byte: i64_to_usize(row.get(11)?),
-                    end_byte: i64_to_usize(row.get(12)?),
-                },
-            })
-        })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
@@ -2106,6 +2284,10 @@ fn verify_baseline(
 fn bounded_limit(limit: usize) -> i64 {
     let capped = limit.clamp(1, HARD_MAX_RESULTS);
     i64::try_from(capped).unwrap_or(i64::MAX)
+}
+
+fn quoted_fts_phrase(query: &str) -> String {
+    format!("\"{}\"", query.replace('"', "\"\""))
 }
 
 fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
@@ -2352,6 +2534,60 @@ mod tests {
                 )
                 .expect("writer remains usable"),
             2
+        );
+        assert_eq!(
+            storage.search_word("after", 10).expect("word search")[0].path,
+            "after.rs"
+        );
+        assert_eq!(
+            storage.search_trigram("after", 10).expect("trigram search")[0].path,
+            "after.rs"
+        );
+    }
+
+    #[test]
+    fn bulk_rebuild_refreshes_both_chunk_search_indexes() {
+        let directory = tempfile::tempdir().expect("directory");
+        let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+        storage
+            .full_reconcile(
+                "config",
+                vec![sample_file("old.rs", "fn obsolete_marker() {}\n")],
+            )
+            .expect("initial generation");
+        let baseline = storage.meta().expect("baseline");
+
+        storage
+            .publish_reconciliation_at(&baseline, "config", true, |writer| {
+                writer.replace(sample_file("new.rs", "fn replacement_marker() {}\n"))
+            })
+            .expect("replacement generation");
+
+        assert!(
+            storage
+                .search_word("obsolete_marker", 10)
+                .expect("old word search")
+                .is_empty()
+        );
+        assert!(
+            storage
+                .search_trigram("obsolete_marker", 10)
+                .expect("old trigram search")
+                .is_empty()
+        );
+        assert_eq!(
+            storage
+                .search_word("replacement_marker", 10)
+                .expect("new word search")[0]
+                .path,
+            "new.rs"
+        );
+        assert_eq!(
+            storage
+                .search_trigram("replacement_marker", 10)
+                .expect("new trigram search")[0]
+                .path,
+            "new.rs"
         );
     }
 

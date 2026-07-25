@@ -1292,18 +1292,31 @@ impl Services {
                 {
                     adaptive_excerpts[index] = excerpt;
                 }
-                let fallback_requests = reference_hits
-                    .iter()
-                    .map(|(_, hit)| StoredExcerptRequest {
+                let mut fallback_indices = Vec::new();
+                let mut fallback_requests = Vec::new();
+                for (index, ((_, hit), adaptive)) in
+                    reference_hits.iter().zip(&adaptive_excerpts).enumerate()
+                {
+                    if adaptive.is_some() {
+                        continue;
+                    }
+                    fallback_indices.push(index);
+                    fallback_requests.push(StoredExcerptRequest {
                         file_id: hit.reference.file_id,
                         desired_start_line: hit.reference.start_line.saturating_sub(2).max(1),
                         desired_end_line: hit.reference.end_line.saturating_add(2),
                         required_start_line: hit.reference.start_line,
                         required_end_line: hit.reference.end_line,
                         max_lines: 12,
-                    })
-                    .collect::<Vec<_>>();
-                let fallback_excerpts = self.stored_excerpts(session, &fallback_requests)?;
+                    });
+                }
+                let mut fallback_excerpts = vec![None; reference_hits.len()];
+                for (index, excerpt) in fallback_indices
+                    .into_iter()
+                    .zip(self.stored_excerpts(session, &fallback_requests)?)
+                {
+                    fallback_excerpts[index] = excerpt;
+                }
                 for (((rank, hit), adaptive), fallback) in reference_hits
                     .into_iter()
                     .zip(adaptive_excerpts)
@@ -1356,7 +1369,7 @@ impl Services {
                         continue;
                     }
                     let Some(search_hit) =
-                        chunk_search_hit(hit.clone(), term, false, 2, term_regex.as_ref(), false)?
+                        chunk_search_hit(&hit, term, false, 2, term_regex.as_ref(), false)?
                     else {
                         continue;
                     };
