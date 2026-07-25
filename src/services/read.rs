@@ -82,17 +82,51 @@ pub(super) struct AdaptiveExcerptRequest {
     pub token_budget: usize,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct ResolvedReadTarget {
-    start_line: usize,
-    end_line: Option<usize>,
+    target_start_line: usize,
+    target_end_line: Option<usize>,
+    page_start_line: usize,
+    page_start_byte: usize,
+    expected_full_hash: Option<String>,
 }
 
 #[derive(Debug)]
 struct LiveReadRange {
     content: String,
-    start_line: usize,
+    page_start_line: usize,
+    target_bytes: usize,
+}
+
+struct LiveFileSnapshot {
+    content_hash: String,
     end_line: usize,
+}
+
+#[derive(Debug)]
+struct ReadCursor {
+    generation: u64,
+    target_start_line: usize,
+    target_end_line: usize,
+    next_start_line: usize,
+    next_byte: usize,
+    full_hash: String,
+    path_hash: String,
+}
+
+impl ReadCursor {
+    fn encode(&self) -> String {
+        format!(
+            "{}:read:{}:{}:{}:{}:{}:{}",
+            self.generation,
+            self.target_start_line,
+            self.target_end_line,
+            self.next_start_line,
+            self.next_byte,
+            self.full_hash,
+            self.path_hash,
+        )
+    }
 }
 
 fn assemble_stored_excerpt(
@@ -164,14 +198,29 @@ fn validate_read_input(request: &ReadRequest) -> Result<()> {
     }
     validate_optional_input(request.symbol.as_deref(), "symbol", MAX_PATTERN_BYTES)?;
     validate_optional_input(request.expected_hash.as_deref(), "expected hash", 128)?;
+    validate_optional_input(
+        request.continuation_cursor.as_deref(),
+        "continuation cursor",
+        256,
+    )?;
+    if let Some(cursor) = request.continuation_cursor.as_deref() {
+        decode_read_cursor(cursor)?;
+    }
     validate_relative(&request.path)?;
-    if request.symbol.is_some() && (request.start_line.is_some() || request.end_line.is_some()) {
+    let has_line_target = request.start_line.is_some() || request.end_line.is_some();
+    if request.symbol.is_some() && has_line_target {
         return Err(Error::InvalidInput {
             field: "read target",
             reason: "must use either a symbol or line range, not both",
         });
     }
-    if request.symbol.is_none() {
+    if request.continuation_cursor.is_some() && (request.symbol.is_some() || has_line_target) {
+        return Err(Error::InvalidInput {
+            field: "read target",
+            reason: "must use either a continuation cursor or a new target, not both",
+        });
+    }
+    if request.symbol.is_none() && request.continuation_cursor.is_none() {
         let start_line = request.start_line.unwrap_or(1);
         if start_line == 0
             || request
@@ -381,41 +430,99 @@ impl Services {
         let indexed = session
             .find_file(&request.path)?
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
-        let target = resolve_read_target(session, indexed.id, request)?;
+        let target = resolve_read_target(session, indexed.id, request, generation)?;
 
         // Stream the file through a BufReader for the full-file hash so the
         // entire file does not need to be held in memory simultaneously. The
         // content range is extracted by a bounded line-oriented reader.
         let file = open_live_file(self, &request.path)?;
-        let full_hash = stream_hash(&file)?;
-        let range = read_live_range(&file, target, max_tokens, self.config.tokenizer)?;
+        let snapshot = stream_snapshot(&file)?;
+        if target
+            .expected_full_hash
+            .as_deref()
+            .is_some_and(|expected| expected != snapshot.content_hash)
+        {
+            return Err(Error::StaleCursor);
+        }
+        let target_end_line = target
+            .target_end_line
+            .unwrap_or(snapshot.end_line)
+            .min(snapshot.end_line);
+        if target.target_start_line > target_end_line || target.page_start_line > target_end_line {
+            return Err(invalid_line_range());
+        }
+        let range = read_live_range(
+            &file,
+            target.target_start_line,
+            target_end_line,
+            target.page_start_byte,
+            max_tokens,
+            self.config.tokenizer,
+        )?;
+        if range.page_start_line != target.page_start_line {
+            return Err(Error::StaleCursor);
+        }
         let baseline_source_tokens = self.config.tokenizer.count(&range.content);
-        let start_line = range.start_line;
         let (content, emitted_tokens) = self.config.tokenizer.truncate(&range.content, max_tokens);
-        let returned_lines = content
-            .lines()
-            .count()
-            .max(usize::from(!content.is_empty()));
-        let end_line = if returned_lines == 0 {
-            start_line
-        } else {
-            (start_line + returned_lines - 1).min(range.end_line)
-        };
+        let returned_start_line = range.page_start_line;
+        let returned_end_line = returned_end_line(returned_start_line, content);
+        let next_byte = target.page_start_byte.saturating_add(content.len());
+        let truncated = next_byte < range.target_bytes;
+        let next_start_line = truncated.then(|| {
+            if content.ends_with('\n') {
+                returned_end_line.saturating_add(1)
+            } else {
+                returned_end_line
+            }
+        });
+        if truncated {
+            let after_read = stream_snapshot(&file)?;
+            if after_read.content_hash != snapshot.content_hash
+                || after_read.end_line != snapshot.end_line
+            {
+                return Err(Error::RetryableConflict(
+                    crate::error::RetryableOperation::Retrieval,
+                ));
+            }
+        }
+        let continuation_cursor = next_start_line.map(|next_start_line| {
+            ReadCursor {
+                generation,
+                target_start_line: target.target_start_line,
+                target_end_line,
+                next_start_line,
+                next_byte,
+                full_hash: snapshot.content_hash.clone(),
+                path_hash: read_path_hash(&request.path),
+            }
+            .encode()
+        });
         let content_hash = hash(content);
-        let index_stale = indexed.content_hash != full_hash;
+        let index_stale = indexed.content_hash != snapshot.content_hash;
         let indexed_hash = Some(indexed.content_hash);
         let not_modified = request.expected_hash.as_deref() == Some(content_hash.as_str());
+        let status = if truncated {
+            ReadStatus::Truncated
+        } else if not_modified {
+            ReadStatus::NotModified
+        } else {
+            ReadStatus::Content
+        };
 
         Ok((
             ReadResponse {
                 path: request.path.clone(),
-                status: if not_modified {
-                    ReadStatus::NotModified
-                } else {
-                    ReadStatus::Content
-                },
-                start_line,
-                end_line,
+                status,
+                target_start_line: target.target_start_line,
+                target_end_line,
+                returned_start_line,
+                returned_end_line,
+                start_line: returned_start_line,
+                end_line: returned_end_line,
+                truncated,
+                next_start_line,
+                continuation_cursor,
+                not_modified,
                 content: (!not_modified).then(|| content.to_string()),
                 content_hash,
                 indexed_hash,
@@ -429,6 +536,72 @@ impl Services {
             baseline_source_tokens,
         ))
     }
+}
+
+fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
+    let fields = cursor.split(':').collect::<Vec<_>>();
+    let [
+        generation,
+        kind,
+        target_start,
+        target_end,
+        next_start,
+        next_byte,
+        full_hash,
+        path_hash,
+    ] = fields.as_slice()
+    else {
+        return Err(Error::StaleCursor);
+    };
+    if *kind != "read"
+        || full_hash.len() != crate::text::CONTENT_FINGERPRINT_HEX_LEN
+        || path_hash.len() != 16
+        || !full_hash.bytes().all(is_lower_hex)
+        || !path_hash.bytes().all(is_lower_hex)
+    {
+        return Err(Error::StaleCursor);
+    }
+    let cursor = ReadCursor {
+        generation: generation.parse().map_err(|_| Error::StaleCursor)?,
+        target_start_line: target_start.parse().map_err(|_| Error::StaleCursor)?,
+        target_end_line: target_end.parse().map_err(|_| Error::StaleCursor)?,
+        next_start_line: next_start.parse().map_err(|_| Error::StaleCursor)?,
+        next_byte: next_byte.parse().map_err(|_| Error::StaleCursor)?,
+        full_hash: (*full_hash).into(),
+        path_hash: (*path_hash).into(),
+    };
+    if cursor.target_start_line == 0
+        || cursor.target_end_line < cursor.target_start_line
+        || cursor.next_start_line < cursor.target_start_line
+        || cursor.next_start_line > cursor.target_end_line
+        || cursor.next_byte == 0
+    {
+        return Err(Error::StaleCursor);
+    }
+    Ok(cursor)
+}
+
+fn parse_read_cursor(cursor: &str, generation: u64, path: &str) -> Result<ReadCursor> {
+    let cursor = decode_read_cursor(cursor)?;
+    if cursor.generation != generation || cursor.path_hash != read_path_hash(path) {
+        return Err(Error::StaleCursor);
+    }
+    Ok(cursor)
+}
+
+fn read_path_hash(path: &str) -> String {
+    blake3::hash(path.as_bytes()).to_hex()[..16].to_string()
+}
+
+fn is_lower_hex(byte: u8) -> bool {
+    byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+}
+
+fn returned_end_line(start_line: usize, content: &str) -> usize {
+    let newline_count = content.bytes().filter(|byte| *byte == b'\n').count();
+    start_line
+        .saturating_add(newline_count)
+        .saturating_sub(usize::from(content.ends_with('\n') && newline_count > 0))
 }
 
 fn open_live_file(services: &Services, path: &str) -> Result<File> {
@@ -450,8 +623,20 @@ fn resolve_read_target(
     session: &ReadSession,
     file_id: i64,
     request: &ReadRequest,
+    generation: u64,
 ) -> Result<ResolvedReadTarget> {
-    let target = if let Some(symbol_name) = &request.symbol {
+    if let Some(cursor) = request.continuation_cursor.as_deref() {
+        let cursor = parse_read_cursor(cursor, generation, &request.path)?;
+        return Ok(ResolvedReadTarget {
+            target_start_line: cursor.target_start_line,
+            target_end_line: Some(cursor.target_end_line),
+            page_start_line: cursor.next_start_line,
+            page_start_byte: cursor.next_byte,
+            expected_full_hash: Some(cursor.full_hash),
+        });
+    }
+
+    let (target_start_line, target_end_line) = if let Some(symbol_name) = &request.symbol {
         let symbol =
             session
                 .find_symbol(file_id, symbol_name)?
@@ -459,47 +644,64 @@ fn resolve_read_target(
                     path: request.path.clone(),
                     symbol: symbol_name.clone(),
                 })?;
-        ResolvedReadTarget {
-            start_line: symbol.start_line,
-            end_line: Some(symbol.end_line),
-        }
+        (symbol.start_line, Some(symbol.end_line))
     } else {
-        ResolvedReadTarget {
-            start_line: request.start_line.unwrap_or(1),
-            end_line: request.end_line,
-        }
+        (request.start_line.unwrap_or(1), request.end_line)
     };
 
-    if target.start_line == 0
-        || target
-            .end_line
-            .is_some_and(|end_line| end_line < target.start_line)
+    if target_start_line == 0
+        || target_end_line.is_some_and(|end_line| end_line < target_start_line)
     {
         return Err(invalid_line_range());
     }
-    Ok(target)
+    Ok(ResolvedReadTarget {
+        target_start_line,
+        target_end_line,
+        page_start_line: target_start_line,
+        page_start_byte: 0,
+        expected_full_hash: None,
+    })
 }
 
-/// Stream a file through a BufReader and compute the content hash without
-/// loading the entire file into memory.
-fn stream_hash(file: &File) -> Result<String> {
-    let mut reader = BufReader::new(file.try_clone()?);
+/// Stream a file without loading it into memory and capture its live identity.
+fn stream_snapshot(file: &File) -> Result<LiveFileSnapshot> {
+    let mut file = file.try_clone()?;
+    file.seek(SeekFrom::Start(0))?;
+    let mut reader = BufReader::new(file);
     let mut hasher = blake3::Hasher::new();
     let mut buf = [0u8; 65_536];
+    let mut bytes_seen = 0usize;
+    let mut newline_count = 0usize;
+    let mut last_byte_was_newline = false;
     loop {
         let n = reader.read(&mut buf)?;
         if n == 0 {
             break;
         }
         hasher.update(&buf[..n]);
+        bytes_seen = bytes_seen.saturating_add(n);
+        newline_count =
+            newline_count.saturating_add(buf[..n].iter().filter(|byte| **byte == b'\n').count());
+        last_byte_was_newline = buf[n - 1] == b'\n';
     }
-    Ok(hasher.finalize().to_hex()[..crate::text::CONTENT_FINGERPRINT_HEX_LEN].to_string())
+    let end_line = if bytes_seen == 0 {
+        1
+    } else {
+        newline_count.saturating_add(usize::from(!last_byte_was_newline))
+    };
+    Ok(LiveFileSnapshot {
+        content_hash: hasher.finalize().to_hex()[..crate::text::CONTENT_FINGERPRINT_HEX_LEN]
+            .to_string(),
+        end_line,
+    })
 }
 
 /// Read a resolved range without changing its original line terminators.
 fn read_live_range(
     file: &File,
-    target: ResolvedReadTarget,
+    target_start_line: usize,
+    target_end_line: usize,
+    page_start_byte: usize,
     max_tokens: usize,
     tokenizer: crate::tokens::Tokenizer,
 ) -> Result<LiveReadRange> {
@@ -508,10 +710,10 @@ fn read_live_range(
     let mut reader = BufReader::new(file);
     let mut selected = Vec::with_capacity(LIVE_READ_TOKEN_CHECK_BYTES);
     let mut current_line = 1usize;
-    let mut selected_end = None;
     let mut target_finished = false;
     let mut token_bound_reached = false;
-    let mut last_byte_was_newline = false;
+    let mut target_bytes = 0usize;
+    let mut page_start_line = target_start_line;
     let mut next_token_check = LIVE_READ_TOKEN_CHECK_BYTES;
     let mut utf8_pending = Vec::new();
 
@@ -524,21 +726,23 @@ fn read_live_range(
         let mut consumed = 0usize;
         let mut validation_chunk = Vec::new();
         for &byte in buffer {
-            let in_target = current_line >= target.start_line
-                && target
-                    .end_line
-                    .is_none_or(|end_line| current_line <= end_line);
+            let in_target = current_line >= target_start_line && current_line <= target_end_line;
             if in_target {
                 validation_chunk.push(byte);
             }
-            if in_target && !token_bound_reached {
-                selected_end = Some(current_line);
-                selected.push(byte);
+            if in_target {
+                if target_bytes < page_start_byte {
+                    if byte == b'\n' {
+                        page_start_line = current_line.saturating_add(1);
+                    }
+                } else if !token_bound_reached {
+                    selected.push(byte);
+                }
+                target_bytes = target_bytes.saturating_add(1);
             }
             consumed += 1;
-            last_byte_was_newline = byte == b'\n';
             if byte == b'\n' {
-                if target.end_line == Some(current_line) {
+                if target_end_line == current_line {
                     target_finished = true;
                     break;
                 }
@@ -579,9 +783,6 @@ fn read_live_range(
                 }
             }
         }
-        if token_bound_reached && target.end_line.is_none() {
-            target_finished = true;
-        }
     }
 
     if !utf8_pending.is_empty() {
@@ -591,13 +792,8 @@ fn read_live_range(
         });
     }
 
-    let logical_line_count = if current_line == 1 || last_byte_was_newline {
-        current_line.saturating_sub(usize::from(current_line > 1))
-    } else {
-        current_line
-    };
-    if selected_end.is_none() && target.start_line > logical_line_count.max(1) {
-        return Err(invalid_line_range());
+    if page_start_byte > target_bytes {
+        return Err(Error::StaleCursor);
     }
     let content = String::from_utf8(selected).map_err(|_| Error::InvalidInput {
         field: "path",
@@ -605,10 +801,8 @@ fn read_live_range(
     })?;
     Ok(LiveReadRange {
         content,
-        start_line: target.start_line,
-        end_line: selected_end
-            .unwrap_or(target.start_line)
-            .min(target.end_line.unwrap_or(usize::MAX)),
+        page_start_line,
+        target_bytes,
     })
 }
 
@@ -806,5 +1000,22 @@ impl Services {
             excerpts[index] = excerpt;
         }
         Ok(excerpts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_snapshot_hashes_from_the_start_of_a_shared_file_cursor() {
+        let mut file = tempfile::tempfile().expect("temporary file");
+        std::io::Write::write_all(&mut file, b"first\nsecond\n").expect("write fixture");
+        file.seek(SeekFrom::Start(6)).expect("move shared cursor");
+
+        let snapshot = stream_snapshot(&file).expect("snapshot");
+
+        assert_eq!(snapshot.content_hash, hash("first\nsecond\n"));
+        assert_eq!(snapshot.end_line, 2);
     }
 }

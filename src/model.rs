@@ -333,6 +333,9 @@ pub struct ReadRequest {
     /// Indexed symbol to read; cannot be combined with line fields.
     #[serde(default)]
     pub symbol: Option<String>,
+    /// Opaque cursor returned by a truncated read; cannot be combined with a new target.
+    #[serde(default)]
+    pub continuation_cursor: Option<String>,
     /// Maximum source tokens to return.
     #[serde(default)]
     pub max_tokens: Option<usize>,
@@ -345,8 +348,34 @@ pub struct ReadRequest {
 pub struct ReadResponse {
     pub path: String,
     pub status: ReadStatus,
+    /// First line in the complete resolved target.
+    #[serde(default)]
+    pub target_start_line: usize,
+    /// Last line in the complete resolved target.
+    #[serde(default)]
+    pub target_end_line: usize,
+    /// First line represented by this response page.
+    #[serde(default)]
+    pub returned_start_line: usize,
+    /// Last line represented by this response page.
+    #[serde(default)]
+    pub returned_end_line: usize,
+    /// Compatibility alias for `returned_start_line`.
     pub start_line: usize,
+    /// Compatibility alias for `returned_end_line`.
     pub end_line: usize,
+    /// Whether source remains after this response page.
+    #[serde(default)]
+    pub truncated: bool,
+    /// First line represented by the next response page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_start_line: Option<usize>,
+    /// Opaque continuation bound to this repository generation and live file content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_cursor: Option<String>,
+    /// Whether `expected_hash` matched this response page.
+    #[serde(default)]
+    pub not_modified: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
     pub content_hash: String,
@@ -360,6 +389,8 @@ pub struct ReadResponse {
 #[serde(rename_all = "snake_case")]
 pub enum ReadStatus {
     Content,
+    /// The response contains only part of the resolved target.
+    Truncated,
     NotModified,
 }
 

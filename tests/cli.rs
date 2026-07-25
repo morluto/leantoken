@@ -160,8 +160,35 @@ fn cli_read_request() {
     assert_eq!(request.start_line, Some(10));
     assert_eq!(request.end_line, Some(20));
     assert_eq!(request.symbol, None);
+    assert_eq!(request.continuation_cursor, None);
     assert_eq!(request.max_tokens, Some(100));
     assert_eq!(request.expected_hash, Some("abc123".into()));
+}
+
+#[test]
+fn cli_read_continuation_request_conflicts_with_new_targets() {
+    let cli = parse(&["read", "src/lib.rs", "--cursor", "opaque"]);
+    let AppRequest::Read(request) = cli.app_request() else {
+        panic!("expected read request");
+    };
+    assert_eq!(request.path, "src/lib.rs");
+    assert_eq!(request.continuation_cursor, Some("opaque".into()));
+    assert!(request.symbol.is_none());
+    assert!(request.start_line.is_none());
+    assert!(request.end_line.is_none());
+
+    assert!(
+        Cli::try_parse_from([
+            "leantoken",
+            "read",
+            "src/lib.rs",
+            "--cursor",
+            "opaque",
+            "--symbol",
+            "run",
+        ])
+        .is_err()
+    );
 }
 
 #[test]

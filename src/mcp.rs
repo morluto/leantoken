@@ -367,6 +367,12 @@ enum ReadMcpTarget {
         #[schemars(range(min = 1))]
         end: usize,
     },
+    /// Continue a truncated read without losing a partial final line.
+    Continuation {
+        /// Opaque cursor from the preceding truncated response.
+        #[schemars(length(min = 1, max = 256))]
+        cursor: String,
+    },
 }
 
 impl ReadMcpRequest {
@@ -375,9 +381,10 @@ impl ReadMcpRequest {
     }
 
     fn into_parts(self) -> (ReadRequest, IndexConsistency, Option<String>) {
-        let (start_line, end_line, symbol) = match self.target {
-            ReadMcpTarget::Symbol { name } => (None, None, Some(name)),
-            ReadMcpTarget::Lines { start, end } => (Some(start), Some(end), None),
+        let (start_line, end_line, symbol, continuation_cursor) = match self.target {
+            ReadMcpTarget::Symbol { name } => (None, None, Some(name), None),
+            ReadMcpTarget::Lines { start, end } => (Some(start), Some(end), None, None),
+            ReadMcpTarget::Continuation { cursor } => (None, None, None, Some(cursor)),
         };
         (
             ReadRequest {
@@ -385,6 +392,7 @@ impl ReadMcpRequest {
                 start_line,
                 end_line,
                 symbol,
+                continuation_cursor,
                 max_tokens: self.max_tokens,
                 expected_hash: self.expected_hash,
             },
@@ -1764,6 +1772,16 @@ mod tests {
             assert_eq!(request.start_line, Some(10));
             assert_eq!(request.end_line, Some(20));
         }
+        let continuation = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+            "path": "src/mcp.rs",
+            "target": {"kind": "continuation", "cursor": "opaque"}
+        }))
+        .expect("continuation target");
+        let (continuation, _, _) = continuation.into_parts();
+        assert_eq!(continuation.continuation_cursor.as_deref(), Some("opaque"));
+        assert!(continuation.symbol.is_none());
+        assert!(continuation.start_line.is_none());
+        assert!(continuation.end_line.is_none());
     }
 
     #[test]
