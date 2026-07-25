@@ -1106,7 +1106,7 @@
 <a href=#1106 id=1106 data-nosnippet>1106</a>        <span class="string">"leantoken doctor --json"</span>.into()
 <a href=#1107 id=1107 data-nosnippet>1107</a>    };
 <a href=#1108 id=1108 data-nosnippet>1108</a>    <span class="prelude-val">Ok</span>(<span class="macro">format!</span>(
-<a href=#1109 id=1109 data-nosnippet>1109</a>        <span class="string">"---\nname: leantoken\ndescription: Use LeanToken for token-bounded repository exploration, audits, codebase investigations, architecture reviews, source archaeology, code search, symbol outlines, and exact source reads.\n---\n\n{DISCOVERY_SKILL_MARKER}\n\nBefore retrieving repository source, including for audits and code archaeology, discover the deferred `leantoken` MCP server and route progressively:\n\n1. `leantoken_files` finds paths or returns a compact tree.\n2. `leantoken_outline` maps definitions and imports; `leantoken_search` locates symbols, references, identifiers, text, or regex matches.\n3. `leantoken_read` returns only the exact symbol or narrow line range needed.\n\nUse `leantoken_context` only while scope remains uncertain and `leantoken_savings` for repository-local savings. Use native workspace tools for edits, commands, tests, runtime probes, Git operations, and evidence that is not source retrieval. If the server or tools cannot be discovered, run `{doctor}` and report its structured registration, launch, handshake, and catalog status instead of silently claiming LeanToken was used.\n"
+<a href=#1109 id=1109 data-nosnippet>1109</a>        <span class="string">"---\nname: leantoken\ndescription: Use LeanToken for token-bounded repository exploration, audits, codebase investigations, architecture reviews, source archaeology, code search, symbol outlines, and exact source reads.\n---\n\n{DISCOVERY_SKILL_MARKER}\n\nBefore retrieving repository source, including for audits and code archaeology, discover the deferred `leantoken` MCP server and route progressively:\n\n1. `leantoken.files` finds paths or returns a compact tree.\n2. `leantoken.outline` maps definitions and imports; `leantoken.search` locates symbols, references, identifiers, text, or regex matches.\n3. `leantoken.read` returns only the exact symbol or narrow line range needed.\n\nUse `leantoken.context` only while scope remains uncertain and `leantoken.savings` for repository-local savings. Use native workspace tools for edits, commands, tests, runtime probes, Git operations, and evidence that is not source retrieval. If the server or tools cannot be discovered, run `{doctor}` and report its structured registration, launch, handshake, and catalog status instead of silently claiming LeanToken was used.\n"
 <a href=#1110 id=1110 data-nosnippet>1110</a>    </span>))
 <a href=#1111 id=1111 data-nosnippet>1111</a>}
 <a href=#1112 id=1112 data-nosnippet>1112</a>
@@ -2727,15 +2727,15 @@
 <a href=#2727 id=2727 data-nosnippet>2727</a>        <span class="kw">for </span>effect <span class="kw">in </span><span class="kw-2">&amp;</span>report.discovery_plan {
 <a href=#2728 id=2728 data-nosnippet>2728</a>            <span class="kw">let </span>skill = fs::read_to_string(<span class="kw-2">&amp;</span>effect.path).unwrap();
 <a href=#2729 id=2729 data-nosnippet>2729</a>            <span class="macro">assert!</span>(skill.contains(DISCOVERY_SKILL_MARKER));
-<a href=#2730 id=2730 data-nosnippet>2730</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"leantoken_context"</span>));
-<a href=#2731 id=2731 data-nosnippet>2731</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"leantoken_savings"</span>));
+<a href=#2730 id=2730 data-nosnippet>2730</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"leantoken.context"</span>));
+<a href=#2731 id=2731 data-nosnippet>2731</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"leantoken.savings"</span>));
 <a href=#2732 id=2732 data-nosnippet>2732</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"audits and code archaeology"</span>));
 <a href=#2733 id=2733 data-nosnippet>2733</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"runtime probes"</span>));
 <a href=#2734 id=2734 data-nosnippet>2734</a>            <span class="macro">assert!</span>(
-<a href=#2735 id=2735 data-nosnippet>2735</a>                skill.find(<span class="string">"leantoken_files"</span>).unwrap() &lt; skill.find(<span class="string">"leantoken_outline"</span>).unwrap()
+<a href=#2735 id=2735 data-nosnippet>2735</a>                skill.find(<span class="string">"leantoken.files"</span>).unwrap() &lt; skill.find(<span class="string">"leantoken.outline"</span>).unwrap()
 <a href=#2736 id=2736 data-nosnippet>2736</a>            );
 <a href=#2737 id=2737 data-nosnippet>2737</a>            <span class="macro">assert!</span>(
-<a href=#2738 id=2738 data-nosnippet>2738</a>                skill.find(<span class="string">"leantoken_outline"</span>).unwrap() &lt; skill.find(<span class="string">"leantoken_read"</span>).unwrap()
+<a href=#2738 id=2738 data-nosnippet>2738</a>                skill.find(<span class="string">"leantoken.outline"</span>).unwrap() &lt; skill.find(<span class="string">"leantoken.read"</span>).unwrap()
 <a href=#2739 id=2739 data-nosnippet>2739</a>            );
 <a href=#2740 id=2740 data-nosnippet>2740</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"leantoken doctor --json"</span>));
 <a href=#2741 id=2741 data-nosnippet>2741</a>            <span class="macro">assert!</span>(!skill.contains(<span class="string">"inputSchema"</span>));
