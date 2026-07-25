@@ -330,6 +330,9 @@ pub struct ContextRequest {
     pub task: String,
     /// Maximum source tokens across selected fragments.
     pub token_budget: usize,
+    /// Require returned source fragments to match at least one path pattern.
+    #[serde(default)]
+    pub include_paths: Vec<String>,
     /// Boost matching paths without filtering other candidates.
     #[serde(default)]
     pub focus_paths: Vec<String>,
@@ -388,6 +391,66 @@ pub struct OmittedCandidate {
     pub start_line: usize,
     pub end_line: usize,
     pub reason: String,
+}
+
+/// Counts of generated context candidates omitted at caller or budget boundaries.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ContextOmissionSummary {
+    /// Candidates rejected by `include_paths` or `exclude_paths`.
+    pub path_excluded: usize,
+    /// Candidates suppressed because the caller already holds their content hash.
+    pub known_hash: usize,
+    /// Ranked candidates that did not fit the token or result limit.
+    pub budget_or_result_limit: usize,
+}
+
+impl ContextOmissionSummary {
+    fn is_empty(&self) -> bool {
+        self.path_excluded == 0 && self.known_hash == 0 && self.budget_or_result_limit == 0
+    }
+}
+
+/// One deterministic path group inferred from an oversized diff scope.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ContextPathGroup {
+    /// Repository-relative directory prefix represented by this group.
+    pub prefix: String,
+    /// Number of changed paths represented by the prefix.
+    pub changed_paths: usize,
+}
+
+/// A bounded follow-up context scope that preserves the original request invariants.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ContextRoutingSuggestion {
+    /// Hard path scope recommended for the next `context` request.
+    pub include_paths: Vec<String>,
+}
+
+/// Breadth and decomposition guidance for a context request spanning many changed paths.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ContextRoutingReceipt {
+    /// Distinct candidate paths considered before ranking.
+    pub candidate_paths: usize,
+    /// Changed paths represented by the diff scope.
+    pub changed_paths: usize,
+    /// Distinct paths selected into the bounded response.
+    pub selected_paths: usize,
+    /// Whether selected evidence is spread across multiple inferred groups.
+    pub weakly_concentrated: bool,
+    /// Consistency boundary to reuse with every suggested scope.
+    pub consistency: IndexConsistency,
+    /// Base revision to reuse with every suggested scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_revision: Option<String>,
+    /// Held hashes to reuse with every suggested scope.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known_hashes: Vec<String>,
+    /// Total deterministic path groups represented by the changed paths.
+    pub path_groups_total: usize,
+    /// Largest deterministic changed-path groups, in descending size order.
+    pub path_groups: Vec<ContextPathGroup>,
+    /// Bounded hard-scope suggestions for follow-up context calls.
+    pub suggestions: Vec<ContextRoutingSuggestion>,
 }
 
 /// Receipt describing the resolved diff scope, if one was supplied.
@@ -467,6 +530,12 @@ pub struct ContextResponse {
     pub diff_scope: Option<DiffScopeReceipt>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub omitted: Vec<OmittedCandidate>,
+    /// Aggregate omission causes, including details truncated from `omitted`.
+    #[serde(default, skip_serializing_if = "ContextOmissionSummary::is_empty")]
+    pub omission_summary: ContextOmissionSummary,
+    /// Decomposition guidance for oversized, multi-area diff scopes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<ContextRoutingReceipt>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
     pub meta: ResponseMeta,
@@ -828,6 +897,8 @@ mod tests {
             },
             diff_scope: None,
             omitted: Vec::new(),
+            omission_summary: ContextOmissionSummary::default(),
+            routing: None,
             warnings: Vec::new(),
             meta: ResponseMeta {
                 repository_id: "repository".into(),
@@ -884,6 +955,11 @@ mod tests {
                 end_line: 12,
                 reason: "budget or result limit".into(),
             }],
+            omission_summary: ContextOmissionSummary {
+                budget_or_result_limit: 1,
+                ..ContextOmissionSummary::default()
+            },
+            routing: None,
             warnings: vec!["1 omitted".into()],
             meta: ResponseMeta {
                 repository_id: "repository".into(),

@@ -410,6 +410,10 @@ struct ContextMcpRequest {
         default = "default_context_token_option"
     )]
     token_budget: Option<usize>,
+    /// Require every returned source fragment to match one of these path patterns.
+    #[serde(default)]
+    #[schemars(length(max = 256), inner(length(max = 4096)))]
+    include_paths: Vec<String>,
     /// Boost matching paths without filtering other candidates.
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 4096)))]
@@ -465,6 +469,7 @@ impl ContextMcpRequest {
             ContextRequest {
                 task: self.task,
                 token_budget: self.token_budget.unwrap_or(default_token_budget),
+                include_paths: self.include_paths,
                 focus_paths: self.focus_paths,
                 focus_symbols: self.focus_symbols,
                 exclude_paths: self.exclude_paths,
@@ -986,7 +991,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "context",
-        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}."
+        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Use include_paths for a hard subsystem boundary; focus_paths only boosts ranking. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}."
     )]
     async fn leantoken_context(
         &self,

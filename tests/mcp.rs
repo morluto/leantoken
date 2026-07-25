@@ -823,6 +823,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let context = ContextRequest {
         task: "find answer and its caller".into(),
         token_budget: 100,
+        include_paths: Vec::new(),
         focus_paths: Vec::new(),
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),

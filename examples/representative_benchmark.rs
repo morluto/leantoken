@@ -594,6 +594,7 @@ async fn run_task(
     let request = ContextRequest {
         task: task.prompt.clone(),
         token_budget: task.token_budget,
+        include_paths: Vec::new(),
         focus_paths: Vec::new(),
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),

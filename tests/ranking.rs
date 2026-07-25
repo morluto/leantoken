@@ -5,6 +5,7 @@ fn request_with_budget(budget: usize) -> ContextRequest {
     ContextRequest {
         task: "rank source evidence for a task".into(),
         token_budget: budget,
+        include_paths: Vec::new(),
         focus_paths: Vec::new(),
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),

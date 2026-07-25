@@ -143,6 +143,7 @@ async fn compare_context_representations() {
         let context_request = ContextRequest {
             task: task.prompt.into(),
             token_budget: TOKEN_BUDGET,
+            include_paths: Vec::new(),
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),

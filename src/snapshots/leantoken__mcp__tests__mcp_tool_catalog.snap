@@ -5,7 +5,7 @@ expression: tools
 [
   {
     "name": "context",
-    "description": "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}.",
+    "description": "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Use include_paths for a hard subsystem boundary; focus_paths only boosts ranking. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}.",
     "inputSchema": {
       "$defs": {
         "ContextWorkflow": {
@@ -102,6 +102,16 @@ expression: tools
         "focus_symbols": {
           "default": [],
           "description": "Boost candidates for these exact symbol names.",
+          "items": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "maxItems": 256,
+          "type": "array"
+        },
+        "include_paths": {
+          "default": [],
+          "description": "Require every returned source fragment to match one of these path patterns.",
           "items": {
             "maxLength": 4096,
             "type": "string"

@@ -27,6 +27,11 @@ expression: response
       "reason": "budget or result limit"
     }
   ],
+  "omission_summary": {
+    "path_excluded": 0,
+    "known_hash": 0,
+    "budget_or_result_limit": 1
+  },
   "warnings": [
     "1 omitted"
   ],

@@ -77,6 +77,7 @@ async fn mcp_handoff_token_costs() {
     let context_request = ContextRequest {
         task: "change the Rust Point distance calculation and its caller".into(),
         token_budget: 500,
+        include_paths: Vec::new(),
         focus_paths: Vec::new(),
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),

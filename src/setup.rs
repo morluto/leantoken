@@ -185,6 +185,8 @@ pub struct SetupRequest {
     pub yes: bool,
     /// Resolve and print the setup plan without changing configuration.
     pub dry_run: bool,
+    /// Permit an intentionally selected older npx release.
+    pub allow_outdated: bool,
 }
 
 /// Planned action for one client configuration.
@@ -438,11 +440,22 @@ pub fn run(
     let home = home_directory()
         .ok_or_else(|| Error::InternalFailure("could not determine the home directory".into()))?;
     let launcher = McpLauncher::current()?;
+    let native_executable = std::env::current_exe()?.canonicalize()?;
+    if operation == SetupOperation::Setup
+        && launcher.uses_npx()
+        && !request.allow_outdated
+        && npx_resolved_from_local_project(&native_executable, &std::env::current_dir()?)
+    {
+        require_current_npx_setup(
+            launcher.version(),
+            crate::upgrade::latest_npm_version().as_deref(),
+        )?;
+    }
     let runtime_root = setup_runtime_root(&home);
     let environment = SetupEnvironment {
         home,
         runtime_root,
-        native_executable: std::env::current_exe()?.canonicalize()?,
+        native_executable,
         persistent_cli: !launcher.uses_npx(),
         launcher,
         interactive: !json_output
@@ -450,6 +463,34 @@ pub fn run(
             && std::io::stderr().is_terminal(),
     };
     run_with(operation, request, &environment, &InteractivePrompt)
+}
+
+fn npx_resolved_from_local_project(executable: &Path, current_directory: &Path) -> bool {
+    current_directory
+        .ancestors()
+        .any(|ancestor| executable.starts_with(ancestor.join("node_modules").join("leantoken")))
+}
+
+fn require_current_npx_setup(current: &str, latest: Option<&str>) -> Result<()> {
+    let Some(latest) = latest else {
+        return Err(Error::InvalidRequest(
+            "could not verify the locally resolved npx release; retry online or pass \
+             --allow-outdated for an intentional pinned setup"
+                .into(),
+        ));
+    };
+    match crate::upgrade::version_update_available(current, latest) {
+        Some(false) => Ok(()),
+        Some(true) => Err(Error::InvalidRequest(format!(
+            "npx resolved stale local LeanToken v{current}; latest is v{latest}. Run \
+             `npx --yes leantoken@latest setup`, or pass --allow-outdated for an intentional \
+             rollback"
+        ))),
+        None => Err(Error::InvalidRequest(format!(
+            "could not compare locally resolved LeanToken v{current} with npm v{latest}; pass \
+             --allow-outdated only for an intentional pinned setup"
+        ))),
+    }
 }
 
 fn setup_runtime_root(home: &Path) -> PathBuf {
@@ -643,6 +684,11 @@ fn run_with(
     if request.private_runtime && operation != SetupOperation::Setup {
         return Err(Error::InvalidRequest(
             "--private-runtime is only valid with the setup command".into(),
+        ));
+    }
+    if request.allow_outdated && operation != SetupOperation::Setup {
+        return Err(Error::InvalidRequest(
+            "--allow-outdated is only valid with the setup command".into(),
         ));
     }
 
@@ -1927,6 +1973,41 @@ mod tests {
     }
 
     #[test]
+    fn local_npx_setup_stops_before_persisting_a_stale_release() {
+        let root = if cfg!(windows) {
+            PathBuf::from(r"C:\project")
+        } else {
+            PathBuf::from("/project")
+        };
+        let executable = root
+            .join("node_modules/leantoken/native/target")
+            .join(if cfg!(windows) {
+                "leantoken.exe"
+            } else {
+                "leantoken"
+            });
+
+        assert!(npx_resolved_from_local_project(
+            &executable,
+            &root.join("nested/workspace")
+        ));
+        let error = require_current_npx_setup("0.1.1", Some("0.1.13")).expect_err("stale release");
+        assert!(
+            error
+                .to_string()
+                .contains("npx --yes leantoken@latest setup")
+        );
+        assert!(require_current_npx_setup("0.1.13", Some("0.1.13")).is_ok());
+    }
+
+    #[test]
+    fn local_npx_setup_requires_an_explicit_override_when_freshness_is_unknown() {
+        let error = require_current_npx_setup("0.1.13", None).expect_err("unknown latest");
+
+        assert!(error.to_string().contains("--allow-outdated"));
+    }
+
+    #[test]
     fn json_setup_preserves_comments_and_is_idempotent() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("mcp.json");
@@ -2092,6 +2173,7 @@ mod tests {
                 private_runtime: false,
                 yes: false,
                 dry_run: false,
+                allow_outdated: false,
             },
             &environment(&temp),
             &FixedPrompt {
@@ -2118,6 +2200,7 @@ mod tests {
                 private_runtime: false,
                 yes: true,
                 dry_run: false,
+                allow_outdated: false,
             },
             &environment,
             &FixedPrompt {
@@ -2141,6 +2224,7 @@ mod tests {
             private_runtime: false,
             yes: true,
             dry_run: false,
+            allow_outdated: false,
         };
         let first = run_with(
             SetupOperation::Setup,
@@ -2210,6 +2294,7 @@ mod tests {
                 private_runtime: false,
                 yes: true,
                 dry_run: false,
+                allow_outdated: false,
             },
             &environment,
             &FixedPrompt {
@@ -2242,6 +2327,7 @@ mod tests {
                 private_runtime: false,
                 yes: true,
                 dry_run: false,
+                allow_outdated: false,
             },
             &environment,
             &FixedPrompt {
@@ -2276,6 +2362,7 @@ mod tests {
                 private_runtime: false,
                 yes: false,
                 dry_run: false,
+                allow_outdated: false,
             },
             &environment,
             &FixedPrompt {
@@ -2302,6 +2389,7 @@ mod tests {
                 private_runtime: false,
                 yes: false,
                 dry_run: true,
+                allow_outdated: false,
             },
             &environment,
             &FixedPrompt {
@@ -2329,6 +2417,7 @@ mod tests {
                 private_runtime: false,
                 yes: false,
                 dry_run: false,
+                allow_outdated: false,
             },
             &environment,
             &FixedPrompt {
@@ -2360,6 +2449,7 @@ mod tests {
                 private_runtime: false,
                 yes: true,
                 dry_run: false,
+                allow_outdated: false,
             },
             &original,
             &FixedPrompt {
@@ -2377,6 +2467,7 @@ mod tests {
             private_runtime: false,
             yes: true,
             dry_run: false,
+            allow_outdated: false,
         };
         let report = run_with(
             SetupOperation::Setup,
@@ -2445,6 +2536,7 @@ mod tests {
                 private_runtime: false,
                 yes: true,
                 dry_run: false,
+                allow_outdated: false,
             },
             &environment,
             &FixedPrompt {
@@ -2484,6 +2576,7 @@ mod tests {
             private_runtime: false,
             yes: true,
             dry_run: false,
+            allow_outdated: false,
         };
         assert!(
             run_with(SetupOperation::Setup, ambiguous, &environment, &prompt)
@@ -2498,6 +2591,7 @@ mod tests {
             private_runtime: false,
             yes: true,
             dry_run: false,
+            allow_outdated: false,
         };
         assert!(
             run_with(SetupOperation::Remove, remove, &environment, &prompt)
@@ -2524,6 +2618,7 @@ mod tests {
             private_runtime: true,
             yes: true,
             dry_run: true,
+            allow_outdated: false,
         };
         let prompt = FixedPrompt {
             selected: None,
@@ -2582,6 +2677,7 @@ mod tests {
                 private_runtime: false,
                 yes: true,
                 dry_run: false,
+                allow_outdated: false,
             },
             &environment,
             &prompt,
@@ -2709,6 +2805,7 @@ mod tests {
             private_runtime: false,
             yes: true,
             dry_run: false,
+            allow_outdated: false,
         };
 
         let report = run_with(

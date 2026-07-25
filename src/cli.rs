@@ -418,6 +418,9 @@ pub struct IntegrationArgs {
     /// Show the exact configuration plan without making changes.
     #[arg(long)]
     pub dry_run: bool,
+    /// Permit setup from an older npx release for an intentional rollback.
+    #[arg(long)]
+    pub allow_outdated: bool,
 }
 
 /// Managed cache operation.
@@ -497,6 +500,7 @@ impl From<IntegrationArgs> for SetupRequest {
             private_runtime: args.private_runtime,
             yes: args.yes,
             dry_run: args.dry_run,
+            allow_outdated: args.allow_outdated,
         }
     }
 }
@@ -809,6 +813,10 @@ pub struct ContextArgs {
     )]
     pub budget: usize,
 
+    /// Include only paths matching these patterns (repeatable).
+    #[arg(long = "include")]
+    pub include_paths: Vec<String>,
+
     /// Focus on these paths (repeatable).
     #[arg(long = "focus")]
     pub focus_paths: Vec<String>,
@@ -865,6 +873,7 @@ impl From<ContextArgs> for ContextRequest {
         Self {
             task: args.task,
             token_budget: args.budget,
+            include_paths: args.include_paths,
             focus_paths: args.focus_paths,
             focus_symbols: args.focus_symbols,
             exclude_paths: args.exclude_paths,

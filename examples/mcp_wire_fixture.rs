@@ -39,6 +39,7 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
     let request = ContextRequest {
         task: "find the request-validation boundary".into(),
         token_budget: 400,
+        include_paths: Vec::new(),
         focus_paths: vec!["src/mcp.rs".into()],
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
@@ -69,6 +70,8 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
         },
         diff_scope: None,
         omitted: Vec::new(),
+        omission_summary: Default::default(),
+        routing: None,
         warnings: Vec::new(),
         meta: ResponseMeta {
             repository_id: "repository".into(),

@@ -50,6 +50,10 @@ const MAX_DIFF_EVIDENCE_PATHS: usize = 64;
 const MAX_WORKFLOW_SCAN_FILES: usize = 8_192;
 const MAX_OWNER_TEST_SCAN_FILES: usize = 4_096;
 const MAX_REFERENCES_PER_CHANGED_SYMBOL: usize = 8;
+const OVERSIZED_CHANGE_PATHS: usize = 32;
+const MIN_OVERSIZED_PATH_GROUPS: usize = 3;
+const MAX_ROUTING_GROUPS: usize = 5;
+const MAX_ROUTING_SUGGESTIONS: usize = 3;
 
 #[derive(Clone, Copy)]
 enum ContextExcerptKind {
@@ -122,6 +126,108 @@ fn context_path_score(path: &str, terms: &[String], task: &str) -> f64 {
         }
     }
     score
+}
+
+fn context_path_group(path: &str) -> String {
+    let mut components = path.split('/').filter(|component| !component.is_empty());
+    let first = components.next().unwrap_or("<root>");
+    let second = components.next();
+    if second.is_none() {
+        return "<root>".into();
+    }
+    if matches!(
+        first,
+        "src" | "lib" | "app" | "apps" | "crates" | "packages"
+    ) && let Some(second) = second
+    {
+        format!("{first}/{second}")
+    } else {
+        first.to_owned()
+    }
+}
+
+fn build_context_routing(
+    request: &ContextRequest,
+    scope: &DiffScopeReceipt,
+    candidate_paths: usize,
+    fragments: &[ContextFragment],
+) -> Option<ContextRoutingReceipt> {
+    if scope.changed_paths.len() < OVERSIZED_CHANGE_PATHS {
+        return None;
+    }
+    let mut grouped_paths = BTreeMap::<String, Vec<String>>::new();
+    for path in &scope.changed_paths {
+        grouped_paths
+            .entry(context_path_group(path))
+            .or_default()
+            .push(path.clone());
+    }
+    if grouped_paths.len() < MIN_OVERSIZED_PATH_GROUPS {
+        return None;
+    }
+    let path_groups_total = grouped_paths.len();
+    let mut groups = grouped_paths.into_iter().collect::<Vec<_>>();
+    groups.sort_by(|left, right| {
+        right
+            .1
+            .len()
+            .cmp(&left.1.len())
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    let selected_groups = fragments.iter().fold(
+        BTreeMap::<String, BTreeSet<&str>>::new(),
+        |mut paths, fragment| {
+            paths
+                .entry(context_path_group(&fragment.path))
+                .or_default()
+                .insert(&fragment.path);
+            paths
+        },
+    );
+    let selected_paths = fragments
+        .iter()
+        .map(|fragment| fragment.path.as_str())
+        .collect::<BTreeSet<_>>()
+        .len();
+    let strongest_selected_group = selected_groups
+        .values()
+        .map(BTreeSet::len)
+        .max()
+        .unwrap_or(0);
+    let weakly_concentrated =
+        selected_paths > 1 && strongest_selected_group.saturating_mul(2) <= selected_paths;
+
+    let suggestions = groups
+        .iter()
+        .take(MAX_ROUTING_SUGGESTIONS)
+        .map(|(prefix, _)| ContextRoutingSuggestion {
+            include_paths: vec![if prefix == "<root>" {
+                "*".into()
+            } else {
+                format!("{prefix}/**")
+            }],
+        })
+        .collect();
+    let path_groups = groups
+        .into_iter()
+        .take(MAX_ROUTING_GROUPS)
+        .map(|(prefix, paths)| ContextPathGroup {
+            prefix,
+            changed_paths: paths.len(),
+        })
+        .collect();
+    Some(ContextRoutingReceipt {
+        candidate_paths,
+        changed_paths: scope.changed_paths.len(),
+        selected_paths,
+        weakly_concentrated,
+        consistency: IndexConsistency::Committed,
+        base_revision: request.base_revision.clone(),
+        known_hashes: request.known_hashes.clone(),
+        path_groups_total,
+        path_groups,
+        suggestions,
+    })
 }
 
 fn resolve_context_workflow(requested: ContextWorkflow, task: &str) -> ContextWorkflow {
@@ -500,6 +606,17 @@ impl Services {
         }
         self.token_budget_limit(request.token_budget)?;
         validate_input(&request.task, "task", MAX_QUERY_BYTES)?;
+        validate_glob_patterns(&request.include_paths)?;
+        if request
+            .include_paths
+            .iter()
+            .any(|pattern| pattern.trim().is_empty())
+        {
+            return Err(Error::InvalidInput {
+                field: "include paths",
+                reason: "must not contain empty patterns",
+            });
+        }
         validate_glob_patterns(&request.focus_paths)?;
         validate_glob_patterns(&request.exclude_paths)?;
         if request.focus_symbols.len() > MAX_INPUT_ITEMS {
@@ -581,7 +698,11 @@ impl Services {
                 continue;
             };
             let target_path = &target.target_file.path;
-            if !path_allowed(target_path, &[], &expansion.request.exclude_paths)? {
+            if !path_allowed(
+                target_path,
+                &expansion.request.include_paths,
+                &expansion.request.exclude_paths,
+            )? {
                 continue;
             }
             let Some((symbol, query, exact)) =
@@ -761,8 +882,11 @@ impl Services {
         self.validate_context_request(&request)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
-        self.context_cancellable_with_workflow(request, ContextWorkflow::Auto, cancellation)
-            .await
+        let mut response = self
+            .context_cancellable_with_workflow(request, ContextWorkflow::Auto, cancellation)
+            .await?;
+        set_routing_consistency(&mut response, consistency);
+        Ok(response)
     }
 
     /// Retrieve context under an explicit or auto-detected workflow.
@@ -776,8 +900,11 @@ impl Services {
         self.validate_context_request(&request)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
-        self.context_cancellable_with_workflow(request, workflow, cancellation)
-            .await
+        let mut response = self
+            .context_cancellable_with_workflow(request, workflow, cancellation)
+            .await?;
+        set_routing_consistency(&mut response, consistency);
+        Ok(response)
     }
 
     pub async fn context_cancellable(
@@ -867,15 +994,16 @@ impl Services {
         workflow: ContextWorkflow,
         cancellation: &CancellationToken,
         candidates: &mut Vec<Candidate>,
-    ) -> Result<Option<WorkflowReceipt>> {
+    ) -> Result<(Option<WorkflowReceipt>, usize)> {
         if !matches!(
             workflow,
             ContextWorkflow::Contribution | ContextWorkflow::Review
         ) {
-            return Ok(None);
+            return Ok((None, 0));
         }
 
         let mut matches = Vec::new();
+        let mut path_excluded = 0usize;
         let mut cursor = None;
         let mut scanned_files = 0;
         let mut scan_truncated = false;
@@ -893,7 +1021,11 @@ impl Services {
                 }
                 scanned_files += 1;
                 if let Some((score, family)) = workflow_path_role(&file.path, request) {
-                    matches.push((file, score, family));
+                    if path_allowed(&file.path, &request.include_paths, &request.exclude_paths)? {
+                        matches.push((file, score, family));
+                    } else {
+                        path_excluded += 1;
+                    }
                 }
             }
             if scan_truncated {
@@ -961,13 +1093,16 @@ impl Services {
                 .focus_boost(score),
             );
         }
-        Ok(Some(WorkflowReceipt {
-            guidance_candidates,
-            template_candidates,
-            validation_candidates,
-            owner_test_candidates,
-            missing_families,
-        }))
+        Ok((
+            Some(WorkflowReceipt {
+                guidance_candidates,
+                template_candidates,
+                validation_candidates,
+                owner_test_candidates,
+                missing_families,
+            }),
+            path_excluded,
+        ))
     }
 
     fn build_diff_evidence(
@@ -1170,6 +1305,7 @@ impl Services {
                 .map(|query| query.value.clone())
                 .collect::<Vec<_>>();
             let mut candidates = Vec::new();
+            let mut path_excluded_candidates = 0usize;
             let mut query_fusion = HashMap::<String, HashMap<String, f64>>::new();
 
             // Workflow words such as `test` are useful path priors but terrible
@@ -1189,8 +1325,10 @@ impl Services {
                     .enumerate()
                 {
                     check_cancelled(cancellation)?;
-                    if path_allowed(&hit.path, &[], &request.exclude_paths)? {
+                    if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)? {
                         symbol_hits.push((rank, hit));
+                    } else {
+                        path_excluded_candidates += 1;
                     }
                 }
                 let symbol_excerpt_requests = symbol_hits
@@ -1258,8 +1396,10 @@ impl Services {
                 let mut reference_hits = Vec::new();
                 for (rank, hit) in reference_results.into_iter().enumerate() {
                     check_cancelled(cancellation)?;
-                    if path_allowed(&hit.path, &[], &request.exclude_paths)? {
+                    if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)? {
                         reference_hits.push((rank, hit));
+                    } else {
+                        path_excluded_candidates += 1;
                     }
                 }
                 let reference_locations = reference_hits
@@ -1365,7 +1505,8 @@ impl Services {
                 let mut lexical_hits = Vec::new();
                 for (rank, hit) in lexical.into_iter().enumerate() {
                     check_cancelled(cancellation)?;
-                    if !path_allowed(&hit.path, &[], &request.exclude_paths)? {
+                    if !path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)? {
+                        path_excluded_candidates += 1;
                         continue;
                     }
                     let Some(search_hit) =
@@ -1456,13 +1597,15 @@ impl Services {
 
             apply_query_fusion(&mut candidates, &query_fusion);
             let resolved_workflow = resolve_context_workflow(workflow, &request.task);
-            let workflow_receipt = self.append_workflow_candidates(
+            let (workflow_receipt, workflow_path_excluded) = self.append_workflow_candidates(
                 session,
                 &scoped_request,
                 resolved_workflow,
                 cancellation,
                 &mut candidates,
             )?;
+            path_excluded_candidates =
+                path_excluded_candidates.saturating_add(workflow_path_excluded);
 
             signals
                 .import_neighbor
@@ -1485,6 +1628,11 @@ impl Services {
                 .then(|| self.apply_reverse_dependency_boost(session, &queries, &mut candidates))
                 .transpose()?;
 
+            let candidate_path_count = candidates
+                .iter()
+                .map(|candidate| candidate.path.as_str())
+                .collect::<BTreeSet<_>>()
+                .len();
             let generated_candidate_paths = if diagnostics == CandidateDiagnostics::Collect {
                 candidates
                     .iter()
@@ -1524,6 +1672,15 @@ impl Services {
             );
             response.workflow = resolved_workflow;
             response.workflow_receipt = workflow_receipt;
+            if path_excluded_candidates > 0 {
+                response.omission_summary.path_excluded = response
+                    .omission_summary
+                    .path_excluded
+                    .saturating_add(path_excluded_candidates);
+                response.warnings.push(format!(
+                    "{path_excluded_candidates} candidates excluded by path constraints"
+                ));
+            }
             response.meta.freshness = self.freshness();
             response.meta.repository_id = self.repository_id();
             if let Some(mut scope) = diff_scope.clone() {
@@ -1540,6 +1697,23 @@ impl Services {
                     &scope,
                     cancellation,
                 )?);
+                response.routing = build_context_routing(
+                    &request,
+                    &scope,
+                    candidate_path_count,
+                    &response.fragments,
+                );
+                if let Some(routing) = &response.routing {
+                    let concentration = if routing.weakly_concentrated {
+                        "; selected evidence is weakly concentrated"
+                    } else {
+                        ""
+                    };
+                    response.warnings.push(format!(
+                        "context spans {} changed paths across {} path groups{concentration}",
+                        routing.changed_paths, routing.path_groups_total
+                    ));
+                }
                 response.diff_scope = Some(scope);
             }
             if response.fragments.is_empty() {
@@ -1565,6 +1739,12 @@ impl Services {
                 baseline_source_tokens,
             ))
         })
+    }
+}
+
+fn set_routing_consistency(response: &mut ContextResponse, consistency: IndexConsistency) {
+    if let Some(routing) = &mut response.routing {
+        routing.consistency = consistency;
     }
 }
 
@@ -1624,6 +1804,7 @@ mod tests {
         let mut request = ContextRequest {
             task: "fix core".into(),
             token_budget: 100,
+            include_paths: Vec::new(),
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -1713,6 +1894,82 @@ mod tests {
                 .any(|term| term.value == "Beta::second_long_identifier")
         );
         assert!(terms.iter().any(|term| term.value == "idempotency"));
+    }
+
+    #[test]
+    fn oversized_diff_routing_is_bounded_deterministic_and_preserves_retry_inputs() {
+        assert_eq!(context_path_group("README.md"), "<root>");
+        let request = ContextRequest {
+            task: "review the changed implementation".into(),
+            token_budget: 4_000,
+            include_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: vec!["held".into()],
+            prior_repository_generation: None,
+            base_revision: Some("origin/main".into()),
+            changed_paths: Vec::new(),
+        };
+        let changed_paths = (0..12)
+            .flat_map(|index| {
+                [
+                    format!("src/browser/file_{index}.rs"),
+                    format!("src/runtime/file_{index}.rs"),
+                    format!("tests/scenario_{index}.rs"),
+                ]
+            })
+            .collect::<Vec<_>>();
+        let scope = DiffScopeReceipt {
+            base_revision: Some("base".into()),
+            head_revision: Some("head".into()),
+            changed_paths,
+            indexed_changed_paths: 36,
+            evidence: None,
+        };
+        let fragments = vec![
+            ContextFragment {
+                path: "src/browser/file_0.rs".into(),
+                start_line: 1,
+                end_line: 1,
+                representation: "source".into(),
+                content: "browser".into(),
+                content_hash: "browser-hash".into(),
+                score: 1.0,
+                reason: "text".into(),
+                token_count: 1,
+            },
+            ContextFragment {
+                path: "src/runtime/file_0.rs".into(),
+                start_line: 1,
+                end_line: 1,
+                representation: "source".into(),
+                content: "runtime".into(),
+                content_hash: "runtime-hash".into(),
+                score: 1.0,
+                reason: "text".into(),
+                token_count: 1,
+            },
+        ];
+
+        let routing =
+            build_context_routing(&request, &scope, 24, &fragments).expect("oversized routing");
+
+        assert_eq!(routing.changed_paths, 36);
+        assert_eq!(routing.path_groups_total, 3);
+        assert!(routing.weakly_concentrated);
+        assert_eq!(
+            routing
+                .path_groups
+                .iter()
+                .map(|group| group.prefix.as_str())
+                .collect::<Vec<_>>(),
+            vec!["src/browser", "src/runtime", "tests"]
+        );
+        assert_eq!(routing.suggestions.len(), 3);
+        assert_eq!(routing.suggestions[0].include_paths, vec!["src/browser/**"]);
+        assert_eq!(routing.base_revision.as_deref(), Some("origin/main"));
+        assert_eq!(routing.known_hashes, vec!["held"]);
     }
 
     #[test]
