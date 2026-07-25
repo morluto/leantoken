@@ -351,6 +351,10 @@ line ranges for one or more files. Name and kind filters narrow the output.
 Bodies are not returned by default.
 
 Supported languages report whether parsing was structurally complete.
+JavaScript, TypeScript, and TSX outlines include top-level `const`, `let`, and
+`var` bindings, exported data bindings, class fields, and object/array default
+exports. Function-local variables remain lexical search evidence rather than
+outline symbols.
 Unsupported text files remain searchable and are marked incomplete rather than
 being presented as precise.
 

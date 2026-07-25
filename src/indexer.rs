@@ -24,9 +24,9 @@ use crate::storage::{
 use crate::text::{PreparedText, TextKind, hash_bytes};
 use crate::{Config, Error, Result};
 
-const INDEX_CONTENT_VERSION: u32 = 8;
+const INDEX_CONTENT_VERSION: u32 = 9;
 #[cfg(test)]
-const PREVIOUS_INDEX_CONTENT_MARKER: &str = "leantoken-index-v6-9-language";
+const PREVIOUS_INDEX_CONTENT_MARKER: &str = "leantoken-index-content-v8";
 
 /// Owns discovery/parse publication for one repository cache.
 ///
