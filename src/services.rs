@@ -598,6 +598,9 @@ fn status_response(
     counts: StorageCounts,
     freshness: Freshness,
 ) -> StatusResponse {
+    let index_storage_bytes = sqlite_storage_bytes(&config.database_path);
+    let index_amplification_ratio =
+        (counts.source_bytes > 0).then(|| index_storage_bytes as f64 / counts.source_bytes as f64);
     StatusResponse {
         repository_root: config.root.display().to_string(),
         database_path: config.database_path.display().to_string(),
@@ -611,6 +614,10 @@ fn status_response(
         file_count: counts.files,
         chunk_count: counts.chunks,
         symbol_count: counts.symbols,
+        index_storage_bytes,
+        indexed_source_bytes: counts.source_bytes,
+        index_amplification_ratio,
+        process_rss_bytes: process_rss_bytes(),
         languages: counts
             .languages
             .into_iter()
@@ -618,6 +625,34 @@ fn status_response(
             .collect(),
         warnings: Vec::new(),
     }
+}
+
+fn sqlite_storage_bytes(path: &std::path::Path) -> u64 {
+    ["", "-wal", "-shm"]
+        .into_iter()
+        .map(|suffix| {
+            let mut candidate = path.as_os_str().to_os_string();
+            candidate.push(suffix);
+            fs::metadata(candidate).map_or(0, |metadata| metadata.len())
+        })
+        .fold(0, u64::saturating_add)
+}
+
+#[cfg(target_os = "linux")]
+fn process_rss_bytes() -> Option<u64> {
+    fs::read_to_string("/proc/self/status")
+        .ok()?
+        .lines()
+        .find_map(|line| {
+            let value = line.strip_prefix("VmRSS:")?.trim();
+            let kibibytes = value.strip_suffix("kB")?.trim().parse::<u64>().ok()?;
+            kibibytes.checked_mul(1024)
+        })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_rss_bytes() -> Option<u64> {
+    None
 }
 
 fn is_database_contention(error: &Error) -> bool {

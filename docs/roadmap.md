@@ -93,6 +93,17 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 - Add model input framing and provider-native counts where hosts expose them.
   Never silently substitute a local tokenizer for provider billing counts.
 
+## Runtime footprint
+
+- MCP processes already share one repository cache, cross-process
+  reconciliation lock, indexing leader, and watcher; followers take over after
+  leader failure. Private-runtime setup registers the versioned native binary
+  directly instead of retaining npm and Node wrappers.
+- Status now exposes current-process RSS, SQLite main/WAL/SHM bytes, indexed
+  source bytes, and index amplification. Cross-process follower counts and
+  aggregate RSS remain future work because file-lock ownership alone cannot
+  identify every live client accurately.
+
 ## Model behavior
 
 - Run the seeded isolated A/B harness on repeated tasks: filesystem, frozen
