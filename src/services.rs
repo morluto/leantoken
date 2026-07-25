@@ -7,6 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use cap_std::fs::Dir;
+use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::coordination::{CacheLease, IndexCoordination, IndexLeadership};
@@ -74,6 +75,30 @@ pub struct Services {
     _cache_lease: CacheLease,
     active_reconciliations: Arc<AtomicUsize>,
 }
+
+trait RetrievalResponse: Serialize {
+    fn meta_mut(&mut self) -> &mut ResponseMeta;
+}
+
+macro_rules! impl_retrieval_response {
+    ($($response:ty),+ $(,)?) => {
+        $(
+            impl RetrievalResponse for $response {
+                fn meta_mut(&mut self) -> &mut ResponseMeta {
+                    &mut self.meta
+                }
+            }
+        )+
+    };
+}
+
+impl_retrieval_response!(
+    FilesResponse,
+    SearchResponse,
+    OutlineResponse,
+    ReadResponse,
+    ContextResponse,
+);
 
 impl Services {
     /// Open the SQLite index and construct retrieval services.
@@ -163,6 +188,13 @@ impl Services {
     /// Return the resolved repository configuration.
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    fn finalize_response<T: RetrievalResponse>(&self, response: &mut T) -> Result<()> {
+        response.meta_mut().payload_tokens = 0;
+        let payload = serde_json::to_string(response)?;
+        response.meta_mut().payload_tokens = self.config.tokenizer.count(&payload);
+        Ok(())
     }
 
     /// Reconcile repository files into one committed index generation.
@@ -463,6 +495,9 @@ impl Services {
             repository_id: self.repository_id(),
             repository_generation: generation,
             freshness: self.freshness(),
+            source_tokens: emitted_tokens,
+            payload_tokens: 0,
+            tokenizer: self.config.tokenizer.name().into(),
             emitted_tokens,
             token_count_exact: self.config.tokenizer.is_exact(),
             next_cursor,

@@ -8,6 +8,22 @@ use leantoken::{
 };
 use tokio_util::sync::CancellationToken;
 
+macro_rules! assert_response_token_accounting {
+    ($response:expr, $tokenizer:expr) => {{
+        let response = &$response;
+        let tokenizer = $tokenizer;
+        assert_eq!(response.meta.source_tokens, response.meta.emitted_tokens);
+        assert_eq!(response.meta.tokenizer, tokenizer.name());
+        assert_eq!(response.meta.token_count_exact, tokenizer.is_exact());
+        assert!(response.meta.payload_tokens > 0);
+
+        let mut countable = response.clone();
+        countable.meta.payload_tokens = 0;
+        let payload = serde_json::to_string(&countable).expect("serialize counted payload");
+        assert_eq!(response.meta.payload_tokens, tokenizer.count(&payload));
+    }};
+}
+
 async fn fixture() -> (tempfile::TempDir, Services) {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::create_dir(root.path().join("src")).expect("create src");
@@ -1684,6 +1700,8 @@ async fn five_services_return_bounded_grounded_responses() {
         .await
         .expect("files");
     assert!(files.entries.iter().any(|entry| entry.path == "src/lib.rs"));
+    assert_eq!(files.meta.source_tokens, 0);
+    assert_response_token_accounting!(files, Tokenizer::Cl100kBase);
 
     let search = services
         .search(SearchRequest {
@@ -1704,6 +1722,7 @@ async fn five_services_return_bounded_grounded_responses() {
     assert!(!search.hits.is_empty());
     assert!(search.meta.emitted_tokens <= 200);
     assert!(search.hits.iter().all(|hit| hit.start_line <= hit.end_line));
+    assert_response_token_accounting!(search, Tokenizer::Cl100kBase);
 
     let outline = services
         .outline(OutlineRequest {
@@ -1722,6 +1741,7 @@ async fn five_services_return_bounded_grounded_responses() {
             .any(|symbol| symbol.name == "greet")
     );
     assert!(outline.meta.emitted_tokens <= 100);
+    assert_response_token_accounting!(outline, Tokenizer::Cl100kBase);
 
     let first = services
         .read(ReadRequest {
@@ -1734,6 +1754,7 @@ async fn five_services_return_bounded_grounded_responses() {
         })
         .await
         .expect("first read");
+    assert_response_token_accounting!(first, Tokenizer::Cl100kBase);
     let second = services
         .read(ReadRequest {
             path: "src/lib.rs".into(),
@@ -1748,6 +1769,7 @@ async fn five_services_return_bounded_grounded_responses() {
     assert_eq!(second.status, ReadStatus::NotModified);
     assert!(second.content.is_none());
     assert_eq!(second.meta.emitted_tokens, 0);
+    assert_response_token_accounting!(second, Tokenizer::Cl100kBase);
 
     let context = services
         .context(ContextRequest {
@@ -1769,6 +1791,7 @@ async fn five_services_return_bounded_grounded_responses() {
         .expect("context");
     assert!(!context.fragments.is_empty());
     assert!(context.meta.emitted_tokens <= 200);
+    assert_response_token_accounting!(context, Tokenizer::Cl100kBase);
     assert_eq!(
         context.receipt.fragment_hashes.len(),
         context.fragments.len()
@@ -3972,18 +3995,10 @@ async fn tokenizer_configuration_is_scoped_to_each_service() {
     let (exact_response, estimate_response) =
         tokio::join!(exact.context(request.clone()), estimate.context(request),);
 
-    assert!(
-        exact_response
-            .expect("exact context")
-            .meta
-            .token_count_exact
-    );
-    assert!(
-        !estimate_response
-            .expect("estimate context")
-            .meta
-            .token_count_exact
-    );
+    let exact_response = exact_response.expect("exact context");
+    let estimate_response = estimate_response.expect("estimate context");
+    assert_response_token_accounting!(exact_response, Tokenizer::O200kBase);
+    assert_response_token_accounting!(estimate_response, Tokenizer::Estimate);
 }
 
 #[tokio::test]

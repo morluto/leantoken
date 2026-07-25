@@ -39,6 +39,9 @@ expression: response
     "repository_id": "repository",
     "repository_generation": 7,
     "freshness": "reconciling",
+    "source_tokens": 9,
+    "payload_tokens": 123,
+    "tokenizer": "cl100k_base",
     "emitted_tokens": 9,
     "token_count_exact": true
   }

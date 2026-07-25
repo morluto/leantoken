@@ -258,7 +258,7 @@ impl Services {
             .collect::<Result<Vec<_>>>()?;
         let limit = self.result_limit(request.max_results)?;
         let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
-        let (response, baseline_source_tokens) = self.consistent(|session, generation| {
+        let (mut response, baseline_source_tokens) = self.consistent(|session, generation| {
             let mut remaining = limit;
             let mut emitted_tokens = 0usize;
             let mut files = Vec::new();
@@ -345,6 +345,7 @@ impl Services {
                 response.meta.emitted_tokens,
             );
         }
+        self.finalize_response(&mut response)?;
         Ok(response)
     }
 
@@ -357,7 +358,7 @@ impl Services {
         validate_read_input(&request)?;
         request.path = normalize_relative(&request.path)?;
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
-        let (response, baseline_source_tokens) = self.consistent(|session, generation| {
+        let (mut response, baseline_source_tokens) = self.consistent(|session, generation| {
             check_cancelled(cancellation)?;
             self.read_at_generation(session, &request, generation, max_tokens)
         })?;
@@ -366,6 +367,7 @@ impl Services {
             baseline_source_tokens,
             response.meta.emitted_tokens,
         );
+        self.finalize_response(&mut response)?;
         Ok(response)
     }
 
