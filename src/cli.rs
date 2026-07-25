@@ -769,8 +769,12 @@ pub struct ReadArgs {
     pub lines: Option<LineRange>,
 
     /// Read the range for the named symbol.
-    #[arg(long, conflicts_with = "lines")]
+    #[arg(long, conflicts_with_all = ["lines", "cursor"])]
     pub symbol: Option<String>,
+
+    /// Continue a truncated read.
+    #[arg(long, conflicts_with_all = ["lines", "symbol"])]
+    pub cursor: Option<String>,
 
     /// Maximum tokens to return.
     #[arg(long, value_parser = parse_positive_usize)]
@@ -793,6 +797,7 @@ impl From<ReadArgs> for ReadRequest {
             start_line,
             end_line,
             symbol: args.symbol,
+            continuation_cursor: args.cursor,
             max_tokens: args.max_tokens,
             expected_hash: args.expected_hash,
         }

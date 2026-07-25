@@ -334,6 +334,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
                 symbol: None,
                 start_line: None,
                 end_line: None,
+                continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
             })
@@ -644,6 +645,7 @@ fn read_limit_request(max_tokens: Option<usize>) -> ReadRequest {
         start_line: Some(1),
         end_line: Some(1),
         symbol: None,
+        continuation_cursor: None,
         max_tokens,
         expected_hash: None,
     }
@@ -1749,6 +1751,7 @@ async fn five_services_return_bounded_grounded_responses() {
             start_line: Some(1),
             end_line: Some(3),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -1761,6 +1764,7 @@ async fn five_services_return_bounded_grounded_responses() {
             start_line: Some(1),
             end_line: Some(3),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first.content_hash.clone()),
         })
@@ -1857,6 +1861,7 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             start_line: Some(1),
             end_line: Some(1),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -1959,6 +1964,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             start_line: Some(1),
             end_line: Some(3),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -1970,6 +1976,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             start_line: Some(1),
             end_line: Some(3),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first_read.content_hash),
         })
@@ -2211,6 +2218,7 @@ function helper() {
                 start_line: None,
                 end_line: None,
                 symbol: Some(symbol.into()),
+                continuation_cursor: None,
                 max_tokens: Some(2_000),
                 expected_hash: None,
             })
@@ -2371,6 +2379,7 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
                 start_line: None,
                 end_line: None,
                 symbol: Some(symbol.into()),
+                continuation_cursor: None,
                 max_tokens: Some(2_000),
                 expected_hash: None,
             })
@@ -3107,6 +3116,7 @@ async fn read_reports_live_content_that_differs_from_the_index() {
             start_line: Some(1),
             end_line: Some(1),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3125,6 +3135,7 @@ async fn read_reports_live_content_that_differs_from_the_index() {
             start_line: Some(1),
             end_line: Some(1),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first.content_hash.clone()),
         })
@@ -3151,6 +3162,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             start_line: Some(2),
             end_line: Some(3),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3165,6 +3177,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             start_line: Some(2),
             end_line: Some(3),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(exact.content_hash.clone()),
         })
@@ -3180,6 +3193,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             start_line: Some(2),
             end_line: None,
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3194,6 +3208,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             start_line: None,
             end_line: Some(3),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3208,6 +3223,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             start_line: None,
             end_line: None,
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3219,6 +3235,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             start_line: Some(1),
             end_line: Some(5),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3234,6 +3251,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             start_line: Some(4),
             end_line: Some(99),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3253,6 +3271,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             start_line: Some(2),
             end_line: Some(3),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(exact.content_hash.clone()),
         })
@@ -3275,6 +3294,7 @@ async fn symbol_read_after_first_line_returns_the_complete_definition() {
             start_line: None,
             end_line: None,
             symbol: Some("target".into()),
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3303,6 +3323,7 @@ async fn open_ended_read_bounds_live_suffix_before_returning_content() {
             start_line: Some(5_000),
             end_line: None,
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(12),
             expected_hash: None,
         })
@@ -3327,6 +3348,7 @@ async fn live_read_rejects_malformed_utf8_at_eof() {
             start_line: Some(1),
             end_line: None,
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3352,6 +3374,7 @@ async fn live_read_rejects_line_after_terminal_newline() {
             start_line: Some(2),
             end_line: None,
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3377,6 +3400,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             start_line: Some(2),
             end_line: Some(3),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3388,6 +3412,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             start_line: Some(2),
             end_line: None,
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3405,6 +3430,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             start_line: Some(3),
             end_line: Some(3),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3423,6 +3449,7 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             start_line: None,
             end_line: None,
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3438,6 +3465,7 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
                 start_line,
                 end_line,
                 symbol: None,
+                continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
             })
@@ -3445,6 +3473,42 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             .expect_err("invalid range");
         assert!(matches!(error, Error::InvalidInput { field: "line range", .. }));
     }
+
+    let malformed = services
+        .read(ReadRequest {
+            path: "empty.txt".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            continuation_cursor: Some("not-a-read-cursor".into()),
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect_err("malformed cursor");
+    assert!(matches!(malformed, Error::StaleCursor));
+
+    let conflicting = services
+        .read(ReadRequest {
+            path: "empty.txt".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            continuation_cursor: Some(
+                "1:read:1:1:1:1:00000000000000000000000000000000:0000000000000000".into(),
+            ),
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect_err("cursor and target conflict");
+    assert!(matches!(
+        conflicting,
+        Error::InvalidInput {
+            field: "read target",
+            ..
+        }
+    ));
 }
 
 #[tokio::test]
@@ -3458,6 +3522,7 @@ async fn token_truncated_read_reports_the_returned_line_range() {
             start_line: Some(2),
             end_line: Some(4),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(3),
             expected_hash: None,
         })
@@ -3467,10 +3532,138 @@ async fn token_truncated_read_reports_the_returned_line_range() {
     let returned_lines = content.lines().count().max(usize::from(!content.is_empty()));
 
     assert!(!content.is_empty());
+    assert_eq!(response.status, ReadStatus::Truncated);
+    assert!(response.truncated);
+    assert_eq!((response.target_start_line, response.target_end_line), (2, 4));
+    assert_eq!(response.returned_start_line, response.start_line);
+    assert_eq!(response.returned_end_line, response.end_line);
+    assert!(response.next_start_line.is_some());
+    assert!(response.continuation_cursor.is_some());
     assert_eq!(response.start_line, 2);
     assert_eq!(response.end_line, response.start_line + returned_lines - 1);
     assert!(response.end_line <= 4);
     assert!(response.meta.emitted_tokens <= 3);
+}
+
+#[tokio::test]
+async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_changes() {
+    let long_line = format!("    let payload = \"{}\";\n", "multibyte-\u{754c}".repeat(80));
+    let source = format!("fn oversized_symbol() {{\n{long_line}    consume(payload);\n}}\n");
+    let (root, services) = indexed_source("large.rs", source.as_bytes()).await;
+
+    let mut cursor = None;
+    let mut reconstructed = String::new();
+    let mut pages = 0usize;
+    loop {
+        let response = services
+            .read(ReadRequest {
+                path: "large.rs".into(),
+                start_line: None,
+                end_line: None,
+                symbol: cursor.is_none().then(|| "oversized_symbol".into()),
+                continuation_cursor: cursor.take(),
+                max_tokens: Some(12),
+                expected_hash: None,
+            })
+            .await
+            .expect("read symbol page");
+        pages += 1;
+        assert_eq!(response.target_start_line, 1);
+        assert_eq!(response.target_end_line, 4);
+        assert_eq!(response.returned_start_line, response.start_line);
+        assert_eq!(response.returned_end_line, response.end_line);
+        reconstructed.push_str(response.content.as_deref().expect("page content"));
+
+        if response.truncated {
+            assert_eq!(response.status, ReadStatus::Truncated);
+            assert!(response.next_start_line.is_some());
+            cursor = response.continuation_cursor;
+            assert!(cursor.is_some());
+        } else {
+            assert_eq!(response.status, ReadStatus::Content);
+            assert!(response.next_start_line.is_none());
+            assert!(response.continuation_cursor.is_none());
+            break;
+        }
+        assert!(pages < 100, "continuation cursor must make progress");
+    }
+
+    assert!(pages > 2, "fixture must exercise multiple truncated pages");
+    assert_eq!(reconstructed, source);
+
+    let first = services
+        .read(ReadRequest {
+            path: "large.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: Some("oversized_symbol".into()),
+            continuation_cursor: None,
+            max_tokens: Some(12),
+            expected_hash: None,
+        })
+        .await
+        .expect("first page");
+    let unchanged = services
+        .read(ReadRequest {
+            path: "large.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: Some("oversized_symbol".into()),
+            continuation_cursor: None,
+            max_tokens: Some(12),
+            expected_hash: Some(first.content_hash.clone()),
+        })
+        .await
+        .expect("conditional first page");
+    assert_eq!(unchanged.status, ReadStatus::Truncated);
+    assert!(unchanged.truncated);
+    assert!(unchanged.not_modified);
+    assert!(unchanged.content.is_none());
+    assert_eq!(unchanged.continuation_cursor, first.continuation_cursor);
+
+    std::fs::write(root.path().join("other.rs"), "fn other() {}\n").expect("write unrelated file");
+    services.index(false).await.expect("advance generation");
+    let stale_generation = services
+        .read(ReadRequest {
+            path: "large.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            continuation_cursor: first.continuation_cursor,
+            max_tokens: Some(12),
+            expected_hash: None,
+        })
+        .await
+        .expect_err("cursor must not cross index generations");
+    assert!(matches!(stale_generation, Error::StaleCursor));
+
+    let current = services
+        .read(ReadRequest {
+            path: "large.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: Some("oversized_symbol".into()),
+            continuation_cursor: None,
+            max_tokens: Some(12),
+            expected_hash: None,
+        })
+        .await
+        .expect("current first page");
+    std::fs::write(root.path().join("large.rs"), source.replace("consume", "changed"))
+        .expect("change live file");
+    let error = services
+        .read(ReadRequest {
+            path: "large.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            continuation_cursor: current.continuation_cursor,
+            max_tokens: Some(12),
+            expected_hash: None,
+        })
+        .await
+        .expect_err("cursor must not cross live file versions");
+    assert!(matches!(error, Error::StaleCursor));
 }
 
 #[tokio::test]
@@ -3492,6 +3685,7 @@ async fn read_rejects_ignored_files() {
             start_line: None,
             end_line: None,
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3530,6 +3724,7 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
             start_line: None,
             end_line: None,
             symbol: Some("Service.run".into()),
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3549,6 +3744,7 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
             start_line: None,
             end_line: None,
             symbol: Some("Service.missing".into()),
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -3580,6 +3776,7 @@ async fn symbol_reads_and_outline_filters_search_beyond_result_caps() {
             start_line: None,
             end_line: None,
             symbol: Some("symbol_129".into()),
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -4283,6 +4480,7 @@ async fn working_tree_consistency_applies_to_each_retrieval_service() {
                 start_line: Some(1),
                 end_line: Some(1),
                 symbol: None,
+                continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
             },
@@ -4345,6 +4543,7 @@ async fn read_reports_index_stale_when_live_file_diverges() {
             start_line: Some(1),
             end_line: Some(1),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -4377,6 +4576,7 @@ async fn read_not_modified_still_reports_index_stale_against_live_file() {
             start_line: Some(1),
             end_line: Some(1),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
         })
@@ -4393,6 +4593,7 @@ async fn read_not_modified_still_reports_index_stale_against_live_file() {
             start_line: Some(1),
             end_line: Some(1),
             symbol: None,
+            continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first.content_hash.clone()),
         })

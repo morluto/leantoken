@@ -525,6 +525,27 @@ expression: tools
                 "end"
               ],
               "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Continue a truncated read without losing a partial final line.",
+              "properties": {
+                "cursor": {
+                  "description": "Opaque cursor from the preceding truncated response.",
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "continuation",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "cursor"
+              ],
+              "type": "object"
             }
           ]
         }

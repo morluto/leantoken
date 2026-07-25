@@ -189,6 +189,7 @@ async fn compare_context_representations() {
                     start_line: None,
                     end_line: None,
                     symbol: None,
+                    continuation_cursor: None,
                     max_tokens: Some(TOKEN_BUDGET),
                     expected_hash: None,
                 })
@@ -244,6 +245,7 @@ async fn compare_context_representations() {
                     start_line: None,
                     end_line: None,
                     symbol: None,
+                    continuation_cursor: None,
                     max_tokens: Some(TOKEN_BUDGET),
                     expected_hash: None,
                 })

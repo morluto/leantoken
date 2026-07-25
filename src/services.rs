@@ -687,6 +687,7 @@ mod tests {
                 start_line: Some(1),
                 end_line: Some(1),
                 symbol: None,
+                continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
             })
@@ -698,6 +699,7 @@ mod tests {
                 start_line: Some(1),
                 end_line: Some(1),
                 symbol: None,
+                continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: Some(first.content_hash),
             })

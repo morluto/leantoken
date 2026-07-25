@@ -372,6 +372,9 @@ Reads an exact source range.
   one-based range.
 - `target: {"kind":"symbol","name":"LeanTokenMcp"}` selects one indexed
   symbol definition.
+- `target: {"kind":"continuation","cursor":"..."}` continues a truncated
+  response. The cursor preserves byte-exact progress even when the preceding
+  page ended in the middle of a line.
 - `max_tokens` defaults to 8,000 and accepts values through 32,000.
 - `expected_hash` returns `not_modified` without source when it matches the
   hash from the same prior target.
@@ -379,6 +382,12 @@ Reads an exact source range.
 `content_hash` identifies the returned range. `indexed_hash` identifies the
 whole indexed file. `index_stale` is true when the live file differs from the
 indexed version (for example after an edit that has not been reindexed yet).
+`target_start_line` and `target_end_line` describe the complete resolved target;
+`returned_start_line` and `returned_end_line` describe the current page.
+`status: "truncated"`, `truncated: true`, `next_start_line`, and
+`continuation_cursor` fail loudly whenever source remains. Continuation cursors
+are bound to the repository generation, path, and live full-file hash, so a
+stale cursor cannot combine pages from different file versions.
 `meta.repository_generation` is the committed index generation used for path
 and symbol lookup; `meta.freshness` is `reconciling` while an index operation
 is active on this cache.
