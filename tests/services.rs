@@ -385,6 +385,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
                 symbol: None,
                 start_line: None,
                 end_line: None,
+                continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
             })
