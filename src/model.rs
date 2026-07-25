@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -257,6 +259,9 @@ pub struct OutlineRequest {
     /// Maximum tokens across signatures and import targets.
     #[serde(default)]
     pub max_tokens: Option<usize>,
+    /// Opaque cursor returned when `max_results` leaves outline entries unread.
+    #[serde(default)]
+    pub cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -264,6 +269,10 @@ pub struct OutlineFile {
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    /// Whether structural parsing covered the complete indexed file.
+    #[serde(default)]
+    pub parse_complete: bool,
+    /// Compatibility alias for `parse_complete`.
     pub structurally_complete: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub symbols: Vec<Symbol>,
@@ -274,6 +283,33 @@ pub struct OutlineFile {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct OutlineResponse {
     pub files: Vec<OutlineFile>,
+    /// Whether every requested file was parsed completely.
+    #[serde(default)]
+    pub parse_complete: bool,
+    /// Whether this response contains every filtered symbol and import.
+    #[serde(default)]
+    pub result_complete: bool,
+    /// Exact filtered symbol count across all requested files.
+    #[serde(default)]
+    pub total_symbols: usize,
+    /// Symbols returned in this response.
+    #[serde(default)]
+    pub returned_symbols: usize,
+    /// Exact import count across all requested files.
+    #[serde(default)]
+    pub total_imports: usize,
+    /// Imports returned in this response.
+    #[serde(default)]
+    pub returned_imports: usize,
+    /// Whether the result cap left outline entries for another page.
+    #[serde(default)]
+    pub truncated_by_max_results: bool,
+    /// Whether signatures or imports were omitted by the token budget.
+    #[serde(default)]
+    pub truncated_by_max_tokens: bool,
+    /// Exact filtered symbol counts grouped by syntax kind.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub symbol_counts_by_kind: BTreeMap<String, usize>,
     pub meta: ResponseMeta,
 }
 
@@ -1133,6 +1169,7 @@ mod tests {
         let file = OutlineFile {
             path: "README.md".into(),
             language: None,
+            parse_complete: true,
             structurally_complete: true,
             symbols: Vec::new(),
             imports: Vec::new(),

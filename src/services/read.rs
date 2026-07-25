@@ -1,6 +1,6 @@
 //! Bounded live reads, outlines, and index-backed excerpts.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
@@ -162,6 +162,68 @@ fn storage_symbol(symbol: crate::storage::SymbolRecord) -> Symbol {
     }
 }
 
+fn decode_outline_cursor(cursor: &str) -> Result<(u64, usize, String)> {
+    let fields = cursor.split(':').collect::<Vec<_>>();
+    let [generation, kind, offset, query_hash] = fields.as_slice() else {
+        return Err(Error::StaleCursor);
+    };
+    if *kind != "outline" || query_hash.len() != 16 || !query_hash.bytes().all(is_lower_hex) {
+        return Err(Error::StaleCursor);
+    }
+    Ok((
+        generation.parse().map_err(|_| Error::StaleCursor)?,
+        offset.parse().map_err(|_| Error::StaleCursor)?,
+        (*query_hash).into(),
+    ))
+}
+
+fn outline_query_hash(request: &OutlineRequest) -> String {
+    fn update_field(hasher: &mut blake3::Hasher, value: &str) {
+        hasher.update(&(value.len() as u64).to_le_bytes());
+        hasher.update(value.as_bytes());
+    }
+
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&(request.paths.len() as u64).to_le_bytes());
+    for path in &request.paths {
+        update_field(&mut hasher, path);
+    }
+    for value in [&request.symbol_name, &request.symbol_kind] {
+        match value {
+            Some(value) => {
+                hasher.update(&[1]);
+                update_field(&mut hasher, value);
+            }
+            None => {
+                hasher.update(&[0]);
+            }
+        }
+    }
+    hasher.finalize().to_hex()[..16].to_string()
+}
+
+fn parse_outline_cursor(
+    cursor: Option<&str>,
+    generation: u64,
+    request: &OutlineRequest,
+) -> Result<usize> {
+    let Some(cursor) = cursor else {
+        return Ok(0);
+    };
+    let (cursor_generation, offset, query_hash) = decode_outline_cursor(cursor)?;
+    if cursor_generation != generation || query_hash != outline_query_hash(request) {
+        return Err(Error::StaleCursor);
+    }
+    Ok(offset)
+}
+
+fn make_outline_cursor(generation: u64, offset: usize, request: &OutlineRequest) -> String {
+    format!(
+        "{generation}:outline:{offset}:{}",
+        outline_query_hash(request)
+    )
+}
+
 fn validate_outline_input(request: &OutlineRequest) -> Result<()> {
     if request.paths.is_empty() {
         return Err(Error::InvalidInput {
@@ -186,6 +248,10 @@ fn validate_outline_input(request: &OutlineRequest) -> Result<()> {
         "symbol kind",
         MAX_PATTERN_BYTES,
     )?;
+    validate_optional_input(request.cursor.as_deref(), "cursor", 256)?;
+    if let Some(cursor) = request.cursor.as_deref() {
+        decode_outline_cursor(cursor)?;
+    }
     Ok(())
 }
 
@@ -309,71 +375,149 @@ impl Services {
         let limit = self.result_limit(request.max_results)?;
         let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         let (mut response, baseline_source_tokens) = self.consistent(|session, generation| {
-            let mut remaining = limit;
-            let mut emitted_tokens = 0usize;
-            let mut files = Vec::new();
+            let offset = parse_outline_cursor(request.cursor.as_deref(), generation, &request)?;
+            let mut total_symbols = 0usize;
+            let mut total_imports = 0usize;
+            let mut symbol_counts_by_kind = BTreeMap::new();
+            let mut parse_complete = true;
+            let mut files = Vec::with_capacity(request.paths.len());
+            let mut file_totals = Vec::with_capacity(request.paths.len());
             for path in &request.paths {
                 check_cancelled(cancellation)?;
                 let file = session
                     .find_file(path)?
                     .ok_or_else(|| Error::NotIndexed(path.clone()))?;
-                let mut symbols = session
-                    .get_symbols_for_file_filtered(
-                        file.id,
-                        request.symbol_name.as_deref(),
-                        request.symbol_kind.as_deref(),
-                        remaining.max(1),
-                    )?
-                    .into_iter()
-                    .map(storage_symbol)
-                    .collect::<Vec<_>>();
-                symbols.retain(|symbol| {
-                    let cost = symbol
-                        .signature
-                        .as_deref()
-                        .map_or(1, |value| self.config.tokenizer.count(value));
-                    if remaining == 0 || emitted_tokens.saturating_add(cost) > token_limit {
-                        false
-                    } else {
-                        remaining -= 1;
-                        emitted_tokens += cost;
-                        true
-                    }
-                });
-                let mut imports = session
-                    .get_imports_for_file(file.id, limit)?
-                    .into_iter()
-                    .map(|import| Import {
-                        raw_target: import.raw_target,
-                        resolved_path: import.resolved_path,
-                        line: import.line,
-                    })
-                    .collect::<Vec<_>>();
-                imports.retain(|import| {
-                    let cost = self.config.tokenizer.count(&import.raw_target)
-                        + import
-                            .resolved_path
-                            .as_deref()
-                            .map_or(0, |value| self.config.tokenizer.count(value));
-                    if remaining == 0 || emitted_tokens.saturating_add(cost) > token_limit {
-                        false
-                    } else {
-                        remaining -= 1;
-                        emitted_tokens += cost;
-                        true
-                    }
-                });
+                let kind_counts = session.symbol_counts_for_file_filtered(
+                    file.id,
+                    request.symbol_name.as_deref(),
+                    request.symbol_kind.as_deref(),
+                )?;
+                let file_symbol_total = kind_counts.iter().map(|(_, count)| *count).sum::<usize>();
+                for (kind, count) in kind_counts {
+                    *symbol_counts_by_kind.entry(kind).or_insert(0usize) += count;
+                }
+                let file_import_total = session.count_imports_for_file(file.id)?;
+                total_symbols = total_symbols.saturating_add(file_symbol_total);
+                total_imports = total_imports.saturating_add(file_import_total);
+                parse_complete &= file.structurally_complete;
+                file_totals.push((file.id, file_symbol_total, file_import_total));
                 files.push(OutlineFile {
                     path: file.path,
-                    language: file.language.clone(),
+                    language: file.language,
+                    parse_complete: file.structurally_complete,
                     structurally_complete: file.structurally_complete,
-                    symbols,
-                    imports,
+                    symbols: Vec::new(),
+                    imports: Vec::new(),
                 });
-                if remaining == 0 {
-                    break;
-                }
             }
+
+            let total_entries = total_symbols.saturating_add(total_imports);
+            if offset > total_entries {
+                return Err(Error::StaleCursor);
+            }
+
+            let mut remaining = limit;
+            let mut emitted_tokens = 0usize;
+            let mut returned_symbols = 0usize;
+            let mut returned_imports = 0usize;
+            let mut consumed = offset;
+            let mut prefix = 0usize;
+            let mut truncated_by_max_tokens = false;
+            'files: for (file_index, (file_id, file_symbol_total, file_import_total)) in
+                file_totals.iter().copied().enumerate()
+            {
+                check_cancelled(cancellation)?;
+                let file_total = file_symbol_total.saturating_add(file_import_total);
+                let file_end = prefix.saturating_add(file_total);
+                if offset >= file_end {
+                    prefix = file_end;
+                    continue;
+                }
+                let local_offset = offset.saturating_sub(prefix);
+                let mut symbol_offset = local_offset.min(file_symbol_total);
+                while symbol_offset < file_symbol_total {
+                    if remaining == 0 {
+                        break 'files;
+                    }
+                    let batch_limit = file_symbol_total.saturating_sub(symbol_offset).min(100);
+                    let symbols = session.get_symbols_for_file_filtered_page(
+                        file_id,
+                        request.symbol_name.as_deref(),
+                        request.symbol_kind.as_deref(),
+                        batch_limit,
+                        symbol_offset,
+                    )?;
+                    if symbols.is_empty() {
+                        return Err(Error::StaleCursor);
+                    }
+                    for symbol in symbols {
+                        if remaining == 0 {
+                            break 'files;
+                        }
+                        consumed = consumed.saturating_add(1);
+                        symbol_offset = symbol_offset.saturating_add(1);
+                        let symbol = storage_symbol(symbol);
+                        let cost = symbol
+                            .signature
+                            .as_deref()
+                            .map_or(1, |value| self.config.tokenizer.count(value));
+                        if emitted_tokens.saturating_add(cost) > token_limit {
+                            truncated_by_max_tokens = true;
+                            continue;
+                        }
+                        emitted_tokens = emitted_tokens.saturating_add(cost);
+                        remaining -= 1;
+                        returned_symbols = returned_symbols.saturating_add(1);
+                        files[file_index].symbols.push(symbol);
+                    }
+                }
+
+                let mut import_offset = local_offset.saturating_sub(file_symbol_total);
+                while import_offset < file_import_total {
+                    if remaining == 0 {
+                        break 'files;
+                    }
+                    let batch_limit = file_import_total.saturating_sub(import_offset).min(100);
+                    let imports =
+                        session.get_imports_for_file_page(file_id, batch_limit, import_offset)?;
+                    if imports.is_empty() {
+                        return Err(Error::StaleCursor);
+                    }
+                    for import in imports {
+                        if remaining == 0 {
+                            break 'files;
+                        }
+                        consumed = consumed.saturating_add(1);
+                        import_offset = import_offset.saturating_add(1);
+                        let import = Import {
+                            raw_target: import.raw_target,
+                            resolved_path: import.resolved_path,
+                            line: import.line,
+                        };
+                        let cost = self.config.tokenizer.count(&import.raw_target)
+                            + import
+                                .resolved_path
+                                .as_deref()
+                                .map_or(0, |value| self.config.tokenizer.count(value));
+                        if emitted_tokens.saturating_add(cost) > token_limit {
+                            truncated_by_max_tokens = true;
+                            continue;
+                        }
+                        emitted_tokens = emitted_tokens.saturating_add(cost);
+                        remaining -= 1;
+                        returned_imports = returned_imports.saturating_add(1);
+                        files[file_index].imports.push(import);
+                    }
+                }
+                prefix = file_end;
+            }
+
+            let truncated_by_max_results = remaining == 0 && consumed < total_entries;
+            let next_cursor = truncated_by_max_results
+                .then(|| make_outline_cursor(generation, consumed, &request));
+            let result_complete = offset == 0
+                && returned_symbols == total_symbols
+                && returned_imports == total_imports;
             let paths = files
                 .iter()
                 .map(|file| file.path.clone())
@@ -383,7 +527,16 @@ impl Services {
             Ok((
                 OutlineResponse {
                     files,
-                    meta: self.meta(generation, emitted_tokens, None),
+                    parse_complete,
+                    result_complete,
+                    total_symbols,
+                    returned_symbols,
+                    total_imports,
+                    returned_imports,
+                    truncated_by_max_results,
+                    truncated_by_max_tokens,
+                    symbol_counts_by_kind,
+                    meta: self.meta(generation, emitted_tokens, next_cursor),
                 },
                 baseline_source_tokens,
             ))

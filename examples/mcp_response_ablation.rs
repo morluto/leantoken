@@ -295,6 +295,7 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
             symbol_kind: None,
             max_results: Some(20),
             max_tokens: Some(8_000),
+            cursor: None,
         })
         .await?;
     outline_empty
@@ -308,6 +309,7 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
             symbol_kind: None,
             max_results: Some(20),
             max_tokens: Some(8_000),
+            cursor: None,
         })
         .await?;
     outline_rich

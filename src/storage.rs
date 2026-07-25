@@ -2070,24 +2070,50 @@ impl ReadSession {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
-    pub(crate) fn get_symbols_for_file_filtered(
+    pub(crate) fn get_symbols_for_file_filtered_page(
         &self,
         file_id: i64,
         name: Option<&str>,
         kind: Option<&str>,
         max_results: usize,
+        offset: usize,
     ) -> Result<Vec<SymbolRecord>> {
         let limit = bounded_limit(max_results);
+        let offset = i64::try_from(offset).unwrap_or(i64::MAX);
         let mut stmt = self.conn.prepare_cached(
             "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
                  FROM symbols
                  WHERE file_id = ?1
                    AND (?2 IS NULL OR instr(name, ?2) > 0)
                    AND (?3 IS NULL OR kind = ?3)
-                 ORDER BY start_byte
-                 LIMIT ?4",
+                 ORDER BY start_byte, id
+                 LIMIT ?4 OFFSET ?5",
         )?;
-        let rows = stmt.query_map(params![file_id, name, kind, limit], Storage::map_symbol)?;
+        let rows = stmt.query_map(
+            params![file_id, name, kind, limit, offset],
+            Storage::map_symbol,
+        )?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub(crate) fn symbol_counts_for_file_filtered(
+        &self,
+        file_id: i64,
+        name: Option<&str>,
+        kind: Option<&str>,
+    ) -> Result<Vec<(String, usize)>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT kind, COUNT(*)
+                 FROM symbols
+                 WHERE file_id = ?1
+                   AND (?2 IS NULL OR instr(name, ?2) > 0)
+                   AND (?3 IS NULL OR kind = ?3)
+                 GROUP BY kind
+                 ORDER BY kind",
+        )?;
+        let rows = stmt.query_map(params![file_id, name, kind], |row| {
+            Ok((row.get(0)?, i64_to_usize(row.get(1)?)))
+        })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
@@ -2227,12 +2253,36 @@ impl ReadSession {
         file_id: i64,
         max_results: usize,
     ) -> Result<Vec<ImportRecord>> {
+        self.get_imports_for_file_page(file_id, max_results, 0)
+    }
+
+    pub(crate) fn get_imports_for_file_page(
+        &self,
+        file_id: i64,
+        max_results: usize,
+        offset: usize,
+    ) -> Result<Vec<ImportRecord>> {
         let limit = bounded_limit(max_results);
+        let offset = i64::try_from(offset).unwrap_or(i64::MAX);
         let mut stmt = self.conn.prepare_cached(
-            "SELECT id, file_id, raw_target, resolved_path, line FROM imports WHERE file_id = ?1 ORDER BY line LIMIT ?2",
+            "SELECT id, file_id, raw_target, resolved_path, line
+                 FROM imports
+                 WHERE file_id = ?1
+                 ORDER BY line, id
+                 LIMIT ?2 OFFSET ?3",
         )?;
-        let rows = stmt.query_map(params![file_id, limit], Storage::map_import)?;
+        let rows = stmt.query_map(params![file_id, limit, offset], Storage::map_import)?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub(crate) fn count_imports_for_file(&self, file_id: i64) -> Result<usize> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM imports WHERE file_id = ?1",
+                params![file_id],
+                |row| Ok(i64_to_usize(row.get(0)?)),
+            )
+            .map_err(Into::into)
     }
 
     pub fn search_word(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
