@@ -817,71 +817,86 @@
 <a href=#817 id=817 data-nosnippet>817</a>    </span><span class="attr">#[arg(long = <span class="string">"include"</span>)]
 <a href=#818 id=818 data-nosnippet>818</a>    </span><span class="kw">pub </span>include_paths: Vec&lt;String&gt;,
 <a href=#819 id=819 data-nosnippet>819</a>
-<a href=#820 id=820 data-nosnippet>820</a>    <span class="doccomment">/// Focus on these paths (repeatable).
-<a href=#821 id=821 data-nosnippet>821</a>    </span><span class="attr">#[arg(long = <span class="string">"focus"</span>)]
-<a href=#822 id=822 data-nosnippet>822</a>    </span><span class="kw">pub </span>focus_paths: Vec&lt;String&gt;,
+<a href=#820 id=820 data-nosnippet>820</a>    <span class="doccomment">/// Require evidence matching each path pattern (repeatable).
+<a href=#821 id=821 data-nosnippet>821</a>    </span><span class="attr">#[arg(long = <span class="string">"must-include"</span>)]
+<a href=#822 id=822 data-nosnippet>822</a>    </span><span class="kw">pub </span>must_include_paths: Vec&lt;String&gt;,
 <a href=#823 id=823 data-nosnippet>823</a>
-<a href=#824 id=824 data-nosnippet>824</a>    <span class="doccomment">/// Focus on these symbols (repeatable).
-<a href=#825 id=825 data-nosnippet>825</a>    </span><span class="attr">#[arg(long = <span class="string">"focus-symbol"</span>)]
-<a href=#826 id=826 data-nosnippet>826</a>    </span><span class="kw">pub </span>focus_symbols: Vec&lt;String&gt;,
+<a href=#824 id=824 data-nosnippet>824</a>    <span class="doccomment">/// Require evidence for each exact symbol (repeatable).
+<a href=#825 id=825 data-nosnippet>825</a>    </span><span class="attr">#[arg(long = <span class="string">"must-include-symbol"</span>)]
+<a href=#826 id=826 data-nosnippet>826</a>    </span><span class="kw">pub </span>must_include_symbols: Vec&lt;String&gt;,
 <a href=#827 id=827 data-nosnippet>827</a>
-<a href=#828 id=828 data-nosnippet>828</a>    <span class="doccomment">/// Exclude these paths (repeatable).
-<a href=#829 id=829 data-nosnippet>829</a>    </span><span class="attr">#[arg(long = <span class="string">"exclude"</span>)]
-<a href=#830 id=830 data-nosnippet>830</a>    </span><span class="kw">pub </span>exclude_paths: Vec&lt;String&gt;,
+<a href=#828 id=828 data-nosnippet>828</a>    <span class="doccomment">/// Maximum number of returned fragments (default: 8).
+<a href=#829 id=829 data-nosnippet>829</a>    </span><span class="attr">#[arg(long, value_parser = parse_positive_usize)]
+<a href=#830 id=830 data-nosnippet>830</a>    </span><span class="kw">pub </span>max_fragments: <span class="prelude-ty">Option</span>&lt;usize&gt;,
 <a href=#831 id=831 data-nosnippet>831</a>
-<a href=#832 id=832 data-nosnippet>832</a>    <span class="doccomment">/// Content hashes the caller already holds (repeatable).
-<a href=#833 id=833 data-nosnippet>833</a>    </span><span class="attr">#[arg(long = <span class="string">"known-hash"</span>)]
-<a href=#834 id=834 data-nosnippet>834</a>    </span><span class="kw">pub </span>known_hashes: Vec&lt;String&gt;,
+<a href=#832 id=832 data-nosnippet>832</a>    <span class="doccomment">/// Focus on these paths (repeatable).
+<a href=#833 id=833 data-nosnippet>833</a>    </span><span class="attr">#[arg(long = <span class="string">"focus"</span>)]
+<a href=#834 id=834 data-nosnippet>834</a>    </span><span class="kw">pub </span>focus_paths: Vec&lt;String&gt;,
 <a href=#835 id=835 data-nosnippet>835</a>
-<a href=#836 id=836 data-nosnippet>836</a>    <span class="doccomment">/// Prior repository generation for delta context.
-<a href=#837 id=837 data-nosnippet>837</a>    </span><span class="attr">#[arg(long = <span class="string">"prior-generation"</span>)]
-<a href=#838 id=838 data-nosnippet>838</a>    </span><span class="kw">pub </span>prior_repository_generation: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#836 id=836 data-nosnippet>836</a>    <span class="doccomment">/// Focus on these symbols (repeatable).
+<a href=#837 id=837 data-nosnippet>837</a>    </span><span class="attr">#[arg(long = <span class="string">"focus-symbol"</span>)]
+<a href=#838 id=838 data-nosnippet>838</a>    </span><span class="kw">pub </span>focus_symbols: Vec&lt;String&gt;,
 <a href=#839 id=839 data-nosnippet>839</a>
-<a href=#840 id=840 data-nosnippet>840</a>    <span class="doccomment">/// Base revision for diff-scoped context (e.g. "origin/main").
-<a href=#841 id=841 data-nosnippet>841</a>    </span><span class="attr">#[arg(long = <span class="string">"base-revision"</span>)]
-<a href=#842 id=842 data-nosnippet>842</a>    </span><span class="kw">pub </span>base_revision: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#840 id=840 data-nosnippet>840</a>    <span class="doccomment">/// Exclude these paths (repeatable).
+<a href=#841 id=841 data-nosnippet>841</a>    </span><span class="attr">#[arg(long = <span class="string">"exclude"</span>)]
+<a href=#842 id=842 data-nosnippet>842</a>    </span><span class="kw">pub </span>exclude_paths: Vec&lt;String&gt;,
 <a href=#843 id=843 data-nosnippet>843</a>
-<a href=#844 id=844 data-nosnippet>844</a>    <span class="doccomment">/// Changed paths for diff-scoped context (repeatable).
-<a href=#845 id=845 data-nosnippet>845</a>    </span><span class="attr">#[arg(long = <span class="string">"changed-path"</span>)]
-<a href=#846 id=846 data-nosnippet>846</a>    </span><span class="kw">pub </span>changed_paths: Vec&lt;String&gt;,
-<a href=#847 id=847 data-nosnippet>847</a>}
-<a href=#848 id=848 data-nosnippet>848</a>
-<a href=#849 id=849 data-nosnippet>849</a><span class="attr">#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
-<a href=#850 id=850 data-nosnippet>850</a></span><span class="kw">pub enum </span>ContextWorkflowArg {
-<a href=#851 id=851 data-nosnippet>851</a>    <span class="attr">#[default]
-<a href=#852 id=852 data-nosnippet>852</a>    </span>Auto,
-<a href=#853 id=853 data-nosnippet>853</a>    Implementation,
-<a href=#854 id=854 data-nosnippet>854</a>    Contribution,
-<a href=#855 id=855 data-nosnippet>855</a>    Review,
-<a href=#856 id=856 data-nosnippet>856</a>    Investigation,
-<a href=#857 id=857 data-nosnippet>857</a>}
-<a href=#858 id=858 data-nosnippet>858</a>
-<a href=#859 id=859 data-nosnippet>859</a><span class="kw">impl </span>From&lt;ContextWorkflowArg&gt; <span class="kw">for </span><span class="kw">crate</span>::model::ContextWorkflow {
-<a href=#860 id=860 data-nosnippet>860</a>    <span class="kw">fn </span>from(value: ContextWorkflowArg) -&gt; <span class="self">Self </span>{
-<a href=#861 id=861 data-nosnippet>861</a>        <span class="kw">match </span>value {
-<a href=#862 id=862 data-nosnippet>862</a>            ContextWorkflowArg::Auto =&gt; <span class="self">Self</span>::Auto,
-<a href=#863 id=863 data-nosnippet>863</a>            ContextWorkflowArg::Implementation =&gt; <span class="self">Self</span>::Implementation,
-<a href=#864 id=864 data-nosnippet>864</a>            ContextWorkflowArg::Contribution =&gt; <span class="self">Self</span>::Contribution,
-<a href=#865 id=865 data-nosnippet>865</a>            ContextWorkflowArg::Review =&gt; <span class="self">Self</span>::Review,
-<a href=#866 id=866 data-nosnippet>866</a>            ContextWorkflowArg::Investigation =&gt; <span class="self">Self</span>::Investigation,
-<a href=#867 id=867 data-nosnippet>867</a>        }
-<a href=#868 id=868 data-nosnippet>868</a>    }
+<a href=#844 id=844 data-nosnippet>844</a>    <span class="doccomment">/// Content hashes the caller already holds (repeatable).
+<a href=#845 id=845 data-nosnippet>845</a>    </span><span class="attr">#[arg(long = <span class="string">"known-hash"</span>)]
+<a href=#846 id=846 data-nosnippet>846</a>    </span><span class="kw">pub </span>known_hashes: Vec&lt;String&gt;,
+<a href=#847 id=847 data-nosnippet>847</a>
+<a href=#848 id=848 data-nosnippet>848</a>    <span class="doccomment">/// Prior repository generation for delta context.
+<a href=#849 id=849 data-nosnippet>849</a>    </span><span class="attr">#[arg(long = <span class="string">"prior-generation"</span>)]
+<a href=#850 id=850 data-nosnippet>850</a>    </span><span class="kw">pub </span>prior_repository_generation: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#851 id=851 data-nosnippet>851</a>
+<a href=#852 id=852 data-nosnippet>852</a>    <span class="doccomment">/// Base revision for diff-scoped context (e.g. "origin/main").
+<a href=#853 id=853 data-nosnippet>853</a>    </span><span class="attr">#[arg(long = <span class="string">"base-revision"</span>)]
+<a href=#854 id=854 data-nosnippet>854</a>    </span><span class="kw">pub </span>base_revision: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#855 id=855 data-nosnippet>855</a>
+<a href=#856 id=856 data-nosnippet>856</a>    <span class="doccomment">/// Changed paths for diff-scoped context (repeatable).
+<a href=#857 id=857 data-nosnippet>857</a>    </span><span class="attr">#[arg(long = <span class="string">"changed-path"</span>)]
+<a href=#858 id=858 data-nosnippet>858</a>    </span><span class="kw">pub </span>changed_paths: Vec&lt;String&gt;,
+<a href=#859 id=859 data-nosnippet>859</a>}
+<a href=#860 id=860 data-nosnippet>860</a>
+<a href=#861 id=861 data-nosnippet>861</a><span class="attr">#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
+<a href=#862 id=862 data-nosnippet>862</a></span><span class="kw">pub enum </span>ContextWorkflowArg {
+<a href=#863 id=863 data-nosnippet>863</a>    <span class="attr">#[default]
+<a href=#864 id=864 data-nosnippet>864</a>    </span>Auto,
+<a href=#865 id=865 data-nosnippet>865</a>    Implementation,
+<a href=#866 id=866 data-nosnippet>866</a>    Contribution,
+<a href=#867 id=867 data-nosnippet>867</a>    Review,
+<a href=#868 id=868 data-nosnippet>868</a>    Investigation,
 <a href=#869 id=869 data-nosnippet>869</a>}
 <a href=#870 id=870 data-nosnippet>870</a>
-<a href=#871 id=871 data-nosnippet>871</a><span class="kw">impl </span>From&lt;ContextArgs&gt; <span class="kw">for </span>ContextRequest {
-<a href=#872 id=872 data-nosnippet>872</a>    <span class="kw">fn </span>from(args: ContextArgs) -&gt; <span class="self">Self </span>{
-<a href=#873 id=873 data-nosnippet>873</a>        <span class="self">Self </span>{
-<a href=#874 id=874 data-nosnippet>874</a>            task: args.task,
-<a href=#875 id=875 data-nosnippet>875</a>            token_budget: args.budget,
-<a href=#876 id=876 data-nosnippet>876</a>            include_paths: args.include_paths,
-<a href=#877 id=877 data-nosnippet>877</a>            focus_paths: args.focus_paths,
-<a href=#878 id=878 data-nosnippet>878</a>            focus_symbols: args.focus_symbols,
-<a href=#879 id=879 data-nosnippet>879</a>            exclude_paths: args.exclude_paths,
-<a href=#880 id=880 data-nosnippet>880</a>            known_hashes: args.known_hashes,
-<a href=#881 id=881 data-nosnippet>881</a>            prior_repository_generation: args.prior_repository_generation,
-<a href=#882 id=882 data-nosnippet>882</a>            base_revision: args.base_revision,
-<a href=#883 id=883 data-nosnippet>883</a>            changed_paths: args.changed_paths,
-<a href=#884 id=884 data-nosnippet>884</a>        }
-<a href=#885 id=885 data-nosnippet>885</a>    }
-<a href=#886 id=886 data-nosnippet>886</a>}
+<a href=#871 id=871 data-nosnippet>871</a><span class="kw">impl </span>From&lt;ContextWorkflowArg&gt; <span class="kw">for </span><span class="kw">crate</span>::model::ContextWorkflow {
+<a href=#872 id=872 data-nosnippet>872</a>    <span class="kw">fn </span>from(value: ContextWorkflowArg) -&gt; <span class="self">Self </span>{
+<a href=#873 id=873 data-nosnippet>873</a>        <span class="kw">match </span>value {
+<a href=#874 id=874 data-nosnippet>874</a>            ContextWorkflowArg::Auto =&gt; <span class="self">Self</span>::Auto,
+<a href=#875 id=875 data-nosnippet>875</a>            ContextWorkflowArg::Implementation =&gt; <span class="self">Self</span>::Implementation,
+<a href=#876 id=876 data-nosnippet>876</a>            ContextWorkflowArg::Contribution =&gt; <span class="self">Self</span>::Contribution,
+<a href=#877 id=877 data-nosnippet>877</a>            ContextWorkflowArg::Review =&gt; <span class="self">Self</span>::Review,
+<a href=#878 id=878 data-nosnippet>878</a>            ContextWorkflowArg::Investigation =&gt; <span class="self">Self</span>::Investigation,
+<a href=#879 id=879 data-nosnippet>879</a>        }
+<a href=#880 id=880 data-nosnippet>880</a>    }
+<a href=#881 id=881 data-nosnippet>881</a>}
+<a href=#882 id=882 data-nosnippet>882</a>
+<a href=#883 id=883 data-nosnippet>883</a><span class="kw">impl </span>From&lt;ContextArgs&gt; <span class="kw">for </span>ContextRequest {
+<a href=#884 id=884 data-nosnippet>884</a>    <span class="kw">fn </span>from(args: ContextArgs) -&gt; <span class="self">Self </span>{
+<a href=#885 id=885 data-nosnippet>885</a>        <span class="self">Self </span>{
+<a href=#886 id=886 data-nosnippet>886</a>            task: args.task,
+<a href=#887 id=887 data-nosnippet>887</a>            token_budget: args.budget,
+<a href=#888 id=888 data-nosnippet>888</a>            include_paths: args.include_paths,
+<a href=#889 id=889 data-nosnippet>889</a>            must_include_paths: args.must_include_paths,
+<a href=#890 id=890 data-nosnippet>890</a>            must_include_symbols: args.must_include_symbols,
+<a href=#891 id=891 data-nosnippet>891</a>            max_fragments: args.max_fragments,
+<a href=#892 id=892 data-nosnippet>892</a>            focus_paths: args.focus_paths,
+<a href=#893 id=893 data-nosnippet>893</a>            focus_symbols: args.focus_symbols,
+<a href=#894 id=894 data-nosnippet>894</a>            exclude_paths: args.exclude_paths,
+<a href=#895 id=895 data-nosnippet>895</a>            known_hashes: args.known_hashes,
+<a href=#896 id=896 data-nosnippet>896</a>            prior_repository_generation: args.prior_repository_generation,
+<a href=#897 id=897 data-nosnippet>897</a>            base_revision: args.base_revision,
+<a href=#898 id=898 data-nosnippet>898</a>            changed_paths: args.changed_paths,
+<a href=#899 id=899 data-nosnippet>899</a>        }
+<a href=#900 id=900 data-nosnippet>900</a>    }
+<a href=#901 id=901 data-nosnippet>901</a>}
 </code></pre></div></section></main></body></html>
