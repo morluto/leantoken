@@ -138,7 +138,7 @@ retrieval.
 
 | Tool | Purpose |
 | --- | --- |
-| `leantoken.context` | Default first call for broad tasks; rank relevant evidence under a token budget. |
+| `leantoken.context` | Default first call for broad tasks; preview or materialize ranked evidence under a token budget. |
 | `leantoken.search` | Prefer over grep/rg for ranked text, regex, identifier, symbol, or reference search. |
 | `leantoken.files` | Prefer over find/ls/glob for compact, ignore-aware path discovery. |
 | `leantoken.outline` | Inspect definitions, signatures, imports, and ranges without whole-file reads. |
@@ -155,6 +155,11 @@ scanning or waiting for filesystem changes; it is not a Git revision boundary.
 live files, so neither accepts an index consistency mode. To constrain context
 to immutable history, pass `BASE..HEAD` as `leantoken.context.base_revision`
 with `strict_changed_paths: true`.
+
+For an uncertain broad task, set `plan_only: true` to receive bounded ranked
+candidate metadata without source fragments or receipt mutation. Confirm the
+paths and coverage, then repeat the same request with `plan_only: false` to
+materialize the selected source.
 
 The catalog stays intentionally small because every tool description and
 schema also consumes model context.

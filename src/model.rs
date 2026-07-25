@@ -789,6 +789,9 @@ pub struct ContextRequest {
     /// Maximum number of returned fragments.
     #[serde(default)]
     pub max_fragments: Option<usize>,
+    /// Return a bounded ranked query plan without source fragments.
+    #[serde(default)]
+    pub plan_only: bool,
     /// Boost matching paths without filtering other candidates.
     #[serde(default)]
     pub focus_paths: Vec<String>,
@@ -824,7 +827,7 @@ pub struct ContextRequest {
     pub strict_changed_paths: bool,
 }
 
-/// Selected coverage for one caller-supplied focus path pattern.
+/// Selected or planned coverage for one caller-supplied focus path pattern.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ContextFocusPathCoverage {
     /// Original focus path pattern.
@@ -833,7 +836,7 @@ pub struct ContextFocusPathCoverage {
     pub indexed_paths: usize,
     /// Minimum fragments required by this request.
     pub minimum_fragments: usize,
-    /// Returned fragments matched by the pattern.
+    /// Returned or planned fragments matched by the pattern.
     pub selected_fragments: usize,
     /// Whether indexed and selected evidence met the requested minimum.
     pub satisfied: bool,
@@ -852,7 +855,7 @@ pub struct ContextChangedPathCoverage {
     pub satisfied: bool,
 }
 
-/// Indexed and selected evidence coverage for caller-supplied context constraints.
+/// Indexed and selected or planned evidence coverage for context constraints.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ContextCoverageReceipt {
     /// Focus path patterns that matched no indexed path.
@@ -861,7 +864,7 @@ pub struct ContextCoverageReceipt {
     /// Focus symbols that matched no exact indexed symbol.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmatched_focus_symbols: Vec<String>,
-    /// Per-pattern selection coverage; ordinary focus paths require one fragment.
+    /// Per-pattern selection or plan coverage; ordinary focus paths require one fragment.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub focus_path_coverage: Vec<ContextFocusPathCoverage>,
     /// Coverage of the resolved changed-path boundary when it is strict.
@@ -873,10 +876,10 @@ pub struct ContextCoverageReceipt {
     /// Hard include patterns that matched no indexed path.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmatched_include_paths: Vec<String>,
-    /// Required path patterns represented by returned or already-held evidence.
+    /// Required path patterns represented by returned, planned, or already-held evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub covered_must_include_paths: Vec<String>,
-    /// Required exact symbols represented by returned or already-held evidence.
+    /// Required exact symbols represented by returned, planned, or already-held evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub covered_must_include_symbols: Vec<String>,
     /// Required path patterns that matched no indexed path.
@@ -928,6 +931,56 @@ pub struct ContextFragment {
     pub reason: String,
     #[serde(default, skip_serializing)]
     pub token_count: usize,
+}
+
+/// One ranked source candidate in a metadata-only context query plan.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ContextPlanCandidate {
+    /// Repository-relative candidate path.
+    pub path: String,
+    /// First one-based source line that materialization would return.
+    pub start_line: usize,
+    /// Last one-based source line that materialization would return.
+    pub end_line: usize,
+    /// Source representation selected by the retrieval pipeline.
+    pub representation: String,
+    /// Deterministic final ranking score.
+    pub score: f64,
+    /// Bounded human-readable ranking signals.
+    pub reasons: Vec<String>,
+    /// Exact source-token estimate for this candidate.
+    pub estimated_tokens: usize,
+}
+
+/// Planned evidence coverage for one caller-supplied focus path.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ContextPlanFocusCoverage {
+    /// Original focus path pattern.
+    pub pattern: String,
+    /// Planned candidate fragments matched by the pattern.
+    pub candidate_fragments: usize,
+    /// Minimum candidate fragments requested for the pattern.
+    pub minimum_fragments: usize,
+    /// Whether the planned candidates meet the requested minimum.
+    pub satisfied: bool,
+}
+
+/// Bounded metadata-only preview of context source materialization.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ContextQueryPlan {
+    /// Ranked candidates that the same materialized request would select.
+    pub candidates: Vec<ContextPlanCandidate>,
+    /// Distinct eligible candidate paths considered before source selection.
+    pub candidate_paths_total: usize,
+    /// Exact source tokens the planned candidates would materialize.
+    pub estimated_source_tokens: usize,
+    /// Planned coverage for each requested focus path pattern.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub focus_coverage: Vec<ContextPlanFocusCoverage>,
+    /// Whether generated-artifact defaults matched any generated candidate.
+    pub generated_artifact_warning: bool,
+    /// Whether every eligible candidate fit the token and fragment limits.
+    pub result_complete: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -1111,6 +1164,9 @@ pub struct ContextResponse {
     /// Bounded routing evidence for specialized workflows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow_receipt: Option<WorkflowReceipt>,
+    /// Metadata-only selection preview when `plan_only` was requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<ContextQueryPlan>,
     pub fragments: Vec<ContextFragment>,
     pub receipt: EvidenceReceipt,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1508,6 +1564,7 @@ mod tests {
         let response = ContextResponse {
             workflow: ContextWorkflow::Implementation,
             workflow_receipt: None,
+            plan: None,
             fragments: vec![ContextFragment {
                 path: "src/lib.rs".into(),
                 start_line: 1,
@@ -1595,6 +1652,7 @@ mod tests {
         let response = ContextResponse {
             workflow: ContextWorkflow::Implementation,
             workflow_receipt: None,
+            plan: None,
             fragments: vec![ContextFragment {
                 path: "src/lib.rs".into(),
                 start_line: 4,

@@ -504,6 +504,17 @@ silently broadens another. `must_include_paths` and
 focus minimums and ordinary ranking. `max_fragments` defaults to 8 and accepts
 values through 100.
 
+Set `plan_only=true` to run the same hard scopes, ranking, must-cover selection,
+token budget, and fragment limit without returning source. The response has an
+empty `fragments` array and no server-managed receipt mutation; `plan` contains
+bounded paths and ranges, final scores and reasons, exact source-token
+estimates, focus coverage, completeness, and a generated-artifact warning.
+`receipt_id` is rejected in plan mode; use `known_hashes` for stateless
+suppression that must apply to both preview and materialization.
+After confirming a broad plan, repeat the same request with `plan_only=false`
+to materialize those candidates against the selected index consistency
+boundary.
+
 Context ranking excludes known generated report trees by default:
 `artifacts/runtime_reports/**`, `artifacts/viability_audit/**`,
 `artifacts/replay_reports/**`, `notes/runs/**`, and `node_modules/**`. Exact

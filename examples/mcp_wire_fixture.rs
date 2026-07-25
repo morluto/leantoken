@@ -43,6 +43,7 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
         must_include_paths: Vec::new(),
         must_include_symbols: Vec::new(),
         max_fragments: None,
+        plan_only: false,
         focus_paths: vec!["src/mcp.rs".into()],
         strict_focus_paths: false,
         minimum_fragments_per_focus_path: None,
@@ -58,6 +59,7 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
     let response = ContextResponse {
         workflow: ContextWorkflow::Implementation,
         workflow_receipt: None,
+        plan: None,
         fragments: vec![ContextFragment {
             path: "src/mcp.rs".into(),
             start_line: 298,

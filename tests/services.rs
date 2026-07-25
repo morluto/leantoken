@@ -746,6 +746,7 @@ async fn contribution_context_routes_to_guidance_validation_and_owner_tests() {
                 must_include_paths: Vec::new(),
                 must_include_symbols: Vec::new(),
                 max_fragments: None,
+                plan_only: false,
                 focus_paths: Vec::new(),
                 strict_focus_paths: false,
                 minimum_fragments_per_focus_path: None,
@@ -906,6 +907,7 @@ fn context_limit_request(token_budget: usize) -> ContextRequest {
         must_include_paths: Vec::new(),
         must_include_symbols: Vec::new(),
         max_fragments: None,
+        plan_only: false,
         focus_paths: Vec::new(),
         strict_focus_paths: false,
         minimum_fragments_per_focus_path: None,
@@ -918,6 +920,66 @@ fn context_limit_request(token_budget: usize) -> ContextRequest {
         changed_paths: Vec::new(),
         strict_changed_paths: false,
     }
+}
+
+#[tokio::test]
+async fn context_plan_previews_materialization_without_receipt_or_source() {
+    let (_root, services) = fixture().await;
+    let mut request = context_limit_request(100);
+    request.focus_paths = vec!["src/**".into()];
+    request.strict_focus_paths = true;
+    request.plan_only = true;
+    let savings_before = services.token_savings().await.expect("savings before plan");
+
+    let preview = services
+        .context(request.clone())
+        .await
+        .expect("context plan");
+    let plan = preview.plan.as_ref().expect("query plan");
+
+    assert!(preview.fragments.is_empty());
+    assert!(preview.receipt.fragment_hashes.is_empty());
+    assert_eq!(preview.meta.source_tokens, 0);
+    assert_eq!(preview.meta.emitted_tokens, 0);
+    assert!(preview.meta.receipt_id.is_none());
+    assert!(!plan.candidates.is_empty());
+    assert!(plan.focus_coverage[0].satisfied);
+    assert!(
+        preview
+            .coverage
+            .focus_path_coverage
+            .iter()
+            .all(|coverage| coverage.satisfied)
+    );
+    assert_response_token_accounting!(preview, Tokenizer::default());
+    let savings_after = services.token_savings().await.expect("savings after plan");
+    assert_eq!(
+        savings_after.tracked_requests,
+        savings_before.tracked_requests
+    );
+    assert_eq!(
+        savings_after.estimated_source_tokens_saved,
+        savings_before.estimated_source_tokens_saved
+    );
+
+    request.plan_only = false;
+    let materialized = services.context(request).await.expect("materialized context");
+    assert!(materialized.plan.is_none());
+    assert_eq!(
+        plan.candidates
+            .iter()
+            .map(|candidate| (&candidate.path, candidate.start_line, candidate.end_line))
+            .collect::<Vec<_>>(),
+        materialized
+            .fragments
+            .iter()
+            .map(|fragment| (&fragment.path, fragment.start_line, fragment.end_line))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        plan.estimated_source_tokens,
+        materialized.meta.source_tokens
+    );
 }
 
 #[tokio::test]
@@ -936,6 +998,21 @@ async fn context_rejects_empty_include_patterns() {
         Error::InvalidInput {
             field: "include paths",
             reason: "must not contain empty patterns"
+        }
+    ));
+
+    let mut plan_with_receipt = context_limit_request(100);
+    plan_with_receipt.plan_only = true;
+    plan_with_receipt.receipt_id = Some("existing".into());
+    let error = services
+        .context(plan_with_receipt)
+        .await
+        .expect_err("plan receipt mutation");
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "receipt_id",
+            reason: "must be omitted when plan_only is true"
         }
     ));
 
@@ -2429,6 +2506,7 @@ async fn five_services_return_bounded_grounded_responses() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
@@ -2458,6 +2536,7 @@ async fn five_services_return_bounded_grounded_responses() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
@@ -2491,6 +2570,7 @@ async fn five_services_return_bounded_grounded_responses() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
@@ -2596,6 +2676,7 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
@@ -2789,6 +2870,7 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
                 must_include_paths: Vec::new(),
                 must_include_symbols: Vec::new(),
                 max_fragments: None,
+                plan_only: false,
                 focus_paths: Vec::new(),
                 strict_focus_paths: false,
                 minimum_fragments_per_focus_path: None,
@@ -3279,6 +3361,7 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
@@ -3308,6 +3391,7 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
@@ -3374,6 +3458,7 @@ async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
         must_include_paths: Vec::new(),
         must_include_symbols: Vec::new(),
         max_fragments: None,
+        plan_only: false,
         focus_paths: Vec::new(),
         strict_focus_paths: false,
         minimum_fragments_per_focus_path: None,
@@ -5065,6 +5150,7 @@ async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_service
                 must_include_paths: Vec::new(),
                 must_include_symbols: Vec::new(),
                 max_fragments: None,
+                plan_only: false,
                 focus_paths: Vec::new(),
                 strict_focus_paths: false,
                 minimum_fragments_per_focus_path: None,
@@ -5402,6 +5488,7 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
@@ -5597,6 +5684,7 @@ async fn working_tree_diff_boosts_changed_files() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
@@ -5647,6 +5735,7 @@ async fn tokenizer_configuration_is_scoped_to_each_service() {
         must_include_paths: Vec::new(),
         must_include_symbols: Vec::new(),
         max_fragments: None,
+        plan_only: false,
         focus_paths: Vec::new(),
         strict_focus_paths: false,
         minimum_fragments_per_focus_path: None,
@@ -5694,6 +5783,7 @@ async fn context_declaration_excerpt_retains_long_body_across_chunks() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
@@ -5744,6 +5834,7 @@ async fn context_text_hits_use_bounded_declaration_excerpts() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
@@ -5996,6 +6087,7 @@ async fn reconcile_working_tree_consistency_applies_to_each_retrieval_service() 
                 must_include_paths: Vec::new(),
                 must_include_symbols: Vec::new(),
                 max_fragments: None,
+                plan_only: false,
                 focus_paths: vec!["context_package.rs".into()],
                 strict_focus_paths: false,
                 minimum_fragments_per_focus_path: None,
@@ -6179,6 +6271,7 @@ async fn diff_scoped_context_with_explicit_changed_paths_reports_receipt() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
@@ -6287,6 +6380,7 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
                 must_include_paths: Vec::new(),
                 must_include_symbols: Vec::new(),
                 max_fragments: None,
+                plan_only: false,
                 focus_paths: Vec::new(),
                 strict_focus_paths: false,
                 minimum_fragments_per_focus_path: None,
@@ -6395,6 +6489,7 @@ async fn diff_scoped_context_preserves_task_only_behavior_without_scope() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
@@ -6429,6 +6524,7 @@ async fn diff_scoped_context_rejects_path_outside_repository() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
@@ -6463,6 +6559,7 @@ async fn diff_scoped_context_rejects_excessive_changed_path_count() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
@@ -6493,6 +6590,7 @@ async fn diff_scoped_context_counts_zero_for_nonexistent_changed_path() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,

@@ -728,6 +728,9 @@ struct ContextMcpRequest {
         default = "default_context_fragment_option"
     )]
     max_fragments: Option<usize>,
+    /// Preview ranked candidates without source or receipt mutation; omit `receipt_id`.
+    #[serde(default)]
+    plan_only: bool,
     /// Boost matching paths without filtering other candidates.
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 4096)))]
@@ -807,6 +810,7 @@ impl ContextMcpRequest {
                 must_include_paths: self.must_include_paths,
                 must_include_symbols: self.must_include_symbols,
                 max_fragments: self.max_fragments,
+                plan_only: self.plan_only,
                 focus_paths: self.focus_paths,
                 strict_focus_paths: self.strict_focus_paths,
                 minimum_fragments_per_focus_path: self.minimum_fragments_per_focus_path,
@@ -1399,7 +1403,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "context",
-        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required evidence. Coverage diagnostics fail loud when strict scopes are empty or underfilled. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}."
+        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. For uncertain broad tasks, set plan_only=true to preview bounded ranked paths, ranges, reasons, token estimates, focus coverage, and generated-artifact warnings without source or receipt mutation; then repeat the same request with plan_only=false to materialize. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required evidence. Coverage diagnostics fail loud when strict scopes are empty or underfilled. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}."
     )]
     async fn leantoken_context(
         &self,
@@ -1449,7 +1453,7 @@ impl LeanTokenMcp {
 
 #[tool_handler(
     name = "leantoken",
-    instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken.context first with the user's task. PREFER leantoken.search over grep or rg for source search; leantoken.files over find, ls, or glob for paths; leantoken.outline over opening whole files to discover structure; leantoken.read over cat, head, or sed for exact current symbols and ranges; leantoken.history over git show, diff, or log -L for one symbol across immutable revisions; and leantoken.json over jq or whole-file reads for structural JSON queries, summaries, and selected-field diffs. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=reconcile_working_tree on index-backed tools after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, runtime probes, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
+    instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken.context first with the user's task. For an uncertain broad task, first use context plan_only=true, inspect its bounded metadata and coverage, then repeat the same request with plan_only=false to materialize source. PREFER leantoken.search over grep or rg for source search; leantoken.files over find, ls, or glob for paths; leantoken.outline over opening whole files to discover structure; leantoken.read over cat, head, or sed for exact current symbols and ranges; leantoken.history over git show, diff, or log -L for one symbol across immutable revisions; and leantoken.json over jq or whole-file reads for structural JSON queries, summaries, and selected-field diffs. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=reconcile_working_tree on index-backed tools after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, runtime probes, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
 )]
 impl ServerHandler for LeanTokenMcp {
     fn on_initialized(

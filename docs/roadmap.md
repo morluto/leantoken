@@ -36,6 +36,10 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 - Structural JSON retrieval now handles exact ignored artifacts through
   Pointer/JMESPath selection, collapsed/key/schema projections, numeric
   summaries, and selected-field diffs without indexing raw reports.
+- Context can now return a bounded metadata-only query plan before source
+  materialization. Plans reuse hard scopes and ranking, expose scores, reasons,
+  exact token estimates, focus coverage, and generated-artifact warnings, and
+  do not create or update receipts.
 
 ## Token accounting
 
