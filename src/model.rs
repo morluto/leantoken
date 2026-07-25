@@ -593,7 +593,7 @@ pub struct ContextCoverageReceipt {
     /// Focus symbols that matched no exact indexed symbol.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmatched_focus_symbols: Vec<String>,
-    /// Per-pattern selection coverage when focus paths are strict or carry a minimum.
+    /// Per-pattern selection coverage; ordinary focus paths require one fragment.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub focus_path_coverage: Vec<ContextFocusPathCoverage>,
     /// Coverage of the resolved changed-path boundary when it is strict.
@@ -688,12 +688,45 @@ pub struct ContextOmissionSummary {
     pub known_hash: usize,
     /// Ranked candidates that did not fit the token or result limit.
     pub budget_or_result_limit: usize,
+    /// Highest-frequency omitted paths, bounded with an `[other]` bucket.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_path: Vec<ContextOmissionFacet>,
+    /// Omitted candidates grouped by language or file extension.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_language_or_file_type: Vec<ContextOmissionFacet>,
+    /// Omitted candidates grouped by the boundary that rejected them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_reason: Vec<ContextOmissionFacet>,
+    /// Omitted candidates grouped by deterministic final-score ranges.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_score_band: Vec<ContextOmissionFacet>,
+    /// Omitted candidates matching at least one requested focus path.
+    #[serde(default)]
+    pub focused: usize,
+    /// Omitted candidates outside every requested focus path.
+    #[serde(default)]
+    pub not_focused: usize,
+    /// Omitted candidates belonging to an explicitly resolved changed path.
+    #[serde(default)]
+    pub changed: usize,
+    /// Omitted candidates outside the explicitly resolved changed paths.
+    #[serde(default)]
+    pub not_changed: usize,
 }
 
 impl ContextOmissionSummary {
     fn is_empty(&self) -> bool {
         self.path_excluded == 0 && self.known_hash == 0 && self.budget_or_result_limit == 0
     }
+}
+
+/// One value and count in a bounded context omission breakdown.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ContextOmissionFacet {
+    /// Stable facet value such as a path, file type, reason, or score range.
+    pub value: String,
+    /// Number of omitted candidates represented by this value.
+    pub count: usize,
 }
 
 /// One deterministic path group inferred from an oversized diff scope.

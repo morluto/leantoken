@@ -981,9 +981,24 @@ async fn context_include_paths_constrain_fragments_and_report_path_omissions() {
     assert!(response.omission_summary.path_excluded > 0);
     assert!(
         response
+            .omission_summary
+            .by_reason
+            .iter()
+            .any(|facet| facet.value == "path_excluded"
+                && facet.count == response.omission_summary.path_excluded)
+    );
+    assert!(
+        response
+            .omission_summary
+            .by_path
+            .iter()
+            .any(|facet| facet.value == "src/managed/evidence.rs")
+    );
+    assert!(
+        response
             .warnings
             .iter()
-            .any(|warning| warning.contains("excluded by path constraints"))
+            .any(|warning| warning.contains("omitted"))
     );
 }
 
@@ -1126,6 +1141,33 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
     )
     .expect("services");
     services.index(false).await.expect("index fixture");
+
+    let mut ordinary_focus = context_limit_request(1_000);
+    ordinary_focus.task = "change shared_scope_target".into();
+    ordinary_focus.focus_paths = vec!["src/alpha/**".into(), "src/beta/**".into()];
+    ordinary_focus.max_fragments = Some(1);
+    let ordinary_focus = services
+        .context(ordinary_focus)
+        .await
+        .expect("ordinary focus context");
+    assert_eq!(ordinary_focus.coverage.strict_scope_satisfied, None);
+    assert_eq!(ordinary_focus.coverage.focus_path_coverage.len(), 2);
+    assert!(
+        ordinary_focus
+            .coverage
+            .focus_path_coverage
+            .iter()
+            .all(|focus| focus.indexed_paths == 2 && focus.minimum_fragments == 1)
+    );
+    assert_eq!(
+        ordinary_focus
+            .coverage
+            .focus_path_coverage
+            .iter()
+            .filter(|focus| focus.satisfied)
+            .count(),
+        1
+    );
 
     let mut request = context_limit_request(1_000);
     request.task = "change shared_scope_target".into();

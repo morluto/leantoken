@@ -477,14 +477,22 @@ opens the repository.
 
 The `coverage` receipt distinguishes unmatched focus/include constraints,
 covered requirements, indexed requirements blocked by path or budget limits,
-and requirements absent from the index. Strict/minimum requests also return
-per-focus counts, resolved changed-path counts, and
-`strict_scope_satisfied`. An empty strict scope therefore returns an explicit
-coverage failure rather than unrelated evidence. Already-held matching hashes
-satisfy a must-cover requirement without resending source. `omission_summary`
-distinguishes path filtering, known hashes, and budget or result limits. The
-selector merges overlapping candidates, suppresses duplicate or known content,
-preserves file diversity, and returns short reasons for each chosen fragment.
+and requirements absent from the index. Every focus path returns indexed and
+selected fragment counts with an implicit minimum of one; strict or explicit
+minimum requests additionally contribute to `strict_scope_satisfied`. Strict
+changed-path requests return resolved and selected changed-path counts. An empty
+strict scope therefore returns an explicit coverage failure rather than
+unrelated evidence. Already-held matching hashes satisfy a must-cover
+requirement without resending source.
+
+`omission_summary` distinguishes path filtering, known hashes, and budget or
+result limits. It also groups omitted candidates by path, language or file type,
+reason, score band, focus membership, and changed-path membership. Facet lists
+are deterministic and bounded to 12 values; longer path or file-type tails are
+combined into `[other]`. Candidates rejected before scoring use the `not scored`
+band. The selector merges overlapping candidates, suppresses duplicate or known
+content, preserves file diversity, and returns short reasons for each chosen
+fragment.
 
 `workflow` accepts `auto`, `implementation`, `contribution`, `review`, or
 `investigation`. Contribution and review modes add bounded repository guidance,
