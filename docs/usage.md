@@ -438,6 +438,27 @@ intersected; no constraint silently broadens another. `must_include_paths` and
 `must_include_symbols` generate and select required indexed evidence before
 focus minimums and ordinary ranking. `max_fragments` defaults to 8 and accepts
 values through 100.
+
+Context ranking excludes known generated report trees by default:
+`artifacts/runtime_reports/**`, `artifacts/viability_audit/**`,
+`artifacts/replay_reports/**`, `notes/runs/**`, and `node_modules/**`. Exact
+`files`, `search`, and `read` operations are unaffected. A matching
+`include_paths` pattern explicitly admits an indexed artifact to context; an
+explicit `exclude_paths` or strict scope still wins.
+
+Repositories can append context-only exclusions in `.leantoken.toml`:
+
+```toml
+[context]
+exclude_paths = ["generated/**", "reports/audit/**"]
+```
+
+These patterns do not remove files from the index. Known cache trees that are
+not indexed by default, including `node_modules`, still require the global
+`--include-generated` indexing override before exact lookup or explicit context
+inclusion can find them. Repository configuration is resolved when LeanToken
+opens the repository.
+
 The `coverage` receipt distinguishes unmatched focus/include constraints,
 covered requirements, indexed requirements blocked by path or budget limits,
 and requirements absent from the index. Strict/minimum requests also return

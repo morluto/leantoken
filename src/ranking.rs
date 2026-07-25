@@ -20,7 +20,7 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
-use crate::config::DEFAULT_CONTEXT_FRAGMENTS;
+use crate::config::{DEFAULT_CONTEXT_FRAGMENTS, default_context_exclude_paths};
 use crate::model::{
     ContextCoverageReceipt, ContextFragment, ContextOmissionSummary, ContextRequest,
     ContextResponse, EvidenceReceipt, Freshness, OmittedCandidate, ResponseMeta,
@@ -544,12 +544,29 @@ pub fn select_with_tokenizer(
     repository_generation: u64,
     tokenizer: tokens::Tokenizer,
 ) -> ContextResponse {
+    select_with_tokenizer_and_context_exclusions(
+        candidates,
+        request,
+        repository_generation,
+        tokenizer,
+        &default_context_exclude_paths(),
+    )
+}
+
+pub(crate) fn select_with_tokenizer_and_context_exclusions(
+    candidates: Vec<Candidate>,
+    request: &ContextRequest,
+    repository_generation: u64,
+    tokenizer: tokens::Tokenizer,
+    context_exclude_paths: &[String],
+) -> ContextResponse {
     select_with_options(
         candidates,
         request,
         repository_generation,
         &Weights::default(),
         tokenizer,
+        context_exclude_paths,
     )
 }
 
@@ -585,6 +602,7 @@ pub fn select_with_weights_and_tokenizer(
         repository_generation,
         weights,
         tokenizer,
+        &default_context_exclude_paths(),
     )
 }
 
@@ -594,11 +612,13 @@ fn select_with_options(
     repository_generation: u64,
     weights: &Weights,
     tokenizer: tokens::Tokenizer,
+    context_exclude_paths: &[String],
 ) -> ContextResponse {
     let mut candidates = candidates;
     let focus_paths = PathMatcher::new_lossy(&request.focus_paths);
     let include_paths = PathMatcher::new_lossy(&request.include_paths);
     let exclude_paths = PathMatcher::new_lossy(&request.exclude_paths);
+    let context_exclude_paths = PathMatcher::new_lossy(context_exclude_paths);
     let changed_paths = request
         .changed_paths
         .iter()
@@ -613,8 +633,11 @@ fn select_with_options(
     let mut eligible: Vec<Candidate> = Vec::with_capacity(candidates.len());
 
     for candidate in candidates {
+        let explicitly_included =
+            !request.include_paths.is_empty() && include_paths.is_match(&candidate.path);
         if (!request.include_paths.is_empty() && !include_paths.is_match(&candidate.path))
             || exclude_paths.is_match(&candidate.path)
+            || (context_exclude_paths.is_match(&candidate.path) && !explicitly_included)
             || (request.strict_focus_paths && !focus_paths.is_match(&candidate.path))
             || (request.strict_changed_paths && !changed_paths.contains(candidate.path.as_str()))
         {
@@ -1661,6 +1684,30 @@ mod tests {
         assert_eq!(response.fragments[0].path, "src/browser/capture.rs");
         assert_eq!(response.omission_summary.path_excluded, 1);
         assert_eq!(response.omitted[0].reason, "path excluded");
+    }
+
+    #[test]
+    fn generated_context_defaults_require_an_explicit_include() {
+        let generated =
+            Candidate::new("artifacts/runtime_reports/latest.json", 1, 2, "generated").exact(10.0);
+        let source = Candidate::new("src/runtime.rs", 1, 2, "source").exact(0.5);
+        let request = request_with_budget(20);
+
+        let response = select(vec![generated.clone(), source], &request, 1);
+
+        assert_eq!(response.fragments.len(), 1);
+        assert_eq!(response.fragments[0].path, "src/runtime.rs");
+        assert_eq!(response.omission_summary.path_excluded, 1);
+
+        let mut included_request = request_with_budget(20);
+        included_request.include_paths = vec!["artifacts/runtime_reports/**".into()];
+        let included = select(vec![generated], &included_request, 1);
+
+        assert_eq!(included.fragments.len(), 1);
+        assert_eq!(
+            included.fragments[0].path,
+            "artifacts/runtime_reports/latest.json"
+        );
     }
 
     #[test]

@@ -769,6 +769,122 @@ async fn context_include_paths_constrain_fragments_and_report_path_omissions() {
 }
 
 #[tokio::test]
+async fn repository_context_exclusions_preserve_exact_artifact_access() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir(root.path().join("src")).expect("source directory");
+    std::fs::create_dir(root.path().join("generated")).expect("generated directory");
+    std::fs::write(
+        root.path().join(".leantoken.toml"),
+        "[context]\nexclude_paths = [\"generated/**\"]\n",
+    )
+    .expect("repository config");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn active_contract() -> bool { true }\n",
+    )
+    .expect("source");
+    std::fs::write(
+        root.path().join("generated/report.rs"),
+        "pub fn generated_only_target() -> bool { true }\n",
+    )
+    .expect("generated artifact");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let files = services
+        .files(FilesRequest {
+            operation: FileOperation::Find,
+            path: None,
+            query: Some("generated/report".into()),
+            pattern: None,
+            max_results: Some(10),
+            cursor: None,
+            depth: None,
+        })
+        .await
+        .expect("exact files");
+    assert!(
+        files
+            .entries
+            .iter()
+            .any(|entry| entry.path == "generated/report.rs")
+    );
+
+    let search = services
+        .search(SearchRequest {
+            query: "generated_only_target".into(),
+            mode: SearchMode::Identifier,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(10),
+            max_tokens: Some(200),
+            context_lines: Some(1),
+            case_sensitive: true,
+            all_occurrences: false,
+            cursor: None,
+        })
+        .await
+        .expect("exact search");
+    assert!(
+        search
+            .hits
+            .iter()
+            .any(|hit| hit.path == "generated/report.rs")
+    );
+
+    let read = services
+        .read(ReadRequest {
+            path: "generated/report.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: Some("generated_only_target".into()),
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(200),
+            expected_hash: None,
+        })
+        .await
+        .expect("exact read");
+    assert!(
+        read.content
+            .expect("read content")
+            .contains("generated_only_target")
+    );
+
+    let mut default_request = context_limit_request(200);
+    default_request.task = "change generated_only_target".into();
+    let default_context = services
+        .context(default_request)
+        .await
+        .expect("default context");
+    assert!(
+        default_context
+            .fragments
+            .iter()
+            .all(|fragment| fragment.path != "generated/report.rs")
+    );
+    assert!(default_context.omission_summary.path_excluded > 0);
+
+    let mut included_request = context_limit_request(200);
+    included_request.task = "change generated_only_target".into();
+    included_request.include_paths = vec!["generated/**".into()];
+    let included_context = services
+        .context(included_request)
+        .await
+        .expect("included context");
+    assert!(
+        included_context
+            .fragments
+            .iter()
+            .any(|fragment| fragment.path == "generated/report.rs")
+    );
+}
+
+#[tokio::test]
 async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
     let root = tempfile::tempdir().expect("temporary repository");
     for (path, symbol) in [
