@@ -355,6 +355,11 @@ JavaScript, TypeScript, and TSX outlines include top-level `const`, `let`, and
 `var` bindings, exported data bindings, class fields, and object/array default
 exports. Function-local variables remain lexical search evidence rather than
 outline symbols.
+CSS outlines include complete selector rules, custom properties, media/supports/
+container conditions, and keyframes. Selector atoms are available to reference
+search. HTML outlines include sectioning elements, IDs, forms and controls,
+dialogs, buttons and links, `data-*` actions, hash anchors, and script/style
+resources. HTML resource paths are also reported as imports.
 Unsupported text files remain searchable and are marked incomplete rather than
 being presented as precise.
 

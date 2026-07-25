@@ -348,13 +348,20 @@ never invent empty successful results at generation zero.
 ## Parsing
 
 Tree-sitter extracts syntax facts for Rust, Python, JavaScript, TypeScript/TSX,
-and Go. LeanToken stores flat definitions, syntactic references, signatures,
-parents, and imports; syntax trees are discarded after indexing.
+Go, C/C++, Java, PHP, Ruby, HTML, and CSS. LeanToken stores flat definitions,
+syntactic references, signatures, parents, and imports; syntax trees are
+discarded after indexing.
 
 JavaScript-family extraction supplements upstream tags with program-level data
 bindings and class fields. It deliberately excludes function-local variables,
 while retaining complete declarator ranges so outline, symbol search, and
 symbol read can navigate large object and array literals.
+
+HTML and CSS use grammar-specific structural extraction over the same
+tree-sitter parse. CSS selector and at-rule symbols retain complete rule ranges;
+HTML ID and element symbols retain complete owning-element ranges. Attribute
+and selector references keep their exact lexical ranges, while resource links
+flow through the shared import model.
 
 Syntax is not semantic resolution. A reference result means that a grammar
 identified a reference-like occurrence. It does not prove the runtime target,
