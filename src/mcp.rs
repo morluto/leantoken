@@ -143,6 +143,10 @@ struct SearchMcpRequest {
     /// Prefer structural definitions when identifier channels find the same definition.
     #[serde(default)]
     prefer_structural: bool,
+    /// Suppress evidence already returned under this server-managed receipt.
+    #[serde(default)]
+    #[schemars(length(max = 128))]
+    receipt_id: Option<String>,
     /// Cursor returned by the same search and repository generation.
     #[serde(default)]
     #[schemars(length(max = 4096))]
@@ -178,6 +182,7 @@ impl SearchMcpRequest {
                 case_sensitive: self.case_sensitive,
                 all_occurrences: self.all_occurrences,
                 prefer_structural: self.prefer_structural,
+                receipt_id: self.receipt_id,
                 cursor: self.cursor,
             },
             self.consistency,
@@ -212,6 +217,10 @@ struct OutlineMcpRequest {
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
     #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
     max_tokens: Option<usize>,
+    /// Suppress evidence already returned under this server-managed receipt.
+    #[serde(default)]
+    #[schemars(length(max = 128))]
+    receipt_id: Option<String>,
     /// Opaque cursor from a result-limited outline response.
     #[serde(default)]
     #[schemars(length(max = 256))]
@@ -236,6 +245,7 @@ impl OutlineMcpRequest {
                 symbol_kind: self.symbol_kind,
                 max_results: self.max_results,
                 max_tokens: self.max_tokens,
+                receipt_id: self.receipt_id,
                 cursor: self.cursor,
             },
             self.consistency,
@@ -349,6 +359,10 @@ struct ReadMcpRequest {
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
     expected_hash: Option<String>,
+    /// Suppress evidence already returned under this server-managed receipt.
+    #[serde(default)]
+    #[schemars(length(max = 128))]
+    receipt_id: Option<String>,
     /// Use `working_tree` after edits; otherwise `committed`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
@@ -431,6 +445,7 @@ impl ReadMcpRequest {
                 continuation_cursor,
                 max_tokens: self.max_tokens,
                 expected_hash: self.expected_hash,
+                receipt_id: self.receipt_id,
             },
             self.consistency,
             self.expected_repository_id,
@@ -500,6 +515,10 @@ struct ContextMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 128)))]
     known_hashes: Vec<String>,
+    /// Suppress evidence already returned under this server-managed receipt.
+    #[serde(default)]
+    #[schemars(length(max = 128))]
+    receipt_id: Option<String>,
     /// Earlier generation used to boost files indexed since that response.
     #[serde(default)]
     prior_repository_generation: Option<u64>,
@@ -558,6 +577,7 @@ impl ContextMcpRequest {
                 focus_symbols: self.focus_symbols,
                 exclude_paths: self.exclude_paths,
                 known_hashes: self.known_hashes,
+                receipt_id: self.receipt_id,
                 prior_repository_generation: self.prior_repository_generation,
                 base_revision: self.base_revision,
                 changed_paths: self.changed_paths,
@@ -1261,6 +1281,14 @@ fn into_mcp_error(error: crate::Error) -> ErrorData {
         crate::Error::StaleCursor => {
             ErrorData::invalid_params("cursor is stale or invalid", mcp_error_data("stale_cursor"))
         }
+        crate::Error::UnknownReceipt(_) => ErrorData::invalid_params(
+            "retrieval receipt is unknown or expired",
+            mcp_error_data("unknown_receipt"),
+        ),
+        crate::Error::StaleReceipt { .. } => ErrorData::invalid_params(
+            "retrieval receipt belongs to a stale repository generation",
+            mcp_error_data("stale_receipt"),
+        ),
         crate::Error::Regex(_) => ErrorData::invalid_params(
             "regular expression is invalid",
             mcp_error_data("invalid_regex"),
@@ -1500,6 +1528,19 @@ mod tests {
                 "requested": 32_001,
                 "limit": 32_000,
             }))
+        );
+
+        let stale_receipt = into_mcp_error(crate::Error::StaleReceipt {
+            receipt_generation: 4,
+            repository_generation: 5,
+        });
+        assert_eq!(stale_receipt.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert_eq!(
+            stale_receipt
+                .data
+                .as_ref()
+                .and_then(|data| data["category"].as_str()),
+            Some("stale_receipt")
         );
 
         let internal = [
@@ -1888,6 +1929,18 @@ mod tests {
         assert!(continuation.heading_occurrence.is_none());
         assert!(continuation.start_line.is_none());
         assert!(continuation.end_line.is_none());
+    }
+
+    #[test]
+    fn receipt_id_maps_to_the_service_request() {
+        let request = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+            "path": "README.md",
+            "receipt_id": "r0000000000000001",
+            "target": {"kind": "lines", "start": 1, "end": 2}
+        }))
+        .expect("read request with receipt");
+        let (request, _, _) = request.into_parts();
+        assert_eq!(request.receipt_id.as_deref(), Some("r0000000000000001"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 ---
 source: src/mcp.rs
-assertion_line: 1892
+assertion_line: 1937
 expression: tools
 ---
 [
@@ -171,6 +171,15 @@ expression: tools
           "minimum": 0,
           "type": [
             "integer",
+            "null"
+          ]
+        },
+        "receipt_id": {
+          "default": null,
+          "description": "Suppress evidence already returned under this server-managed receipt.",
+          "maxLength": 128,
+          "type": [
+            "string",
             "null"
           ]
         },
@@ -471,6 +480,15 @@ expression: tools
           "minItems": 1,
           "type": "array"
         },
+        "receipt_id": {
+          "default": null,
+          "description": "Suppress evidence already returned under this server-managed receipt.",
+          "maxLength": 128,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "symbol_kind": {
           "default": null,
           "description": "Keep definitions of this exact syntax kind.",
@@ -648,6 +666,15 @@ expression: tools
           "minLength": 1,
           "type": "string"
         },
+        "receipt_id": {
+          "default": null,
+          "description": "Suppress evidence already returned under this server-managed receipt.",
+          "maxLength": 128,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "target": {
           "$ref": "#/$defs/ReadMcpTarget",
           "description": "Exact symbol, Markdown heading, line range, or continuation to read."
@@ -823,6 +850,15 @@ expression: tools
           "maxLength": 65536,
           "minLength": 1,
           "type": "string"
+        },
+        "receipt_id": {
+          "default": null,
+          "description": "Suppress evidence already returned under this server-managed receipt.",
+          "maxLength": 128,
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

@@ -604,6 +604,7 @@ async fn run_task(
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
+        receipt_id: None,
         prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
@@ -714,6 +715,7 @@ async fn run_task(
     let known_set = known.iter().cloned().collect::<HashSet<_>>();
     let repeat_request = ContextRequest {
         known_hashes: known,
+        receipt_id: None,
         prior_repository_generation: Some(response.meta.repository_generation),
         ..request
     };

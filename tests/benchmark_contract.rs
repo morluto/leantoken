@@ -109,6 +109,7 @@ async fn benchmark_token_economy() {
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
@@ -153,6 +154,7 @@ async fn benchmark_token_economy() {
         let repeated = services
             .context(ContextRequest {
                 known_hashes: known,
+                receipt_id: None,
                 prior_repository_generation: Some(response.meta.repository_generation),
                 ..request
             })

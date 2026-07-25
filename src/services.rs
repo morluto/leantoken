@@ -1,7 +1,7 @@
 use std::fs;
 use std::sync::{
     Arc,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 use std::thread;
 use std::time::{Duration, Instant};
@@ -21,6 +21,7 @@ use crate::{Config, Error, Result};
 mod context;
 mod files;
 mod read;
+mod receipts;
 mod search;
 pub(crate) mod validation;
 
@@ -75,6 +76,8 @@ pub struct Services {
     coordination: IndexCoordination,
     _cache_lease: CacheLease,
     active_reconciliations: Arc<AtomicUsize>,
+    receipts: Arc<receipts::ReceiptRegistry>,
+    next_receipt_id: Arc<AtomicU64>,
 }
 
 trait RetrievalResponse: Serialize {
@@ -182,6 +185,8 @@ impl Services {
             coordination,
             _cache_lease: cache_lease,
             active_reconciliations: Arc::new(AtomicUsize::new(0)),
+            receipts: Arc::new(receipts::ReceiptRegistry::default()),
+            next_receipt_id: Arc::new(AtomicU64::new(1)),
         })
     }
 
@@ -516,6 +521,10 @@ impl Services {
             tokenizer: self.config.tokenizer.name().into(),
             emitted_tokens,
             token_count_exact: self.config.tokenizer.is_exact(),
+            receipt_id: None,
+            receipt_suppressed_exact: 0,
+            receipt_suppressed_overlap: 0,
+            receipt_near_duplicates: 0,
             next_cursor,
         }
     }
@@ -691,6 +700,7 @@ mod tests {
                 case_sensitive: false,
                 all_occurrences: false,
                 prefer_structural: false,
+                receipt_id: None,
                 cursor: None,
             })
             .await
@@ -709,6 +719,7 @@ mod tests {
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
+                receipt_id: None,
             })
             .await
             .expect("read");
@@ -723,6 +734,7 @@ mod tests {
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: Some(first.content_hash),
+                receipt_id: None,
             })
             .await
             .expect("read delta");
@@ -824,6 +836,7 @@ mod tests {
             case_sensitive: false,
             all_occurrences: false,
             prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         };
         let response = services.search(request.clone()).await.expect("search");
@@ -986,6 +999,7 @@ mod tests {
                 case_sensitive: true,
                 all_occurrences: false,
                 prefer_structural: false,
+                receipt_id: None,
                 cursor: None,
             })
             .await

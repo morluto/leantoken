@@ -7,7 +7,7 @@
   "source_manifest_description": "Retrospective context-retrieval tasks evaluated at the parent of eight public bug-fix commits.",
   "source_manifest_schema_version": 1,
   "harness_revision": "acf0e240a58030b09f8326858ae1ed300ac6ed58",
-  "harness_source_blake3": "1029c96ec6b13ac511c5bc2f4766e53550fa1379f7f5a440460155ea90a7caf8",
+  "harness_source_blake3": "1eacc812259285bc97784cee5f3b50d3ed0bf3d795cebfa1f1c896d0bf62f828",
   "harness_worktree_dirty": true,
   "leantoken_version": "0.1.8",
   "host_os": "linux",

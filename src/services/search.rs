@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 use super::Services;
 use super::files::FILE_LIST_PAGE_SIZE;
 use super::read::{StoredExcerpt, StoredExcerptRequest};
+use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
     MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled, make_cursor, parse_cursor,
     validate_cursor, validate_glob_patterns, validate_input,
@@ -766,6 +767,38 @@ impl Services {
                 selected.push(candidate);
             }
             let has_more = offset.saturating_add(consumed) < total_candidates;
+            let receipt_candidates = selected
+                .iter()
+                .map(|candidate| {
+                    ReceiptEvidence::new(
+                        candidate.hit.path.clone(),
+                        candidate.hit.start_line,
+                        candidate.hit.end_line,
+                        candidate.hit.content_hash.clone(),
+                        Some(&candidate.hit.excerpt),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let receipt = self.evaluate_receipt(
+                request.receipt_id.as_deref(),
+                generation,
+                &receipt_candidates,
+            )?;
+            selected = selected
+                .into_iter()
+                .zip(&receipt.decisions)
+                .filter_map(|(candidate, decision)| {
+                    matches!(
+                        decision,
+                        ReceiptDecision::Return | ReceiptDecision::ReturnNearDuplicate
+                    )
+                    .then_some(candidate)
+                })
+                .collect();
+            emitted_tokens = selected
+                .iter()
+                .map(|candidate| self.config.tokenizer.count(&candidate.hit.excerpt))
+                .sum();
             let paths = selected
                 .iter()
                 .map(|candidate| candidate.hit.path.clone())
@@ -780,20 +813,19 @@ impl Services {
                 .collect();
             let baseline_source_tokens =
                 session.whole_file_source_tokens(&paths, self.config.tokenizer.name())?;
-            Ok((
-                SearchResponse {
-                    hits: selected,
-                    coverage,
-                    occurrences_returned,
-                    occurrences_total: request.all_occurrences.then_some(total_candidates),
-                    meta: self.meta(
-                        generation,
-                        emitted_tokens,
-                        has_more.then(|| make_cursor(generation, offset + consumed)),
-                    ),
-                },
-                baseline_source_tokens,
-            ))
+            let mut response = SearchResponse {
+                hits: selected,
+                coverage,
+                occurrences_returned,
+                occurrences_total: request.all_occurrences.then_some(total_candidates),
+                meta: self.meta(
+                    generation,
+                    emitted_tokens,
+                    has_more.then(|| make_cursor(generation, offset + consumed)),
+                ),
+            };
+            receipt.apply_meta(&mut response.meta);
+            Ok((response, baseline_source_tokens))
         })?;
         if let Some(baseline_source_tokens) = baseline_source_tokens {
             self.record_token_savings(

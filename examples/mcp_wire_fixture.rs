@@ -49,6 +49,7 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
+        receipt_id: None,
         prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
@@ -92,6 +93,10 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
             tokenizer: "cl100k_base".into(),
             emitted_tokens: 21,
             token_count_exact: true,
+            receipt_id: None,
+            receipt_suppressed_exact: 0,
+            receipt_suppressed_overlap: 0,
+            receipt_near_duplicates: 0,
             next_cursor: None,
         },
     };

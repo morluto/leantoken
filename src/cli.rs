@@ -658,6 +658,7 @@ impl From<SearchArgs> for SearchRequest {
             case_sensitive: args.case_sensitive,
             all_occurrences: args.all_occurrences,
             prefer_structural: args.prefer_structural,
+            receipt_id: None,
             cursor: args.cursor,
         }
     }
@@ -697,6 +698,7 @@ impl From<OutlineArgs> for OutlineRequest {
             symbol_kind: args.symbol_kind,
             max_results: args.max_results,
             max_tokens: args.max_tokens,
+            receipt_id: None,
             cursor: args.cursor,
         }
     }
@@ -827,6 +829,7 @@ impl From<ReadArgs> for ReadRequest {
             continuation_cursor: args.cursor,
             max_tokens: args.max_tokens,
             expected_hash: args.expected_hash,
+            receipt_id: None,
         }
     }
 }
@@ -944,6 +947,7 @@ impl From<ContextArgs> for ContextRequest {
             focus_symbols: args.focus_symbols,
             exclude_paths: args.exclude_paths,
             known_hashes: args.known_hashes,
+            receipt_id: None,
             prior_repository_generation: args.prior_repository_generation,
             base_revision: args.base_revision,
             changed_paths: args.changed_paths,
