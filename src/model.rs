@@ -452,6 +452,12 @@ pub struct ContextRequest {
     /// Boost matching paths without filtering other candidates.
     #[serde(default)]
     pub focus_paths: Vec<String>,
+    /// Require every returned fragment to match at least one focus path.
+    #[serde(default)]
+    pub strict_focus_paths: bool,
+    /// Minimum returned fragments required for each focus path pattern.
+    #[serde(default)]
+    pub minimum_fragments_per_focus_path: Option<usize>,
     /// Boost candidates for these exact symbol names.
     #[serde(default)]
     pub focus_symbols: Vec<String>,
@@ -470,6 +476,37 @@ pub struct ContextRequest {
     /// Explicit changed paths for diff-scoped context; bounded and validated.
     #[serde(default)]
     pub changed_paths: Vec<String>,
+    /// Require every returned fragment to belong to the resolved changed paths.
+    #[serde(default)]
+    pub strict_changed_paths: bool,
+}
+
+/// Selected coverage for one caller-supplied focus path pattern.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ContextFocusPathCoverage {
+    /// Original focus path pattern.
+    pub pattern: String,
+    /// Indexed files matched by the pattern.
+    pub indexed_paths: usize,
+    /// Minimum fragments required by this request.
+    pub minimum_fragments: usize,
+    /// Returned fragments matched by the pattern.
+    pub selected_fragments: usize,
+    /// Whether indexed and selected evidence met the requested minimum.
+    pub satisfied: bool,
+}
+
+/// Selected coverage for a strict resolved changed-path scope.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ContextChangedPathCoverage {
+    /// Resolved changed paths in the hard scope.
+    pub resolved_paths: usize,
+    /// Resolved changed paths present in the index.
+    pub indexed_paths: usize,
+    /// Returned fragments belonging to resolved changed paths.
+    pub selected_fragments: usize,
+    /// Whether the strict scope produced indexed selected evidence.
+    pub satisfied: bool,
 }
 
 /// Indexed and selected evidence coverage for caller-supplied context constraints.
@@ -481,6 +518,15 @@ pub struct ContextCoverageReceipt {
     /// Focus symbols that matched no exact indexed symbol.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmatched_focus_symbols: Vec<String>,
+    /// Per-pattern selection coverage when focus paths are strict or carry a minimum.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub focus_path_coverage: Vec<ContextFocusPathCoverage>,
+    /// Coverage of the resolved changed-path boundary when it is strict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed_path_coverage: Option<ContextChangedPathCoverage>,
+    /// Whether every requested strict or minimum focus/changed scope was satisfied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strict_scope_satisfied: Option<bool>,
     /// Hard include patterns that matched no indexed path.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmatched_include_paths: Vec<String>,
@@ -508,6 +554,9 @@ impl ContextCoverageReceipt {
     fn is_empty(&self) -> bool {
         self.unmatched_focus_paths.is_empty()
             && self.unmatched_focus_symbols.is_empty()
+            && self.focus_path_coverage.is_empty()
+            && self.changed_path_coverage.is_none()
+            && self.strict_scope_satisfied.is_none()
             && self.unmatched_include_paths.is_empty()
             && self.covered_must_include_paths.is_empty()
             && self.covered_must_include_symbols.is_empty()

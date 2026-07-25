@@ -277,6 +277,9 @@ fn cli_context_request() {
         "12",
         "--focus",
         "src",
+        "--strict-focus-paths",
+        "--minimum-fragments-per-focus-path",
+        "2",
         "--focus-symbol",
         "sym",
         "--exclude",
@@ -285,6 +288,7 @@ fn cli_context_request() {
         "abc",
         "--prior-generation",
         "7",
+        "--strict-changed-paths",
         "--workflow",
         "contribution",
     ]);
@@ -305,10 +309,13 @@ fn cli_context_request() {
     );
     assert_eq!(request.max_fragments, Some(12));
     assert_eq!(request.focus_paths, vec!["src".to_string()]);
+    assert!(request.strict_focus_paths);
+    assert_eq!(request.minimum_fragments_per_focus_path, Some(2));
     assert_eq!(request.focus_symbols, vec!["sym".to_string()]);
     assert_eq!(request.exclude_paths, vec!["tests".to_string()]);
     assert_eq!(request.known_hashes, vec!["abc".to_string()]);
     assert_eq!(request.prior_repository_generation, Some(7));
+    assert!(request.strict_changed_paths);
 }
 
 #[test]
@@ -335,6 +342,14 @@ fn cli_request_limit_boundaries_reject_only_meaningless_zero_values() {
         &["leantoken", "outline", "src/lib.rs", "--max-tokens", "0"],
         &["leantoken", "read", "src/lib.rs", "--max-tokens", "0"],
         &["leantoken", "context", "--task", "x", "--budget", "0"],
+        &[
+            "leantoken",
+            "context",
+            "--task",
+            "x",
+            "--minimum-fragments-per-focus-path",
+            "0",
+        ],
     ] {
         assert!(Cli::try_parse_from(args).is_err(), "accepted {args:?}");
     }

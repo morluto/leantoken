@@ -642,6 +642,9 @@ impl Services {
         if let Some(max_fragments) = request.max_fragments {
             self.result_limit(Some(max_fragments))?;
         }
+        if let Some(minimum) = request.minimum_fragments_per_focus_path {
+            self.result_limit(Some(minimum))?;
+        }
         validate_input(&request.task, "task", MAX_QUERY_BYTES)?;
         validate_glob_patterns(&request.include_paths)?;
         if request
@@ -666,6 +669,24 @@ impl Services {
             });
         }
         validate_glob_patterns(&request.focus_paths)?;
+        if request
+            .focus_paths
+            .iter()
+            .any(|pattern| pattern.trim().is_empty())
+        {
+            return Err(Error::InvalidInput {
+                field: "focus paths",
+                reason: "must not contain empty patterns",
+            });
+        }
+        if (request.strict_focus_paths || request.minimum_fragments_per_focus_path.is_some())
+            && request.focus_paths.is_empty()
+        {
+            return Err(Error::InvalidInput {
+                field: "focus paths",
+                reason: "must not be empty when focus path constraints are enabled",
+            });
+        }
         validate_glob_patterns(&request.exclude_paths)?;
         if request.focus_symbols.len() > MAX_INPUT_ITEMS {
             return Err(Error::LimitExceeded);
@@ -723,7 +744,7 @@ impl Services {
         candidates: &mut Vec<Candidate>,
     ) -> Result<ContextCoverageReceipt> {
         let mut coverage = ContextCoverageReceipt::default();
-        let mut focus_path_matches = vec![false; request.focus_paths.len()];
+        let mut focus_path_matches = vec![0usize; request.focus_paths.len()];
         let mut include_path_matches = vec![false; request.include_paths.len()];
         let mut required_path_matches = vec![false; request.must_include_paths.len()];
         let mut required_path_files = vec![None::<FileRecord>; request.must_include_paths.len()];
@@ -758,7 +779,9 @@ impl Services {
                 cursor = Some(last.id);
                 for file in page {
                     for (index, matcher) in focus_matchers.iter().enumerate() {
-                        focus_path_matches[index] |= matcher.is_match(&file.path);
+                        if matcher.is_match(&file.path) {
+                            focus_path_matches[index] = focus_path_matches[index].saturating_add(1);
+                        }
                     }
                     for (index, matcher) in include_matchers.iter().enumerate() {
                         include_path_matches[index] |= matcher.is_match(&file.path);
@@ -779,10 +802,27 @@ impl Services {
         coverage.unmatched_focus_paths = request
             .focus_paths
             .iter()
-            .zip(focus_path_matches)
-            .filter(|(_, matched)| !matched)
+            .zip(&focus_path_matches)
+            .filter(|(_, matched)| **matched == 0)
             .map(|(pattern, _)| pattern.clone())
             .collect();
+        let minimum_focus_fragments = request
+            .minimum_fragments_per_focus_path
+            .unwrap_or(usize::from(request.strict_focus_paths));
+        if minimum_focus_fragments > 0 {
+            coverage.focus_path_coverage = request
+                .focus_paths
+                .iter()
+                .zip(focus_path_matches)
+                .map(|(pattern, indexed_paths)| ContextFocusPathCoverage {
+                    pattern: pattern.clone(),
+                    indexed_paths,
+                    minimum_fragments: minimum_focus_fragments,
+                    selected_fragments: 0,
+                    satisfied: false,
+                })
+                .collect();
+        }
         coverage.unmatched_include_paths = request
             .include_paths
             .iter()
@@ -897,6 +937,62 @@ impl Services {
         }
 
         Ok(coverage)
+    }
+
+    fn finalize_strict_scope_coverage(
+        &self,
+        session: &ReadSession,
+        request: &ContextRequest,
+        fragments: &[ContextFragment],
+        coverage: &mut ContextCoverageReceipt,
+    ) -> Result<()> {
+        for focus in &mut coverage.focus_path_coverage {
+            let matcher = PathMatcher::new(std::slice::from_ref(&focus.pattern))?;
+            focus.selected_fragments = fragments
+                .iter()
+                .filter(|fragment| matcher.is_match(&fragment.path))
+                .count();
+            focus.satisfied =
+                focus.indexed_paths > 0 && focus.selected_fragments >= focus.minimum_fragments;
+        }
+
+        if request.strict_changed_paths {
+            let changed_paths = request
+                .changed_paths
+                .iter()
+                .map(String::as_str)
+                .collect::<HashSet<_>>();
+            let mut indexed_paths = 0usize;
+            for path in &request.changed_paths {
+                if session.find_file(path)?.is_some() {
+                    indexed_paths = indexed_paths.saturating_add(1);
+                }
+            }
+            let selected_fragments = fragments
+                .iter()
+                .filter(|fragment| changed_paths.contains(fragment.path.as_str()))
+                .count();
+            coverage.changed_path_coverage = Some(ContextChangedPathCoverage {
+                resolved_paths: changed_paths.len(),
+                indexed_paths,
+                selected_fragments,
+                satisfied: !changed_paths.is_empty() && indexed_paths > 0 && selected_fragments > 0,
+            });
+        }
+
+        if !coverage.focus_path_coverage.is_empty() || request.strict_changed_paths {
+            coverage.strict_scope_satisfied = Some(
+                coverage
+                    .focus_path_coverage
+                    .iter()
+                    .all(|focus| focus.satisfied)
+                    && coverage
+                        .changed_path_coverage
+                        .as_ref()
+                        .is_none_or(|changed| changed.satisfied),
+            );
+        }
+        Ok(())
     }
 
     fn file_change_boost(
@@ -1055,7 +1151,8 @@ impl Services {
     /// When `base_revision` is set, committed and working-tree paths since that
     /// revision are resolved from the repository, including untracked files.
     /// Explicit `changed_paths` are merged with that result. When neither input
-    /// is supplied, `None` is returned and task-only behavior is preserved.
+    /// is supplied, strict changed-path requests use the current working tree;
+    /// otherwise `None` preserves task-only behavior.
     fn resolve_diff_scope(
         &self,
         request: &ContextRequest,
@@ -1076,7 +1173,7 @@ impl Services {
                 tracing::debug!(%error, "working-tree signal unavailable");
                 HashSet::new()
             });
-        if !has_base && !has_paths {
+        if !has_base && !has_paths && !request.strict_changed_paths {
             return Ok((None, working_tree_paths));
         }
         if let Some(git_result) = git_result {
@@ -1106,11 +1203,18 @@ impl Services {
                 working_tree_paths,
             ));
         }
+        let mut resolved_paths = if has_paths {
+            request.changed_paths.clone()
+        } else {
+            working_tree_paths.iter().cloned().collect::<Vec<_>>()
+        };
+        resolved_paths.sort();
+        resolved_paths.dedup();
         Ok((
             Some(DiffScopeReceipt {
                 base_revision: None,
                 head_revision: None,
-                changed_paths: request.changed_paths.clone(),
+                changed_paths: resolved_paths,
                 indexed_changed_paths: 0,
                 evidence: None,
             }),
@@ -1927,7 +2031,7 @@ impl Services {
             };
             let mut response = ranking::select_with_tokenizer(
                 candidates,
-                &request,
+                &scoped_request,
                 generation,
                 self.config.tokenizer,
             );
@@ -1945,6 +2049,12 @@ impl Services {
             coverage
                 .uncovered_must_include_symbols
                 .retain(|symbol| !coverage.unmatched_must_include_symbols.contains(symbol));
+            self.finalize_strict_scope_coverage(
+                session,
+                &scoped_request,
+                &response.fragments,
+                &mut coverage,
+            )?;
             response.coverage = coverage;
             let uncovered = response
                 .coverage
@@ -1976,6 +2086,27 @@ impl Services {
                 response.warnings.push(format!(
                     "{unmatched_hints} focus or include constraints matched no indexed evidence"
                 ));
+            }
+            let underfilled_focus_paths = response
+                .coverage
+                .focus_path_coverage
+                .iter()
+                .filter(|focus| !focus.satisfied)
+                .count();
+            if underfilled_focus_paths > 0 {
+                response.warnings.push(format!(
+                    "{underfilled_focus_paths} focus path constraints did not meet minimum fragment coverage"
+                ));
+            }
+            if response
+                .coverage
+                .changed_path_coverage
+                .as_ref()
+                .is_some_and(|changed| !changed.satisfied)
+            {
+                response.warnings.push(
+                    "strict changed-path scope produced no indexed selected evidence".into(),
+                );
             }
             response.workflow = resolved_workflow;
             response.workflow_receipt = workflow_receipt;
@@ -2117,12 +2248,15 @@ mod tests {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: vec!["src/core.rs".into()],
+            strict_changed_paths: false,
         };
 
         assert_eq!(
@@ -2218,12 +2352,15 @@ mod tests {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: vec!["held".into()],
             prior_repository_generation: None,
             base_revision: Some("origin/main".into()),
             changed_paths: Vec::new(),
+            strict_changed_paths: false,
         };
         let changed_paths = (0..12)
             .flat_map(|index| {

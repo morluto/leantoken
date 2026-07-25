@@ -511,12 +511,15 @@ async fn contribution_context_routes_to_guidance_validation_and_owner_tests() {
                 must_include_symbols: Vec::new(),
                 max_fragments: None,
                 focus_paths: Vec::new(),
+                strict_focus_paths: false,
+                minimum_fragments_per_focus_path: None,
                 focus_symbols: vec!["parse_contribution_target".into()],
                 exclude_paths: Vec::new(),
                 known_hashes: Vec::new(),
                 prior_repository_generation: None,
                 base_revision: None,
                 changed_paths: vec!["src/parser.rs".into()],
+                strict_changed_paths: false,
             },
             ContextWorkflow::Contribution,
             IndexConsistency::Committed,
@@ -661,12 +664,15 @@ fn context_limit_request(token_budget: usize) -> ContextRequest {
         must_include_symbols: Vec::new(),
         max_fragments: None,
         focus_paths: Vec::new(),
+        strict_focus_paths: false,
+        minimum_fragments_per_focus_path: None,
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
         prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
+        strict_changed_paths: false,
     }
 }
 
@@ -686,6 +692,20 @@ async fn context_rejects_empty_include_patterns() {
         Error::InvalidInput {
             field: "include paths",
             reason: "must not contain empty patterns"
+        }
+    ));
+
+    let mut strict = context_limit_request(100);
+    strict.strict_focus_paths = true;
+    let error = services
+        .context(strict)
+        .await
+        .expect_err("strict focus without paths");
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "focus paths",
+            reason: "must not be empty when focus path constraints are enabled"
         }
     ));
 }
@@ -722,6 +742,215 @@ async fn context_include_paths_constrain_fragments_and_report_path_omissions() {
             .iter()
             .any(|warning| warning.contains("excluded by path constraints"))
     );
+}
+
+#[tokio::test]
+async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    for (path, symbol) in [
+        ("src/alpha/one.rs", "shared_scope_target_alpha_one"),
+        ("src/alpha/two.rs", "shared_scope_target_alpha_two"),
+        ("src/beta/one.rs", "shared_scope_target_beta_one"),
+        ("src/beta/two.rs", "shared_scope_target_beta_two"),
+        ("artifacts/noise.rs", "shared_scope_target_noise"),
+    ] {
+        let path = root.path().join(path);
+        std::fs::create_dir_all(path.parent().expect("fixture parent")).expect("fixture directory");
+        std::fs::write(path, format!("pub fn {symbol}() -> bool {{ true }}\n"))
+            .expect("fixture source");
+    }
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let mut request = context_limit_request(1_000);
+    request.task = "change shared_scope_target".into();
+    request.focus_paths = vec!["src/alpha/**".into(), "src/beta/**".into()];
+    request.strict_focus_paths = true;
+    request.minimum_fragments_per_focus_path = Some(2);
+    request.max_fragments = Some(4);
+    let response = services.context(request).await.expect("strict focus context");
+
+    assert_eq!(response.fragments.len(), 4);
+    assert!(
+        response
+            .fragments
+            .iter()
+            .all(|fragment| fragment.path.starts_with("src/alpha/")
+                || fragment.path.starts_with("src/beta/"))
+    );
+    assert_eq!(response.coverage.strict_scope_satisfied, Some(true));
+    assert_eq!(response.coverage.focus_path_coverage.len(), 2);
+    assert!(
+        response
+            .coverage
+            .focus_path_coverage
+            .iter()
+            .all(|focus| focus.indexed_paths == 2
+                && focus.minimum_fragments == 2
+                && focus.selected_fragments == 2
+                && focus.satisfied)
+    );
+    assert!(response.omission_summary.path_excluded > 0);
+
+    let mut soft_minimum = context_limit_request(1_000);
+    soft_minimum.task = "change shared_scope_target".into();
+    soft_minimum.focus_paths = vec!["src/alpha/**".into()];
+    soft_minimum.minimum_fragments_per_focus_path = Some(2);
+    soft_minimum.max_fragments = Some(3);
+    let soft_minimum = services
+        .context(soft_minimum)
+        .await
+        .expect("soft focus minimum");
+    assert_eq!(soft_minimum.fragments.len(), 3);
+    assert_eq!(soft_minimum.coverage.strict_scope_satisfied, Some(true));
+    assert_eq!(
+        soft_minimum.coverage.focus_path_coverage[0].selected_fragments,
+        2
+    );
+    assert!(
+        soft_minimum
+            .fragments
+            .iter()
+            .any(|fragment| !fragment.path.starts_with("src/alpha/"))
+    );
+
+    let mut underfilled = context_limit_request(1_000);
+    underfilled.task = "change shared_scope_target".into();
+    underfilled.focus_paths = vec!["src/alpha/**".into(), "src/beta/**".into()];
+    underfilled.strict_focus_paths = true;
+    underfilled.minimum_fragments_per_focus_path = Some(2);
+    underfilled.max_fragments = Some(3);
+    let underfilled = services
+        .context(underfilled)
+        .await
+        .expect("underfilled focus context");
+    assert_eq!(underfilled.fragments.len(), 3);
+    assert_eq!(underfilled.coverage.strict_scope_satisfied, Some(false));
+    assert_eq!(
+        underfilled
+            .coverage
+            .focus_path_coverage
+            .iter()
+            .filter(|focus| focus.satisfied)
+            .count(),
+        1
+    );
+
+    let mut missing = context_limit_request(400);
+    missing.task = "change shared_scope_target".into();
+    missing.focus_paths = vec!["src/missing/**".into()];
+    missing.strict_focus_paths = true;
+    let missing = services.context(missing).await.expect("missing strict focus");
+    assert!(missing.fragments.is_empty());
+    assert_eq!(missing.coverage.strict_scope_satisfied, Some(false));
+    assert_eq!(missing.coverage.unmatched_focus_paths, ["src/missing/**"]);
+    assert_eq!(missing.coverage.focus_path_coverage[0].indexed_paths, 0);
+    assert!(!missing.coverage.focus_path_coverage[0].satisfied);
+    assert!(missing.warnings.iter().any(|warning| {
+        warning.contains("focus path constraints did not meet minimum fragment coverage")
+    }));
+}
+
+#[tokio::test]
+async fn strict_changed_paths_are_a_hard_boundary_and_intersect_focus_scope() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir_all(root.path().join("src")).expect("source directory");
+    std::fs::create_dir_all(root.path().join("artifacts")).expect("artifact directory");
+    std::fs::write(
+        root.path().join("src/active.rs"),
+        "pub fn strict_changed_target_active() -> bool { true }\n",
+    )
+    .expect("active source");
+    std::fs::write(
+        root.path().join("artifacts/report.rs"),
+        "pub fn strict_changed_target_report() -> bool { false }\n",
+    )
+    .expect("artifact source");
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let mut request = context_limit_request(500);
+    request.task = "change strict_changed_target".into();
+    request.changed_paths = vec!["src/active.rs".into()];
+    request.strict_changed_paths = true;
+    let response = services.context(request).await.expect("strict changed scope");
+
+    assert!(!response.fragments.is_empty());
+    assert!(
+        response
+            .fragments
+            .iter()
+            .all(|fragment| fragment.path == "src/active.rs")
+    );
+    assert_eq!(response.coverage.strict_scope_satisfied, Some(true));
+    let changed = response
+        .coverage
+        .changed_path_coverage
+        .expect("changed path coverage");
+    assert_eq!(changed.resolved_paths, 1);
+    assert_eq!(changed.indexed_paths, 1);
+    assert!(changed.selected_fragments > 0);
+    assert!(changed.satisfied);
+
+    let mut intersection = context_limit_request(500);
+    intersection.task = "change strict_changed_target".into();
+    intersection.focus_paths = vec!["artifacts/**".into()];
+    intersection.strict_focus_paths = true;
+    intersection.changed_paths = vec!["src/active.rs".into()];
+    intersection.strict_changed_paths = true;
+    let intersection = services
+        .context(intersection)
+        .await
+        .expect("intersected hard scopes");
+    assert!(intersection.fragments.is_empty());
+    assert_eq!(
+        intersection.coverage.strict_scope_satisfied,
+        Some(false)
+    );
+    assert!(
+        !intersection
+            .coverage
+            .focus_path_coverage
+            .first()
+            .expect("focus coverage")
+            .satisfied
+    );
+    assert!(
+        !intersection
+            .coverage
+            .changed_path_coverage
+            .as_ref()
+            .expect("changed coverage")
+            .satisfied
+    );
+
+    let mut missing = context_limit_request(500);
+    missing.task = "change strict_changed_target".into();
+    missing.changed_paths = vec!["src/missing.rs".into()];
+    missing.strict_changed_paths = true;
+    let missing = services
+        .context(missing)
+        .await
+        .expect("missing changed scope");
+    assert!(missing.fragments.is_empty());
+    assert_eq!(missing.coverage.strict_scope_satisfied, Some(false));
+    let changed = missing
+        .coverage
+        .changed_path_coverage
+        .expect("missing changed coverage");
+    assert_eq!(changed.resolved_paths, 1);
+    assert_eq!(changed.indexed_paths, 0);
+    assert_eq!(changed.selected_fragments, 0);
+    assert!(!changed.satisfied);
+    assert!(missing.warnings.iter().any(|warning| {
+        warning.contains("strict changed-path scope produced no indexed selected evidence")
+    }));
 }
 
 #[tokio::test]
@@ -1786,12 +2015,15 @@ async fn five_services_return_bounded_grounded_responses() {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
+        strict_changed_paths: false,
         })
         .await
         .expect("context");
@@ -1811,12 +2043,15 @@ async fn five_services_return_bounded_grounded_responses() {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
+        strict_changed_paths: false,
         })
         .await
         .expect("repeated context");
@@ -1836,12 +2071,15 @@ async fn five_services_return_bounded_grounded_responses() {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: vec![known.clone()],
             prior_repository_generation: Some(context.meta.repository_generation),
         base_revision: None,
         changed_paths: Vec::new(),
+        strict_changed_paths: false,
         })
         .await
         .expect("context delta");
@@ -1931,12 +2169,15 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: vec![r".\src\lib.rs".into()],
+            strict_changed_paths: false,
         })
         .await
         .expect("normalized context path");
@@ -2113,12 +2354,15 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
                 must_include_symbols: Vec::new(),
                 max_fragments: None,
                 focus_paths: Vec::new(),
+                strict_focus_paths: false,
+                minimum_fragments_per_focus_path: None,
                 focus_symbols: Vec::new(),
                 exclude_paths: Vec::new(),
                 known_hashes: Vec::new(),
                 prior_repository_generation: None,
             base_revision: None,
             changed_paths: Vec::new(),
+            strict_changed_paths: false,
             })
             .await
             .expect("context");
@@ -2434,12 +2678,15 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
+        strict_changed_paths: false,
         })
         .await
         .expect("exact evaluation");
@@ -2459,12 +2706,15 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
+        strict_changed_paths: false,
         })
         .await
         .expect("multi-concept evaluation");
@@ -2521,12 +2771,15 @@ async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
         must_include_symbols: Vec::new(),
         max_fragments: None,
         focus_paths: Vec::new(),
+        strict_focus_paths: false,
+        minimum_fragments_per_focus_path: None,
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
         prior_repository_generation: None,
     base_revision: None,
     changed_paths: Vec::new(),
+    strict_changed_paths: false,
     };
 
     let baseline = services
@@ -4081,12 +4334,15 @@ async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_service
                 must_include_symbols: Vec::new(),
                 max_fragments: None,
                 focus_paths: Vec::new(),
+                strict_focus_paths: false,
+                minimum_fragments_per_focus_path: None,
                 focus_symbols: Vec::new(),
                 exclude_paths: Vec::new(),
                 known_hashes: Vec::new(),
                 prior_repository_generation: None,
             base_revision: None,
             changed_paths: Vec::new(),
+            strict_changed_paths: false,
             },
             cancellation,
         )
@@ -4295,12 +4551,15 @@ async fn working_tree_diff_boosts_changed_files() {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
+        strict_changed_paths: false,
         })
         .await
         .unwrap();
@@ -4341,12 +4600,15 @@ async fn tokenizer_configuration_is_scoped_to_each_service() {
         must_include_symbols: Vec::new(),
         max_fragments: None,
         focus_paths: Vec::new(),
+        strict_focus_paths: false,
+        minimum_fragments_per_focus_path: None,
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
         prior_repository_generation: None,
     base_revision: None,
     changed_paths: Vec::new(),
+    strict_changed_paths: false,
     };
 
     let (exact_response, estimate_response) =
@@ -4384,12 +4646,15 @@ async fn context_declaration_excerpt_retains_long_body_across_chunks() {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
+        strict_changed_paths: false,
         })
         .await
         .expect("context");
@@ -4430,12 +4695,15 @@ async fn context_text_hits_use_bounded_declaration_excerpts() {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
+        strict_changed_paths: false,
         })
         .await
         .expect("context");
@@ -4668,12 +4936,15 @@ async fn working_tree_consistency_applies_to_each_retrieval_service() {
                 must_include_symbols: Vec::new(),
                 max_fragments: None,
                 focus_paths: vec!["context_package.rs".into()],
+                strict_focus_paths: false,
+                minimum_fragments_per_focus_path: None,
                 focus_symbols: vec!["contextual_package_marker".into()],
                 exclude_paths: Vec::new(),
                 known_hashes: Vec::new(),
                 prior_repository_generation: None,
             base_revision: None,
             changed_paths: Vec::new(),
+            strict_changed_paths: false,
             },
             IndexConsistency::WorkingTree,
             CancellationToken::new(),
@@ -4838,12 +5109,15 @@ async fn diff_scoped_context_with_explicit_changed_paths_reports_receipt() {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: vec!["src/lib.rs".into()],
+            strict_changed_paths: false,
         })
         .await
         .expect("diff-scoped context");
@@ -4942,12 +5216,15 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
                 must_include_symbols: Vec::new(),
                 max_fragments: None,
                 focus_paths: Vec::new(),
+                strict_focus_paths: false,
+                minimum_fragments_per_focus_path: None,
                 focus_symbols: Vec::new(),
                 exclude_paths: Vec::new(),
                 known_hashes: Vec::new(),
                 prior_repository_generation: None,
                 base_revision: Some(base_revision),
                 changed_paths: Vec::new(),
+                strict_changed_paths: true,
             },
             ContextWorkflow::Review,
             IndexConsistency::Committed,
@@ -4956,7 +5233,25 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
         .await
         .expect("base-revision context");
 
+    assert_eq!(response.coverage.strict_scope_satisfied, Some(true));
+    assert!(
+        response
+            .coverage
+            .changed_path_coverage
+            .as_ref()
+            .is_some_and(|coverage| coverage.satisfied)
+    );
+    let fragment_paths = response
+        .fragments
+        .iter()
+        .map(|fragment| fragment.path.clone())
+        .collect::<Vec<_>>();
     let scope = response.diff_scope.expect("diff scope");
+    assert!(
+        fragment_paths
+            .iter()
+            .all(|path| scope.changed_paths.contains(path))
+    );
     for path in [
         "src/lib.rs",
         "src/obsolete.py",
@@ -4994,6 +5289,25 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
             && relationship.related_path == "tests/service_test.py"
             && relationship.signal == "test_name_match"
     }));
+
+    let mut working_tree_request = context_limit_request(1_000);
+    working_tree_request.task = "review compute and rust_changed".into();
+    working_tree_request.strict_changed_paths = true;
+    let working_tree = services
+        .context(working_tree_request)
+        .await
+        .expect("strict working-tree scope");
+    assert_eq!(
+        working_tree.coverage.strict_scope_satisfied,
+        Some(true)
+    );
+    let working_tree_scope = working_tree.diff_scope.expect("working-tree scope");
+    assert!(
+        working_tree
+            .fragments
+            .iter()
+            .all(|fragment| working_tree_scope.changed_paths.contains(&fragment.path))
+    );
 }
 
 #[tokio::test]
@@ -5009,12 +5323,15 @@ async fn diff_scoped_context_preserves_task_only_behavior_without_scope() {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: Vec::new(),
+            strict_changed_paths: false,
         })
         .await
         .expect("task-only context");
@@ -5039,12 +5356,15 @@ async fn diff_scoped_context_rejects_path_outside_repository() {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: vec!["../escape.rs".into()],
+            strict_changed_paths: false,
         })
         .await
         .expect_err("path traversal rejected");
@@ -5069,12 +5389,15 @@ async fn diff_scoped_context_rejects_excessive_changed_path_count() {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: too_many,
+            strict_changed_paths: false,
         })
         .await
         .expect_err("too many changed paths rejected");
@@ -5095,12 +5418,15 @@ async fn diff_scoped_context_counts_zero_for_nonexistent_changed_path() {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: vec!["src/nonexistent.rs".into()],
+            strict_changed_paths: false,
         })
         .await
         .expect("context with unindexed changed path");

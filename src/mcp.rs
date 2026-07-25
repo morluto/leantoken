@@ -450,6 +450,13 @@ struct ContextMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 4096)))]
     focus_paths: Vec<String>,
+    /// Require every returned fragment to match at least one focus path.
+    #[serde(default)]
+    strict_focus_paths: bool,
+    /// Minimum returned fragments required for each focus path pattern.
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(schema_with = "context_fragment_limit_schema")]
+    minimum_fragments_per_focus_path: Option<usize>,
     /// Boost candidates for these exact symbol names.
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 4096)))]
@@ -473,6 +480,9 @@ struct ContextMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 512), inner(length(max = 4096)))]
     changed_paths: Vec<String>,
+    /// Require every returned fragment to belong to the resolved changed paths.
+    #[serde(default)]
+    strict_changed_paths: bool,
     /// Use `working_tree` after edits; otherwise `committed`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
@@ -486,7 +496,12 @@ impl ContextMcpRequest {
             self.token_budget,
             limits.max_output_tokens,
         )?;
-        validate_optional_positive_limit("max_fragments", self.max_fragments, limits.max_results)
+        validate_optional_positive_limit("max_fragments", self.max_fragments, limits.max_results)?;
+        validate_optional_positive_limit(
+            "minimum_fragments_per_focus_path",
+            self.minimum_fragments_per_focus_path,
+            limits.max_results,
+        )
     }
 
     fn into_parts(
@@ -507,12 +522,15 @@ impl ContextMcpRequest {
                 must_include_symbols: self.must_include_symbols,
                 max_fragments: self.max_fragments,
                 focus_paths: self.focus_paths,
+                strict_focus_paths: self.strict_focus_paths,
+                minimum_fragments_per_focus_path: self.minimum_fragments_per_focus_path,
                 focus_symbols: self.focus_symbols,
                 exclude_paths: self.exclude_paths,
                 known_hashes: self.known_hashes,
                 prior_repository_generation: self.prior_repository_generation,
                 base_revision: self.base_revision,
                 changed_paths: self.changed_paths,
+                strict_changed_paths: self.strict_changed_paths,
             },
             self.workflow,
             self.consistency,
@@ -1040,7 +1058,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "context",
-        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Use include_paths for a hard subsystem boundary, must_include_paths or must_include_symbols for required evidence, and max_fragments for breadth; focus paths and symbols only boost ranking. Coverage diagnostics report unmatched and unselected requirements. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}."
+        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; use minimum_fragments_per_focus_path and must-include constraints for required evidence. Coverage diagnostics fail loud when strict scopes are empty or underfilled. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}."
     )]
     async fn leantoken_context(
         &self,
@@ -1577,6 +1595,13 @@ mod tests {
             }))
             .is_err()
         );
+        assert!(
+            serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+                "task": "find answer",
+                "minimum_fragments_per_focus_path": null
+            }))
+            .is_err()
+        );
     }
 
     #[test]
@@ -1590,11 +1615,21 @@ mod tests {
 
         let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
             "task": "find answer",
-            "token_budget": 23
+            "token_budget": 23,
+            "focus_paths": ["src/**"],
+            "strict_focus_paths": true,
+            "minimum_fragments_per_focus_path": 2,
+            "changed_paths": ["src/lib.rs"],
+            "strict_changed_paths": true
         }))
         .expect("context request with a budget");
         let (request, _, _, _) = request.into_parts(37);
         assert_eq!(request.token_budget, 23);
+        assert_eq!(request.focus_paths, ["src/**"]);
+        assert!(request.strict_focus_paths);
+        assert_eq!(request.minimum_fragments_per_focus_path, Some(2));
+        assert_eq!(request.changed_paths, ["src/lib.rs"]);
+        assert!(request.strict_changed_paths);
     }
 
     #[test]

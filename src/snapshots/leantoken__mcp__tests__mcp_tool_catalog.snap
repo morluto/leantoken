@@ -1,12 +1,12 @@
 ---
 source: src/mcp.rs
-assertion_line: 1772
+assertion_line: 1830
 expression: tools
 ---
 [
   {
     "name": "context",
-    "description": "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Use include_paths for a hard subsystem boundary, must_include_paths or must_include_symbols for required evidence, and max_fragments for breadth; focus paths and symbols only boost ranking. Coverage diagnostics report unmatched and unselected requirements. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}.",
+    "description": "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; use minimum_fragments_per_focus_path and must-include constraints for required evidence. Coverage diagnostics fail loud when strict scopes are empty or underfilled. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}.",
     "inputSchema": {
       "$defs": {
         "ContextWorkflow": {
@@ -137,6 +137,13 @@ expression: tools
           "minimum": 1,
           "type": "integer"
         },
+        "minimum_fragments_per_focus_path": {
+          "default": null,
+          "description": "Minimum returned fragments required for each focus path pattern.",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        },
         "must_include_paths": {
           "default": [],
           "description": "Require evidence matching every indexed path pattern.",
@@ -166,6 +173,16 @@ expression: tools
             "integer",
             "null"
           ]
+        },
+        "strict_changed_paths": {
+          "default": false,
+          "description": "Require every returned fragment to belong to the resolved changed paths.",
+          "type": "boolean"
+        },
+        "strict_focus_paths": {
+          "default": false,
+          "description": "Require every returned fragment to match at least one focus path.",
+          "type": "boolean"
         },
         "task": {
           "description": "Natural-language coding task; include known identifiers and constraints.",
