@@ -335,7 +335,7 @@ struct ReadMcpRequest {
     /// Repository-relative UTF-8 source file.
     #[schemars(length(min = 1, max = 4096))]
     path: String,
-    /// Exact symbol or inclusive line range to read.
+    /// Exact symbol, Markdown heading, line range, or continuation to read.
     target: ReadMcpTarget,
     /// Maximum source tokens to return (default 8000, maximum 32000).
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
@@ -360,6 +360,16 @@ enum ReadMcpTarget {
         #[schemars(length(min = 1, max = 4096))]
         name: String,
     },
+    /// Read one indexed Markdown section by exact heading title or outline signature.
+    Heading {
+        /// Exact rendered heading title or outline signature such as `## Performance`.
+        #[schemars(length(min = 1, max = 4096))]
+        name: String,
+        /// One-based occurrence when the heading text is duplicated.
+        #[serde(default = "default_heading_occurrence")]
+        #[schemars(default = "default_heading_occurrence", range(min = 1))]
+        occurrence: usize,
+    },
     /// Read one inclusive one-based line range.
     #[serde(alias = "range", alias = "line_range")]
     Lines {
@@ -382,21 +392,38 @@ enum ReadMcpTarget {
 
 impl ReadMcpRequest {
     fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
-        validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)
+        validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)?;
+        if matches!(self.target, ReadMcpTarget::Heading { occurrence: 0, .. }) {
+            return Err(crate::Error::InvalidInput {
+                field: "heading occurrence",
+                reason: "must be one-based",
+            });
+        }
+        Ok(())
     }
 
     fn into_parts(self) -> (ReadRequest, IndexConsistency, Option<String>) {
-        let (start_line, end_line, symbol, continuation_cursor) = match self.target {
-            ReadMcpTarget::Symbol { name } => (None, None, Some(name), None),
-            ReadMcpTarget::Lines { start, end } => (Some(start), Some(end), None, None),
-            ReadMcpTarget::Continuation { cursor } => (None, None, None, Some(cursor)),
-        };
+        let (start_line, end_line, symbol, heading, heading_occurrence, continuation_cursor) =
+            match self.target {
+                ReadMcpTarget::Symbol { name } => (None, None, Some(name), None, None, None),
+                ReadMcpTarget::Heading { name, occurrence } => {
+                    (None, None, None, Some(name), Some(occurrence), None)
+                }
+                ReadMcpTarget::Lines { start, end } => {
+                    (Some(start), Some(end), None, None, None, None)
+                }
+                ReadMcpTarget::Continuation { cursor } => {
+                    (None, None, None, None, None, Some(cursor))
+                }
+            };
         (
             ReadRequest {
                 path: self.path,
                 start_line,
                 end_line,
                 symbol,
+                heading,
+                heading_occurrence,
                 continuation_cursor,
                 max_tokens: self.max_tokens,
                 expected_hash: self.expected_hash,
@@ -566,6 +593,10 @@ const fn default_token_option() -> Option<usize> {
 
 const fn default_context_line_option() -> Option<usize> {
     Some(DEFAULT_CONTEXT_LINES)
+}
+
+const fn default_heading_occurrence() -> usize {
+    1
 }
 
 fn result_limit_schema(_: &mut SchemaGenerator) -> Schema {
@@ -1032,7 +1063,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "read",
-        description = "Preferred exact source reader instead of cat, head, or sed. Keep path as a file path; put the owner separately in target. Exact target shapes are {\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"} and {\"kind\":\"lines\",\"start\":120,\"end\":160}. Reuse content_hash as expected_hash to suppress unchanged source. Example: {\"path\":\"src/mcp.rs\",\"target\":{\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}}."
+        description = "Preferred exact source and Markdown section reader instead of cat, head, or sed. Keep path as a file path; put the owner separately in target. Exact target shapes include {\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}, {\"kind\":\"heading\",\"name\":\"## Performance\",\"occurrence\":2}, and {\"kind\":\"lines\",\"start\":120,\"end\":160}. Heading targets accept an exact rendered title or outline signature. Reuse content_hash as expected_hash to suppress unchanged source. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}."
     )]
     async fn leantoken_read(
         &self,
@@ -1170,6 +1201,10 @@ fn into_mcp_error(error: crate::Error) -> ErrorData {
         crate::Error::SymbolNotFound { .. } => ErrorData::invalid_params(
             "requested symbol is not indexed",
             mcp_error_data("symbol_not_found"),
+        ),
+        crate::Error::HeadingNotFound { .. } => ErrorData::invalid_params(
+            "requested Markdown heading occurrence is not indexed",
+            mcp_error_data("heading_not_found"),
         ),
         crate::Error::RepositoryIdentityMismatch { expected, actual } => ErrorData::invalid_params(
             "repository identity does not match this server",
@@ -1494,6 +1529,11 @@ mod tests {
                 path: unix_marker.into(),
                 symbol: "sensitive-marker".into(),
             },
+            crate::Error::HeadingNotFound {
+                path: unix_marker.into(),
+                heading: "sensitive-marker".into(),
+                occurrence: 2,
+            },
             crate::Error::UnsupportedLanguage(unix_marker.into()),
             crate::Error::InvalidRequest(format!("invalid path: {unix_marker}")),
             crate::Error::InternalFailure(format!("failed at {unix_marker}")),
@@ -1812,6 +1852,26 @@ mod tests {
             assert_eq!(request.start_line, Some(10));
             assert_eq!(request.end_line, Some(20));
         }
+        let heading = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+            "path": "README.md",
+            "target": {"kind": "heading", "name": "Installation", "occurrence": 2}
+        }))
+        .expect("Markdown heading target");
+        assert!(heading.validate_limits(McpLimitPolicy::DEFAULT).is_ok());
+        let (heading, _, _) = heading.into_parts();
+        assert_eq!(heading.heading.as_deref(), Some("Installation"));
+        assert_eq!(heading.heading_occurrence, Some(2));
+        assert!(heading.symbol.is_none());
+        let invalid_heading = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+            "path": "README.md",
+            "target": {"kind": "heading", "name": "Installation", "occurrence": 0}
+        }))
+        .expect("schema validation remains a runtime boundary");
+        assert!(
+            invalid_heading
+                .validate_limits(McpLimitPolicy::DEFAULT)
+                .is_err()
+        );
         let continuation = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
             "path": "src/mcp.rs",
             "target": {"kind": "continuation", "cursor": "opaque"}
@@ -1820,6 +1880,8 @@ mod tests {
         let (continuation, _, _) = continuation.into_parts();
         assert_eq!(continuation.continuation_cursor.as_deref(), Some("opaque"));
         assert!(continuation.symbol.is_none());
+        assert!(continuation.heading.is_none());
+        assert!(continuation.heading_occurrence.is_none());
         assert!(continuation.start_line.is_none());
         assert!(continuation.end_line.is_none());
     }

@@ -1,6 +1,6 @@
 ---
 source: src/mcp.rs
-assertion_line: 1830
+assertion_line: 1892
 expression: tools
 ---
 [
@@ -498,7 +498,7 @@ expression: tools
   },
   {
     "name": "read",
-    "description": "Preferred exact source reader instead of cat, head, or sed. Keep path as a file path; put the owner separately in target. Exact target shapes are {\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"} and {\"kind\":\"lines\",\"start\":120,\"end\":160}. Reuse content_hash as expected_hash to suppress unchanged source. Example: {\"path\":\"src/mcp.rs\",\"target\":{\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}}.",
+    "description": "Preferred exact source and Markdown section reader instead of cat, head, or sed. Keep path as a file path; put the owner separately in target. Exact target shapes include {\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}, {\"kind\":\"heading\",\"name\":\"## Performance\",\"occurrence\":2}, and {\"kind\":\"lines\",\"start\":120,\"end\":160}. Heading targets accept an exact rendered title or outline signature. Reuse content_hash as expected_hash to suppress unchanged source. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}.",
     "inputSchema": {
       "$defs": {
         "ReadMcpTarget": {
@@ -516,6 +516,34 @@ expression: tools
                   "maxLength": 4096,
                   "minLength": 1,
                   "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "name"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Read one indexed Markdown section by exact heading title or outline signature.",
+              "properties": {
+                "kind": {
+                  "const": "heading",
+                  "type": "string"
+                },
+                "name": {
+                  "description": "Exact rendered heading title or outline signature such as `## Performance`.",
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "occurrence": {
+                  "default": 1,
+                  "description": "One-based occurrence when the heading text is duplicated.",
+                  "format": "uint",
+                  "minimum": 1,
+                  "type": "integer"
                 }
               },
               "required": [
@@ -622,7 +650,7 @@ expression: tools
         },
         "target": {
           "$ref": "#/$defs/ReadMcpTarget",
-          "description": "Exact symbol or inclusive line range to read."
+          "description": "Exact symbol, Markdown heading, line range, or continuation to read."
         }
       },
       "required": [

@@ -774,11 +774,26 @@ pub struct ReadArgs {
     pub lines: Option<LineRange>,
 
     /// Read the range for the named symbol.
-    #[arg(long, conflicts_with_all = ["lines", "cursor"])]
+    #[arg(long, conflicts_with_all = ["lines", "heading", "cursor"])]
     pub symbol: Option<String>,
 
+    /// Read the section for an exact Markdown heading title or outline signature.
+    #[arg(long, conflicts_with_all = ["lines", "symbol", "cursor"])]
+    pub heading: Option<String>,
+
+    /// One-based occurrence of a duplicate Markdown heading.
+    #[arg(
+        long,
+        requires = "heading",
+        value_parser = parse_positive_usize
+    )]
+    pub heading_occurrence: Option<usize>,
+
     /// Continue a truncated read.
-    #[arg(long, conflicts_with_all = ["lines", "symbol"])]
+    #[arg(
+        long,
+        conflicts_with_all = ["lines", "symbol", "heading", "heading_occurrence"]
+    )]
     pub cursor: Option<String>,
 
     /// Maximum tokens to return.
@@ -802,6 +817,8 @@ impl From<ReadArgs> for ReadRequest {
             start_line,
             end_line,
             symbol: args.symbol,
+            heading: args.heading,
+            heading_occurrence: args.heading_occurrence,
             continuation_cursor: args.cursor,
             max_tokens: args.max_tokens,
             expected_hash: args.expected_hash,

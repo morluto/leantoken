@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
 use std::path::Path;
 
+use pulldown_cmark::{Event as MarkdownEvent, HeadingLevel, Parser as MarkdownParser, Tag, TagEnd};
 use tokio_util::sync::CancellationToken;
 use tree_sitter::{
     Language, Node, ParseOptions, Parser, Query, QueryCursor, QueryCursorOptions, QueryMatch,
@@ -10,6 +11,7 @@ use tree_sitter::{
 };
 
 use crate::model::{Import, Reference, ReferenceRole, Symbol};
+use crate::text::byte_range_to_line_range;
 use crate::{Error, Result};
 
 const RUST_DEFS_QUERY: &str = r#"
@@ -100,6 +102,7 @@ pub fn language_by_path(path: impl AsRef<Path>) -> Option<String> {
         "go" => "go".to_string(),
         "html" | "htm" => "html".to_string(),
         "css" => "css".to_string(),
+        "md" | "markdown" => "markdown".to_string(),
         _ => return None,
     })
 }
@@ -156,6 +159,9 @@ fn parse_language_with_cancellation(
     source: &str,
     mut is_cancelled: impl FnMut() -> bool,
 ) -> Result<ParseOutput> {
+    if language == "markdown" {
+        return parse_markdown(source, &mut is_cancelled);
+    }
     let lang = language_object(language)
         .ok_or_else(|| Error::UnsupportedLanguage(language.to_string()))?;
 
@@ -259,6 +265,94 @@ fn parse_language_with_cancellation(
             imports,
         })
     })
+}
+
+struct MarkdownHeading {
+    level: usize,
+    name: String,
+    start_byte: usize,
+}
+
+fn parse_markdown(source: &str, is_cancelled: &mut impl FnMut() -> bool) -> Result<ParseOutput> {
+    let mut headings = Vec::new();
+    let mut pending = None::<MarkdownHeading>;
+    for (event, range) in MarkdownParser::new(source).into_offset_iter() {
+        if is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        match event {
+            MarkdownEvent::Start(Tag::Heading { level, .. }) => {
+                pending = Some(MarkdownHeading {
+                    level: markdown_heading_level(level),
+                    name: String::new(),
+                    start_byte: range.start,
+                });
+            }
+            MarkdownEvent::Text(text)
+            | MarkdownEvent::Code(text)
+            | MarkdownEvent::InlineMath(text) => {
+                if let Some(heading) = &mut pending {
+                    heading.name.push_str(&text);
+                }
+            }
+            MarkdownEvent::SoftBreak | MarkdownEvent::HardBreak => {
+                if let Some(heading) = &mut pending {
+                    heading.name.push(' ');
+                }
+            }
+            MarkdownEvent::End(TagEnd::Heading(_)) => {
+                if let Some(mut heading) = pending.take() {
+                    heading.name = heading.name.trim().to_owned();
+                    if !heading.name.is_empty() {
+                        headings.push(heading);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if is_cancelled() {
+        return Err(Error::Cancelled);
+    }
+
+    let mut symbols = Vec::with_capacity(headings.len());
+    for (index, heading) in headings.iter().enumerate() {
+        let end_byte = headings[index + 1..]
+            .iter()
+            .find(|next| next.level <= heading.level)
+            .map_or(source.len(), |next| next.start_byte);
+        let (start_line, end_line) = byte_range_to_line_range(source, heading.start_byte, end_byte);
+        symbols.push(Symbol {
+            name: heading.name.clone(),
+            kind: "markdown_heading".into(),
+            parent: None,
+            signature: Some(format!("{} {}", "#".repeat(heading.level), heading.name)),
+            start_line,
+            end_line,
+            start_byte: heading.start_byte,
+            end_byte,
+        });
+    }
+    compute_symbol_parents(&mut symbols);
+
+    Ok(ParseOutput {
+        language: Some("markdown".into()),
+        structurally_complete: true,
+        symbols,
+        references: Vec::new(),
+        imports: Vec::new(),
+    })
+}
+
+fn markdown_heading_level(level: HeadingLevel) -> usize {
+    match level {
+        HeadingLevel::H1 => 1,
+        HeadingLevel::H2 => 2,
+        HeadingLevel::H3 => 3,
+        HeadingLevel::H4 => 4,
+        HeadingLevel::H5 => 5,
+        HeadingLevel::H6 => 6,
+    }
 }
 
 fn empty_parse() -> ParseOutput {
@@ -1544,9 +1638,86 @@ end
             ("src/index.html", "html"),
             ("src/partial.htm", "html"),
             ("src/styles.css", "css"),
+            ("README.md", "markdown"),
+            ("docs/GUIDE.markdown", "markdown"),
         ] {
             assert_eq!(language_by_path(path).as_deref(), Some(expected), "{path}");
         }
+    }
+
+    #[test]
+    fn markdown_headings_define_nested_sections_and_ignore_fenced_code() -> Result<()> {
+        let source = "\
+# Root
+intro
+## Repeat
+first
+### Child
+child
+## Repeat
+second
+
+Setext
+------
+```markdown
+# hidden
+```
+";
+        let output = parse("README.md", source)?;
+
+        assert_eq!(output.language.as_deref(), Some("markdown"));
+        assert!(output.structurally_complete);
+        assert_eq!(
+            output
+                .symbols
+                .iter()
+                .map(|symbol| (
+                    symbol.name.as_str(),
+                    symbol.kind.as_str(),
+                    symbol.parent.as_deref(),
+                    symbol.start_line,
+                    symbol.end_line,
+                    symbol.signature.as_deref(),
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("Root", "markdown_heading", None, 1, 14, Some("# Root")),
+                (
+                    "Repeat",
+                    "markdown_heading",
+                    Some("Root"),
+                    3,
+                    6,
+                    Some("## Repeat")
+                ),
+                (
+                    "Child",
+                    "markdown_heading",
+                    Some("Repeat"),
+                    5,
+                    6,
+                    Some("### Child")
+                ),
+                (
+                    "Repeat",
+                    "markdown_heading",
+                    Some("Root"),
+                    7,
+                    9,
+                    Some("## Repeat")
+                ),
+                (
+                    "Setext",
+                    "markdown_heading",
+                    Some("Root"),
+                    10,
+                    14,
+                    Some("## Setext")
+                ),
+            ]
+        );
+        assert!(!output.symbols.iter().any(|symbol| symbol.name == "hidden"));
+        Ok(())
     }
 
     #[test]

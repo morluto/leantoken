@@ -369,6 +369,12 @@ pub struct ReadRequest {
     /// Indexed symbol to read; cannot be combined with line fields.
     #[serde(default)]
     pub symbol: Option<String>,
+    /// Indexed Markdown heading title or outline signature to read.
+    #[serde(default)]
+    pub heading: Option<String>,
+    /// One-based occurrence of a duplicate Markdown heading; defaults to 1.
+    #[serde(default)]
+    pub heading_occurrence: Option<usize>,
     /// Opaque cursor returned by a truncated read; cannot be combined with a new target.
     #[serde(default)]
     pub continuation_cursor: Option<String>,
