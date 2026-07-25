@@ -1,25 +1,19 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-## [0.1.13] - 2026-07-24
-### Benchmarks
-
-- Add agent evaluation fixtures and trajectory sanitizer
+## [0.1.14] - 2026-07-25
 ### Bug Fixes
 
-- Ensure prepare batches advance
-- Preserve empty target boundaries in git diff hunk parser
-- Advance batch end past oversized single candidate
-### Chores
-
-- Ignore local snapshot and codex design artifacts
-### Continuous Integration
-
-- Speed up Rust test workflows
-### Documentation
-
-- Note stale-install workaround for npx bootstrap
+- **ci:** Prevent stale release planner runs
+- Update graph ablation harness binding
 ### Features
 
-- Resolve qualified symbols and surface typed symbol_not_found
+- Scope context and guard stale npx setup
+- **mcp:** Shorten tool names
+### Performance
+
+- **indexer:** Relocate renamed files in place
+- **context:** Skip redundant excerpt work
+- **storage:** Index structural names with FTS
+- **indexer:** Reuse parsing allocations
 
