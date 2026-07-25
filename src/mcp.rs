@@ -137,6 +137,9 @@ struct SearchMcpRequest {
     /// Preserve query case when matching.
     #[serde(default)]
     case_sensitive: bool,
+    /// Return every text or regex occurrence with exact coordinates and counts.
+    #[serde(default)]
+    all_occurrences: bool,
     /// Cursor returned by the same search and repository generation.
     #[serde(default)]
     #[schemars(length(max = 4096))]
@@ -170,6 +173,7 @@ impl SearchMcpRequest {
                 max_tokens: self.max_tokens,
                 context_lines: self.context_lines,
                 case_sensitive: self.case_sensitive,
+                all_occurrences: self.all_occurrences,
                 cursor: self.cursor,
             },
             self.consistency,
@@ -945,7 +949,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "search",
-        description = "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
+        description = "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Set all_occurrences in text or regex mode for exact occurrence coordinates and returned/total counts; exhaustive scans fail instead of silently truncating at internal scan limits. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
     )]
     async fn leantoken_search(
         &self,

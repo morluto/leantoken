@@ -322,6 +322,13 @@ count, case sensitivity, and a generation-bound cursor. Defaults are 20 results,
 path, one-based returned line range, excerpt, match kind, score reasons, and
 content hash. Structural fields appear only when syntax supports them.
 
+Set `all_occurrences` in `text` or `regex` mode to return one hit for every
+non-overlapping match, including repeated matches in one indexed chunk or line.
+Those hits include exact line and UTF-8 byte coordinates. The response reports
+`occurrences_returned` for the current page and an exact `occurrences_total`
+across the filtered index. Exhaustive pagination applies `max_results` and
+`max_tokens` without changing the total; follow `next_cursor` until absent.
+
 Each page examines at most `max_results` ranked candidates. `max_tokens` may
 filter some or all of those candidates, so a page can contain fewer hits or be
 empty while still returning `next_cursor`. Follow the cursor to examine later
@@ -331,10 +338,11 @@ candidates. When `next_cursor` is absent, every candidate was examined; increase
 Lexical matches remain eligible when structural extraction is unavailable or
 incomplete.
 
-Regex search has explicit file, chunk, candidate, and compiled-program safety
-limits. If a limit would make the answer incomplete, the tool returns
-`LimitExceeded`; use text, identifier, symbol, or reference mode for exhaustive
-indexed lookup on larger repositories.
+Repository-wide lexical scans have explicit file, per-file chunk, occurrence,
+and compiled-program safety limits. Exhaustive text and regex modes remove the
+candidate-chunk cap, but retain the other limits. If a limit would make the
+answer incomplete, the tool returns `LimitExceeded` instead of reporting a
+partial exhaustive result.
 
 ## `leantoken.outline`
 

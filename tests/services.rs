@@ -98,6 +98,7 @@ async fn search_applies_path_filters_before_candidate_limits() {
                 query: query.into(),
                 mode,
                 case_sensitive: true,
+                all_occurrences: false,
                 include_paths: vec!["z_included.rs".into()],
                 exclude_paths: Vec::new(),
                 focus_paths: Vec::new(),
@@ -116,6 +117,7 @@ async fn search_applies_path_filters_before_candidate_limits() {
                 query: query.into(),
                 mode,
                 case_sensitive: true,
+                all_occurrences: false,
                 include_paths: Vec::new(),
                 exclude_paths: vec!["a*.rs".into()],
                 focus_paths: Vec::new(),
@@ -129,6 +131,157 @@ async fn search_applies_path_filters_before_candidate_limits() {
         assert_eq!(response.hits.len(), 1, "{mode:?}");
         assert_eq!(response.hits[0].path, "z_included.rs", "{mode:?}");
     }
+}
+
+#[tokio::test]
+async fn exhaustive_text_search_returns_each_occurrence_with_exact_total_and_pagination() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let source = "const first = \"audit_key audit_key\";\nconst second = \"audit_key\";\n";
+    std::fs::write(root.path().join("occurrences.js"), source).expect("write source");
+    std::fs::write(root.path().join("excluded.js"), "const value = 'audit_key';\n")
+        .expect("write excluded source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+    let request = SearchRequest {
+        query: "audit_key".into(),
+        mode: SearchMode::Text,
+        include_paths: vec!["occurrences.js".into()],
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(2),
+        max_tokens: Some(1_000),
+        context_lines: Some(0),
+        case_sensitive: true,
+        all_occurrences: true,
+        cursor: None,
+    };
+
+    let first = services
+        .search(request.clone())
+        .await
+        .expect("first occurrence page");
+
+    assert_eq!(first.occurrences_total, Some(3));
+    assert_eq!(first.occurrences_returned, 2);
+    assert_eq!(first.hits.len(), 2);
+    let expected_offsets = source
+        .match_indices("audit_key")
+        .map(|(start, matched)| (start, start + matched.len()))
+        .collect::<Vec<_>>();
+    let first_offsets = first
+        .hits
+        .iter()
+        .map(|hit| {
+            let occurrence = hit.occurrence.as_ref().expect("exact occurrence");
+            (occurrence.start_byte, occurrence.end_byte)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(first_offsets, expected_offsets[..2]);
+
+    let mut token_limited = request.clone();
+    token_limited.max_tokens = Some(1);
+    let limited = services
+        .search(token_limited)
+        .await
+        .expect("token-limited occurrence page");
+    assert_eq!(limited.occurrences_total, Some(3));
+    assert_eq!(limited.occurrences_returned, 0);
+    assert!(limited.hits.is_empty());
+    assert!(limited.meta.next_cursor.is_some());
+
+    let mut next = request;
+    next.cursor = first.meta.next_cursor;
+    let second = services
+        .search(next)
+        .await
+        .expect("second occurrence page");
+
+    assert_eq!(second.occurrences_total, Some(3));
+    assert_eq!(second.occurrences_returned, 1);
+    assert!(second.meta.next_cursor.is_none());
+    let occurrence = second.hits[0]
+        .occurrence
+        .as_ref()
+        .expect("exact occurrence");
+    assert_eq!(
+        (occurrence.start_byte, occurrence.end_byte),
+        expected_offsets[2]
+    );
+    assert_eq!(occurrence.start_line, 2);
+    assert_eq!(occurrence.end_line, 2);
+
+    let mut short_query = search_limit_request(Some(10), Some(1_000), Some(0));
+    short_query.query = "it".into();
+    short_query.mode = SearchMode::Text;
+    short_query.include_paths = vec!["occurrences.js".into()];
+    short_query.case_sensitive = true;
+    short_query.all_occurrences = true;
+    let short = services
+        .search(short_query)
+        .await
+        .expect("short substring occurrence search");
+    assert_eq!(short.occurrences_total, Some(3));
+    assert_eq!(short.occurrences_returned, 3);
+}
+
+#[tokio::test]
+async fn exhaustive_occurrence_search_requires_text_or_regex_mode() {
+    let (_root, services) = fixture().await;
+    let mut request = search_limit_request(Some(20), Some(1_000), Some(0));
+    request.mode = SearchMode::Auto;
+    request.all_occurrences = true;
+
+    let error = services
+        .search(request)
+        .await
+        .expect_err("auto mode must not claim exhaustive occurrences");
+
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "all occurrences",
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn exhaustive_regex_search_counts_repeated_matches_in_one_chunk() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let source = "const values = ['item1', 'item22', 'item333'];\n";
+    std::fs::write(root.path().join("regex.js"), source).expect("write source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+    let response = services
+        .search(SearchRequest {
+            query: r"item\d+".into(),
+            mode: SearchMode::Regex,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(10),
+            max_tokens: Some(1_000),
+            context_lines: Some(0),
+            case_sensitive: true,
+            all_occurrences: true,
+            cursor: None,
+        })
+        .await
+        .expect("exhaustive regex search");
+
+    assert_eq!(response.occurrences_total, Some(3));
+    assert_eq!(response.occurrences_returned, 3);
+    assert_eq!(response.hits.len(), 3);
+    assert!(
+        response
+            .hits
+            .iter()
+            .all(|hit| hit.occurrence.is_some() && hit.match_kind == "regex")
+    );
 }
 
 #[cfg(unix)]
@@ -276,6 +429,7 @@ async fn repository_identity_distinguishes_linked_worktrees_before_empty_search_
             query: "linked_worktree_holdout_symbol".into(),
             mode: SearchMode::Symbol,
             case_sensitive: true,
+            all_occurrences: false,
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
             focus_paths: Vec::new(),
@@ -450,6 +604,7 @@ fn search_limit_request(
         max_tokens,
         context_lines,
         case_sensitive: false,
+        all_occurrences: false,
         cursor: None,
     }
 }
@@ -1541,6 +1696,7 @@ async fn five_services_return_bounded_grounded_responses() {
             max_tokens: Some(200),
             context_lines: Some(1),
             case_sensitive: false,
+            all_occurrences: false,
             cursor: None,
         })
         .await
@@ -1722,6 +1878,7 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             max_tokens: Some(100),
             context_lines: Some(1),
             case_sensitive: false,
+            all_occurrences: false,
             cursor: None,
         })
         .await
@@ -2309,6 +2466,7 @@ async fn invalid_focus_glob_is_a_typed_error() {
             max_tokens: None,
             context_lines: None,
             case_sensitive: false,
+            all_occurrences: false,
             cursor: None,
         })
         .await
@@ -2349,6 +2507,7 @@ async fn search_range_covers_the_returned_context_lines() {
             max_tokens: Some(100),
             context_lines: Some(1),
             case_sensitive: false,
+            all_occurrences: false,
             cursor: None,
         })
         .await
@@ -2388,6 +2547,7 @@ async fn text_search_windows_keep_case_insensitive_matches_across_a_chunk() {
                 max_tokens: Some(1_000),
                 context_lines: Some(20),
                 case_sensitive: false,
+                all_occurrences: false,
                 cursor: None,
             })
             .await
@@ -2429,6 +2589,7 @@ async fn maximum_text_context_keeps_the_original_read_bounded_range_match() {
             max_tokens: Some(1_000),
             context_lines: Some(20),
             case_sensitive: true,
+            all_occurrences: false,
             cursor: None,
         })
         .await
@@ -2462,6 +2623,7 @@ async fn regex_search_keeps_a_multiline_match_that_exceeds_the_line_cap() {
             max_tokens: Some(5_000),
             context_lines: Some(20),
             case_sensitive: true,
+            all_occurrences: false,
             cursor: None,
         })
         .await
@@ -2502,6 +2664,7 @@ async fn symbol_search_caps_a_long_definition_without_losing_its_declaration() {
             max_tokens: Some(2_000),
             context_lines: Some(20),
             case_sensitive: true,
+            all_occurrences: false,
             cursor: None,
         })
         .await
@@ -2535,6 +2698,7 @@ async fn reference_search_window_keeps_the_required_reference_span() {
             max_tokens: Some(1_000),
             context_lines: Some(20),
             case_sensitive: true,
+            all_occurrences: false,
             cursor: None,
         })
         .await
@@ -2585,6 +2749,7 @@ async fn text_search_reports_enclosing_symbols_across_languages() {
             max_tokens: Some(1_000),
             context_lines: Some(1),
             case_sensitive: true,
+            all_occurrences: false,
             cursor: None,
         })
         .await
@@ -2634,6 +2799,7 @@ async fn text_search_preserves_multiline_matches_without_a_single_matching_line(
             max_tokens: Some(1_000),
             context_lines: Some(1),
             case_sensitive: true,
+            all_occurrences: false,
             cursor: None,
         })
         .await
@@ -3223,6 +3389,7 @@ async fn oversized_query_is_rejected_without_stopping_services() {
             max_tokens: None,
             context_lines: None,
             case_sensitive: false,
+            all_occurrences: false,
             cursor: None,
         })
         .await
@@ -3251,6 +3418,7 @@ async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_service
                 max_tokens: Some(100),
                 context_lines: Some(2),
                 case_sensitive: false,
+                all_occurrences: false,
                 cursor: None,
             },
             cancellation.child_token(),
@@ -3318,6 +3486,7 @@ async fn concurrent_queries_observe_one_committed_generation_during_reconciliati
                     max_tokens: Some(100),
                     context_lines: Some(1),
                     case_sensitive: false,
+                    all_occurrences: false,
                     cursor: None,
                 })
                 .await
@@ -3677,6 +3846,7 @@ async fn regex_search_respects_absolute_candidate_cap() {
             max_tokens: Some(32_000),
             context_lines: Some(0),
             case_sensitive: false,
+            all_occurrences: false,
             cursor: None,
         })
         .await
@@ -3715,6 +3885,7 @@ async fn working_tree_search_reconciles_file_created_after_index() {
                 max_tokens: Some(100),
                 context_lines: Some(0),
                 case_sensitive: false,
+                all_occurrences: false,
                 cursor: None,
             },
             IndexConsistency::WorkingTree,
@@ -3755,6 +3926,7 @@ async fn committed_search_does_not_reconcile_file_created_after_index() {
                 max_tokens: Some(100),
                 context_lines: Some(0),
                 case_sensitive: false,
+                all_occurrences: false,
                 cursor: None,
             },
             IndexConsistency::Committed,

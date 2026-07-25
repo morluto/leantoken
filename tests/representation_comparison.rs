@@ -215,6 +215,7 @@ async fn compare_context_representations() {
                 max_tokens: Some(TOKEN_BUDGET),
                 context_lines: Some(2),
                 case_sensitive: false,
+                all_occurrences: false,
                 cursor: None,
             })
             .await

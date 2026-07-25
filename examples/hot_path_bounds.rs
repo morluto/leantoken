@@ -75,6 +75,7 @@ async fn main() -> leantoken::Result<()> {
         max_tokens: Some(8_000),
         context_lines: Some(0),
         case_sensitive: false,
+        all_occurrences: false,
         cursor: None,
     };
     let context_request = ContextRequest {

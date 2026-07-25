@@ -171,9 +171,25 @@ pub struct SearchRequest {
     /// Preserve query case when matching.
     #[serde(default)]
     pub case_sensitive: bool,
+    /// Return every text or regex occurrence instead of one hit per indexed chunk.
+    #[serde(default)]
+    pub all_occurrences: bool,
     /// Cursor returned by an earlier response from the same generation.
     #[serde(default)]
     pub cursor: Option<String>,
+}
+
+/// Exact source coordinates for one lexical search occurrence.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SearchOccurrence {
+    /// One-based line containing the start of the match.
+    pub start_line: usize,
+    /// One-based line containing the end of the match.
+    pub end_line: usize,
+    /// Zero-based UTF-8 byte offset of the match start in the indexed file.
+    pub start_byte: usize,
+    /// Zero-based exclusive UTF-8 byte offset of the match end in the indexed file.
+    pub end_byte: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -189,6 +205,9 @@ pub struct SearchHit {
     pub symbol: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enclosing_symbol: Option<String>,
+    /// Exact match coordinates when exhaustive occurrence search is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrence: Option<SearchOccurrence>,
     pub score: f64,
     pub score_reasons: Vec<String>,
     pub content_hash: String,
@@ -197,6 +216,12 @@ pub struct SearchHit {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SearchResponse {
     pub hits: Vec<SearchHit>,
+    /// Occurrences returned in this response page after token limits.
+    #[serde(default)]
+    pub occurrences_returned: usize,
+    /// Exact filtered occurrence count when `all_occurrences` is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrences_total: Option<usize>,
     pub meta: ResponseMeta,
 }
 
