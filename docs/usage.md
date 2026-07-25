@@ -267,17 +267,19 @@ unknown path -> files
 
 All five MCP retrieval tools accept an optional `consistency` input:
 
-- `committed` (default) queries the latest completed index generation without
-  waiting for filesystem changes;
-- `working_tree` first reconciles the current working tree, then queries the
-  resulting committed generation.
+- `indexed_generation` (default) queries the latest completed index generation
+  without scanning or waiting for filesystem changes. It does not mean Git
+  HEAD and may include files indexed from an earlier working-tree state;
+- `reconcile_working_tree` first reconciles the current working tree, then
+  queries the resulting completed generation.
 
-Use `working_tree` when edits, generated files, branch changes, or external
-commits must be visible to the current call. Reconciliation uses the same
-ignore rules and cross-process operation lock as automatic indexing, and the
-request remains cancellable. Writes that begin concurrently with the call may
-require another `working_tree` request. CLI users can run `leantoken index`
-immediately before retrieval when they need to reconcile first.
+Use `reconcile_working_tree` when edits, generated files, branch changes, or
+external commits must be visible to the current call. Reconciliation uses the
+same ignore rules and cross-process operation lock as automatic indexing, and
+the request remains cancellable. Writes that begin concurrently with the call
+may require another `reconcile_working_tree` request. CLI users can run
+`leantoken index` immediately before retrieval when they need to reconcile
+first.
 
 Numeric retrieval limits are inclusive and validated uniformly by the CLI,
 MCP, and direct service APIs. `max_results` must be in `1..=100`;
@@ -430,8 +432,9 @@ is active on this cache.
 When the index has never completed a generation, retrieval tools return a
 successful retry result such as `{"status":"retryable","reason":"index_building",
 "retry_after_ms":500}`. Retry the same call after that delay. After local edits,
-set `consistency` to `working_tree` on the next MCP retrieval. A committed read
-may still use `index_stale` and `expected_hash` to detect or suppress live ranges.
+set `consistency` to `reconcile_working_tree` on the next MCP retrieval. An
+`indexed_generation` read may still use `index_stale` and `expected_hash` to
+detect or suppress live ranges.
 
 ## `leantoken.context`
 

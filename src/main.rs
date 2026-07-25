@@ -177,7 +177,7 @@ async fn run(cli: Cli) -> Result<()> {
                 .context_with_workflow_consistency_cancellable(
                     request,
                     workflow,
-                    leantoken::model::IndexConsistency::Committed,
+                    leantoken::model::IndexConsistency::IndexedGeneration,
                     tokio_util::sync::CancellationToken::new(),
                 )
                 .await?,

@@ -758,7 +758,7 @@ async fn contribution_context_routes_to_guidance_validation_and_owner_tests() {
                 strict_changed_paths: false,
             },
             ContextWorkflow::Contribution,
-            IndexConsistency::Committed,
+            IndexConsistency::IndexedGeneration,
             CancellationToken::new(),
         )
         .await
@@ -1383,7 +1383,7 @@ async fn context_must_cover_generates_evidence_and_reports_unmatched_constraints
 }
 
 #[tokio::test]
-async fn oversized_context_reports_bounded_routing_with_working_tree_retries() {
+async fn oversized_context_reports_bounded_routing_with_reconcile_working_tree_retries() {
     let (_root, services) = fixture().await;
     let changed_paths = (0..12)
         .flat_map(|index| {
@@ -1401,7 +1401,7 @@ async fn oversized_context_reports_bounded_routing_with_working_tree_retries() {
         .context_with_workflow_consistency_cancellable(
             request,
             ContextWorkflow::Review,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             tokio_util::sync::CancellationToken::new(),
         )
         .await
@@ -1413,7 +1413,7 @@ async fn oversized_context_reports_bounded_routing_with_working_tree_retries() {
     assert!(routing.path_groups.len() <= 5);
     assert!(routing.suggestions.len() <= 3);
     assert!(
-        routing.consistency == IndexConsistency::WorkingTree
+        routing.consistency == IndexConsistency::ReconcileWorkingTree
     );
     assert!(
         response
@@ -1611,7 +1611,7 @@ async fn context_enforces_token_budget_contract() {
 }
 
 #[tokio::test]
-async fn working_tree_limit_errors_do_not_reconcile_the_index() {
+async fn reconcile_working_tree_limit_errors_do_not_reconcile_the_index() {
     let (root, services) = fixture().await;
     let generation = services
         .status()
@@ -1627,7 +1627,7 @@ async fn working_tree_limit_errors_do_not_reconcile_the_index() {
     let error = services
         .files_with_consistency_cancellable(
             files_limit_request(Some(0)),
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -1641,7 +1641,7 @@ async fn working_tree_limit_errors_do_not_reconcile_the_index() {
         let error = services
             .search_with_consistency_cancellable(
                 request,
-                IndexConsistency::WorkingTree,
+                IndexConsistency::ReconcileWorkingTree,
                 CancellationToken::new(),
             )
             .await
@@ -1651,7 +1651,7 @@ async fn working_tree_limit_errors_do_not_reconcile_the_index() {
     let error = services
         .search_with_consistency_cancellable(
             search_limit_request(Some(1), Some(1), Some(21)),
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -1665,7 +1665,7 @@ async fn working_tree_limit_errors_do_not_reconcile_the_index() {
         let error = services
             .outline_with_consistency_cancellable(
                 request,
-                IndexConsistency::WorkingTree,
+                IndexConsistency::ReconcileWorkingTree,
                 CancellationToken::new(),
             )
             .await
@@ -1676,7 +1676,7 @@ async fn working_tree_limit_errors_do_not_reconcile_the_index() {
     let error = services
         .read_with_consistency_cancellable(
             read_limit_request(Some(0)),
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -1685,7 +1685,7 @@ async fn working_tree_limit_errors_do_not_reconcile_the_index() {
     let error = services
         .context_with_consistency_cancellable(
             context_limit_request(0),
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -1710,7 +1710,7 @@ async fn working_tree_limit_errors_do_not_reconcile_the_index() {
 }
 
 #[tokio::test]
-async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
+async fn reconcile_working_tree_static_input_errors_do_not_reconcile_the_index() {
     let (root, services) = fixture().await;
     let generation = services
         .status()
@@ -1745,7 +1745,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
                 cursor: None,
                 depth: None,
             },
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "missing find query"
@@ -1761,7 +1761,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
                 cursor: None,
                 depth: None,
             },
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "unsafe tree root"
@@ -1777,7 +1777,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
                 cursor: None,
                 depth: None,
             },
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "invalid files glob"
@@ -1787,7 +1787,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.files_with_consistency_cancellable(
             files,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "malformed files cursor"
@@ -1798,7 +1798,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.search_with_consistency_cancellable(
             search,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "empty search query"
@@ -1809,7 +1809,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.search_with_consistency_cancellable(
             search,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "invalid search regex"
@@ -1819,7 +1819,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.search_with_consistency_cancellable(
             search,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "invalid search path glob"
@@ -1829,7 +1829,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.search_with_consistency_cancellable(
             search,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "oversized search query"
@@ -1839,7 +1839,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.search_with_consistency_cancellable(
             search,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "malformed search cursor"
@@ -1850,7 +1850,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.outline_with_consistency_cancellable(
             outline,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "empty outline paths"
@@ -1860,7 +1860,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.outline_with_consistency_cancellable(
             outline,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "excessive outline paths"
@@ -1870,7 +1870,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.outline_with_consistency_cancellable(
             outline,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "unsafe outline path"
@@ -1881,7 +1881,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.read_with_consistency_cancellable(
             read,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "invalid read range"
@@ -1891,7 +1891,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.read_with_consistency_cancellable(
             read,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "conflicting read target"
@@ -1903,7 +1903,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     let error = services
         .read_with_consistency_cancellable(
             read,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -1932,7 +1932,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.context_with_consistency_cancellable(
             context,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "empty context task"
@@ -1942,7 +1942,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.context_with_consistency_cancellable(
             context,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "invalid context path glob"
@@ -1952,7 +1952,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.context_with_consistency_cancellable(
             context,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "excessive context symbols"
@@ -1962,7 +1962,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.context_with_consistency_cancellable(
             context,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "unsafe context changed path"
@@ -1972,7 +1972,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.context_with_consistency_cancellable(
             context,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "oversized context base revision"
@@ -1982,7 +1982,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.context_with_consistency_cancellable(
             context,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "excessive context changed paths"
@@ -1992,7 +1992,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.context_with_consistency_cancellable(
             context,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "oversized derived context matcher"
@@ -2014,7 +2014,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
 }
 
 #[tokio::test]
-async fn working_tree_generation_checks_run_after_reconciliation() {
+async fn reconcile_working_tree_generation_checks_run_after_reconciliation() {
     let (root, services) = fixture().await;
     let generation = services
         .status()
@@ -2032,7 +2032,7 @@ async fn working_tree_generation_checks_run_after_reconciliation() {
     let error = services
         .search_with_consistency_cancellable(
             request,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -5461,7 +5461,7 @@ async fn regex_search_respects_absolute_candidate_cap() {
 }
 
 #[tokio::test]
-async fn working_tree_search_reconciles_file_created_after_index() {
+async fn reconcile_working_tree_search_reconciles_file_created_after_index() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(root.path().join("lib.rs"), "fn existing() {}\n").expect("initial source");
     let config =
@@ -5492,7 +5492,7 @@ async fn working_tree_search_reconciles_file_created_after_index() {
                 receipt_id: None,
                 cursor: None,
             },
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -5504,7 +5504,7 @@ async fn working_tree_search_reconciles_file_created_after_index() {
 }
 
 #[tokio::test]
-async fn committed_search_does_not_reconcile_file_created_after_index() {
+async fn indexed_generation_search_does_not_reconcile_file_created_after_index() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(root.path().join("lib.rs"), "fn existing() {}\n").expect("initial source");
     let config =
@@ -5535,7 +5535,7 @@ async fn committed_search_does_not_reconcile_file_created_after_index() {
                 receipt_id: None,
                 cursor: None,
             },
-            IndexConsistency::Committed,
+            IndexConsistency::IndexedGeneration,
             CancellationToken::new(),
         )
         .await
@@ -5549,7 +5549,7 @@ async fn committed_search_does_not_reconcile_file_created_after_index() {
 }
 
 #[tokio::test]
-async fn working_tree_consistency_applies_to_each_retrieval_service() {
+async fn reconcile_working_tree_consistency_applies_to_each_retrieval_service() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(root.path().join("lib.rs"), "fn existing() {}\n").expect("initial source");
     let config =
@@ -5570,7 +5570,7 @@ async fn working_tree_consistency_applies_to_each_retrieval_service() {
                 cursor: None,
                 depth: None,
             },
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -5593,7 +5593,7 @@ async fn working_tree_consistency_applies_to_each_retrieval_service() {
                 receipt_id: None,
                 cursor: None,
             },
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -5619,7 +5619,7 @@ async fn working_tree_consistency_applies_to_each_retrieval_service() {
                 expected_hash: None,
                 receipt_id: None,
             },
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -5653,7 +5653,7 @@ async fn working_tree_consistency_applies_to_each_retrieval_service() {
             changed_paths: Vec::new(),
             strict_changed_paths: false,
             },
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -5945,7 +5945,7 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
                 strict_changed_paths: true,
             },
             ContextWorkflow::Review,
-            IndexConsistency::Committed,
+            IndexConsistency::IndexedGeneration,
             CancellationToken::new(),
         )
         .await
