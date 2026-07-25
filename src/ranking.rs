@@ -599,6 +599,11 @@ fn select_with_options(
     let focus_paths = PathMatcher::new_lossy(&request.focus_paths);
     let include_paths = PathMatcher::new_lossy(&request.include_paths);
     let exclude_paths = PathMatcher::new_lossy(&request.exclude_paths);
+    let changed_paths = request
+        .changed_paths
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
     apply_request_signals(&mut candidates, request, &focus_paths);
 
     let known_hashes: HashSet<String> = request.known_hashes.iter().cloned().collect();
@@ -610,6 +615,8 @@ fn select_with_options(
     for candidate in candidates {
         if (!request.include_paths.is_empty() && !include_paths.is_match(&candidate.path))
             || exclude_paths.is_match(&candidate.path)
+            || (request.strict_focus_paths && !focus_paths.is_match(&candidate.path))
+            || (request.strict_changed_paths && !changed_paths.contains(candidate.path.as_str()))
         {
             path_omitted.push(ScoredCandidate::new_with_tokenizer(
                 candidate, weights, tokenizer,
@@ -820,6 +827,34 @@ fn select_required_candidates(
         let candidate = candidates.remove(index);
         used_tokens = used_tokens.saturating_add(candidate.token_count);
         selected.push(candidate);
+    }
+
+    let minimum_focus_fragments = request
+        .minimum_fragments_per_focus_path
+        .unwrap_or(usize::from(request.strict_focus_paths));
+    if minimum_focus_fragments > 0 {
+        for pattern in &request.focus_paths {
+            while selected
+                .iter()
+                .filter(|candidate| required_path_matches(&candidate.candidate, pattern))
+                .count()
+                < minimum_focus_fragments
+            {
+                if selected.len() == max_fragments {
+                    break;
+                }
+                let remaining = budget.saturating_sub(used_tokens);
+                let Some(index) = candidates.iter().position(|candidate| {
+                    required_path_matches(&candidate.candidate, pattern)
+                        && candidate.token_count <= remaining
+                }) else {
+                    break;
+                };
+                let candidate = candidates.remove(index);
+                used_tokens = used_tokens.saturating_add(candidate.token_count);
+                selected.push(candidate);
+            }
+        }
     }
 
     (selected, candidates)
@@ -1082,12 +1117,15 @@ mod tests {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: Vec::new(),
+            strict_changed_paths: false,
         }
     }
 
@@ -1100,12 +1138,15 @@ mod tests {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: vec![focus_path.into()],
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: Vec::new(),
+            strict_changed_paths: false,
         }
     }
 
@@ -1118,12 +1159,15 @@ mod tests {
             must_include_symbols: Vec::new(),
             max_fragments: None,
             focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: vec![exclude.into()],
             known_hashes: Vec::new(),
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: Vec::new(),
+            strict_changed_paths: false,
         }
     }
 

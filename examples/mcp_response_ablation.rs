@@ -265,12 +265,15 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
         must_include_symbols: Vec::new(),
         max_fragments: None,
         focus_paths: Vec::new(),
+        strict_focus_paths: false,
+        minimum_fragments_per_focus_path: None,
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
         prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
+        strict_changed_paths: false,
     };
     let mut response = services.context(request.clone()).await?;
     validate_context_semantics(&response)?;

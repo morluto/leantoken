@@ -848,6 +848,14 @@ pub struct ContextArgs {
     #[arg(long = "focus")]
     pub focus_paths: Vec<String>,
 
+    /// Restrict returned fragments to focus paths.
+    #[arg(long)]
+    pub strict_focus_paths: bool,
+
+    /// Minimum fragments to return for each focus path.
+    #[arg(long, value_parser = parse_positive_usize)]
+    pub minimum_fragments_per_focus_path: Option<usize>,
+
     /// Focus on these symbols (repeatable).
     #[arg(long = "focus-symbol")]
     pub focus_symbols: Vec<String>,
@@ -871,6 +879,10 @@ pub struct ContextArgs {
     /// Changed paths for diff-scoped context (repeatable).
     #[arg(long = "changed-path")]
     pub changed_paths: Vec<String>,
+
+    /// Restrict returned fragments to resolved changed paths.
+    #[arg(long)]
+    pub strict_changed_paths: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
@@ -905,12 +917,15 @@ impl From<ContextArgs> for ContextRequest {
             must_include_symbols: args.must_include_symbols,
             max_fragments: args.max_fragments,
             focus_paths: args.focus_paths,
+            strict_focus_paths: args.strict_focus_paths,
+            minimum_fragments_per_focus_path: args.minimum_fragments_per_focus_path,
             focus_symbols: args.focus_symbols,
             exclude_paths: args.exclude_paths,
             known_hashes: args.known_hashes,
             prior_repository_generation: args.prior_repository_generation,
             base_revision: args.base_revision,
             changed_paths: args.changed_paths,
+            strict_changed_paths: args.strict_changed_paths,
         }
     }
 }
