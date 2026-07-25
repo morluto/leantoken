@@ -493,6 +493,118 @@ pub struct ReadResponse {
     pub meta: ResponseMeta,
 }
 
+/// Git-backed symbol history operation.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HistoryOperation {
+    /// Read one parsed symbol from a historical file blob.
+    ReadSymbol {
+        /// Repository-relative source path.
+        path: String,
+        /// Exact parsed symbol name.
+        symbol: String,
+        /// Git revision containing the source blob.
+        revision: String,
+    },
+    /// Compare one parsed symbol between two revisions.
+    DiffSymbol {
+        /// Repository-relative source path at both revisions.
+        path: String,
+        /// Exact parsed symbol name.
+        symbol: String,
+        /// Older Git revision.
+        base_revision: String,
+        /// Newer Git revision.
+        head_revision: String,
+    },
+    /// List recent commits that touched the symbol's tracked line history.
+    SymbolLog {
+        /// Repository-relative source path.
+        path: String,
+        /// Exact parsed symbol name at `revision`.
+        symbol: String,
+        /// Revision from which line history starts; defaults to `HEAD`.
+        #[serde(default)]
+        revision: Option<String>,
+    },
+}
+
+/// Input for Git-backed symbol history retrieval.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct HistoryRequest {
+    /// Historical operation and its exact target.
+    pub operation: HistoryOperation,
+    /// Maximum commits returned by `symbol_log`; defaults to 20.
+    #[serde(default)]
+    pub max_results: Option<usize>,
+    /// Maximum source or diff tokens returned; defaults to 8000.
+    #[serde(default)]
+    pub max_tokens: Option<usize>,
+}
+
+/// One parsed symbol read from an immutable Git revision.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct HistoricalSymbol {
+    /// Resolved 12-character revision.
+    pub revision: String,
+    pub path: String,
+    pub name: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    /// First line of the complete historical symbol.
+    pub target_start_line: usize,
+    /// Last line of the complete historical symbol.
+    pub target_end_line: usize,
+    /// Last line represented by `content`, or zero when source is omitted.
+    pub returned_end_line: usize,
+    /// Whether source remains after `content`.
+    pub truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    pub content_hash: String,
+}
+
+/// One commit returned by symbol line-history traversal.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SymbolHistoryCommit {
+    /// Full commit object ID.
+    pub commit: String,
+    /// Commit author date in strict ISO 8601 format.
+    pub authored_at: String,
+    /// Commit subject.
+    pub subject: String,
+}
+
+/// Git-backed symbol history response.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct HistoryResponse {
+    /// Resolved operation kind.
+    pub kind: String,
+    /// Historical symbol for `read_symbol`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<HistoricalSymbol>,
+    /// Base-side symbol for `diff_symbol`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<HistoricalSymbol>,
+    /// Head-side symbol for `diff_symbol`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<HistoricalSymbol>,
+    /// Unified symbol diff for `diff_symbol`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff: Option<String>,
+    /// Whether the unified diff was truncated by `max_tokens`.
+    #[serde(default)]
+    pub diff_truncated: bool,
+    /// Recent commits for `symbol_log`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commits: Vec<SymbolHistoryCommit>,
+    /// Whether all matching commits fit `max_results`.
+    #[serde(default)]
+    pub result_complete: bool,
+    pub meta: ResponseMeta,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadStatus {
@@ -545,7 +657,7 @@ pub struct ContextRequest {
     /// Earlier generation used to boost files indexed since that response.
     #[serde(default)]
     pub prior_repository_generation: Option<u64>,
-    /// Base revision for diff-scoped context; resolved against the repository.
+    /// Base revision or `BASE..HEAD` range for diff-scoped context.
     #[serde(default)]
     pub base_revision: Option<String>,
     /// Explicit changed paths for diff-scoped context; bounded and validated.

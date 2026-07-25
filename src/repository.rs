@@ -531,9 +531,9 @@ pub(crate) fn checked_slash_path(path: &Path) -> Result<String> {
 pub struct GitDiffResult {
     /// Short (12-char) SHA of the resolved base revision.
     pub base_revision: String,
-    /// Short (12-char) SHA of the resolved head revision (HEAD).
+    /// Short (12-char) SHA of the resolved head revision.
     pub head_revision: String,
-    /// Repository-relative changed paths between base and the working tree.
+    /// Repository-relative changed paths in the resolved diff scope.
     pub changed_paths: Vec<String>,
 }
 
@@ -548,6 +548,201 @@ pub struct GitHunkRange {
     ///
     /// An empty target-side hunk has `end_line < start_line`.
     pub end_line: usize,
+}
+
+/// One immutable UTF-8 file blob loaded from a resolved Git revision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GitBlob {
+    /// Resolved 12-character revision.
+    pub revision: String,
+    /// File contents at the revision.
+    pub content: String,
+}
+
+/// One commit from Git's tracked line history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GitLineCommit {
+    pub commit: String,
+    pub authored_at: String,
+    pub subject: String,
+}
+
+/// Load one bounded UTF-8 repository file from an immutable Git revision.
+pub(crate) fn git_blob_at_revision(
+    root: &Path,
+    revision: &str,
+    path: &str,
+    max_bytes: usize,
+) -> Result<GitBlob> {
+    let timeout = Duration::from_millis(1_000);
+    let program = Path::new("git");
+    let revision = resolve_revision_sha_for_field(root, program, revision, timeout, "revision")?;
+    let repository_path = format!("{}{path}", git_worktree_prefix(root));
+    let object = format!("{revision}:{repository_path}");
+    let size_output = run_git_capture(
+        root,
+        program,
+        &["cat-file".into(), "-s".into(), object.clone()],
+        GitCaptureOptions {
+            timeout,
+            field: "path",
+            timeout_reason: "git cat-file timed out",
+            failure_reason: "file does not exist at revision",
+            max_output_bytes: 4 * 1024,
+        },
+    )?;
+    let size = std::str::from_utf8(&size_output)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .ok_or_else(|| Error::InternalFailure("invalid git blob size".into()))?;
+    if size > max_bytes {
+        return Err(Error::RequestLimitExceeded {
+            field: "historical file bytes",
+            requested: size,
+            limit: max_bytes,
+        });
+    }
+    let content = run_git_capture(
+        root,
+        program,
+        &["cat-file".into(), "blob".into(), object],
+        GitCaptureOptions {
+            timeout,
+            field: "path",
+            timeout_reason: "git cat-file timed out",
+            failure_reason: "file does not exist at revision",
+            max_output_bytes: max_bytes,
+        },
+    )?;
+    let content = String::from_utf8(content).map_err(|_| Error::InvalidInput {
+        field: "path",
+        reason: "historical file is not valid UTF-8",
+    })?;
+    Ok(GitBlob { revision, content })
+}
+
+/// Return bounded commit metadata for one tracked historical line range.
+pub(crate) fn git_line_history(
+    root: &Path,
+    revision: &str,
+    path: &str,
+    start_line: usize,
+    end_line: usize,
+    max: usize,
+) -> Result<Vec<GitLineCommit>> {
+    let timeout = Duration::from_millis(2_000);
+    let program = Path::new("git");
+    let revision = resolve_revision_sha_for_field(root, program, revision, timeout, "revision")?;
+    let repository_path = format!("{}{path}", git_worktree_prefix(root));
+    let line_range = format!("-L{start_line},{end_line}:{repository_path}");
+    let output = run_git_capture(
+        root,
+        program,
+        &[
+            "log".into(),
+            "--no-patch".into(),
+            "--format=%H%x1f%aI%x1f%s%x00".into(),
+            format!("--max-count={max}"),
+            line_range,
+            revision,
+        ],
+        GitCaptureOptions {
+            timeout,
+            field: "symbol",
+            timeout_reason: "git line history timed out",
+            failure_reason: "could not trace symbol line history",
+            max_output_bytes: max.saturating_mul(1024).max(4 * 1024),
+        },
+    )?;
+    let mut commits = Vec::new();
+    for record in output.split(|byte| *byte == 0) {
+        let record = record.strip_prefix(b"\n").unwrap_or(record);
+        let record = record.strip_suffix(b"\n").unwrap_or(record);
+        if record.is_empty() {
+            continue;
+        }
+        let mut fields = record.splitn(3, |byte| *byte == 0x1f);
+        let commit = fields.next();
+        let authored_at = fields.next();
+        let subject = fields.next();
+        let (Some(commit), Some(authored_at), Some(subject)) = (commit, authored_at, subject)
+        else {
+            return Err(Error::InternalFailure(
+                "invalid git line history record".into(),
+            ));
+        };
+        commits.push(GitLineCommit {
+            commit: String::from_utf8_lossy(commit).into_owned(),
+            authored_at: String::from_utf8_lossy(authored_at).into_owned(),
+            subject: String::from_utf8_lossy(subject).into_owned(),
+        });
+    }
+    Ok(commits)
+}
+
+struct GitCaptureOptions {
+    timeout: Duration,
+    field: &'static str,
+    timeout_reason: &'static str,
+    failure_reason: &'static str,
+    max_output_bytes: usize,
+}
+
+fn run_git_capture(
+    root: &Path,
+    program: &Path,
+    args: &[String],
+    options: GitCaptureOptions,
+) -> Result<Vec<u8>> {
+    use std::io::Read;
+
+    let mut output =
+        tempfile::tempfile().map_err(|error| Error::InternalFailure(error.to_string()))?;
+    let child_output = output
+        .try_clone()
+        .map_err(|error| Error::InternalFailure(error.to_string()))?;
+    let mut child = Command::new(program)
+        .args(args)
+        .current_dir(root)
+        .stdout(Stdio::from(child_output))
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| Error::InvalidInput {
+            field: options.field,
+            reason: "git is unavailable",
+        })?;
+    let status = match child.wait_timeout(options.timeout) {
+        Ok(Some(status)) => status,
+        Ok(None) | Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Error::InvalidInput {
+                field: options.field,
+                reason: options.timeout_reason,
+            });
+        }
+    };
+    if !status.success() {
+        return Err(Error::InvalidInput {
+            field: options.field,
+            reason: options.failure_reason,
+        });
+    }
+    let output_bytes = output
+        .metadata()
+        .map_err(|error| Error::InternalFailure(error.to_string()))?
+        .len();
+    if output_bytes > options.max_output_bytes as u64 {
+        return Err(Error::RequestLimitExceeded {
+            field: "git output bytes",
+            requested: usize::try_from(output_bytes).unwrap_or(usize::MAX),
+            limit: options.max_output_bytes,
+        });
+    }
+    output.rewind()?;
+    let mut bytes = Vec::new();
+    output.read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 /// Resolve changed paths between a base revision and the working tree.
@@ -567,30 +762,86 @@ pub fn git_diff_paths(root: &Path, base_revision: &str, max: usize) -> Result<Gi
     )
 }
 
+/// Resolve changed paths between two immutable Git revisions.
+pub fn git_diff_paths_between(
+    root: &Path,
+    base_revision: &str,
+    head_revision: &str,
+    max: usize,
+) -> Result<GitDiffResult> {
+    let timeout = Duration::from_millis(1_000);
+    let program = Path::new("git");
+    let base_sha =
+        resolve_revision_sha_for_field(root, program, base_revision, timeout, "base revision")?;
+    let head_sha =
+        resolve_revision_sha_for_field(root, program, head_revision, timeout, "head revision")?;
+    let changed_paths = diff_name_only(
+        root,
+        program,
+        &base_sha,
+        Some(&head_sha),
+        max,
+        timeout,
+        &git_worktree_prefix(root),
+    )?;
+    Ok(GitDiffResult {
+        base_revision: base_sha,
+        head_revision: head_sha,
+        changed_paths,
+    })
+}
+
 /// Parse bounded target-side hunk ranges between a base revision and the working tree.
 pub fn git_diff_hunks(root: &Path, base_revision: &str, max: usize) -> Result<Vec<GitHunkRange>> {
+    git_diff_hunks_with_head(root, base_revision, None, max)
+}
+
+/// Parse bounded target-side hunk ranges between two immutable Git revisions.
+pub fn git_diff_hunks_between(
+    root: &Path,
+    base_revision: &str,
+    head_revision: &str,
+    max: usize,
+) -> Result<Vec<GitHunkRange>> {
+    git_diff_hunks_with_head(root, base_revision, Some(head_revision), max)
+}
+
+fn git_diff_hunks_with_head(
+    root: &Path,
+    base_revision: &str,
+    head_revision: Option<&str>,
+    max: usize,
+) -> Result<Vec<GitHunkRange>> {
     if max == 0 {
         return Ok(Vec::new());
     }
     let timeout = Duration::from_millis(1_000);
-    let base_sha = resolve_revision_sha(root, Path::new("git"), base_revision, timeout)?;
+    let program = Path::new("git");
+    let base_sha =
+        resolve_revision_sha_for_field(root, program, base_revision, timeout, "base revision")?;
+    let head_sha = head_revision
+        .map(|revision| {
+            resolve_revision_sha_for_field(root, program, revision, timeout, "head revision")
+        })
+        .transpose()?;
     let prefix = git_worktree_prefix(root);
     let mut output =
         tempfile::tempfile().map_err(|error| Error::InternalFailure(error.to_string()))?;
     let child_output = output
         .try_clone()
         .map_err(|error| Error::InternalFailure(error.to_string()))?;
-    let mut child = Command::new("git")
-        .args([
-            "-c",
-            "core.fsmonitor=false",
-            "diff",
-            "--unified=0",
-            "--no-renames",
-            &base_sha,
-            "--",
-            ".",
-        ])
+    let mut args = vec![
+        "-c".to_owned(),
+        "core.fsmonitor=false".to_owned(),
+        "diff".to_owned(),
+        "--unified=0".to_owned(),
+        "--no-renames".to_owned(),
+        base_sha,
+    ];
+    args.extend(head_sha);
+    args.extend(["--".to_owned(), ".".to_owned()]);
+    let mut child = Command::new(program)
+        .args(args)
         .current_dir(root)
         .stdout(Stdio::from(child_output))
         .stderr(Stdio::null())
@@ -708,7 +959,7 @@ fn git_diff_paths_with(
     let prefix = git_worktree_prefix(root);
     let base_sha = resolve_revision_sha(root, program, base_revision, timeout)?;
     let head_sha = resolve_revision_sha(root, program, "HEAD", timeout)?;
-    let changed = diff_name_only(root, program, &base_sha, max, timeout, &prefix)?;
+    let changed = diff_name_only(root, program, &base_sha, None, max, timeout, &prefix)?;
     Ok(GitDiffResult {
         base_revision: base_sha,
         head_revision: head_sha,
@@ -722,8 +973,31 @@ fn resolve_revision_sha(
     revision: &str,
     timeout: Duration,
 ) -> Result<String> {
+    resolve_revision_sha_for_field(root, program, revision, timeout, "base revision")
+}
+
+fn resolve_revision_sha_for_field(
+    root: &Path,
+    program: &Path,
+    revision: &str,
+    timeout: Duration,
+    field: &'static str,
+) -> Result<String> {
+    if revision.trim().is_empty() {
+        return Err(Error::InvalidInput {
+            field,
+            reason: "must not be empty",
+        });
+    }
+    let commit_revision = format!("{revision}^{{commit}}");
     let mut child = match Command::new(program)
-        .args(["rev-parse", "--verify", "--short=12", revision])
+        .args([
+            "rev-parse",
+            "--verify",
+            "--short=12",
+            "--end-of-options",
+            &commit_revision,
+        ])
         .current_dir(root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -732,7 +1006,7 @@ fn resolve_revision_sha(
         Ok(child) => child,
         Err(_) => {
             return Err(Error::InvalidInput {
-                field: "base revision",
+                field,
                 reason: "git is unavailable",
             });
         }
@@ -743,14 +1017,14 @@ fn resolve_revision_sha(
             let _ = child.kill();
             let _ = child.wait();
             return Err(Error::InvalidInput {
-                field: "base revision",
+                field,
                 reason: "git rev-parse timed out",
             });
         }
     };
     if !status.success() {
         return Err(Error::InvalidInput {
-            field: "base revision",
+            field,
             reason: "could not resolve revision",
         });
     }
@@ -774,6 +1048,7 @@ fn diff_name_only(
     root: &Path,
     program: &Path,
     base_sha: &str,
+    head_sha: Option<&str>,
     max: usize,
     timeout: Duration,
     prefix: &str,
@@ -786,18 +1061,19 @@ fn diff_name_only(
         Ok(output) => output,
         Err(_) => return Ok(Vec::new()),
     };
+    let mut args = vec![
+        "-c".to_owned(),
+        "core.fsmonitor=false".to_owned(),
+        "diff".to_owned(),
+        "--name-only".to_owned(),
+        "-z".to_owned(),
+        "--no-renames".to_owned(),
+        base_sha.to_owned(),
+    ];
+    args.extend(head_sha.map(str::to_owned));
+    args.extend(["--".to_owned(), ".".to_owned()]);
     let mut child = match Command::new(program)
-        .args([
-            "-c",
-            "core.fsmonitor=false",
-            "diff",
-            "--name-only",
-            "-z",
-            "--no-renames",
-            base_sha,
-            "--",
-            ".",
-        ])
+        .args(args)
         .current_dir(root)
         .stdout(Stdio::from(child_output))
         .stderr(Stdio::null())

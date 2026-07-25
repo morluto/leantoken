@@ -1,6 +1,6 @@
 use clap::{Parser, error::ErrorKind};
 use leantoken::cli::{AppRequest, Cli};
-use leantoken::model::{ContextWorkflow, FileOperation, SearchMode};
+use leantoken::model::{ContextWorkflow, FileOperation, HistoryOperation, SearchMode};
 use leantoken::tokens::Tokenizer;
 use leantoken::setup::SetupClient;
 
@@ -185,6 +185,36 @@ fn cli_read_request() {
     assert_eq!(request.continuation_cursor, None);
     assert_eq!(request.max_tokens, Some(100));
     assert_eq!(request.expected_hash, Some("abc123".into()));
+}
+
+#[test]
+fn cli_history_request() {
+    let cli = parse(&[
+        "history",
+        "--max-tokens",
+        "500",
+        "diff-symbol",
+        "src/lib.rs",
+        "Services",
+        "main~1",
+        "main",
+    ]);
+    let AppRequest::History(request) = cli.app_request() else {
+        panic!("expected history request");
+    };
+    assert_eq!(request.max_tokens, Some(500));
+    assert!(matches!(
+        request.operation,
+        HistoryOperation::DiffSymbol {
+            path,
+            symbol,
+            base_revision,
+            head_revision,
+        } if path == "src/lib.rs"
+            && symbol == "Services"
+            && base_revision == "main~1"
+            && head_revision == "main"
+    ));
 }
 
 #[test]

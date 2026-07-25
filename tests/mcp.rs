@@ -517,6 +517,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     assert!(instructions.contains("call leantoken.savings directly"));
     assert!(instructions.contains("call leantoken.context first"));
     assert!(instructions.contains("leantoken.search over grep or rg"));
+    assert!(instructions.contains("leantoken.history over git show"));
     assert!(instructions.contains("consistency=reconcile_working_tree"));
     assert!(instructions.contains("native tools for edits, builds, tests"));
 
@@ -525,12 +526,13 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .iter()
         .map(|tool| tool.name.as_ref())
         .collect::<std::collections::HashSet<_>>();
-    assert_eq!(tools.len(), 6);
+    assert_eq!(tools.len(), 7);
     for name in [
         "files",
         "search",
         "outline",
         "read",
+        "history",
         "context",
         "savings",
     ] {

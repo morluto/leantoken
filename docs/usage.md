@@ -93,7 +93,7 @@ Setup writes only the `leantoken` entry in each selected global client config.
 It also manages a concise `leantoken` discovery skill in
 `~/.agents/skills/leantoken/SKILL.md` and
 `~/.claude/skills/leantoken/SKILL.md`. Hosts preload only its name and routing
-description, then load the instructions on selection; the six MCP schemas
+description, then load the instructions on selection; the seven MCP schemas
 remain deferred. Repeated setup updates only marker-owned copies, removal
 preserves an unowned file at either path, and partial client removal retains the
 skill while another LeanToken registration remains. JSON setup reports the
@@ -179,7 +179,7 @@ pruning during a mixed-version rollout.
 ## First-run doctor
 
 `leantoken doctor` launches the current executable as a real MCP subprocess and
-verifies its initialization identity and agent instructions, exact six-tool
+verifies its initialization identity and agent instructions, exact seven-tool
 catalog, and first `leantoken.context` retrieval. On a cold repository it
 follows structured `retry_after_ms` guidance until the first index generation
 is ready. Use `--json` for a machine-readable readiness report. Failures use
@@ -436,6 +436,32 @@ set `consistency` to `reconcile_working_tree` on the next MCP retrieval. An
 `indexed_generation` read may still use `index_stale` and `expected_hash` to
 detect or suppress live ranges.
 
+## `leantoken.history`
+
+Reads symbol-aware evidence from immutable Git revisions without changing the
+working tree or index:
+
+- `operation: {"kind":"read_symbol","path":"src/lib.rs","symbol":"Services",
+  "revision":"main~1"}` parses the historical blob and returns that symbol.
+- `operation: {"kind":"diff_symbol",...}` parses the symbol independently at
+  `base_revision` and `head_revision`, then returns a bounded unified diff.
+- `operation: {"kind":"symbol_log",...}` starts at `revision` (default `HEAD`)
+  and uses Git line-history traversal for the resolved symbol range.
+
+Historical paths are repository-relative, revisions are resolved before object
+lookup, and blobs remain subject to the configured per-file byte limit.
+`max_tokens` defaults to 8,000 and applies to historical source or unified diff;
+truncation is explicit through `result_complete`, `HistoricalSymbol.truncated`,
+or `diff_truncated`. `max_results` defaults to 20 and is capped at 100 for
+`symbol_log`. Symbol metadata includes the resolved 12-character revision,
+complete line range, kind, parent, and full-content hash. This tool deliberately
+has no index consistency mode because Git objects are immutable.
+
+For context restricted to immutable history, pass `BASE..HEAD` as
+`leantoken.context.base_revision` with `strict_changed_paths: true`. A single
+commit uses `COMMIT^..COMMIT`; the resolved diff scope and coverage receipt make
+the hard boundary explicit.
+
 ## `leantoken.context`
 
 Turns a task into a ranked set of source evidence. `task` is the only required
@@ -448,9 +474,10 @@ pattern, while `focus_paths` remains a ranking boost unless
 `strict_focus_paths=true`. `minimum_fragments_per_focus_path` reserves the
 requested number of fragments for every focus pattern before ordinary ranking.
 `strict_changed_paths=true` restricts fragments to the resolved explicit paths,
-base-revision diff, or current Git working-tree changes when neither diff input
-is supplied. Include, strict focus, strict changed, and exclude constraints are
-intersected; no constraint silently broadens another. `must_include_paths` and
+an immutable `BASE..HEAD` range, a base-revision-to-working-tree diff, or current
+Git working-tree changes when neither diff input is supplied. Include, strict
+focus, strict changed, and exclude constraints are intersected; no constraint
+silently broadens another. `must_include_paths` and
 `must_include_symbols` generate and select required indexed evidence before
 focus minimums and ordinary ranking. `max_fragments` defaults to 8 and accepts
 values through 100.

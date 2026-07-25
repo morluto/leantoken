@@ -14,7 +14,9 @@ use serde_json::{Value, json};
 use crate::setup::{self, SetupClient};
 use crate::{Config, Error, Result};
 
-const EXPECTED_TOOLS: [&str; 6] = ["context", "files", "outline", "read", "savings", "search"];
+const EXPECTED_TOOLS: [&str; 7] = [
+    "context", "files", "history", "outline", "read", "savings", "search",
+];
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
 const DIAGNOSTIC_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
