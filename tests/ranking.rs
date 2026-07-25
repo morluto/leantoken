@@ -15,6 +15,7 @@ fn request_with_budget(budget: usize) -> ContextRequest {
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
+        receipt_id: None,
         prior_repository_generation: None,
     base_revision: None,
     changed_paths: Vec::new(),

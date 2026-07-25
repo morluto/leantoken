@@ -12,6 +12,7 @@ mod facets;
 
 use super::Services;
 use super::read::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
+use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::search::{chunk_search_hit, compile_literal_regex, fts_quote, matching_line};
 use super::validation::{
     MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, PathFilter, PathMatcher,
@@ -2155,10 +2156,67 @@ impl Services {
                 }
                 response.diff_scope = Some(scope);
             }
+            let receipt_candidates = response
+                .fragments
+                .iter()
+                .map(|fragment| {
+                    ReceiptEvidence::new(
+                        fragment.path.clone(),
+                        fragment.start_line,
+                        fragment.end_line,
+                        fragment.content_hash.clone(),
+                        Some(&fragment.content),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let receipt = self.evaluate_receipt(
+                request.receipt_id.as_deref(),
+                generation,
+                &receipt_candidates,
+            )?;
+            response.fragments = response
+                .fragments
+                .into_iter()
+                .zip(&receipt.decisions)
+                .filter_map(|(fragment, decision)| {
+                    matches!(
+                        decision,
+                        ReceiptDecision::Return | ReceiptDecision::ReturnNearDuplicate
+                    )
+                    .then_some(fragment)
+                })
+                .collect();
+            response.receipt.fragment_hashes = response
+                .fragments
+                .iter()
+                .map(|fragment| fragment.content_hash.clone())
+                .collect();
+            response.meta.source_tokens = response
+                .fragments
+                .iter()
+                .map(|fragment| self.config.tokenizer.count(&fragment.content))
+                .sum();
+            response.meta.emitted_tokens = response.meta.source_tokens;
+            receipt.apply_meta(&mut response.meta);
+            if response.meta.receipt_near_duplicates > 0 {
+                response.warnings.push(format!(
+                    "{} returned fragments are semantic near-duplicates of prior receipt evidence",
+                    response.meta.receipt_near_duplicates
+                ));
+            }
             if response.fragments.is_empty() {
-                response
-                    .warnings
-                    .push("no relevant indexed evidence found".into());
+                if response.meta.receipt_suppressed_exact
+                    + response.meta.receipt_suppressed_overlap
+                    > 0
+                {
+                    response
+                        .warnings
+                        .push("all selected evidence was already covered by the receipt".into());
+                } else {
+                    response
+                        .warnings
+                        .push("no relevant indexed evidence found".into());
+                }
             }
             self.finalize_response(&mut response)?;
             let paths = response
@@ -2254,6 +2312,7 @@ mod tests {
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: vec!["src/core.rs".into()],
@@ -2358,6 +2417,7 @@ mod tests {
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: vec!["held".into()],
+            receipt_id: None,
             prior_repository_generation: None,
             base_revision: Some("origin/main".into()),
             changed_paths: Vec::new(),

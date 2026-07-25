@@ -604,6 +604,8 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         leantoken::Error::HeadingNotFound { .. } => ("heading_not_found", None, None, None, None),
         leantoken::Error::IndexNotReady => ("index_not_ready", None, None, None, None),
         leantoken::Error::StaleCursor => ("stale_cursor", None, None, None, None),
+        leantoken::Error::UnknownReceipt(_) => ("unknown_receipt", None, None, None, None),
+        leantoken::Error::StaleReceipt { .. } => ("stale_receipt", None, None, None, None),
         leantoken::Error::Cancelled => ("request_cancelled", None, None, None, None),
         leantoken::Error::PathOutsideRoot(_) => ("path_outside_root", None, None, None, None),
         leantoken::Error::UnsupportedPathEncoding(_) => {

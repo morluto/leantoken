@@ -79,6 +79,18 @@ pub struct ResponseMeta {
     pub emitted_tokens: usize,
     /// Whether the configured tokenizer produces exact local counts.
     pub token_count_exact: bool,
+    /// Opaque server-managed retrieval receipt for suppressing repeated evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_id: Option<String>,
+    /// Evidence omitted because its content hash was already recorded by the receipt.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub receipt_suppressed_exact: usize,
+    /// Evidence omitted because its source range overlaps evidence recorded by the receipt.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub receipt_suppressed_overlap: usize,
+    /// Returned evidence that is semantically close to evidence recorded by the receipt.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub receipt_near_duplicates: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
 }
@@ -203,6 +215,9 @@ pub struct SearchRequest {
     /// Prefer a structural definition when lexical and structural channels find the same definition.
     #[serde(default)]
     pub prefer_structural: bool,
+    /// Server-managed receipt whose previously returned evidence should be suppressed.
+    #[serde(default)]
+    pub receipt_id: Option<String>,
     /// Cursor returned by an earlier response from the same generation.
     #[serde(default)]
     pub cursor: Option<String>,
@@ -302,6 +317,9 @@ pub struct OutlineRequest {
     /// Maximum tokens across signatures and import targets.
     #[serde(default)]
     pub max_tokens: Option<usize>,
+    /// Server-managed receipt whose previously returned evidence should be suppressed.
+    #[serde(default)]
+    pub receipt_id: Option<String>,
     /// Opaque cursor returned when `max_results` leaves outline entries unread.
     #[serde(default)]
     pub cursor: Option<String>,
@@ -427,6 +445,9 @@ pub struct ReadRequest {
     /// Hash from the same prior range; matching content returns `not_modified`.
     #[serde(default)]
     pub expected_hash: Option<String>,
+    /// Server-managed receipt whose previously returned evidence should be suppressed.
+    #[serde(default)]
+    pub receipt_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -516,6 +537,9 @@ pub struct ContextRequest {
     /// Fragment hashes already held by the caller and not to resend.
     #[serde(default)]
     pub known_hashes: Vec<String>,
+    /// Server-managed receipt whose previously returned evidence should be suppressed.
+    #[serde(default)]
+    pub receipt_id: Option<String>,
     /// Earlier generation used to boost files indexed since that response.
     #[serde(default)]
     pub prior_repository_generation: Option<u64>,
@@ -1176,6 +1200,10 @@ mod tests {
                 tokenizer: "cl100k_base".into(),
                 emitted_tokens: 4,
                 token_count_exact: true,
+                receipt_id: None,
+                receipt_suppressed_exact: 0,
+                receipt_suppressed_overlap: 0,
+                receipt_near_duplicates: 0,
                 next_cursor: None,
             },
         };
@@ -1267,6 +1295,10 @@ mod tests {
                 tokenizer: "cl100k_base".into(),
                 emitted_tokens: 9,
                 token_count_exact: true,
+                receipt_id: None,
+                receipt_suppressed_exact: 0,
+                receipt_suppressed_overlap: 0,
+                receipt_near_duplicates: 0,
                 next_cursor: None,
             },
         };

@@ -245,11 +245,14 @@ representation. The catalog publishes documented input schemas but omits
 optional output schemas; repeating full response DTOs in every `tools/list`
 result costs model context without changing tool behavior.
 
-Context receipts serialize only `fragment_hashes`, aligned by index with the
-returned fragments. The internal task fingerprint is not part of the wire
-contract because the originating request already carries the task and no
-follow-up request consumes that fingerprint. Pass the aligned hashes through
-`known_hashes` to suppress exact-content resends.
+Search, outline, read, and context responses return an opaque
+`meta.receipt_id`. Within one live MCP or programmatic service session, pass
+that ID to a later retrieval to suppress exact content and overlapping source
+ranges already returned. Near-duplicate evidence remains visible and increments
+`meta.receipt_near_duplicates`. Receipts are bounded, server-managed, and tied
+to one repository generation; unknown, evicted, and stale receipts fail
+explicitly. Context `fragment_hashes` and `known_hashes` remain available for
+stateless compatibility.
 
 Prefer LeanToken over shell discovery and whole-file reads. For a broad coding,
 debugging, review, or architecture task, start with `leantoken.context`. Use the
@@ -497,16 +500,17 @@ boundary, base revision, and held fragment hashes once; callers overlay a
 suggested scope while reusing the original diff inputs. It is decomposition
 guidance, not a completeness claim.
 
-The evidence receipt contains a task fingerprint and a compact hash list aligned
-by index with the returned fragments. Repository generation appears once in
-response metadata. The receipt is returned but not persisted. Passing its
-`fragment_hashes` as `known_hashes` prevents those exact fragments from being
-resent; other relevant evidence may still be returned.
+The context evidence receipt retains a compact hash list aligned by index with
+the returned fragments. For normal same-session reuse, pass
+`meta.receipt_id` instead of copying those hashes. The server then suppresses
+exact duplicates and overlapping ranges across context, search, outline, and
+read. `fragment_hashes` plus `known_hashes` remains the stateless fallback for
+clients that cannot retain a server receipt.
 
-For a frontier-to-executor handoff, transfer the grounded fragments, receipt,
-repository generation, current todo list, and first validated edit. This is a
-compact trajectory manifest, not a LeanToken session. The executor can pass the
-receipt hashes back without rereading the same evidence.
+For a frontier-to-executor handoff in the same live server session, transfer the
+grounded fragments, receipt ID, repository generation, current todo list, and
+first validated edit. A later server process cannot recover the in-memory
+receipt; use the aligned fragment hashes when persistence is required.
 
 Every retrieval response also includes an opaque `meta.repository_id`. MCP
 callers can pass it back as `expected_repository_id`; a server bound to another
