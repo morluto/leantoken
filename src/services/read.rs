@@ -905,7 +905,7 @@ fn returned_end_line(start_line: usize, content: &str) -> usize {
         .saturating_sub(usize::from(content.ends_with('\n') && newline_count > 0))
 }
 
-fn open_live_file(services: &Services, path: &str) -> Result<File> {
+pub(super) fn open_live_file(services: &Services, path: &str) -> Result<File> {
     services
         .repository_root
         .open(path)

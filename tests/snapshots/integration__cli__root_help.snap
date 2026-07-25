@@ -1,6 +1,6 @@
 ---
 source: tests/cli.rs
-assertion_line: 29
+assertion_line: 32
 expression: "help(&[])"
 ---
 Token-budgeted repository context
@@ -16,6 +16,7 @@ Commands:
   outline  Show the structural outline of one or more files
   read     Read a bounded source range
   history  Read, diff, or trace a symbol across Git revisions
+  json     Query, summarize, or compare live JSON structures
   context  Retrieve ranked task context within a token budget
   doctor   Verify MCP identity, tools, and first-retrieval readiness
   mcp      Run the MCP server over stdio

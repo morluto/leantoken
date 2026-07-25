@@ -1,6 +1,6 @@
 ---
 source: src/mcp.rs
-assertion_line: 2096
+assertion_line: 2313
 expression: tools
 ---
 [
@@ -566,6 +566,240 @@ expression: tools
         "operation": {
           "$ref": "#/$defs/HistoryMcpOperation",
           "description": "Git-backed symbol history operation."
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "json",
+    "description": "Query, summarize, or compare bounded live JSON without indexing raw artifacts. Select with RFC 6901 JSON Pointer or standard JMESPath; use collapsed, keys, or schema projections for large arrays and objects, numeric_summary for count/min/median/p95/max, and diff_fields for selected values across two files. Example: {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"artifacts/results.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"runs[].score\"}}}.",
+    "inputSchema": {
+      "$defs": {
+        "JsonMcpOperation": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Select and project one JSON value.",
+              "properties": {
+                "kind": {
+                  "const": "query",
+                  "type": "string"
+                },
+                "path": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "projection": {
+                  "$ref": "#/$defs/JsonProjection",
+                  "default": "value"
+                },
+                "selector": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/JsonMcpSelector"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Summarize numeric leaves below one JSON selection.",
+              "properties": {
+                "kind": {
+                  "const": "numeric_summary",
+                  "type": "string"
+                },
+                "path": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "selector": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/JsonMcpSelector"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Compare selected fields between two JSON files.",
+              "properties": {
+                "base_path": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "head_path": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "diff_fields",
+                  "type": "string"
+                },
+                "projection": {
+                  "$ref": "#/$defs/JsonProjection",
+                  "default": "value"
+                },
+                "selectors": {
+                  "items": {
+                    "$ref": "#/$defs/JsonMcpSelector"
+                  },
+                  "maxItems": 100,
+                  "minItems": 1,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "kind",
+                "base_path",
+                "head_path",
+                "selectors"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "JsonMcpSelector": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "RFC 6901 JSON Pointer.",
+              "properties": {
+                "kind": {
+                  "const": "pointer",
+                  "type": "string"
+                },
+                "pointer": {
+                  "maxLength": 4096,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "pointer"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Standard JMESPath expression.",
+              "properties": {
+                "expression": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "jmespath",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "expression"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "JsonProjection": {
+          "description": "Structural projection applied after JSON selection.",
+          "oneOf": [
+            {
+              "const": "value",
+              "description": "Preserve the selected JSON value.",
+              "type": "string"
+            },
+            {
+              "const": "collapsed",
+              "description": "Replace arrays with count and bounded sample summaries.",
+              "type": "string"
+            },
+            {
+              "const": "keys",
+              "description": "Return JSON Pointer-shaped key paths and value types only.",
+              "type": "string"
+            },
+            {
+              "const": "schema",
+              "description": "Return an inferred structural schema without leaf values.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "array_sample_size": {
+          "default": null,
+          "description": "Array elements sampled by collapsed projections (default 3, maximum 20).",
+          "format": "uint",
+          "maximum": 20,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "expected_repository_id": {
+          "default": null,
+          "description": "Expected opaque repository identity from an earlier response.",
+          "maxLength": 128,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_items": {
+          "default": null,
+          "description": "Maximum structural items returned (default 1000, maximum 10000).",
+          "format": "uint",
+          "maximum": 10000,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_tokens": {
+          "default": 8000,
+          "description": "Maximum tokens across selected/projected JSON (default 8000, maximum 32000).",
+          "format": "uint",
+          "maximum": 32000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "operation": {
+          "$ref": "#/$defs/JsonMcpOperation",
+          "description": "Structural JSON operation."
         }
       },
       "required": [

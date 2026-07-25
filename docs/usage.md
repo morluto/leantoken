@@ -93,7 +93,7 @@ Setup writes only the `leantoken` entry in each selected global client config.
 It also manages a concise `leantoken` discovery skill in
 `~/.agents/skills/leantoken/SKILL.md` and
 `~/.claude/skills/leantoken/SKILL.md`. Hosts preload only its name and routing
-description, then load the instructions on selection; the seven MCP schemas
+description, then load the instructions on selection; the eight MCP schemas
 remain deferred. Repeated setup updates only marker-owned copies, removal
 preserves an unowned file at either path, and partial client removal retains the
 skill while another LeanToken registration remains. JSON setup reports the
@@ -179,7 +179,7 @@ pruning during a mixed-version rollout.
 ## First-run doctor
 
 `leantoken doctor` launches the current executable as a real MCP subprocess and
-verifies its initialization identity and agent instructions, exact seven-tool
+verifies its initialization identity and agent instructions, exact eight-tool
 catalog, and first `leantoken.context` retrieval. On a cold repository it
 follows structured `retry_after_ms` guidance until the first index generation
 is ready. Use `--json` for a machine-readable readiness report. Failures use
@@ -435,6 +435,25 @@ successful retry result such as `{"status":"retryable","reason":"index_building"
 set `consistency` to `reconcile_working_tree` on the next MCP retrieval. An
 `indexed_generation` read may still use `index_stale` and `expected_hash` to
 detect or suppress live ranges.
+
+## `leantoken.json`
+
+Reads exact repository-relative JSON files without requiring them to be indexed,
+including ignored artifact paths. Operations are:
+
+- `query`: select the root, an RFC 6901 JSON Pointer, or a standard JMESPath
+  expression, then return `value`, `collapsed`, `keys`, or `schema`.
+- `numeric_summary`: collect numeric leaves below the selection and return exact
+  count, min, median, nearest-rank p95, max, and ignored non-numeric count.
+- `diff_fields`: evaluate up to 100 selectors against two files and report
+  presence, projected before/after values, and whether each field changed.
+
+`collapsed` replaces arrays with their total count and a bounded sample.
+`max_items` defaults to 1,000 (maximum 10,000), `array_sample_size` defaults to
+3 (maximum 20), and `max_tokens` defaults to 8,000. Exact source hashes bind
+responses to the complete live files. Raw values that exceed a cap fail loud;
+structural projections report `result_complete: false` when the item cap omits
+structure.
 
 ## `leantoken.history`
 

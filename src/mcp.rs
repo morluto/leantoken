@@ -22,7 +22,8 @@ use crate::config::{
 };
 use crate::model::{
     ContextRequest, ContextWorkflow, FileOperation, FilesRequest, HistoryOperation, HistoryRequest,
-    IndexConsistency, OutlineRequest, ReadRequest, SearchMode, SearchRequest,
+    IndexConsistency, JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest,
+    ReadRequest, SearchMode, SearchRequest,
 };
 use crate::services::{Services, validate_positive_request_limit, validate_request_limit};
 
@@ -550,6 +551,138 @@ impl HistoryMcpRequest {
                 operation,
                 max_results: self.max_results,
                 max_tokens: self.max_tokens,
+            },
+            self.expected_repository_id,
+        )
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct JsonMcpRequest {
+    /// Expected opaque repository identity from an earlier response.
+    #[serde(default)]
+    #[schemars(schema_with = "expected_repository_id_schema")]
+    expected_repository_id: Option<String>,
+    /// Structural JSON operation.
+    operation: JsonMcpOperation,
+    /// Maximum tokens across selected/projected JSON (default 8000, maximum 32000).
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
+    max_tokens: Option<usize>,
+    /// Maximum structural items returned (default 1000, maximum 10000).
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(range(min = 1, max = 10000))]
+    max_items: Option<usize>,
+    /// Array elements sampled by collapsed projections (default 3, maximum 20).
+    #[serde(default)]
+    #[schemars(range(min = 0, max = 20))]
+    array_sample_size: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum JsonMcpSelector {
+    /// RFC 6901 JSON Pointer.
+    Pointer {
+        #[schemars(length(max = 4096))]
+        pointer: String,
+    },
+    /// Standard JMESPath expression.
+    Jmespath {
+        #[schemars(length(min = 1, max = 4096))]
+        expression: String,
+    },
+}
+
+impl From<JsonMcpSelector> for JsonSelector {
+    fn from(value: JsonMcpSelector) -> Self {
+        match value {
+            JsonMcpSelector::Pointer { pointer } => Self::Pointer { pointer },
+            JsonMcpSelector::Jmespath { expression } => Self::Jmespath { expression },
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum JsonMcpOperation {
+    /// Select and project one JSON value.
+    Query {
+        #[schemars(length(min = 1, max = 4096))]
+        path: String,
+        #[serde(default)]
+        selector: Option<JsonMcpSelector>,
+        #[serde(default)]
+        projection: JsonProjection,
+    },
+    /// Summarize numeric leaves below one JSON selection.
+    NumericSummary {
+        #[schemars(length(min = 1, max = 4096))]
+        path: String,
+        #[serde(default)]
+        selector: Option<JsonMcpSelector>,
+    },
+    /// Compare selected fields between two JSON files.
+    DiffFields {
+        #[schemars(length(min = 1, max = 4096))]
+        base_path: String,
+        #[schemars(length(min = 1, max = 4096))]
+        head_path: String,
+        #[schemars(length(min = 1, max = 100))]
+        selectors: Vec<JsonMcpSelector>,
+        #[serde(default)]
+        projection: JsonProjection,
+    },
+}
+
+impl JsonMcpRequest {
+    fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
+        validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)?;
+        validate_optional_positive_limit("max_items", self.max_items, 10_000)?;
+        if self.array_sample_size.is_some_and(|value| value > 20) {
+            return Err(crate::Error::RequestLimitExceeded {
+                field: "array_sample_size",
+                requested: self.array_sample_size.unwrap_or_default(),
+                limit: 20,
+            });
+        }
+        Ok(())
+    }
+
+    fn into_parts(self) -> (JsonRequest, Option<String>) {
+        let operation = match self.operation {
+            JsonMcpOperation::Query {
+                path,
+                selector,
+                projection,
+            } => JsonOperation::Query {
+                path,
+                selector: selector.map(Into::into),
+                projection,
+            },
+            JsonMcpOperation::NumericSummary { path, selector } => JsonOperation::NumericSummary {
+                path,
+                selector: selector.map(Into::into),
+            },
+            JsonMcpOperation::DiffFields {
+                base_path,
+                head_path,
+                selectors,
+                projection,
+            } => JsonOperation::DiffFields {
+                base_path,
+                head_path,
+                selectors: selectors.into_iter().map(Into::into).collect(),
+                projection,
+            },
+        };
+        (
+            JsonRequest {
+                operation,
+                max_tokens: self.max_tokens,
+                max_items: self.max_items,
+                array_sample_size: self.array_sample_size,
             },
             self.expected_repository_id,
         )
@@ -1241,6 +1374,30 @@ impl LeanTokenMcp {
     }
 
     #[tool(
+        name = "json",
+        description = "Query, summarize, or compare bounded live JSON without indexing raw artifacts. Select with RFC 6901 JSON Pointer or standard JMESPath; use collapsed, keys, or schema projections for large arrays and objects, numeric_summary for count/min/median/p95/max, and diff_fields for selected values across two files. Example: {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"artifacts/results.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"runs[].score\"}}}."
+    )]
+    async fn leantoken_json(
+        &self,
+        Parameters(req): Parameters<JsonMcpRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let state = self.services.get();
+        req.validate_limits(state.limits())
+            .map_err(into_mcp_error)?;
+        let services = match self.services(&state) {
+            Ok(services) => services,
+            Err(result) => return Ok(result),
+        };
+        let (request, expected_repository_id) = req.into_parts();
+        services
+            .validate_repository_id(expected_repository_id.as_deref())
+            .map_err(into_mcp_error)?;
+        let resp = services.json_cancellable(request, context.ct.clone()).await;
+        self.service_result(resp)
+    }
+
+    #[tool(
         name = "context",
         description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required evidence. Coverage diagnostics fail loud when strict scopes are empty or underfilled. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}."
     )]
@@ -1292,7 +1449,7 @@ impl LeanTokenMcp {
 
 #[tool_handler(
     name = "leantoken",
-    instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken.context first with the user's task. PREFER leantoken.search over grep or rg for source search; leantoken.files over find, ls, or glob for paths; leantoken.outline over opening whole files to discover structure; leantoken.read over cat, head, or sed for exact current symbols and ranges; and leantoken.history over git show, diff, or log -L for one symbol across immutable revisions. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=reconcile_working_tree on index-backed tools after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, generated artifacts, non-symbol Git operations, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
+    instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken.context first with the user's task. PREFER leantoken.search over grep or rg for source search; leantoken.files over find, ls, or glob for paths; leantoken.outline over opening whole files to discover structure; leantoken.read over cat, head, or sed for exact current symbols and ranges; leantoken.history over git show, diff, or log -L for one symbol across immutable revisions; and leantoken.json over jq or whole-file reads for structural JSON queries, summaries, and selected-field diffs. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=reconcile_working_tree on index-backed tools after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, runtime probes, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
 )]
 impl ServerHandler for LeanTokenMcp {
     fn on_initialized(
@@ -1532,14 +1689,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mcp_exposes_seven_tools() {
+    fn mcp_exposes_eight_tools() {
         let router = LeanTokenMcp::tool_router();
         let tools = router.list_all();
-        assert_eq!(tools.len(), 7);
+        assert_eq!(tools.len(), 8);
 
         let names: std::collections::HashSet<_> = tools.iter().map(|t| t.name.as_ref()).collect();
         for name in [
-            "files", "search", "outline", "read", "history", "context", "savings",
+            "files", "search", "outline", "read", "history", "json", "context", "savings",
         ] {
             assert!(names.contains(name), "missing tool {name}");
         }
@@ -1904,7 +2061,7 @@ mod tests {
         for tool in LeanTokenMcp::tool_router()
             .list_all()
             .into_iter()
-            .filter(|tool| tool.name != "savings" && tool.name != "history")
+            .filter(|tool| tool.name != "savings" && tool.name != "history" && tool.name != "json")
         {
             let consistency = tool
                 .input_schema
@@ -2119,6 +2276,34 @@ mod tests {
                 && symbol == "Services"
                 && base_revision == "main~1"
                 && head_revision == "main"
+        ));
+    }
+
+    #[test]
+    fn json_operation_maps_to_the_service_request() {
+        let request = serde_json::from_value::<JsonMcpRequest>(serde_json::json!({
+            "operation": {
+                "kind": "numeric_summary",
+                "path": "artifacts/results.json",
+                "selector": {
+                    "kind": "jmespath",
+                    "expression": "runs[].score"
+                }
+            },
+            "max_items": 500
+        }))
+        .expect("JSON request");
+        request
+            .validate_limits(McpLimitPolicy::DEFAULT)
+            .expect("JSON limits");
+        let (request, _) = request.into_parts();
+        assert_eq!(request.max_items, Some(500));
+        assert!(matches!(
+            request.operation,
+            JsonOperation::NumericSummary {
+                path,
+                selector: Some(JsonSelector::Jmespath { expression }),
+            } if path == "artifacts/results.json" && expression == "runs[].score"
         ));
     }
 

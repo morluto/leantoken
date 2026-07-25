@@ -526,7 +526,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .iter()
         .map(|tool| tool.name.as_ref())
         .collect::<std::collections::HashSet<_>>();
-    assert_eq!(tools.len(), 7);
+    assert_eq!(tools.len(), 8);
     for name in [
         "files",
         "search",

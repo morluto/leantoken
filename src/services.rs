@@ -21,6 +21,7 @@ use crate::{Config, Error, Result};
 mod context;
 mod files;
 mod history;
+mod json;
 mod read;
 mod receipts;
 mod search;
@@ -100,6 +101,7 @@ macro_rules! impl_retrieval_response {
 impl_retrieval_response!(
     FilesResponse,
     HistoryResponse,
+    JsonResponse,
     SearchResponse,
     OutlineResponse,
     ReadResponse,

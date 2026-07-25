@@ -33,12 +33,15 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 - Add a language grammar only when a pinned task and parser fixture demonstrate
   recall value that outweighs its binary, indexing, and schema cost. The
   expanded task set uses existing grammars, so no grammar was added.
+- Structural JSON retrieval now handles exact ignored artifacts through
+  Pointer/JMESPath selection, collapsed/key/schema projections, numeric
+  summaries, and selected-field diffs without indexing raw reports.
 
 ## Token accounting
 
 - Exact local modes now cover the bundled `tiktoken-rs` encodings; an explicit
   inexact estimate mode covers providers without a local vocabulary.
-- MCP accounting includes initialization, the seven-tool catalog,
+- MCP accounting includes initialization, the eight-tool catalog,
   `notifications/initialized`, JSON-RPC envelopes, results, and handoffs. A
   transparent stdio proxy can capture exact exchanges from real hosts.
 - Compare dual, text-only, and structured-only results per host/version. Keep
