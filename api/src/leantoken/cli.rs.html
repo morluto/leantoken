@@ -848,70 +848,85 @@
 <a href=#848 id=848 data-nosnippet>848</a>    </span><span class="attr">#[arg(long = <span class="string">"focus"</span>)]
 <a href=#849 id=849 data-nosnippet>849</a>    </span><span class="kw">pub </span>focus_paths: Vec&lt;String&gt;,
 <a href=#850 id=850 data-nosnippet>850</a>
-<a href=#851 id=851 data-nosnippet>851</a>    <span class="doccomment">/// Focus on these symbols (repeatable).
-<a href=#852 id=852 data-nosnippet>852</a>    </span><span class="attr">#[arg(long = <span class="string">"focus-symbol"</span>)]
-<a href=#853 id=853 data-nosnippet>853</a>    </span><span class="kw">pub </span>focus_symbols: Vec&lt;String&gt;,
+<a href=#851 id=851 data-nosnippet>851</a>    <span class="doccomment">/// Restrict returned fragments to focus paths.
+<a href=#852 id=852 data-nosnippet>852</a>    </span><span class="attr">#[arg(long)]
+<a href=#853 id=853 data-nosnippet>853</a>    </span><span class="kw">pub </span>strict_focus_paths: bool,
 <a href=#854 id=854 data-nosnippet>854</a>
-<a href=#855 id=855 data-nosnippet>855</a>    <span class="doccomment">/// Exclude these paths (repeatable).
-<a href=#856 id=856 data-nosnippet>856</a>    </span><span class="attr">#[arg(long = <span class="string">"exclude"</span>)]
-<a href=#857 id=857 data-nosnippet>857</a>    </span><span class="kw">pub </span>exclude_paths: Vec&lt;String&gt;,
+<a href=#855 id=855 data-nosnippet>855</a>    <span class="doccomment">/// Minimum fragments to return for each focus path.
+<a href=#856 id=856 data-nosnippet>856</a>    </span><span class="attr">#[arg(long, value_parser = parse_positive_usize)]
+<a href=#857 id=857 data-nosnippet>857</a>    </span><span class="kw">pub </span>minimum_fragments_per_focus_path: <span class="prelude-ty">Option</span>&lt;usize&gt;,
 <a href=#858 id=858 data-nosnippet>858</a>
-<a href=#859 id=859 data-nosnippet>859</a>    <span class="doccomment">/// Content hashes the caller already holds (repeatable).
-<a href=#860 id=860 data-nosnippet>860</a>    </span><span class="attr">#[arg(long = <span class="string">"known-hash"</span>)]
-<a href=#861 id=861 data-nosnippet>861</a>    </span><span class="kw">pub </span>known_hashes: Vec&lt;String&gt;,
+<a href=#859 id=859 data-nosnippet>859</a>    <span class="doccomment">/// Focus on these symbols (repeatable).
+<a href=#860 id=860 data-nosnippet>860</a>    </span><span class="attr">#[arg(long = <span class="string">"focus-symbol"</span>)]
+<a href=#861 id=861 data-nosnippet>861</a>    </span><span class="kw">pub </span>focus_symbols: Vec&lt;String&gt;,
 <a href=#862 id=862 data-nosnippet>862</a>
-<a href=#863 id=863 data-nosnippet>863</a>    <span class="doccomment">/// Prior repository generation for delta context.
-<a href=#864 id=864 data-nosnippet>864</a>    </span><span class="attr">#[arg(long = <span class="string">"prior-generation"</span>)]
-<a href=#865 id=865 data-nosnippet>865</a>    </span><span class="kw">pub </span>prior_repository_generation: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#863 id=863 data-nosnippet>863</a>    <span class="doccomment">/// Exclude these paths (repeatable).
+<a href=#864 id=864 data-nosnippet>864</a>    </span><span class="attr">#[arg(long = <span class="string">"exclude"</span>)]
+<a href=#865 id=865 data-nosnippet>865</a>    </span><span class="kw">pub </span>exclude_paths: Vec&lt;String&gt;,
 <a href=#866 id=866 data-nosnippet>866</a>
-<a href=#867 id=867 data-nosnippet>867</a>    <span class="doccomment">/// Base revision for diff-scoped context (e.g. "origin/main").
-<a href=#868 id=868 data-nosnippet>868</a>    </span><span class="attr">#[arg(long = <span class="string">"base-revision"</span>)]
-<a href=#869 id=869 data-nosnippet>869</a>    </span><span class="kw">pub </span>base_revision: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#867 id=867 data-nosnippet>867</a>    <span class="doccomment">/// Content hashes the caller already holds (repeatable).
+<a href=#868 id=868 data-nosnippet>868</a>    </span><span class="attr">#[arg(long = <span class="string">"known-hash"</span>)]
+<a href=#869 id=869 data-nosnippet>869</a>    </span><span class="kw">pub </span>known_hashes: Vec&lt;String&gt;,
 <a href=#870 id=870 data-nosnippet>870</a>
-<a href=#871 id=871 data-nosnippet>871</a>    <span class="doccomment">/// Changed paths for diff-scoped context (repeatable).
-<a href=#872 id=872 data-nosnippet>872</a>    </span><span class="attr">#[arg(long = <span class="string">"changed-path"</span>)]
-<a href=#873 id=873 data-nosnippet>873</a>    </span><span class="kw">pub </span>changed_paths: Vec&lt;String&gt;,
-<a href=#874 id=874 data-nosnippet>874</a>}
-<a href=#875 id=875 data-nosnippet>875</a>
-<a href=#876 id=876 data-nosnippet>876</a><span class="attr">#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
-<a href=#877 id=877 data-nosnippet>877</a></span><span class="kw">pub enum </span>ContextWorkflowArg {
-<a href=#878 id=878 data-nosnippet>878</a>    <span class="attr">#[default]
-<a href=#879 id=879 data-nosnippet>879</a>    </span>Auto,
-<a href=#880 id=880 data-nosnippet>880</a>    Implementation,
-<a href=#881 id=881 data-nosnippet>881</a>    Contribution,
-<a href=#882 id=882 data-nosnippet>882</a>    Review,
-<a href=#883 id=883 data-nosnippet>883</a>    Investigation,
-<a href=#884 id=884 data-nosnippet>884</a>}
-<a href=#885 id=885 data-nosnippet>885</a>
-<a href=#886 id=886 data-nosnippet>886</a><span class="kw">impl </span>From&lt;ContextWorkflowArg&gt; <span class="kw">for </span><span class="kw">crate</span>::model::ContextWorkflow {
-<a href=#887 id=887 data-nosnippet>887</a>    <span class="kw">fn </span>from(value: ContextWorkflowArg) -&gt; <span class="self">Self </span>{
-<a href=#888 id=888 data-nosnippet>888</a>        <span class="kw">match </span>value {
-<a href=#889 id=889 data-nosnippet>889</a>            ContextWorkflowArg::Auto =&gt; <span class="self">Self</span>::Auto,
-<a href=#890 id=890 data-nosnippet>890</a>            ContextWorkflowArg::Implementation =&gt; <span class="self">Self</span>::Implementation,
-<a href=#891 id=891 data-nosnippet>891</a>            ContextWorkflowArg::Contribution =&gt; <span class="self">Self</span>::Contribution,
-<a href=#892 id=892 data-nosnippet>892</a>            ContextWorkflowArg::Review =&gt; <span class="self">Self</span>::Review,
-<a href=#893 id=893 data-nosnippet>893</a>            ContextWorkflowArg::Investigation =&gt; <span class="self">Self</span>::Investigation,
-<a href=#894 id=894 data-nosnippet>894</a>        }
-<a href=#895 id=895 data-nosnippet>895</a>    }
+<a href=#871 id=871 data-nosnippet>871</a>    <span class="doccomment">/// Prior repository generation for delta context.
+<a href=#872 id=872 data-nosnippet>872</a>    </span><span class="attr">#[arg(long = <span class="string">"prior-generation"</span>)]
+<a href=#873 id=873 data-nosnippet>873</a>    </span><span class="kw">pub </span>prior_repository_generation: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#874 id=874 data-nosnippet>874</a>
+<a href=#875 id=875 data-nosnippet>875</a>    <span class="doccomment">/// Base revision for diff-scoped context (e.g. "origin/main").
+<a href=#876 id=876 data-nosnippet>876</a>    </span><span class="attr">#[arg(long = <span class="string">"base-revision"</span>)]
+<a href=#877 id=877 data-nosnippet>877</a>    </span><span class="kw">pub </span>base_revision: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#878 id=878 data-nosnippet>878</a>
+<a href=#879 id=879 data-nosnippet>879</a>    <span class="doccomment">/// Changed paths for diff-scoped context (repeatable).
+<a href=#880 id=880 data-nosnippet>880</a>    </span><span class="attr">#[arg(long = <span class="string">"changed-path"</span>)]
+<a href=#881 id=881 data-nosnippet>881</a>    </span><span class="kw">pub </span>changed_paths: Vec&lt;String&gt;,
+<a href=#882 id=882 data-nosnippet>882</a>
+<a href=#883 id=883 data-nosnippet>883</a>    <span class="doccomment">/// Restrict returned fragments to resolved changed paths.
+<a href=#884 id=884 data-nosnippet>884</a>    </span><span class="attr">#[arg(long)]
+<a href=#885 id=885 data-nosnippet>885</a>    </span><span class="kw">pub </span>strict_changed_paths: bool,
+<a href=#886 id=886 data-nosnippet>886</a>}
+<a href=#887 id=887 data-nosnippet>887</a>
+<a href=#888 id=888 data-nosnippet>888</a><span class="attr">#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
+<a href=#889 id=889 data-nosnippet>889</a></span><span class="kw">pub enum </span>ContextWorkflowArg {
+<a href=#890 id=890 data-nosnippet>890</a>    <span class="attr">#[default]
+<a href=#891 id=891 data-nosnippet>891</a>    </span>Auto,
+<a href=#892 id=892 data-nosnippet>892</a>    Implementation,
+<a href=#893 id=893 data-nosnippet>893</a>    Contribution,
+<a href=#894 id=894 data-nosnippet>894</a>    Review,
+<a href=#895 id=895 data-nosnippet>895</a>    Investigation,
 <a href=#896 id=896 data-nosnippet>896</a>}
 <a href=#897 id=897 data-nosnippet>897</a>
-<a href=#898 id=898 data-nosnippet>898</a><span class="kw">impl </span>From&lt;ContextArgs&gt; <span class="kw">for </span>ContextRequest {
-<a href=#899 id=899 data-nosnippet>899</a>    <span class="kw">fn </span>from(args: ContextArgs) -&gt; <span class="self">Self </span>{
-<a href=#900 id=900 data-nosnippet>900</a>        <span class="self">Self </span>{
-<a href=#901 id=901 data-nosnippet>901</a>            task: args.task,
-<a href=#902 id=902 data-nosnippet>902</a>            token_budget: args.budget,
-<a href=#903 id=903 data-nosnippet>903</a>            include_paths: args.include_paths,
-<a href=#904 id=904 data-nosnippet>904</a>            must_include_paths: args.must_include_paths,
-<a href=#905 id=905 data-nosnippet>905</a>            must_include_symbols: args.must_include_symbols,
-<a href=#906 id=906 data-nosnippet>906</a>            max_fragments: args.max_fragments,
-<a href=#907 id=907 data-nosnippet>907</a>            focus_paths: args.focus_paths,
-<a href=#908 id=908 data-nosnippet>908</a>            focus_symbols: args.focus_symbols,
-<a href=#909 id=909 data-nosnippet>909</a>            exclude_paths: args.exclude_paths,
-<a href=#910 id=910 data-nosnippet>910</a>            known_hashes: args.known_hashes,
-<a href=#911 id=911 data-nosnippet>911</a>            prior_repository_generation: args.prior_repository_generation,
-<a href=#912 id=912 data-nosnippet>912</a>            base_revision: args.base_revision,
-<a href=#913 id=913 data-nosnippet>913</a>            changed_paths: args.changed_paths,
-<a href=#914 id=914 data-nosnippet>914</a>        }
-<a href=#915 id=915 data-nosnippet>915</a>    }
-<a href=#916 id=916 data-nosnippet>916</a>}
+<a href=#898 id=898 data-nosnippet>898</a><span class="kw">impl </span>From&lt;ContextWorkflowArg&gt; <span class="kw">for </span><span class="kw">crate</span>::model::ContextWorkflow {
+<a href=#899 id=899 data-nosnippet>899</a>    <span class="kw">fn </span>from(value: ContextWorkflowArg) -&gt; <span class="self">Self </span>{
+<a href=#900 id=900 data-nosnippet>900</a>        <span class="kw">match </span>value {
+<a href=#901 id=901 data-nosnippet>901</a>            ContextWorkflowArg::Auto =&gt; <span class="self">Self</span>::Auto,
+<a href=#902 id=902 data-nosnippet>902</a>            ContextWorkflowArg::Implementation =&gt; <span class="self">Self</span>::Implementation,
+<a href=#903 id=903 data-nosnippet>903</a>            ContextWorkflowArg::Contribution =&gt; <span class="self">Self</span>::Contribution,
+<a href=#904 id=904 data-nosnippet>904</a>            ContextWorkflowArg::Review =&gt; <span class="self">Self</span>::Review,
+<a href=#905 id=905 data-nosnippet>905</a>            ContextWorkflowArg::Investigation =&gt; <span class="self">Self</span>::Investigation,
+<a href=#906 id=906 data-nosnippet>906</a>        }
+<a href=#907 id=907 data-nosnippet>907</a>    }
+<a href=#908 id=908 data-nosnippet>908</a>}
+<a href=#909 id=909 data-nosnippet>909</a>
+<a href=#910 id=910 data-nosnippet>910</a><span class="kw">impl </span>From&lt;ContextArgs&gt; <span class="kw">for </span>ContextRequest {
+<a href=#911 id=911 data-nosnippet>911</a>    <span class="kw">fn </span>from(args: ContextArgs) -&gt; <span class="self">Self </span>{
+<a href=#912 id=912 data-nosnippet>912</a>        <span class="self">Self </span>{
+<a href=#913 id=913 data-nosnippet>913</a>            task: args.task,
+<a href=#914 id=914 data-nosnippet>914</a>            token_budget: args.budget,
+<a href=#915 id=915 data-nosnippet>915</a>            include_paths: args.include_paths,
+<a href=#916 id=916 data-nosnippet>916</a>            must_include_paths: args.must_include_paths,
+<a href=#917 id=917 data-nosnippet>917</a>            must_include_symbols: args.must_include_symbols,
+<a href=#918 id=918 data-nosnippet>918</a>            max_fragments: args.max_fragments,
+<a href=#919 id=919 data-nosnippet>919</a>            focus_paths: args.focus_paths,
+<a href=#920 id=920 data-nosnippet>920</a>            strict_focus_paths: args.strict_focus_paths,
+<a href=#921 id=921 data-nosnippet>921</a>            minimum_fragments_per_focus_path: args.minimum_fragments_per_focus_path,
+<a href=#922 id=922 data-nosnippet>922</a>            focus_symbols: args.focus_symbols,
+<a href=#923 id=923 data-nosnippet>923</a>            exclude_paths: args.exclude_paths,
+<a href=#924 id=924 data-nosnippet>924</a>            known_hashes: args.known_hashes,
+<a href=#925 id=925 data-nosnippet>925</a>            prior_repository_generation: args.prior_repository_generation,
+<a href=#926 id=926 data-nosnippet>926</a>            base_revision: args.base_revision,
+<a href=#927 id=927 data-nosnippet>927</a>            changed_paths: args.changed_paths,
+<a href=#928 id=928 data-nosnippet>928</a>            strict_changed_paths: args.strict_changed_paths,
+<a href=#929 id=929 data-nosnippet>929</a>        }
+<a href=#930 id=930 data-nosnippet>930</a>    }
+<a href=#931 id=931 data-nosnippet>931</a>}
 </code></pre></div></section></main></body></html>
