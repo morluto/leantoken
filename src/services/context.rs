@@ -14,8 +14,8 @@ use super::Services;
 use super::read::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
 use super::search::{chunk_search_hit, compile_literal_regex, fts_quote, matching_line};
 use super::validation::{
-    MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, check_cancelled,
-    path_allowed, path_matches, validate_glob_patterns, validate_input,
+    MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, PathFilter, PathMatcher,
+    check_cancelled, validate_glob_patterns, validate_input,
 };
 use crate::model::*;
 use crate::ranking::{self, Candidate};
@@ -79,53 +79,87 @@ fn excerpt_budget(request_budget: usize, kind: ContextExcerptKind) -> usize {
 }
 
 fn context_path_score(path: &str, terms: &[String], task: &str) -> f64 {
-    let path = path.to_lowercase();
-    let mut score = terms
-        .iter()
-        .filter(|term| path.contains(term.to_ascii_lowercase().as_str()))
-        .count() as f64;
-    for code_token in facets::legacy_code_tokens(task)
-        .into_iter()
-        .filter(|token| {
-            token.contains("::")
-                || token
-                    .split('.')
-                    .any(|part| part.chars().next().is_some_and(char::is_uppercase))
-        })
-    {
-        let matched_parts = expand_terms(&code_token)
+    ContextPathScorer::new(terms, task).score(path)
+}
+
+struct ContextPathScorer {
+    terms: Vec<String>,
+    code_token_parts: Vec<Vec<String>>,
+    languages: [bool; 5],
+}
+
+impl ContextPathScorer {
+    fn new(terms: &[String], task: &str) -> Self {
+        let code_token_parts = facets::legacy_code_tokens(task)
             .into_iter()
-            .map(|part| part.to_ascii_lowercase())
-            .filter(|part| part.chars().count() >= 2 && path.contains(part))
-            .collect::<HashSet<_>>()
-            .len();
-        if matched_parts >= 2 {
-            #[allow(clippy::cast_precision_loss)]
-            {
-                score += (matched_parts * matched_parts) as f64;
+            .filter(|token| {
+                token.contains("::")
+                    || token
+                        .split('.')
+                        .any(|part| part.chars().next().is_some_and(char::is_uppercase))
+            })
+            .map(|code_token| {
+                expand_terms(&code_token)
+                    .into_iter()
+                    .map(|part| part.to_ascii_lowercase())
+                    .filter(|part| part.chars().count() >= 2)
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect()
+            })
+            .collect();
+        Self {
+            terms: terms.iter().map(|term| term.to_ascii_lowercase()).collect(),
+            code_token_parts,
+            languages: [
+                task_mentions_language(task, "javascript"),
+                task_mentions_language(task, "typescript"),
+                task_mentions_language(task, "python"),
+                task_mentions_language(task, "rust"),
+                task_mentions_language(task, "go"),
+            ],
+        }
+    }
+
+    fn score(&self, path: &str) -> f64 {
+        let path = path.to_lowercase();
+        let mut score = self
+            .terms
+            .iter()
+            .filter(|term| path.contains(term.as_str()))
+            .count() as f64;
+        for parts in &self.code_token_parts {
+            let matched_parts = parts.iter().filter(|part| path.contains(*part)).count();
+            if matched_parts >= 2 {
+                #[allow(clippy::cast_precision_loss)]
+                {
+                    score += (matched_parts * matched_parts) as f64;
+                }
             }
         }
-    }
-    for (language, component, extensions) in [
-        ("javascript", "/js/", &["js", "jsx", "mjs", "cjs"][..]),
-        ("typescript", "/ts/", &["ts", "tsx"][..]),
-        ("python", "/python/", &["py", "pyw"][..]),
-        ("rust", "/rust/", &["rs"][..]),
-        ("go", "/go/", &["go"][..]),
-    ] {
-        let extension_matches = path
-            .rsplit_once('.')
-            .is_some_and(|(_, extension)| extensions.contains(&extension));
-        if task_mentions_language(task, language)
-            && (extension_matches || format!("/{path}/").contains(component))
-        {
-            // An explicit language name in the task is strong repository-scope
-            // evidence. Keep this above an exact-name match in another
-            // language so common names such as `Point` do not dominate.
-            score += 12.0;
+        for (mentioned, component, extensions) in [
+            (self.languages[0], "/js/", &["js", "jsx", "mjs", "cjs"][..]),
+            (self.languages[1], "/ts/", &["ts", "tsx"][..]),
+            (self.languages[2], "/python/", &["py", "pyw"][..]),
+            (self.languages[3], "/rust/", &["rs"][..]),
+            (self.languages[4], "/go/", &["go"][..]),
+        ] {
+            let extension_matches = path
+                .rsplit_once('.')
+                .is_some_and(|(_, extension)| extensions.contains(&extension));
+            let component = component.trim_matches('/');
+            let component_matches = path
+                .split('/')
+                .any(|path_component| path_component == component);
+            if mentioned && (extension_matches || component_matches) {
+                // An explicit language name in the task is strong repository-scope
+                // evidence. Keep this above an exact-name match in another
+                // language so common names such as `Point` do not dominate.
+                score += 12.0;
+            }
         }
+        score
     }
-    score
 }
 
 fn context_path_group(path: &str) -> String {
@@ -693,6 +727,22 @@ impl Services {
         let mut include_path_matches = vec![false; request.include_paths.len()];
         let mut required_path_matches = vec![false; request.must_include_paths.len()];
         let mut required_path_files = vec![None::<FileRecord>; request.must_include_paths.len()];
+        let focus_matchers = request
+            .focus_paths
+            .iter()
+            .map(|pattern| PathMatcher::new(std::slice::from_ref(pattern)))
+            .collect::<Result<Vec<_>>>()?;
+        let include_matchers = request
+            .include_paths
+            .iter()
+            .map(|pattern| PathMatcher::new(std::slice::from_ref(pattern)))
+            .collect::<Result<Vec<_>>>()?;
+        let required_matchers = request
+            .must_include_paths
+            .iter()
+            .map(|pattern| PathMatcher::new(std::slice::from_ref(pattern)))
+            .collect::<Result<Vec<_>>>()?;
+        let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
 
         if !request.focus_paths.is_empty()
             || !request.include_paths.is_empty()
@@ -707,24 +757,18 @@ impl Services {
                 };
                 cursor = Some(last.id);
                 for file in page {
-                    for (index, pattern) in request.focus_paths.iter().enumerate() {
-                        focus_path_matches[index] |= path_matches(&file.path, pattern)?;
+                    for (index, matcher) in focus_matchers.iter().enumerate() {
+                        focus_path_matches[index] |= matcher.is_match(&file.path);
                     }
-                    for (index, pattern) in request.include_paths.iter().enumerate() {
-                        include_path_matches[index] |= path_matches(&file.path, pattern)?;
+                    for (index, matcher) in include_matchers.iter().enumerate() {
+                        include_path_matches[index] |= matcher.is_match(&file.path);
                     }
-                    for (index, pattern) in request.must_include_paths.iter().enumerate() {
-                        if !path_matches(&file.path, pattern)? {
+                    for (index, matcher) in required_matchers.iter().enumerate() {
+                        if !matcher.is_match(&file.path) {
                             continue;
                         }
                         required_path_matches[index] = true;
-                        if required_path_files[index].is_none()
-                            && path_allowed(
-                                &file.path,
-                                &request.include_paths,
-                                &request.exclude_paths,
-                            )?
-                        {
+                        if required_path_files[index].is_none() && path_filter.allows(&file.path) {
                             required_path_files[index] = Some(file.clone());
                         }
                     }
@@ -811,10 +855,10 @@ impl Services {
                 coverage.unmatched_must_include_symbols.push(symbol.clone());
                 continue;
             }
-            if let Some(hit) = exact_hits.into_iter().find(|hit| {
-                path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)
-                    .unwrap_or(false)
-            }) {
+            if let Some(hit) = exact_hits
+                .into_iter()
+                .find(|hit| path_filter.allows(&hit.path))
+            {
                 required_symbol_hits.push((symbol, hit));
             }
         }
@@ -891,6 +935,10 @@ impl Services {
             expansion
                 .session
                 .import_symbol_targets(&requested_paths, 32, MAX_IMPORT_SYMBOLS)?;
+        let path_filter = PathFilter::new(
+            &expansion.request.include_paths,
+            &expansion.request.exclude_paths,
+        )?;
         let mut pending = Vec::new();
         for target in targets {
             check_cancelled(expansion.cancellation)?;
@@ -898,11 +946,7 @@ impl Services {
                 continue;
             };
             let target_path = &target.target_file.path;
-            if !path_allowed(
-                target_path,
-                &expansion.request.include_paths,
-                &expansion.request.exclude_paths,
-            )? {
+            if !path_filter.allows(target_path) {
                 continue;
             }
             let Some((symbol, query, exact)) =
@@ -1012,27 +1056,33 @@ impl Services {
     /// revision are resolved from the repository, including untracked files.
     /// Explicit `changed_paths` are merged with that result. When neither input
     /// is supplied, `None` is returned and task-only behavior is preserved.
-    fn resolve_diff_scope(&self, request: &ContextRequest) -> Result<Option<DiffScopeReceipt>> {
+    fn resolve_diff_scope(
+        &self,
+        request: &ContextRequest,
+    ) -> Result<(Option<DiffScopeReceipt>, HashSet<String>)> {
         let has_base = request
             .base_revision
             .as_deref()
             .is_some_and(|rev| !rev.trim().is_empty());
         let has_paths = !request.changed_paths.is_empty();
+        let git_result = request
+            .base_revision
+            .as_deref()
+            .filter(|revision| !revision.trim().is_empty())
+            .map(|revision| git_diff_paths(&self.config.root, revision, MAX_DIFF_CHANGED_PATHS))
+            .transpose()?;
+        let working_tree_paths = git_changed_paths(&self.config.root, GIT_CHANGED_PATHS_MAX)
+            .unwrap_or_else(|error| {
+                tracing::debug!(%error, "working-tree signal unavailable");
+                HashSet::new()
+            });
         if !has_base && !has_paths {
-            return Ok(None);
+            return Ok((None, working_tree_paths));
         }
-        if let Some(ref revision) = request.base_revision
-            && !revision.trim().is_empty()
-        {
-            let git_result = git_diff_paths(&self.config.root, revision, MAX_DIFF_CHANGED_PATHS)?;
+        if let Some(git_result) = git_result {
             let mut changed_paths = request.changed_paths.clone();
             let mut resolved_paths = git_result.changed_paths;
-            match git_changed_paths(&self.config.root, MAX_DIFF_CHANGED_PATHS) {
-                Ok(working_tree_paths) => resolved_paths.extend(working_tree_paths),
-                Err(error) => {
-                    tracing::debug!(%error, "working-tree diff scope unavailable");
-                }
-            }
+            resolved_paths.extend(working_tree_paths.iter().cloned());
             resolved_paths.sort();
             resolved_paths.dedup();
             for path in resolved_paths {
@@ -1045,21 +1095,27 @@ impl Services {
             }
             changed_paths.sort();
             changed_paths.dedup();
-            return Ok(Some(DiffScopeReceipt {
-                base_revision: Some(git_result.base_revision),
-                head_revision: Some(git_result.head_revision),
-                changed_paths,
+            return Ok((
+                Some(DiffScopeReceipt {
+                    base_revision: Some(git_result.base_revision),
+                    head_revision: Some(git_result.head_revision),
+                    changed_paths,
+                    indexed_changed_paths: 0,
+                    evidence: None,
+                }),
+                working_tree_paths,
+            ));
+        }
+        Ok((
+            Some(DiffScopeReceipt {
+                base_revision: None,
+                head_revision: None,
+                changed_paths: request.changed_paths.clone(),
                 indexed_changed_paths: 0,
                 evidence: None,
-            }));
-        }
-        Ok(Some(DiffScopeReceipt {
-            base_revision: None,
-            head_revision: None,
-            changed_paths: request.changed_paths.clone(),
-            indexed_changed_paths: 0,
-            evidence: None,
-        }))
+            }),
+            working_tree_paths,
+        ))
     }
 
     /// Select ranked task evidence within an exact source-token budget.
@@ -1205,6 +1261,7 @@ impl Services {
         }
 
         let mut matches = Vec::new();
+        let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
         let mut path_excluded = 0usize;
         let mut cursor = None;
         let mut scanned_files = 0;
@@ -1223,7 +1280,7 @@ impl Services {
                 }
                 scanned_files += 1;
                 if let Some((score, family)) = workflow_path_role(&file.path, request) {
-                    if path_allowed(&file.path, &request.include_paths, &request.exclude_paths)? {
+                    if path_filter.allows(&file.path) {
                         matches.push((file, score, family));
                     } else {
                         path_excluded += 1;
@@ -1485,20 +1542,15 @@ impl Services {
             .iter()
             .map(|path| normalize_relative(path))
             .collect::<Result<Vec<_>>>()?;
-        let diff_scope = self.resolve_diff_scope(&request)?;
+        let (diff_scope, mut changed_paths) = self.resolve_diff_scope(&request)?;
         let mut scoped_request = request.clone();
         if let Some(scope) = &diff_scope {
             scoped_request.changed_paths = scope.changed_paths.clone();
         }
-
-        let mut changed_paths = git_changed_paths(&self.config.root, GIT_CHANGED_PATHS_MAX)
-            .unwrap_or_else(|error| {
-                tracing::debug!(%error, "working-tree signal unavailable");
-                HashSet::new()
-            });
         if let Some(ref scope) = diff_scope {
             changed_paths.extend(scope.changed_paths.iter().cloned());
         }
+        let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
         self.consistent(|session, generation| {
             let facet_plan = facets::plan(&request.task, MAX_CONTEXT_QUERIES);
             let queries = facet_plan.queries;
@@ -1506,6 +1558,7 @@ impl Services {
                 .iter()
                 .map(|query| query.value.clone())
                 .collect::<Vec<_>>();
+            let path_scorer = ContextPathScorer::new(&terms, &request.task);
             let mut candidates = Vec::new();
             let mut path_excluded_candidates = 0usize;
             let mut query_fusion = HashMap::<String, HashMap<String, f64>>::new();
@@ -1533,7 +1586,7 @@ impl Services {
                     .enumerate()
                 {
                     check_cancelled(cancellation)?;
-                    if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)? {
+                    if path_filter.allows(&hit.path) {
                         symbol_hits.push((rank, hit));
                     } else {
                         path_excluded_candidates += 1;
@@ -1592,7 +1645,7 @@ impl Services {
                     .symbol_name(hit.symbol.name)
                     .exact(exact + qualified * 1.5)
                     .symbol(1.0)
-                    .path_score(context_path_score(&hit.path, &terms, &request.task))
+                    .path_score(path_scorer.score(&hit.path))
                     .change_boost(change_boost);
                     candidates.push(annotate_candidate(candidate, query, "symbol", rank));
                 }
@@ -1604,7 +1657,7 @@ impl Services {
                 let mut reference_hits = Vec::new();
                 for (rank, hit) in reference_results.into_iter().enumerate() {
                     check_cancelled(cancellation)?;
-                    if path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)? {
+                    if path_filter.allows(&hit.path) {
                         reference_hits.push((rank, hit));
                     } else {
                         path_excluded_candidates += 1;
@@ -1700,7 +1753,7 @@ impl Services {
                     .concept(concept, query.concept_weight)
                     .symbol_name(hit.reference.name)
                     .reference(1.0)
-                    .path_score(context_path_score(&hit.path, &terms, &request.task))
+                    .path_score(path_scorer.score(&hit.path))
                     .change_boost(change_boost);
                     candidates.push(annotate_candidate(candidate, query, "reference", rank));
                 }
@@ -1713,7 +1766,7 @@ impl Services {
                 let mut lexical_hits = Vec::new();
                 for (rank, hit) in lexical.into_iter().enumerate() {
                     check_cancelled(cancellation)?;
-                    if !path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)? {
+                    if !path_filter.allows(&hit.path) {
                         path_excluded_candidates += 1;
                         continue;
                     }
@@ -1794,7 +1847,7 @@ impl Services {
                     .concept(concept, query.concept_weight)
                     .exact(query.weight)
                     .bm25((-hit.score).max(0.0) * 1_000_000.0)
-                    .path_score(context_path_score(&search_hit.path, &terms, &request.task))
+                    .path_score(path_scorer.score(&search_hit.path))
                     .lexical_frequency_penalty(
                         (occurrences.saturating_sub(5) as f64 / 20.0).min(1.0),
                     )

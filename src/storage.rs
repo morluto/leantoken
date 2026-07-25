@@ -2131,7 +2131,7 @@ impl ReadSession {
     /// Find the narrowest enclosing symbol for every requested file/line pair.
     ///
     /// Results preserve input order and cardinality; `None` marks a location with
-    /// no enclosing declaration. Duplicate locations remain duplicate outputs.
+    /// no enclosing declaration. Duplicate locations share one storage lookup.
     pub(crate) fn find_enclosing_symbols_batch(
         &self,
         locations: &[(i64, usize)],
@@ -2139,7 +2139,19 @@ impl ReadSession {
         if locations.is_empty() {
             return Ok(Vec::new());
         }
-        let input = locations
+        let mut unique_indices = HashMap::new();
+        let mut unique_locations = Vec::new();
+        let location_mapping = locations
+            .iter()
+            .map(|location| {
+                *unique_indices.entry(*location).or_insert_with(|| {
+                    let unique_index = unique_locations.len();
+                    unique_locations.push(*location);
+                    unique_index
+                })
+            })
+            .collect::<Vec<_>>();
+        let input = unique_locations
             .iter()
             .map(|(file_id, line)| serde_json::json!({ "file_id": file_id, "line": line }))
             .collect::<Vec<_>>();
@@ -2184,14 +2196,17 @@ impl ReadSession {
             };
             Ok((request_index, symbol))
         })?;
-        let mut symbols = vec![None; locations.len()];
+        let mut symbols = vec![None; unique_locations.len()];
         for row in rows {
             let (request_index, symbol) = row?;
             if let Some(slot) = symbols.get_mut(request_index) {
                 *slot = Some(symbol);
             }
         }
-        Ok(symbols)
+        Ok(location_mapping
+            .into_iter()
+            .map(|unique_index| symbols[unique_index].clone())
+            .collect())
     }
 
     pub fn get_references_for_file(
