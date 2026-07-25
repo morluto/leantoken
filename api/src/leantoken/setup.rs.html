@@ -1152,7 +1152,7 @@
 <a href=#1152 id=1152 data-nosnippet>1152</a>        <span class="string">"leantoken doctor --json"</span>.into()
 <a href=#1153 id=1153 data-nosnippet>1153</a>    };
 <a href=#1154 id=1154 data-nosnippet>1154</a>    <span class="prelude-val">Ok</span>(<span class="macro">format!</span>(
-<a href=#1155 id=1155 data-nosnippet>1155</a>        <span class="string">"---\nname: leantoken\ndescription: Use LeanToken for token-bounded repository exploration, audits, codebase investigations, architecture reviews, source archaeology, code search, symbol outlines, exact source reads, symbol history, and structural JSON queries.\n---\n\n{DISCOVERY_SKILL_MARKER}\n\nBefore retrieving repository source, including for audits and code archaeology, discover the deferred `leantoken` MCP server and route progressively:\n\n1. `leantoken.files` finds paths or returns a compact tree.\n2. `leantoken.outline` maps definitions and imports; `leantoken.search` locates symbols, references, identifiers, text, or regex matches.\n3. `leantoken.read` returns only the exact current symbol or narrow line range needed; `leantoken.history` reads, diffs, or traces that symbol across immutable Git revisions; `leantoken.json` queries, summarizes, or compares exact JSON artifacts without whole-file output.\n\nUse `leantoken.context` only while scope remains uncertain; pass `BASE..HEAD` as `base_revision` with `strict_changed_paths` for immutable range context. Use `leantoken.savings` for repository-local savings. Use native workspace tools for edits, commands, tests, runtime probes, unsupported files, or evidence that is not source retrieval. If the server or tools cannot be discovered, run `{doctor}` and report its structured registration, launch, handshake, and catalog status instead of silently claiming LeanToken was used.\n"
+<a href=#1155 id=1155 data-nosnippet>1155</a>        <span class="string">"---\nname: leantoken\ndescription: Use LeanToken for token-bounded repository exploration, audits, codebase investigations, architecture reviews, source archaeology, code search, symbol outlines, exact source reads, symbol history, and structural JSON queries.\n---\n\n{DISCOVERY_SKILL_MARKER}\n\nBefore retrieving repository source, including for audits and code archaeology, discover the deferred `leantoken` MCP server and route progressively:\n\n1. `leantoken.files` finds paths or returns a compact tree.\n2. `leantoken.outline` maps definitions and imports; `leantoken.search` locates symbols, references, identifiers, text, or regex matches.\n3. `leantoken.read` returns only the exact current symbol or narrow line range needed; `leantoken.history` reads, diffs, or traces that symbol across immutable Git revisions; `leantoken.json` queries, summarizes, or compares exact JSON artifacts without whole-file output.\n\nUse `leantoken.context` only while scope remains uncertain. For a broad uncertain task, first set `plan_only=true`, inspect the ranked metadata and coverage, then repeat the same request with `plan_only=false` to materialize source. Pass `BASE..HEAD` as `base_revision` with `strict_changed_paths` for immutable range context. Use `leantoken.savings` for repository-local savings. Use native workspace tools for edits, commands, tests, runtime probes, unsupported files, or evidence that is not source retrieval. If the server or tools cannot be discovered, run `{doctor}` and report its structured registration, launch, handshake, and catalog status instead of silently claiming LeanToken was used.\n"
 <a href=#1156 id=1156 data-nosnippet>1156</a>    </span>))
 <a href=#1157 id=1157 data-nosnippet>1157</a>}
 <a href=#1158 id=1158 data-nosnippet>1158</a>
@@ -2825,71 +2825,72 @@
 <a href=#2825 id=2825 data-nosnippet>2825</a>            <span class="kw">let </span>skill = fs::read_to_string(<span class="kw-2">&amp;</span>effect.path).unwrap();
 <a href=#2826 id=2826 data-nosnippet>2826</a>            <span class="macro">assert!</span>(skill.contains(DISCOVERY_SKILL_MARKER));
 <a href=#2827 id=2827 data-nosnippet>2827</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"leantoken.context"</span>));
-<a href=#2828 id=2828 data-nosnippet>2828</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"leantoken.savings"</span>));
-<a href=#2829 id=2829 data-nosnippet>2829</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"audits and code archaeology"</span>));
-<a href=#2830 id=2830 data-nosnippet>2830</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"runtime probes"</span>));
-<a href=#2831 id=2831 data-nosnippet>2831</a>            <span class="macro">assert!</span>(
-<a href=#2832 id=2832 data-nosnippet>2832</a>                skill.find(<span class="string">"leantoken.files"</span>).unwrap() &lt; skill.find(<span class="string">"leantoken.outline"</span>).unwrap()
-<a href=#2833 id=2833 data-nosnippet>2833</a>            );
-<a href=#2834 id=2834 data-nosnippet>2834</a>            <span class="macro">assert!</span>(
-<a href=#2835 id=2835 data-nosnippet>2835</a>                skill.find(<span class="string">"leantoken.outline"</span>).unwrap() &lt; skill.find(<span class="string">"leantoken.read"</span>).unwrap()
-<a href=#2836 id=2836 data-nosnippet>2836</a>            );
-<a href=#2837 id=2837 data-nosnippet>2837</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"leantoken doctor --json"</span>));
-<a href=#2838 id=2838 data-nosnippet>2838</a>            <span class="macro">assert!</span>(!skill.contains(<span class="string">"inputSchema"</span>));
-<a href=#2839 id=2839 data-nosnippet>2839</a>            <span class="macro">assert_eq!</span>(
-<a href=#2840 id=2840 data-nosnippet>2840</a>                report.discovery_skill_tokens,
-<a href=#2841 id=2841 data-nosnippet>2841</a>                <span class="prelude-val">Some</span>(<span class="kw">crate</span>::tokens::Tokenizer::Cl100kBase.count(<span class="kw-2">&amp;</span>skill))
-<a href=#2842 id=2842 data-nosnippet>2842</a>            );
-<a href=#2843 id=2843 data-nosnippet>2843</a>        }
-<a href=#2844 id=2844 data-nosnippet>2844</a>
-<a href=#2845 id=2845 data-nosnippet>2845</a>        <span class="kw">let </span>shared_skill = environment.home.join(<span class="string">".agents/skills/leantoken/SKILL.md"</span>);
-<a href=#2846 id=2846 data-nosnippet>2846</a>        fs::write(<span class="kw-2">&amp;</span>shared_skill, <span class="string">"user-owned skill"</span>).unwrap();
-<a href=#2847 id=2847 data-nosnippet>2847</a>        <span class="kw">let </span>error = run_with(SetupOperation::Setup, request, <span class="kw-2">&amp;</span>environment, <span class="kw-2">&amp;</span>prompt)
-<a href=#2848 id=2848 data-nosnippet>2848</a>            .expect_err(<span class="string">"unowned skill must block setup"</span>);
-<a href=#2849 id=2849 data-nosnippet>2849</a>        <span class="macro">assert!</span>(error.to_string().contains(<span class="string">"unowned discovery skill"</span>));
-<a href=#2850 id=2850 data-nosnippet>2850</a>        <span class="macro">assert_eq!</span>(
-<a href=#2851 id=2851 data-nosnippet>2851</a>            fs::read_to_string(shared_skill).unwrap(),
-<a href=#2852 id=2852 data-nosnippet>2852</a>            <span class="string">"user-owned skill"
-<a href=#2853 id=2853 data-nosnippet>2853</a>        </span>);
-<a href=#2854 id=2854 data-nosnippet>2854</a>    }
-<a href=#2855 id=2855 data-nosnippet>2855</a>
-<a href=#2856 id=2856 data-nosnippet>2856</a>    <span class="attr">#[test]
-<a href=#2857 id=2857 data-nosnippet>2857</a>    </span><span class="kw">fn </span>interrupted_setup_journal_restores_applied_and_unapplied_entries() {
-<a href=#2858 id=2858 data-nosnippet>2858</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
-<a href=#2859 id=2859 data-nosnippet>2859</a>        <span class="kw">let </span>runtime_root = temp.path().join(<span class="string">"runtime"</span>);
-<a href=#2860 id=2860 data-nosnippet>2860</a>        fs::create_dir_all(<span class="kw-2">&amp;</span>runtime_root).unwrap();
-<a href=#2861 id=2861 data-nosnippet>2861</a>        <span class="kw">let </span>applied = temp.path().join(<span class="string">"applied.json"</span>);
-<a href=#2862 id=2862 data-nosnippet>2862</a>        <span class="kw">let </span>untouched = temp.path().join(<span class="string">"untouched.json"</span>);
-<a href=#2863 id=2863 data-nosnippet>2863</a>        fs::write(<span class="kw-2">&amp;</span>applied, <span class="string">"new"</span>).unwrap();
-<a href=#2864 id=2864 data-nosnippet>2864</a>        fs::write(<span class="kw-2">&amp;</span>untouched, <span class="string">"old-two"</span>).unwrap();
-<a href=#2865 id=2865 data-nosnippet>2865</a>        <span class="kw">let </span>journal = SetupTransactionJournal {
-<a href=#2866 id=2866 data-nosnippet>2866</a>            schema_version: <span class="number">1</span>,
-<a href=#2867 id=2867 data-nosnippet>2867</a>            entries: <span class="macro">vec!</span>[
-<a href=#2868 id=2868 data-nosnippet>2868</a>                SetupTransactionEntry {
-<a href=#2869 id=2869 data-nosnippet>2869</a>                    path: applied.clone(),
-<a href=#2870 id=2870 data-nosnippet>2870</a>                    original: <span class="prelude-val">Some</span>(<span class="string">"old-one"</span>.into()),
-<a href=#2871 id=2871 data-nosnippet>2871</a>                    updated_hash: <span class="prelude-val">Some</span>(content_hash(<span class="string">"new"</span>)),
-<a href=#2872 id=2872 data-nosnippet>2872</a>                    updated_exists: <span class="bool-val">true</span>,
-<a href=#2873 id=2873 data-nosnippet>2873</a>                },
-<a href=#2874 id=2874 data-nosnippet>2874</a>                SetupTransactionEntry {
-<a href=#2875 id=2875 data-nosnippet>2875</a>                    path: untouched.clone(),
-<a href=#2876 id=2876 data-nosnippet>2876</a>                    original: <span class="prelude-val">Some</span>(<span class="string">"old-two"</span>.into()),
-<a href=#2877 id=2877 data-nosnippet>2877</a>                    updated_hash: <span class="prelude-val">Some</span>(content_hash(<span class="string">"new-two"</span>)),
-<a href=#2878 id=2878 data-nosnippet>2878</a>                    updated_exists: <span class="bool-val">true</span>,
-<a href=#2879 id=2879 data-nosnippet>2879</a>                },
-<a href=#2880 id=2880 data-nosnippet>2880</a>            ],
-<a href=#2881 id=2881 data-nosnippet>2881</a>        };
-<a href=#2882 id=2882 data-nosnippet>2882</a>        fs::write(
-<a href=#2883 id=2883 data-nosnippet>2883</a>            transaction_path(<span class="kw-2">&amp;</span>runtime_root),
-<a href=#2884 id=2884 data-nosnippet>2884</a>            serde_json::to_string(<span class="kw-2">&amp;</span>journal).unwrap(),
-<a href=#2885 id=2885 data-nosnippet>2885</a>        )
-<a href=#2886 id=2886 data-nosnippet>2886</a>        .unwrap();
-<a href=#2887 id=2887 data-nosnippet>2887</a>
-<a href=#2888 id=2888 data-nosnippet>2888</a>        recover_interrupted_transaction(<span class="kw-2">&amp;</span>runtime_root).unwrap();
-<a href=#2889 id=2889 data-nosnippet>2889</a>
-<a href=#2890 id=2890 data-nosnippet>2890</a>        <span class="macro">assert_eq!</span>(fs::read_to_string(applied).unwrap(), <span class="string">"old-one"</span>);
-<a href=#2891 id=2891 data-nosnippet>2891</a>        <span class="macro">assert_eq!</span>(fs::read_to_string(untouched).unwrap(), <span class="string">"old-two"</span>);
-<a href=#2892 id=2892 data-nosnippet>2892</a>        <span class="macro">assert!</span>(!transaction_path(<span class="kw-2">&amp;</span>runtime_root).exists());
-<a href=#2893 id=2893 data-nosnippet>2893</a>    }
-<a href=#2894 id=2894 data-nosnippet>2894</a>}
+<a href=#2828 id=2828 data-nosnippet>2828</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"plan_only=true"</span>));
+<a href=#2829 id=2829 data-nosnippet>2829</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"leantoken.savings"</span>));
+<a href=#2830 id=2830 data-nosnippet>2830</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"audits and code archaeology"</span>));
+<a href=#2831 id=2831 data-nosnippet>2831</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"runtime probes"</span>));
+<a href=#2832 id=2832 data-nosnippet>2832</a>            <span class="macro">assert!</span>(
+<a href=#2833 id=2833 data-nosnippet>2833</a>                skill.find(<span class="string">"leantoken.files"</span>).unwrap() &lt; skill.find(<span class="string">"leantoken.outline"</span>).unwrap()
+<a href=#2834 id=2834 data-nosnippet>2834</a>            );
+<a href=#2835 id=2835 data-nosnippet>2835</a>            <span class="macro">assert!</span>(
+<a href=#2836 id=2836 data-nosnippet>2836</a>                skill.find(<span class="string">"leantoken.outline"</span>).unwrap() &lt; skill.find(<span class="string">"leantoken.read"</span>).unwrap()
+<a href=#2837 id=2837 data-nosnippet>2837</a>            );
+<a href=#2838 id=2838 data-nosnippet>2838</a>            <span class="macro">assert!</span>(skill.contains(<span class="string">"leantoken doctor --json"</span>));
+<a href=#2839 id=2839 data-nosnippet>2839</a>            <span class="macro">assert!</span>(!skill.contains(<span class="string">"inputSchema"</span>));
+<a href=#2840 id=2840 data-nosnippet>2840</a>            <span class="macro">assert_eq!</span>(
+<a href=#2841 id=2841 data-nosnippet>2841</a>                report.discovery_skill_tokens,
+<a href=#2842 id=2842 data-nosnippet>2842</a>                <span class="prelude-val">Some</span>(<span class="kw">crate</span>::tokens::Tokenizer::Cl100kBase.count(<span class="kw-2">&amp;</span>skill))
+<a href=#2843 id=2843 data-nosnippet>2843</a>            );
+<a href=#2844 id=2844 data-nosnippet>2844</a>        }
+<a href=#2845 id=2845 data-nosnippet>2845</a>
+<a href=#2846 id=2846 data-nosnippet>2846</a>        <span class="kw">let </span>shared_skill = environment.home.join(<span class="string">".agents/skills/leantoken/SKILL.md"</span>);
+<a href=#2847 id=2847 data-nosnippet>2847</a>        fs::write(<span class="kw-2">&amp;</span>shared_skill, <span class="string">"user-owned skill"</span>).unwrap();
+<a href=#2848 id=2848 data-nosnippet>2848</a>        <span class="kw">let </span>error = run_with(SetupOperation::Setup, request, <span class="kw-2">&amp;</span>environment, <span class="kw-2">&amp;</span>prompt)
+<a href=#2849 id=2849 data-nosnippet>2849</a>            .expect_err(<span class="string">"unowned skill must block setup"</span>);
+<a href=#2850 id=2850 data-nosnippet>2850</a>        <span class="macro">assert!</span>(error.to_string().contains(<span class="string">"unowned discovery skill"</span>));
+<a href=#2851 id=2851 data-nosnippet>2851</a>        <span class="macro">assert_eq!</span>(
+<a href=#2852 id=2852 data-nosnippet>2852</a>            fs::read_to_string(shared_skill).unwrap(),
+<a href=#2853 id=2853 data-nosnippet>2853</a>            <span class="string">"user-owned skill"
+<a href=#2854 id=2854 data-nosnippet>2854</a>        </span>);
+<a href=#2855 id=2855 data-nosnippet>2855</a>    }
+<a href=#2856 id=2856 data-nosnippet>2856</a>
+<a href=#2857 id=2857 data-nosnippet>2857</a>    <span class="attr">#[test]
+<a href=#2858 id=2858 data-nosnippet>2858</a>    </span><span class="kw">fn </span>interrupted_setup_journal_restores_applied_and_unapplied_entries() {
+<a href=#2859 id=2859 data-nosnippet>2859</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
+<a href=#2860 id=2860 data-nosnippet>2860</a>        <span class="kw">let </span>runtime_root = temp.path().join(<span class="string">"runtime"</span>);
+<a href=#2861 id=2861 data-nosnippet>2861</a>        fs::create_dir_all(<span class="kw-2">&amp;</span>runtime_root).unwrap();
+<a href=#2862 id=2862 data-nosnippet>2862</a>        <span class="kw">let </span>applied = temp.path().join(<span class="string">"applied.json"</span>);
+<a href=#2863 id=2863 data-nosnippet>2863</a>        <span class="kw">let </span>untouched = temp.path().join(<span class="string">"untouched.json"</span>);
+<a href=#2864 id=2864 data-nosnippet>2864</a>        fs::write(<span class="kw-2">&amp;</span>applied, <span class="string">"new"</span>).unwrap();
+<a href=#2865 id=2865 data-nosnippet>2865</a>        fs::write(<span class="kw-2">&amp;</span>untouched, <span class="string">"old-two"</span>).unwrap();
+<a href=#2866 id=2866 data-nosnippet>2866</a>        <span class="kw">let </span>journal = SetupTransactionJournal {
+<a href=#2867 id=2867 data-nosnippet>2867</a>            schema_version: <span class="number">1</span>,
+<a href=#2868 id=2868 data-nosnippet>2868</a>            entries: <span class="macro">vec!</span>[
+<a href=#2869 id=2869 data-nosnippet>2869</a>                SetupTransactionEntry {
+<a href=#2870 id=2870 data-nosnippet>2870</a>                    path: applied.clone(),
+<a href=#2871 id=2871 data-nosnippet>2871</a>                    original: <span class="prelude-val">Some</span>(<span class="string">"old-one"</span>.into()),
+<a href=#2872 id=2872 data-nosnippet>2872</a>                    updated_hash: <span class="prelude-val">Some</span>(content_hash(<span class="string">"new"</span>)),
+<a href=#2873 id=2873 data-nosnippet>2873</a>                    updated_exists: <span class="bool-val">true</span>,
+<a href=#2874 id=2874 data-nosnippet>2874</a>                },
+<a href=#2875 id=2875 data-nosnippet>2875</a>                SetupTransactionEntry {
+<a href=#2876 id=2876 data-nosnippet>2876</a>                    path: untouched.clone(),
+<a href=#2877 id=2877 data-nosnippet>2877</a>                    original: <span class="prelude-val">Some</span>(<span class="string">"old-two"</span>.into()),
+<a href=#2878 id=2878 data-nosnippet>2878</a>                    updated_hash: <span class="prelude-val">Some</span>(content_hash(<span class="string">"new-two"</span>)),
+<a href=#2879 id=2879 data-nosnippet>2879</a>                    updated_exists: <span class="bool-val">true</span>,
+<a href=#2880 id=2880 data-nosnippet>2880</a>                },
+<a href=#2881 id=2881 data-nosnippet>2881</a>            ],
+<a href=#2882 id=2882 data-nosnippet>2882</a>        };
+<a href=#2883 id=2883 data-nosnippet>2883</a>        fs::write(
+<a href=#2884 id=2884 data-nosnippet>2884</a>            transaction_path(<span class="kw-2">&amp;</span>runtime_root),
+<a href=#2885 id=2885 data-nosnippet>2885</a>            serde_json::to_string(<span class="kw-2">&amp;</span>journal).unwrap(),
+<a href=#2886 id=2886 data-nosnippet>2886</a>        )
+<a href=#2887 id=2887 data-nosnippet>2887</a>        .unwrap();
+<a href=#2888 id=2888 data-nosnippet>2888</a>
+<a href=#2889 id=2889 data-nosnippet>2889</a>        recover_interrupted_transaction(<span class="kw-2">&amp;</span>runtime_root).unwrap();
+<a href=#2890 id=2890 data-nosnippet>2890</a>
+<a href=#2891 id=2891 data-nosnippet>2891</a>        <span class="macro">assert_eq!</span>(fs::read_to_string(applied).unwrap(), <span class="string">"old-one"</span>);
+<a href=#2892 id=2892 data-nosnippet>2892</a>        <span class="macro">assert_eq!</span>(fs::read_to_string(untouched).unwrap(), <span class="string">"old-two"</span>);
+<a href=#2893 id=2893 data-nosnippet>2893</a>        <span class="macro">assert!</span>(!transaction_path(<span class="kw-2">&amp;</span>runtime_root).exists());
+<a href=#2894 id=2894 data-nosnippet>2894</a>    }
+<a href=#2895 id=2895 data-nosnippet>2895</a>}
 </code></pre></div></section></main></body></html>
