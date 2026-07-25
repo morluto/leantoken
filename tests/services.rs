@@ -332,6 +332,8 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
             .read(ReadRequest {
                 path: "src/module.rs".into(),
                 symbol: None,
+                heading: None,
+                heading_occurrence: None,
                 start_line: None,
                 end_line: None,
                 continuation_cursor: None,
@@ -383,6 +385,8 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
             .read(ReadRequest {
                 path: "src/module.rs".into(),
                 symbol: None,
+                heading: None,
+                heading_occurrence: None,
                 start_line: None,
                 end_line: None,
                 max_tokens: Some(100),
@@ -649,6 +653,8 @@ fn read_limit_request(max_tokens: Option<usize>) -> ReadRequest {
         start_line: Some(1),
         end_line: Some(1),
         symbol: None,
+        heading: None,
+        heading_occurrence: None,
         continuation_cursor: None,
         max_tokens,
         expected_hash: None,
@@ -1982,6 +1988,8 @@ async fn five_services_return_bounded_grounded_responses() {
             start_line: Some(1),
             end_line: Some(3),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -1995,6 +2003,8 @@ async fn five_services_return_bounded_grounded_responses() {
             start_line: Some(1),
             end_line: Some(3),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first.content_hash.clone()),
@@ -2101,6 +2111,8 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             start_line: Some(1),
             end_line: Some(1),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -2208,6 +2220,8 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             start_line: Some(1),
             end_line: Some(3),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -2220,6 +2234,8 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             start_line: Some(1),
             end_line: Some(3),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first_read.content_hash),
@@ -2467,6 +2483,8 @@ function helper() {
                 start_line: None,
                 end_line: None,
                 symbol: Some(symbol.into()),
+                heading: None,
+                heading_occurrence: None,
                 continuation_cursor: None,
                 max_tokens: Some(2_000),
                 expected_hash: None,
@@ -2629,6 +2647,8 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
                 start_line: None,
                 end_line: None,
                 symbol: Some(symbol.into()),
+                heading: None,
+                heading_occurrence: None,
                 continuation_cursor: None,
                 max_tokens: Some(2_000),
                 expected_hash: None,
@@ -2643,6 +2663,155 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
             read.content
         );
     }
+}
+
+#[tokio::test]
+async fn markdown_outline_and_heading_read_preserve_section_structure_and_occurrences() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(
+        root.path().join("README.md"),
+        "\
+# Root
+intro
+## Repeat
+first
+### Child
+child
+## Repeat
+second
+
+Setext
+------
+```markdown
+# hidden
+```
+",
+    )
+    .expect("Markdown source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    let outline = services
+        .outline(OutlineRequest {
+            paths: vec!["README.md".into()],
+            symbol_name: None,
+            symbol_kind: Some("markdown_heading".into()),
+            max_results: Some(20),
+            max_tokens: Some(2_000),
+            cursor: None,
+        })
+        .await
+        .expect("Markdown outline");
+    assert!(outline.parse_complete);
+    assert!(outline.result_complete);
+    assert_eq!(outline.total_symbols, 5);
+    assert_eq!(
+        outline.symbol_counts_by_kind.get("markdown_heading"),
+        Some(&5)
+    );
+    let markdown = &outline.files[0];
+    assert_eq!(markdown.language.as_deref(), Some("markdown"));
+    assert!(markdown.parse_complete);
+    assert_eq!(
+        markdown
+            .symbols
+            .iter()
+            .map(|symbol| (
+                symbol.name.as_str(),
+                symbol.parent.as_deref(),
+                symbol.start_line,
+                symbol.end_line,
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("Root", None, 1, 14),
+            ("Repeat", Some("Root"), 3, 6),
+            ("Child", Some("Repeat"), 5, 6),
+            ("Repeat", Some("Root"), 7, 9),
+            ("Setext", Some("Root"), 10, 14),
+        ]
+    );
+    assert!(!markdown.symbols.iter().any(|symbol| symbol.name == "hidden"));
+
+    for (occurrence, expected_range, expected_content) in [
+        (
+            None,
+            (3, 6),
+            "## Repeat\nfirst\n### Child\nchild",
+        ),
+        (Some(2), (7, 9), "## Repeat\nsecond"),
+    ] {
+        let read = services
+            .read(ReadRequest {
+                path: "README.md".into(),
+                start_line: None,
+                end_line: None,
+                symbol: None,
+                heading: Some(if occurrence == Some(2) {
+                    "## Repeat".into()
+                } else {
+                    "Repeat".into()
+                }),
+                heading_occurrence: occurrence,
+                continuation_cursor: None,
+                max_tokens: Some(2_000),
+                expected_hash: None,
+            })
+            .await
+            .expect("Markdown heading read");
+        assert_eq!(
+            (read.target_start_line, read.target_end_line),
+            expected_range
+        );
+        assert_eq!(read.content.as_deref().map(str::trim_end), Some(expected_content));
+    }
+
+    let error = services
+        .read(ReadRequest {
+            path: "README.md".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            heading: Some("Repeat".into()),
+            heading_occurrence: Some(3),
+            continuation_cursor: None,
+            max_tokens: Some(2_000),
+            expected_hash: None,
+        })
+        .await
+        .expect_err("missing duplicate occurrence");
+    assert!(matches!(
+        error,
+        Error::HeadingNotFound {
+            path,
+            heading,
+            occurrence: 3
+        } if path == "README.md" && heading == "Repeat"
+    ));
+
+    let error = services
+        .read(ReadRequest {
+            path: "README.md".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            heading: Some("Repeat".into()),
+            heading_occurrence: Some(0),
+            continuation_cursor: None,
+            max_tokens: Some(2_000),
+            expected_hash: None,
+        })
+        .await
+        .expect_err("zero heading occurrence");
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "heading occurrence",
+            reason: "must be one-based"
+        }
+    ));
 }
 
 #[tokio::test]
@@ -3375,6 +3544,8 @@ async fn read_reports_live_content_that_differs_from_the_index() {
             start_line: Some(1),
             end_line: Some(1),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -3394,6 +3565,8 @@ async fn read_reports_live_content_that_differs_from_the_index() {
             start_line: Some(1),
             end_line: Some(1),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first.content_hash.clone()),
@@ -3421,6 +3594,8 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             start_line: Some(2),
             end_line: Some(3),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -3436,6 +3611,8 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             start_line: Some(2),
             end_line: Some(3),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(exact.content_hash.clone()),
@@ -3452,6 +3629,8 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             start_line: Some(2),
             end_line: None,
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -3467,6 +3646,8 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             start_line: None,
             end_line: Some(3),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -3482,6 +3663,8 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             start_line: None,
             end_line: None,
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -3494,6 +3677,8 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             start_line: Some(1),
             end_line: Some(5),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -3510,6 +3695,8 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             start_line: Some(4),
             end_line: Some(99),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -3530,6 +3717,8 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             start_line: Some(2),
             end_line: Some(3),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(exact.content_hash.clone()),
@@ -3553,6 +3742,8 @@ async fn symbol_read_after_first_line_returns_the_complete_definition() {
             start_line: None,
             end_line: None,
             symbol: Some("target".into()),
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -3582,6 +3773,8 @@ async fn open_ended_read_bounds_live_suffix_before_returning_content() {
             start_line: Some(5_000),
             end_line: None,
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(12),
             expected_hash: None,
@@ -3607,6 +3800,8 @@ async fn live_read_rejects_malformed_utf8_at_eof() {
             start_line: Some(1),
             end_line: None,
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -3633,6 +3828,8 @@ async fn live_read_rejects_line_after_terminal_newline() {
             start_line: Some(2),
             end_line: None,
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -3659,6 +3856,8 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             start_line: Some(2),
             end_line: Some(3),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -3671,6 +3870,8 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             start_line: Some(2),
             end_line: None,
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -3689,6 +3890,8 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             start_line: Some(3),
             end_line: Some(3),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -3708,6 +3911,8 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             start_line: None,
             end_line: None,
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -3724,6 +3929,8 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
                 start_line,
                 end_line,
                 symbol: None,
+                heading: None,
+                heading_occurrence: None,
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
@@ -3739,6 +3946,8 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             start_line: None,
             end_line: None,
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: Some("not-a-read-cursor".into()),
             max_tokens: Some(100),
             expected_hash: None,
@@ -3753,6 +3962,8 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             start_line: Some(1),
             end_line: Some(1),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: Some(
                 "1:read:1:1:1:1:00000000000000000000000000000000:0000000000000000".into(),
             ),
@@ -3781,6 +3992,8 @@ async fn token_truncated_read_reports_the_returned_line_range() {
             start_line: Some(2),
             end_line: Some(4),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(3),
             expected_hash: None,
@@ -3820,6 +4033,8 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
                 start_line: None,
                 end_line: None,
                 symbol: cursor.is_none().then(|| "oversized_symbol".into()),
+                heading: None,
+                heading_occurrence: None,
                 continuation_cursor: cursor.take(),
                 max_tokens: Some(12),
                 expected_hash: None,
@@ -3856,6 +4071,8 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             start_line: None,
             end_line: None,
             symbol: Some("oversized_symbol".into()),
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(12),
             expected_hash: None,
@@ -3868,6 +4085,8 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             start_line: None,
             end_line: None,
             symbol: Some("oversized_symbol".into()),
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(12),
             expected_hash: Some(first.content_hash.clone()),
@@ -3888,6 +4107,8 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             start_line: None,
             end_line: None,
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: first.continuation_cursor,
             max_tokens: Some(12),
             expected_hash: None,
@@ -3902,6 +4123,8 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             start_line: None,
             end_line: None,
             symbol: Some("oversized_symbol".into()),
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(12),
             expected_hash: None,
@@ -3916,6 +4139,8 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             start_line: None,
             end_line: None,
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: current.continuation_cursor,
             max_tokens: Some(12),
             expected_hash: None,
@@ -3944,6 +4169,8 @@ async fn read_rejects_ignored_files() {
             start_line: None,
             end_line: None,
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -3984,6 +4211,8 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
             start_line: None,
             end_line: None,
             symbol: Some("Service.run".into()),
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -4004,6 +4233,8 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
             start_line: None,
             end_line: None,
             symbol: Some("Service.missing".into()),
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -4036,6 +4267,8 @@ async fn symbol_reads_and_outline_filters_search_beyond_result_caps() {
             start_line: None,
             end_line: None,
             symbol: Some("symbol_129".into()),
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -4909,6 +5142,8 @@ async fn working_tree_consistency_applies_to_each_retrieval_service() {
                 start_line: Some(1),
                 end_line: Some(1),
                 symbol: None,
+                heading: None,
+                heading_occurrence: None,
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
@@ -4975,6 +5210,8 @@ async fn read_reports_index_stale_when_live_file_diverges() {
             start_line: Some(1),
             end_line: Some(1),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -5008,6 +5245,8 @@ async fn read_not_modified_still_reports_index_stale_against_live_file() {
             start_line: Some(1),
             end_line: Some(1),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
@@ -5025,6 +5264,8 @@ async fn read_not_modified_still_reports_index_stale_against_live_file() {
             start_line: Some(1),
             end_line: Some(1),
             symbol: None,
+            heading: None,
+            heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first.content_hash.clone()),

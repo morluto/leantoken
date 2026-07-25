@@ -373,6 +373,10 @@ container conditions, and keyframes. Selector atoms are available to reference
 search. HTML outlines include sectioning elements, IDs, forms and controls,
 dialogs, buttons and links, `data-*` actions, hash anchors, and script/style
 resources. HTML resource paths are also reported as imports.
+Markdown outlines include ATX and Setext headings as `markdown_heading`
+symbols. Their ranges cover the complete section through the line before the
+next heading of equal or higher level, parent fields preserve the heading tree,
+and headings inside fenced code blocks are excluded.
 Unsupported text files remain searchable and are marked incomplete rather than
 being presented as precise.
 
@@ -385,6 +389,11 @@ Reads an exact source range.
   one-based range.
 - `target: {"kind":"symbol","name":"LeanTokenMcp"}` selects one indexed
   symbol definition.
+- `target: {"kind":"heading","name":"Installation"}` selects one indexed
+  Markdown section. The exact outline signature form, such as
+  `"name":"## Installation"`, is also accepted. Add `"occurrence":2` to
+  select the second duplicate heading; occurrences are one-based and follow
+  source order.
 - `target: {"kind":"continuation","cursor":"..."}` continues a truncated
   response. The cursor preserves byte-exact progress even when the preceding
   page ended in the middle of a line.

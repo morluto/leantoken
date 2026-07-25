@@ -601,6 +601,7 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         leantoken::Error::LimitExceeded => ("request_limit_exceeded", None, None, None, None),
         leantoken::Error::NotIndexed(_) => ("not_indexed", None, None, None, None),
         leantoken::Error::SymbolNotFound { .. } => ("symbol_not_found", None, None, None, None),
+        leantoken::Error::HeadingNotFound { .. } => ("heading_not_found", None, None, None, None),
         leantoken::Error::IndexNotReady => ("index_not_ready", None, None, None, None),
         leantoken::Error::StaleCursor => ("stale_cursor", None, None, None, None),
         leantoken::Error::Cancelled => ("request_cancelled", None, None, None, None),
@@ -786,6 +787,17 @@ mod tests {
                 serde_json::json!({
                     "error": "symbol is not indexed in lib.rs: missing",
                     "category": "symbol_not_found"
+                }),
+            ),
+            (
+                leantoken::Error::HeadingNotFound {
+                    path: "README.md".into(),
+                    heading: "Installation".into(),
+                    occurrence: 2,
+                },
+                serde_json::json!({
+                    "error": "Markdown heading occurrence 2 is not indexed in README.md: Installation",
+                    "category": "heading_not_found"
                 }),
             ),
             (

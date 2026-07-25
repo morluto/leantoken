@@ -264,6 +264,29 @@ fn validate_read_input(request: &ReadRequest) -> Result<()> {
         });
     }
     validate_optional_input(request.symbol.as_deref(), "symbol", MAX_PATTERN_BYTES)?;
+    if request
+        .heading
+        .as_deref()
+        .is_some_and(|heading| heading.trim().is_empty())
+    {
+        return Err(Error::InvalidInput {
+            field: "heading",
+            reason: "must not be empty",
+        });
+    }
+    validate_optional_input(request.heading.as_deref(), "heading", MAX_PATTERN_BYTES)?;
+    if request.heading_occurrence == Some(0) {
+        return Err(Error::InvalidInput {
+            field: "heading occurrence",
+            reason: "must be one-based",
+        });
+    }
+    if request.heading_occurrence.is_some() && request.heading.is_none() {
+        return Err(Error::InvalidInput {
+            field: "heading occurrence",
+            reason: "requires a heading target",
+        });
+    }
     validate_optional_input(request.expected_hash.as_deref(), "expected hash", 128)?;
     validate_optional_input(
         request.continuation_cursor.as_deref(),
@@ -281,13 +304,24 @@ fn validate_read_input(request: &ReadRequest) -> Result<()> {
             reason: "must use either a symbol or line range, not both",
         });
     }
-    if request.continuation_cursor.is_some() && (request.symbol.is_some() || has_line_target) {
+    if request.heading.is_some() && (request.symbol.is_some() || has_line_target) {
+        return Err(Error::InvalidInput {
+            field: "read target",
+            reason: "must use either a heading, symbol, or line range",
+        });
+    }
+    if request.continuation_cursor.is_some()
+        && (request.symbol.is_some() || request.heading.is_some() || has_line_target)
+    {
         return Err(Error::InvalidInput {
             field: "read target",
             reason: "must use either a continuation cursor or a new target, not both",
         });
     }
-    if request.symbol.is_none() && request.continuation_cursor.is_none() {
+    if request.symbol.is_none()
+        && request.heading.is_none()
+        && request.continuation_cursor.is_none()
+    {
         let start_line = request.start_line.unwrap_or(1);
         if start_line == 0
             || request
@@ -799,6 +833,16 @@ fn resolve_read_target(
                     symbol: symbol_name.clone(),
                 })?;
         (symbol.start_line, Some(symbol.end_line))
+    } else if let Some(heading_name) = &request.heading {
+        let occurrence = request.heading_occurrence.unwrap_or(1);
+        let heading = session
+            .find_markdown_heading(file_id, heading_name, occurrence)?
+            .ok_or_else(|| Error::HeadingNotFound {
+                path: request.path.clone(),
+                heading: heading_name.clone(),
+                occurrence,
+            })?;
+        (heading.start_line, Some(heading.end_line))
     } else {
         (request.start_line.unwrap_or(1), request.end_line)
     };

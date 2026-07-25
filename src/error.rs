@@ -85,6 +85,16 @@ pub enum Error {
         /// Exact symbol identity requested by the caller.
         symbol: String,
     },
+    /// Requested Markdown heading occurrence was absent from an indexed file.
+    #[error("Markdown heading occurrence {occurrence} is not indexed in {path}: {heading}")]
+    HeadingNotFound {
+        /// Repository-relative indexed file.
+        path: String,
+        /// Exact rendered heading text requested by the caller.
+        heading: String,
+        /// One-based duplicate occurrence requested by the caller.
+        occurrence: usize,
+    },
     #[error("requested content exceeds the configured limit")]
     LimitExceeded,
     /// Caller-controlled response limit crossed its configured maximum.

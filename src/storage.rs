@@ -2133,6 +2133,29 @@ impl ReadSession {
             .optional()?)
     }
 
+    pub(crate) fn find_markdown_heading(
+        &self,
+        file_id: i64,
+        name: &str,
+        occurrence: usize,
+    ) -> Result<Option<SymbolRecord>> {
+        let offset = usize_to_i64(occurrence.saturating_sub(1))?;
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
+                     FROM symbols
+                     WHERE file_id = ?1
+                       AND kind = 'markdown_heading'
+                       AND (name = ?2 OR signature = ?2)
+                     ORDER BY start_byte, id
+                     LIMIT 1 OFFSET ?3",
+                params![file_id, name, offset],
+                Storage::map_symbol,
+            )
+            .optional()?)
+    }
+
     #[cfg(test)]
     pub(crate) fn find_enclosing_symbol(
         &self,

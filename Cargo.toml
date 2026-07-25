@@ -26,6 +26,7 @@ inquire = { version = "0.9.4", default-features = false, features = ["crossterm"
 jsonc-parser = { version = "0.32.4", features = ["cst", "serde"] }
 notify = "8.2.0"
 nucleo-matcher = "0.3.1"
+pulldown-cmark = { version = "0.13.4", default-features = false }
 rayon = "1.11.0"
 r2d2 = "0.8.10"
 r2d2_sqlite = { version = "0.35.0", default-features = false }
