@@ -2,8 +2,9 @@ use std::time::Instant;
 
 use leantoken::{
     Config, ContextRequest, ContextSignalPolicy, ContextWorkflow, Error, FileOperation, FilesRequest,
-    Freshness, HistoryOperation, HistoryRequest, IndexConsistency, IndexState, OutlineRequest,
-    ReadRequest, ReadStatus, SearchMode, SearchRequest, TokenSavingsOperation,
+    Freshness, HistoryOperation, HistoryRequest, IndexConsistency, IndexState, JsonOperation,
+    JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadRequest, ReadStatus, SearchMode,
+    SearchRequest, TokenSavingsOperation,
     coordination::IndexCoordination, services::Services, tokens::Tokenizer,
 };
 use tokio_util::sync::CancellationToken;
@@ -5433,6 +5434,140 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
             .iter()
             .all(|hunk| hunk.path == "src/lib.rs")
     );
+}
+
+#[tokio::test]
+async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("artifacts")).expect("artifact directory");
+    std::fs::write(root.path().join(".gitignore"), "artifacts/\n").expect("ignore file");
+    std::fs::write(
+        root.path().join("artifacts/before.json"),
+        r#"{"runs":[{"score":1,"name":"a"},{"score":2,"name":"b"},{"score":3,"name":"c"},{"score":100,"name":"d"}],"version":1}"#,
+    )
+    .expect("base JSON");
+    std::fs::write(
+        root.path().join("artifacts/after.json"),
+        r#"{"runs":[{"score":2,"name":"a"},{"score":4,"name":"b"}],"status":"done"}"#,
+    )
+    .expect("head JSON");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+
+    let query = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "artifacts/before.json".into(),
+                selector: Some(JsonSelector::Pointer {
+                    pointer: "/version".into(),
+                }),
+                projection: JsonProjection::Value,
+            },
+            max_tokens: Some(100),
+            max_items: None,
+            array_sample_size: None,
+        })
+        .await
+        .expect("pointer query");
+    assert_eq!(query.value, Some(serde_json::json!(1)));
+    assert_eq!(query.sources[0].path, "artifacts/before.json");
+    assert_response_token_accounting!(query, Tokenizer::default());
+
+    let collapsed = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "artifacts/before.json".into(),
+                selector: Some(JsonSelector::Jmespath {
+                    expression: "runs".into(),
+                }),
+                projection: JsonProjection::Collapsed,
+            },
+            max_tokens: Some(500),
+            max_items: Some(100),
+            array_sample_size: Some(1),
+        })
+        .await
+        .expect("collapsed JMESPath query");
+    assert_eq!(collapsed.value.as_ref().expect("value")["$array"]["count"], 4);
+    assert_eq!(
+        collapsed.value.as_ref().expect("value")["$array"]["sample"]
+            .as_array()
+            .expect("sample")
+            .len(),
+        1
+    );
+
+    for projection in [JsonProjection::Keys, JsonProjection::Schema] {
+        let projected = services
+            .json(JsonRequest {
+                operation: JsonOperation::Query {
+                    path: "artifacts/before.json".into(),
+                    selector: None,
+                    projection,
+                },
+                max_tokens: Some(1_000),
+                max_items: Some(100),
+                array_sample_size: None,
+            })
+            .await
+            .expect("structural projection");
+        assert!(projected.value.is_some());
+        assert!(projected.result_complete);
+    }
+
+    let summary = services
+        .json(JsonRequest {
+            operation: JsonOperation::NumericSummary {
+                path: "artifacts/before.json".into(),
+                selector: Some(JsonSelector::Jmespath {
+                    expression: "runs[].score".into(),
+                }),
+            },
+            max_tokens: None,
+            max_items: None,
+            array_sample_size: None,
+        })
+        .await
+        .expect("numeric summary");
+    let statistics = summary.numeric_summary.expect("statistics");
+    assert_eq!(statistics.count, 4);
+    assert_eq!(statistics.min, Some(1.0));
+    assert_eq!(statistics.median, Some(2.5));
+    assert_eq!(statistics.p95, Some(100.0));
+    assert_eq!(statistics.max, Some(100.0));
+
+    let diff = services
+        .json(JsonRequest {
+            operation: JsonOperation::DiffFields {
+                base_path: "artifacts/before.json".into(),
+                head_path: "artifacts/after.json".into(),
+                selectors: vec![
+                    JsonSelector::Pointer {
+                        pointer: "/version".into(),
+                    },
+                    JsonSelector::Pointer {
+                        pointer: "/status".into(),
+                    },
+                    JsonSelector::Jmespath {
+                        expression: "runs[].score".into(),
+                    },
+                ],
+                projection: JsonProjection::Collapsed,
+            },
+            max_tokens: Some(1_000),
+            max_items: Some(100),
+            array_sample_size: Some(2),
+        })
+        .await
+        .expect("selected-field diff");
+    assert_eq!(diff.differences.len(), 3);
+    assert!(diff.differences.iter().all(|field| field.changed));
+    assert!(diff.differences[0].before_present);
+    assert!(!diff.differences[0].after_present);
+    assert!(!diff.differences[1].before_present);
+    assert!(diff.differences[1].after_present);
+    assert_response_token_accounting!(diff, Tokenizer::default());
 }
 
 #[tokio::test]

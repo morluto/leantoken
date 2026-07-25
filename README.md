@@ -72,7 +72,8 @@ out the task.
 <td width="33%" valign="top">
 <strong>Built for agent workflows</strong><br><br>
 Browse paths, search identifiers, inspect outlines, read exact ranges, trace
-symbol history, and inspect cumulative savings through seven focused MCP tools.
+symbol history, query structured JSON, and inspect cumulative savings through
+eight focused MCP tools.
 </td>
 </tr>
 </table>
@@ -143,16 +144,17 @@ retrieval.
 | `leantoken.outline` | Inspect definitions, signatures, imports, and ranges without whole-file reads. |
 | `leantoken.read` | Prefer over cat/head/sed for one exact symbol or inclusive line range. |
 | `leantoken.history` | Read, diff, or trace one parsed symbol across immutable Git revisions. |
+| `leantoken.json` | Query, summarize, or compare bounded live JSON structures. |
 | `leantoken.savings` | Report cumulative repository-local estimated source-token savings. |
 
 Every index-backed retrieval tool accepts `consistency: "reconcile_working_tree"` when
 completed edits must be reconciled before the query. The default,
 `"indexed_generation"`, returns the latest completed index generation without
 scanning or waiting for filesystem changes; it is not a Git revision boundary.
-`leantoken.history` reads immutable Git objects and therefore does not accept
-an index consistency mode. To constrain context to immutable history, pass
-`BASE..HEAD` as `leantoken.context.base_revision` with
-`strict_changed_paths: true`.
+`leantoken.history` reads immutable Git objects and `leantoken.json` reads exact
+live files, so neither accepts an index consistency mode. To constrain context
+to immutable history, pass `BASE..HEAD` as `leantoken.context.base_revision`
+with `strict_changed_paths: true`.
 
 The catalog stays intentionally small because every tool description and
 schema also consumes model context.
