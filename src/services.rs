@@ -15,6 +15,7 @@ use crate::error::RetryableOperation;
 use crate::indexer::Indexer;
 use crate::model::*;
 use crate::storage::{ReadSession, Storage, StorageCounts};
+use crate::tokens::response_token_accounting;
 use crate::{Config, Error, Result};
 
 mod context;
@@ -191,9 +192,21 @@ impl Services {
     }
 
     fn finalize_response<T: RetrievalResponse>(&self, response: &mut T) -> Result<()> {
-        response.meta_mut().payload_tokens = 0;
-        let payload = serde_json::to_string(response)?;
-        response.meta_mut().payload_tokens = self.config.tokenizer.count(&payload);
+        let source_tokens = {
+            let meta = response.meta_mut();
+            meta.protocol_tokens = 0;
+            meta.path_and_metadata_tokens = 0;
+            meta.total_response_tokens = 0;
+            meta.payload_tokens = 0;
+            meta.source_tokens
+        };
+        let accounting =
+            response_token_accounting(&*response, source_tokens, &self.config.tokenizer)?;
+        let meta = response.meta_mut();
+        meta.protocol_tokens = accounting.protocol_tokens;
+        meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
+        meta.total_response_tokens = accounting.total_response_tokens;
+        meta.payload_tokens = accounting.total_response_tokens;
         Ok(())
     }
 
@@ -496,6 +509,9 @@ impl Services {
             repository_generation: generation,
             freshness: self.freshness(),
             source_tokens: emitted_tokens,
+            protocol_tokens: 0,
+            path_and_metadata_tokens: 0,
+            total_response_tokens: 0,
             payload_tokens: 0,
             tokenizer: self.config.tokenizer.name().into(),
             emitted_tokens,
