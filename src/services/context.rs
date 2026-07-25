@@ -204,7 +204,7 @@ fn build_context_routing(
     request: &ContextRequest,
     scope: &DiffScopeReceipt,
     candidate_paths: usize,
-    fragments: &[ContextFragment],
+    selected_paths: &[String],
 ) -> Option<ContextRoutingReceipt> {
     if scope.changed_paths.len() < OVERSIZED_CHANGE_PATHS {
         return None;
@@ -228,19 +228,19 @@ fn build_context_routing(
             .cmp(&left.1.len())
             .then_with(|| left.0.cmp(&right.0))
     });
-    let selected_groups = fragments.iter().fold(
+    let selected_groups = selected_paths.iter().fold(
         BTreeMap::<String, BTreeSet<&str>>::new(),
-        |mut paths, fragment| {
+        |mut paths, path| {
             paths
-                .entry(context_path_group(&fragment.path))
+                .entry(context_path_group(path))
                 .or_default()
-                .insert(&fragment.path);
+                .insert(path);
             paths
         },
     );
-    let selected_paths = fragments
+    let selected_path_count = selected_paths
         .iter()
-        .map(|fragment| fragment.path.as_str())
+        .map(String::as_str)
         .collect::<BTreeSet<_>>()
         .len();
     let strongest_selected_group = selected_groups
@@ -248,8 +248,8 @@ fn build_context_routing(
         .map(BTreeSet::len)
         .max()
         .unwrap_or(0);
-    let weakly_concentrated =
-        selected_paths > 1 && strongest_selected_group.saturating_mul(2) <= selected_paths;
+    let weakly_concentrated = selected_path_count > 1
+        && strongest_selected_group.saturating_mul(2) <= selected_path_count;
 
     let suggestions = groups
         .iter()
@@ -273,7 +273,7 @@ fn build_context_routing(
     Some(ContextRoutingReceipt {
         candidate_paths,
         changed_paths: scope.changed_paths.len(),
-        selected_paths,
+        selected_paths: selected_path_count,
         weakly_concentrated,
         consistency: IndexConsistency::IndexedGeneration,
         base_revision: request.base_revision.clone(),
@@ -665,6 +665,12 @@ impl Services {
         if let Some(minimum) = request.minimum_fragments_per_focus_path {
             self.result_limit(Some(minimum))?;
         }
+        if request.plan_only && request.receipt_id.is_some() {
+            return Err(Error::InvalidInput {
+                field: "receipt_id",
+                reason: "must be omitted when plan_only is true",
+            });
+        }
         validate_input(&request.task, "task", MAX_QUERY_BYTES)?;
         validate_glob_patterns(&request.include_paths)?;
         if request
@@ -962,14 +968,14 @@ impl Services {
         &self,
         session: &ReadSession,
         request: &ContextRequest,
-        fragments: &[ContextFragment],
+        selected_paths: &[String],
         coverage: &mut ContextCoverageReceipt,
     ) -> Result<()> {
         for focus in &mut coverage.focus_path_coverage {
             let matcher = PathMatcher::new(std::slice::from_ref(&focus.pattern))?;
-            focus.selected_fragments = fragments
+            focus.selected_fragments = selected_paths
                 .iter()
-                .filter(|fragment| matcher.is_match(&fragment.path))
+                .filter(|path| matcher.is_match(path))
                 .count();
             focus.satisfied =
                 focus.indexed_paths > 0 && focus.selected_fragments >= focus.minimum_fragments;
@@ -987,9 +993,9 @@ impl Services {
                     indexed_paths = indexed_paths.saturating_add(1);
                 }
             }
-            let selected_fragments = fragments
+            let selected_fragments = selected_paths
                 .iter()
-                .filter(|fragment| changed_paths.contains(fragment.path.as_str()))
+                .filter(|path| changed_paths.contains(path.as_str()))
                 .count();
             coverage.changed_path_coverage = Some(ContextChangedPathCoverage {
                 resolved_paths: changed_paths.len(),
@@ -2106,10 +2112,25 @@ impl Services {
             coverage
                 .uncovered_must_include_symbols
                 .retain(|symbol| !coverage.unmatched_must_include_symbols.contains(symbol));
+            let selected_paths: Vec<String> = response.plan.as_ref().map_or_else(
+                || {
+                    response
+                        .fragments
+                        .iter()
+                        .map(|fragment| fragment.path.clone())
+                        .collect()
+                },
+                |plan| {
+                    plan.candidates
+                        .iter()
+                        .map(|candidate| candidate.path.clone())
+                        .collect()
+                },
+            );
             self.finalize_strict_scope_coverage(
                 session,
                 &scoped_request,
-                &response.fragments,
+                &selected_paths,
                 &mut coverage,
             )?;
             response.coverage = coverage;
@@ -2187,7 +2208,7 @@ impl Services {
                     &request,
                     &scope,
                     candidate_path_count,
-                    &response.fragments,
+                    &selected_paths,
                 );
                 if let Some(routing) = &response.routing {
                     let concentration = if routing.weakly_concentrated {
@@ -2202,78 +2223,86 @@ impl Services {
                 }
                 response.diff_scope = Some(scope);
             }
-            let receipt_candidates = response
-                .fragments
-                .iter()
-                .map(|fragment| {
-                    ReceiptEvidence::new(
-                        fragment.path.clone(),
-                        fragment.start_line,
-                        fragment.end_line,
-                        fragment.content_hash.clone(),
-                        Some(&fragment.content),
-                    )
-                })
-                .collect::<Vec<_>>();
-            let receipt = self.evaluate_receipt(
-                request.receipt_id.as_deref(),
-                generation,
-                &receipt_candidates,
-            )?;
-            response.fragments = response
-                .fragments
-                .into_iter()
-                .zip(&receipt.decisions)
-                .filter_map(|(fragment, decision)| {
-                    matches!(
-                        decision,
-                        ReceiptDecision::Return | ReceiptDecision::ReturnNearDuplicate
-                    )
-                    .then_some(fragment)
-                })
-                .collect();
-            response.receipt.fragment_hashes = response
-                .fragments
-                .iter()
-                .map(|fragment| fragment.content_hash.clone())
-                .collect();
-            response.meta.source_tokens = response
-                .fragments
-                .iter()
-                .map(|fragment| self.config.tokenizer.count(&fragment.content))
-                .sum();
-            response.meta.emitted_tokens = response.meta.source_tokens;
-            receipt.apply_meta(&mut response.meta);
-            if response.meta.receipt_near_duplicates > 0 {
-                response.warnings.push(format!(
-                    "{} returned fragments are semantic near-duplicates of prior receipt evidence",
-                    response.meta.receipt_near_duplicates
-                ));
-            }
-            if response.fragments.is_empty() {
-                if response.meta.receipt_suppressed_exact
-                    + response.meta.receipt_suppressed_overlap
-                    > 0
-                {
-                    response
-                        .warnings
-                        .push("all selected evidence was already covered by the receipt".into());
-                } else {
-                    response
-                        .warnings
-                        .push("no relevant indexed evidence found".into());
+            if !request.plan_only {
+                let receipt_candidates = response
+                    .fragments
+                    .iter()
+                    .map(|fragment| {
+                        ReceiptEvidence::new(
+                            fragment.path.clone(),
+                            fragment.start_line,
+                            fragment.end_line,
+                            fragment.content_hash.clone(),
+                            Some(&fragment.content),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let receipt = self.evaluate_receipt(
+                    request.receipt_id.as_deref(),
+                    generation,
+                    &receipt_candidates,
+                )?;
+                response.fragments = response
+                    .fragments
+                    .into_iter()
+                    .zip(&receipt.decisions)
+                    .filter_map(|(fragment, decision)| {
+                        matches!(
+                            decision,
+                            ReceiptDecision::Return | ReceiptDecision::ReturnNearDuplicate
+                        )
+                        .then_some(fragment)
+                    })
+                    .collect();
+                response.receipt.fragment_hashes = response
+                    .fragments
+                    .iter()
+                    .map(|fragment| fragment.content_hash.clone())
+                    .collect();
+                response.meta.source_tokens = response
+                    .fragments
+                    .iter()
+                    .map(|fragment| self.config.tokenizer.count(&fragment.content))
+                    .sum();
+                response.meta.emitted_tokens = response.meta.source_tokens;
+                receipt.apply_meta(&mut response.meta);
+                if response.meta.receipt_near_duplicates > 0 {
+                    response.warnings.push(format!(
+                        "{} returned fragments are semantic near-duplicates of prior receipt evidence",
+                        response.meta.receipt_near_duplicates
+                    ));
+                }
+                if response.fragments.is_empty() {
+                    if response.meta.receipt_suppressed_exact
+                        + response.meta.receipt_suppressed_overlap
+                        > 0
+                    {
+                        response
+                            .warnings
+                            .push("all selected evidence was already covered by the receipt".into());
+                    } else {
+                        response
+                            .warnings
+                            .push("no relevant indexed evidence found".into());
+                    }
                 }
             }
             self.finalize_response(&mut response)?;
-            let paths = response
-                .fragments
-                .iter()
-                .map(|fragment| fragment.path.clone())
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>();
-            let baseline_source_tokens =
-                session.whole_file_source_tokens(&paths, self.config.tokenizer.name())?;
+            let baseline_source_tokens = if request.plan_only {
+                None
+            } else {
+                let paths = response
+                    .fragments
+                    .iter()
+                    .map(|fragment| fragment.path.clone())
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                session.whole_file_source_tokens(
+                    &paths,
+                    self.config.tokenizer.name(),
+                )?
+            };
             Ok((
                 ContextEvaluation {
                     response,
@@ -2367,6 +2396,7 @@ mod tests {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
@@ -2472,6 +2502,7 @@ mod tests {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
@@ -2500,7 +2531,7 @@ mod tests {
             indexed_changed_paths: 36,
             evidence: None,
         };
-        let fragments = vec![
+        let fragments = [
             ContextFragment {
                 path: "src/browser/file_0.rs".into(),
                 start_line: 1,
@@ -2525,8 +2556,12 @@ mod tests {
             },
         ];
 
-        let routing =
-            build_context_routing(&request, &scope, 24, &fragments).expect("oversized routing");
+        let selected_paths = fragments
+            .iter()
+            .map(|fragment| fragment.path.clone())
+            .collect::<Vec<_>>();
+        let routing = build_context_routing(&request, &scope, 24, &selected_paths)
+            .expect("oversized routing");
 
         assert_eq!(routing.changed_paths, 36);
         assert_eq!(routing.path_groups_total, 3);

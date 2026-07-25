@@ -1101,6 +1101,10 @@ pub struct ContextArgs {
     #[arg(long, value_parser = parse_positive_usize)]
     pub max_fragments: Option<usize>,
 
+    /// Preview ranked candidates without returning source fragments.
+    #[arg(long)]
+    pub plan_only: bool,
+
     /// Focus on these paths (repeatable).
     #[arg(long = "focus")]
     pub focus_paths: Vec<String>,
@@ -1173,6 +1177,7 @@ impl From<ContextArgs> for ContextRequest {
             must_include_paths: args.must_include_paths,
             must_include_symbols: args.must_include_symbols,
             max_fragments: args.max_fragments,
+            plan_only: args.plan_only,
             focus_paths: args.focus_paths,
             strict_focus_paths: args.strict_focus_paths,
             minimum_fragments_per_focus_path: args.minimum_fragments_per_focus_path,

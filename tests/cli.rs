@@ -415,6 +415,7 @@ fn cli_context_request() {
         "owner_symbol",
         "--max-fragments",
         "12",
+        "--plan-only",
         "--focus",
         "src",
         "--strict-focus-paths",
@@ -448,6 +449,7 @@ fn cli_context_request() {
         vec!["owner_symbol".to_string()]
     );
     assert_eq!(request.max_fragments, Some(12));
+    assert!(request.plan_only);
     assert_eq!(request.focus_paths, vec!["src".to_string()]);
     assert!(request.strict_focus_paths);
     assert_eq!(request.minimum_fragments_per_focus_path, Some(2));
