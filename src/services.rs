@@ -638,6 +638,7 @@ mod tests {
                 max_tokens: Some(100),
                 context_lines: Some(1),
                 case_sensitive: false,
+                all_occurrences: false,
                 cursor: None,
             })
             .await
@@ -763,6 +764,7 @@ mod tests {
             max_tokens: Some(1),
             context_lines: Some(0),
             case_sensitive: false,
+            all_occurrences: false,
             cursor: None,
         };
         let response = services.search(request.clone()).await.expect("search");
@@ -923,6 +925,7 @@ mod tests {
                 max_tokens: Some(10_000),
                 context_lines: Some(0),
                 case_sensitive: true,
+                all_occurrences: false,
                 cursor: None,
             })
             .await

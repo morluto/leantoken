@@ -631,6 +631,10 @@ pub struct SearchArgs {
     #[arg(long)]
     pub case_sensitive: bool,
 
+    /// Return every text or regex occurrence with exact coordinates and counts.
+    #[arg(long)]
+    pub all_occurrences: bool,
+
     /// Pagination cursor.
     #[arg(long)]
     pub cursor: Option<String>,
@@ -648,6 +652,7 @@ impl From<SearchArgs> for SearchRequest {
             max_tokens: args.max_tokens,
             context_lines: args.context_lines,
             case_sensitive: args.case_sensitive,
+            all_occurrences: args.all_occurrences,
             cursor: args.cursor,
         }
     }

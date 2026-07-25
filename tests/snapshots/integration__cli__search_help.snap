@@ -1,5 +1,6 @@
 ---
 source: tests/cli.rs
+assertion_line: 34
 expression: "help(&[\"search\"])"
 ---
 Search the repository for terms, symbols, or references
@@ -42,6 +43,9 @@ Options:
 
       --case-sensitive
           Perform a case-sensitive search
+
+      --all-occurrences
+          Return every text or regex occurrence with exact coordinates and counts
 
       --cursor <CURSOR>
           Pagination cursor

@@ -22,6 +22,8 @@ const MAX_REGEX_CANDIDATES: usize = 2_000;
 const MAX_REGEX_FILES_SCANNED: usize = 10_000;
 /// Maximum chunks examined per file during a regex scan.
 const MAX_REGEX_CHUNKS_PER_FILE: usize = 256;
+/// Maximum exact matches materialized by one exhaustive occurrence request.
+const MAX_EXHAUSTIVE_OCCURRENCES: usize = 100_000;
 const FILTER_SCAN_PAGE_SIZE: usize = 256;
 const MAX_FILTER_SCAN_ROWS: usize = 10_000;
 
@@ -82,6 +84,51 @@ pub(super) fn chunk_search_hit(
     let Some((start, end)) = byte_range else {
         return Ok(None);
     };
+    Ok(Some(chunk_search_hit_for_range(
+        hit,
+        start,
+        end,
+        context,
+        regex_match,
+        false,
+    )))
+}
+
+fn chunk_search_hits(
+    hit: &ChunkHit,
+    query: &str,
+    case_sensitive: bool,
+    context: usize,
+    compiled_matcher: Option<&regex::Regex>,
+    regex_match: bool,
+) -> Vec<SearchHit> {
+    let ranges = if let Some(regex) = compiled_matcher {
+        regex
+            .find_iter(&hit.content)
+            .map(|matched| (matched.start(), matched.end()))
+            .collect::<Vec<_>>()
+    } else if case_sensitive {
+        hit.content
+            .match_indices(query)
+            .map(|(start, matched)| (start, start + matched.len()))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    ranges
+        .into_iter()
+        .map(|(start, end)| chunk_search_hit_for_range(hit, start, end, context, regex_match, true))
+        .collect()
+}
+
+fn chunk_search_hit_for_range(
+    hit: &ChunkHit,
+    start: usize,
+    end: usize,
+    context: usize,
+    regex_match: bool,
+    include_occurrence: bool,
+) -> SearchHit {
     let (local_start, local_end) = byte_range_to_line_range(&hit.content, start, end);
     let available_lines = hit.content.lines().count().max(1);
     let desired_start = local_start.saturating_sub(context).max(1);
@@ -89,7 +136,7 @@ pub(super) fn chunk_search_hit(
     let (excerpt_start, excerpt_end) =
         anchored_line_window(desired_start, desired_end, local_start, local_end, 20);
     let excerpt = excerpt(&hit.content, excerpt_start, excerpt_end);
-    Ok(Some(SearchHit {
+    SearchHit {
         path: hit.path.clone(),
         start_line: hit.start_line + excerpt_start - 1,
         end_line: hit.start_line + excerpt_end - 1,
@@ -103,13 +150,19 @@ pub(super) fn chunk_search_hit(
         role: None,
         symbol: None,
         enclosing_symbol: None,
+        occurrence: include_occurrence.then_some(SearchOccurrence {
+            start_line: hit.start_line + local_start - 1,
+            end_line: hit.start_line + local_end - 1,
+            start_byte: hit.start_byte + start,
+            end_byte: hit.start_byte + end,
+        }),
         score: 3.0 + (-hit.score).max(0.0) * 1_000_000.0,
         score_reasons: vec![if regex_match {
             "regex match".into()
         } else {
             "text match".into()
         }],
-    }))
+    }
 }
 
 pub(super) fn matching_line(
@@ -160,6 +213,14 @@ fn compile_regex(request: &SearchRequest) -> Result<regex::Regex> {
         .build()?)
 }
 
+fn compile_occurrence_literal_regex(request: &SearchRequest) -> Result<regex::Regex> {
+    Ok(regex::RegexBuilder::new(&regex::escape(&request.query))
+        .case_insensitive(!request.case_sensitive)
+        .size_limit(1 << 20)
+        .dfa_size_limit(1 << 20)
+        .build()?)
+}
+
 /// Compile a case-insensitive literal matcher for non-regex search modes.
 ///
 /// In Auto/Text/Identifier modes the query is a literal string, not a regex
@@ -193,6 +254,12 @@ fn validate_search_input(request: &SearchRequest) -> Result<()> {
     validate_glob_patterns(&request.exclude_paths)?;
     validate_glob_patterns(&request.focus_paths)?;
     validate_cursor(request.cursor.as_deref())?;
+    if request.all_occurrences && !matches!(request.mode, SearchMode::Text | SearchMode::Regex) {
+        return Err(Error::InvalidInput {
+            field: "all occurrences",
+            reason: "requires text or regex mode",
+        });
+    }
     if matches!(request.mode, SearchMode::Regex) {
         compile_regex(request)?;
     } else {
@@ -248,6 +315,10 @@ impl Services {
         } else {
             None
         };
+        let occurrence_literal_regex = (request.all_occurrences
+            && matches!(request.mode, SearchMode::Text))
+        .then(|| compile_occurrence_literal_regex(&request))
+        .transpose()?;
         let limit = self.result_limit(request.max_results)?;
         let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         let context_lines = self.context_line_limit(request.context_lines)?;
@@ -344,27 +415,33 @@ impl Services {
                     session,
                     &request,
                     regex.as_ref().expect("regex mode compiles a pattern"),
-                    limit.saturating_mul(20),
+                    (!request.all_occurrences).then_some(limit.saturating_mul(20)),
+                    cancellation,
+                )?,
+                SearchMode::Text if request.all_occurrences => self.regex_hits(
+                    session,
+                    &request,
+                    occurrence_literal_regex
+                        .as_ref()
+                        .expect("exhaustive text mode compiles a literal pattern"),
+                    None,
                     cancellation,
                 )?,
                 SearchMode::Text | SearchMode::Auto | SearchMode::Identifier => {
+                    let fetch_page = |offset, page_limit| {
+                        if matches!(request.mode, SearchMode::Identifier)
+                            || request.query.chars().count() < 3
+                        {
+                            session.search_word_page(&fts_quote(&request.query), page_limit, offset)
+                        } else {
+                            session.search_trigram_page(&request.query, page_limit, offset)
+                        }
+                    };
                     collect_filtered_hits(
                         &request,
                         limit.saturating_mul(8),
                         cancellation,
-                        |offset, page_limit| {
-                            if matches!(request.mode, SearchMode::Identifier)
-                                || request.query.chars().count() < 3
-                            {
-                                session.search_word_page(
-                                    &fts_quote(&request.query),
-                                    page_limit,
-                                    offset,
-                                )
-                            } else {
-                                session.search_trigram_page(&request.query, page_limit, offset)
-                            }
-                        },
+                        fetch_page,
                         |hit: &ChunkHit| &hit.path,
                     )?
                 }
@@ -373,14 +450,34 @@ impl Services {
             let mut lexical_hits = Vec::new();
             for hit in lexical {
                 check_cancelled(cancellation)?;
-                if let Some(search_hit) = chunk_search_hit(
-                    &hit,
-                    &request.query,
-                    request.case_sensitive,
-                    context_lines,
-                    regex.as_ref().or(literal_regex.as_ref()),
-                    matches!(request.mode, SearchMode::Regex),
-                )? {
+                let chunk_hits = if request.all_occurrences {
+                    chunk_search_hits(
+                        &hit,
+                        &request.query,
+                        request.case_sensitive,
+                        context_lines,
+                        regex
+                            .as_ref()
+                            .or(occurrence_literal_regex.as_ref())
+                            .or(literal_regex.as_ref()),
+                        matches!(request.mode, SearchMode::Regex),
+                    )
+                } else {
+                    chunk_search_hit(
+                        &hit,
+                        &request.query,
+                        request.case_sensitive,
+                        context_lines,
+                        regex.as_ref().or(literal_regex.as_ref()),
+                        matches!(request.mode, SearchMode::Regex),
+                    )?
+                    .into_iter()
+                    .collect()
+                };
+                for search_hit in chunk_hits {
+                    if request.all_occurrences && lexical_hits.len() == MAX_EXHAUSTIVE_OCCURRENCES {
+                        return Err(Error::LimitExceeded);
+                    }
                     let matched_line = matching_line(
                         &hit,
                         &request.query,
@@ -388,14 +485,22 @@ impl Services {
                         regex.as_ref().or(literal_regex.as_ref()),
                     )
                     .unwrap_or(search_hit.start_line);
-                    lexical_hits.push((hit, search_hit, matched_line));
+                    let matched_line = search_hit
+                        .occurrence
+                        .as_ref()
+                        .map_or(matched_line, |occurrence| occurrence.start_line);
+                    lexical_hits.push((hit.file_id, search_hit, matched_line));
                 }
             }
             let lexical_locations = lexical_hits
                 .iter()
-                .map(|(hit, _, matched_line)| (hit.file_id, *matched_line))
+                .map(|(file_id, _, matched_line)| (*file_id, *matched_line))
                 .collect::<Vec<_>>();
-            let enclosing = session.find_enclosing_symbols_batch(&lexical_locations)?;
+            let mut enclosing = Vec::with_capacity(lexical_locations.len());
+            for locations in lexical_locations.chunks(512) {
+                check_cancelled(cancellation)?;
+                enclosing.extend(session.find_enclosing_symbols_batch(locations)?);
+            }
             for ((_, mut hit, _), symbol) in lexical_hits.into_iter().zip(enclosing) {
                 hit.enclosing_symbol = symbol.map(|symbol| symbol.name);
                 hits.push(hit);
@@ -408,6 +513,17 @@ impl Services {
                     .total_cmp(&left.score)
                     .then_with(|| left.path.cmp(&right.path))
                     .then_with(|| left.start_line.cmp(&right.start_line))
+                    .then_with(|| {
+                        left.occurrence
+                            .as_ref()
+                            .map(|occurrence| occurrence.start_byte)
+                            .cmp(
+                                &right
+                                    .occurrence
+                                    .as_ref()
+                                    .map(|occurrence| occurrence.start_byte),
+                            )
+                    })
             });
             let mut seen = HashSet::new();
             hits.retain(|hit| {
@@ -416,6 +532,9 @@ impl Services {
                     hit.start_line,
                     hit.end_line,
                     hit.content_hash.clone(),
+                    hit.occurrence
+                        .as_ref()
+                        .map(|occurrence| (occurrence.start_byte, occurrence.end_byte)),
                 ))
             });
 
@@ -441,11 +560,14 @@ impl Services {
                 .collect::<HashSet<_>>()
                 .into_iter()
                 .collect::<Vec<_>>();
+            let occurrences_returned = selected.len();
             let baseline_source_tokens =
                 session.whole_file_source_tokens(&paths, self.config.tokenizer.name())?;
             Ok((
                 SearchResponse {
                     hits: selected,
+                    occurrences_returned,
+                    occurrences_total: request.all_occurrences.then_some(total_candidates),
                     meta: self.meta(
                         generation,
                         emitted_tokens,
@@ -477,6 +599,7 @@ impl Services {
             role: Some(ReferenceRole::Definition),
             symbol: Some(hit.symbol.name),
             enclosing_symbol: hit.symbol.parent,
+            occurrence: None,
             score: if exact { 10.0 } else { 7.0 },
             score_reasons: vec![if exact {
                 "exact symbol".into()
@@ -503,6 +626,7 @@ impl Services {
             role: Some(hit.reference.role),
             symbol: Some(hit.reference.name),
             enclosing_symbol: hit.reference.enclosing_symbol,
+            occurrence: None,
             score: if exact { 8.0 } else { 5.0 },
             score_reasons: vec![if exact {
                 "exact reference".into()
@@ -517,13 +641,13 @@ impl Services {
         session: &ReadSession,
         request: &SearchRequest,
         regex: &regex::Regex,
-        max_candidates: usize,
+        max_candidates: Option<usize>,
         cancellation: &CancellationToken,
     ) -> Result<Vec<ChunkHit>> {
-        // Hard caps prevent repository-wide regex work from running unbounded.
-        // Prefer FTS/trigram prefilters in other modes; regex fails explicitly
-        // rather than returning an incomplete snapshot scan.
-        let max_candidates = max_candidates.min(MAX_REGEX_CANDIDATES);
+        // Hard caps prevent repository-wide lexical scans from running
+        // unbounded. Exhaustive modes lift only the candidate-chunk cap and
+        // fail explicitly if another cap would make the result incomplete.
+        let max_candidates = max_candidates.map(|limit| limit.min(MAX_REGEX_CANDIDATES));
         let mut hits = Vec::new();
         let mut files_scanned = 0usize;
         let mut cursor = None;
@@ -549,7 +673,7 @@ impl Services {
                 for chunk in chunks.into_iter().take(MAX_REGEX_CHUNKS_PER_FILE) {
                     check_cancelled(cancellation)?;
                     if regex.is_match(&chunk.content) {
-                        if hits.len() == max_candidates {
+                        if max_candidates.is_some_and(|limit| hits.len() == limit) {
                             return Err(Error::LimitExceeded);
                         }
                         hits.push(ChunkHit {

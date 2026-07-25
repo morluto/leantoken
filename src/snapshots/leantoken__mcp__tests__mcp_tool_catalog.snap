@@ -1,6 +1,6 @@
 ---
 source: src/mcp.rs
-assertion_line: 1768
+assertion_line: 1772
 expression: tools
 ---
 [
@@ -600,7 +600,7 @@ expression: tools
   },
   {
     "name": "search",
-    "description": "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}.",
+    "description": "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Set all_occurrences in text or regex mode for exact occurrence coordinates and returned/total counts; exhaustive scans fail instead of silently truncating at internal scan limits. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}.",
     "inputSchema": {
       "$defs": {
         "SearchMode": {
@@ -642,6 +642,11 @@ expression: tools
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
+        "all_occurrences": {
+          "default": false,
+          "description": "Return every text or regex occurrence with exact coordinates and counts.",
+          "type": "boolean"
+        },
         "case_sensitive": {
           "default": false,
           "description": "Preserve query case when matching.",

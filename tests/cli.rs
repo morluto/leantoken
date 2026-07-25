@@ -94,6 +94,7 @@ fn cli_search_request() {
         "--context-lines",
         "3",
         "--case-sensitive",
+        "--all-occurrences",
     ]);
     let AppRequest::Search(request) = cli.app_request() else {
         panic!("expected search request");
@@ -106,6 +107,7 @@ fn cli_search_request() {
     assert_eq!(request.max_tokens, Some(1024));
     assert_eq!(request.context_lines, Some(3));
     assert!(request.case_sensitive);
+    assert!(request.all_occurrences);
 }
 
 #[test]
