@@ -25,7 +25,7 @@ use crate::model::{
     ContextCoverageReceipt, ContextFragment, ContextOmissionSummary, ContextRequest,
     ContextResponse, EvidenceReceipt, Freshness, OmittedCandidate, ResponseMeta,
 };
-use crate::services::validation::path_matches;
+use crate::services::validation::{PathMatcher, path_matches};
 use crate::tokens;
 
 const FACET_PREFIX: &str = "facet:";
@@ -391,18 +391,13 @@ fn rank_with_tokenizer(
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
 pub fn deduplicate(candidates: Vec<ScoredCandidate>) -> Vec<ScoredCandidate> {
-    deduplicate_with_options(
-        candidates,
-        &Weights::default(),
-        tokens::Tokenizer::default(),
-    )
+    deduplicate_with_options(candidates, &Weights::default())
 }
 
 #[allow(clippy::cast_precision_loss)]
 fn deduplicate_with_options(
     candidates: Vec<ScoredCandidate>,
     weights: &Weights,
-    tokenizer: tokens::Tokenizer,
 ) -> Vec<ScoredCandidate> {
     let mut sorted = candidates;
     sorted.sort_by(|a, b| {
@@ -431,7 +426,7 @@ fn deduplicate_with_options(
             candidate.content_hash.clone(),
         );
         if let Some(existing) = seen_hashes.get(&hash_key).copied() {
-            merge_scored_candidate(&mut kept[existing], &candidate, weights, tokenizer);
+            merge_scored_candidate(&mut kept[existing], &candidate, weights);
             continue;
         }
 
@@ -464,7 +459,7 @@ fn deduplicate_with_options(
                 })
             });
         if let Some(existing) = duplicate {
-            merge_scored_candidate(&mut kept[existing], &candidate, weights, tokenizer);
+            merge_scored_candidate(&mut kept[existing], &candidate, weights);
             continue;
         }
 
@@ -490,10 +485,10 @@ fn merge_scored_candidate(
     existing: &mut ScoredCandidate,
     duplicate: &ScoredCandidate,
     weights: &Weights,
-    tokenizer: tokens::Tokenizer,
 ) {
     merge_candidate_signals(&mut existing.candidate, &duplicate.candidate);
-    *existing = ScoredCandidate::new_with_tokenizer(existing.candidate.clone(), weights, tokenizer);
+    existing.score = existing.candidate.score(weights, existing.token_count);
+    existing.marginal_score = existing.score / existing.token_count as f64;
 }
 
 fn merge_candidate_signals(existing: &mut Candidate, duplicate: &Candidate) {
@@ -601,7 +596,10 @@ fn select_with_options(
     tokenizer: tokens::Tokenizer,
 ) -> ContextResponse {
     let mut candidates = candidates;
-    apply_request_signals(&mut candidates, request);
+    let focus_paths = PathMatcher::new_lossy(&request.focus_paths);
+    let include_paths = PathMatcher::new_lossy(&request.include_paths);
+    let exclude_paths = PathMatcher::new_lossy(&request.exclude_paths);
+    apply_request_signals(&mut candidates, request, &focus_paths);
 
     let known_hashes: HashSet<String> = request.known_hashes.iter().cloned().collect();
 
@@ -610,8 +608,8 @@ fn select_with_options(
     let mut eligible: Vec<Candidate> = Vec::with_capacity(candidates.len());
 
     for candidate in candidates {
-        if !is_included(&candidate.path, &request.include_paths)
-            || is_excluded(&candidate.path, &request.exclude_paths)
+        if (!request.include_paths.is_empty() && !include_paths.is_match(&candidate.path))
+            || exclude_paths.is_match(&candidate.path)
         {
             path_omitted.push(ScoredCandidate::new_with_tokenizer(
                 candidate, weights, tokenizer,
@@ -630,7 +628,7 @@ fn select_with_options(
     }
 
     let ranked = rank_with_tokenizer(eligible, weights, tokenizer);
-    let deduped = deduplicate_with_options(ranked, weights, tokenizer);
+    let deduped = deduplicate_with_options(ranked, weights);
 
     let budget = request.token_budget;
     let max_per_file = (budget / DIVERSITY_DIVISOR).clamp(1, 3);
@@ -831,16 +829,14 @@ fn required_symbol_matches(candidate: &Candidate, symbol: &str) -> bool {
         .is_some_and(|name| name == symbol)
 }
 
-fn apply_request_signals(candidates: &mut [Candidate], request: &ContextRequest) {
+fn apply_request_signals(
+    candidates: &mut [Candidate],
+    request: &ContextRequest,
+    focus_paths: &PathMatcher,
+) {
     for candidate in candidates {
-        for focus_path in &request.focus_paths {
-            if focus_path.is_empty() {
-                continue;
-            }
-            if focus_matches(&candidate.path, focus_path) {
-                candidate.focus_boost += 1.0;
-                break;
-            }
+        if focus_paths.is_match(&candidate.path) {
+            candidate.focus_boost += 1.0;
         }
 
         if let Some(ref name) = candidate.symbol_name {
@@ -852,25 +848,6 @@ fn apply_request_signals(candidates: &mut [Candidate], request: &ContextRequest)
             }
         }
     }
-}
-
-fn focus_matches(path: &str, pattern: &str) -> bool {
-    path_matches(path, pattern).unwrap_or(false)
-}
-
-fn is_included(path: &str, patterns: &[String]) -> bool {
-    patterns.is_empty()
-        || patterns
-            .iter()
-            .filter(|pattern| !pattern.is_empty())
-            .any(|pattern| path_matches(path, pattern).unwrap_or(false))
-}
-
-fn is_excluded(path: &str, patterns: &[String]) -> bool {
-    patterns
-        .iter()
-        .filter(|pattern| !pattern.is_empty())
-        .any(|pattern| path_matches(path, pattern).unwrap_or(false))
 }
 
 fn greedy_select(

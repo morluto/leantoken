@@ -8,12 +8,14 @@ use super::Services;
 use super::files::FILE_LIST_PAGE_SIZE;
 use super::read::{StoredExcerpt, StoredExcerptRequest};
 use super::validation::{
-    MAX_QUERY_BYTES, check_cancelled, make_cursor, parse_cursor, path_allowed, path_matches,
+    MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled, make_cursor, parse_cursor,
     validate_cursor, validate_glob_patterns, validate_input,
 };
 use crate::model::*;
 use crate::storage::{ChunkHit, ReadSession, ReferenceHit, SymbolHit};
-use crate::text::{anchored_line_window, byte_range_to_line_range, excerpt, hash};
+use crate::text::{
+    anchored_line_window, byte_range_to_line_range, byte_to_line, excerpt, hash, line_starts,
+};
 use crate::{Error, Result};
 
 /// Absolute regex scan candidate cap (independent of max_results multiplier).
@@ -34,6 +36,7 @@ fn collect_filtered_hits<T>(
     mut fetch_page: impl FnMut(usize, usize) -> Result<Vec<T>>,
     path: impl Fn(&T) -> &str,
 ) -> Result<Vec<T>> {
+    let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
     let mut selected = Vec::new();
     let mut offset = 0usize;
     while selected.len() < max_candidates && offset < MAX_FILTER_SCAN_ROWS {
@@ -43,7 +46,7 @@ fn collect_filtered_hits<T>(
         let page_len = page.len();
         for hit in page {
             check_cancelled(cancellation)?;
-            if path_allowed(path(&hit), &request.include_paths, &request.exclude_paths)? {
+            if path_filter.allows(path(&hit)) {
                 selected.push(hit);
                 if selected.len() == max_candidates {
                     break;
@@ -84,6 +87,7 @@ pub(super) fn chunk_search_hit(
     let Some((start, end)) = byte_range else {
         return Ok(None);
     };
+    let starts = line_starts(&hit.content);
     Ok(Some(chunk_search_hit_for_range(
         hit,
         start,
@@ -91,6 +95,7 @@ pub(super) fn chunk_search_hit(
         context,
         regex_match,
         false,
+        &starts,
     )))
 }
 
@@ -101,24 +106,41 @@ fn chunk_search_hits(
     context: usize,
     compiled_matcher: Option<&regex::Regex>,
     regex_match: bool,
-) -> Vec<SearchHit> {
-    let ranges = if let Some(regex) = compiled_matcher {
-        regex
-            .find_iter(&hit.content)
-            .map(|matched| (matched.start(), matched.end()))
-            .collect::<Vec<_>>()
-    } else if case_sensitive {
-        hit.content
-            .match_indices(query)
-            .map(|(start, matched)| (start, start + matched.len()))
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
-    ranges
-        .into_iter()
-        .map(|(start, end)| chunk_search_hit_for_range(hit, start, end, context, regex_match, true))
-        .collect()
+    max_hits: usize,
+) -> Result<Vec<SearchHit>> {
+    let ranges: Box<dyn Iterator<Item = (usize, usize)> + '_> =
+        if let Some(regex) = compiled_matcher {
+            Box::new(
+                regex
+                    .find_iter(&hit.content)
+                    .map(|matched| (matched.start(), matched.end())),
+            )
+        } else if case_sensitive {
+            Box::new(
+                hit.content
+                    .match_indices(query)
+                    .map(|(start, matched)| (start, start + matched.len())),
+            )
+        } else {
+            Box::new(std::iter::empty())
+        };
+    let starts = line_starts(&hit.content);
+    let mut hits = Vec::new();
+    for (start, end) in ranges {
+        if hits.len() == max_hits {
+            return Err(Error::LimitExceeded);
+        }
+        hits.push(chunk_search_hit_for_range(
+            hit,
+            start,
+            end,
+            context,
+            regex_match,
+            true,
+            &starts,
+        ));
+    }
+    Ok(hits)
 }
 
 fn chunk_search_hit_for_range(
@@ -128,9 +150,16 @@ fn chunk_search_hit_for_range(
     context: usize,
     regex_match: bool,
     include_occurrence: bool,
+    line_starts: &[usize],
 ) -> SearchHit {
-    let (local_start, local_end) = byte_range_to_line_range(&hit.content, start, end);
-    let available_lines = hit.content.lines().count().max(1);
+    let text_len = hit.content.len();
+    let local_start = byte_to_line(line_starts, text_len, start);
+    let local_end = if end == 0 || end == start {
+        local_start
+    } else {
+        byte_to_line(line_starts, text_len, end.saturating_sub(1))
+    };
+    let available_lines = line_starts.len().max(1);
     let desired_start = local_start.saturating_sub(context).max(1);
     let desired_end = local_end.saturating_add(context).min(available_lines);
     let (excerpt_start, excerpt_end) =
@@ -188,12 +217,9 @@ pub(super) fn matching_line(
 }
 
 fn apply_focus(hits: &mut [SearchHit], focus_paths: &[String]) -> Result<()> {
+    let focus_paths = PathMatcher::new(focus_paths)?;
     for hit in hits {
-        let mut focused = false;
-        for focus in focus_paths {
-            focused |= path_matches(&hit.path, focus)?;
-        }
-        if focused {
+        if focus_paths.is_match(&hit.path) {
             hit.score += 2.0;
             hit.score_reasons.push("focus path".into());
         }
@@ -461,7 +487,8 @@ impl Services {
                             .or(occurrence_literal_regex.as_ref())
                             .or(literal_regex.as_ref()),
                         matches!(request.mode, SearchMode::Regex),
-                    )
+                        MAX_EXHAUSTIVE_OCCURRENCES.saturating_sub(lexical_hits.len()),
+                    )?
                 } else {
                     chunk_search_hit(
                         &hit,
@@ -478,17 +505,19 @@ impl Services {
                     if request.all_occurrences && lexical_hits.len() == MAX_EXHAUSTIVE_OCCURRENCES {
                         return Err(Error::LimitExceeded);
                     }
-                    let matched_line = matching_line(
-                        &hit,
-                        &request.query,
-                        request.case_sensitive,
-                        regex.as_ref().or(literal_regex.as_ref()),
-                    )
-                    .unwrap_or(search_hit.start_line);
                     let matched_line = search_hit
                         .occurrence
                         .as_ref()
-                        .map_or(matched_line, |occurrence| occurrence.start_line);
+                        .map(|occurrence| occurrence.start_line)
+                        .or_else(|| {
+                            matching_line(
+                                &hit,
+                                &request.query,
+                                request.case_sensitive,
+                                regex.as_ref().or(literal_regex.as_ref()),
+                            )
+                        })
+                        .unwrap_or(search_hit.start_line);
                     lexical_hits.push((hit.file_id, search_hit, matched_line));
                 }
             }
@@ -648,6 +677,7 @@ impl Services {
         // unbounded. Exhaustive modes lift only the candidate-chunk cap and
         // fail explicitly if another cap would make the result incomplete.
         let max_candidates = max_candidates.map(|limit| limit.min(MAX_REGEX_CANDIDATES));
+        let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
         let mut hits = Vec::new();
         let mut files_scanned = 0usize;
         let mut cursor = None;
@@ -664,7 +694,7 @@ impl Services {
                     return Err(Error::LimitExceeded);
                 }
                 files_scanned += 1;
-                if !path_allowed(&file.path, &request.include_paths, &request.exclude_paths)? {
+                if !path_filter.allows(&file.path) {
                     continue;
                 }
                 let chunks = session
@@ -697,5 +727,32 @@ impl Services {
             }
         }
         Ok(hits)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exhaustive_chunk_hits_fail_before_exceeding_the_materialization_limit() {
+        let hit = ChunkHit {
+            chunk_id: 1,
+            file_id: 1,
+            path: "src/lib.rs".into(),
+            content: "key key key".into(),
+            start_line: 1,
+            end_line: 1,
+            start_byte: 0,
+            end_byte: 11,
+            token_count: 3,
+            generation: 1,
+            score: 0.0,
+        };
+
+        let error = chunk_search_hits(&hit, "key", true, 0, None, false, 2)
+            .expect_err("third occurrence exceeds the materialization limit");
+
+        assert!(matches!(error, Error::LimitExceeded));
     }
 }
