@@ -57,7 +57,7 @@ fn collect_filtered_hits<T>(
 }
 
 pub(super) fn chunk_search_hit(
-    hit: ChunkHit,
+    hit: &ChunkHit,
     query: &str,
     case_sensitive: bool,
     context: usize,
@@ -90,7 +90,7 @@ pub(super) fn chunk_search_hit(
         anchored_line_window(desired_start, desired_end, local_start, local_end, 20);
     let excerpt = excerpt(&hit.content, excerpt_start, excerpt_end);
     Ok(Some(SearchHit {
-        path: hit.path,
+        path: hit.path.clone(),
         start_line: hit.start_line + excerpt_start - 1,
         end_line: hit.start_line + excerpt_end - 1,
         content_hash: hash(&excerpt),
@@ -374,7 +374,7 @@ impl Services {
             for hit in lexical {
                 check_cancelled(cancellation)?;
                 if let Some(search_hit) = chunk_search_hit(
-                    hit.clone(),
+                    &hit,
                     &request.query,
                     request.case_sensitive,
                     context_lines,
