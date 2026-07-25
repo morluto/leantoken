@@ -61,7 +61,7 @@ struct FilesMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 4096))]
     cursor: Option<String>,
-    /// Use `working_tree` after edits; otherwise `committed`.
+    /// Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
@@ -151,7 +151,7 @@ struct SearchMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 4096))]
     cursor: Option<String>,
-    /// Use `working_tree` after edits; otherwise `committed`.
+    /// Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
@@ -225,7 +225,7 @@ struct OutlineMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 256))]
     cursor: Option<String>,
-    /// Use `working_tree` after edits; otherwise `committed`.
+    /// Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
@@ -363,7 +363,7 @@ struct ReadMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 128))]
     receipt_id: Option<String>,
-    /// Use `working_tree` after edits; otherwise `committed`.
+    /// Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
@@ -533,7 +533,7 @@ struct ContextMcpRequest {
     /// Require every returned fragment to belong to the resolved changed paths.
     #[serde(default)]
     strict_changed_paths: bool,
-    /// Use `working_tree` after edits; otherwise `committed`.
+    /// Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
@@ -764,7 +764,7 @@ impl RetryableToolResponse {
 fn index_consistency_schema(_: &mut SchemaGenerator) -> Schema {
     schemars::json_schema!({
         "type": "string",
-        "enum": ["committed", "working_tree"]
+        "enum": ["indexed_generation", "reconcile_working_tree"]
     })
 }
 
@@ -1163,7 +1163,7 @@ impl LeanTokenMcp {
 
 #[tool_handler(
     name = "leantoken",
-    instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken.context first with the user's task. PREFER leantoken.search over grep or rg for source search; leantoken.files over find, ls, or glob for paths; leantoken.outline over opening whole files to discover structure; and leantoken.read over cat, head, or sed for exact symbols and ranges. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=working_tree after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, generated artifacts, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
+    instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken.context first with the user's task. PREFER leantoken.search over grep or rg for source search; leantoken.files over find, ls, or glob for paths; leantoken.outline over opening whole files to discover structure; and leantoken.read over cat, head, or sed for exact symbols and ranges. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=reconcile_working_tree after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, generated artifacts, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
 )]
 impl ServerHandler for LeanTokenMcp {
     fn on_initialized(
@@ -1783,18 +1783,22 @@ mod tests {
                 .unwrap_or_else(|| panic!("{} consistency schema missing", tool.name));
             assert_eq!(
                 consistency.get("default"),
-                Some(&serde_json::json!("committed"))
+                Some(&serde_json::json!("indexed_generation"))
             );
             assert_eq!(
                 consistency.get("enum"),
-                Some(&serde_json::json!(["committed", "working_tree"]))
+                Some(&serde_json::json!([
+                    "indexed_generation",
+                    "reconcile_working_tree"
+                ]))
             );
             assert!(
                 consistency
                     .get("description")
                     .and_then(serde_json::Value::as_str)
                     .is_some_and(|description| {
-                        description.contains("working_tree") && description.contains("edits")
+                        description.contains("reconcile_working_tree")
+                            && description.contains("edits")
                     }),
                 "{}.consistency must tell agents when to synchronize",
                 tool.name

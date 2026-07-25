@@ -27,11 +27,13 @@ pub enum IndexState {
 #[serde(rename_all = "snake_case")]
 /// Consistency boundary applied before repository retrieval.
 pub enum IndexConsistency {
-    /// Query the latest committed index generation without waiting for filesystem changes.
+    /// Query the latest completed index generation without scanning filesystem changes.
     #[default]
-    Committed,
+    #[serde(alias = "committed")]
+    IndexedGeneration,
     /// Reconcile the current working tree before querying the resulting generation.
-    WorkingTree,
+    #[serde(alias = "working_tree")]
+    ReconcileWorkingTree,
 }
 
 /// Requested or resolved evidence workflow for context retrieval.
@@ -1067,6 +1069,30 @@ fn source_representation() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn consistency_names_are_explicit_and_legacy_inputs_remain_readable() {
+        assert_eq!(
+            serde_json::to_string(&IndexConsistency::IndexedGeneration)
+                .expect("serialize indexed generation"),
+            "\"indexed_generation\""
+        );
+        assert_eq!(
+            serde_json::to_string(&IndexConsistency::ReconcileWorkingTree)
+                .expect("serialize working-tree reconciliation"),
+            "\"reconcile_working_tree\""
+        );
+        assert_eq!(
+            serde_json::from_str::<IndexConsistency>("\"committed\"")
+                .expect("legacy committed alias"),
+            IndexConsistency::IndexedGeneration
+        );
+        assert_eq!(
+            serde_json::from_str::<IndexConsistency>("\"working_tree\"")
+                .expect("legacy working-tree alias"),
+            IndexConsistency::ReconcileWorkingTree
+        );
+    }
 
     #[test]
     fn index_report_preserves_unknown_legacy_skip_reasons_and_serializes_known_counts() {

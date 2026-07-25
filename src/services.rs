@@ -487,7 +487,7 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<()> {
-        if consistency == IndexConsistency::WorkingTree {
+        if consistency == IndexConsistency::ReconcileWorkingTree {
             self.index_cancellable(false, cancellation).await?;
         }
         Ok(())

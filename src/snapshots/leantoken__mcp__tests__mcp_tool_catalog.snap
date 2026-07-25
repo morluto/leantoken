@@ -1,6 +1,6 @@
 ---
 source: src/mcp.rs
-assertion_line: 1937
+assertion_line: 1953
 expression: tools
 ---
 [
@@ -63,11 +63,11 @@ expression: tools
           "type": "array"
         },
         "consistency": {
-          "default": "committed",
-          "description": "Use `working_tree` after edits; otherwise `committed`.",
+          "default": "indexed_generation",
+          "description": "Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.",
           "enum": [
-            "committed",
-            "working_tree"
+            "indexed_generation",
+            "reconcile_working_tree"
           ],
           "type": "string"
         },
@@ -336,11 +336,11 @@ expression: tools
       ],
       "properties": {
         "consistency": {
-          "default": "committed",
-          "description": "Use `working_tree` after edits; otherwise `committed`.",
+          "default": "indexed_generation",
+          "description": "Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.",
           "enum": [
-            "committed",
-            "working_tree"
+            "indexed_generation",
+            "reconcile_working_tree"
           ],
           "type": "string"
         },
@@ -428,11 +428,11 @@ expression: tools
       "additionalProperties": false,
       "properties": {
         "consistency": {
-          "default": "committed",
-          "description": "Use `working_tree` after edits; otherwise `committed`.",
+          "default": "indexed_generation",
+          "description": "Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.",
           "enum": [
-            "committed",
-            "working_tree"
+            "indexed_generation",
+            "reconcile_working_tree"
           ],
           "type": "string"
         },
@@ -626,11 +626,11 @@ expression: tools
       "additionalProperties": false,
       "properties": {
         "consistency": {
-          "default": "committed",
-          "description": "Use `working_tree` after edits; otherwise `committed`.",
+          "default": "indexed_generation",
+          "description": "Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.",
           "enum": [
-            "committed",
-            "working_tree"
+            "indexed_generation",
+            "reconcile_working_tree"
           ],
           "type": "string"
         },
@@ -755,11 +755,11 @@ expression: tools
           "type": "boolean"
         },
         "consistency": {
-          "default": "committed",
-          "description": "Use `working_tree` after edits; otherwise `committed`.",
+          "default": "indexed_generation",
+          "description": "Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.",
           "enum": [
-            "committed",
-            "working_tree"
+            "indexed_generation",
+            "reconcile_working_tree"
           ],
           "type": "string"
         },

@@ -256,7 +256,7 @@ fn build_context_routing(
         changed_paths: scope.changed_paths.len(),
         selected_paths,
         weakly_concentrated,
-        consistency: IndexConsistency::Committed,
+        consistency: IndexConsistency::IndexedGeneration,
         base_revision: request.base_revision.clone(),
         known_hashes: request.known_hashes.clone(),
         path_groups_total,

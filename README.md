@@ -144,9 +144,10 @@ retrieval.
 | `leantoken.read` | Prefer over cat/head/sed for one exact symbol or inclusive line range. |
 | `leantoken.savings` | Report cumulative repository-local estimated source-token savings. |
 
-Every retrieval tool accepts `consistency: "working_tree"` when completed edits
-must be reconciled before the query. The default, `"committed"`, returns the
-latest completed index generation without waiting for filesystem changes.
+Every retrieval tool accepts `consistency: "reconcile_working_tree"` when
+completed edits must be reconciled before the query. The default,
+`"indexed_generation"`, returns the latest completed index generation without
+scanning or waiting for filesystem changes; it is not a Git revision boundary.
 
 The catalog stays intentionally small because every tool description and
 schema also consumes model context.

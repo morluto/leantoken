@@ -517,7 +517,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     assert!(instructions.contains("call leantoken.savings directly"));
     assert!(instructions.contains("call leantoken.context first"));
     assert!(instructions.contains("leantoken.search over grep or rg"));
-    assert!(instructions.contains("consistency=working_tree"));
+    assert!(instructions.contains("consistency=reconcile_working_tree"));
     assert!(instructions.contains("native tools for edits, builds, tests"));
 
     let tools = client.peer().list_all_tools().await.expect("list tools");
@@ -603,12 +603,12 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         "pub fn newly_committed_package() {}\n",
     )
     .expect("write source after initial index");
-    let working_tree_arguments = serde_json::json!({
+    let reconcile_working_tree_arguments = serde_json::json!({
         "query": "newly_committed_package",
         "mode": "identifier",
         "max_results": 5,
         "max_tokens": 100,
-        "consistency": "working_tree"
+        "consistency": "reconcile_working_tree"
     })
     .as_object()
     .expect("working-tree search arguments")
@@ -617,7 +617,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .peer()
         .call_tool(
             CallToolRequestParams::new("search")
-                .with_arguments(working_tree_arguments),
+                .with_arguments(reconcile_working_tree_arguments),
         )
         .await
         .expect("working-tree search");
