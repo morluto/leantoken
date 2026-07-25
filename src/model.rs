@@ -333,6 +333,15 @@ pub struct ContextRequest {
     /// Require returned source fragments to match at least one path pattern.
     #[serde(default)]
     pub include_paths: Vec<String>,
+    /// Require evidence matching each path pattern when indexed and within budget.
+    #[serde(default)]
+    pub must_include_paths: Vec<String>,
+    /// Require evidence for each exact symbol when indexed and within budget.
+    #[serde(default)]
+    pub must_include_symbols: Vec<String>,
+    /// Maximum number of returned fragments.
+    #[serde(default)]
+    pub max_fragments: Option<usize>,
     /// Boost matching paths without filtering other candidates.
     #[serde(default)]
     pub focus_paths: Vec<String>,
@@ -354,6 +363,52 @@ pub struct ContextRequest {
     /// Explicit changed paths for diff-scoped context; bounded and validated.
     #[serde(default)]
     pub changed_paths: Vec<String>,
+}
+
+/// Indexed and selected evidence coverage for caller-supplied context constraints.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ContextCoverageReceipt {
+    /// Focus path patterns that matched no indexed path.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unmatched_focus_paths: Vec<String>,
+    /// Focus symbols that matched no exact indexed symbol.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unmatched_focus_symbols: Vec<String>,
+    /// Hard include patterns that matched no indexed path.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unmatched_include_paths: Vec<String>,
+    /// Required path patterns represented by returned or already-held evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covered_must_include_paths: Vec<String>,
+    /// Required exact symbols represented by returned or already-held evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covered_must_include_symbols: Vec<String>,
+    /// Required path patterns that matched no indexed path.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unmatched_must_include_paths: Vec<String>,
+    /// Required exact symbols that matched no indexed symbol.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unmatched_must_include_symbols: Vec<String>,
+    /// Indexed required path patterns omitted by path, token, or result constraints.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub uncovered_must_include_paths: Vec<String>,
+    /// Indexed required symbols omitted by path, token, or result constraints.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub uncovered_must_include_symbols: Vec<String>,
+}
+
+impl ContextCoverageReceipt {
+    fn is_empty(&self) -> bool {
+        self.unmatched_focus_paths.is_empty()
+            && self.unmatched_focus_symbols.is_empty()
+            && self.unmatched_include_paths.is_empty()
+            && self.covered_must_include_paths.is_empty()
+            && self.covered_must_include_symbols.is_empty()
+            && self.unmatched_must_include_paths.is_empty()
+            && self.unmatched_must_include_symbols.is_empty()
+            && self.uncovered_must_include_paths.is_empty()
+            && self.uncovered_must_include_symbols.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -533,6 +588,9 @@ pub struct ContextResponse {
     /// Aggregate omission causes, including details truncated from `omitted`.
     #[serde(default, skip_serializing_if = "ContextOmissionSummary::is_empty")]
     pub omission_summary: ContextOmissionSummary,
+    /// Coverage of caller-supplied focus, hard-scope, and must-cover constraints.
+    #[serde(default, skip_serializing_if = "ContextCoverageReceipt::is_empty")]
+    pub coverage: ContextCoverageReceipt,
     /// Decomposition guidance for oversized, multi-area diff scopes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routing: Option<ContextRoutingReceipt>,
@@ -898,6 +956,7 @@ mod tests {
             diff_scope: None,
             omitted: Vec::new(),
             omission_summary: ContextOmissionSummary::default(),
+            coverage: ContextCoverageReceipt::default(),
             routing: None,
             warnings: Vec::new(),
             meta: ResponseMeta {
@@ -959,6 +1018,7 @@ mod tests {
                 budget_or_result_limit: 1,
                 ..ContextOmissionSummary::default()
             },
+            coverage: ContextCoverageReceipt::default(),
             routing: None,
             warnings: vec!["1 omitted".into()],
             meta: ResponseMeta {

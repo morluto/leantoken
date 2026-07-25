@@ -336,6 +336,9 @@ async fn contribution_context_routes_to_guidance_validation_and_owner_tests() {
                 task: "prepare a contribution for parse_contribution_target".into(),
                 token_budget: 1_000,
                 include_paths: Vec::new(),
+                must_include_paths: Vec::new(),
+                must_include_symbols: Vec::new(),
+                max_fragments: None,
                 focus_paths: Vec::new(),
                 focus_symbols: vec!["parse_contribution_target".into()],
                 exclude_paths: Vec::new(),
@@ -480,6 +483,9 @@ fn context_limit_request(token_budget: usize) -> ContextRequest {
         task: "find greet".into(),
         token_budget,
         include_paths: Vec::new(),
+        must_include_paths: Vec::new(),
+        must_include_symbols: Vec::new(),
+        max_fragments: None,
         focus_paths: Vec::new(),
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
@@ -542,6 +548,73 @@ async fn context_include_paths_constrain_fragments_and_report_path_omissions() {
             .iter()
             .any(|warning| warning.contains("excluded by path constraints"))
     );
+}
+
+#[tokio::test]
+async fn context_must_cover_generates_evidence_and_reports_unmatched_constraints() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir_all(root.path().join("src")).expect("source directory");
+    std::fs::write(
+        root.path().join("src/required.rs"),
+        "pub fn required_symbol() -> bool { true }\n",
+    )
+    .expect("required source");
+    std::fs::write(
+        root.path().join("src/general.rs"),
+        "pub fn unrelated_symbol() -> bool { false }\n",
+    )
+    .expect("general source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+    let mut request = context_limit_request(300);
+    request.task = "investigate a different subsystem".into();
+    request.include_paths = vec!["src/**".into(), "absent/**".into()];
+    request.focus_paths = vec!["missing-focus/**".into()];
+    request.focus_symbols = vec!["missing_focus_symbol".into()];
+    request.must_include_paths = vec!["src/required.rs".into(), "src/missing.rs".into()];
+    request.must_include_symbols = vec!["required_symbol".into(), "missing_symbol".into()];
+    request.max_fragments = Some(2);
+
+    let response = services.context(request).await.expect("must-cover context");
+
+    assert!(
+        response
+            .fragments
+            .iter()
+            .any(|fragment| fragment.path == "src/required.rs")
+    );
+    assert_eq!(
+        response.coverage.covered_must_include_paths,
+        vec!["src/required.rs"]
+    );
+    assert_eq!(
+        response.coverage.covered_must_include_symbols,
+        vec!["required_symbol"]
+    );
+    assert_eq!(
+        response.coverage.unmatched_must_include_paths,
+        vec!["src/missing.rs"]
+    );
+    assert_eq!(
+        response.coverage.unmatched_must_include_symbols,
+        vec!["missing_symbol"]
+    );
+    assert_eq!(
+        response.coverage.unmatched_include_paths,
+        vec!["absent/**"]
+    );
+    assert_eq!(
+        response.coverage.unmatched_focus_paths,
+        vec!["missing-focus/**"]
+    );
+    assert_eq!(
+        response.coverage.unmatched_focus_symbols,
+        vec!["missing_focus_symbol"]
+    );
+    assert!(response.coverage.uncovered_must_include_paths.is_empty());
+    assert!(response.coverage.uncovered_must_include_symbols.is_empty());
 }
 
 #[tokio::test]
@@ -1525,6 +1598,9 @@ async fn five_services_return_bounded_grounded_responses() {
             task: "change greet caller".into(),
             token_budget: 200,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -1546,6 +1622,9 @@ async fn five_services_return_bounded_grounded_responses() {
             task: "change greet caller".into(),
             token_budget: 200,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -1568,6 +1647,9 @@ async fn five_services_return_bounded_grounded_responses() {
             task: "change greet caller".into(),
             token_budget: 200,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -1657,6 +1739,9 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             task: "find greet".into(),
             token_budget: 200,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -1833,6 +1918,9 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
                 task: format!("Fix {symbol}"),
                 token_budget: 300,
                 include_paths: Vec::new(),
+                must_include_paths: Vec::new(),
+                must_include_symbols: Vec::new(),
+                max_fragments: None,
                 focus_paths: Vec::new(),
                 focus_symbols: Vec::new(),
                 exclude_paths: Vec::new(),
@@ -1883,6 +1971,9 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
             task: "Fix OwnerAlpha".into(),
             token_budget: 400,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -1905,6 +1996,9 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
             task: "Fix OwnerAlpha and OtherSignal".into(),
             token_budget: 400,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -1964,6 +2058,9 @@ async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
         task: "Fix OwnerAlpha and OtherSignal".into(),
         token_budget: 400,
         include_paths: Vec::new(),
+        must_include_paths: Vec::new(),
+        must_include_symbols: Vec::new(),
+        max_fragments: None,
         focus_paths: Vec::new(),
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
@@ -3168,6 +3265,9 @@ async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_service
                 task: "change greet".into(),
                 token_budget: 100,
                 include_paths: Vec::new(),
+                must_include_paths: Vec::new(),
+                must_include_symbols: Vec::new(),
+                max_fragments: None,
                 focus_paths: Vec::new(),
                 focus_symbols: Vec::new(),
                 exclude_paths: Vec::new(),
@@ -3378,6 +3478,9 @@ async fn working_tree_diff_boosts_changed_files() {
             task: "update shared implementation".into(),
             token_budget: 500,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -3421,6 +3524,9 @@ async fn tokenizer_configuration_is_scoped_to_each_service() {
         task: "change independent_token_budget".into(),
         token_budget: 100,
         include_paths: Vec::new(),
+        must_include_paths: Vec::new(),
+        must_include_symbols: Vec::new(),
+        max_fragments: None,
         focus_paths: Vec::new(),
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
@@ -3469,6 +3575,9 @@ async fn context_declaration_excerpt_retains_long_body_across_chunks() {
             task: "fix target_symbol".into(),
             token_budget: 600,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -3512,6 +3621,9 @@ async fn context_text_hits_use_bounded_declaration_excerpts() {
             task: "fix rare_runtime_marker behavior".into(),
             token_budget: 1200,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -3742,6 +3854,9 @@ async fn working_tree_consistency_applies_to_each_retrieval_service() {
                 task: "change contextual_package_marker".into(),
                 token_budget: 200,
                 include_paths: Vec::new(),
+                must_include_paths: Vec::new(),
+                must_include_symbols: Vec::new(),
+                max_fragments: None,
                 focus_paths: vec!["context_package.rs".into()],
                 focus_symbols: vec!["contextual_package_marker".into()],
                 exclude_paths: Vec::new(),
@@ -3906,6 +4021,9 @@ async fn diff_scoped_context_with_explicit_changed_paths_reports_receipt() {
             task: "change greet caller".into(),
             token_budget: 200,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -4007,6 +4125,9 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
                 task: "review compute and rust_changed with owning tests".into(),
                 token_budget: 1_500,
                 include_paths: Vec::new(),
+                must_include_paths: Vec::new(),
+                must_include_symbols: Vec::new(),
+                max_fragments: None,
                 focus_paths: Vec::new(),
                 focus_symbols: Vec::new(),
                 exclude_paths: Vec::new(),
@@ -4071,6 +4192,9 @@ async fn diff_scoped_context_preserves_task_only_behavior_without_scope() {
             task: "change greet caller".into(),
             token_budget: 200,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -4098,6 +4222,9 @@ async fn diff_scoped_context_rejects_path_outside_repository() {
             task: "change greet caller".into(),
             token_budget: 200,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -4125,6 +4252,9 @@ async fn diff_scoped_context_rejects_excessive_changed_path_count() {
             task: "change greet caller".into(),
             token_budget: 200,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -4148,6 +4278,9 @@ async fn diff_scoped_context_counts_zero_for_nonexistent_changed_path() {
             task: "change greet caller".into(),
             token_budget: 200,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),

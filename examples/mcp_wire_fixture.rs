@@ -40,6 +40,9 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
         task: "find the request-validation boundary".into(),
         token_budget: 400,
         include_paths: Vec::new(),
+        must_include_paths: Vec::new(),
+        must_include_symbols: Vec::new(),
+        max_fragments: None,
         focus_paths: vec!["src/mcp.rs".into()],
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
@@ -71,6 +74,7 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
         diff_scope: None,
         omitted: Vec::new(),
         omission_summary: Default::default(),
+        coverage: Default::default(),
         routing: None,
         warnings: Vec::new(),
         meta: ResponseMeta {

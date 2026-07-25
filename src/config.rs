@@ -11,6 +11,7 @@ pub(crate) const DEFAULT_RESULTS: usize = 20;
 pub(crate) const MAX_RESULTS: usize = 100;
 pub(crate) const DEFAULT_READ_TOKENS: usize = 8_000;
 pub(crate) const DEFAULT_CONTEXT_TOKENS: usize = 3_000;
+pub(crate) const DEFAULT_CONTEXT_FRAGMENTS: usize = 8;
 pub(crate) const MAX_OUTPUT_TOKENS: usize = 32_000;
 pub(crate) const DEFAULT_CONTEXT_LINES: usize = 2;
 pub(crate) const MAX_CONTEXT_LINES: usize = 20;

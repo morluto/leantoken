@@ -817,6 +817,18 @@ pub struct ContextArgs {
     #[arg(long = "include")]
     pub include_paths: Vec<String>,
 
+    /// Require evidence matching each path pattern (repeatable).
+    #[arg(long = "must-include")]
+    pub must_include_paths: Vec<String>,
+
+    /// Require evidence for each exact symbol (repeatable).
+    #[arg(long = "must-include-symbol")]
+    pub must_include_symbols: Vec<String>,
+
+    /// Maximum number of returned fragments (default: 8).
+    #[arg(long, value_parser = parse_positive_usize)]
+    pub max_fragments: Option<usize>,
+
     /// Focus on these paths (repeatable).
     #[arg(long = "focus")]
     pub focus_paths: Vec<String>,
@@ -874,6 +886,9 @@ impl From<ContextArgs> for ContextRequest {
             task: args.task,
             token_budget: args.budget,
             include_paths: args.include_paths,
+            must_include_paths: args.must_include_paths,
+            must_include_symbols: args.must_include_symbols,
+            max_fragments: args.max_fragments,
             focus_paths: args.focus_paths,
             focus_symbols: args.focus_symbols,
             exclude_paths: args.exclude_paths,
