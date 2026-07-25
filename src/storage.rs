@@ -465,6 +465,22 @@ pub struct ImportRecord {
     pub line: usize,
 }
 
+#[derive(Debug)]
+pub(crate) struct ImportSeed {
+    pub id: i64,
+    pub file_id: i64,
+    pub source_path: String,
+    pub raw_target: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct ImportProjection {
+    pub id: i64,
+    pub file_id: i64,
+    pub resolved_path: Option<String>,
+    pub candidate_paths: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 /// Complete derived representation of one file, ready for transactional publication.
 ///
@@ -605,6 +621,95 @@ impl ReconciliationWriter<'_, '_> {
             "UPDATE imports SET resolved_path = NULL WHERE resolved_path = ?1",
             params![path],
         )?;
+        Ok(())
+    }
+
+    pub(crate) fn relocate(
+        &mut self,
+        old_path: &str,
+        new_path: &str,
+        size_bytes: u64,
+        modified_ns: Option<u128>,
+        expected_hash: &str,
+    ) -> Result<()> {
+        let updated = self.transaction.execute(
+            "UPDATE files
+             SET path = ?1, size_bytes = ?2, modified_ns = ?3, generation = ?4
+             WHERE path = ?5 AND content_hash = ?6",
+            params![
+                new_path,
+                u64_to_i64(size_bytes)?,
+                modified_ns.map(u128_to_i64).transpose()?,
+                self.generation,
+                old_path,
+                expected_hash,
+            ],
+        )?;
+        if updated != 1 {
+            return Err(Error::InternalFailure(
+                "relocation source changed before publication".into(),
+            ));
+        }
+        let file_id = self.transaction.query_row(
+            "SELECT id FROM files WHERE path = ?1",
+            params![new_path],
+            |row| row.get(0),
+        )?;
+        self.transaction.execute(
+            "DELETE FROM path_entries WHERE file_id = ?1",
+            params![file_id],
+        )?;
+        Storage::insert_path_projection(self.transaction, new_path, file_id)?;
+        self.deletions.insert(old_path.to_string());
+        self.replacements = self.replacements.saturating_add(1);
+        Ok(())
+    }
+
+    pub(crate) fn refresh_import_projections(
+        &mut self,
+        projections: &[ImportProjection],
+    ) -> Result<()> {
+        if projections.is_empty() {
+            return Ok(());
+        }
+        let mut update_import = self
+            .transaction
+            .prepare_cached("UPDATE imports SET resolved_path = ?1 WHERE id = ?2")?;
+        let mut delete_candidates = self
+            .transaction
+            .prepare_cached("DELETE FROM import_candidates WHERE import_id = ?1")?;
+        let mut insert_candidate = self.transaction.prepare_cached(
+            "INSERT INTO import_candidates(import_id, candidate_path, priority) VALUES (?1, ?2, ?3)",
+        )?;
+        let mut file_ids = HashSet::new();
+        for projection in projections {
+            if update_import.execute(params![projection.resolved_path.as_deref(), projection.id])?
+                != 1
+            {
+                return Err(Error::InternalFailure(
+                    "import changed before projection refresh".into(),
+                ));
+            }
+            delete_candidates.execute(params![projection.id])?;
+            for (priority, candidate_path) in projection.candidate_paths.iter().enumerate() {
+                insert_candidate.execute(params![
+                    projection.id,
+                    candidate_path,
+                    usize_to_i64(priority)?
+                ])?;
+            }
+            file_ids.insert(projection.file_id);
+        }
+        drop(update_import);
+        drop(delete_candidates);
+        drop(insert_candidate);
+
+        let mut update_generation = self
+            .transaction
+            .prepare_cached("UPDATE files SET generation = ?1 WHERE id = ?2")?;
+        for file_id in file_ids {
+            update_generation.execute(params![self.generation, file_id])?;
+        }
         Ok(())
     }
 }
@@ -1291,6 +1396,10 @@ impl Storage {
         self.begin_read()?.affected_importers(candidate_paths)
     }
 
+    pub(crate) fn import_seeds_for_paths(&self, paths: &[String]) -> Result<Vec<ImportSeed>> {
+        self.begin_read()?.import_seeds_for_paths(paths)
+    }
+
     pub fn search_word(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
         self.begin_read()?.search_word(query, max_results)
     }
@@ -1703,6 +1812,29 @@ impl ReadSession {
              ORDER BY files.path",
         )?;
         let rows = stmt.query_map(params![input], |row| row.get(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub(crate) fn import_seeds_for_paths(&self, paths: &[String]) -> Result<Vec<ImportSeed>> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let input = serde_json::to_string(paths)?;
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT imports.id, imports.file_id, files.path, imports.raw_target
+             FROM json_each(?1) AS requested
+             JOIN files ON files.path = requested.value
+             JOIN imports ON imports.file_id = files.id
+             ORDER BY files.path, imports.line, imports.id",
+        )?;
+        let rows = stmt.query_map(params![input], |row| {
+            Ok(ImportSeed {
+                id: row.get(0)?,
+                file_id: row.get(1)?,
+                source_path: row.get(2)?,
+                raw_target: row.get(3)?,
+            })
+        })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
@@ -2460,6 +2592,49 @@ mod tests {
                 .find_file("first.rs")
                 .expect("first lookup")
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn relocation_failure_rolls_back_path_and_preserves_content_rows() {
+        let directory = tempfile::tempdir().expect("directory");
+        let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+        storage
+            .full_reconcile("config", vec![sample_file("old.rs", "fn old() {}\n")])
+            .expect("initial generation");
+        let old = storage
+            .find_file("old.rs")
+            .expect("old lookup")
+            .expect("old file");
+        let chunk_id = storage.get_chunks_for_file(old.id, 10).expect("old chunks")[0].id;
+        let baseline = storage.meta().expect("baseline");
+
+        let error = storage
+            .publish_reconciliation_at(&baseline, "config", false, |writer| -> Result<()> {
+                writer.relocate(
+                    "old.rs",
+                    "new.rs",
+                    old.size_bytes,
+                    old.modified_ns,
+                    &old.content_hash,
+                )?;
+                Err(Error::Cancelled)
+            })
+            .expect_err("injected failure");
+
+        assert!(matches!(error, Error::Cancelled));
+        assert!(storage.find_file("new.rs").expect("new lookup").is_none());
+        let restored = storage
+            .find_file("old.rs")
+            .expect("restored lookup")
+            .expect("restored file");
+        assert_eq!(restored.id, old.id);
+        assert_eq!(
+            storage
+                .get_chunks_for_file(restored.id, 10)
+                .expect("restored chunks")[0]
+                .id,
+            chunk_id
         );
     }
 
