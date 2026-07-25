@@ -333,7 +333,7 @@ pub(crate) fn enforce_limit(kind: IndexLimitKind, observed: u64, limit: u64) -> 
 }
 
 fn is_git_metadata_path(path: &str) -> bool {
-    path == ".git" || path.starts_with(".git/")
+    path.split('/').any(|component| component == ".git")
 }
 
 pub fn resolve_existing(root: &Path, requested: &str) -> Result<PathBuf> {

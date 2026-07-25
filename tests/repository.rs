@@ -195,6 +195,23 @@ fn discover_files_excludes_git_pointer_file() {
 }
 
 #[test]
+fn discover_files_excludes_nested_git_metadata() {
+    let root = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(root.path().join("nested/.git/objects")).expect("nested git metadata");
+    fs::write(root.path().join("nested/.git/config"), "[core]\n").expect("git config");
+    fs::write(root.path().join("nested/.git/objects/object"), "metadata").expect("git object");
+    fs::write(root.path().join("nested/source.rs"), "fn source() {}\n").expect("source");
+
+    let files = discover_files(root.path(), 1024).expect("discovery");
+    let paths = files
+        .iter()
+        .map(|file| file.relative_path.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(paths, vec!["nested/source.rs"]);
+}
+
+#[test]
 fn discover_files_skips_oversized_files() {
     let root = tempfile::tempdir().expect("tempdir");
     fs::write(root.path().join("small.rs"), "fn a() {}\n").expect("small");
