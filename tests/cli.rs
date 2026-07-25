@@ -129,6 +129,8 @@ fn cli_outline_request() {
         "Cli",
         "--max-tokens",
         "500",
+        "--cursor",
+        "12:34",
     ]);
     let AppRequest::Outline(request) = cli.app_request() else {
         panic!("expected outline request");
@@ -139,6 +141,7 @@ fn cli_outline_request() {
     );
     assert_eq!(request.symbol_name, Some("Cli".into()));
     assert_eq!(request.max_tokens, Some(500));
+    assert_eq!(request.cursor, Some("12:34".into()));
 }
 
 #[test]

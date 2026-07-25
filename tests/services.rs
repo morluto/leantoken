@@ -636,6 +636,7 @@ fn outline_limit_request(
         symbol_kind: None,
         max_results,
         max_tokens,
+        cursor: None,
     }
 }
 
@@ -1733,6 +1734,7 @@ async fn five_services_return_bounded_grounded_responses() {
             symbol_kind: None,
             max_results: Some(10),
             max_tokens: Some(100),
+            cursor: None,
         })
         .await
         .expect("outline");
@@ -1876,6 +1878,7 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             symbol_kind: None,
             max_results: Some(10),
             max_tokens: Some(100),
+            cursor: None,
         })
         .await
         .expect("normalized outline");
@@ -2088,6 +2091,7 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
                 symbol_kind: None,
                 max_results: Some(10),
                 max_tokens: Some(200),
+                cursor: None,
             })
             .await
             .expect("outline");
@@ -2171,6 +2175,7 @@ function helper() {
                 symbol_kind: None,
                 max_results: Some(20),
                 max_tokens: Some(2_000),
+                cursor: None,
             })
             .await
             .expect("outline data file");
@@ -2292,6 +2297,7 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
             symbol_kind: None,
             max_results: Some(100),
             max_tokens: Some(4_000),
+            cursor: None,
         })
         .await
         .expect("frontend outlines");
@@ -3707,6 +3713,7 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
             symbol_kind: Some("function".into()),
             max_results: Some(10),
             max_tokens: Some(100),
+            cursor: None,
         })
         .await
         .expect("outline method");
@@ -3796,11 +3803,163 @@ async fn symbol_reads_and_outline_filters_search_beyond_result_caps() {
             symbol_kind: Some("function".into()),
             max_results: Some(1),
             max_tokens: Some(100),
+            cursor: None,
         })
         .await
         .expect("filtered outline");
     assert_eq!(outline.files[0].symbols.len(), 1);
     assert_eq!(outline.files[0].symbols[0].name, "symbol_129");
+    assert!(outline.parse_complete);
+    assert!(outline.result_complete);
+    assert_eq!(outline.total_symbols, 1);
+    assert_eq!(outline.returned_symbols, 1);
+    assert_eq!(outline.symbol_counts_by_kind.get("function"), Some(&1));
+}
+
+#[tokio::test]
+async fn outline_distinguishes_parse_completeness_from_result_completeness() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let constants = (0..120)
+        .map(|index| format!("const VALUE_{index:03}: usize = {index};\n"))
+        .collect::<String>();
+    let functions = (0..20)
+        .map(|index| format!("fn operation_{index:03}() {{}}\n"))
+        .collect::<String>();
+    std::fs::write(
+        root.path().join("many.rs"),
+        format!("use std::fmt; use std::io;\n{constants}{functions}"),
+    )
+    .expect("many symbols");
+    std::fs::write(root.path().join("broken.rs"), "fn broken( {\n").expect("malformed source");
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index");
+
+    let first = services
+        .outline(OutlineRequest {
+            paths: vec!["many.rs".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(100),
+            max_tokens: Some(32_000),
+            cursor: None,
+        })
+        .await
+        .expect("first outline page");
+    assert!(first.parse_complete);
+    assert!(first.files[0].parse_complete);
+    assert!(first.files[0].structurally_complete);
+    assert!(!first.result_complete);
+    assert_eq!(first.total_symbols, 140);
+    assert_eq!(first.returned_symbols, 100);
+    assert_eq!(first.total_imports, 2);
+    assert_eq!(first.returned_imports, 0);
+    assert!(first.truncated_by_max_results);
+    assert!(!first.truncated_by_max_tokens);
+    assert_eq!(first.symbol_counts_by_kind.get("constant"), Some(&120));
+    assert_eq!(first.symbol_counts_by_kind.get("function"), Some(&20));
+    let cursor = first.meta.next_cursor.clone().expect("continuation cursor");
+
+    let changed_query = services
+        .outline(OutlineRequest {
+            paths: vec!["many.rs".into()],
+            symbol_name: None,
+            symbol_kind: Some("function".into()),
+            max_results: Some(100),
+            max_tokens: Some(32_000),
+            cursor: Some(cursor.clone()),
+        })
+        .await
+        .expect_err("cursor must remain bound to the original filters");
+    assert!(matches!(changed_query, Error::StaleCursor));
+
+    let second = services
+        .outline(OutlineRequest {
+            paths: vec!["many.rs".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(41),
+            max_tokens: Some(32_000),
+            cursor: Some(cursor),
+        })
+        .await
+        .expect("second outline page");
+    assert!(second.parse_complete);
+    assert!(!second.result_complete);
+    assert_eq!(second.total_symbols, 140);
+    assert_eq!(second.returned_symbols, 40);
+    assert_eq!(second.returned_imports, 1);
+    assert!(second.truncated_by_max_results);
+    assert!(!second.truncated_by_max_tokens);
+    let final_cursor = second.meta.next_cursor.clone().expect("final cursor");
+
+    let third = services
+        .outline(OutlineRequest {
+            paths: vec!["many.rs".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(100),
+            max_tokens: Some(32_000),
+            cursor: Some(final_cursor),
+        })
+        .await
+        .expect("third outline page");
+    assert_eq!(third.returned_symbols, 0);
+    assert_eq!(third.returned_imports, 1);
+    assert!(!third.truncated_by_max_results);
+    assert!(third.meta.next_cursor.is_none());
+    let names = first.files[0]
+        .symbols
+        .iter()
+        .chain(&second.files[0].symbols)
+        .map(|symbol| symbol.name.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(names.len(), 140);
+    assert!(names.contains("VALUE_000"));
+    assert!(names.contains("operation_019"));
+    let imports = second.files[0]
+        .imports
+        .iter()
+        .chain(&third.files[0].imports)
+        .map(|import| import.raw_target.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(imports, ["std::fmt", "std::io"].into_iter().collect());
+
+    let token_limited = services
+        .outline(OutlineRequest {
+            paths: vec!["many.rs".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(100),
+            max_tokens: Some(1),
+            cursor: None,
+        })
+        .await
+        .expect("token-limited outline");
+    assert!(token_limited.parse_complete);
+    assert!(!token_limited.result_complete);
+    assert!(token_limited.returned_symbols < token_limited.total_symbols);
+    assert!(!token_limited.truncated_by_max_results);
+    assert!(token_limited.truncated_by_max_tokens);
+    assert!(token_limited.meta.next_cursor.is_none());
+
+    let malformed = services
+        .outline(OutlineRequest {
+            paths: vec!["broken.rs".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(100),
+            max_tokens: Some(1_000),
+            cursor: None,
+        })
+        .await
+        .expect("malformed outline");
+    assert!(!malformed.parse_complete);
+    assert!(!malformed.files[0].parse_complete);
+    assert!(!malformed.files[0].structurally_complete);
+    assert!(malformed.result_complete);
 }
 
 #[tokio::test]
@@ -3834,6 +3993,7 @@ async fn fixture_outlines_deduplicate_methods_and_report_receiver_owners() {
             symbol_kind: None,
             max_results: Some(100),
             max_tokens: Some(2_000),
+            cursor: None,
         })
         .await
         .expect("fixture outline");
@@ -4460,6 +4620,7 @@ async fn working_tree_consistency_applies_to_each_retrieval_service() {
                 symbol_kind: None,
                 max_results: Some(10),
                 max_tokens: Some(100),
+                cursor: None,
             },
             IndexConsistency::WorkingTree,
             CancellationToken::new(),

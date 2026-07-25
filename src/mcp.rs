@@ -208,6 +208,10 @@ struct OutlineMcpRequest {
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
     #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
     max_tokens: Option<usize>,
+    /// Opaque cursor from a result-limited outline response.
+    #[serde(default)]
+    #[schemars(length(max = 256))]
+    cursor: Option<String>,
     /// Use `working_tree` after edits; otherwise `committed`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
@@ -228,6 +232,7 @@ impl OutlineMcpRequest {
                 symbol_kind: self.symbol_kind,
                 max_results: self.max_results,
                 max_tokens: self.max_tokens,
+                cursor: self.cursor,
             },
             self.consistency,
             self.expected_repository_id,
@@ -1788,5 +1793,20 @@ mod tests {
     fn tool_catalog_schema_snapshot() {
         let tools = LeanTokenMcp::tool_router().list_all();
         insta::assert_json_snapshot!("mcp_tool_catalog", tools);
+    }
+
+    #[test]
+    fn outline_cursor_maps_to_the_service_request() {
+        let request = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
+            "paths": ["src/lib.rs"],
+            "cursor": "12:outline:34:0000000000000000"
+        }))
+        .expect("outline request");
+        let (request, _, _) = request.into_parts();
+
+        assert_eq!(
+            request.cursor.as_deref(),
+            Some("12:outline:34:0000000000000000")
+        );
     }
 }

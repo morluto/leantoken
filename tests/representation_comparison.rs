@@ -231,6 +231,7 @@ async fn compare_context_representations() {
                 symbol_kind: None,
                 max_results: Some(100),
                 max_tokens: Some(TOKEN_BUDGET),
+                cursor: None,
             })
             .await
             .expect("outline");

@@ -671,13 +671,17 @@ pub struct OutlineArgs {
     #[arg(long)]
     pub symbol_kind: Option<String>,
 
-    /// Maximum number of symbols.
+    /// Maximum number of symbols and imports.
     #[arg(long, value_parser = parse_positive_usize)]
     pub max_results: Option<usize>,
 
     /// Maximum tokens to return.
     #[arg(long, value_parser = parse_positive_usize)]
     pub max_tokens: Option<usize>,
+
+    /// Continue a result-limited outline.
+    #[arg(long)]
+    pub cursor: Option<String>,
 }
 
 impl From<OutlineArgs> for OutlineRequest {
@@ -688,6 +692,7 @@ impl From<OutlineArgs> for OutlineRequest {
             symbol_kind: args.symbol_kind,
             max_results: args.max_results,
             max_tokens: args.max_tokens,
+            cursor: args.cursor,
         }
     }
 }

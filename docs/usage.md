@@ -350,6 +350,19 @@ Returns definitions, imports, signatures, parent relationships, and one-based
 line ranges for one or more files. Name and kind filters narrow the output.
 Bodies are not returned by default.
 
+`parse_complete` reports whether every requested file was parsed completely;
+each file reports the same state independently. `structurally_complete` remains
+as a compatibility alias on each file. Parse completeness does not imply result
+completeness.
+
+`result_complete` is true only when the response contains every filtered symbol
+and import. Exact `total_symbols`, `returned_symbols`, `total_imports`,
+`returned_imports`, and `symbol_counts_by_kind` make coverage auditable.
+`truncated_by_max_results` provides `meta.next_cursor` for another page, while
+`truncated_by_max_tokens` means the query must be repeated with a larger token
+budget to recover omitted entries. Outline cursors are bound to the repository
+generation, normalized path order, and symbol filters.
+
 Supported languages report whether parsing was structurally complete.
 JavaScript, TypeScript, and TSX outlines include top-level `const`, `let`, and
 `var` bindings, exported data bindings, class fields, and object/array default
