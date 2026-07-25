@@ -394,6 +394,7 @@ fn cli_setup_and_remove_select_clients() {
     assert!(!request.refresh);
     assert!(request.yes);
     assert!(!request.dry_run);
+    assert!(!request.allow_outdated);
 
     let cli = parse(&["remove", "--all", "-y"]);
     let AppRequest::Remove(request) = cli.app_request() else {
@@ -419,6 +420,12 @@ fn cli_setup_and_remove_select_clients() {
     assert!(!request.all);
     assert!(request.refresh);
     assert!(request.yes);
+
+    let cli = parse(&["setup", "--codex", "--yes", "--allow-outdated"]);
+    let AppRequest::Setup(request) = cli.app_request() else {
+        panic!("expected setup request");
+    };
+    assert!(request.allow_outdated);
 }
 
 #[test]

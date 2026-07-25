@@ -208,10 +208,15 @@ pub fn run(options: UpgradeOptions) -> Result<()> {
     )
 }
 
-fn version_update_available(current: &str, latest: &str) -> Option<bool> {
+pub(crate) fn version_update_available(current: &str, latest: &str) -> Option<bool> {
     let current = Version::parse(current).ok()?;
     let latest = Version::parse(latest).ok()?;
     Some(current.cmp_precedence(&latest).is_lt())
+}
+
+pub(crate) fn latest_npm_version() -> Option<String> {
+    command_stdout("npm", &["view", PACKAGE_NAME, "version", "--json"])
+        .and_then(|value| serde_json::from_str::<String>(&value).ok())
 }
 
 fn detect_current_context(executable: &Path) -> InstallContext {
@@ -294,8 +299,7 @@ fn latest_version(context: InstallContext) -> Option<String> {
                 .map(str::to_owned)
         }),
         InstallContext::Npx | InstallContext::GlobalNpm | InstallContext::Unknown => {
-            command_stdout("npm", &["view", PACKAGE_NAME, "version", "--json"])
-                .and_then(|value| serde_json::from_str::<String>(&value).ok())
+            latest_npm_version()
         }
     }
 }

@@ -21,8 +21,8 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    ContextFragment, ContextRequest, ContextResponse, EvidenceReceipt, Freshness, OmittedCandidate,
-    ResponseMeta,
+    ContextFragment, ContextOmissionSummary, ContextRequest, ContextResponse, EvidenceReceipt,
+    Freshness, OmittedCandidate, ResponseMeta,
 };
 use crate::services::validation::path_matches;
 use crate::tokens;
@@ -605,11 +605,17 @@ fn select_with_options(
 
     let known_hashes: HashSet<String> = request.known_hashes.iter().cloned().collect();
 
+    let mut path_omitted: Vec<ScoredCandidate> = Vec::new();
     let mut known_omitted: Vec<ScoredCandidate> = Vec::new();
     let mut eligible: Vec<Candidate> = Vec::with_capacity(candidates.len());
 
     for candidate in candidates {
-        if is_excluded(&candidate.path, &request.exclude_paths) {
+        if !is_included(&candidate.path, &request.include_paths)
+            || is_excluded(&candidate.path, &request.exclude_paths)
+        {
+            path_omitted.push(ScoredCandidate::new_with_tokenizer(
+                candidate, weights, tokenizer,
+            ));
             continue;
         }
 
@@ -656,14 +662,25 @@ fn select_with_options(
         fragment_hashes.push(scored.content_hash);
     }
 
-    let mut omitted_dto: Vec<OmittedCandidate> = known_omitted
+    let omission_summary = ContextOmissionSummary {
+        path_excluded: path_omitted.len(),
+        known_hash: known_omitted.len(),
+        budget_or_result_limit: omitted.len(),
+    };
+    let mut omitted_dto: Vec<OmittedCandidate> = path_omitted
         .into_iter()
         .map(|scored| OmittedCandidate {
             path: scored.candidate.path,
             start_line: scored.candidate.start_line,
             end_line: scored.candidate.end_line,
-            reason: "known hash".to_string(),
+            reason: "path excluded".to_string(),
         })
+        .chain(known_omitted.into_iter().map(|scored| OmittedCandidate {
+            path: scored.candidate.path,
+            start_line: scored.candidate.start_line,
+            end_line: scored.candidate.end_line,
+            reason: "known hash".to_string(),
+        }))
         .collect();
 
     omitted_dto.extend(omitted.drain(..).map(|scored| OmittedCandidate {
@@ -704,6 +721,8 @@ fn select_with_options(
         receipt,
         diff_scope: None,
         omitted: omitted_dto,
+        omission_summary,
+        routing: None,
         warnings,
         meta,
     }
@@ -734,6 +753,14 @@ fn apply_request_signals(candidates: &mut [Candidate], request: &ContextRequest)
 
 fn focus_matches(path: &str, pattern: &str) -> bool {
     path_matches(path, pattern).unwrap_or(false)
+}
+
+fn is_included(path: &str, patterns: &[String]) -> bool {
+    patterns.is_empty()
+        || patterns
+            .iter()
+            .filter(|pattern| !pattern.is_empty())
+            .any(|pattern| path_matches(path, pattern).unwrap_or(false))
 }
 
 fn is_excluded(path: &str, patterns: &[String]) -> bool {
@@ -963,6 +990,7 @@ mod tests {
         ContextRequest {
             task: "rank source evidence for a task".into(),
             token_budget: budget,
+            include_paths: Vec::new(),
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -977,6 +1005,7 @@ mod tests {
         ContextRequest {
             task: "focus path test".into(),
             token_budget: budget,
+            include_paths: Vec::new(),
             focus_paths: vec![focus_path.into()],
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -991,6 +1020,7 @@ mod tests {
         ContextRequest {
             task: "exclude path test".into(),
             token_budget: budget,
+            include_paths: Vec::new(),
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: vec![exclude.into()],
@@ -1376,6 +1406,23 @@ mod tests {
 
         assert_eq!(resp.fragments.len(), 1);
         assert_eq!(resp.fragments[0].path, "src/lib.rs");
+        assert_eq!(resp.omission_summary.path_excluded, 1);
+        assert_eq!(resp.omitted[0].reason, "path excluded");
+    }
+
+    #[test]
+    fn include_paths_are_a_hard_fragment_boundary() {
+        let included = Candidate::new("src/browser/capture.rs", 1, 2, "alpha").exact(0.5);
+        let unrelated = Candidate::new("src/managed/evidence.rs", 1, 2, "beta").exact(10.0);
+        let mut request = request_with_budget(10);
+        request.include_paths = vec!["src/browser/**".into()];
+
+        let response = select(vec![unrelated, included], &request, 1);
+
+        assert_eq!(response.fragments.len(), 1);
+        assert_eq!(response.fragments[0].path, "src/browser/capture.rs");
+        assert_eq!(response.omission_summary.path_excluded, 1);
+        assert_eq!(response.omitted[0].reason, "path excluded");
     }
 
     #[test]

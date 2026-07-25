@@ -33,9 +33,9 @@ leantoken files <tree|find|glob> [options]
 leantoken search <query> [options]
 leantoken outline <path>...
 leantoken read <path> [--lines START:END] [--symbol NAME]
-leantoken context --task <text> --budget <tokens> [--workflow <mode>]
+leantoken context --task <text> --budget <tokens> [--workflow <mode>] [--include <glob>]
 leantoken mcp [--result-mode dual|text|structured]
-leantoken setup [CLIENT...] [--all] [--refresh] [--yes] [--dry-run]
+leantoken setup [CLIENT...] [--all] [--refresh] [--yes] [--dry-run] [--allow-outdated]
 leantoken remove [CLIENT...] [--all] [--yes] [--dry-run]
 leantoken cache list
 leantoken cache prune [--older-than DAYS] [--max-total-bytes BYTES]
@@ -378,9 +378,12 @@ Turns a task into a ranked set of source evidence. `task` is the only required
 input; `token_budget` defaults to 3,000 and accepts values through 32,000.
 
 Optional inputs focus or exclude paths and symbols, provide hashes already held
-by the caller, and identify a prior repository generation. The selector merges
-overlapping candidates, suppresses duplicate or known content, preserves file
-diversity, and returns short reasons for each chosen fragment.
+by the caller, and identify a prior repository generation. `include_paths` is a
+hard boundary: every returned source fragment must match at least one supplied
+pattern, while `focus_paths` remains a ranking boost. `omission_summary`
+distinguishes path filtering, known hashes, and budget or result limits. The
+selector merges overlapping candidates, suppresses duplicate or known content,
+preserves file diversity, and returns short reasons for each chosen fragment.
 
 `workflow` accepts `auto`, `implementation`, `contribution`, `review`, or
 `investigation`. Contribution and review modes add bounded repository guidance,
@@ -390,6 +393,14 @@ high-confidence task language; ordinary tasks retain implementation ranking.
 The resolved mode is returned as `workflow`. Specialized responses include a
 `workflow_receipt` with candidate counts and explicit missing evidence families;
 missing guidance or owner tests is not represented as proof that none exists.
+
+Diff-scoped requests spanning at least 32 changed paths across three or more
+deterministic path groups also return a bounded `routing` receipt. It reports
+candidate, changed, selected, and group counts and suggests up to three narrower
+`include_paths` scopes. The receipt records the originating consistency
+boundary, base revision, and held fragment hashes once; callers overlay a
+suggested scope while reusing the original diff inputs. It is decomposition
+guidance, not a completeness claim.
 
 The evidence receipt contains a task fingerprint and a compact hash list aligned
 by index with the returned fragments. Repository generation appears once in

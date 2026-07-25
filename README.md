@@ -28,8 +28,10 @@ Antigravity:
 npx leantoken setup
 ```
 
-If `npx` reuses a stale project-local or ancestor install, run
-`npx leantoken@latest setup` once to bootstrap the newest published release.
+Current releases stop setup before writing when `npx` resolves a stale
+project-local or ancestor install, and point to
+`npx leantoken@latest setup`. Older releases that predate this check can be
+bootstrapped directly with that versioned command.
 
 The setup wizard labels supported clients it detects, but leaves every client
 unselected so you choose exactly which coding agents receive LeanToken. Before
@@ -110,7 +112,7 @@ version, or use an older version to roll back:
 
 ```bash
 npx --yes leantoken@latest setup --refresh --yes
-npx --yes leantoken@0.1.8 setup --refresh --yes
+npx --yes leantoken@0.1.8 setup --refresh --yes --allow-outdated
 ```
 
 ## Why LeanToken

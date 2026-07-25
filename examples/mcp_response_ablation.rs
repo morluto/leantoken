@@ -260,6 +260,7 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
     let request = ContextRequest {
         task: manifest.fixture.task.clone(),
         token_budget: manifest.fixture.token_budget,
+        include_paths: Vec::new(),
         focus_paths: Vec::new(),
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),

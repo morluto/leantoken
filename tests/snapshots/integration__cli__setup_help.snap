@@ -45,6 +45,9 @@ Options:
       --dry-run
           Show the exact configuration plan without making changes
 
+      --allow-outdated
+          Permit setup from an older npx release for an intentional rollback
+
       --database <PATH>
           SQLite database path
 

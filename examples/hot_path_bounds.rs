@@ -80,6 +80,7 @@ async fn main() -> leantoken::Result<()> {
     let context_request = ContextRequest {
         task: "find needle item helpers".into(),
         token_budget: 1_200,
+        include_paths: Vec::new(),
         focus_paths: Vec::new(),
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
