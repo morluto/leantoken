@@ -1,5 +1,6 @@
 //! Bounded live reads, outlines, and index-backed excerpts.
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
@@ -39,7 +40,7 @@ pub(super) struct StoredExcerptRequest {
     pub max_lines: usize,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct ResolvedStoredExcerptRequest {
     file_id: i64,
     start_line: usize,
@@ -674,19 +675,33 @@ impl Services {
             .map(|request| request.file_id)
             .collect::<Vec<_>>();
         let file_end_lines = session.file_end_lines_batch(&file_ids)?;
-        let mut resolved = Vec::new();
-        let mut ranges = Vec::new();
+        let mut unique_indices = HashMap::new();
+        let mut unique_requests = Vec::new();
+        let mut request_mapping = Vec::new();
         for (index, (request, file_end_line)) in requests.iter().zip(file_end_lines).enumerate() {
             let Some(request) = request.resolve(file_end_line) else {
                 continue;
             };
-            ranges.push((request.file_id, request.start_line, request.end_line));
-            resolved.push((index, request));
+            let unique_index = *unique_indices.entry(request).or_insert_with(|| {
+                let unique_index = unique_requests.len();
+                unique_requests.push(request);
+                unique_index
+            });
+            request_mapping.push((index, unique_index));
         }
+        let ranges = unique_requests
+            .iter()
+            .map(|request| (request.file_id, request.start_line, request.end_line))
+            .collect::<Vec<_>>();
         let chunks = session.get_chunks_overlapping_batch(&ranges)?;
+        let hydrated = unique_requests
+            .into_iter()
+            .zip(chunks)
+            .map(|(request, chunks)| assemble_stored_excerpt(request, &chunks))
+            .collect::<Vec<_>>();
         let mut excerpts = vec![None; requests.len()];
-        for ((index, request), chunks) in resolved.into_iter().zip(chunks) {
-            excerpts[index] = assemble_stored_excerpt(request, &chunks);
+        for (index, unique_index) in request_mapping {
+            excerpts[index] = hydrated[unique_index].clone();
         }
         Ok(excerpts)
     }
