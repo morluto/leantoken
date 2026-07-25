@@ -439,7 +439,7 @@
 <a href=#439 id=439 data-nosnippet>439</a>        check_cancelled(cancellation)<span class="question-mark">?</span>;
 <a href=#440 id=440 data-nosnippet>440</a>        validate_files_input(<span class="kw-2">&amp;</span>request)<span class="question-mark">?</span>;
 <a href=#441 id=441 data-nosnippet>441</a>        <span class="kw">let </span>limit = <span class="self">self</span>.result_limit(request.max_results)<span class="question-mark">?</span>;
-<a href=#442 id=442 data-nosnippet>442</a>        <span class="self">self</span>.consistent(|session, generation| {
+<a href=#442 id=442 data-nosnippet>442</a>        <span class="kw">let </span><span class="kw-2">mut </span>response = <span class="self">self</span>.consistent(|session, generation| {
 <a href=#443 id=443 data-nosnippet>443</a>            <span class="kw">let </span>cursor =
 <a href=#444 id=444 data-nosnippet>444</a>                parse_files_cursor(request.cursor.as_deref(), generation, <span class="kw-2">&amp;</span>request.operation)<span class="question-mark">?</span>;
 <a href=#445 id=445 data-nosnippet>445</a>            <span class="kw">let </span>page = <span class="kw">match </span>request.operation {
@@ -470,7 +470,9 @@
 <a href=#470 id=470 data-nosnippet>470</a>                entries: page.entries,
 <a href=#471 id=471 data-nosnippet>471</a>                meta: <span class="self">self</span>.meta(generation, <span class="number">0</span>, page.next.map(|next| next.encode(generation))),
 <a href=#472 id=472 data-nosnippet>472</a>            })
-<a href=#473 id=473 data-nosnippet>473</a>        })
-<a href=#474 id=474 data-nosnippet>474</a>    }
-<a href=#475 id=475 data-nosnippet>475</a>}
+<a href=#473 id=473 data-nosnippet>473</a>        })<span class="question-mark">?</span>;
+<a href=#474 id=474 data-nosnippet>474</a>        <span class="self">self</span>.finalize_response(<span class="kw-2">&amp;mut </span>response)<span class="question-mark">?</span>;
+<a href=#475 id=475 data-nosnippet>475</a>        <span class="prelude-val">Ok</span>(response)
+<a href=#476 id=476 data-nosnippet>476</a>    }
+<a href=#477 id=477 data-nosnippet>477</a>}
 </code></pre></div></section></main></body></html>

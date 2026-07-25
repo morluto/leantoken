@@ -322,7 +322,7 @@
 <a href=#322 id=322 data-nosnippet>322</a>        <span class="kw">let </span>limit = <span class="self">self</span>.result_limit(request.max_results)<span class="question-mark">?</span>;
 <a href=#323 id=323 data-nosnippet>323</a>        <span class="kw">let </span>token_limit = <span class="self">self</span>.token_limit(request.max_tokens, <span class="self">self</span>.config.default_read_tokens)<span class="question-mark">?</span>;
 <a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">let </span>context_lines = <span class="self">self</span>.context_line_limit(request.context_lines)<span class="question-mark">?</span>;
-<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw">let </span>(response, baseline_source_tokens) = <span class="self">self</span>.consistent(|session, generation| {
+<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>response, baseline_source_tokens) = <span class="self">self</span>.consistent(|session, generation| {
 <a href=#326 id=326 data-nosnippet>326</a>            <span class="kw">let </span>offset = parse_cursor(request.cursor.as_deref(), generation)<span class="question-mark">?</span>;
 <a href=#327 id=327 data-nosnippet>327</a>            <span class="kw">let </span><span class="kw-2">mut </span>hits = Vec::new();
 <a href=#328 id=328 data-nosnippet>328</a>            <span class="kw">if </span><span class="macro">matches!</span>(
@@ -584,119 +584,120 @@
 <a href=#584 id=584 data-nosnippet>584</a>                response.meta.emitted_tokens,
 <a href=#585 id=585 data-nosnippet>585</a>            );
 <a href=#586 id=586 data-nosnippet>586</a>        }
-<a href=#587 id=587 data-nosnippet>587</a>        <span class="prelude-val">Ok</span>(response)
-<a href=#588 id=588 data-nosnippet>588</a>    }
-<a href=#589 id=589 data-nosnippet>589</a>
-<a href=#590 id=590 data-nosnippet>590</a>    <span class="kw">fn </span>symbol_search_hit(<span class="kw-2">&amp;</span><span class="self">self</span>, hit: SymbolHit, query: <span class="kw-2">&amp;</span>str, excerpt: StoredExcerpt) -&gt; SearchHit {
-<a href=#591 id=591 data-nosnippet>591</a>        <span class="kw">let </span>exact = hit.symbol.name == query || hit.symbol.name.eq_ignore_ascii_case(query);
-<a href=#592 id=592 data-nosnippet>592</a>        SearchHit {
-<a href=#593 id=593 data-nosnippet>593</a>            path: hit.path,
-<a href=#594 id=594 data-nosnippet>594</a>            start_line: excerpt.start_line,
-<a href=#595 id=595 data-nosnippet>595</a>            end_line: excerpt.end_line,
-<a href=#596 id=596 data-nosnippet>596</a>            content_hash: hash(<span class="kw-2">&amp;</span>excerpt.content),
-<a href=#597 id=597 data-nosnippet>597</a>            excerpt: excerpt.content,
-<a href=#598 id=598 data-nosnippet>598</a>            match_kind: <span class="string">"symbol"</span>.into(),
-<a href=#599 id=599 data-nosnippet>599</a>            role: <span class="prelude-val">Some</span>(ReferenceRole::Definition),
-<a href=#600 id=600 data-nosnippet>600</a>            symbol: <span class="prelude-val">Some</span>(hit.symbol.name),
-<a href=#601 id=601 data-nosnippet>601</a>            enclosing_symbol: hit.symbol.parent,
-<a href=#602 id=602 data-nosnippet>602</a>            occurrence: <span class="prelude-val">None</span>,
-<a href=#603 id=603 data-nosnippet>603</a>            score: <span class="kw">if </span>exact { <span class="number">10.0 </span>} <span class="kw">else </span>{ <span class="number">7.0 </span>},
-<a href=#604 id=604 data-nosnippet>604</a>            score_reasons: <span class="macro">vec!</span>[<span class="kw">if </span>exact {
-<a href=#605 id=605 data-nosnippet>605</a>                <span class="string">"exact symbol"</span>.into()
-<a href=#606 id=606 data-nosnippet>606</a>            } <span class="kw">else </span>{
-<a href=#607 id=607 data-nosnippet>607</a>                <span class="string">"symbol"</span>.into()
-<a href=#608 id=608 data-nosnippet>608</a>            }],
-<a href=#609 id=609 data-nosnippet>609</a>        }
-<a href=#610 id=610 data-nosnippet>610</a>    }
-<a href=#611 id=611 data-nosnippet>611</a>
-<a href=#612 id=612 data-nosnippet>612</a>    <span class="kw">fn </span>reference_search_hit(
-<a href=#613 id=613 data-nosnippet>613</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#614 id=614 data-nosnippet>614</a>        hit: ReferenceHit,
-<a href=#615 id=615 data-nosnippet>615</a>        query: <span class="kw-2">&amp;</span>str,
-<a href=#616 id=616 data-nosnippet>616</a>        excerpt: StoredExcerpt,
-<a href=#617 id=617 data-nosnippet>617</a>    ) -&gt; SearchHit {
-<a href=#618 id=618 data-nosnippet>618</a>        <span class="kw">let </span>exact = hit.reference.name == query || hit.reference.name.eq_ignore_ascii_case(query);
-<a href=#619 id=619 data-nosnippet>619</a>        SearchHit {
-<a href=#620 id=620 data-nosnippet>620</a>            path: hit.path,
-<a href=#621 id=621 data-nosnippet>621</a>            start_line: excerpt.start_line,
-<a href=#622 id=622 data-nosnippet>622</a>            end_line: excerpt.end_line,
-<a href=#623 id=623 data-nosnippet>623</a>            content_hash: hash(<span class="kw-2">&amp;</span>excerpt.content),
-<a href=#624 id=624 data-nosnippet>624</a>            excerpt: excerpt.content,
-<a href=#625 id=625 data-nosnippet>625</a>            match_kind: <span class="string">"reference"</span>.into(),
-<a href=#626 id=626 data-nosnippet>626</a>            role: <span class="prelude-val">Some</span>(hit.reference.role),
-<a href=#627 id=627 data-nosnippet>627</a>            symbol: <span class="prelude-val">Some</span>(hit.reference.name),
-<a href=#628 id=628 data-nosnippet>628</a>            enclosing_symbol: hit.reference.enclosing_symbol,
-<a href=#629 id=629 data-nosnippet>629</a>            occurrence: <span class="prelude-val">None</span>,
-<a href=#630 id=630 data-nosnippet>630</a>            score: <span class="kw">if </span>exact { <span class="number">8.0 </span>} <span class="kw">else </span>{ <span class="number">5.0 </span>},
-<a href=#631 id=631 data-nosnippet>631</a>            score_reasons: <span class="macro">vec!</span>[<span class="kw">if </span>exact {
-<a href=#632 id=632 data-nosnippet>632</a>                <span class="string">"exact reference"</span>.into()
-<a href=#633 id=633 data-nosnippet>633</a>            } <span class="kw">else </span>{
-<a href=#634 id=634 data-nosnippet>634</a>                <span class="string">"reference"</span>.into()
-<a href=#635 id=635 data-nosnippet>635</a>            }],
-<a href=#636 id=636 data-nosnippet>636</a>        }
-<a href=#637 id=637 data-nosnippet>637</a>    }
-<a href=#638 id=638 data-nosnippet>638</a>
-<a href=#639 id=639 data-nosnippet>639</a>    <span class="kw">fn </span>regex_hits(
-<a href=#640 id=640 data-nosnippet>640</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#641 id=641 data-nosnippet>641</a>        session: <span class="kw-2">&amp;</span>ReadSession,
-<a href=#642 id=642 data-nosnippet>642</a>        request: <span class="kw-2">&amp;</span>SearchRequest,
-<a href=#643 id=643 data-nosnippet>643</a>        regex: <span class="kw-2">&amp;</span>regex::Regex,
-<a href=#644 id=644 data-nosnippet>644</a>        max_candidates: <span class="prelude-ty">Option</span>&lt;usize&gt;,
-<a href=#645 id=645 data-nosnippet>645</a>        cancellation: <span class="kw-2">&amp;</span>CancellationToken,
-<a href=#646 id=646 data-nosnippet>646</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;ChunkHit&gt;&gt; {
-<a href=#647 id=647 data-nosnippet>647</a>        <span class="comment">// Hard caps prevent repository-wide lexical scans from running
-<a href=#648 id=648 data-nosnippet>648</a>        // unbounded. Exhaustive modes lift only the candidate-chunk cap and
-<a href=#649 id=649 data-nosnippet>649</a>        // fail explicitly if another cap would make the result incomplete.
-<a href=#650 id=650 data-nosnippet>650</a>        </span><span class="kw">let </span>max_candidates = max_candidates.map(|limit| limit.min(MAX_REGEX_CANDIDATES));
-<a href=#651 id=651 data-nosnippet>651</a>        <span class="kw">let </span><span class="kw-2">mut </span>hits = Vec::new();
-<a href=#652 id=652 data-nosnippet>652</a>        <span class="kw">let </span><span class="kw-2">mut </span>files_scanned = <span class="number">0usize</span>;
-<a href=#653 id=653 data-nosnippet>653</a>        <span class="kw">let </span><span class="kw-2">mut </span>cursor = <span class="prelude-val">None</span>;
-<a href=#654 id=654 data-nosnippet>654</a>        <span class="kw">loop </span>{
-<a href=#655 id=655 data-nosnippet>655</a>            check_cancelled(cancellation)<span class="question-mark">?</span>;
-<a href=#656 id=656 data-nosnippet>656</a>            <span class="kw">let </span>page = session.list_files(FILE_LIST_PAGE_SIZE, cursor)<span class="question-mark">?</span>;
-<a href=#657 id=657 data-nosnippet>657</a>            <span class="kw">if </span>page.is_empty() {
-<a href=#658 id=658 data-nosnippet>658</a>                <span class="kw">break</span>;
-<a href=#659 id=659 data-nosnippet>659</a>            }
-<a href=#660 id=660 data-nosnippet>660</a>            cursor = page.last().map(|file| file.id);
-<a href=#661 id=661 data-nosnippet>661</a>            <span class="kw">for </span>file <span class="kw">in </span>page {
-<a href=#662 id=662 data-nosnippet>662</a>                check_cancelled(cancellation)<span class="question-mark">?</span>;
-<a href=#663 id=663 data-nosnippet>663</a>                <span class="kw">if </span>files_scanned == MAX_REGEX_FILES_SCANNED {
-<a href=#664 id=664 data-nosnippet>664</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
-<a href=#665 id=665 data-nosnippet>665</a>                }
-<a href=#666 id=666 data-nosnippet>666</a>                files_scanned += <span class="number">1</span>;
-<a href=#667 id=667 data-nosnippet>667</a>                <span class="kw">if </span>!path_allowed(<span class="kw-2">&amp;</span>file.path, <span class="kw-2">&amp;</span>request.include_paths, <span class="kw-2">&amp;</span>request.exclude_paths)<span class="question-mark">? </span>{
-<a href=#668 id=668 data-nosnippet>668</a>                    <span class="kw">continue</span>;
-<a href=#669 id=669 data-nosnippet>669</a>                }
-<a href=#670 id=670 data-nosnippet>670</a>                <span class="kw">let </span>chunks = session
-<a href=#671 id=671 data-nosnippet>671</a>                    .get_chunks_for_file(file.id, MAX_REGEX_CHUNKS_PER_FILE.saturating_add(<span class="number">1</span>))<span class="question-mark">?</span>;
-<a href=#672 id=672 data-nosnippet>672</a>                <span class="kw">let </span>chunks_truncated = chunks.len() &gt; MAX_REGEX_CHUNKS_PER_FILE;
-<a href=#673 id=673 data-nosnippet>673</a>                <span class="kw">for </span>chunk <span class="kw">in </span>chunks.into_iter().take(MAX_REGEX_CHUNKS_PER_FILE) {
-<a href=#674 id=674 data-nosnippet>674</a>                    check_cancelled(cancellation)<span class="question-mark">?</span>;
-<a href=#675 id=675 data-nosnippet>675</a>                    <span class="kw">if </span>regex.is_match(<span class="kw-2">&amp;</span>chunk.content) {
-<a href=#676 id=676 data-nosnippet>676</a>                        <span class="kw">if </span>max_candidates.is_some_and(|limit| hits.len() == limit) {
-<a href=#677 id=677 data-nosnippet>677</a>                            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
-<a href=#678 id=678 data-nosnippet>678</a>                        }
-<a href=#679 id=679 data-nosnippet>679</a>                        hits.push(ChunkHit {
-<a href=#680 id=680 data-nosnippet>680</a>                            chunk_id: chunk.id,
-<a href=#681 id=681 data-nosnippet>681</a>                            file_id: chunk.file_id,
-<a href=#682 id=682 data-nosnippet>682</a>                            path: file.path.clone(),
-<a href=#683 id=683 data-nosnippet>683</a>                            content: chunk.content,
-<a href=#684 id=684 data-nosnippet>684</a>                            start_line: chunk.start_line,
-<a href=#685 id=685 data-nosnippet>685</a>                            end_line: chunk.end_line,
-<a href=#686 id=686 data-nosnippet>686</a>                            start_byte: chunk.start_byte,
-<a href=#687 id=687 data-nosnippet>687</a>                            end_byte: chunk.end_byte,
-<a href=#688 id=688 data-nosnippet>688</a>                            token_count: chunk.token_count,
-<a href=#689 id=689 data-nosnippet>689</a>                            generation: file.generation,
-<a href=#690 id=690 data-nosnippet>690</a>                            score: <span class="number">0.0</span>,
-<a href=#691 id=691 data-nosnippet>691</a>                        });
-<a href=#692 id=692 data-nosnippet>692</a>                    }
-<a href=#693 id=693 data-nosnippet>693</a>                }
-<a href=#694 id=694 data-nosnippet>694</a>                <span class="kw">if </span>chunks_truncated {
-<a href=#695 id=695 data-nosnippet>695</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
-<a href=#696 id=696 data-nosnippet>696</a>                }
-<a href=#697 id=697 data-nosnippet>697</a>            }
-<a href=#698 id=698 data-nosnippet>698</a>        }
-<a href=#699 id=699 data-nosnippet>699</a>        <span class="prelude-val">Ok</span>(hits)
-<a href=#700 id=700 data-nosnippet>700</a>    }
-<a href=#701 id=701 data-nosnippet>701</a>}
+<a href=#587 id=587 data-nosnippet>587</a>        <span class="self">self</span>.finalize_response(<span class="kw-2">&amp;mut </span>response)<span class="question-mark">?</span>;
+<a href=#588 id=588 data-nosnippet>588</a>        <span class="prelude-val">Ok</span>(response)
+<a href=#589 id=589 data-nosnippet>589</a>    }
+<a href=#590 id=590 data-nosnippet>590</a>
+<a href=#591 id=591 data-nosnippet>591</a>    <span class="kw">fn </span>symbol_search_hit(<span class="kw-2">&amp;</span><span class="self">self</span>, hit: SymbolHit, query: <span class="kw-2">&amp;</span>str, excerpt: StoredExcerpt) -&gt; SearchHit {
+<a href=#592 id=592 data-nosnippet>592</a>        <span class="kw">let </span>exact = hit.symbol.name == query || hit.symbol.name.eq_ignore_ascii_case(query);
+<a href=#593 id=593 data-nosnippet>593</a>        SearchHit {
+<a href=#594 id=594 data-nosnippet>594</a>            path: hit.path,
+<a href=#595 id=595 data-nosnippet>595</a>            start_line: excerpt.start_line,
+<a href=#596 id=596 data-nosnippet>596</a>            end_line: excerpt.end_line,
+<a href=#597 id=597 data-nosnippet>597</a>            content_hash: hash(<span class="kw-2">&amp;</span>excerpt.content),
+<a href=#598 id=598 data-nosnippet>598</a>            excerpt: excerpt.content,
+<a href=#599 id=599 data-nosnippet>599</a>            match_kind: <span class="string">"symbol"</span>.into(),
+<a href=#600 id=600 data-nosnippet>600</a>            role: <span class="prelude-val">Some</span>(ReferenceRole::Definition),
+<a href=#601 id=601 data-nosnippet>601</a>            symbol: <span class="prelude-val">Some</span>(hit.symbol.name),
+<a href=#602 id=602 data-nosnippet>602</a>            enclosing_symbol: hit.symbol.parent,
+<a href=#603 id=603 data-nosnippet>603</a>            occurrence: <span class="prelude-val">None</span>,
+<a href=#604 id=604 data-nosnippet>604</a>            score: <span class="kw">if </span>exact { <span class="number">10.0 </span>} <span class="kw">else </span>{ <span class="number">7.0 </span>},
+<a href=#605 id=605 data-nosnippet>605</a>            score_reasons: <span class="macro">vec!</span>[<span class="kw">if </span>exact {
+<a href=#606 id=606 data-nosnippet>606</a>                <span class="string">"exact symbol"</span>.into()
+<a href=#607 id=607 data-nosnippet>607</a>            } <span class="kw">else </span>{
+<a href=#608 id=608 data-nosnippet>608</a>                <span class="string">"symbol"</span>.into()
+<a href=#609 id=609 data-nosnippet>609</a>            }],
+<a href=#610 id=610 data-nosnippet>610</a>        }
+<a href=#611 id=611 data-nosnippet>611</a>    }
+<a href=#612 id=612 data-nosnippet>612</a>
+<a href=#613 id=613 data-nosnippet>613</a>    <span class="kw">fn </span>reference_search_hit(
+<a href=#614 id=614 data-nosnippet>614</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#615 id=615 data-nosnippet>615</a>        hit: ReferenceHit,
+<a href=#616 id=616 data-nosnippet>616</a>        query: <span class="kw-2">&amp;</span>str,
+<a href=#617 id=617 data-nosnippet>617</a>        excerpt: StoredExcerpt,
+<a href=#618 id=618 data-nosnippet>618</a>    ) -&gt; SearchHit {
+<a href=#619 id=619 data-nosnippet>619</a>        <span class="kw">let </span>exact = hit.reference.name == query || hit.reference.name.eq_ignore_ascii_case(query);
+<a href=#620 id=620 data-nosnippet>620</a>        SearchHit {
+<a href=#621 id=621 data-nosnippet>621</a>            path: hit.path,
+<a href=#622 id=622 data-nosnippet>622</a>            start_line: excerpt.start_line,
+<a href=#623 id=623 data-nosnippet>623</a>            end_line: excerpt.end_line,
+<a href=#624 id=624 data-nosnippet>624</a>            content_hash: hash(<span class="kw-2">&amp;</span>excerpt.content),
+<a href=#625 id=625 data-nosnippet>625</a>            excerpt: excerpt.content,
+<a href=#626 id=626 data-nosnippet>626</a>            match_kind: <span class="string">"reference"</span>.into(),
+<a href=#627 id=627 data-nosnippet>627</a>            role: <span class="prelude-val">Some</span>(hit.reference.role),
+<a href=#628 id=628 data-nosnippet>628</a>            symbol: <span class="prelude-val">Some</span>(hit.reference.name),
+<a href=#629 id=629 data-nosnippet>629</a>            enclosing_symbol: hit.reference.enclosing_symbol,
+<a href=#630 id=630 data-nosnippet>630</a>            occurrence: <span class="prelude-val">None</span>,
+<a href=#631 id=631 data-nosnippet>631</a>            score: <span class="kw">if </span>exact { <span class="number">8.0 </span>} <span class="kw">else </span>{ <span class="number">5.0 </span>},
+<a href=#632 id=632 data-nosnippet>632</a>            score_reasons: <span class="macro">vec!</span>[<span class="kw">if </span>exact {
+<a href=#633 id=633 data-nosnippet>633</a>                <span class="string">"exact reference"</span>.into()
+<a href=#634 id=634 data-nosnippet>634</a>            } <span class="kw">else </span>{
+<a href=#635 id=635 data-nosnippet>635</a>                <span class="string">"reference"</span>.into()
+<a href=#636 id=636 data-nosnippet>636</a>            }],
+<a href=#637 id=637 data-nosnippet>637</a>        }
+<a href=#638 id=638 data-nosnippet>638</a>    }
+<a href=#639 id=639 data-nosnippet>639</a>
+<a href=#640 id=640 data-nosnippet>640</a>    <span class="kw">fn </span>regex_hits(
+<a href=#641 id=641 data-nosnippet>641</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#642 id=642 data-nosnippet>642</a>        session: <span class="kw-2">&amp;</span>ReadSession,
+<a href=#643 id=643 data-nosnippet>643</a>        request: <span class="kw-2">&amp;</span>SearchRequest,
+<a href=#644 id=644 data-nosnippet>644</a>        regex: <span class="kw-2">&amp;</span>regex::Regex,
+<a href=#645 id=645 data-nosnippet>645</a>        max_candidates: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+<a href=#646 id=646 data-nosnippet>646</a>        cancellation: <span class="kw-2">&amp;</span>CancellationToken,
+<a href=#647 id=647 data-nosnippet>647</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;ChunkHit&gt;&gt; {
+<a href=#648 id=648 data-nosnippet>648</a>        <span class="comment">// Hard caps prevent repository-wide lexical scans from running
+<a href=#649 id=649 data-nosnippet>649</a>        // unbounded. Exhaustive modes lift only the candidate-chunk cap and
+<a href=#650 id=650 data-nosnippet>650</a>        // fail explicitly if another cap would make the result incomplete.
+<a href=#651 id=651 data-nosnippet>651</a>        </span><span class="kw">let </span>max_candidates = max_candidates.map(|limit| limit.min(MAX_REGEX_CANDIDATES));
+<a href=#652 id=652 data-nosnippet>652</a>        <span class="kw">let </span><span class="kw-2">mut </span>hits = Vec::new();
+<a href=#653 id=653 data-nosnippet>653</a>        <span class="kw">let </span><span class="kw-2">mut </span>files_scanned = <span class="number">0usize</span>;
+<a href=#654 id=654 data-nosnippet>654</a>        <span class="kw">let </span><span class="kw-2">mut </span>cursor = <span class="prelude-val">None</span>;
+<a href=#655 id=655 data-nosnippet>655</a>        <span class="kw">loop </span>{
+<a href=#656 id=656 data-nosnippet>656</a>            check_cancelled(cancellation)<span class="question-mark">?</span>;
+<a href=#657 id=657 data-nosnippet>657</a>            <span class="kw">let </span>page = session.list_files(FILE_LIST_PAGE_SIZE, cursor)<span class="question-mark">?</span>;
+<a href=#658 id=658 data-nosnippet>658</a>            <span class="kw">if </span>page.is_empty() {
+<a href=#659 id=659 data-nosnippet>659</a>                <span class="kw">break</span>;
+<a href=#660 id=660 data-nosnippet>660</a>            }
+<a href=#661 id=661 data-nosnippet>661</a>            cursor = page.last().map(|file| file.id);
+<a href=#662 id=662 data-nosnippet>662</a>            <span class="kw">for </span>file <span class="kw">in </span>page {
+<a href=#663 id=663 data-nosnippet>663</a>                check_cancelled(cancellation)<span class="question-mark">?</span>;
+<a href=#664 id=664 data-nosnippet>664</a>                <span class="kw">if </span>files_scanned == MAX_REGEX_FILES_SCANNED {
+<a href=#665 id=665 data-nosnippet>665</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
+<a href=#666 id=666 data-nosnippet>666</a>                }
+<a href=#667 id=667 data-nosnippet>667</a>                files_scanned += <span class="number">1</span>;
+<a href=#668 id=668 data-nosnippet>668</a>                <span class="kw">if </span>!path_allowed(<span class="kw-2">&amp;</span>file.path, <span class="kw-2">&amp;</span>request.include_paths, <span class="kw-2">&amp;</span>request.exclude_paths)<span class="question-mark">? </span>{
+<a href=#669 id=669 data-nosnippet>669</a>                    <span class="kw">continue</span>;
+<a href=#670 id=670 data-nosnippet>670</a>                }
+<a href=#671 id=671 data-nosnippet>671</a>                <span class="kw">let </span>chunks = session
+<a href=#672 id=672 data-nosnippet>672</a>                    .get_chunks_for_file(file.id, MAX_REGEX_CHUNKS_PER_FILE.saturating_add(<span class="number">1</span>))<span class="question-mark">?</span>;
+<a href=#673 id=673 data-nosnippet>673</a>                <span class="kw">let </span>chunks_truncated = chunks.len() &gt; MAX_REGEX_CHUNKS_PER_FILE;
+<a href=#674 id=674 data-nosnippet>674</a>                <span class="kw">for </span>chunk <span class="kw">in </span>chunks.into_iter().take(MAX_REGEX_CHUNKS_PER_FILE) {
+<a href=#675 id=675 data-nosnippet>675</a>                    check_cancelled(cancellation)<span class="question-mark">?</span>;
+<a href=#676 id=676 data-nosnippet>676</a>                    <span class="kw">if </span>regex.is_match(<span class="kw-2">&amp;</span>chunk.content) {
+<a href=#677 id=677 data-nosnippet>677</a>                        <span class="kw">if </span>max_candidates.is_some_and(|limit| hits.len() == limit) {
+<a href=#678 id=678 data-nosnippet>678</a>                            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
+<a href=#679 id=679 data-nosnippet>679</a>                        }
+<a href=#680 id=680 data-nosnippet>680</a>                        hits.push(ChunkHit {
+<a href=#681 id=681 data-nosnippet>681</a>                            chunk_id: chunk.id,
+<a href=#682 id=682 data-nosnippet>682</a>                            file_id: chunk.file_id,
+<a href=#683 id=683 data-nosnippet>683</a>                            path: file.path.clone(),
+<a href=#684 id=684 data-nosnippet>684</a>                            content: chunk.content,
+<a href=#685 id=685 data-nosnippet>685</a>                            start_line: chunk.start_line,
+<a href=#686 id=686 data-nosnippet>686</a>                            end_line: chunk.end_line,
+<a href=#687 id=687 data-nosnippet>687</a>                            start_byte: chunk.start_byte,
+<a href=#688 id=688 data-nosnippet>688</a>                            end_byte: chunk.end_byte,
+<a href=#689 id=689 data-nosnippet>689</a>                            token_count: chunk.token_count,
+<a href=#690 id=690 data-nosnippet>690</a>                            generation: file.generation,
+<a href=#691 id=691 data-nosnippet>691</a>                            score: <span class="number">0.0</span>,
+<a href=#692 id=692 data-nosnippet>692</a>                        });
+<a href=#693 id=693 data-nosnippet>693</a>                    }
+<a href=#694 id=694 data-nosnippet>694</a>                }
+<a href=#695 id=695 data-nosnippet>695</a>                <span class="kw">if </span>chunks_truncated {
+<a href=#696 id=696 data-nosnippet>696</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
+<a href=#697 id=697 data-nosnippet>697</a>                }
+<a href=#698 id=698 data-nosnippet>698</a>            }
+<a href=#699 id=699 data-nosnippet>699</a>        }
+<a href=#700 id=700 data-nosnippet>700</a>        <span class="prelude-val">Ok</span>(hits)
+<a href=#701 id=701 data-nosnippet>701</a>    }
+<a href=#702 id=702 data-nosnippet>702</a>}
 </code></pre></div></section></main></body></html>
