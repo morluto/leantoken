@@ -498,15 +498,25 @@ tokens. Assembled context has a separate 3,000-token default. Programmatic
 configurations may lower these defaults and ceilings; omitted MCP fields use
 the active service defaults rather than the static tool-schema examples.
 
-Every retrieval response reports both source and serialized response cost:
+Every retrieval response separates budgeted evidence from model-facing response
+overhead:
 
-- `source_tokens` counts selected source text. Path-only `files` responses
-  therefore report zero source tokens.
-- `payload_tokens` counts the compact JSON response DTO, including paths,
-  metadata, and source text. To make the self-reported value deterministic, the
-  count excludes the `payload_tokens` field itself. It also excludes transport
-  wrappers, MCP dual-mode duplication, tool schemas, and JSON-RPC envelopes.
-- `tokenizer` identifies the tokenizer used for both counts.
+- `source_tokens` counts the selected evidence text. Path-only `files`
+  responses therefore report zero source tokens.
+- `protocol_tokens` counts the compact JSON response envelope with scalar
+  values neutralized and result arrays emptied.
+- `path_and_metadata_tokens` counts the remaining non-source response cost,
+  including paths, metadata values, and repeated result structure.
+- `total_response_tokens` counts the complete compact JSON response DTO.
+- `payload_tokens` is a compatibility alias for `total_response_tokens`.
+- `tokenizer` identifies the tokenizer used for every count.
+
+The accounting fields themselves are zeroed before counting, which avoids a
+self-referential total. For current responses,
+`source_tokens + protocol_tokens + path_and_metadata_tokens` equals
+`total_response_tokens`. These counts describe the service response DTO, not
+MCP text/structured-content duplication, tool schemas, provider framing, or
+JSON-RPC envelopes.
 - `emitted_tokens` remains a compatibility alias for `source_tokens`.
 
 The default tokenizer is `cl100k_base`. Exact built-in modes are `cl100k_base`,

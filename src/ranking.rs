@@ -750,6 +750,9 @@ fn select_with_options(
         repository_generation,
         freshness: Freshness::Current,
         source_tokens: emitted_tokens,
+        protocol_tokens: 0,
+        path_and_metadata_tokens: 0,
+        total_response_tokens: 0,
         payload_tokens: 0,
         tokenizer: tokenizer.name().into(),
         emitted_tokens,
@@ -770,9 +773,12 @@ fn select_with_options(
         warnings,
         meta,
     };
-    let payload =
-        serde_json::to_string(&response).expect("context response metadata is serializable");
-    response.meta.payload_tokens = tokenizer.count(&payload);
+    let accounting = tokens::response_token_accounting(&response, emitted_tokens, &tokenizer)
+        .expect("context response metadata is serializable");
+    response.meta.protocol_tokens = accounting.protocol_tokens;
+    response.meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
+    response.meta.total_response_tokens = accounting.total_response_tokens;
+    response.meta.payload_tokens = accounting.total_response_tokens;
     response
 }
 
@@ -1724,11 +1730,21 @@ mod tests {
         assert_eq!(resp.meta.source_tokens, resp.meta.emitted_tokens);
         assert_eq!(resp.meta.tokenizer, tokens::Tokenizer::default().name());
         let mut countable = resp.clone();
+        countable.meta.protocol_tokens = 0;
+        countable.meta.path_and_metadata_tokens = 0;
+        countable.meta.total_response_tokens = 0;
         countable.meta.payload_tokens = 0;
         let payload = serde_json::to_string(&countable).expect("serialize context response");
         assert_eq!(
-            resp.meta.payload_tokens,
+            resp.meta.total_response_tokens,
             tokens::Tokenizer::default().count(&payload)
+        );
+        assert_eq!(resp.meta.payload_tokens, resp.meta.total_response_tokens);
+        assert_eq!(
+            resp.meta.total_response_tokens,
+            resp.meta.source_tokens
+                + resp.meta.protocol_tokens
+                + resp.meta.path_and_metadata_tokens
         );
         assert!(resp.meta.token_count_exact);
     }

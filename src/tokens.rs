@@ -2,6 +2,50 @@ use std::fmt;
 
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ResponseTokenAccounting {
+    pub(crate) protocol_tokens: usize,
+    pub(crate) path_and_metadata_tokens: usize,
+    pub(crate) total_response_tokens: usize,
+}
+
+pub(crate) fn response_token_accounting<T: Serialize>(
+    response: &T,
+    source_tokens: usize,
+    tokenizer: &Tokenizer,
+) -> serde_json::Result<ResponseTokenAccounting> {
+    let payload = serde_json::to_string(response)?;
+    let total_response_tokens = tokenizer.count(&payload);
+    let mut protocol_skeleton = serde_json::to_value(response)?;
+    strip_response_values(&mut protocol_skeleton);
+    let available_overhead = total_response_tokens.saturating_sub(source_tokens);
+    let protocol_tokens = tokenizer
+        .count(&protocol_skeleton.to_string())
+        .min(available_overhead);
+
+    Ok(ResponseTokenAccounting {
+        protocol_tokens,
+        path_and_metadata_tokens: available_overhead.saturating_sub(protocol_tokens),
+        total_response_tokens,
+    })
+}
+
+fn strip_response_values(value: &mut Value) {
+    match value {
+        Value::Null => {}
+        Value::Bool(value) => *value = false,
+        Value::Number(value) => *value = 0.into(),
+        Value::String(value) => value.clear(),
+        Value::Array(values) => values.clear(),
+        Value::Object(values) => {
+            for value in values.values_mut() {
+                strip_response_values(value);
+            }
+        }
+    }
+}
 
 /// Tokenizer used for source and protocol token accounting.
 ///
@@ -220,6 +264,28 @@ pub fn truncate_with(text: &str, max_tokens: usize, tokenizer: Tokenizer) -> (&s
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn response_accounting_separates_protocol_from_values_and_items() {
+        let tokenizer = Tokenizer::Cl100kBase;
+        let response = json!({
+            "entries": [{"path": "src/lib.rs", "kind": "file"}],
+            "meta": {"source_tokens": 0, "freshness": "current"}
+        });
+        let payload = response.to_string();
+
+        let accounting =
+            response_token_accounting(&response, 0, &tokenizer).expect("response accounting");
+
+        assert!(accounting.protocol_tokens > 0);
+        assert!(accounting.path_and_metadata_tokens > 0);
+        assert_eq!(
+            accounting.total_response_tokens,
+            accounting.protocol_tokens + accounting.path_and_metadata_tokens
+        );
+        assert_eq!(accounting.total_response_tokens, tokenizer.count(&payload));
+    }
 
     #[test]
     fn tokenizer_names_are_snake_case() {

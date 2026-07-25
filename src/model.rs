@@ -60,10 +60,19 @@ pub struct ResponseMeta {
     /// Tokens in source content selected for the response.
     #[serde(default)]
     pub source_tokens: usize,
-    /// Tokens in the compact serialized response, excluding this field itself.
+    /// Tokens in the compact JSON response envelope after values and result items are removed.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub protocol_tokens: usize,
+    /// Tokens attributed to paths, metadata values, and repeated result structure.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub path_and_metadata_tokens: usize,
+    /// Tokens in the compact serialized response, excluding accounting fields themselves.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub total_response_tokens: usize,
+    /// Compatibility alias for `total_response_tokens`.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub payload_tokens: usize,
-    /// Tokenizer used for source and payload accounting.
+    /// Tokenizer used for source and serialized response accounting.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub tokenizer: String,
     /// Compatibility alias for `source_tokens`.
@@ -1126,6 +1135,9 @@ mod tests {
                 repository_generation: 7,
                 freshness: Freshness::Current,
                 source_tokens: 4,
+                protocol_tokens: 0,
+                path_and_metadata_tokens: 0,
+                total_response_tokens: 0,
                 payload_tokens: 0,
                 tokenizer: "cl100k_base".into(),
                 emitted_tokens: 4,
@@ -1160,11 +1172,17 @@ mod tests {
             .as_object_mut()
             .expect("response metadata object");
         legacy_meta.remove("source_tokens");
+        legacy_meta.remove("protocol_tokens");
+        legacy_meta.remove("path_and_metadata_tokens");
+        legacy_meta.remove("total_response_tokens");
         legacy_meta.remove("payload_tokens");
         legacy_meta.remove("tokenizer");
         let legacy: ContextResponse =
             serde_json::from_value(legacy_value).expect("deserialize legacy response");
         assert_eq!(legacy.meta.source_tokens, 0);
+        assert_eq!(legacy.meta.protocol_tokens, 0);
+        assert_eq!(legacy.meta.path_and_metadata_tokens, 0);
+        assert_eq!(legacy.meta.total_response_tokens, 0);
         assert_eq!(legacy.meta.payload_tokens, 0);
         assert!(legacy.meta.tokenizer.is_empty());
     }
@@ -1208,6 +1226,9 @@ mod tests {
                 repository_generation: 7,
                 freshness: Freshness::Reconciling,
                 source_tokens: 9,
+                protocol_tokens: 17,
+                path_and_metadata_tokens: 97,
+                total_response_tokens: 123,
                 payload_tokens: 123,
                 tokenizer: "cl100k_base".into(),
                 emitted_tokens: 9,

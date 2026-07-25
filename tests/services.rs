@@ -15,12 +15,29 @@ macro_rules! assert_response_token_accounting {
         assert_eq!(response.meta.source_tokens, response.meta.emitted_tokens);
         assert_eq!(response.meta.tokenizer, tokenizer.name());
         assert_eq!(response.meta.token_count_exact, tokenizer.is_exact());
+        assert!(response.meta.protocol_tokens > 0);
+        assert_eq!(
+            response.meta.total_response_tokens,
+            response.meta.source_tokens
+                + response.meta.protocol_tokens
+                + response.meta.path_and_metadata_tokens
+        );
+        assert_eq!(
+            response.meta.payload_tokens,
+            response.meta.total_response_tokens
+        );
         assert!(response.meta.payload_tokens > 0);
 
         let mut countable = response.clone();
+        countable.meta.protocol_tokens = 0;
+        countable.meta.path_and_metadata_tokens = 0;
+        countable.meta.total_response_tokens = 0;
         countable.meta.payload_tokens = 0;
         let payload = serde_json::to_string(&countable).expect("serialize counted payload");
-        assert_eq!(response.meta.payload_tokens, tokenizer.count(&payload));
+        assert_eq!(
+            response.meta.total_response_tokens,
+            tokenizer.count(&payload)
+        );
     }};
 }
 
@@ -1940,6 +1957,7 @@ async fn five_services_return_bounded_grounded_responses() {
     assert!(files.entries.iter().any(|entry| entry.path == "src/lib.rs"));
     assert_eq!(files.meta.source_tokens, 0);
     assert_response_token_accounting!(files, Tokenizer::Cl100kBase);
+    assert!(files.meta.path_and_metadata_tokens > 0);
 
     let search = services
         .search(SearchRequest {
