@@ -380,7 +380,13 @@ input; `token_budget` defaults to 3,000 and accepts values through 32,000.
 Optional inputs focus or exclude paths and symbols, provide hashes already held
 by the caller, and identify a prior repository generation. `include_paths` is a
 hard boundary: every returned source fragment must match at least one supplied
-pattern, while `focus_paths` remains a ranking boost. `omission_summary`
+pattern, while `focus_paths` remains a ranking boost. `must_include_paths` and
+`must_include_symbols` generate and select required indexed evidence before the
+ordinary ranker. `max_fragments` defaults to 8 and accepts values through 100.
+The `coverage` receipt distinguishes unmatched focus/include constraints,
+covered requirements, indexed requirements blocked by path or budget limits,
+and requirements absent from the index. Already-held matching hashes satisfy a
+must-cover requirement without resending source. `omission_summary`
 distinguishes path filtering, known hashes, and budget or result limits. The
 selector merges overlapping candidates, suppresses duplicate or known content,
 preserves file diversity, and returns short reasons for each chosen fragment.

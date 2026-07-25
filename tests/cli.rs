@@ -235,6 +235,14 @@ fn cli_context_request() {
         "fix the bug",
         "--budget",
         "1024",
+        "--include",
+        "src/**",
+        "--must-include",
+        "src/owner.rs",
+        "--must-include-symbol",
+        "owner_symbol",
+        "--max-fragments",
+        "12",
         "--focus",
         "src",
         "--focus-symbol",
@@ -254,6 +262,16 @@ fn cli_context_request() {
     assert_eq!(workflow, ContextWorkflow::Contribution);
     assert_eq!(request.task, "fix the bug");
     assert_eq!(request.token_budget, 1024);
+    assert_eq!(request.include_paths, vec!["src/**".to_string()]);
+    assert_eq!(
+        request.must_include_paths,
+        vec!["src/owner.rs".to_string()]
+    );
+    assert_eq!(
+        request.must_include_symbols,
+        vec!["owner_symbol".to_string()]
+    );
+    assert_eq!(request.max_fragments, Some(12));
     assert_eq!(request.focus_paths, vec!["src".to_string()]);
     assert_eq!(request.focus_symbols, vec!["sym".to_string()]);
     assert_eq!(request.exclude_paths, vec!["tests".to_string()]);

@@ -17,8 +17,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Config;
 use crate::config::{
-    DEFAULT_CONTEXT_LINES, DEFAULT_CONTEXT_TOKENS, DEFAULT_READ_TOKENS, DEFAULT_RESULTS,
-    MAX_CONTEXT_LINES, MAX_OUTPUT_TOKENS, MAX_RESULTS,
+    DEFAULT_CONTEXT_FRAGMENTS, DEFAULT_CONTEXT_LINES, DEFAULT_CONTEXT_TOKENS, DEFAULT_READ_TOKENS,
+    DEFAULT_RESULTS, MAX_CONTEXT_LINES, MAX_OUTPUT_TOKENS, MAX_RESULTS,
 };
 use crate::model::{
     ContextRequest, ContextWorkflow, FileOperation, FilesRequest, IndexConsistency, OutlineRequest,
@@ -414,6 +414,21 @@ struct ContextMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 4096)))]
     include_paths: Vec<String>,
+    /// Require evidence matching every indexed path pattern.
+    #[serde(default)]
+    #[schemars(length(max = 256), inner(length(max = 4096)))]
+    must_include_paths: Vec<String>,
+    /// Require evidence for every exact indexed symbol.
+    #[serde(default)]
+    #[schemars(length(max = 256), inner(length(max = 4096)))]
+    must_include_symbols: Vec<String>,
+    /// Maximum returned fragments (default 8, maximum 100).
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(
+        schema_with = "context_fragment_limit_schema",
+        default = "default_context_fragment_option"
+    )]
+    max_fragments: Option<usize>,
     /// Boost matching paths without filtering other candidates.
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 4096)))]
@@ -453,7 +468,8 @@ impl ContextMcpRequest {
             "token_budget",
             self.token_budget,
             limits.max_output_tokens,
-        )
+        )?;
+        validate_optional_positive_limit("max_fragments", self.max_fragments, limits.max_results)
     }
 
     fn into_parts(
@@ -470,6 +486,9 @@ impl ContextMcpRequest {
                 task: self.task,
                 token_budget: self.token_budget.unwrap_or(default_token_budget),
                 include_paths: self.include_paths,
+                must_include_paths: self.must_include_paths,
+                must_include_symbols: self.must_include_symbols,
+                max_fragments: self.max_fragments,
                 focus_paths: self.focus_paths,
                 focus_symbols: self.focus_symbols,
                 exclude_paths: self.exclude_paths,
@@ -487,6 +506,19 @@ impl ContextMcpRequest {
 
 const fn default_context_token_option() -> Option<usize> {
     Some(DEFAULT_CONTEXT_TOKENS)
+}
+
+const fn default_context_fragment_option() -> Option<usize> {
+    Some(DEFAULT_CONTEXT_FRAGMENTS)
+}
+
+fn context_fragment_limit_schema(_: &mut SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "type": "integer",
+        "minimum": 1,
+        "maximum": MAX_RESULTS,
+        "default": DEFAULT_CONTEXT_FRAGMENTS
+    })
 }
 
 const fn default_result_option() -> Option<usize> {
@@ -991,7 +1023,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "context",
-        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Use include_paths for a hard subsystem boundary; focus_paths only boosts ranking. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}."
+        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Use include_paths for a hard subsystem boundary, must_include_paths or must_include_symbols for required evidence, and max_fragments for breadth; focus paths and symbols only boost ranking. Coverage diagnostics report unmatched and unselected requirements. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}."
     )]
     async fn leantoken_context(
         &self,

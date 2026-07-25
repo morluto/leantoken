@@ -15,14 +15,14 @@ use super::read::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
 use super::search::{chunk_search_hit, compile_literal_regex, fts_quote, matching_line};
 use super::validation::{
     MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, check_cancelled,
-    path_allowed, validate_glob_patterns, validate_input,
+    path_allowed, path_matches, validate_glob_patterns, validate_input,
 };
 use crate::model::*;
 use crate::ranking::{self, Candidate};
 use crate::repository::{
     git_changed_paths, git_diff_hunks, git_diff_paths, normalize_relative, validate_relative,
 };
-use crate::storage::{ReadSession, SymbolRecord};
+use crate::storage::{FileRecord, ReadSession, SymbolHit, SymbolRecord};
 use crate::text::{expand_terms, identifier_words};
 use crate::{Error, Result};
 use facets::{ContextQuery, FacetKind};
@@ -605,6 +605,9 @@ impl Services {
             });
         }
         self.token_budget_limit(request.token_budget)?;
+        if let Some(max_fragments) = request.max_fragments {
+            self.result_limit(Some(max_fragments))?;
+        }
         validate_input(&request.task, "task", MAX_QUERY_BYTES)?;
         validate_glob_patterns(&request.include_paths)?;
         if request
@@ -617,6 +620,17 @@ impl Services {
                 reason: "must not contain empty patterns",
             });
         }
+        validate_glob_patterns(&request.must_include_paths)?;
+        if request
+            .must_include_paths
+            .iter()
+            .any(|pattern| pattern.trim().is_empty())
+        {
+            return Err(Error::InvalidInput {
+                field: "must include paths",
+                reason: "must not contain empty patterns",
+            });
+        }
         validate_glob_patterns(&request.focus_paths)?;
         validate_glob_patterns(&request.exclude_paths)?;
         if request.focus_symbols.len() > MAX_INPUT_ITEMS {
@@ -624,6 +638,18 @@ impl Services {
         }
         for symbol in &request.focus_symbols {
             validate_input(symbol, "focus symbol", MAX_PATTERN_BYTES)?;
+        }
+        if request.must_include_symbols.len() > MAX_INPUT_ITEMS {
+            return Err(Error::LimitExceeded);
+        }
+        for symbol in &request.must_include_symbols {
+            validate_input(symbol, "must include symbol", MAX_PATTERN_BYTES)?;
+            if symbol.trim().is_empty() {
+                return Err(Error::InvalidInput {
+                    field: "must include symbols",
+                    reason: "must not contain empty symbols",
+                });
+            }
         }
         if request.known_hashes.len() > MAX_INPUT_ITEMS {
             return Err(Error::LimitExceeded);
@@ -653,6 +679,180 @@ impl Services {
             compile_literal_regex(&query.value, false)?;
         }
         Ok(())
+    }
+
+    fn append_constraint_candidates(
+        &self,
+        session: &ReadSession,
+        request: &ContextRequest,
+        cancellation: &CancellationToken,
+        candidates: &mut Vec<Candidate>,
+    ) -> Result<ContextCoverageReceipt> {
+        let mut coverage = ContextCoverageReceipt::default();
+        let mut focus_path_matches = vec![false; request.focus_paths.len()];
+        let mut include_path_matches = vec![false; request.include_paths.len()];
+        let mut required_path_matches = vec![false; request.must_include_paths.len()];
+        let mut required_path_files = vec![None::<FileRecord>; request.must_include_paths.len()];
+
+        if !request.focus_paths.is_empty()
+            || !request.include_paths.is_empty()
+            || !request.must_include_paths.is_empty()
+        {
+            let mut cursor = None;
+            loop {
+                check_cancelled(cancellation)?;
+                let page = session.list_files(512, cursor)?;
+                let Some(last) = page.last() else {
+                    break;
+                };
+                cursor = Some(last.id);
+                for file in page {
+                    for (index, pattern) in request.focus_paths.iter().enumerate() {
+                        focus_path_matches[index] |= path_matches(&file.path, pattern)?;
+                    }
+                    for (index, pattern) in request.include_paths.iter().enumerate() {
+                        include_path_matches[index] |= path_matches(&file.path, pattern)?;
+                    }
+                    for (index, pattern) in request.must_include_paths.iter().enumerate() {
+                        if !path_matches(&file.path, pattern)? {
+                            continue;
+                        }
+                        required_path_matches[index] = true;
+                        if required_path_files[index].is_none()
+                            && path_allowed(
+                                &file.path,
+                                &request.include_paths,
+                                &request.exclude_paths,
+                            )?
+                        {
+                            required_path_files[index] = Some(file.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        coverage.unmatched_focus_paths = request
+            .focus_paths
+            .iter()
+            .zip(focus_path_matches)
+            .filter(|(_, matched)| !matched)
+            .map(|(pattern, _)| pattern.clone())
+            .collect();
+        coverage.unmatched_include_paths = request
+            .include_paths
+            .iter()
+            .zip(include_path_matches)
+            .filter(|(_, matched)| !matched)
+            .map(|(pattern, _)| pattern.clone())
+            .collect();
+        coverage.unmatched_must_include_paths = request
+            .must_include_paths
+            .iter()
+            .zip(&required_path_matches)
+            .filter(|(_, matched)| !**matched)
+            .map(|(pattern, _)| pattern.clone())
+            .collect();
+
+        let path_excerpt_requests = required_path_files
+            .iter()
+            .flatten()
+            .map(|file| StoredExcerptRequest {
+                file_id: file.id,
+                desired_start_line: 1,
+                desired_end_line: 40,
+                required_start_line: 1,
+                required_end_line: 1,
+                max_lines: 40,
+            })
+            .collect::<Vec<_>>();
+        for ((pattern, file), excerpt) in request
+            .must_include_paths
+            .iter()
+            .zip(required_path_files)
+            .filter_map(|(pattern, file)| file.map(|file| (pattern, file)))
+            .zip(self.stored_excerpts(session, &path_excerpt_requests)?)
+        {
+            let Some(excerpt) = excerpt else { continue };
+            candidates.push(
+                Candidate::new(
+                    file.path,
+                    excerpt.start_line,
+                    excerpt.end_line,
+                    excerpt.content,
+                )
+                .match_kind("must_path")
+                .concept(format!("must:path:{pattern}"), 2.0)
+                .representation("required_path")
+                .exact(2.0)
+                .focus_boost(2.0),
+            );
+        }
+
+        let mut required_symbol_hits = Vec::<(&String, SymbolHit)>::new();
+        for symbol in &request.focus_symbols {
+            check_cancelled(cancellation)?;
+            let matched = session
+                .search_symbols(symbol, true, MAX_IMPORT_SYMBOLS)?
+                .into_iter()
+                .any(|hit| hit.symbol.name == *symbol);
+            if !matched {
+                coverage.unmatched_focus_symbols.push(symbol.clone());
+            }
+        }
+        for symbol in &request.must_include_symbols {
+            check_cancelled(cancellation)?;
+            let hits = session.search_symbols(symbol, true, MAX_IMPORT_SYMBOLS)?;
+            let exact_hits = hits
+                .into_iter()
+                .filter(|hit| hit.symbol.name == *symbol)
+                .collect::<Vec<_>>();
+            if exact_hits.is_empty() {
+                coverage.unmatched_must_include_symbols.push(symbol.clone());
+                continue;
+            }
+            if let Some(hit) = exact_hits.into_iter().find(|hit| {
+                path_allowed(&hit.path, &request.include_paths, &request.exclude_paths)
+                    .unwrap_or(false)
+            }) {
+                required_symbol_hits.push((symbol, hit));
+            }
+        }
+        let symbol_excerpt_requests = required_symbol_hits
+            .iter()
+            .map(|(_, hit)| AdaptiveExcerptRequest {
+                file_id: hit.symbol.file_id,
+                declaration_start: hit.symbol.start_line,
+                declaration_end: hit.symbol.end_line,
+                matched_line: hit.symbol.start_line,
+                token_budget: excerpt_budget(request.token_budget, ContextExcerptKind::Symbol),
+            })
+            .collect::<Vec<_>>();
+        for (((symbol, hit), excerpt), rank) in required_symbol_hits
+            .into_iter()
+            .zip(self.adaptive_context_excerpts(session, &symbol_excerpt_requests)?)
+            .zip(0usize..)
+        {
+            let Some(excerpt) = excerpt else { continue };
+            candidates.push(
+                Candidate::new(
+                    hit.path,
+                    excerpt.start_line,
+                    excerpt.end_line,
+                    excerpt.content,
+                )
+                .match_kind("must_symbol")
+                .concept(format!("must:symbol:{symbol}"), 2.0)
+                .representation("required_symbol")
+                .symbol_name(hit.symbol.name)
+                .exact(2.0)
+                .symbol(2.0)
+                .focus_boost(2.0)
+                .channel("must_symbol", rank),
+            );
+        }
+
+        Ok(coverage)
     }
 
     fn file_change_boost(
@@ -1307,6 +1507,12 @@ impl Services {
             let mut candidates = Vec::new();
             let mut path_excluded_candidates = 0usize;
             let mut query_fusion = HashMap::<String, HashMap<String, f64>>::new();
+            let mut coverage = self.append_constraint_candidates(
+                session,
+                &request,
+                cancellation,
+                &mut candidates,
+            )?;
 
             // Workflow words such as `test` are useful path priors but terrible
             // retrieval queries: nearly every test function becomes a high-
@@ -1670,6 +1876,52 @@ impl Services {
                 generation,
                 self.config.tokenizer,
             );
+            coverage.covered_must_include_paths =
+                std::mem::take(&mut response.coverage.covered_must_include_paths);
+            coverage.covered_must_include_symbols =
+                std::mem::take(&mut response.coverage.covered_must_include_symbols);
+            coverage.uncovered_must_include_paths =
+                std::mem::take(&mut response.coverage.uncovered_must_include_paths);
+            coverage.uncovered_must_include_symbols =
+                std::mem::take(&mut response.coverage.uncovered_must_include_symbols);
+            coverage
+                .uncovered_must_include_paths
+                .retain(|pattern| !coverage.unmatched_must_include_paths.contains(pattern));
+            coverage
+                .uncovered_must_include_symbols
+                .retain(|symbol| !coverage.unmatched_must_include_symbols.contains(symbol));
+            response.coverage = coverage;
+            let uncovered = response
+                .coverage
+                .uncovered_must_include_paths
+                .len()
+                .saturating_add(response.coverage.uncovered_must_include_symbols.len());
+            if uncovered > 0 {
+                response.warnings.push(format!(
+                    "{uncovered} indexed must-cover requirements were not selected"
+                ));
+            }
+            let unmatched = response
+                .coverage
+                .unmatched_must_include_paths
+                .len()
+                .saturating_add(response.coverage.unmatched_must_include_symbols.len());
+            if unmatched > 0 {
+                response.warnings.push(format!(
+                    "{unmatched} must-cover requirements matched no indexed evidence"
+                ));
+            }
+            let unmatched_hints = response
+                .coverage
+                .unmatched_focus_paths
+                .len()
+                .saturating_add(response.coverage.unmatched_focus_symbols.len())
+                .saturating_add(response.coverage.unmatched_include_paths.len());
+            if unmatched_hints > 0 {
+                response.warnings.push(format!(
+                    "{unmatched_hints} focus or include constraints matched no indexed evidence"
+                ));
+            }
             response.workflow = resolved_workflow;
             response.workflow_receipt = workflow_receipt;
             if path_excluded_candidates > 0 {
@@ -1805,6 +2057,9 @@ mod tests {
             task: "fix core".into(),
             token_budget: 100,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -1903,6 +2158,9 @@ mod tests {
             task: "review the changed implementation".into(),
             token_budget: 4_000,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),

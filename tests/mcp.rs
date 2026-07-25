@@ -201,6 +201,15 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
         false,
     )
     .await;
+    assert_mcp_limit_contract(
+        client.peer(),
+        "context",
+        serde_json::json!({"task": "find the answer definition"}),
+        "max_fragments",
+        100,
+        false,
+    )
+    .await;
 
     client.close().await.expect("close client");
     server.close().await.expect("close server");
@@ -824,6 +833,9 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         task: "find answer and its caller".into(),
         token_budget: 100,
         include_paths: Vec::new(),
+        must_include_paths: Vec::new(),
+        must_include_symbols: Vec::new(),
+        max_fragments: None,
         focus_paths: Vec::new(),
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),

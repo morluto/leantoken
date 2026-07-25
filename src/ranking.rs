@@ -20,9 +20,10 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
+use crate::config::DEFAULT_CONTEXT_FRAGMENTS;
 use crate::model::{
-    ContextFragment, ContextOmissionSummary, ContextRequest, ContextResponse, EvidenceReceipt,
-    Freshness, OmittedCandidate, ResponseMeta,
+    ContextCoverageReceipt, ContextFragment, ContextOmissionSummary, ContextRequest,
+    ContextResponse, EvidenceReceipt, Freshness, OmittedCandidate, ResponseMeta,
 };
 use crate::services::validation::path_matches;
 use crate::tokens;
@@ -38,7 +39,6 @@ const OVERLAP_THRESHOLD: f64 = 0.5;
 /// two non-overlapping regions from one file, while tiny budgets still prefer
 /// breadth.
 const DIVERSITY_DIVISOR: usize = 600;
-const MAX_CONTEXT_FRAGMENTS: usize = 8;
 const MAX_OMITTED_DETAILS: usize = 1;
 const MIN_RELATIVE_CONTEXT_SCORE: f64 = 0.25;
 
@@ -636,10 +636,45 @@ fn select_with_options(
     let max_per_file = (budget / DIVERSITY_DIVISOR).clamp(1, 3);
     // Candidate excerpts vary from a few tokens to hundreds. A token-derived
     // fragment estimate underfilled budgets when high-value evidence happened
-    // to be short. The fixed cap bounds metadata; the token budget remains the
-    // authoritative content bound.
-    let max_fragments = MAX_CONTEXT_FRAGMENTS;
-    let (selected, mut omitted) = greedy_select(deduped, budget, max_per_file, max_fragments);
+    // to be short. The caller-bounded cap limits metadata; the token budget
+    // remains the authoritative content bound.
+    let max_fragments = request.max_fragments.unwrap_or(DEFAULT_CONTEXT_FRAGMENTS);
+    let (mut selected, remaining) =
+        select_required_candidates(deduped, request, budget, max_fragments);
+    let required_tokens = selected
+        .iter()
+        .map(|candidate| candidate.token_count)
+        .sum::<usize>();
+    let (additional, mut omitted) = greedy_select(
+        remaining,
+        budget.saturating_sub(required_tokens),
+        max_per_file,
+        max_fragments.saturating_sub(selected.len()),
+    );
+    selected.extend(additional);
+
+    let covered_candidates = selected.iter().chain(&known_omitted);
+    let mut coverage = ContextCoverageReceipt::default();
+    for pattern in &request.must_include_paths {
+        if covered_candidates
+            .clone()
+            .any(|candidate| required_path_matches(&candidate.candidate, pattern))
+        {
+            coverage.covered_must_include_paths.push(pattern.clone());
+        } else {
+            coverage.uncovered_must_include_paths.push(pattern.clone());
+        }
+    }
+    for symbol in &request.must_include_symbols {
+        if covered_candidates
+            .clone()
+            .any(|candidate| required_symbol_matches(&candidate.candidate, symbol))
+        {
+            coverage.covered_must_include_symbols.push(symbol.clone());
+        } else {
+            coverage.uncovered_must_include_symbols.push(symbol.clone());
+        }
+    }
 
     // Build DTOs.
     let mut fragments: Vec<ContextFragment> = Vec::with_capacity(selected.len());
@@ -722,10 +757,78 @@ fn select_with_options(
         diff_scope: None,
         omitted: omitted_dto,
         omission_summary,
+        coverage,
         routing: None,
         warnings,
         meta,
     }
+}
+
+fn select_required_candidates(
+    mut candidates: Vec<ScoredCandidate>,
+    request: &ContextRequest,
+    budget: usize,
+    max_fragments: usize,
+) -> (Vec<ScoredCandidate>, Vec<ScoredCandidate>) {
+    let mut selected = Vec::new();
+    let mut used_tokens = 0usize;
+
+    for pattern in &request.must_include_paths {
+        if selected
+            .iter()
+            .any(|candidate: &ScoredCandidate| required_path_matches(&candidate.candidate, pattern))
+        {
+            continue;
+        }
+        let remaining = budget.saturating_sub(used_tokens);
+        let Some(index) = candidates.iter().position(|candidate| {
+            required_path_matches(&candidate.candidate, pattern)
+                && candidate.token_count <= remaining
+        }) else {
+            continue;
+        };
+        if selected.len() == max_fragments {
+            break;
+        }
+        let candidate = candidates.remove(index);
+        used_tokens = used_tokens.saturating_add(candidate.token_count);
+        selected.push(candidate);
+    }
+
+    for symbol in &request.must_include_symbols {
+        if selected
+            .iter()
+            .any(|candidate| required_symbol_matches(&candidate.candidate, symbol))
+        {
+            continue;
+        }
+        let remaining = budget.saturating_sub(used_tokens);
+        let Some(index) = candidates.iter().position(|candidate| {
+            required_symbol_matches(&candidate.candidate, symbol)
+                && candidate.token_count <= remaining
+        }) else {
+            continue;
+        };
+        if selected.len() == max_fragments {
+            break;
+        }
+        let candidate = candidates.remove(index);
+        used_tokens = used_tokens.saturating_add(candidate.token_count);
+        selected.push(candidate);
+    }
+
+    (selected, candidates)
+}
+
+fn required_path_matches(candidate: &Candidate, pattern: &str) -> bool {
+    path_matches(&candidate.path, pattern).unwrap_or(false)
+}
+
+fn required_symbol_matches(candidate: &Candidate, symbol: &str) -> bool {
+    candidate
+        .symbol_name
+        .as_deref()
+        .is_some_and(|name| name == symbol)
 }
 
 fn apply_request_signals(candidates: &mut [Candidate], request: &ContextRequest) {
@@ -991,6 +1094,9 @@ mod tests {
             task: "rank source evidence for a task".into(),
             token_budget: budget,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -1006,6 +1112,9 @@ mod tests {
             task: "focus path test".into(),
             token_budget: budget,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: vec![focus_path.into()],
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
@@ -1021,6 +1130,9 @@ mod tests {
             task: "exclude path test".into(),
             token_budget: budget,
             include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
             focus_paths: Vec::new(),
             focus_symbols: Vec::new(),
             exclude_paths: vec![exclude.into()],
@@ -1294,7 +1406,7 @@ mod tests {
 
         let response = select(candidates, &request_with_budget(1_200), 1);
 
-        assert_eq!(response.fragments.len(), MAX_CONTEXT_FRAGMENTS);
+        assert_eq!(response.fragments.len(), DEFAULT_CONTEXT_FRAGMENTS);
         assert_eq!(
             response
                 .fragments
@@ -1304,6 +1416,98 @@ mod tests {
             2
         );
         assert!(response.meta.emitted_tokens < 1_200);
+    }
+
+    #[test]
+    fn context_honors_caller_fragment_limit_above_the_default() {
+        let candidates = (0..12)
+            .map(|index| {
+                Candidate::new(format!("file{index}.rs"), 1, 1, format!("evidence_{index}"))
+                    .concept(format!("concept_{index}"), 1.0)
+                    .exact(1.0)
+            })
+            .collect::<Vec<_>>();
+        let mut request = request_with_budget(1_200);
+        request.max_fragments = Some(12);
+
+        let response = select(candidates, &request, 1);
+
+        assert_eq!(response.fragments.len(), 12);
+    }
+
+    #[test]
+    fn must_cover_candidate_precedes_higher_scored_general_evidence() {
+        let required = Candidate::new("src/required.rs", 1, 1, "required")
+            .symbol_name("required_symbol")
+            .exact(0.1);
+        let general = Candidate::new("src/general.rs", 1, 1, "general").exact(10.0);
+        let mut request = request_with_budget(100);
+        request.must_include_paths = vec!["src/required.rs".into()];
+        request.must_include_symbols = vec!["required_symbol".into()];
+        request.max_fragments = Some(1);
+
+        let response = select(vec![general, required], &request, 1);
+
+        assert_eq!(response.fragments[0].path, "src/required.rs");
+        assert_eq!(
+            response.coverage.covered_must_include_paths,
+            vec!["src/required.rs"]
+        );
+        assert_eq!(
+            response.coverage.covered_must_include_symbols,
+            vec!["required_symbol"]
+        );
+        assert!(response.coverage.uncovered_must_include_paths.is_empty());
+        assert!(response.coverage.uncovered_must_include_symbols.is_empty());
+    }
+
+    #[test]
+    fn uncovered_must_cover_requirements_are_explicit() {
+        let mut request = request_with_budget(100);
+        request.must_include_paths = vec!["src/missing.rs".into()];
+        request.must_include_symbols = vec!["missing_symbol".into()];
+
+        let response = select(
+            vec![Candidate::new("src/general.rs", 1, 1, "general").exact(1.0)],
+            &request,
+            1,
+        );
+
+        assert_eq!(
+            response.coverage.uncovered_must_include_paths,
+            vec!["src/missing.rs"]
+        );
+        assert_eq!(
+            response.coverage.uncovered_must_include_symbols,
+            vec!["missing_symbol"]
+        );
+    }
+
+    #[test]
+    fn known_hash_satisfies_must_cover_without_resending_source() {
+        let required = Candidate::new("src/required.rs", 1, 1, "required")
+            .symbol_name("required_symbol")
+            .exact(1.0);
+        let known_hash = required.content_hash();
+        let mut request = request_with_budget(100);
+        request.must_include_paths = vec!["src/required.rs".into()];
+        request.must_include_symbols = vec!["required_symbol".into()];
+        request.known_hashes = vec![known_hash];
+
+        let response = select(vec![required], &request, 1);
+
+        assert!(response.fragments.is_empty());
+        assert_eq!(response.omission_summary.known_hash, 1);
+        assert_eq!(
+            response.coverage.covered_must_include_paths,
+            vec!["src/required.rs"]
+        );
+        assert_eq!(
+            response.coverage.covered_must_include_symbols,
+            vec!["required_symbol"]
+        );
+        assert!(response.coverage.uncovered_must_include_paths.is_empty());
+        assert!(response.coverage.uncovered_must_include_symbols.is_empty());
     }
 
     #[test]
