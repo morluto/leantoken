@@ -305,9 +305,9 @@ lower bounds.
 
 The adapter also enforces the retrieval arm from the completed tool trajectory.
 Progressive runs must call LeanToken before any substantive command or edit,
-receive nonempty narrow-tool evidence, never call `leantoken_context`, and reject
+receive nonempty narrow-tool evidence, never call `leantoken.context`, and reject
 native repository listing, search, and source-read commands. One-shot runs must
-make exactly one evidence-bearing `leantoken_context` call before substantive
+make exactly one evidence-bearing `leantoken.context` call before substantive
 work and cannot retrieve again. Prewalk applies the progressive restriction to
 the frontier phase and forbids repository rediscovery by the executor. Git
 status/revision preflight is allowed before LeanToken, and build, test, lint,

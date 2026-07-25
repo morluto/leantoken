@@ -74,7 +74,7 @@ pub enum FileOperation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-/// Input for `leantoken_files`.
+/// Input for `leantoken.files`.
 pub struct FilesRequest {
     /// Discovery operation to perform.
     pub operation: FileOperation,
@@ -143,7 +143,7 @@ pub enum SearchMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-/// Input for `leantoken_search`.
+/// Input for `leantoken.search`.
 pub struct SearchRequest {
     /// Text, identifier, symbol, or regular expression to find.
     pub query: String,
@@ -201,7 +201,7 @@ pub struct SearchResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-/// Input for `leantoken_outline`.
+/// Input for `leantoken.outline`.
 pub struct OutlineRequest {
     /// Repository-relative files to outline.
     pub paths: Vec<String>,
@@ -280,7 +280,7 @@ pub struct Reference {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-/// Input for `leantoken_read`.
+/// Input for `leantoken.read`.
 pub struct ReadRequest {
     /// Repository-relative file path.
     pub path: String,
@@ -324,7 +324,7 @@ pub enum ReadStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-/// Input for `leantoken_context`.
+/// Input for `leantoken.context`.
 pub struct ContextRequest {
     /// Natural-language coding task used to retrieve evidence.
     pub task: String,

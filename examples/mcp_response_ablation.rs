@@ -354,7 +354,7 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
         "id": 2,
         "method": "tools/call",
         "params": {
-            "name": "leantoken_context",
+            "name": "context",
             "arguments": {
                 "task": manifest.fixture.task,
                 "token_budget": manifest.fixture.token_budget,
@@ -368,15 +368,15 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
     });
     let outline_empty_call = json!({
         "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-        "params": {"name": "leantoken_outline", "arguments": {"paths": ["README.md"]}}
+        "params": {"name": "outline", "arguments": {"paths": ["README.md"]}}
     });
     let outline_rich_call = json!({
         "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-        "params": {"name": "leantoken_outline", "arguments": {"paths": ["src/rust/math.rs"]}}
+        "params": {"name": "outline", "arguments": {"paths": ["src/rust/math.rs"]}}
     });
     let files_call = json!({
         "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-        "params": {"name": "leantoken_files", "arguments": {
+        "params": {"name": "files", "arguments": {
             "operation": {"kind": "tree", "depth": 2}, "max_results": 20
         }}
     });

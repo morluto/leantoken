@@ -881,7 +881,7 @@ impl McpServices {
 #[tool_router]
 impl LeanTokenMcp {
     #[tool(
-        name = "leantoken_files",
+        name = "files",
         description = "Preferred repository path discovery instead of find, ls, or glob. Use tree for hierarchy, find for fuzzy filenames, and glob for path patterns; returns paths, not source. Example: {\"operation\":\"find\",\"query\":\"mcp\"}."
     )]
     async fn leantoken_files(
@@ -907,8 +907,8 @@ impl LeanTokenMcp {
     }
 
     #[tool(
-        name = "leantoken_search",
-        description = "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken_read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
+        name = "search",
+        description = "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
     )]
     async fn leantoken_search(
         &self,
@@ -933,8 +933,8 @@ impl LeanTokenMcp {
     }
 
     #[tool(
-        name = "leantoken_outline",
-        description = "Inspect file structure without reading whole source files. Prefer this when the file is known but the relevant symbol or range is not; then use leantoken_read. Example: {\"paths\":[\"src/mcp.rs\"]}."
+        name = "outline",
+        description = "Inspect file structure without reading whole source files. Prefer this when the file is known but the relevant symbol or range is not; then use leantoken.read. Example: {\"paths\":[\"src/mcp.rs\"]}."
     )]
     async fn leantoken_outline(
         &self,
@@ -959,7 +959,7 @@ impl LeanTokenMcp {
     }
 
     #[tool(
-        name = "leantoken_read",
+        name = "read",
         description = "Preferred exact source reader instead of cat, head, or sed. Keep path as a file path; put the owner separately in target. Exact target shapes are {\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"} and {\"kind\":\"lines\",\"start\":120,\"end\":160}. Reuse content_hash as expected_hash to suppress unchanged source. Example: {\"path\":\"src/mcp.rs\",\"target\":{\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}}."
     )]
     async fn leantoken_read(
@@ -985,7 +985,7 @@ impl LeanTokenMcp {
     }
 
     #[tool(
-        name = "leantoken_context",
+        name = "context",
         description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}."
     )]
     async fn leantoken_context(
@@ -1017,7 +1017,7 @@ impl LeanTokenMcp {
     }
 
     #[tool(
-        name = "leantoken_savings",
+        name = "savings",
         description = "Report cumulative repository-local estimated source-token savings. Use when asked how many tokens LeanToken saved. Example: {}.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
@@ -1036,7 +1036,7 @@ impl LeanTokenMcp {
 
 #[tool_handler(
     name = "leantoken",
-    instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken_savings directly. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken_context first with the user's task. PREFER leantoken_search over grep or rg for source search; leantoken_files over find, ls, or glob for paths; leantoken_outline over opening whole files to discover structure; and leantoken_read over cat, head, or sed for exact symbols and ranges. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=working_tree after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, generated artifacts, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
+    instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken.context first with the user's task. PREFER leantoken.search over grep or rg for source search; leantoken.files over find, ls, or glob for paths; leantoken.outline over opening whole files to discover structure; and leantoken.read over cat, head, or sed for exact symbols and ranges. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=working_tree after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, generated artifacts, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
 )]
 impl ServerHandler for LeanTokenMcp {
     fn on_initialized(
@@ -1270,14 +1270,7 @@ mod tests {
         assert_eq!(tools.len(), 6);
 
         let names: std::collections::HashSet<_> = tools.iter().map(|t| t.name.as_ref()).collect();
-        for name in [
-            "leantoken_files",
-            "leantoken_search",
-            "leantoken_outline",
-            "leantoken_read",
-            "leantoken_context",
-            "leantoken_savings",
-        ] {
+        for name in ["files", "search", "outline", "read", "context", "savings"] {
             assert!(names.contains(name), "missing tool {name}");
         }
     }
@@ -1287,7 +1280,7 @@ mod tests {
         let expected = LeanTokenMcp::tool_router()
             .list_all()
             .into_iter()
-            .map(|tool| tool.name.into_owned())
+            .map(|tool| format!("leantoken.{}", tool.name))
             .collect::<std::collections::BTreeSet<_>>();
 
         let readme = include_str!("../README.md");
@@ -1308,7 +1301,7 @@ mod tests {
             .lines()
             .filter_map(|line| line.strip_prefix("## `"))
             .filter_map(|line| line.strip_suffix('`'))
-            .filter(|name| name.starts_with("leantoken_"))
+            .filter(|name| name.starts_with("leantoken."))
             .map(str::to_owned)
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(usage_tools, expected, "usage guide tool sections drifted");
@@ -1557,7 +1550,7 @@ mod tests {
                 .input_schema
                 .get("properties")
                 .and_then(serde_json::Value::as_object);
-            if tool.name == "leantoken_savings" {
+            if tool.name == "savings" {
                 assert!(
                     properties.is_none_or(serde_json::Map::is_empty),
                     "savings must remain a zero-input tool"
@@ -1585,7 +1578,7 @@ mod tests {
         let tool = LeanTokenMcp::tool_router()
             .list_all()
             .into_iter()
-            .find(|tool| tool.name == "leantoken_files")
+            .find(|tool| tool.name == "files")
             .expect("files tool");
         let schema = serde_json::Value::Object((*tool.input_schema).clone());
         let variants = schema["oneOf"].as_array().expect("operation variants");
@@ -1606,7 +1599,7 @@ mod tests {
         for tool in LeanTokenMcp::tool_router()
             .list_all()
             .into_iter()
-            .filter(|tool| tool.name != "leantoken_savings")
+            .filter(|tool| tool.name != "savings")
         {
             let consistency = tool
                 .input_schema
@@ -1647,13 +1640,13 @@ mod tests {
                 )
             })
             .collect::<std::collections::HashMap<_, _>>();
-        assert!(descriptions["leantoken_files"].contains("instead of find"));
-        assert!(descriptions["leantoken_search"].contains("instead of grep or rg"));
-        assert!(descriptions["leantoken_outline"].contains("without reading whole source files"));
-        assert!(descriptions["leantoken_read"].contains("expected_hash"));
-        assert!(descriptions["leantoken_read"].contains("instead of cat"));
-        assert!(descriptions["leantoken_context"].contains("DEFAULT FIRST CALL"));
-        assert!(descriptions["leantoken_savings"].contains("how many tokens LeanToken saved"));
+        assert!(descriptions["files"].contains("instead of find"));
+        assert!(descriptions["search"].contains("instead of grep or rg"));
+        assert!(descriptions["outline"].contains("without reading whole source files"));
+        assert!(descriptions["read"].contains("expected_hash"));
+        assert!(descriptions["read"].contains("instead of cat"));
+        assert!(descriptions["context"].contains("DEFAULT FIRST CALL"));
+        assert!(descriptions["savings"].contains("how many tokens LeanToken saved"));
         assert!(
             descriptions
                 .values()
@@ -1666,7 +1659,7 @@ mod tests {
         let tool = LeanTokenMcp::tool_router()
             .list_all()
             .into_iter()
-            .find(|tool| tool.name == "leantoken_savings")
+            .find(|tool| tool.name == "savings")
             .expect("savings tool");
         let annotations = tool.annotations.expect("savings annotations");
         assert_eq!(annotations.read_only_hint, Some(true));
@@ -1694,34 +1687,14 @@ mod tests {
             );
         }
         assert_eq!(
-            tools["leantoken_context"].pointer("/properties/token_budget/default"),
+            tools["context"].pointer("/properties/token_budget/default"),
             Some(&serde_json::json!(3_000))
         );
-        assert!(
-            tools["leantoken_files"]
-                .pointer("/properties/query")
-                .is_some()
-        );
-        assert!(
-            tools["leantoken_files"]
-                .pointer("/properties/pattern")
-                .is_some()
-        );
-        assert!(
-            tools["leantoken_read"]
-                .pointer("/properties/symbol")
-                .is_none()
-        );
-        assert!(
-            tools["leantoken_read"]
-                .pointer("/properties/start_line")
-                .is_none()
-        );
-        assert!(
-            tools["leantoken_read"]
-                .pointer("/properties/target")
-                .is_some()
-        );
+        assert!(tools["files"].pointer("/properties/query").is_some());
+        assert!(tools["files"].pointer("/properties/pattern").is_some());
+        assert!(tools["read"].pointer("/properties/symbol").is_none());
+        assert!(tools["read"].pointer("/properties/start_line").is_none());
+        assert!(tools["read"].pointer("/properties/target").is_some());
 
         let request = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
             "operation": "find",

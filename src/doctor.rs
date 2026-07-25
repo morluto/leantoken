@@ -14,14 +14,7 @@ use serde_json::{Value, json};
 use crate::setup::{self, SetupClient};
 use crate::{Config, Error, Result};
 
-const EXPECTED_TOOLS: [&str; 6] = [
-    "leantoken_context",
-    "leantoken_files",
-    "leantoken_outline",
-    "leantoken_read",
-    "leantoken_savings",
-    "leantoken_search",
-];
+const EXPECTED_TOOLS: [&str; 6] = ["context", "files", "outline", "read", "savings", "search"];
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_DIAGNOSTIC_LINES: usize = 8;
@@ -140,9 +133,9 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
         .get("instructions")
         .and_then(Value::as_str)
         .is_some_and(|instructions| {
-            instructions.contains("call leantoken_savings directly")
-                && instructions.contains("call leantoken_context first")
-                && instructions.contains("leantoken_search over grep or rg")
+            instructions.contains("call leantoken.savings directly")
+                && instructions.contains("call leantoken.context first")
+                && instructions.contains("leantoken.search over grep or rg")
         });
     if !instructions_loaded {
         return Err(doctor_error(
@@ -202,7 +195,7 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
                 "id": id,
                 "method": "tools/call",
                 "params": {
-                    "name": "leantoken_context",
+                    "name": "context",
                     "arguments": {
                         "task": "Verify LeanToken Context Distillery first-run readiness",
                         "token_budget": 200
@@ -216,7 +209,7 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
             deadline.saturating_duration_since(Instant::now()),
             "first_retrieval",
         )?;
-        let call = result_object(&response, "leantoken_context", "first_retrieval")?;
+        let call = result_object(&response, "context", "first_retrieval")?;
         if call.get("isError").and_then(Value::as_bool) == Some(true) {
             return Err(doctor_error(
                 "first_retrieval",
@@ -341,7 +334,7 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
     writeln!(output)?;
     writeln!(
         output,
-        "Ready. Distill broad tasks with leantoken_context first."
+        "Ready. Distill broad tasks with leantoken.context first."
     )?;
     Ok(())
 }

@@ -52,7 +52,7 @@ npx leantoken doctor
 
 Start with a broad task such as: *Use LeanToken to map the relevant repository
 context before editing.* The MCP initialization guidance routes the agent to
-`leantoken_context` first and keeps native tools available for edits, builds,
+`leantoken.context` first and keeps native tools available for edits, builds,
 and tests.
 
 <table>
@@ -135,12 +135,12 @@ retrieval.
 
 | Tool | Purpose |
 | --- | --- |
-| `leantoken_context` | Default first call for broad tasks; rank relevant evidence under a token budget. |
-| `leantoken_search` | Prefer over grep/rg for ranked text, regex, identifier, symbol, or reference search. |
-| `leantoken_files` | Prefer over find/ls/glob for compact, ignore-aware path discovery. |
-| `leantoken_outline` | Inspect definitions, signatures, imports, and ranges without whole-file reads. |
-| `leantoken_read` | Prefer over cat/head/sed for one exact symbol or inclusive line range. |
-| `leantoken_savings` | Report cumulative repository-local estimated source-token savings. |
+| `leantoken.context` | Default first call for broad tasks; rank relevant evidence under a token budget. |
+| `leantoken.search` | Prefer over grep/rg for ranked text, regex, identifier, symbol, or reference search. |
+| `leantoken.files` | Prefer over find/ls/glob for compact, ignore-aware path discovery. |
+| `leantoken.outline` | Inspect definitions, signatures, imports, and ranges without whole-file reads. |
+| `leantoken.read` | Prefer over cat/head/sed for one exact symbol or inclusive line range. |
+| `leantoken.savings` | Report cumulative repository-local estimated source-token savings. |
 
 Every retrieval tool accepts `consistency: "working_tree"` when completed edits
 must be reconciled before the query. The default, `"committed"`, returns the

@@ -134,7 +134,7 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "tools/call",
-                "params": {"name": "leantoken_context", "arguments": request}
+                "params": {"name": "context", "arguments": request}
             }),
         ),
         (
@@ -170,7 +170,7 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
         })
         .collect::<Vec<_>>();
     let result_event = events.last_mut().expect("result event");
-    result_event.tool_name = Some("leantoken_context".into());
+    result_event.tool_name = Some("context".into());
     result_event.call_id = Some("2".into());
     result_event.result_id = Some("context-result-1".into());
     result_event.visible_through_turn = Some(3);
@@ -194,7 +194,7 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
         provider_visible_payload: Some(
             "{\"role\":\"tool\",\"result_id\":\"context-result-1\"}".into(),
         ),
-        tool_name: Some("leantoken_context".into()),
+        tool_name: Some("context".into()),
         call_id: Some("2".into()),
         result_id: Some("context-result-1".into()),
         ranges: Vec::new(),

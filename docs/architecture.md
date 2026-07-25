@@ -305,7 +305,7 @@ compared on the same machine and release profile.
 
 ## Live read vs index
 
-`leantoken_read` always reads the live filesystem for the returned body while
+`leantoken.read` always reads the live filesystem for the returned body while
 symbol resolution and path admission use the index. Responses include:
 
 - `meta.repository_generation` — committed generation used for index lookups;
@@ -398,7 +398,7 @@ instead of adding a guessed fixed overhead.
 
 All repository-facing paths are relative. Absolute paths, parent traversal,
 NUL bytes, and canonical paths outside the repository root are rejected.
-Symlink escapes are rejected when live content is opened. `leantoken_read`
+Symlink escapes are rejected when live content is opened. `leantoken.read`
 requires an indexed path, so ignore rules also govern which files can be read
 through the tool.
 

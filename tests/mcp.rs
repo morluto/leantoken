@@ -128,7 +128,7 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
 
     assert_mcp_limit_contract(
         client.peer(),
-        "leantoken_files",
+        "files",
         serde_json::json!({"operation": "tree", "depth": 0}),
         "max_results",
         100,
@@ -137,7 +137,7 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
     .await;
     assert_mcp_limit_contract(
         client.peer(),
-        "leantoken_search",
+        "search",
         serde_json::json!({"query": "answer", "mode": "text"}),
         "max_results",
         100,
@@ -146,7 +146,7 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
     .await;
     assert_mcp_limit_contract(
         client.peer(),
-        "leantoken_search",
+        "search",
         serde_json::json!({"query": "answer", "mode": "text"}),
         "max_tokens",
         32_000,
@@ -155,7 +155,7 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
     .await;
     assert_mcp_limit_contract(
         client.peer(),
-        "leantoken_search",
+        "search",
         serde_json::json!({"query": "answer", "mode": "text"}),
         "context_lines",
         20,
@@ -164,7 +164,7 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
     .await;
     assert_mcp_limit_contract(
         client.peer(),
-        "leantoken_outline",
+        "outline",
         serde_json::json!({"paths": ["lib.rs"]}),
         "max_results",
         100,
@@ -173,7 +173,7 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
     .await;
     assert_mcp_limit_contract(
         client.peer(),
-        "leantoken_outline",
+        "outline",
         serde_json::json!({"paths": ["lib.rs"]}),
         "max_tokens",
         32_000,
@@ -182,7 +182,7 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
     .await;
     assert_mcp_limit_contract(
         client.peer(),
-        "leantoken_read",
+        "read",
         serde_json::json!({
             "path": "lib.rs",
             "target": {"kind": "lines", "start": 1, "end": 1}
@@ -194,7 +194,7 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
     .await;
     assert_mcp_limit_contract(
         client.peer(),
-        "leantoken_context",
+        "context",
         serde_json::json!({"task": "find the answer definition"}),
         "token_budget",
         32_000,
@@ -238,7 +238,7 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
 
     let files = call_tool(
         client.peer(),
-        "leantoken_files",
+        "files",
         serde_json::json!({"operation": "tree"}),
     )
     .await
@@ -257,7 +257,7 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
 
     let search = call_tool(
         client.peer(),
-        "leantoken_search",
+        "search",
         serde_json::json!({
             "query": "answer",
             "mode": "text",
@@ -276,7 +276,7 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
 
     let mismatch = call_tool(
         client.peer(),
-        "leantoken_search",
+        "search",
         serde_json::json!({
             "query": "answer",
             "expected_repository_id": "different-repository",
@@ -293,9 +293,9 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
     ));
 
     for (tool, arguments) in [
-        ("leantoken_outline", serde_json::json!({"paths": ["lib.rs"]})),
+        ("outline", serde_json::json!({"paths": ["lib.rs"]})),
         (
-            "leantoken_read",
+            "read",
             serde_json::json!({
                 "path": "lib.rs",
                 "target": {"kind": "lines", "start": 2, "end": 2}
@@ -310,7 +310,7 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
 
     let context = call_tool(
         client.peer(),
-        "leantoken_context",
+        "context",
         serde_json::json!({
             "task": "find the answer definition",
             "workflow": "investigation",
@@ -365,42 +365,42 @@ async fn customized_mcp_limits_apply_while_starting_and_after_failure() {
 
     let cases = [
         (
-            "leantoken_files",
+            "files",
             serde_json::json!({"operation": "tree"}),
             "max_results",
             2,
             1,
         ),
         (
-            "leantoken_search",
+            "search",
             serde_json::json!({"query": "answer"}),
             "max_results",
             2,
             1,
         ),
         (
-            "leantoken_search",
+            "search",
             serde_json::json!({"query": "answer"}),
             "max_tokens",
             51,
             50,
         ),
         (
-            "leantoken_outline",
+            "outline",
             serde_json::json!({"paths": ["lib.rs"]}),
             "max_results",
             2,
             1,
         ),
         (
-            "leantoken_outline",
+            "outline",
             serde_json::json!({"paths": ["lib.rs"]}),
             "max_tokens",
             51,
             50,
         ),
         (
-            "leantoken_read",
+            "read",
             serde_json::json!({
                 "path": "lib.rs",
                 "target": {"kind": "lines", "start": 1, "end": 1}
@@ -410,7 +410,7 @@ async fn customized_mcp_limits_apply_while_starting_and_after_failure() {
             50,
         ),
         (
-            "leantoken_context",
+            "context",
             serde_json::json!({"task": "find answer"}),
             "token_budget",
             51,
@@ -432,7 +432,7 @@ async fn customized_mcp_limits_apply_while_starting_and_after_failure() {
 
     let starting = call_tool(
         client.peer(),
-        "leantoken_files",
+        "files",
         serde_json::json!({"operation": "tree", "max_results": 1}),
     )
     .await
@@ -457,7 +457,7 @@ async fn customized_mcp_limits_apply_while_starting_and_after_failure() {
 
     let failed = call_tool(
         client.peer(),
-        "leantoken_files",
+        "files",
         serde_json::json!({"operation": "tree", "max_results": 1}),
     )
     .await
@@ -505,9 +505,9 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .clone()
         .expect("server instructions");
     assert!(instructions.contains("preferred repository discovery"));
-    assert!(instructions.contains("call leantoken_savings directly"));
-    assert!(instructions.contains("call leantoken_context first"));
-    assert!(instructions.contains("leantoken_search over grep or rg"));
+    assert!(instructions.contains("call leantoken.savings directly"));
+    assert!(instructions.contains("call leantoken.context first"));
+    assert!(instructions.contains("leantoken.search over grep or rg"));
     assert!(instructions.contains("consistency=working_tree"));
     assert!(instructions.contains("native tools for edits, builds, tests"));
 
@@ -518,12 +518,12 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .collect::<std::collections::HashSet<_>>();
     assert_eq!(tools.len(), 6);
     for name in [
-        "leantoken_files",
-        "leantoken_search",
-        "leantoken_outline",
-        "leantoken_read",
-        "leantoken_context",
-        "leantoken_savings",
+        "files",
+        "search",
+        "outline",
+        "read",
+        "context",
+        "savings",
     ] {
         assert!(names.contains(name));
     }
@@ -539,7 +539,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let response = client
         .peer()
         .call_tool(
-            CallToolRequestParams::new("leantoken_files").with_arguments(files_arguments.clone()),
+            CallToolRequestParams::new("files").with_arguments(files_arguments.clone()),
         )
         .await
         .expect("call files tool");
@@ -557,7 +557,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
             "lib.rs",
         ),
     ] {
-        let response = call_tool(client.peer(), "leantoken_files", arguments)
+        let response = call_tool(client.peer(), "files", arguments)
             .await
             .expect("call documented files operation");
         assert_ne!(response.is_error, Some(true));
@@ -577,7 +577,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let legacy_result = client
         .peer()
         .call_tool(
-            CallToolRequestParams::new("leantoken_files").with_arguments(nested_files_arguments),
+            CallToolRequestParams::new("files").with_arguments(nested_files_arguments),
         )
         .await
         .expect("nested arguments receive an MCP tool result");
@@ -607,7 +607,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let response = client
         .peer()
         .call_tool(
-            CallToolRequestParams::new("leantoken_search")
+            CallToolRequestParams::new("search")
                 .with_arguments(working_tree_arguments),
         )
         .await
@@ -625,7 +625,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .clone();
     let error = client
         .peer()
-        .call_tool(CallToolRequestParams::new("leantoken_read").with_arguments(invalid_arguments))
+        .call_tool(CallToolRequestParams::new("read").with_arguments(invalid_arguments))
         .await
         .expect_err("invalid path should be a protocol error");
     assert!(matches!(
@@ -648,7 +648,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let error = client
         .peer()
         .call_tool(
-            CallToolRequestParams::new("leantoken_search").with_arguments(oversized_arguments),
+            CallToolRequestParams::new("search").with_arguments(oversized_arguments),
         )
         .await
         .expect_err("oversized request should be rejected");
@@ -663,7 +663,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let boundary_id = "x".repeat(128);
     let boundary_error = call_tool(
         client.peer(),
-        "leantoken_files",
+        "files",
         serde_json::json!({
             "operation": "tree",
             "expected_repository_id": boundary_id
@@ -681,7 +681,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let oversized_id = "x".repeat(129);
     let oversized_error = call_tool(
         client.peer(),
-        "leantoken_files",
+        "files",
         serde_json::json!({
             "operation": "tree",
             "expected_repository_id": oversized_id
@@ -705,7 +705,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
 
     let multibyte_boundary_error = call_tool(
         client.peer(),
-        "leantoken_files",
+        "files",
         serde_json::json!({
             "operation": "tree",
             "expected_repository_id": "é".repeat(64)
@@ -721,7 +721,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     ));
     let multibyte_oversized_error = call_tool(
         client.peer(),
-        "leantoken_files",
+        "files",
         serde_json::json!({
             "operation": "tree",
             "expected_repository_id": "é".repeat(65)
@@ -748,7 +748,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let bounded = client
         .peer()
         .call_tool(
-            CallToolRequestParams::new("leantoken_search").with_arguments(bounded_arguments),
+            CallToolRequestParams::new("search").with_arguments(bounded_arguments),
         )
         .await
         .expect("large bounded search");
@@ -770,7 +770,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let default_context = client
         .peer()
         .call_tool(
-            CallToolRequestParams::new("leantoken_context")
+            CallToolRequestParams::new("context")
                 .with_arguments(default_context_arguments),
         )
         .await
@@ -788,7 +788,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let savings = client
         .peer()
         .call_tool(
-            CallToolRequestParams::new("leantoken_savings")
+            CallToolRequestParams::new("savings")
                 .with_arguments(Default::default()),
         )
         .await
@@ -809,7 +809,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let repeated_savings = client
         .peer()
         .call_tool(
-            CallToolRequestParams::new("leantoken_savings")
+            CallToolRequestParams::new("savings")
                 .with_arguments(Default::default()),
         )
         .await
@@ -837,7 +837,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .expect("context request object")
         .clone();
     let request = ClientRequest::CallToolRequest(Request::new(
-        CallToolRequestParams::new("leantoken_context").with_arguments(context_arguments),
+        CallToolRequestParams::new("context").with_arguments(context_arguments),
     ));
     let handle = client
         .peer()
@@ -852,7 +852,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     // A cancelled request must not poison the stdio transport or server.
     let response = client
         .peer()
-        .call_tool(CallToolRequestParams::new("leantoken_files").with_arguments(files_arguments))
+        .call_tool(CallToolRequestParams::new("files").with_arguments(files_arguments))
         .await
         .expect("call after cancellation");
     assert_ne!(response.is_error, Some(true));
@@ -905,7 +905,7 @@ async fn mcp_path_errors_redact_external_and_absolute_paths() {
         .clone();
         let error = client
             .peer()
-            .call_tool(CallToolRequestParams::new("leantoken_read").with_arguments(arguments))
+            .call_tool(CallToolRequestParams::new("read").with_arguments(arguments))
             .await
             .expect_err("path must be rejected");
         let ServiceError::McpError(data) = error else {
@@ -956,49 +956,49 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
 
     for (tool, arguments, field, limit, zero_is_valid) in [
         (
-            "leantoken_files",
+            "files",
             serde_json::json!({"operation": "tree", "depth": 0}),
             "max_results",
             100,
             false,
         ),
         (
-            "leantoken_search",
+            "search",
             serde_json::json!({"query": "answer", "mode": "text"}),
             "max_results",
             100,
             false,
         ),
         (
-            "leantoken_search",
+            "search",
             serde_json::json!({"query": "answer", "mode": "text"}),
             "max_tokens",
             32_000,
             false,
         ),
         (
-            "leantoken_search",
+            "search",
             serde_json::json!({"query": "answer", "mode": "text"}),
             "context_lines",
             20,
             true,
         ),
         (
-            "leantoken_outline",
+            "outline",
             serde_json::json!({"paths": ["lib.rs"]}),
             "max_results",
             100,
             false,
         ),
         (
-            "leantoken_outline",
+            "outline",
             serde_json::json!({"paths": ["lib.rs"]}),
             "max_tokens",
             32_000,
             false,
         ),
         (
-            "leantoken_read",
+            "read",
             serde_json::json!({
                 "path": "lib.rs",
                 "target": {"kind": "lines", "start": 1, "end": 1}
@@ -1008,7 +1008,7 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
             false,
         ),
         (
-            "leantoken_context",
+            "context",
             serde_json::json!({"task": "find the answer definition"}),
             "token_budget",
             32_000,
@@ -1031,7 +1031,7 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
             .as_object()
             .expect("arguments")
             .clone();
-        CallToolRequestParams::new("leantoken_files").with_arguments(arguments)
+        CallToolRequestParams::new("files").with_arguments(arguments)
     };
 
     let starting = client

@@ -180,7 +180,7 @@ pruning during a mixed-version rollout.
 
 `leantoken doctor` launches the current executable as a real MCP subprocess and
 verifies its initialization identity and agent instructions, exact six-tool
-catalog, and first `leantoken_context` retrieval. On a cold repository it
+catalog, and first `leantoken.context` retrieval. On a cold repository it
 follows structured `retry_after_ms` guidance until the first index generation
 is ready. Use `--json` for a machine-readable readiness report. Failures use
 the `doctor_failure` category and identify the `launch`, `handshake`, `catalog`,
@@ -252,7 +252,7 @@ follow-up request consumes that fingerprint. Pass the aligned hashes through
 `known_hashes` to suppress exact-content resends.
 
 Prefer LeanToken over shell discovery and whole-file reads. For a broad coding,
-debugging, review, or architecture task, start with `leantoken_context`. Use the
+debugging, review, or architecture task, start with `leantoken.context`. Use the
 narrow tools directly when the target is already known:
 
 ```text
@@ -285,18 +285,18 @@ clamped. Disallowed zero values are invalid input; values above a maximum
 produce an MCP error with the public field name, requested value, and active
 maximum.
 
-## `leantoken_savings`
+## `leantoken.savings`
 
 Returns cumulative repository-local source-token savings estimates with no
 input fields. The response includes the tokenizer, whether local counts are
 exact, tracked request count, baseline and emitted source tokens, the estimated
 source tokens saved, and a fixed breakdown by retrieval operation.
 
-This is a read-only observation: calling `leantoken_savings` does not update
+This is a read-only observation: calling `leantoken.savings` does not update
 the tracker. Ask the host agent how many tokens LeanToken saved or request
 LeanToken usage statistics to route directly to this tool.
 
-## `leantoken_files`
+## `leantoken.files`
 
 Discovers repository structure without returning source bodies.
 
@@ -311,7 +311,7 @@ cannot be mixed. Common inputs are `max_results` (default 20, maximum 100) and
 `cursor`. Output contains bounded file/directory entries with language and size
 metadata when available.
 
-## `leantoken_search`
+## `leantoken.search`
 
 Returns ranked source excerpts. Modes are `auto`, `text`, `regex`,
 `identifier`, `symbol`, and `reference`.
@@ -336,7 +336,7 @@ limits. If a limit would make the answer incomplete, the tool returns
 `LimitExceeded`; use text, identifier, symbol, or reference mode for exhaustive
 indexed lookup on larger repositories.
 
-## `leantoken_outline`
+## `leantoken.outline`
 
 Returns definitions, imports, signatures, parent relationships, and one-based
 line ranges for one or more files. Name and kind filters narrow the output.
@@ -346,7 +346,7 @@ Supported languages report whether parsing was structurally complete.
 Unsupported text files remain searchable and are marked incomplete rather than
 being presented as precise.
 
-## `leantoken_read`
+## `leantoken.read`
 
 Reads an exact source range.
 
@@ -372,7 +372,7 @@ successful retry result such as `{"status":"retryable","reason":"index_building"
 set `consistency` to `working_tree` on the next MCP retrieval. A committed read
 may still use `index_stale` and `expected_hash` to detect or suppress live ranges.
 
-## `leantoken_context`
+## `leantoken.context`
 
 Turns a task into a ranked set of source evidence. `task` is the only required
 input; `token_budget` defaults to 3,000 and accepts values through 32,000.

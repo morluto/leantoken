@@ -1101,7 +1101,7 @@ mod tests {
                     "call_id": "event-private-id",
                     "invocation": {
                         "server": "leantoken",
-                        "tool": "leantoken_files",
+                        "tool": "files",
                         "arguments": {"secret": "/home/alice"}
                     },
                     "result": {"Ok": result}
@@ -1126,7 +1126,7 @@ mod tests {
         let tokenizer = Tokenizer::from_str("cl100k_base", false).expect("tokenizer");
         let mut trace: Trace = serde_json::from_slice(&mcp).expect("trace");
         let call = trace.events[5].message.as_mut().expect("call message");
-        call["params"]["name"] = Value::String("leantoken_read".into());
+        call["params"]["name"] = Value::String("read".into());
         trace.seal_content_hash().expect("reseal");
         let mismatched = serde_json::to_vec(&trace).expect("trace JSON");
 
@@ -1283,7 +1283,7 @@ mod tests {
                 "id": 8,
                 "method": "tools/call",
                 "params": {
-                    "name": "leantoken_files",
+                    "name": "files",
                     "arguments": {"expected_hash": content_hash}
                 }
             }),
@@ -1342,7 +1342,7 @@ mod tests {
                 "payload": {
                     "type": "function_call",
                     "namespace": "leantoken",
-                    "name": "leantoken_files",
+                    "name": "files",
                     "call_id": "call-private-id",
                     "arguments": "private argument"
                 }
@@ -1437,7 +1437,7 @@ mod tests {
                         "jsonrpc": "2.0",
                         "id": 7,
                         "method": "tools/call",
-                        "params": {"name": "leantoken_files", "arguments": {}}
+                        "params": {"name": "files", "arguments": {}}
                     }),
                 ),
                 trace_event(

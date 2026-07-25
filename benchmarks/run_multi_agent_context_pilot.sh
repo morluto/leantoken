@@ -71,12 +71,12 @@ case "$arm" in
     ;;
   thin-leantoken-dual)
     fork_turns=none
-    retrieval_contract="The child must use the leantoken MCP server as its only repository discovery and source-reading mechanism; it must not run native shell search/read commands or use web search. It must call leantoken_context first, use at most 6 LeanToken retrieval calls, and keep each context request at or below 1800 source tokens."
+    retrieval_contract="The child must use the leantoken MCP server as its only repository discovery and source-reading mechanism; it must not run native shell search/read commands or use web search. It must call leantoken.context first, use at most 6 LeanToken retrieval calls, and keep each context request at or below 1800 source tokens."
     result_mode=dual
     ;;
   thin-leantoken-structured | thin-leantoken-structured-owner)
     fork_turns=none
-    retrieval_contract="The child must use the leantoken MCP server as its only repository discovery and source-reading mechanism; it must not run native shell search/read commands or use web search. It must call leantoken_context first, use at most 6 LeanToken retrieval calls, and keep each context request at or below 1800 source tokens."
+    retrieval_contract="The child must use the leantoken MCP server as its only repository discovery and source-reading mechanism; it must not run native shell search/read commands or use web search. It must call leantoken.context first, use at most 6 LeanToken retrieval calls, and keep each context request at or below 1800 source tokens."
     result_mode=structured
     ;;
   *) usage ;;

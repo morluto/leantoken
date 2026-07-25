@@ -201,12 +201,12 @@ while IFS=$'\t' read -r schedule_key repetition task_id corpus arm; do
       ;;
     thin-leantoken-structured-owner)
       fork_turns=none
-      retrieval_contract="The child must use the leantoken MCP server as its only repository discovery and source-reading mechanism; it must not run native shell search/read commands or use web search. It must call leantoken_context first, use at most 8 LeanToken retrieval calls, and keep each context request at or below 1600 source tokens. Text and regex search hits may include an enclosing_symbol; prefer that owner or an exact returned line range when reading."
+      retrieval_contract="The child must use the leantoken MCP server as its only repository discovery and source-reading mechanism; it must not run native shell search/read commands or use web search. It must call leantoken.context first, use at most 8 LeanToken retrieval calls, and keep each context request at or below 1600 source tokens. Text and regex search hits may include an enclosing_symbol; prefer that owner or an exact returned line range when reading."
       result_mode=structured
       ;;
     thin-leantoken-context-bundle)
       fork_turns=none
-      retrieval_contract="The child must use the leantoken MCP server as its only repository discovery mechanism; it must not run native shell search/read commands or use web search. Make exactly one leantoken_context call first with at most 1600 source tokens. If and only if that bundle lacks a directly required implementation or regression-test file, make at most one leantoken_search call with at most 1200 source tokens. Do not call leantoken_read, leantoken_outline, or leantoken_files. Infer the minimal file set from the returned fragments and hits without extra verification."
+      retrieval_contract="The child must use the leantoken MCP server as its only repository discovery mechanism; it must not run native shell search/read commands or use web search. Make exactly one leantoken.context call first with at most 1600 source tokens. If and only if that bundle lacks a directly required implementation or regression-test file, make at most one leantoken.search call with at most 1200 source tokens. Do not call leantoken.read, leantoken.outline, or leantoken.files. Infer the minimal file set from the returned fragments and hits without extra verification."
       result_mode=structured
       ;;
     *)

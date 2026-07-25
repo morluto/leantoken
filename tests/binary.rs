@@ -478,7 +478,7 @@ fn doctor_human_output_uses_context_distillery_handoff() {
     assert!(stdout.contains("LeanToken // Context Distillery"));
     assert!(stdout.contains("MCP identity: leantoken"));
     assert!(stdout.contains("Tool catalog: 6 MCP tools"));
-    assert!(stdout.contains("leantoken_context first"));
+    assert!(stdout.contains("leantoken.context first"));
 }
 
 #[test]
@@ -532,7 +532,7 @@ fn mcp_survives_malformed_and_invalid_messages() {
         "id": 100,
         "method": "tools/call",
         "params": {
-            "name": "leantoken_files",
+            "name": "files",
             "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
         }
     }));
@@ -604,8 +604,8 @@ fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
         initialize["result"]["instructions"]
             .as_str()
             .is_some_and(|instructions| {
-                instructions.contains("call leantoken_savings directly")
-                    && instructions.contains("call leantoken_context first")
+                instructions.contains("call leantoken.savings directly")
+                    && instructions.contains("call leantoken.context first")
             })
     );
     process.send_initialized();
@@ -626,12 +626,12 @@ fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
     assert_eq!(
         names,
         [
-            "leantoken_context",
-            "leantoken_files",
-            "leantoken_outline",
-            "leantoken_read",
-            "leantoken_savings",
-            "leantoken_search",
+            "context",
+            "files",
+            "outline",
+            "read",
+            "savings",
+            "search",
         ]
         .into_iter()
         .collect()
@@ -646,7 +646,7 @@ fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
             "id": id,
             "method": "tools/call",
             "params": {
-                "name": "leantoken_context",
+                "name": "context",
                 "arguments": {
                     "task": "find context_distillery_ready",
                     "token_budget": 200
@@ -794,7 +794,7 @@ fn mcp_rejects_home_root_after_initialize_without_opening_storage() {
             "id": id,
             "method": "tools/call",
             "params": {
-                "name": "leantoken_files",
+                "name": "files",
                 "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
             }
         }));
@@ -839,7 +839,7 @@ fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
             "id": id,
             "method": "tools/call",
             "params": {
-                "name": "leantoken_files",
+                "name": "files",
                 "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
             }
         }));
@@ -865,7 +865,7 @@ fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
         "id": id + 1,
         "method": "tools/call",
         "params": {
-            "name": "leantoken_files",
+            "name": "files",
             "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
         }
     }));
@@ -1439,12 +1439,12 @@ fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
     assert_eq!(
         doctor_report["tools"],
         serde_json::json!([
-            "leantoken_context",
-            "leantoken_files",
-            "leantoken_outline",
-            "leantoken_read",
-            "leantoken_savings",
-            "leantoken_search"
+            "context",
+            "files",
+            "outline",
+            "read",
+            "savings",
+            "search"
         ])
     );
     assert_eq!(doctor_report["first_call"]["status"], "ready");
@@ -1692,7 +1692,7 @@ impl McpProcess {
                 "id": id,
                 "method": "tools/call",
                 "params": {
-                    "name": "leantoken_files",
+                    "name": "files",
                     "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
                 }
             }));
@@ -1717,7 +1717,7 @@ impl McpProcess {
                 "id": id,
                 "method": "tools/call",
                 "params": {
-                    "name": "leantoken_files",
+                    "name": "files",
                     "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
                 }
             }));

@@ -43,7 +43,7 @@
       "configuration": { "retrieval": "one_shot_context" },
       "tool_catalog": ["leantoken", "edit", "shell"],
       "budget": { "tool_call_limit": 40, "context_token_limit": 8000 },
-      "retrieval_contract": "Make exactly one evidence-bearing leantoken_context call and do not perform any later repository retrieval."
+      "retrieval_contract": "Make exactly one evidence-bearing leantoken.context call and do not perform any later repository retrieval."
     },
     "prewalk": {
       "runtime_repository": "/absolute/path/to/frozen-leantoken-worktree",

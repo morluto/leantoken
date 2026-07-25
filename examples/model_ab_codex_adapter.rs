@@ -398,10 +398,10 @@ fn build_prompt(request: &AdapterRequest, retrieval_policy: RetrievalPolicy) -> 
             "LeanToken is unavailable in this arm. Use only native repository tools."
         }
         RetrievalPolicy::LeanTokenProgressive => {
-            "LeanToken is the only permitted repository discovery and source-reading tool. Do not call leantoken_context. Progress from the narrow files, outline, search, and read tools as evidence warrants. Call LeanToken before any substantive shell command or edit. Native shell commands remain available only for Git preflight and post-retrieval build, test, lint, and patch verification."
+            "LeanToken is the only permitted repository discovery and source-reading tool. Do not call leantoken.context. Progress from the narrow files, outline, search, and read tools as evidence warrants. Call LeanToken before any substantive shell command or edit. Native shell commands remain available only for Git preflight and post-retrieval build, test, lint, and patch verification."
         }
         RetrievalPolicy::LeanTokenOneShot => {
-            "LeanToken is the only permitted repository discovery and source-reading tool. Make exactly one leantoken_context call before any substantive shell command or edit, then implement from that fixed bundle without further repository retrieval. Native shell commands remain available only for build, test, lint, and patch verification."
+            "LeanToken is the only permitted repository discovery and source-reading tool. Make exactly one leantoken.context call before any substantive shell command or edit, then implement from that fixed bundle without further repository retrieval. Native shell commands remain available only for build, test, lint, and patch verification."
         }
         RetrievalPolicy::Prewalk => unreachable!("prewalk uses phase-specific prompts"),
     };
@@ -1360,16 +1360,16 @@ fn validate_retrieval_execution(
             if analysis
                 .leantoken_tools
                 .iter()
-                .any(|tool| tool == "leantoken_context")
+                .any(|tool| tool == "context")
             {
-                return Err("progressive arm called leantoken_context".into());
+                return Err("progressive arm called leantoken.context".into());
             }
         }
         RetrievalPolicy::LeanTokenOneShot => {
             validate_leantoken_first_and_no_native(analysis, None)?;
             if leantoken_calls != 1
                 || leantoken_evidence_calls != 1
-                || analysis.leantoken_tools.as_slice() != ["leantoken_context"]
+                || analysis.leantoken_tools.as_slice() != ["context"]
             {
                 return Err(
                     "one-shot arm must make one successful evidence-bearing context call".into(),
@@ -1739,7 +1739,7 @@ mod tests {
                     "id": id,
                     "type": "mcp_tool_call",
                     "server": "leantoken",
-                    "tool": "leantoken_context",
+                    "tool": "context",
                     "status": "completed",
                     "result": {"structured_content": {
                         "fragments": [{
@@ -1807,7 +1807,7 @@ mod tests {
     fn progressive_contract_rejects_native_source_reads() {
         let analysis = analyze(&[
             command_event("preflight", "/bin/bash -lc 'git status --short'"),
-            leantoken_event("search", "leantoken_search", true),
+            leantoken_event("search", "search", true),
             command_event("read", "/bin/bash -lc \"sed -n '1,80p' src/lib.rs\""),
         ]);
 
@@ -1823,7 +1823,7 @@ mod tests {
     fn one_shot_contract_requires_one_context_call_before_substantive_tools() {
         let invalid = analyze(&[
             command_event("search", "/bin/bash -lc 'rg --files'"),
-            leantoken_event("context", "leantoken_context", true),
+            leantoken_event("context", "context", true),
         ]);
         let error = validate_retrieval_execution(RetrievalPolicy::LeanTokenOneShot, &invalid)
             .unwrap_err()
@@ -1831,7 +1831,7 @@ mod tests {
         assert!(error.contains("before its first LeanToken call"));
 
         let valid = analyze(&[
-            leantoken_event("context", "leantoken_context", true),
+            leantoken_event("context", "context", true),
             command_event("test", "/bin/bash -lc 'cargo test'"),
         ]);
         let evidence = validate_retrieval_execution(RetrievalPolicy::LeanTokenOneShot, &valid)
@@ -1842,13 +1842,13 @@ mod tests {
 
     #[test]
     fn progressive_contract_rejects_context_and_requires_successful_evidence() {
-        let context = analyze(&[leantoken_event("context", "leantoken_context", true)]);
+        let context = analyze(&[leantoken_event("context", "context", true)]);
         let error = validate_retrieval_execution(RetrievalPolicy::LeanTokenProgressive, &context)
             .unwrap_err()
             .to_string();
-        assert!(error.contains("leantoken_context"));
+        assert!(error.contains("context"));
 
-        let empty = analyze(&[leantoken_event("empty", "leantoken_search", false)]);
+        let empty = analyze(&[leantoken_event("empty", "search", false)]);
         let error = validate_retrieval_execution(RetrievalPolicy::LeanTokenProgressive, &empty)
             .unwrap_err()
             .to_string();
@@ -1878,7 +1878,7 @@ mod tests {
     #[test]
     fn prewalk_merge_retains_phase_boundary_usage_and_validated_edit() {
         let mut prewalk = analyze(&[
-            leantoken_event("search", "leantoken_search", true),
+            leantoken_event("search", "search", true),
             serde_json::json!({
                 "type":"item.completed",
                 "item": {"id":"todo", "type":"todo_list", "items":[]}

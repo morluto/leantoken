@@ -1,6 +1,6 @@
 # Representative context benchmark
 
-This benchmark measures one narrow question: given a natural-language maintenance task and a fixed source tree, how much labeled source evidence does `leantoken_context` retrieve within a token budget?
+This benchmark measures one narrow question: given a natural-language maintenance task and a fixed source tree, how much labeled source evidence does `leantoken.context` retrieve within a token budget?
 
 It does not run a model, edit code, execute project tests, or measure whether an agent can solve the task. The results cannot support claims about patch correctness, pass rate, end-to-end task cost, or plan/prewalk handoffs.
 
@@ -418,7 +418,7 @@ validation evidence, not a blind generalization result.
 For each task, the runner reports:
 
 - cold indexing time and SQLite index size;
-- warm `leantoken_context` latency;
+- warm `leantoken.context` latency;
 - labeled-file recall and line-anchor coverage;
 - source tokens returned by LeanToken;
 - tokens in the complete serialized LeanToken response;
@@ -436,7 +436,7 @@ Source tokens and serialized protocol tokens are separate measurements. LeanToke
 The oracle baseline is intentionally favorable to ordinary file reads: it knows the correct files in advance and pays no cost for choosing them or following dead ends. Conversely, adding `rg` discovery output to that oracle can duplicate text and inflate the baseline, so the report keeps discovery, oracle-file, and combined counts visible rather than hiding them behind one headline. The baseline uses a minimal path/content JSON envelope, while LeanToken emits its real response schema; total-JSON comparisons are conservative diagnostics, not like-for-like protocol benchmarks.
 
 The small representation fixture is an intentional counterexample to using
-`leantoken_context` for every turn. In the 2026-07-15 fixture run, context used
+`leantoken.context` for every turn. In the 2026-07-15 fixture run, context used
 329 source tokens and 1,710 complete JSON tokens, while direct reads of
 already-known labeled files used 527 source tokens and 1,673 JSON tokens. A
 compact tree used 555 JSON tokens. Context returned less source but still cost

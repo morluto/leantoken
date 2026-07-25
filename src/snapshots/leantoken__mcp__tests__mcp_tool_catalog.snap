@@ -4,7 +4,7 @@ expression: tools
 ---
 [
   {
-    "name": "leantoken_context",
+    "name": "context",
     "description": "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}.",
     "inputSchema": {
       "$defs": {
@@ -156,7 +156,7 @@ expression: tools
     }
   },
   {
-    "name": "leantoken_files",
+    "name": "files",
     "description": "Preferred repository path discovery instead of find, ls, or glob. Use tree for hierarchy, find for fuzzy filenames, and glob for path patterns; returns paths, not source. Example: {\"operation\":\"find\",\"query\":\"mcp\"}.",
     "inputSchema": {
       "$defs": {
@@ -357,8 +357,8 @@ expression: tools
     }
   },
   {
-    "name": "leantoken_outline",
-    "description": "Inspect file structure without reading whole source files. Prefer this when the file is known but the relevant symbol or range is not; then use leantoken_read. Example: {\"paths\":[\"src/mcp.rs\"]}.",
+    "name": "outline",
+    "description": "Inspect file structure without reading whole source files. Prefer this when the file is known but the relevant symbol or range is not; then use leantoken.read. Example: {\"paths\":[\"src/mcp.rs\"]}.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
@@ -433,7 +433,7 @@ expression: tools
     }
   },
   {
-    "name": "leantoken_read",
+    "name": "read",
     "description": "Preferred exact source reader instead of cat, head, or sed. Keep path as a file path; put the owner separately in target. Exact target shapes are {\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"} and {\"kind\":\"lines\",\"start\":120,\"end\":160}. Reuse content_hash as expected_hash to suppress unchanged source. Example: {\"path\":\"src/mcp.rs\",\"target\":{\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}}.",
     "inputSchema": {
       "$defs": {
@@ -548,7 +548,7 @@ expression: tools
     }
   },
   {
-    "name": "leantoken_savings",
+    "name": "savings",
     "description": "Report cumulative repository-local estimated source-token savings. Use when asked how many tokens LeanToken saved. Example: {}.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -561,8 +561,8 @@ expression: tools
     }
   },
   {
-    "name": "leantoken_search",
-    "description": "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken_read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}.",
+    "name": "search",
+    "description": "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}.",
     "inputSchema": {
       "$defs": {
         "SearchMode": {

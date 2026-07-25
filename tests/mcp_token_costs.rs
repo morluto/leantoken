@@ -103,7 +103,7 @@ async fn mcp_handoff_token_costs() {
         "id": 2,
         "method": "tools/call",
         "params": {
-            "name": "leantoken_context",
+            "name": "context",
             "arguments": {
                 "task": "change the Rust Point distance calculation and its caller",
                 "token_budget": 500,
