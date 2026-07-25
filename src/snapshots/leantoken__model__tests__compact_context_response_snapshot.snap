@@ -30,7 +30,11 @@ expression: response
   "omission_summary": {
     "path_excluded": 0,
     "known_hash": 0,
-    "budget_or_result_limit": 1
+    "budget_or_result_limit": 1,
+    "focused": 0,
+    "not_focused": 0,
+    "changed": 0,
+    "not_changed": 0
   },
   "warnings": [
     "1 omitted"

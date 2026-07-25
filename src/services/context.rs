@@ -807,10 +807,8 @@ impl Services {
             .filter(|(_, matched)| **matched == 0)
             .map(|(pattern, _)| pattern.clone())
             .collect();
-        let minimum_focus_fragments = request
-            .minimum_fragments_per_focus_path
-            .unwrap_or(usize::from(request.strict_focus_paths));
-        if minimum_focus_fragments > 0 {
+        let minimum_focus_fragments = request.minimum_fragments_per_focus_path.unwrap_or(1);
+        if !request.focus_paths.is_empty() {
             coverage.focus_path_coverage = request
                 .focus_paths
                 .iter()
@@ -981,12 +979,15 @@ impl Services {
             });
         }
 
-        if !coverage.focus_path_coverage.is_empty() || request.strict_changed_paths {
+        let focus_coverage_is_required =
+            request.strict_focus_paths || request.minimum_fragments_per_focus_path.is_some();
+        if focus_coverage_is_required || request.strict_changed_paths {
             coverage.strict_scope_satisfied = Some(
-                coverage
-                    .focus_path_coverage
-                    .iter()
-                    .all(|focus| focus.satisfied)
+                (!focus_coverage_is_required
+                    || coverage
+                        .focus_path_coverage
+                        .iter()
+                        .all(|focus| focus.satisfied))
                     && coverage
                         .changed_path_coverage
                         .as_ref()
@@ -1357,17 +1358,17 @@ impl Services {
         workflow: ContextWorkflow,
         cancellation: &CancellationToken,
         candidates: &mut Vec<Candidate>,
-    ) -> Result<(Option<WorkflowReceipt>, usize)> {
+    ) -> Result<(Option<WorkflowReceipt>, Vec<String>)> {
         if !matches!(
             workflow,
             ContextWorkflow::Contribution | ContextWorkflow::Review
         ) {
-            return Ok((None, 0));
+            return Ok((None, Vec::new()));
         }
 
         let mut matches = Vec::new();
         let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
-        let mut path_excluded = 0usize;
+        let mut path_excluded = Vec::new();
         let mut cursor = None;
         let mut scanned_files = 0;
         let mut scan_truncated = false;
@@ -1388,7 +1389,7 @@ impl Services {
                     if path_filter.allows(&file.path) {
                         matches.push((file, score, family));
                     } else {
-                        path_excluded += 1;
+                        path_excluded.push(file.path);
                     }
                 }
             }
@@ -1665,7 +1666,7 @@ impl Services {
                 .collect::<Vec<_>>();
             let path_scorer = ContextPathScorer::new(&terms, &request.task);
             let mut candidates = Vec::new();
-            let mut path_excluded_candidates = 0usize;
+            let mut path_excluded_candidates = Vec::new();
             let mut query_fusion = HashMap::<String, HashMap<String, f64>>::new();
             let mut coverage = self.append_constraint_candidates(
                 session,
@@ -1694,7 +1695,7 @@ impl Services {
                     if path_filter.allows(&hit.path) {
                         symbol_hits.push((rank, hit));
                     } else {
-                        path_excluded_candidates += 1;
+                        path_excluded_candidates.push(hit.path);
                     }
                 }
                 let symbol_excerpt_requests = symbol_hits
@@ -1765,7 +1766,7 @@ impl Services {
                     if path_filter.allows(&hit.path) {
                         reference_hits.push((rank, hit));
                     } else {
-                        path_excluded_candidates += 1;
+                        path_excluded_candidates.push(hit.path);
                     }
                 }
                 let reference_locations = reference_hits
@@ -1872,7 +1873,7 @@ impl Services {
                 for (rank, hit) in lexical.into_iter().enumerate() {
                     check_cancelled(cancellation)?;
                     if !path_filter.allows(&hit.path) {
-                        path_excluded_candidates += 1;
+                        path_excluded_candidates.push(hit.path);
                         continue;
                     }
                     let Some(search_hit) =
@@ -1970,8 +1971,7 @@ impl Services {
                 cancellation,
                 &mut candidates,
             )?;
-            path_excluded_candidates =
-                path_excluded_candidates.saturating_add(workflow_path_excluded);
+            path_excluded_candidates.extend(workflow_path_excluded);
 
             signals
                 .import_neighbor
@@ -2036,6 +2036,7 @@ impl Services {
                 generation,
                 self.config.tokenizer,
                 &self.config.context_exclude_paths,
+                &path_excluded_candidates,
             );
             coverage.covered_must_include_paths =
                 std::mem::take(&mut response.coverage.covered_must_include_paths);
@@ -2112,15 +2113,6 @@ impl Services {
             }
             response.workflow = resolved_workflow;
             response.workflow_receipt = workflow_receipt;
-            if path_excluded_candidates > 0 {
-                response.omission_summary.path_excluded = response
-                    .omission_summary
-                    .path_excluded
-                    .saturating_add(path_excluded_candidates);
-                response.warnings.push(format!(
-                    "{path_excluded_candidates} candidates excluded by path constraints"
-                ));
-            }
             response.meta.freshness = self.freshness();
             response.meta.repository_id = self.repository_id();
             if let Some(mut scope) = diff_scope.clone() {

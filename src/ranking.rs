@@ -19,11 +19,12 @@
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use crate::config::{DEFAULT_CONTEXT_FRAGMENTS, default_context_exclude_paths};
 use crate::model::{
-    ContextCoverageReceipt, ContextFragment, ContextOmissionSummary, ContextRequest,
-    ContextResponse, EvidenceReceipt, Freshness, OmittedCandidate, ResponseMeta,
+    ContextCoverageReceipt, ContextFragment, ContextOmissionFacet, ContextOmissionSummary,
+    ContextRequest, ContextResponse, EvidenceReceipt, Freshness, OmittedCandidate, ResponseMeta,
 };
 use crate::services::validation::{PathMatcher, path_matches};
 use crate::tokens;
@@ -40,7 +41,126 @@ const OVERLAP_THRESHOLD: f64 = 0.5;
 /// breadth.
 const DIVERSITY_DIVISOR: usize = 600;
 const MAX_OMITTED_DETAILS: usize = 1;
+const MAX_OMISSION_FACETS: usize = 12;
 const MIN_RELATIVE_CONTEXT_SCORE: f64 = 0.25;
+
+fn increment_facet(counts: &mut HashMap<String, usize>, value: impl Into<String>) {
+    let count = counts.entry(value.into()).or_default();
+    *count = count.saturating_add(1);
+}
+
+fn bounded_facets(counts: HashMap<String, usize>) -> Vec<ContextOmissionFacet> {
+    let mut facets = counts
+        .into_iter()
+        .map(|(value, count)| ContextOmissionFacet { value, count })
+        .collect::<Vec<_>>();
+    facets.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.value.cmp(&right.value))
+    });
+    if facets.len() > MAX_OMISSION_FACETS {
+        let other = facets
+            .drain(MAX_OMISSION_FACETS - 1..)
+            .map(|facet| facet.count)
+            .sum();
+        facets.push(ContextOmissionFacet {
+            value: "[other]".into(),
+            count: other,
+        });
+    }
+    facets
+}
+
+fn candidate_file_type(path: &str) -> String {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .filter(|extension| !extension.is_empty())
+        .map_or_else(
+            || "[no extension]".into(),
+            |extension| format!(".{}", extension.to_ascii_lowercase()),
+        )
+}
+
+fn score_band(score: f64) -> &'static str {
+    if score >= 1.0 {
+        "score >= 1.0"
+    } else if score >= 0.5 {
+        "0.5 <= score < 1.0"
+    } else if score > 0.0 {
+        "0 < score < 0.5"
+    } else {
+        "score = 0"
+    }
+}
+
+fn summarize_omissions(
+    path_omitted: &[ScoredCandidate],
+    known_omitted: &[ScoredCandidate],
+    limit_omitted: &[ScoredCandidate],
+    prefiltered_path_omissions: &[String],
+    focus_paths: &PathMatcher,
+    changed_paths: &HashSet<&str>,
+) -> ContextOmissionSummary {
+    let mut paths = HashMap::new();
+    let mut file_types = HashMap::new();
+    let mut score_bands = HashMap::new();
+    let mut focused = 0usize;
+    let mut changed = 0usize;
+
+    let mut record = |path: &str, score: Option<f64>| {
+        increment_facet(&mut paths, path);
+        increment_facet(&mut file_types, candidate_file_type(path));
+        increment_facet(&mut score_bands, score.map_or("not scored", score_band));
+        focused = focused.saturating_add(usize::from(focus_paths.is_match(path)));
+        changed = changed.saturating_add(usize::from(changed_paths.contains(path)));
+    };
+    for candidate in path_omitted
+        .iter()
+        .chain(known_omitted)
+        .chain(limit_omitted)
+    {
+        record(&candidate.candidate.path, Some(candidate.score));
+    }
+    for path in prefiltered_path_omissions {
+        record(path, None);
+    }
+
+    let path_excluded = path_omitted
+        .len()
+        .saturating_add(prefiltered_path_omissions.len());
+    let known_hash = known_omitted.len();
+    let budget_or_result_limit = limit_omitted.len();
+    let total = path_excluded
+        .saturating_add(known_hash)
+        .saturating_add(budget_or_result_limit);
+    let mut reasons = HashMap::new();
+    if path_excluded > 0 {
+        reasons.insert("path_excluded".into(), path_excluded);
+    }
+    if known_hash > 0 {
+        reasons.insert("known_hash".into(), known_hash);
+    }
+    if budget_or_result_limit > 0 {
+        reasons.insert("budget_or_result_limit".into(), budget_or_result_limit);
+    }
+
+    ContextOmissionSummary {
+        path_excluded,
+        known_hash,
+        budget_or_result_limit,
+        by_path: bounded_facets(paths),
+        by_language_or_file_type: bounded_facets(file_types),
+        by_reason: bounded_facets(reasons),
+        by_score_band: bounded_facets(score_bands),
+        focused,
+        not_focused: total.saturating_sub(focused),
+        changed,
+        not_changed: total.saturating_sub(changed),
+    }
+}
 
 /// Linear scoring weights for ranking signals.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -550,6 +670,7 @@ pub fn select_with_tokenizer(
         repository_generation,
         tokenizer,
         &default_context_exclude_paths(),
+        &[],
     )
 }
 
@@ -559,6 +680,7 @@ pub(crate) fn select_with_tokenizer_and_context_exclusions(
     repository_generation: u64,
     tokenizer: tokens::Tokenizer,
     context_exclude_paths: &[String],
+    prefiltered_path_omissions: &[String],
 ) -> ContextResponse {
     select_with_options(
         candidates,
@@ -567,6 +689,7 @@ pub(crate) fn select_with_tokenizer_and_context_exclusions(
         &Weights::default(),
         tokenizer,
         context_exclude_paths,
+        prefiltered_path_omissions,
     )
 }
 
@@ -603,6 +726,7 @@ pub fn select_with_weights_and_tokenizer(
         weights,
         tokenizer,
         &default_context_exclude_paths(),
+        &[],
     )
 }
 
@@ -613,6 +737,7 @@ fn select_with_options(
     weights: &Weights,
     tokenizer: tokens::Tokenizer,
     context_exclude_paths: &[String],
+    prefiltered_path_omissions: &[String],
 ) -> ContextResponse {
     let mut candidates = candidates;
     let focus_paths = PathMatcher::new_lossy(&request.focus_paths);
@@ -725,11 +850,14 @@ fn select_with_options(
         fragment_hashes.push(scored.content_hash);
     }
 
-    let omission_summary = ContextOmissionSummary {
-        path_excluded: path_omitted.len(),
-        known_hash: known_omitted.len(),
-        budget_or_result_limit: omitted.len(),
-    };
+    let omission_summary = summarize_omissions(
+        &path_omitted,
+        &known_omitted,
+        &omitted,
+        prefiltered_path_omissions,
+        &focus_paths,
+        &changed_paths,
+    );
     let mut omitted_dto: Vec<OmittedCandidate> = path_omitted
         .into_iter()
         .map(|scored| OmittedCandidate {
@@ -753,7 +881,10 @@ fn select_with_options(
         reason: "budget or result limit".to_string(),
     }));
 
-    let omitted_count = omitted_dto.len();
+    let omitted_count = omission_summary
+        .path_excluded
+        .saturating_add(omission_summary.known_hash)
+        .saturating_add(omission_summary.budget_or_result_limit);
     omitted_dto.truncate(MAX_OMITTED_DETAILS);
     let mut warnings = Vec::new();
     if omitted_count > 0 {
@@ -1676,6 +1807,77 @@ mod tests {
         assert_eq!(resp.fragments[0].path, "src/lib.rs");
         assert_eq!(resp.omission_summary.path_excluded, 1);
         assert_eq!(resp.omitted[0].reason, "path excluded");
+    }
+
+    #[test]
+    fn omission_summary_reports_bounded_coverage_facets() {
+        let selected = Candidate::new("src/selected.rs", 1, 2, "selected").exact(3.0);
+        let limited = Candidate::new("src/changed.rs", 1, 2, "limited").exact(2.0);
+        let known = Candidate::new("src/known.md", 1, 2, "known").exact(1.0);
+        let known_hash = known.content_hash();
+        let excluded = Candidate::new("tests/helper.ts", 1, 2, "excluded").exact(1.0);
+        let mut request = request_with_budget(100);
+        request.max_fragments = Some(1);
+        request.focus_paths = vec!["src/**".into()];
+        request.changed_paths = vec!["src/changed.rs".into()];
+        request.exclude_paths = vec!["tests/**".into()];
+        request.known_hashes = vec![known_hash];
+
+        let response = select_with_tokenizer_and_context_exclusions(
+            vec![selected, limited, known, excluded],
+            &request,
+            1,
+            tokens::Tokenizer::default(),
+            &[],
+            &["generated/tool.js".into()],
+        );
+
+        let summary = response.omission_summary;
+        assert_eq!(summary.path_excluded, 2);
+        assert_eq!(summary.known_hash, 1);
+        assert_eq!(summary.budget_or_result_limit, 1);
+        assert_eq!(summary.focused, 2);
+        assert_eq!(summary.not_focused, 2);
+        assert_eq!(summary.changed, 1);
+        assert_eq!(summary.not_changed, 3);
+        assert!(summary.by_reason.contains(&ContextOmissionFacet {
+            value: "path_excluded".into(),
+            count: 2,
+        }));
+        assert!(
+            summary
+                .by_language_or_file_type
+                .iter()
+                .any(|facet| facet.value == ".js" && facet.count == 1)
+        );
+        assert!(
+            summary
+                .by_score_band
+                .iter()
+                .any(|facet| facet.value == "not scored" && facet.count == 1)
+        );
+        assert_eq!(
+            summary
+                .by_path
+                .iter()
+                .map(|facet| facet.count)
+                .sum::<usize>(),
+            4
+        );
+    }
+
+    #[test]
+    fn omission_facets_fold_long_tails_into_other() {
+        let counts = (0..20)
+            .map(|index| (format!("path-{index:02}"), 1))
+            .collect();
+
+        let facets = bounded_facets(counts);
+
+        assert_eq!(facets.len(), MAX_OMISSION_FACETS);
+        assert_eq!(facets.last().expect("other").value, "[other]");
+        assert_eq!(facets.last().expect("other").count, 9);
+        assert_eq!(facets.iter().map(|facet| facet.count).sum::<usize>(), 20);
     }
 
     #[test]
