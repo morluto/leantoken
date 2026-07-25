@@ -1,7 +1,12 @@
 use std::{
+    collections::HashSet,
+    fs,
     path::{Path, PathBuf},
     time::Duration,
 };
+
+use globset::Glob;
+use toml_edit::DocumentMut;
 
 use crate::repository::DiscoveryPolicy;
 use crate::tokens::Tokenizer;
@@ -15,6 +20,24 @@ pub(crate) const DEFAULT_CONTEXT_FRAGMENTS: usize = 8;
 pub(crate) const MAX_OUTPUT_TOKENS: usize = 32_000;
 pub(crate) const DEFAULT_CONTEXT_LINES: usize = 2;
 pub(crate) const MAX_CONTEXT_LINES: usize = 20;
+const REPOSITORY_CONFIG_FILE: &str = ".leantoken.toml";
+const MAX_REPOSITORY_CONFIG_BYTES: u64 = 64 * 1024;
+const MAX_CONTEXT_EXCLUDE_PATHS: usize = 256;
+const MAX_CONTEXT_PATH_PATTERN_BYTES: usize = 4 * 1024;
+pub(crate) const DEFAULT_CONTEXT_EXCLUDE_PATHS: &[&str] = &[
+    "artifacts/runtime_reports/**",
+    "artifacts/viability_audit/**",
+    "artifacts/replay_reports/**",
+    "notes/runs/**",
+    "node_modules/**",
+];
+
+pub(crate) fn default_context_exclude_paths() -> Vec<String> {
+    DEFAULT_CONTEXT_EXCLUDE_PATHS
+        .iter()
+        .map(|pattern| (*pattern).to_owned())
+        .collect()
+}
 
 /// Hard repository discovery and preparation limits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +136,8 @@ pub struct Config {
     pub max_prepare_batch_bytes: u64,
     /// Whether known generated and package-cache trees are indexed.
     pub include_generated: bool,
+    /// Repository-relative patterns excluded from context unless explicitly included.
+    pub context_exclude_paths: Vec<String>,
     /// Default number of returned results.
     pub default_results: usize,
     /// Maximum number of returned results, up to the public protocol ceiling.
@@ -178,6 +203,7 @@ impl Config {
         let database_is_managed_cache = database_path.is_none();
         let database_path = database_path.unwrap_or_else(|| default_database_path(&root));
         let database_path = canonicalize_database_path(database_path);
+        let context_exclude_paths = load_context_exclude_paths(&root)?;
         Ok(Self {
             root,
             database_path,
@@ -190,6 +216,7 @@ impl Config {
             max_prepare_batch_files: DiscoveryLimits::DEFAULT_MAX_PREPARE_BATCH_FILES,
             max_prepare_batch_bytes: DiscoveryLimits::DEFAULT_MAX_PREPARE_BATCH_BYTES,
             include_generated: false,
+            context_exclude_paths,
             default_results: DEFAULT_RESULTS,
             max_results: MAX_RESULTS,
             default_read_tokens: DEFAULT_READ_TOKENS,
@@ -262,6 +289,7 @@ impl Config {
                 "max_index_workers must be positive".into(),
             ));
         }
+        validate_context_exclude_paths(&self.context_exclude_paths)?;
         Ok(())
     }
 
@@ -312,6 +340,88 @@ impl Config {
             candidate.as_os_str() == sidecar
         })
     }
+}
+
+fn load_context_exclude_paths(root: &Path) -> Result<Vec<String>> {
+    let path = root.join(REPOSITORY_CONFIG_FILE);
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(default_context_exclude_paths());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.len() > MAX_REPOSITORY_CONFIG_BYTES {
+        return Err(Error::InvalidConfiguration(format!(
+            "{REPOSITORY_CONFIG_FILE} exceeds the {MAX_REPOSITORY_CONFIG_BYTES}-byte limit"
+        )));
+    }
+    let source = fs::read_to_string(path)?;
+    if u64::try_from(source.len()).unwrap_or(u64::MAX) > MAX_REPOSITORY_CONFIG_BYTES {
+        return Err(Error::InvalidConfiguration(format!(
+            "{REPOSITORY_CONFIG_FILE} exceeds the {MAX_REPOSITORY_CONFIG_BYTES}-byte limit"
+        )));
+    }
+    let document = source.parse::<DocumentMut>().map_err(|error| {
+        Error::InvalidConfiguration(format!("invalid {REPOSITORY_CONFIG_FILE}: {error}"))
+    })?;
+    let mut patterns = default_context_exclude_paths();
+    let Some(context) = document.get("context") else {
+        return Ok(patterns);
+    };
+    let context = context.as_table().ok_or_else(|| {
+        Error::InvalidConfiguration(format!(
+            "{REPOSITORY_CONFIG_FILE} field `context` must be a table"
+        ))
+    })?;
+    let Some(exclude_paths) = context.get("exclude_paths") else {
+        return Ok(patterns);
+    };
+    let exclude_paths = exclude_paths.as_array().ok_or_else(|| {
+        Error::InvalidConfiguration(format!(
+            "{REPOSITORY_CONFIG_FILE} field `context.exclude_paths` must be an array"
+        ))
+    })?;
+    for value in exclude_paths {
+        let pattern = value.as_str().ok_or_else(|| {
+            Error::InvalidConfiguration(format!(
+                "{REPOSITORY_CONFIG_FILE} field `context.exclude_paths` must contain only strings"
+            ))
+        })?;
+        patterns.push(pattern.to_owned());
+    }
+    let mut seen = HashSet::new();
+    patterns.retain(|pattern| seen.insert(pattern.clone()));
+    validate_context_exclude_paths(&patterns)?;
+    Ok(patterns)
+}
+
+fn validate_context_exclude_paths(patterns: &[String]) -> Result<()> {
+    if patterns.len() > MAX_CONTEXT_EXCLUDE_PATHS {
+        return Err(Error::InvalidConfiguration(format!(
+            "context_exclude_paths must not contain more than {MAX_CONTEXT_EXCLUDE_PATHS} patterns"
+        )));
+    }
+    for pattern in patterns {
+        if pattern.trim_matches(['/', '\\']).is_empty() {
+            return Err(Error::InvalidConfiguration(
+                "context_exclude_paths must not contain empty patterns".into(),
+            ));
+        }
+        if pattern.len() > MAX_CONTEXT_PATH_PATTERN_BYTES {
+            return Err(Error::InvalidConfiguration(format!(
+                "context exclusion patterns must not exceed {MAX_CONTEXT_PATH_PATTERN_BYTES} bytes"
+            )));
+        }
+        if pattern.contains(['*', '?', '[', ']', '{', '}']) {
+            Glob::new(&pattern.replace('\\', "/")).map_err(|error| {
+                Error::InvalidConfiguration(format!(
+                    "invalid context exclusion pattern `{pattern}`: {error}"
+                ))
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn home_directory() -> Option<PathBuf> {
@@ -409,5 +519,49 @@ mod tests {
             .to_path_buf();
 
         assert!(is_unsafe_repository_root(&root, None));
+    }
+
+    #[test]
+    fn repository_config_extends_default_context_exclusions() {
+        let root = tempfile::tempdir().expect("root");
+        fs::write(
+            root.path().join(REPOSITORY_CONFIG_FILE),
+            "[context]\nexclude_paths = [\"generated/**\", \"notes/runs/**\"]\n",
+        )
+        .expect("repository config");
+
+        let config = Config::discover(root.path(), Some(root.path().join("index.sqlite")))
+            .expect("resolved config");
+
+        assert_eq!(
+            config.context_exclude_paths,
+            [
+                DEFAULT_CONTEXT_EXCLUDE_PATHS
+                    .iter()
+                    .map(|pattern| (*pattern).to_owned())
+                    .collect::<Vec<_>>(),
+                vec!["generated/**".into()],
+            ]
+            .concat()
+        );
+    }
+
+    #[test]
+    fn repository_config_rejects_invalid_context_exclusions() {
+        let root = tempfile::tempdir().expect("root");
+        fs::write(
+            root.path().join(REPOSITORY_CONFIG_FILE),
+            "[context]\nexclude_paths = \"generated/**\"\n",
+        )
+        .expect("repository config");
+
+        let error = Config::discover(root.path(), Some(root.path().join("index.sqlite")))
+            .expect_err("invalid repository config");
+
+        assert!(
+            error
+                .to_string()
+                .contains("context.exclude_paths` must be an array")
+        );
     }
 }

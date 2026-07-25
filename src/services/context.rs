@@ -2029,11 +2029,12 @@ impl Services {
             } else {
                 Vec::new()
             };
-            let mut response = ranking::select_with_tokenizer(
+            let mut response = ranking::select_with_tokenizer_and_context_exclusions(
                 candidates,
                 &scoped_request,
                 generation,
                 self.config.tokenizer,
+                &self.config.context_exclude_paths,
             );
             coverage.covered_must_include_paths =
                 std::mem::take(&mut response.coverage.covered_must_include_paths);
