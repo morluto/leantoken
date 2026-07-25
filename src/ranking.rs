@@ -744,12 +744,15 @@ fn select_with_options(
         repository_id: String::new(),
         repository_generation,
         freshness: Freshness::Current,
+        source_tokens: emitted_tokens,
+        payload_tokens: 0,
+        tokenizer: tokenizer.name().into(),
         emitted_tokens,
         token_count_exact: tokenizer.is_exact(),
         next_cursor: None,
     };
 
-    ContextResponse {
+    let mut response = ContextResponse {
         workflow: crate::model::ContextWorkflow::Implementation,
         workflow_receipt: None,
         fragments,
@@ -761,7 +764,11 @@ fn select_with_options(
         routing: None,
         warnings,
         meta,
-    }
+    };
+    let payload =
+        serde_json::to_string(&response).expect("context response metadata is serializable");
+    response.meta.payload_tokens = tokenizer.count(&payload);
+    response
 }
 
 fn select_required_candidates(
@@ -1693,6 +1700,15 @@ mod tests {
             resp.meta.emitted_tokens,
             resp.fragments.iter().map(|f| f.token_count).sum::<usize>()
         );
+        assert_eq!(resp.meta.source_tokens, resp.meta.emitted_tokens);
+        assert_eq!(resp.meta.tokenizer, tokens::Tokenizer::default().name());
+        let mut countable = resp.clone();
+        countable.meta.payload_tokens = 0;
+        let payload = serde_json::to_string(&countable).expect("serialize context response");
+        assert_eq!(
+            resp.meta.payload_tokens,
+            tokens::Tokenizer::default().count(&payload)
+        );
         assert!(resp.meta.token_count_exact);
     }
 
@@ -1709,6 +1725,8 @@ mod tests {
         );
 
         assert!(!response.meta.token_count_exact);
+        assert_eq!(response.meta.source_tokens, response.meta.emitted_tokens);
+        assert_eq!(response.meta.tokenizer, tokens::Tokenizer::Estimate.name());
         assert_eq!(response.meta.emitted_tokens, 4);
     }
 

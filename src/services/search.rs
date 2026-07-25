@@ -322,7 +322,7 @@ impl Services {
         let limit = self.result_limit(request.max_results)?;
         let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         let context_lines = self.context_line_limit(request.context_lines)?;
-        let (response, baseline_source_tokens) = self.consistent(|session, generation| {
+        let (mut response, baseline_source_tokens) = self.consistent(|session, generation| {
             let offset = parse_cursor(request.cursor.as_deref(), generation)?;
             let mut hits = Vec::new();
             if matches!(
@@ -584,6 +584,7 @@ impl Services {
                 response.meta.emitted_tokens,
             );
         }
+        self.finalize_response(&mut response)?;
         Ok(response)
     }
 

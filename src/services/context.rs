@@ -1086,6 +1086,7 @@ impl Services {
             .context_cancellable_with_workflow(request, ContextWorkflow::Auto, cancellation)
             .await?;
         set_routing_consistency(&mut response, consistency);
+        self.finalize_response(&mut response)?;
         Ok(response)
     }
 
@@ -1104,6 +1105,7 @@ impl Services {
             .context_cancellable_with_workflow(request, workflow, cancellation)
             .await?;
         set_routing_consistency(&mut response, consistency);
+        self.finalize_response(&mut response)?;
         Ok(response)
     }
 
@@ -1973,6 +1975,7 @@ impl Services {
                     .warnings
                     .push("no relevant indexed evidence found".into());
             }
+            self.finalize_response(&mut response)?;
             let paths = response
                 .fragments
                 .iter()

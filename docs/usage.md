@@ -457,9 +457,20 @@ tokens. Assembled context has a separate 3,000-token default. Programmatic
 configurations may lower these defaults and ceilings; omitted MCP fields use
 the active service defaults rather than the static tool-schema examples.
 
-`emitted_tokens` counts source text with the configured tokenizer. The default
-is `cl100k_base`. Exact built-in modes are `cl100k_base`, `o200k_base`,
-`o200k_harmony`, `p50k_base`, `p50k_edit`, `r50k_base`, and `gpt2`.
+Every retrieval response reports both source and serialized response cost:
+
+- `source_tokens` counts selected source text. Path-only `files` responses
+  therefore report zero source tokens.
+- `payload_tokens` counts the compact JSON response DTO, including paths,
+  metadata, and source text. To make the self-reported value deterministic, the
+  count excludes the `payload_tokens` field itself. It also excludes transport
+  wrappers, MCP dual-mode duplication, tool schemas, and JSON-RPC envelopes.
+- `tokenizer` identifies the tokenizer used for both counts.
+- `emitted_tokens` remains a compatibility alias for `source_tokens`.
+
+The default tokenizer is `cl100k_base`. Exact built-in modes are `cl100k_base`,
+`o200k_base`, `o200k_harmony`, `p50k_base`, `p50k_edit`, `r50k_base`, and
+`gpt2`.
 
 `estimate` is an inexact heuristic for providers whose tokenizer is not
 available locally. It does not guarantee that a provider will accept a payload
@@ -471,8 +482,9 @@ difference, so one response whose estimate has no savings cannot reduce savings
 recorded for another response.
 
 Source limits do not include JSON keys, paths, scores, hashes, receipts, tool
-schemas, or JSON-RPC envelopes. The benchmark utilities report those costs
-separately rather than presenting source-token counts as complete MCP cost.
+schemas, or JSON-RPC envelopes. `payload_tokens` captures the compact response
+DTO costs; benchmark utilities continue to measure complete transport costs
+when they include schemas, result-mode duplication, and JSON-RPC envelopes.
 
 Every source range has a 128-bit BLAKE3 fingerprint for local identity and
 duplicate suppression. Direct search/read responses carry it with the range;

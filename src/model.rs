@@ -55,10 +55,25 @@ pub struct ResponseMeta {
     pub repository_id: String,
     pub repository_generation: u64,
     pub freshness: Freshness,
+    /// Tokens in source content selected for the response.
+    #[serde(default)]
+    pub source_tokens: usize,
+    /// Tokens in the compact serialized response, excluding this field itself.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub payload_tokens: usize,
+    /// Tokenizer used for source and payload accounting.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tokenizer: String,
+    /// Compatibility alias for `source_tokens`.
     pub emitted_tokens: usize,
+    /// Whether the configured tokenizer produces exact local counts.
     pub token_count_exact: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -988,6 +1003,9 @@ mod tests {
                 repository_id: "repository".into(),
                 repository_generation: 7,
                 freshness: Freshness::Current,
+                source_tokens: 4,
+                payload_tokens: 0,
+                tokenizer: "cl100k_base".into(),
                 emitted_tokens: 4,
                 token_count_exact: true,
                 next_cursor: None,
@@ -999,6 +1017,8 @@ mod tests {
         assert!(value["fragments"][0].get("content_hash").is_none());
         assert!(value["receipt"].get("task_fingerprint").is_none());
         assert_eq!(value["meta"]["freshness"], "current");
+        assert_eq!(value["meta"]["source_tokens"], 4);
+        assert_eq!(value["meta"]["tokenizer"], "cl100k_base");
         assert_eq!(value["meta"]["token_count_exact"], true);
         assert!(value.get("omitted").is_none());
         assert!(value.get("warnings").is_none());
@@ -1009,7 +1029,22 @@ mod tests {
         assert_eq!(round_trip.fragments[0].content_hash, "");
         assert!(round_trip.receipt.task_fingerprint.is_empty());
         assert_eq!(round_trip.meta.freshness, Freshness::Current);
+        assert_eq!(round_trip.meta.source_tokens, 4);
+        assert_eq!(round_trip.meta.tokenizer, "cl100k_base");
         assert!(round_trip.meta.token_count_exact);
+
+        let mut legacy_value = serde_json::to_value(response).expect("serialize legacy response");
+        let legacy_meta = legacy_value["meta"]
+            .as_object_mut()
+            .expect("response metadata object");
+        legacy_meta.remove("source_tokens");
+        legacy_meta.remove("payload_tokens");
+        legacy_meta.remove("tokenizer");
+        let legacy: ContextResponse =
+            serde_json::from_value(legacy_value).expect("deserialize legacy response");
+        assert_eq!(legacy.meta.source_tokens, 0);
+        assert_eq!(legacy.meta.payload_tokens, 0);
+        assert!(legacy.meta.tokenizer.is_empty());
     }
 
     #[test]
@@ -1050,6 +1085,9 @@ mod tests {
                 repository_id: "repository".into(),
                 repository_generation: 7,
                 freshness: Freshness::Reconciling,
+                source_tokens: 9,
+                payload_tokens: 123,
+                tokenizer: "cl100k_base".into(),
                 emitted_tokens: 9,
                 token_count_exact: true,
                 next_cursor: None,

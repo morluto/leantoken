@@ -439,7 +439,7 @@ impl Services {
         check_cancelled(cancellation)?;
         validate_files_input(&request)?;
         let limit = self.result_limit(request.max_results)?;
-        self.consistent(|session, generation| {
+        let mut response = self.consistent(|session, generation| {
             let cursor =
                 parse_files_cursor(request.cursor.as_deref(), generation, &request.operation)?;
             let page = match request.operation {
@@ -470,6 +470,8 @@ impl Services {
                 entries: page.entries,
                 meta: self.meta(generation, 0, page.next.map(|next| next.encode(generation))),
             })
-        })
+        })?;
+        self.finalize_response(&mut response)?;
+        Ok(response)
     }
 }
