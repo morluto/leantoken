@@ -96,80 +96,77 @@ impl Tokenizer {
         if text.is_empty() || max_tokens == 0 {
             return ("", 0);
         }
-        let total = self.count(text);
-        if total <= max_tokens {
-            return (text, total);
-        }
-
-        // Tokenize once and find the byte offset of the token boundary at
-        // `max_tokens`. This avoids the O(N log N) binary search that
-        // re-tokenizes the same prefixes repeatedly.
-        let prefix_end = self.token_boundary_byte_offset(text, max_tokens);
-        let prefix = &text[..prefix_end];
-        (prefix, self.count(prefix))
-    }
-
-    /// Find the byte offset in `text` where the first `max_tokens` tokens end.
-    ///
-    /// Uses `split_by_token_ordinary_iter` to decode and split the text into
-    /// token-sized substrings in a single pass, then sums their byte lengths
-    /// until the budget is exhausted.
-    fn token_boundary_byte_offset(&self, text: &str, max_tokens: usize) -> usize {
         match self {
             Self::Cl100kBase => {
-                self.bpe_boundary(tiktoken_rs::cl100k_base_singleton(), text, max_tokens)
+                self.truncate_bpe(tiktoken_rs::cl100k_base_singleton(), text, max_tokens)
             }
             Self::O200kBase => {
-                self.bpe_boundary(tiktoken_rs::o200k_base_singleton(), text, max_tokens)
+                self.truncate_bpe(tiktoken_rs::o200k_base_singleton(), text, max_tokens)
             }
             Self::O200kHarmony => {
-                self.bpe_boundary(tiktoken_rs::o200k_harmony_singleton(), text, max_tokens)
+                self.truncate_bpe(tiktoken_rs::o200k_harmony_singleton(), text, max_tokens)
             }
             Self::P50kBase => {
-                self.bpe_boundary(tiktoken_rs::p50k_base_singleton(), text, max_tokens)
+                self.truncate_bpe(tiktoken_rs::p50k_base_singleton(), text, max_tokens)
             }
             Self::P50kEdit => {
-                self.bpe_boundary(tiktoken_rs::p50k_edit_singleton(), text, max_tokens)
+                self.truncate_bpe(tiktoken_rs::p50k_edit_singleton(), text, max_tokens)
             }
             Self::R50kBase | Self::Gpt2 => {
-                self.bpe_boundary(tiktoken_rs::r50k_base_singleton(), text, max_tokens)
+                self.truncate_bpe(tiktoken_rs::r50k_base_singleton(), text, max_tokens)
             }
             Self::Estimate => {
-                // Keep the boundary consistent with `estimate_count`, whose
-                // budget is the larger of words and one token per four chars.
-                let mut offset = 0usize;
-                let mut chars = 0usize;
-                let mut words = 0usize;
-                let mut in_word = false;
-                for (start, character) in text.char_indices() {
-                    let next_chars = chars + 1;
-                    let next_in_word = !character.is_whitespace();
-                    let next_words = words + usize::from(next_in_word && !in_word);
-                    if next_chars.div_ceil(4).max(next_words) > max_tokens {
-                        break;
-                    }
-                    chars = next_chars;
-                    words = next_words;
-                    in_word = next_in_word;
-                    offset = start + character.len_utf8();
+                let total = estimate_count(text);
+                if total <= max_tokens {
+                    return (text, total);
                 }
-                offset
+                let prefix = &text[..estimate_boundary(text, max_tokens)];
+                (prefix, estimate_count(prefix))
             }
         }
     }
 
-    fn bpe_boundary(&self, bpe: &tiktoken_rs::CoreBPE, text: &str, max_tokens: usize) -> usize {
+    fn truncate_bpe<'a>(
+        &self,
+        bpe: &tiktoken_rs::CoreBPE,
+        text: &'a str,
+        max_tokens: usize,
+    ) -> (&'a str, usize) {
         let tokens = bpe.encode_ordinary(text);
+        if tokens.len() <= max_tokens {
+            return (text, tokens.len());
+        }
         let selected = &tokens[..tokens.len().min(max_tokens)];
         let Ok(bytes) = bpe.decode_bytes(selected) else {
-            return 0;
+            return ("", 0);
         };
         let mut offset = bytes.len().min(text.len());
         while !text.is_char_boundary(offset) {
             offset -= 1;
         }
-        offset
+        let prefix = &text[..offset];
+        (prefix, bpe.count_ordinary(prefix))
     }
+}
+
+fn estimate_boundary(text: &str, max_tokens: usize) -> usize {
+    let mut offset = 0usize;
+    let mut chars = 0usize;
+    let mut words = 0usize;
+    let mut in_word = false;
+    for (start, character) in text.char_indices() {
+        let next_chars = chars + 1;
+        let next_in_word = !character.is_whitespace();
+        let next_words = words + usize::from(next_in_word && !in_word);
+        if next_chars.div_ceil(4).max(next_words) > max_tokens {
+            break;
+        }
+        chars = next_chars;
+        words = next_words;
+        in_word = next_in_word;
+        offset = start + character.len_utf8();
+    }
+    offset
 }
 
 impl fmt::Display for Tokenizer {
@@ -291,6 +288,7 @@ mod tests {
             let (prefix, tokens) = tokenizer.truncate(&source, 12);
             assert!(source.starts_with(prefix));
             assert!(tokens <= 12);
+            assert_eq!(tokens, tokenizer.count(prefix));
             assert!(std::str::from_utf8(prefix.as_bytes()).is_ok());
         }
     }
