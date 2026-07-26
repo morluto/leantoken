@@ -104,6 +104,11 @@ struct LiveFileSnapshot {
     end_line: usize,
 }
 
+struct LiveReadObservation {
+    snapshot: LiveFileSnapshot,
+    range: LiveReadRange,
+}
+
 #[derive(Debug)]
 struct ReadCursor {
     generation: u64,
@@ -620,11 +625,20 @@ impl Services {
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
         let target = resolve_read_target(session, indexed.id, request, generation)?;
 
-        // Stream the file through a BufReader for the full-file hash so the
-        // entire file does not need to be held in memory simultaneously. The
-        // content range is extracted by a bounded line-oriented reader.
+        // Hash the complete live file and extract the bounded target during
+        // the same stream. Truncated responses retain one verification pass
+        // before issuing a continuation cursor.
         let file = open_live_file(self, &request.path)?;
-        let snapshot = stream_snapshot(&file)?;
+        let observation = observe_live_range(
+            &file,
+            target.target_start_line,
+            target.target_end_line,
+            target.page_start_byte,
+            max_tokens,
+            self.config.tokenizer,
+        )?;
+        let snapshot = observation.snapshot;
+        let range = observation.range;
         if target
             .expected_full_hash
             .as_deref()
@@ -639,14 +653,6 @@ impl Services {
         if target.target_start_line > target_end_line || target.page_start_line > target_end_line {
             return Err(invalid_line_range());
         }
-        let range = read_live_range(
-            &file,
-            target.target_start_line,
-            target_end_line,
-            target.page_start_byte,
-            max_tokens,
-            self.config.tokenizer,
-        )?;
         if range.page_start_line != target.page_start_line {
             return Err(Error::StaleCursor);
         }
@@ -894,76 +900,93 @@ fn stream_snapshot(file: &File) -> Result<LiveFileSnapshot> {
     })
 }
 
-/// Read a resolved range without changing its original line terminators.
-fn read_live_range(
+/// Hash the live file and read a resolved range in one forward stream.
+fn observe_live_range(
     file: &File,
     target_start_line: usize,
-    target_end_line: usize,
+    target_end_line: Option<usize>,
     page_start_byte: usize,
     max_tokens: usize,
     tokenizer: crate::tokens::Tokenizer,
-) -> Result<LiveReadRange> {
+) -> Result<LiveReadObservation> {
     let mut file = file.try_clone()?;
     file.seek(SeekFrom::Start(0))?;
     let mut reader = BufReader::new(file);
+    let mut hasher = blake3::Hasher::new();
     let mut selected = Vec::with_capacity(LIVE_READ_TOKEN_CHECK_BYTES);
     let mut current_line = 1usize;
     let mut target_finished = false;
     let mut token_bound_reached = false;
+    let mut final_target_checked = false;
     let mut target_bytes = 0usize;
     let mut page_start_line = target_start_line;
     let mut next_token_check = LIVE_READ_TOKEN_CHECK_BYTES;
     let mut utf8_pending = Vec::new();
+    let mut bytes_seen = 0usize;
+    let mut newline_count = 0usize;
+    let mut last_byte_was_newline = false;
+    let requested_end_line = target_end_line.unwrap_or(usize::MAX);
 
-    while !target_finished {
+    loop {
         let buffer = reader.fill_buf()?;
         if buffer.is_empty() {
             break;
         }
+        hasher.update(buffer);
+        bytes_seen = bytes_seen.saturating_add(buffer.len());
+        newline_count =
+            newline_count.saturating_add(buffer.iter().filter(|byte| **byte == b'\n').count());
+        last_byte_was_newline = buffer.last() == Some(&b'\n');
 
-        let mut consumed = 0usize;
         let mut validation_chunk = Vec::new();
-        for &byte in buffer {
-            let in_target = current_line >= target_start_line && current_line <= target_end_line;
-            if in_target {
-                validation_chunk.push(byte);
-            }
-            if in_target {
-                if target_bytes < page_start_byte {
-                    if byte == b'\n' {
-                        page_start_line = current_line.saturating_add(1);
+        if !target_finished {
+            for &byte in buffer {
+                let in_target =
+                    current_line >= target_start_line && current_line <= requested_end_line;
+                if in_target {
+                    validation_chunk.push(byte);
+                    if target_bytes < page_start_byte {
+                        if byte == b'\n' {
+                            page_start_line = current_line.saturating_add(1);
+                        }
+                    } else if !token_bound_reached {
+                        selected.push(byte);
                     }
-                } else if !token_bound_reached {
-                    selected.push(byte);
+                    target_bytes = target_bytes.saturating_add(1);
                 }
-                target_bytes = target_bytes.saturating_add(1);
-            }
-            consumed += 1;
-            if byte == b'\n' {
-                if target_end_line == current_line {
-                    target_finished = true;
-                    break;
+                if byte == b'\n' {
+                    if requested_end_line == current_line {
+                        target_finished = true;
+                        break;
+                    }
+                    current_line = current_line.saturating_add(1);
                 }
-                current_line = current_line.saturating_add(1);
             }
         }
+        let consumed = buffer.len();
         reader.consume(consumed);
-        validate_utf8_chunk(&mut utf8_pending, &validation_chunk, target_finished)?;
+        validate_utf8_chunk(
+            &mut utf8_pending,
+            &validation_chunk,
+            target_finished || consumed == 0,
+        )?;
 
         if !token_bound_reached
-            && (target_finished
+            && ((target_finished && !final_target_checked)
                 || selected.len() >= next_token_check
                 || selected.len() >= MAX_LIVE_READ_BYTES)
         {
             match std::str::from_utf8(&selected) {
                 Ok(content) if tokenizer.count(content) > max_tokens => {
                     token_bound_reached = true;
+                    final_target_checked = target_finished;
                 }
                 Ok(_) => {
                     if selected.len() >= MAX_LIVE_READ_BYTES {
                         return Err(Error::LimitExceeded);
                     }
                     next_token_check = selected.len().saturating_add(LIVE_READ_TOKEN_CHECK_BYTES);
+                    final_target_checked = target_finished;
                 }
                 Err(error) if error.error_len().is_none() => {
                     if target_finished || selected.len() >= MAX_LIVE_READ_BYTES {
@@ -983,6 +1006,7 @@ fn read_live_range(
         }
     }
 
+    validate_utf8_chunk(&mut utf8_pending, &[], true)?;
     if !utf8_pending.is_empty() {
         return Err(Error::InvalidInput {
             field: "path",
@@ -997,10 +1021,22 @@ fn read_live_range(
         field: "path",
         reason: "must identify UTF-8 text",
     })?;
-    Ok(LiveReadRange {
-        content,
-        page_start_line,
-        target_bytes,
+    let end_line = if bytes_seen == 0 {
+        1
+    } else {
+        newline_count.saturating_add(usize::from(!last_byte_was_newline))
+    };
+    Ok(LiveReadObservation {
+        snapshot: LiveFileSnapshot {
+            content_hash: hasher.finalize().to_hex()[..crate::text::CONTENT_FINGERPRINT_HEX_LEN]
+                .to_string(),
+            end_line,
+        },
+        range: LiveReadRange {
+            content,
+            page_start_line,
+            target_bytes,
+        },
     })
 }
 
