@@ -1310,12 +1310,23 @@ async fn context_must_cover_generates_evidence_and_reports_unmatched_constraints
     request.task = "investigate a different subsystem".into();
     request.include_paths = vec!["src/**".into(), "absent/**".into()];
     request.focus_paths = vec!["missing-focus/**".into()];
-    request.focus_symbols = vec!["missing_focus_symbol".into()];
+    request.focus_symbols = vec!["missing_focus_symbol".into(), "required_symbol".into()];
     request.must_include_paths = vec!["src/required.rs".into(), "src/missing.rs".into()];
     request.must_include_symbols = vec!["required_symbol".into(), "missing_symbol".into()];
     request.max_fragments = Some(2);
 
-    let response = services.context(request).await.expect("must-cover context");
+    let evaluation = services
+        .context_evaluation(request.clone())
+        .await
+        .expect("must-cover evaluation");
+    let repeated = services
+        .context_evaluation(request.clone())
+        .await
+        .expect("repeated must-cover evaluation");
+    let response = services
+        .context(request.clone())
+        .await
+        .expect("must-cover context");
 
     assert!(
         response
@@ -1353,6 +1364,53 @@ async fn context_must_cover_generates_evidence_and_reports_unmatched_constraints
     );
     assert!(response.coverage.uncovered_must_include_paths.is_empty());
     assert!(response.coverage.uncovered_must_include_symbols.is_empty());
+    assert_eq!(evaluation.phases.exact_symbol_names, 3);
+    assert_eq!(evaluation.phases.exact_symbol_batches, 1);
+    assert_eq!(evaluation.phases.exact_symbol_hits, 1);
+    assert!(
+        evaluation.phases.unique_adaptive_excerpt_requests
+            <= evaluation.phases.adaptive_excerpt_requests
+    );
+    assert!(!evaluation.primitive_keys.is_empty());
+    assert_eq!(evaluation.primitive_keys, repeated.primitive_keys);
+
+    let mut batched_request = context_limit_request(300);
+    batched_request.task = "investigate a different subsystem".into();
+    batched_request.focus_symbols = (0..33)
+        .map(|index| format!("missing_symbol_{index:02}"))
+        .collect();
+    let batched = services
+        .context_evaluation(batched_request)
+        .await
+        .expect("bounded exact-symbol batches");
+    assert_eq!(batched.phases.exact_symbol_names, 33);
+    assert_eq!(batched.phases.exact_symbol_batches, 2);
+    assert_eq!(batched.phases.exact_symbol_hits, 0);
+
+    std::fs::write(
+        root.path().join("src/required.rs"),
+        "pub fn required_symbol() -> bool { false }\n",
+    )
+    .expect("change required source");
+    services
+        .index_paths(vec!["src/required.rs".into()])
+        .await
+        .expect("advance generation");
+    let next_generation = services
+        .context_evaluation(request)
+        .await
+        .expect("next-generation evaluation");
+    let previous_keys = evaluation
+        .primitive_keys
+        .iter()
+        .map(|key| key.key_blake3.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    assert!(
+        next_generation
+            .primitive_keys
+            .iter()
+            .all(|key| !previous_keys.contains(key.key_blake3.as_str()))
+    );
 }
 
 #[tokio::test]

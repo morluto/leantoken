@@ -2512,6 +2512,70 @@ impl ReadSession {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
+    pub(crate) fn find_symbols_exact_batch(
+        &self,
+        names: &[String],
+        max_results_per_name: usize,
+    ) -> Result<Vec<Vec<SymbolHit>>> {
+        if names.is_empty() {
+            return Ok(Vec::new());
+        }
+        let input = serde_json::to_string(names)?;
+        let limit = bounded_limit(max_results_per_name);
+        let mut stmt = self.conn.prepare_cached(
+            "WITH requested AS (
+                 SELECT CAST(key AS INTEGER) AS request_index,
+                        CAST(value AS TEXT) AS name
+                 FROM json_each(?1)
+             )
+             SELECT requested.request_index,
+                    f.path, f.content_hash, f.generation,
+                    s.id, s.file_id, s.name, s.kind, s.parent, s.signature,
+                    s.start_line, s.end_line, s.start_byte, s.end_byte
+             FROM requested
+             JOIN symbols AS s ON s.id IN (
+                 SELECT exact.id
+                 FROM symbols AS exact INDEXED BY symbols_name_idx
+                 JOIN files AS exact_file ON exact_file.id = exact.file_id
+                 WHERE exact.name = requested.name COLLATE NOCASE
+                   AND exact.name = requested.name COLLATE BINARY
+                 ORDER BY exact_file.path, exact.start_byte
+                 LIMIT ?2
+             )
+             JOIN files f ON f.id = s.file_id
+             ORDER BY requested.request_index, f.path, s.start_byte, s.id",
+        )?;
+        let rows = stmt.query_map(params![input, limit], |row| {
+            let request_index = i64_to_usize(row.get(0)?);
+            let hit = SymbolHit {
+                path: row.get(1)?,
+                content_hash: row.get(2)?,
+                generation: i64_to_u64(row.get(3)?),
+                symbol: SymbolRecord {
+                    id: row.get(4)?,
+                    file_id: row.get(5)?,
+                    name: row.get(6)?,
+                    kind: row.get(7)?,
+                    parent: row.get(8)?,
+                    signature: row.get(9)?,
+                    start_line: i64_to_usize(row.get(10)?),
+                    end_line: i64_to_usize(row.get(11)?),
+                    start_byte: i64_to_usize(row.get(12)?),
+                    end_byte: i64_to_usize(row.get(13)?),
+                },
+            };
+            Ok((request_index, hit))
+        })?;
+        let mut matches = vec![Vec::new(); names.len()];
+        for row in rows {
+            let (request_index, hit) = row?;
+            if let Some(slot) = matches.get_mut(request_index) {
+                slot.push(hit);
+            }
+        }
+        Ok(matches)
+    }
+
     pub fn search_references(
         &self,
         query: &str,

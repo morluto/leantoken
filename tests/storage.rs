@@ -371,6 +371,33 @@ fn hot_relational_projections_use_their_indexes() {
         "unexpected batched-range plan: {range_plan}"
     );
 
+    let symbols = serde_json::to_string(&["main", "library"]).expect("symbols");
+    let exact_symbol_plan = query_plan(
+        &connection,
+        "EXPLAIN QUERY PLAN
+         WITH requested AS (
+             SELECT CAST(key AS INTEGER) AS request_index,
+                    CAST(value AS TEXT) AS name
+             FROM json_each(?1)
+         )
+         SELECT s.id
+         FROM requested
+         JOIN symbols AS s ON s.id IN (
+             SELECT exact.id
+             FROM symbols AS exact INDEXED BY symbols_name_idx
+             JOIN files AS exact_file ON exact_file.id = exact.file_id
+             WHERE exact.name = requested.name COLLATE NOCASE
+               AND exact.name = requested.name COLLATE BINARY
+             ORDER BY exact_file.path, exact.start_byte
+             LIMIT ?2
+         )",
+        &[&symbols, &128_i64],
+    );
+    assert!(
+        exact_symbol_plan.contains("symbols_name_idx"),
+        "unexpected exact-symbol plan: {exact_symbol_plan}"
+    );
+
     let tree_plan = query_plan(
         &connection,
         "EXPLAIN QUERY PLAN
