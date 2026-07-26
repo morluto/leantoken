@@ -1,0 +1,4344 @@
+{
+  "schema_version": 2,
+  "dataset_kind": "prospective_validation",
+  "manifest_blake3": "5991d8a643a873ef61d5a4122f52abd7f589a5403d13ab609ebc6b9428e73d9a",
+  "frozen_at": "2026-07-15",
+  "candidate_revision": null,
+  "evaluation_protocol": null,
+  "reclassification_rule": null,
+  "manifest_description": "Frozen validation tasks derived from issue reports that were still open at collection time and from pinned source inspection. No future patch or proposed pull request was used to construct prompts or labels. The tasks were later used during retrieval tuning, so this is not a blind holdout.",
+  "leantoken_version": "0.1.15",
+  "harness_revision": "3d96f14a5fd7798dd1aca8603ec4a28e4e5d4a69",
+  "harness_worktree_dirty": false,
+  "candidate_runtime_tree_verified": null,
+  "diagnostic_only": false,
+  "host_os": "linux",
+  "host_arch": "x86_64",
+  "rustc_version": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "ripgrep_version": "ripgrep 13.0.0",
+  "generated_at_unix_seconds": 1785055179,
+  "tokenizer": "cl100k_base",
+  "token_count_exact": true,
+  "methodology": {
+    "oracle_baseline": "Full contents of fix-labeled relevant files, as if an agent chose every file perfectly and paid no discovery cost.",
+    "rg_discovery_baseline": "Bounded, path-sorted ripgrep --json output for fixed-string queries derived from each public bug task.",
+    "scripted_baseline": "One JSON envelope containing the ripgrep discovery output and oracle full-file reads.",
+    "source_tokens": "Tokens in source content only; excludes paths, scores, reasons, receipts, and JSON syntax.",
+    "serialized_tokens": "Tokens in the complete serialized JSON payload, including metadata and syntax."
+  },
+  "concept_coverage": {
+    "labels_schema_version": 1,
+    "labels_blake3": "f496deaadd5098b1faf9f7519cb9e92cdcf14ebf09d73f5beebd675b889c9763",
+    "source_manifest": "benchmarks/validation.json",
+    "source_manifest_blake3": "5991d8a643a873ef61d5a4122f52abd7f589a5403d13ab609ebc6b9428e73d9a",
+    "dataset_kind": "prospective_validation",
+    "frozen_at": "2026-07-26",
+    "methodology": "Each independent task concept partitions the source manifest's existing path and line-anchor labels. A concept is covered when at least one of its frozen anchors appears in a generated candidate or selected fragment. Candidate and selected coverage are reported separately at the source manifest's fixed token budget; labels do not use runtime retrieval output.",
+    "thresholds": {
+      "minimum_candidate_concept_recall": 0.75,
+      "minimum_selected_concept_recall": 0.4,
+      "minimum_selection_retention": 0.5,
+      "minimum_task_selected_concept_recall": 0.3333333333333333
+    },
+    "passed": true,
+    "failures": []
+  },
+  "aggregate": {
+    "corpus_count": 4,
+    "task_count": 4,
+    "relevant_files": 11,
+    "relevant_files_found": 7,
+    "relevant_file_recall": 0.6363636363636364,
+    "candidate_relevant_files_found": 11,
+    "candidate_relevant_file_recall": 1.0,
+    "returned_files": 27,
+    "labeled_file_precision": 0.25925925925925924,
+    "line_anchors": 38,
+    "line_anchors_found": 19,
+    "line_anchor_recall": 0.5,
+    "oracle_source_tokens": 56202,
+    "rg_discovery_tokens": 32088,
+    "scripted_baseline_total_json_tokens": 102996,
+    "leantoken_source_tokens": 4073,
+    "leantoken_total_json_tokens": 6999,
+    "source_savings_against_oracle_fraction": 0.9275292694210171,
+    "total_json_savings_against_scripted_fraction": 0.932045904695328,
+    "known_fragments_resent": 0,
+    "dead_end_fragments": 20,
+    "dead_end_source_tokens": 1703,
+    "second_response_source_tokens": 3850,
+    "estimated_repeated_range_source_tokens": 549,
+    "repeat_request_json_tokens": 1152,
+    "repeat_total_json_tokens": 6605,
+    "two_turn_context_json_tokens": 14756,
+    "concepts": 12,
+    "candidate_concepts_found": 9,
+    "candidate_concept_recall": 0.75,
+    "selected_concepts_found": 6,
+    "selected_concept_recall": 0.5,
+    "concept_selection_retention": 0.6666666666666666
+  },
+  "corpora": [
+    {
+      "name": "flask-validation",
+      "url": "https://github.com/pallets/flask",
+      "base_revision": "36e4a824f340fdee7ed50937ba8e7f6bc7d17f81",
+      "fix_commit": null,
+      "issue_url": "https://github.com/pallets/flask/issues/6093",
+      "prompt_provenance": "Issue title, description, and reproductions as published before the dataset freeze; no patch or PR consulted.",
+      "label_provenance": "Exact partition calls named by the issue plus the existing tests owning session_transaction and run configuration behavior.",
+      "dataset_url": null,
+      "dataset_revision": null,
+      "dataset_license": null,
+      "external_limitations": [],
+      "indexed_files": 231,
+      "indexed_chunks": 594,
+      "index_warnings": [],
+      "cold_index_ms": 1002.697486,
+      "database_bytes": 16194152,
+      "tasks": [
+        {
+          "id": "flask-ipv6-address-partition",
+          "prompt": "Fix IPv6 address handling in Flask. session_transaction loses the IPv6 host when saving cookies, and Flask.run parses SERVER_NAME=[::1]:8080 incorrectly. Add regression coverage for both behaviors without changing IPv4 host:port behavior.",
+          "languages": [],
+          "task_shapes": [],
+          "token_budget": 1200,
+          "relevant_files": [
+            "src/flask/app.py",
+            "src/flask/testing.py",
+            "tests/test_basic.py",
+            "tests/test_testing.py"
+          ],
+          "returned_files": [
+            ".github/ISSUE_TEMPLATE/bug-report.md",
+            "CHANGES.rst",
+            "src/flask/cli.py",
+            "src/flask/testing.py",
+            "tests/test_config.py",
+            "tests/test_testing.py"
+          ],
+          "returned_evidence": [
+            {
+              "path": "src/flask/testing.py",
+              "start_line": 265,
+              "end_line": 298,
+              "representation": "import_symbol",
+              "reason": "import; symbol; multi-query",
+              "score": 3.1478,
+              "token_count": 321,
+              "content_hash": "fdcc92beb01d095cad255d2b9809873b"
+            },
+            {
+              "path": "tests/test_testing.py",
+              "start_line": 157,
+              "end_line": 171,
+              "representation": "source",
+              "reason": "text; multi-query; symbol; reference",
+              "score": 3.0869,
+              "token_count": 109,
+              "content_hash": "289cba234ba405ea9dfdd5f50665909a"
+            },
+            {
+              "path": "src/flask/testing.py",
+              "start_line": 136,
+              "end_line": 183,
+              "representation": "symbol",
+              "reason": "symbol; multi-query; text",
+              "score": 2.7968,
+              "token_count": 331,
+              "content_hash": "3ad8100b83fa03afa758ee9be6b49b85"
+            },
+            {
+              "path": ".github/ISSUE_TEMPLATE/bug-report.md",
+              "start_line": 2,
+              "end_line": 27,
+              "representation": "source",
+              "reason": "text; symbol",
+              "score": 1.9327,
+              "token_count": 122,
+              "content_hash": "bb23bc5813f7c22c3c9b1f42a1c82a2d"
+            },
+            {
+              "path": "CHANGES.rst",
+              "start_line": 527,
+              "end_line": 531,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.016,
+              "token_count": 44,
+              "content_hash": "46ddb929b0c607d9bc8d80da86ad9726"
+            },
+            {
+              "path": "tests/test_testing.py",
+              "start_line": 192,
+              "end_line": 197,
+              "representation": "symbol",
+              "reason": "symbol; multi-query; reference",
+              "score": 1.7178,
+              "token_count": 41,
+              "content_hash": "a931b08cf3df5ddb06410aad757fed6e"
+            },
+            {
+              "path": "src/flask/cli.py",
+              "start_line": 657,
+              "end_line": 676,
+              "representation": "import_symbol",
+              "reason": "import; symbol",
+              "score": 2.8674,
+              "token_count": 184,
+              "content_hash": "caecd24c48859c1ed49b41daf395eadb"
+            },
+            {
+              "path": "tests/test_config.py",
+              "start_line": 202,
+              "end_line": 203,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 2.1872,
+              "token_count": 14,
+              "content_hash": "6f40b738e6eff8cde6af1b8c3d0dbfbd"
+            }
+          ],
+          "candidate_files": [
+            ".github/ISSUE_TEMPLATE/bug-report.md",
+            ".github/ISSUE_TEMPLATE/feature-request.md",
+            ".github/pull_request_template.md",
+            "CHANGES.rst",
+            "README.md",
+            "docs/api.rst",
+            "docs/blueprints.rst",
+            "docs/cli.rst",
+            "docs/config.rst",
+            "docs/deploying/gevent.rst",
+            "docs/deploying/gunicorn.rst",
+            "docs/deploying/nginx.rst",
+            "docs/deploying/proxy_fix.rst",
+            "docs/deploying/uwsgi.rst",
+            "docs/deploying/waitress.rst",
+            "docs/errorhandling.rst",
+            "docs/extensions.rst",
+            "docs/index.rst",
+            "docs/lifecycle.rst",
+            "docs/logging.rst",
+            "docs/patterns/deferredcallbacks.rst",
+            "docs/patterns/fileuploads.rst",
+            "docs/patterns/subclassing.rst",
+            "docs/patterns/wtforms.rst",
+            "docs/quickstart.rst",
+            "docs/server.rst",
+            "docs/shell.rst",
+            "docs/testing.rst",
+            "docs/tutorial/database.rst",
+            "docs/tutorial/factory.rst",
+            "examples/celery/make_celery.py",
+            "examples/celery/src/task_app/__init__.py",
+            "examples/javascript/js_example/__init__.py",
+            "examples/tutorial/README.rst",
+            "examples/tutorial/flaskr/__init__.py",
+            "src/flask/app.py",
+            "src/flask/cli.py",
+            "src/flask/ctx.py",
+            "src/flask/globals.py",
+            "src/flask/testing.py",
+            "tests/conftest.py",
+            "tests/test_appctx.py",
+            "tests/test_apps/blueprintapp/__init__.py",
+            "tests/test_apps/cliapp/app.py",
+            "tests/test_apps/cliapp/factory.py",
+            "tests/test_apps/cliapp/importerrorapp.py",
+            "tests/test_apps/cliapp/inner1/__init__.py",
+            "tests/test_apps/cliapp/inner1/inner2/flask.py",
+            "tests/test_apps/cliapp/multiapp.py",
+            "tests/test_apps/helloworld/hello.py",
+            "tests/test_async.py",
+            "tests/test_basic.py",
+            "tests/test_blueprints.py",
+            "tests/test_cli.py",
+            "tests/test_config.py",
+            "tests/test_helpers.py",
+            "tests/test_instance_config.py",
+            "tests/test_reqctx.py",
+            "tests/test_signals.py",
+            "tests/test_subclassing.py",
+            "tests/test_templating.py",
+            "tests/test_testing.py",
+            "tests/test_views.py"
+          ],
+          "relevant_candidate_evidence": [
+            {
+              "path": "src/flask/testing.py",
+              "start_line": 136,
+              "end_line": 183,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:session_transaction",
+                "facet:symbol:session_transaction",
+                "channel:symbol:0",
+                "multi-query"
+              ],
+              "concepts": [
+                "session_transaction"
+              ],
+              "concept_weight": 2.0,
+              "score": 2.396777546777547,
+              "token_count": 331
+            },
+            {
+              "path": "tests/test_testing.py",
+              "start_line": 157,
+              "end_line": 171,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:session_transaction",
+                "facet:symbol:session_transaction",
+                "channel:symbol:1",
+                "multi-query"
+              ],
+              "concepts": [
+                "session_transaction"
+              ],
+              "concept_weight": 2.0,
+              "score": 1.186872586872587,
+              "token_count": 109
+            },
+            {
+              "path": "tests/test_testing.py",
+              "start_line": 184,
+              "end_line": 189,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:session_transaction",
+                "facet:symbol:session_transaction",
+                "channel:symbol:2",
+                "multi-query"
+              ],
+              "concepts": [
+                "session_transaction"
+              ],
+              "concept_weight": 2.0,
+              "score": 1.2119402985074628,
+              "token_count": 51
+            },
+            {
+              "path": "tests/test_testing.py",
+              "start_line": 192,
+              "end_line": 197,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:session_transaction",
+                "facet:symbol:session_transaction",
+                "channel:symbol:3",
+                "multi-query"
+              ],
+              "concepts": [
+                "session_transaction"
+              ],
+              "concept_weight": 2.0,
+              "score": 1.2178010471204188,
+              "token_count": 41
+            },
+            {
+              "path": "tests/test_testing.py",
+              "start_line": 174,
+              "end_line": 181,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:session_transaction",
+                "facet:symbol:session_transaction",
+                "channel:symbol:4",
+                "multi-query"
+              ],
+              "concepts": [
+                "session_transaction"
+              ],
+              "concept_weight": 2.0,
+              "score": 1.2066350710900475,
+              "token_count": 61
+            },
+            {
+              "path": "tests/test_testing.py",
+              "start_line": 157,
+              "end_line": 171,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:session_transaction",
+                "facet:symbol:session_transaction",
+                "channel:reference:1",
+                "multi-query"
+              ],
+              "concepts": [
+                "session_transaction"
+              ],
+              "concept_weight": 2.0,
+              "score": 0.886872586872587,
+              "token_count": 109
+            },
+            {
+              "path": "tests/test_testing.py",
+              "start_line": 157,
+              "end_line": 171,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:session_transaction",
+                "facet:symbol:session_transaction",
+                "channel:reference:2",
+                "multi-query"
+              ],
+              "concepts": [
+                "session_transaction"
+              ],
+              "concept_weight": 2.0,
+              "score": 0.886872586872587,
+              "token_count": 109
+            },
+            {
+              "path": "tests/test_testing.py",
+              "start_line": 174,
+              "end_line": 181,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:session_transaction",
+                "facet:symbol:session_transaction",
+                "channel:reference:3",
+                "multi-query"
+              ],
+              "concepts": [
+                "session_transaction"
+              ],
+              "concept_weight": 2.0,
+              "score": 0.9066350710900475,
+              "token_count": 61
+            },
+            {
+              "path": "tests/test_testing.py",
+              "start_line": 184,
+              "end_line": 189,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:session_transaction",
+                "facet:symbol:session_transaction",
+                "channel:reference:4",
+                "multi-query"
+              ],
+              "concepts": [
+                "session_transaction"
+              ],
+              "concept_weight": 2.0,
+              "score": 0.9119402985074627,
+              "token_count": 51
+            },
+            {
+              "path": "tests/test_testing.py",
+              "start_line": 192,
+              "end_line": 197,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:session_transaction",
+                "facet:symbol:session_transaction",
+                "channel:reference:5",
+                "multi-query"
+              ],
+              "concepts": [
+                "session_transaction"
+              ],
+              "concept_weight": 2.0,
+              "score": 0.9178010471204189,
+              "token_count": 41
+            },
+            {
+              "path": "tests/test_testing.py",
+              "start_line": 157,
+              "end_line": 171,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:session_transaction",
+                "facet:symbol:session_transaction",
+                "channel:text:0",
+                "multi-query"
+              ],
+              "concepts": [
+                "session_transaction"
+              ],
+              "concept_weight": 2.0,
+              "score": 1.7493725411748402,
+              "token_count": 109
+            },
+            {
+              "path": "src/flask/testing.py",
+              "start_line": 136,
+              "end_line": 172,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:session_transaction",
+                "facet:symbol:session_transaction",
+                "channel:text:2",
+                "multi-query"
+              ],
+              "concepts": [
+                "session_transaction"
+              ],
+              "concept_weight": 2.0,
+              "score": 2.0038276852672974,
+              "token_count": 268
+            },
+            {
+              "path": "tests/test_testing.py",
+              "start_line": 157,
+              "end_line": 171,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:session_transaction",
+                "facet:symbol:session_transaction",
+                "channel:text:4",
+                "multi-query"
+              ],
+              "concepts": [
+                "session_transaction"
+              ],
+              "concept_weight": 2.0,
+              "score": 1.7868725019848277,
+              "token_count": 109
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 1827,
+              "end_line": 1847,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:address",
+                "channel:text:10"
+              ],
+              "concepts": [
+                "address"
+              ],
+              "concept_weight": 0.65,
+              "score": 1.3652172781537748,
+              "token_count": 195
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 886,
+              "end_line": 921,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:handling",
+                "channel:symbol:0"
+              ],
+              "concepts": [
+                "handling"
+              ],
+              "concept_weight": 0.65,
+              "score": 1.1111413043478262,
+              "token_count": 218
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 970,
+              "end_line": 983,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:handling",
+                "channel:symbol:1"
+              ],
+              "concepts": [
+                "handling"
+              ],
+              "concept_weight": 0.65,
+              "score": 1.1513513513513514,
+              "token_count": 72
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 924,
+              "end_line": 942,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:handling",
+                "channel:symbol:2"
+              ],
+              "concepts": [
+                "handling"
+              ],
+              "concept_weight": 0.65,
+              "score": 1.1365384615384615,
+              "token_count": 110
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 945,
+              "end_line": 953,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:handling",
+                "channel:symbol:3"
+              ],
+              "concepts": [
+                "handling"
+              ],
+              "concept_weight": 0.65,
+              "score": 1.1671875,
+              "token_count": 42
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 986,
+              "end_line": 1015,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:handling",
+                "channel:symbol:4"
+              ],
+              "concepts": [
+                "handling"
+              ],
+              "concept_weight": 0.65,
+              "score": 1.1175675675675676,
+              "token_count": 183
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 886,
+              "end_line": 921,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:handling",
+                "channel:text:0"
+              ],
+              "concepts": [
+                "handling"
+              ],
+              "concept_weight": 0.65,
+              "score": 1.361141209907464,
+              "token_count": 218
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 970,
+              "end_line": 983,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:handling",
+                "channel:text:3"
+              ],
+              "concepts": [
+                "handling"
+              ],
+              "concept_weight": 0.65,
+              "score": 1.401351247119779,
+              "token_count": 72
+            },
+            {
+              "path": "src/flask/app.py",
+              "start_line": 1481,
+              "end_line": 1499,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:handling",
+                "channel:text:12"
+              ],
+              "concepts": [
+                "handling"
+              ],
+              "concept_weight": 0.65,
+              "score": 1.3770546710557534,
+              "token_count": 142
+            },
+            {
+              "path": "src/flask/app.py",
+              "start_line": 966,
+              "end_line": 988,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:handling",
+                "channel:text:14"
+              ],
+              "concepts": [
+                "handling"
+              ],
+              "concept_weight": 0.65,
+              "score": 1.3603215909243687,
+              "token_count": 223
+            },
+            {
+              "path": "src/flask/testing.py",
+              "start_line": 138,
+              "end_line": 174,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:handling",
+                "channel:text:25",
+                "multi-query"
+              ],
+              "concepts": [
+                "handling"
+              ],
+              "concept_weight": 0.65,
+              "score": 1.65474436321579,
+              "token_count": 261
+            },
+            {
+              "path": "src/flask/app.py",
+              "start_line": 1021,
+              "end_line": 1051,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:handling",
+                "channel:text:27"
+              ],
+              "concepts": [
+                "handling"
+              ],
+              "concept_weight": 0.65,
+              "score": 1.3593665893248046,
+              "token_count": 229
+            },
+            {
+              "path": "src/flask/app.py",
+              "start_line": 109,
+              "end_line": 198,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:flask.run",
+                "facet:symbol:flask.run",
+                "channel:symbol:1"
+              ],
+              "concepts": [
+                "flask.run"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.0703435804701624,
+              "token_count": 956
+            },
+            {
+              "path": "src/flask/testing.py",
+              "start_line": 109,
+              "end_line": 210,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:flask.run",
+                "facet:symbol:flask.run",
+                "channel:symbol:9",
+                "multi-query"
+              ],
+              "concepts": [
+                "flask.run"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.3745901639344262,
+              "token_count": 765
+            },
+            {
+              "path": "src/flask/testing.py",
+              "start_line": 265,
+              "end_line": 298,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:flask.run",
+                "facet:symbol:flask.run",
+                "channel:symbol:13",
+                "multi-query"
+              ],
+              "concepts": [
+                "flask.run"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.897770700636942,
+              "token_count": 321
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 1235,
+              "end_line": 1280,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:flask.run",
+                "facet:symbol:flask.run",
+                "channel:reference:16"
+              ],
+              "concepts": [
+                "flask.run"
+              ],
+              "concept_weight": 1.95,
+              "score": 0.8061097256857855,
+              "token_count": 251
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 1432,
+              "end_line": 1440,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:flask.run",
+                "facet:symbol:flask.run",
+                "channel:reference:17"
+              ],
+              "concepts": [
+                "flask.run"
+              ],
+              "concept_weight": 1.95,
+              "score": 0.8491189427312775,
+              "token_count": 77
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 1443,
+              "end_line": 1451,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:flask.run",
+                "facet:symbol:flask.run",
+                "channel:reference:18"
+              ],
+              "concepts": [
+                "flask.run"
+              ],
+              "concept_weight": 1.95,
+              "score": 0.8469827586206896,
+              "token_count": 82
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 1454,
+              "end_line": 1458,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:flask.run",
+                "facet:symbol:flask.run",
+                "channel:reference:19"
+              ],
+              "concepts": [
+                "flask.run"
+              ],
+              "concept_weight": 1.95,
+              "score": 0.8608374384236454,
+              "token_count": 53
+            },
+            {
+              "path": "tests/test_testing.py",
+              "start_line": 4,
+              "end_line": 8,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:flask.run",
+                "facet:symbol:flask.run",
+                "channel:text:2",
+                "multi-query"
+              ],
+              "concepts": [
+                "flask.run"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.4276504003329238,
+              "token_count": 21
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 1443,
+              "end_line": 1451,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:flask.run",
+                "facet:symbol:flask.run",
+                "channel:text:5"
+              ],
+              "concepts": [
+                "flask.run"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.3548142296979264,
+              "token_count": 82
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 1764,
+              "end_line": 1769,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:flask.run",
+                "facet:symbol:flask.run",
+                "channel:text:12"
+              ],
+              "concepts": [
+                "flask.run"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.4123016646859217,
+              "token_count": 64
+            },
+            {
+              "path": "tests/test_basic.py",
+              "start_line": 563,
+              "end_line": 567,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:flask.run",
+                "facet:symbol:flask.run",
+                "channel:text:25"
+              ],
+              "concepts": [
+                "flask.run"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.4653215136660198,
+              "token_count": 35
+            },
+            {
+              "path": "src/flask/app.py",
+              "start_line": 632,
+              "end_line": 674,
+              "representation": "import_symbol",
+              "match_kinds": [
+                "import",
+                "symbol",
+                "facet:exact_atom:flask.run",
+                "facet:symbol:flask.run",
+                "channel:import_symbol:1"
+              ],
+              "concepts": [
+                "flask.run"
+              ],
+              "concept_weight": 2.0,
+              "score": 2.836290322580645,
+              "token_count": 470
+            },
+            {
+              "path": "src/flask/testing.py",
+              "start_line": 265,
+              "end_line": 298,
+              "representation": "import_symbol",
+              "match_kinds": [
+                "import",
+                "symbol",
+                "facet:exact_atom:flask.run",
+                "facet:symbol:flask.run",
+                "channel:import_symbol:2"
+              ],
+              "concepts": [
+                "flask.run"
+              ],
+              "concept_weight": 2.0,
+              "score": 3.0977707006369424,
+              "token_count": 321
+            }
+          ],
+          "omitted_relevant_files": [
+            {
+              "path": "src/flask/app.py",
+              "reason": "generated but not selected"
+            },
+            {
+              "path": "tests/test_basic.py",
+              "reason": "generated but not selected"
+            }
+          ],
+          "relevant_files_found": 2,
+          "relevant_file_recall": 0.5,
+          "candidate_relevant_files_found": 4,
+          "candidate_relevant_file_recall": 1.0,
+          "labeled_file_precision": 0.3333333333333333,
+          "line_anchors": 12,
+          "line_anchors_found": 6,
+          "line_anchor_recall": 0.5,
+          "unlabeled_returned_files": [
+            ".github/ISSUE_TEMPLATE/bug-report.md",
+            "CHANGES.rst",
+            "src/flask/cli.py",
+            "tests/test_config.py"
+          ],
+          "oracle_source_tokens": 31562,
+          "oracle_minimal_read_json_tokens": 36735,
+          "rg_discovery_tokens": 7272,
+          "rg_discovery_json_tokens": 8397,
+          "scripted_baseline_total_json_tokens": 45135,
+          "leantoken_source_tokens": 1166,
+          "leantoken_total_json_tokens": 1899,
+          "source_savings_against_oracle_fraction": 0.963056840504404,
+          "total_json_savings_against_scripted_fraction": 0.957926221335992,
+          "first_context_ms": 106.006208,
+          "warm_context_ms_samples": [
+            92.76454100000001,
+            102.728739,
+            110.117238
+          ],
+          "warm_context_median_ms": 102.728739,
+          "warm_context_p95_ms": 110.117238,
+          "second_response_source_tokens": 1195,
+          "estimated_repeated_range_source_tokens": 268,
+          "repeat_request_json_tokens": 292,
+          "repeat_total_json_tokens": 1827,
+          "two_turn_context_json_tokens": 4018,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 4,
+          "dead_end_source_tokens": 364,
+          "concept_coverage": {
+            "concepts": 4,
+            "candidate_concepts_found": 2,
+            "candidate_concept_recall": 0.5,
+            "selected_concepts_found": 2,
+            "selected_concept_recall": 0.5,
+            "selection_retention": 1.0,
+            "evidence": [
+              {
+                "id": "run-ipv6-regression",
+                "description": "Regression coverage must preserve IPv6 SERVER_NAME parsing in Flask.run.",
+                "candidate_covered": false,
+                "selected_covered": false,
+                "candidate_anchors_found": [],
+                "selected_anchors_found": []
+              },
+              {
+                "id": "run-server-name-ipv6",
+                "description": "Flask.run must partition a bracketed IPv6 SERVER_NAME without losing the host.",
+                "candidate_covered": false,
+                "selected_covered": false,
+                "candidate_anchors_found": [],
+                "selected_anchors_found": []
+              },
+              {
+                "id": "session-cookie-ipv6",
+                "description": "session_transaction must preserve the IPv6 host while saving cookies.",
+                "candidate_covered": true,
+                "selected_covered": true,
+                "candidate_anchors_found": [
+                  {
+                    "path": "src/flask/testing.py",
+                    "line": 176
+                  },
+                  {
+                    "path": "src/flask/testing.py",
+                    "line": 180
+                  },
+                  {
+                    "path": "src/flask/testing.py",
+                    "line": 182
+                  }
+                ],
+                "selected_anchors_found": [
+                  {
+                    "path": "src/flask/testing.py",
+                    "line": 176
+                  },
+                  {
+                    "path": "src/flask/testing.py",
+                    "line": 180
+                  },
+                  {
+                    "path": "src/flask/testing.py",
+                    "line": 182
+                  }
+                ]
+              },
+              {
+                "id": "session-ipv6-regression",
+                "description": "Regression coverage must exercise session cookies with an IPv6 host.",
+                "candidate_covered": true,
+                "selected_covered": true,
+                "candidate_anchors_found": [
+                  {
+                    "path": "tests/test_testing.py",
+                    "line": 157
+                  },
+                  {
+                    "path": "tests/test_testing.py",
+                    "line": 163
+                  },
+                  {
+                    "path": "tests/test_testing.py",
+                    "line": 167
+                  }
+                ],
+                "selected_anchors_found": [
+                  {
+                    "path": "tests/test_testing.py",
+                    "line": 157
+                  },
+                  {
+                    "path": "tests/test_testing.py",
+                    "line": 163
+                  },
+                  {
+                    "path": "tests/test_testing.py",
+                    "line": 167
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "gin-validation",
+      "url": "https://github.com/gin-gonic/gin",
+      "base_revision": "34dac209ffb6ef85cc78c5d217bbb7ad001d68fd",
+      "fix_commit": null,
+      "issue_url": "https://github.com/gin-gonic/gin/issues/4688",
+      "prompt_provenance": "Issue title, description, and reproduction as published before the dataset freeze; no patch or PR consulted.",
+      "label_provenance": "The AsciiJSON loop and existing AsciiJSON regression-test neighborhood identified directly from the pinned tree.",
+      "dataset_url": null,
+      "dataset_revision": null,
+      "dataset_license": null,
+      "external_limitations": [],
+      "indexed_files": 130,
+      "indexed_chunks": 433,
+      "index_warnings": [],
+      "cold_index_ms": 701.178948,
+      "database_bytes": 13971688,
+      "tasks": [
+        {
+          "id": "gin-ascii-json-non-bmp",
+          "prompt": "Fix render.AsciiJSON so non-BMP Unicode such as emoji round-trips through JSON. JSON unicode escapes must use a UTF-16 surrogate pair instead of a five-digit escape. Preserve current BMP and ASCII behavior and add a regression test.",
+          "languages": [],
+          "task_shapes": [],
+          "token_budget": 900,
+          "relevant_files": [
+            "render/json.go",
+            "render/render_test.go"
+          ],
+          "returned_files": [
+            "context.go",
+            "context_test.go",
+            "docs/doc.md",
+            "render/html.go",
+            "render/json.go",
+            "render/render_test.go",
+            "response_writer_test.go",
+            "tree.go"
+          ],
+          "returned_evidence": [
+            {
+              "path": "render/json.go",
+              "start_line": 155,
+              "end_line": 176,
+              "representation": "symbol",
+              "reason": "symbol; multi-query; text; reference",
+              "score": 5.574,
+              "token_count": 154,
+              "content_hash": "6a6bde1d27c0acae7b102b63d62863e8"
+            },
+            {
+              "path": "docs/doc.md",
+              "start_line": 1771,
+              "end_line": 1793,
+              "representation": "symbol",
+              "reason": "symbol; multi-query; text",
+              "score": 3.8271,
+              "token_count": 142,
+              "content_hash": "6b67ece27a872ff9c4ac812bbb3666bf"
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 272,
+              "end_line": 282,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.9879,
+              "token_count": 106,
+              "content_hash": "5aeed31281e8c54d4214dbfe9ad5594f"
+            },
+            {
+              "path": "response_writer_test.go",
+              "start_line": 322,
+              "end_line": 326,
+              "representation": "source",
+              "reason": "text; symbol; reference",
+              "score": 3.025,
+              "token_count": 30,
+              "content_hash": "9235d4c76ceb556cf33e875f5f1b4ca0"
+            },
+            {
+              "path": "context.go",
+              "start_line": 1284,
+              "end_line": 1286,
+              "representation": "source",
+              "reason": "text; multi-query; reference",
+              "score": 2.0271,
+              "token_count": 27,
+              "content_hash": "7aee22bd0e634734c49ad4e21c5b4d14"
+            },
+            {
+              "path": "tree.go",
+              "start_line": 833,
+              "end_line": 866,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.4584,
+              "token_count": 235,
+              "content_hash": "3474620a71f365969330df8d03e9b4af"
+            },
+            {
+              "path": "context_test.go",
+              "start_line": 1588,
+              "end_line": 1599,
+              "representation": "symbol",
+              "reason": "symbol; multi-query",
+              "score": 1.1818,
+              "token_count": 125,
+              "content_hash": "4ec5dfd0a829a945e2ad18abf3da3aa3"
+            },
+            {
+              "path": "render/html.go",
+              "start_line": 5,
+              "end_line": 5,
+              "representation": "symbol",
+              "reason": "symbol; text",
+              "score": 2.5971,
+              "token_count": 3,
+              "content_hash": "e9f25f9a5fe3ef12b46440011e07602f"
+            }
+          ],
+          "candidate_files": [
+            "CHANGELOG.md",
+            "CODE_OF_CONDUCT.md",
+            "LICENSE",
+            "binding/binding.go",
+            "binding/binding_nomsgpack.go",
+            "binding/form_mapping.go",
+            "binding/form_mapping_test.go",
+            "binding/header.go",
+            "binding/json.go",
+            "binding/json_test.go",
+            "binding/validate_test.go",
+            "binding/xml_test.go",
+            "codec/json/api.go",
+            "context.go",
+            "context_file_test.go",
+            "context_test.go",
+            "docs/doc.md",
+            "errors_test.go",
+            "gin.go",
+            "gin_test.go",
+            "githubapi_test.go",
+            "internal/bytesconv/bytesconv_test.go",
+            "logger.go",
+            "path.go",
+            "recovery_test.go",
+            "render/bson.go",
+            "render/data.go",
+            "render/html.go",
+            "render/json.go",
+            "render/msgpack.go",
+            "render/pdf.go",
+            "render/protobuf.go",
+            "render/reader_test.go",
+            "render/render.go",
+            "render/render_msgpack_test.go",
+            "render/render_test.go",
+            "render/toml.go",
+            "render/xml.go",
+            "render/yaml.go",
+            "response_writer_test.go",
+            "routes_test.go",
+            "tree.go",
+            "tree_test.go",
+            "utils.go"
+          ],
+          "relevant_candidate_evidence": [
+            {
+              "path": "render/json.go",
+              "start_line": 155,
+              "end_line": 176,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:unicode",
+                "channel:text:0",
+                "multi-query"
+              ],
+              "concepts": [
+                "unicode"
+              ],
+              "concept_weight": 0.65,
+              "score": 2.4240130906076574,
+              "token_count": 154
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 10,
+              "end_line": 14,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:unicode",
+                "channel:text:9",
+                "multi-query"
+              ],
+              "concepts": [
+                "unicode"
+              ],
+              "concept_weight": 0.65,
+              "score": 2.4793102378109078,
+              "token_count": 24
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 5,
+              "end_line": 5,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:symbol:8",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 3.2470588235294118,
+              "token_count": 3
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 57,
+              "end_line": 59,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:symbol:9",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 3.2315789473684213,
+              "token_count": 21
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 78,
+              "end_line": 86,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:symbol:10",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 3.2076555023923445,
+              "token_count": 59
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 94,
+              "end_line": 109,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:symbol:11",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 3.1824175824175827,
+              "token_count": 123
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 117,
+              "end_line": 147,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:symbol:12",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 3.17120253164557,
+              "token_count": 166
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 155,
+              "end_line": 176,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:symbol:13",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 4.674013157894737,
+              "token_count": 154
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 184,
+              "end_line": 189,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:symbol:14",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 3.217801047120419,
+              "token_count": 41
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 633,
+              "end_line": 647,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:text:2",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.8580257126695214,
+              "token_count": 121
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 569,
+              "end_line": 583,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:text:4",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.8929750881429175,
+              "token_count": 92
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 395,
+              "end_line": 418,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:text:5",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.8962024122557932,
+              "token_count": 166
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 712,
+              "end_line": 722,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:text:6",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.8824365893149693,
+              "token_count": 87
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 339,
+              "end_line": 343,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:text:7",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.9309209325079717,
+              "token_count": 40
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 5,
+              "end_line": 5,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:text:10",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.9845587022902893,
+              "token_count": 3
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 243,
+              "end_line": 262,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:text:12",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.9192306468181217,
+              "token_count": 175
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 178,
+              "end_line": 217,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:text:14",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.9055554324508248,
+              "token_count": 255
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 485,
+              "end_line": 523,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:text:16",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.9236411790996508,
+              "token_count": 218
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 74,
+              "end_line": 100,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:text:18",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.9308311365661692,
+              "token_count": 253
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 91,
+              "end_line": 95,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:text:21",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.7571807201963554,
+              "token_count": 38
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 74,
+              "end_line": 100,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:utf-16",
+                "facet:symbol:utf-16",
+                "channel:text:0",
+                "multi-query"
+              ],
+              "concepts": [
+                "utf-16"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.9433311598100753,
+              "token_count": 253
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 585,
+              "end_line": 602,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:utf-16",
+                "facet:symbol:utf-16",
+                "channel:text:3",
+                "multi-query"
+              ],
+              "concepts": [
+                "utf-16"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.9765304998597546,
+              "token_count": 144
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 633,
+              "end_line": 647,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:utf-16",
+                "facet:symbol:utf-16",
+                "channel:text:6",
+                "multi-query"
+              ],
+              "concepts": [
+                "utf-16"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.9830257165613896,
+              "token_count": 121
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 26,
+              "end_line": 41,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:utf-16",
+                "facet:symbol:utf-16",
+                "channel:text:10",
+                "multi-query"
+              ],
+              "concepts": [
+                "utf-16"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.9783970921244791,
+              "token_count": 137
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 308,
+              "end_line": 330,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:utf-16",
+                "facet:symbol:utf-16",
+                "channel:text:13",
+                "multi-query"
+              ],
+              "concepts": [
+                "utf-16"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.9621545725393632,
+              "token_count": 212
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 444,
+              "end_line": 458,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:utf-16",
+                "facet:symbol:utf-16",
+                "channel:text:16",
+                "multi-query"
+              ],
+              "concepts": [
+                "utf-16"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.9836429884828106,
+              "token_count": 119
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 272,
+              "end_line": 282,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:utf-16",
+                "facet:symbol:utf-16",
+                "channel:text:19",
+                "multi-query"
+              ],
+              "concepts": [
+                "utf-16"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.987890488571364,
+              "token_count": 106
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 49,
+              "end_line": 53,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:utf-16",
+                "facet:symbol:utf-16",
+                "channel:text:20",
+                "multi-query"
+              ],
+              "concepts": [
+                "utf-16"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.7659792437126103,
+              "token_count": 44
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 219,
+              "end_line": 232,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:utf-16",
+                "facet:symbol:utf-16",
+                "channel:text:21",
+                "multi-query"
+              ],
+              "concepts": [
+                "utf-16"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.981227297906965,
+              "token_count": 127
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 41,
+              "end_line": 43,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:symbol:2",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 3.240625,
+              "token_count": 10
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 243,
+              "end_line": 262,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:symbol:3",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.919230769230769,
+              "token_count": 175
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 264,
+              "end_line": 270,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:symbol:4",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.9630653266331657,
+              "token_count": 49
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 41,
+              "end_line": 43,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:reference:2",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.940625,
+              "token_count": 10
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 155,
+              "end_line": 176,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:reference:3",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.874013157894737,
+              "token_count": 154
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 179,
+              "end_line": 181,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:reference:4",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.930057803468208,
+              "token_count": 23
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 243,
+              "end_line": 262,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:reference:5",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.1192307692307693,
+              "token_count": 175
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 243,
+              "end_line": 262,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:reference:6",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.1192307692307693,
+              "token_count": 175
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 264,
+              "end_line": 270,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:reference:7",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.1630653266331659,
+              "token_count": 49
+            },
+            {
+              "path": "render/render_test.go",
+              "start_line": 243,
+              "end_line": 262,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:text:0",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.9692307087807142,
+              "token_count": 175
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 176,
+              "end_line": 180,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:text:2",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.7722825414085728,
+              "token_count": 34
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 38,
+              "end_line": 42,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:text:4",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.7823528630793555,
+              "token_count": 20
+            },
+            {
+              "path": "render/json.go",
+              "start_line": 152,
+              "end_line": 156,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:render.asciijson",
+                "facet:symbol:render.asciijson",
+                "channel:text:5",
+                "multi-query"
+              ],
+              "concepts": [
+                "render.asciijson"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.769047539595117,
+              "token_count": 39
+            }
+          ],
+          "omitted_relevant_files": [],
+          "relevant_files_found": 2,
+          "relevant_file_recall": 1.0,
+          "candidate_relevant_files_found": 2,
+          "candidate_relevant_file_recall": 1.0,
+          "labeled_file_precision": 0.25,
+          "line_anchors": 6,
+          "line_anchors_found": 3,
+          "line_anchor_recall": 0.5,
+          "unlabeled_returned_files": [
+            "context.go",
+            "context_test.go",
+            "docs/doc.md",
+            "render/html.go",
+            "response_writer_test.go",
+            "tree.go"
+          ],
+          "oracle_source_tokens": 7046,
+          "oracle_minimal_read_json_tokens": 8837,
+          "rg_discovery_tokens": 3234,
+          "rg_discovery_json_tokens": 3693,
+          "scripted_baseline_total_json_tokens": 12533,
+          "leantoken_source_tokens": 822,
+          "leantoken_total_json_tokens": 1665,
+          "source_savings_against_oracle_fraction": 0.8833380641498723,
+          "total_json_savings_against_scripted_fraction": 0.8671507220936727,
+          "first_context_ms": 120.729508,
+          "warm_context_ms_samples": [
+            96.0954,
+            98.17253,
+            100.557739
+          ],
+          "warm_context_median_ms": 98.17253,
+          "warm_context_p95_ms": 100.557739,
+          "second_response_source_tokens": 817,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 304,
+          "repeat_total_json_tokens": 1544,
+          "two_turn_context_json_tokens": 3513,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 6,
+          "dead_end_source_tokens": 562,
+          "concept_coverage": {
+            "concepts": 2,
+            "candidate_concepts_found": 2,
+            "candidate_concept_recall": 1.0,
+            "selected_concepts_found": 1,
+            "selected_concept_recall": 0.5,
+            "selection_retention": 0.5,
+            "evidence": [
+              {
+                "id": "non-bmp-regression",
+                "description": "Regression coverage must round-trip a non-BMP character through AsciiJSON.",
+                "candidate_covered": true,
+                "selected_covered": false,
+                "candidate_anchors_found": [
+                  {
+                    "path": "render/render_test.go",
+                    "line": 243
+                  },
+                  {
+                    "path": "render/render_test.go",
+                    "line": 250
+                  },
+                  {
+                    "path": "render/render_test.go",
+                    "line": 253
+                  }
+                ],
+                "selected_anchors_found": []
+              },
+              {
+                "id": "non-bmp-surrogate-encoding",
+                "description": "AsciiJSON must encode non-BMP Unicode with a UTF-16 surrogate pair.",
+                "candidate_covered": true,
+                "selected_covered": true,
+                "candidate_anchors_found": [
+                  {
+                    "path": "render/json.go",
+                    "line": 160
+                  },
+                  {
+                    "path": "render/json.go",
+                    "line": 167
+                  },
+                  {
+                    "path": "render/json.go",
+                    "line": 174
+                  }
+                ],
+                "selected_anchors_found": [
+                  {
+                    "path": "render/json.go",
+                    "line": 160
+                  },
+                  {
+                    "path": "render/json.go",
+                    "line": 167
+                  },
+                  {
+                    "path": "render/json.go",
+                    "line": 174
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "express-validation",
+      "url": "https://github.com/expressjs/express",
+      "base_revision": "ae6dd37680e3a00618d6c8a3e522f0ee4eeba1a4",
+      "fix_commit": null,
+      "issue_url": "https://github.com/expressjs/express/issues/7350",
+      "prompt_provenance": "Issue title, description, and reproduction as published before the dataset freeze; no patch or PR consulted.",
+      "label_provenance": "View extension parsing, app.render error flow, and the existing missing-view test neighborhood identified from the pinned tree.",
+      "dataset_url": null,
+      "dataset_revision": null,
+      "dataset_license": null,
+      "external_limitations": [],
+      "indexed_files": 213,
+      "indexed_chunks": 471,
+      "index_warnings": [],
+      "cold_index_ms": 534.977684,
+      "database_bytes": 9424168,
+      "tasks": [
+        {
+          "id": "express-trailing-dot-view",
+          "prompt": "Fix app.render and res.render for a view name ending in a dot. app.render('index.', callback) must report the normal failed-to-lookup-view error through the callback instead of throwing because require receives an empty module name. Add regression coverage.",
+          "languages": [],
+          "task_shapes": [],
+          "token_budget": 1000,
+          "relevant_files": [
+            "lib/view.js",
+            "lib/application.js",
+            "test/app.render.js"
+          ],
+          "returned_files": [
+            "History.md",
+            "examples/resource/index.js",
+            "examples/route-separation/index.js",
+            "lib/application.js",
+            "lib/response.js",
+            "test/app.engine.js",
+            "test/app.render.js",
+            "test/res.sendFile.js"
+          ],
+          "returned_evidence": [
+            {
+              "path": "lib/application.js",
+              "start_line": 522,
+              "end_line": 575,
+              "representation": "symbol",
+              "reason": "symbol; text",
+              "score": 3.995,
+              "token_count": 350,
+              "content_hash": "78616a0524587fe0d07b9fc6a10939e8"
+            },
+            {
+              "path": "lib/response.js",
+              "start_line": 897,
+              "end_line": 921,
+              "representation": "import_symbol",
+              "reason": "import; symbol; multi-query; text",
+              "score": 3.3276,
+              "token_count": 140,
+              "content_hash": "930e88567d584a16343429b2c8a98ed7"
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 7,
+              "end_line": 11,
+              "representation": "source",
+              "reason": "text; reference",
+              "score": 2.9716,
+              "token_count": 35,
+              "content_hash": "7b61464fa7c2e426b70b2db9d77b0835"
+            },
+            {
+              "path": "History.md",
+              "start_line": 3564,
+              "end_line": 3582,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.5045,
+              "token_count": 263,
+              "content_hash": "5fb7c3f2ce7fc5a03592fe190d895b8b"
+            },
+            {
+              "path": "examples/route-separation/index.js",
+              "start_line": 9,
+              "end_line": 9,
+              "representation": "symbol",
+              "reason": "symbol; multi-query; text; reference",
+              "score": 2.7656,
+              "token_count": 5,
+              "content_hash": "a7ad76780ecf40eaa693b4e7a69aaf84"
+            },
+            {
+              "path": "test/res.sendFile.js",
+              "start_line": 489,
+              "end_line": 493,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.325,
+              "token_count": 30,
+              "content_hash": "419ab267efae31b4a027dd4dfcd924ce"
+            },
+            {
+              "path": "test/app.engine.js",
+              "start_line": 8,
+              "end_line": 14,
+              "representation": "symbol",
+              "reason": "symbol; text",
+              "score": 2.8098,
+              "token_count": 55,
+              "content_hash": "ceb73642c627d25df67b4da6e06f6efa"
+            },
+            {
+              "path": "examples/resource/index.js",
+              "start_line": 9,
+              "end_line": 9,
+              "representation": "symbol",
+              "reason": "symbol; multi-query; reference",
+              "score": 2.7424,
+              "token_count": 8,
+              "content_hash": "80eab834ea1d7feb0c750edf6ca9ba8e"
+            }
+          ],
+          "candidate_files": [
+            ".github/workflows/ci.yml",
+            ".github/workflows/legacy.yml",
+            "History.md",
+            "examples/auth/index.js",
+            "examples/auth/views/login.ejs",
+            "examples/content-negotiation/db.js",
+            "examples/content-negotiation/index.js",
+            "examples/cookie-sessions/index.js",
+            "examples/cookies/index.js",
+            "examples/downloads/index.js",
+            "examples/ejs/index.js",
+            "examples/error-pages/index.js",
+            "examples/error/index.js",
+            "examples/hello-world/index.js",
+            "examples/markdown/index.js",
+            "examples/markdown/views/index.md",
+            "examples/multi-router/controllers/api_v1.js",
+            "examples/multi-router/controllers/api_v2.js",
+            "examples/multi-router/index.js",
+            "examples/mvc/controllers/pet/index.js",
+            "examples/mvc/controllers/pet/views/edit.ejs",
+            "examples/mvc/controllers/pet/views/show.ejs",
+            "examples/mvc/controllers/user-pet/index.js",
+            "examples/mvc/controllers/user/index.js",
+            "examples/mvc/controllers/user/views/edit.hbs",
+            "examples/mvc/controllers/user/views/show.hbs",
+            "examples/mvc/db.js",
+            "examples/mvc/index.js",
+            "examples/mvc/lib/boot.js",
+            "examples/online/index.js",
+            "examples/params/index.js",
+            "examples/resource/index.js",
+            "examples/route-map/index.js",
+            "examples/route-middleware/index.js",
+            "examples/route-separation/index.js",
+            "examples/route-separation/post.js",
+            "examples/route-separation/site.js",
+            "examples/route-separation/user.js",
+            "examples/route-separation/views/users/edit.ejs",
+            "examples/search/index.js",
+            "examples/search/public/index.html",
+            "examples/session/index.js",
+            "examples/view-constructor/github-view.js",
+            "examples/view-constructor/index.js",
+            "examples/view-locals/index.js",
+            "lib/application.js",
+            "lib/express.js",
+            "lib/request.js",
+            "lib/response.js",
+            "lib/view.js",
+            "test/app.engine.js",
+            "test/app.head.js",
+            "test/app.js",
+            "test/app.locals.js",
+            "test/app.options.js",
+            "test/app.param.js",
+            "test/app.render.js",
+            "test/app.request.js",
+            "test/app.response.js",
+            "test/app.route.js",
+            "test/app.router.js",
+            "test/app.use.js",
+            "test/config.js",
+            "test/exports.js",
+            "test/express.json.js",
+            "test/express.raw.js",
+            "test/express.static.js",
+            "test/express.urlencoded.js",
+            "test/req.accepts.js",
+            "test/req.baseUrl.js",
+            "test/req.fresh.js",
+            "test/req.host.js",
+            "test/req.ip.js",
+            "test/req.is.js",
+            "test/req.query.js",
+            "test/req.stale.js",
+            "test/res.append.js",
+            "test/res.attachment.js",
+            "test/res.clearCookie.js",
+            "test/res.cookie.js",
+            "test/res.download.js",
+            "test/res.format.js",
+            "test/res.json.js",
+            "test/res.locals.js",
+            "test/res.render.js",
+            "test/res.send.js",
+            "test/res.sendFile.js",
+            "test/res.set.js",
+            "test/res.status.js",
+            "test/res.type.js",
+            "test/res.vary.js",
+            "test/support/tmpl.js"
+          ],
+          "relevant_candidate_evidence": [
+            {
+              "path": "test/app.render.js",
+              "start_line": 245,
+              "end_line": 249,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:text:0"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 2.0,
+              "score": 2.4959676811791165,
+              "token_count": 36
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 325,
+              "end_line": 329,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:text:1"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 2.0,
+              "score": 2.5108373750740656,
+              "token_count": 53
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 13,
+              "end_line": 17,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:text:2"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 2.0,
+              "score": 2.508695587616203,
+              "token_count": 57
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 85,
+              "end_line": 89,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:text:3"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 2.0,
+              "score": 2.5036865693284773,
+              "token_count": 67
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 161,
+              "end_line": 165,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:text:5"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 2.0,
+              "score": 2.513065256113827,
+              "token_count": 49
+            },
+            {
+              "path": "lib/application.js",
+              "start_line": 510,
+              "end_line": 514,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:text:6"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 2.0,
+              "score": 1.7743093092972515,
+              "token_count": 31
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 25,
+              "end_line": 25,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:name",
+                "channel:symbol:2"
+              ],
+              "concepts": [
+                "name"
+              ],
+              "concept_weight": 0.45,
+              "score": 0.9442307692307692,
+              "token_count": 6
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 27,
+              "end_line": 27,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:name",
+                "channel:symbol:3"
+              ],
+              "concepts": [
+                "name"
+              ],
+              "concept_weight": 0.45,
+              "score": 0.9424050632911393,
+              "token_count": 8
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 26,
+              "end_line": 26,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:name",
+                "channel:symbol:6"
+              ],
+              "concepts": [
+                "name"
+              ],
+              "concept_weight": 0.45,
+              "score": 0.9442307692307692,
+              "token_count": 6
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 52,
+              "end_line": 95,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:behavior:name",
+                "channel:reference:2"
+              ],
+              "concepts": [
+                "name"
+              ],
+              "concept_weight": 0.45,
+              "score": 0.5559701492537313,
+              "token_count": 252
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 104,
+              "end_line": 123,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:behavior:name",
+                "channel:reference:3"
+              ],
+              "concepts": [
+                "name"
+              ],
+              "concept_weight": 0.45,
+              "score": 0.5868725868725869,
+              "token_count": 109
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 104,
+              "end_line": 123,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:behavior:name",
+                "channel:reference:8"
+              ],
+              "concepts": [
+                "name"
+              ],
+              "concept_weight": 0.45,
+              "score": 0.5868725868725869,
+              "token_count": 109
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 169,
+              "end_line": 187,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:behavior:name",
+                "channel:reference:9"
+              ],
+              "concepts": [
+                "name"
+              ],
+              "concept_weight": 0.45,
+              "score": 0.5875486381322957,
+              "token_count": 107
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 25,
+              "end_line": 25,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:name",
+                "channel:text:1"
+              ],
+              "concepts": [
+                "name"
+              ],
+              "concept_weight": 0.45,
+              "score": 0.8317299084239042,
+              "token_count": 6
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 161,
+              "end_line": 163,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:name",
+                "channel:text:12"
+              ],
+              "concepts": [
+                "name"
+              ],
+              "concept_weight": 0.45,
+              "score": 1.8639035888753055,
+              "token_count": 28
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 7,
+              "end_line": 11,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:name",
+                "channel:text:22"
+              ],
+              "concepts": [
+                "name"
+              ],
+              "concept_weight": 0.45,
+              "score": 1.896620701764298,
+              "token_count": 35
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 52,
+              "end_line": 95,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:name",
+                "channel:text:28"
+              ],
+              "concepts": [
+                "name"
+              ],
+              "concept_weight": 0.45,
+              "score": 0.868469220415289,
+              "token_count": 252
+            },
+            {
+              "path": "lib/application.js",
+              "start_line": 477,
+              "end_line": 481,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:reference:0"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 0.8756983240223464,
+              "token_count": 29
+            },
+            {
+              "path": "lib/application.js",
+              "start_line": 494,
+              "end_line": 503,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:reference:1"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 0.8561320754716981,
+              "token_count": 62
+            },
+            {
+              "path": "lib/application.js",
+              "start_line": 598,
+              "end_line": 606,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:reference:2"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 0.8482532751091703,
+              "token_count": 79
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 139,
+              "end_line": 156,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:reference:5"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 0.5872093023255814,
+              "token_count": 108
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 153,
+              "end_line": 155,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:reference:6"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 0.631578947368421,
+              "token_count": 21
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 9,
+              "end_line": 13,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:reference:15"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.6178010471204187,
+              "token_count": 41
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 21,
+              "end_line": 25,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:reference:16"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.6229508196721312,
+              "token_count": 33
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 34,
+              "end_line": 38,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:reference:17"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.6229508196721312,
+              "token_count": 33
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 47,
+              "end_line": 51,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:reference:18"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.622282608695652,
+              "token_count": 34
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 82,
+              "end_line": 86,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:reference:19"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.6153846153846154,
+              "token_count": 45
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 6,
+              "end_line": 10,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:text:20"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.10302419667829,
+              "token_count": 36
+            },
+            {
+              "path": "lib/application.js",
+              "start_line": 522,
+              "end_line": 575,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:symbol:1"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 3.5949999999999998,
+              "token_count": 350
+            },
+            {
+              "path": "lib/application.js",
+              "start_line": 522,
+              "end_line": 575,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:symbol:2"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.0949999999999998,
+              "token_count": 350
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 133,
+              "end_line": 159,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:symbol:5"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.875,
+              "token_count": 150
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 133,
+              "end_line": 159,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:symbol:6"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.875,
+              "token_count": 150
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 69,
+              "end_line": 71,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:symbol:8"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.933136094674556,
+              "token_count": 19
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 215,
+              "end_line": 217,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:symbol:9"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.9323529411764704,
+              "token_count": 20
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 240,
+              "end_line": 242,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:symbol:10"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.9323529411764704,
+              "token_count": 20
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 270,
+              "end_line": 272,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:symbol:11"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.9323529411764704,
+              "token_count": 20
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 363,
+              "end_line": 365,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:symbol:12"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.9323529411764704,
+              "token_count": 20
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 139,
+              "end_line": 156,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:symbol:13"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 0.8872093023255815,
+              "token_count": 108
+            },
+            {
+              "path": "lib/application.js",
+              "start_line": 625,
+              "end_line": 631,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:symbol:14"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.1722826086956522,
+              "token_count": 34
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 153,
+              "end_line": 155,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:symbol:15"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 0.9315789473684211,
+              "token_count": 21
+            },
+            {
+              "path": "lib/application.js",
+              "start_line": 504,
+              "end_line": 508,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:text:0"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.674999902319957,
+              "token_count": 30
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 245,
+              "end_line": 249,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:text:1"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.4084676433084833,
+              "token_count": 36
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 124,
+              "end_line": 128,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:text:3"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.4589284718908568,
+              "token_count": 18
+            },
+            {
+              "path": "lib/application.js",
+              "start_line": 537,
+              "end_line": 575,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:text:4"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.6306929696827086,
+              "token_count": 254
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 7,
+              "end_line": 11,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:text:6"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.434121520388094,
+              "token_count": 35
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 85,
+              "end_line": 89,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:text:9"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.4161865324971243,
+              "token_count": 67
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 325,
+              "end_line": 329,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:text:11"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.4483373334430487,
+              "token_count": 53
+            },
+            {
+              "path": "test/app.render.js",
+              "start_line": 161,
+              "end_line": 165,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:text:17"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.450565217464169,
+              "token_count": 49
+            },
+            {
+              "path": "lib/application.js",
+              "start_line": 263,
+              "end_line": 267,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:text:28"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 1.7171873712842678,
+              "token_count": 42
+            },
+            {
+              "path": "lib/view.js",
+              "start_line": 133,
+              "end_line": 159,
+              "representation": "import_symbol",
+              "match_kinds": [
+                "import",
+                "symbol",
+                "facet:exact_atom:app.render",
+                "facet:symbol:app.render",
+                "channel:import_symbol:0"
+              ],
+              "concepts": [
+                "app.render"
+              ],
+              "concept_weight": 1.95,
+              "score": 2.125,
+              "token_count": 150
+            }
+          ],
+          "omitted_relevant_files": [
+            {
+              "path": "lib/view.js",
+              "reason": "generated but not selected"
+            }
+          ],
+          "relevant_files_found": 2,
+          "relevant_file_recall": 0.6666666666666666,
+          "candidate_relevant_files_found": 3,
+          "candidate_relevant_file_recall": 1.0,
+          "labeled_file_precision": 0.25,
+          "line_anchors": 11,
+          "line_anchors_found": 4,
+          "line_anchor_recall": 0.36363636363636365,
+          "unlabeled_returned_files": [
+            "History.md",
+            "examples/resource/index.js",
+            "examples/route-separation/index.js",
+            "lib/response.js",
+            "test/app.engine.js",
+            "test/res.sendFile.js"
+          ],
+          "oracle_source_tokens": 7043,
+          "oracle_minimal_read_json_tokens": 8584,
+          "rg_discovery_tokens": 4481,
+          "rg_discovery_json_tokens": 5114,
+          "scripted_baseline_total_json_tokens": 13701,
+          "leantoken_source_tokens": 886,
+          "leantoken_total_json_tokens": 1571,
+          "source_savings_against_oracle_fraction": 0.8742013346585262,
+          "total_json_savings_against_scripted_fraction": 0.8853368367272462,
+          "first_context_ms": 106.30235,
+          "warm_context_ms_samples": [
+            86.82086,
+            90.74947999999999,
+            97.01688999999999
+          ],
+          "warm_context_median_ms": 90.74947999999999,
+          "warm_context_p95_ms": 97.01688999999999,
+          "second_response_source_tokens": 640,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 301,
+          "repeat_total_json_tokens": 1310,
+          "two_turn_context_json_tokens": 3182,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 6,
+          "dead_end_source_tokens": 501,
+          "concept_coverage": {
+            "concepts": 3,
+            "candidate_concepts_found": 3,
+            "candidate_concept_recall": 1.0,
+            "selected_concepts_found": 1,
+            "selected_concept_recall": 0.3333333333333333,
+            "selection_retention": 0.3333333333333333,
+            "evidence": [
+              {
+                "id": "empty-extension-resolution",
+                "description": "View resolution must handle an empty extension without passing an empty module name to require.",
+                "candidate_covered": true,
+                "selected_covered": false,
+                "candidate_anchors_found": [
+                  {
+                    "path": "lib/view.js",
+                    "line": 56
+                  },
+                  {
+                    "path": "lib/view.js",
+                    "line": 66
+                  },
+                  {
+                    "path": "lib/view.js",
+                    "line": 77
+                  },
+                  {
+                    "path": "lib/view.js",
+                    "line": 81
+                  }
+                ],
+                "selected_anchors_found": []
+              },
+              {
+                "id": "render-error-propagation",
+                "description": "Application rendering must route failed lookup errors through the callback.",
+                "candidate_covered": true,
+                "selected_covered": true,
+                "candidate_anchors_found": [
+                  {
+                    "path": "lib/application.js",
+                    "line": 522
+                  },
+                  {
+                    "path": "lib/application.js",
+                    "line": 552
+                  },
+                  {
+                    "path": "lib/application.js",
+                    "line": 562
+                  },
+                  {
+                    "path": "lib/application.js",
+                    "line": 564
+                  }
+                ],
+                "selected_anchors_found": [
+                  {
+                    "path": "lib/application.js",
+                    "line": 522
+                  },
+                  {
+                    "path": "lib/application.js",
+                    "line": 552
+                  },
+                  {
+                    "path": "lib/application.js",
+                    "line": 562
+                  },
+                  {
+                    "path": "lib/application.js",
+                    "line": 564
+                  }
+                ]
+              },
+              {
+                "id": "trailing-dot-regression",
+                "description": "Regression coverage must exercise a view name ending in a dot.",
+                "candidate_covered": true,
+                "selected_covered": false,
+                "candidate_anchors_found": [
+                  {
+                    "path": "test/app.render.js",
+                    "line": 82
+                  },
+                  {
+                    "path": "test/app.render.js",
+                    "line": 87
+                  },
+                  {
+                    "path": "test/app.render.js",
+                    "line": 89
+                  }
+                ],
+                "selected_anchors_found": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "tokio-validation",
+      "url": "https://github.com/tokio-rs/tokio",
+      "base_revision": "9cae638de6dc8dd9779c450201df8c102247a242",
+      "fix_commit": null,
+      "issue_url": "https://github.com/tokio-rs/tokio/issues/8182",
+      "prompt_provenance": "Issue title, description, reproduction, and root-cause analysis as published before the dataset freeze; no patch or PR consulted.",
+      "label_provenance": "The two affected write state-machine branches and existing fs::File write-test neighborhood identified from the pinned tree.",
+      "dataset_url": null,
+      "dataset_revision": null,
+      "dataset_license": null,
+      "external_limitations": [],
+      "indexed_files": 865,
+      "indexed_chunks": 2820,
+      "index_warnings": [],
+      "cold_index_ms": 4777.398716000001,
+      "database_bytes": 60231680,
+      "tasks": [
+        {
+          "id": "tokio-file-write-after-spawn-failure",
+          "prompt": "Fix tokio::fs::File so a second poll_write does not panic after spawn_mandatory_blocking failed on the previous write. The failed spawn currently leaves State::Idle without its buffer. Cover poll_write and poll_write_vectored and add a regression test for a shut-down blocking pool.",
+          "languages": [],
+          "task_shapes": [],
+          "token_budget": 1200,
+          "relevant_files": [
+            "tokio/src/fs/file.rs",
+            "tokio/tests/fs_file.rs"
+          ],
+          "returned_files": [
+            "tokio-util/src/sync/mpsc.rs",
+            "tokio/src/fs/file.rs",
+            "tokio/src/net/tcp/stream.rs",
+            "tokio/tests/fs_uring_file_read.rs",
+            "tokio/tests/io_panic.rs"
+          ],
+          "returned_evidence": [
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 728,
+              "end_line": 797,
+              "representation": "symbol",
+              "reason": "symbol; multi-query; text; reference",
+              "score": 5.2871,
+              "token_count": 456,
+              "content_hash": "1c043520086c18ffc56af00bea20b777"
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 799,
+              "end_line": 868,
+              "representation": "symbol",
+              "reason": "symbol; multi-query; text; reference",
+              "score": 5.2865,
+              "token_count": 467,
+              "content_hash": "8891687ebc7b69fb6fef266570379691"
+            },
+            {
+              "path": "tokio/tests/fs_uring_file_read.rs",
+              "start_line": 1,
+              "end_line": 3,
+              "representation": "source",
+              "reason": "text",
+              "score": 4.2816,
+              "token_count": 21,
+              "content_hash": "c952fac884d62a2b361e4f2c0541395e"
+            },
+            {
+              "path": "tokio-util/src/sync/mpsc.rs",
+              "start_line": 183,
+              "end_line": 201,
+              "representation": "source",
+              "reason": "text; reference",
+              "score": 2.2145,
+              "token_count": 199,
+              "content_hash": "869cad3bb4fa8744069119a76a9b31ae"
+            },
+            {
+              "path": "tokio/src/net/tcp/stream.rs",
+              "start_line": 1445,
+              "end_line": 1451,
+              "representation": "source",
+              "reason": "text; multi-query; reference",
+              "score": 2.3119,
+              "token_count": 51,
+              "content_hash": "a6ba4bcd8561528320e78207578af36f"
+            },
+            {
+              "path": "tokio/tests/io_panic.rs",
+              "start_line": 10,
+              "end_line": 10,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 2.6952,
+              "token_count": 5,
+              "content_hash": "10ff68d5dd1617f01ac82aa74be31b15"
+            }
+          ],
+          "candidate_files": [
+            "CONTRIBUTING.md",
+            "README.md",
+            "benches/copy.rs",
+            "benches/fs.rs",
+            "docs/contributing/pull-requests.md",
+            "examples/README.md",
+            "examples/chat.rs",
+            "examples/dump.rs",
+            "examples/proxy.rs",
+            "stress-test/examples/simple_echo_tcp.rs",
+            "tests-build/README.md",
+            "tests-build/tests/fail/macros_invalid_input.rs",
+            "tests-build/tests/fail/macros_invalid_input.stderr",
+            "tests-integration/tests/process_stdio.rs",
+            "tokio-macros/CHANGELOG.md",
+            "tokio-macros/README.md",
+            "tokio-macros/src/entry.rs",
+            "tokio-macros/src/select.rs",
+            "tokio-stream/CHANGELOG.md",
+            "tokio-stream/README.md",
+            "tokio-stream/src/stream_ext.rs",
+            "tokio-stream/tests/join_set_stream.rs",
+            "tokio-stream/tests/stream_chain.rs",
+            "tokio-stream/tests/stream_fused.rs",
+            "tokio-stream/tests/stream_iter.rs",
+            "tokio-stream/tests/stream_merge.rs",
+            "tokio-stream/tests/stream_panic.rs",
+            "tokio-stream/tests/stream_stream_map.rs",
+            "tokio-stream/tests/watch.rs",
+            "tokio-test/README.md",
+            "tokio-test/src/io.rs",
+            "tokio-test/src/macros.rs",
+            "tokio-test/src/task.rs",
+            "tokio-test/tests/io.rs",
+            "tokio-test/tests/stream_mock.rs",
+            "tokio-util/CHANGELOG.md",
+            "tokio-util/README.md",
+            "tokio-util/src/codec/bytes_codec.rs",
+            "tokio-util/src/compat.rs",
+            "tokio-util/src/either.rs",
+            "tokio-util/src/io/inspect.rs",
+            "tokio-util/src/io/simplex.rs",
+            "tokio-util/src/io/sink_writer.rs",
+            "tokio-util/src/sync/mpsc.rs",
+            "tokio-util/src/task/join_queue.rs",
+            "tokio-util/src/task/spawn_pinned.rs",
+            "tokio-util/src/time/mod.rs",
+            "tokio-util/src/time/wheel/mod.rs",
+            "tokio-util/src/util/poll_buf.rs",
+            "tokio-util/tests/context.rs",
+            "tokio-util/tests/framed_stream.rs",
+            "tokio-util/tests/framed_write.rs",
+            "tokio-util/tests/future.rs",
+            "tokio-util/tests/io_inspect.rs",
+            "tokio-util/tests/io_simplex.rs",
+            "tokio-util/tests/io_write_all_vectored.rs",
+            "tokio-util/tests/length_delimited.rs",
+            "tokio-util/tests/panic.rs",
+            "tokio-util/tests/task_tracker.rs",
+            "tokio-util/tests/time_delay_queue.rs",
+            "tokio/CHANGELOG.md",
+            "tokio/README.md",
+            "tokio/src/blocking.rs",
+            "tokio/src/fs/file.rs",
+            "tokio/src/fs/mocks.rs",
+            "tokio/src/fs/mod.rs",
+            "tokio/src/fs/read_dir.rs",
+            "tokio/src/io/async_fd.rs",
+            "tokio/src/io/async_write.rs",
+            "tokio/src/io/blocking.rs",
+            "tokio/src/io/join.rs",
+            "tokio/src/io/mod.rs",
+            "tokio/src/io/split.rs",
+            "tokio/src/io/stderr.rs",
+            "tokio/src/io/stdio_common.rs",
+            "tokio/src/io/stdout.rs",
+            "tokio/src/io/util/async_read_ext.rs",
+            "tokio/src/io/util/async_seek_ext.rs",
+            "tokio/src/io/util/async_write_ext.rs",
+            "tokio/src/io/util/buf_reader.rs",
+            "tokio/src/io/util/buf_stream.rs",
+            "tokio/src/io/util/buf_writer.rs",
+            "tokio/src/io/util/chain.rs",
+            "tokio/src/io/util/copy.rs",
+            "tokio/src/io/util/mem.rs",
+            "tokio/src/io/util/sink.rs",
+            "tokio/src/io/util/write.rs",
+            "tokio/src/io/util/write_vectored.rs",
+            "tokio/src/macros/thread_local.rs",
+            "tokio/src/macros/try_join.rs",
+            "tokio/src/net/tcp/split.rs",
+            "tokio/src/net/tcp/split_owned.rs",
+            "tokio/src/net/tcp/stream.rs",
+            "tokio/src/net/unix/pipe.rs",
+            "tokio/src/net/unix/split.rs",
+            "tokio/src/net/unix/split_owned.rs",
+            "tokio/src/net/unix/stream.rs",
+            "tokio/src/net/windows/named_pipe.rs",
+            "tokio/src/process/mod.rs",
+            "tokio/src/process/unix/orphan.rs",
+            "tokio/src/runtime/blocking/mod.rs",
+            "tokio/src/runtime/blocking/pool.rs",
+            "tokio/src/runtime/builder.rs",
+            "tokio/src/runtime/config.rs",
+            "tokio/src/runtime/context.rs",
+            "tokio/src/runtime/io/registration_set.rs",
+            "tokio/src/runtime/mod.rs",
+            "tokio/src/runtime/park.rs",
+            "tokio/src/runtime/scheduler/multi_thread/mod.rs",
+            "tokio/src/runtime/scheduler/multi_thread/worker.rs",
+            "tokio/src/runtime/task/error.rs",
+            "tokio/src/runtime/task/harness.rs",
+            "tokio/src/runtime/task/waker.rs",
+            "tokio/src/runtime/task_hooks.rs",
+            "tokio/src/runtime/tests/loom_blocking.rs",
+            "tokio/src/runtime/tests/task_combinations.rs",
+            "tokio/src/runtime/time/entry.rs",
+            "tokio/src/runtime/time/mod.rs",
+            "tokio/src/runtime/time/wheel/mod.rs",
+            "tokio/src/runtime/time_alt/wheel/mod.rs",
+            "tokio/src/signal/registry.rs",
+            "tokio/src/sync/mpsc/bounded.rs",
+            "tokio/src/sync/mpsc/unbounded.rs",
+            "tokio/src/sync/tests/atomic_waker.rs",
+            "tokio/src/sync/tests/loom_mpsc.rs",
+            "tokio/src/sync/tests/loom_notify.rs",
+            "tokio/src/sync/tests/loom_oneshot.rs",
+            "tokio/src/task/local.rs",
+            "tokio/src/task/task_local.rs",
+            "tokio/src/time/interval.rs",
+            "tokio/src/time/mod.rs",
+            "tokio/tests/async_send_sync.rs",
+            "tokio/tests/fs_copy.rs",
+            "tokio/tests/fs_file.rs",
+            "tokio/tests/fs_remove_dir_all.rs",
+            "tokio/tests/fs_uring_completed_then_dropped_before_repoll.rs",
+            "tokio/tests/fs_uring_file_read.rs",
+            "tokio/tests/fs_uring_runtime_shutdown.rs",
+            "tokio/tests/fs_uring_statx.rs",
+            "tokio/tests/io_async_fd_memory_leak.rs",
+            "tokio/tests/io_fill_buf.rs",
+            "tokio/tests/io_panic.rs",
+            "tokio/tests/io_poll_aio.rs",
+            "tokio/tests/io_write_buf.rs",
+            "tokio/tests/join_handle_panic.rs",
+            "tokio/tests/macros_test.rs",
+            "tokio/tests/net_bind_resource.rs",
+            "tokio/tests/net_panic.rs",
+            "tokio/tests/no_rt.rs",
+            "tokio/tests/process_kill_after_wait.rs",
+            "tokio/tests/rt_basic.rs",
+            "tokio/tests/rt_panic.rs",
+            "tokio/tests/rt_poll_callbacks.rs",
+            "tokio/tests/rt_spawn_blocking.rs",
+            "tokio/tests/rt_threaded.rs",
+            "tokio/tests/signal_drop_recv.rs",
+            "tokio/tests/signal_drop_rt.rs",
+            "tokio/tests/signal_drop_signal.rs",
+            "tokio/tests/signal_notify_both.rs",
+            "tokio/tests/signal_panic.rs",
+            "tokio/tests/signal_twice.rs",
+            "tokio/tests/signal_usr1.rs",
+            "tokio/tests/support/panic.rs",
+            "tokio/tests/support/signal.rs",
+            "tokio/tests/sync_mpsc.rs",
+            "tokio/tests/sync_mpsc_weak.rs",
+            "tokio/tests/sync_notify.rs",
+            "tokio/tests/sync_notify_owned.rs",
+            "tokio/tests/sync_once_cell.rs",
+            "tokio/tests/sync_oneshot.rs",
+            "tokio/tests/sync_panic.rs",
+            "tokio/tests/sync_rwlock.rs",
+            "tokio/tests/task_abort.rs",
+            "tokio/tests/task_hooks.rs",
+            "tokio/tests/task_id.rs",
+            "tokio/tests/task_join_set.rs",
+            "tokio/tests/task_local_set.rs",
+            "tokio/tests/task_panic.rs",
+            "tokio/tests/tcp_into_std.rs",
+            "tokio/tests/tcp_socket.rs",
+            "tokio/tests/test_clock.rs",
+            "tokio/tests/time_interval.rs",
+            "tokio/tests/time_panic.rs",
+            "tokio/tests/time_pause.rs",
+            "tokio/tests/time_sleep.rs",
+            "tokio/tests/tracing_task.rs",
+            "tokio/tests/udp.rs"
+          ],
+          "relevant_candidate_evidence": [
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 256,
+              "end_line": 260,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:tokio::fs::file",
+                "facet:symbol:tokio::fs::file",
+                "channel:text:1",
+                "multi-query"
+              ],
+              "concepts": [
+                "tokio::fs::file"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.073626315383888,
+              "token_count": 32
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 484,
+              "end_line": 488,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:tokio::fs::file",
+                "facet:symbol:tokio::fs::file",
+                "channel:text:2",
+                "multi-query"
+              ],
+              "concepts": [
+                "tokio::fs::file"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.0709676792115825,
+              "token_count": 36
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 81,
+              "end_line": 84,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:tokio::fs::file",
+                "facet:symbol:tokio::fs::file",
+                "channel:text:4",
+                "multi-query"
+              ],
+              "concepts": [
+                "tokio::fs::file"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.073626305496742,
+              "token_count": 32
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 437,
+              "end_line": 441,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:tokio::fs::file",
+                "facet:symbol:tokio::fs::file",
+                "channel:text:6",
+                "multi-query"
+              ],
+              "concepts": [
+                "tokio::fs::file"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.070967671197312,
+              "token_count": 36
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 176,
+              "end_line": 180,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:tokio::fs::file",
+                "facet:symbol:tokio::fs::file",
+                "channel:text:8",
+                "multi-query"
+              ],
+              "concepts": [
+                "tokio::fs::file"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.073626300516802,
+              "token_count": 32
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 335,
+              "end_line": 339,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:tokio::fs::file",
+                "facet:symbol:tokio::fs::file",
+                "channel:text:10",
+                "multi-query"
+              ],
+              "concepts": [
+                "tokio::fs::file"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.073626299093962,
+              "token_count": 32
+            },
+            {
+              "path": "tokio/tests/fs_file.rs",
+              "start_line": 240,
+              "end_line": 249,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:tokio::fs::file",
+                "facet:symbol:tokio::fs::file",
+                "channel:text:16"
+              ],
+              "concepts": [
+                "tokio::fs::file"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.256634993000072,
+              "token_count": 61
+            },
+            {
+              "path": "tokio/tests/fs_file.rs",
+              "start_line": 227,
+              "end_line": 236,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:tokio::fs::file",
+                "facet:symbol:tokio::fs::file",
+                "channel:text:20"
+              ],
+              "concepts": [
+                "tokio::fs::file"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.256634977877838,
+              "token_count": 61
+            },
+            {
+              "path": "tokio/tests/fs_file.rs",
+              "start_line": 6,
+              "end_line": 10,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:tokio::fs::file",
+                "facet:symbol:tokio::fs::file",
+                "channel:text:21"
+              ],
+              "concepts": [
+                "tokio::fs::file"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.261940205204047,
+              "token_count": 51
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 893,
+              "end_line": 897,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:tokio::fs::file",
+                "facet:symbol:tokio::fs::file",
+                "channel:text:24",
+                "multi-query"
+              ],
+              "concepts": [
+                "tokio::fs::file"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.063065232472397,
+              "token_count": 49
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 728,
+              "end_line": 797,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:poll_write",
+                "facet:symbol:poll_write",
+                "channel:symbol:15",
+                "multi-query"
+              ],
+              "concepts": [
+                "poll_write"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.387128712871287,
+              "token_count": 456
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 742,
+              "end_line": 780,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:spawn_mandatory_blocking",
+                "facet:symbol:spawn_mandatory_blocking",
+                "channel:reference:0",
+                "multi-query"
+              ],
+              "concepts": [
+                "spawn_mandatory_blocking"
+              ],
+              "concept_weight": 2.0,
+              "score": 3.1006756756756757,
+              "token_count": 294
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 814,
+              "end_line": 851,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:exact_atom:spawn_mandatory_blocking",
+                "facet:symbol:spawn_mandatory_blocking",
+                "channel:reference:1",
+                "multi-query"
+              ],
+              "concepts": [
+                "spawn_mandatory_blocking"
+              ],
+              "concept_weight": 2.0,
+              "score": 3.1009049773755653,
+              "token_count": 292
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 23,
+              "end_line": 27,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:spawn_mandatory_blocking",
+                "facet:symbol:spawn_mandatory_blocking",
+                "channel:text:3",
+                "multi-query"
+              ],
+              "concepts": [
+                "spawn_mandatory_blocking"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.066580255912659,
+              "token_count": 43
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 742,
+              "end_line": 780,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:spawn_mandatory_blocking",
+                "facet:symbol:spawn_mandatory_blocking",
+                "channel:text:7",
+                "multi-query"
+              ],
+              "concepts": [
+                "spawn_mandatory_blocking"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.000675595740833,
+              "token_count": 294
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 814,
+              "end_line": 851,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:spawn_mandatory_blocking",
+                "facet:symbol:spawn_mandatory_blocking",
+                "channel:text:9",
+                "multi-query"
+              ],
+              "concepts": [
+                "spawn_mandatory_blocking"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.000904894363062,
+              "token_count": 292
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 623,
+              "end_line": 660,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:state::idle",
+                "facet:symbol:state::idle",
+                "channel:text:1",
+                "multi-query"
+              ],
+              "concepts": [
+                "state::idle"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.007692261265985,
+              "token_count": 240
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 597,
+              "end_line": 634,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:state::idle",
+                "facet:symbol:state::idle",
+                "channel:text:2",
+                "multi-query"
+              ],
+              "concepts": [
+                "state::idle"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.002570044737792,
+              "token_count": 278
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 395,
+              "end_line": 432,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:state::idle",
+                "facet:symbol:state::idle",
+                "channel:text:6",
+                "multi-query"
+              ],
+              "concepts": [
+                "state::idle"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.008290097188894,
+              "token_count": 236
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 730,
+              "end_line": 768,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:state::idle",
+                "facet:symbol:state::idle",
+                "channel:text:7",
+                "multi-query"
+              ],
+              "concepts": [
+                "state::idle"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.0022041151308505,
+              "token_count": 281
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 1104,
+              "end_line": 1122,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:state::idle",
+                "facet:symbol:state::idle",
+                "channel:text:8",
+                "multi-query"
+              ],
+              "concepts": [
+                "state::idle"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.021655989421683,
+              "token_count": 164
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 802,
+              "end_line": 839,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:state::idle",
+                "facet:symbol:state::idle",
+                "channel:text:10",
+                "multi-query"
+              ],
+              "concepts": [
+                "state::idle"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.002204113455947,
+              "token_count": 281
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 282,
+              "end_line": 292,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:state::idle",
+                "facet:symbol:state::idle",
+                "channel:text:14",
+                "multi-query"
+              ],
+              "concepts": [
+                "state::idle"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.049118857095081,
+              "token_count": 77
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 390,
+              "end_line": 427,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:exact_atom:state::idle",
+                "facet:symbol:state::idle",
+                "channel:text:15",
+                "multi-query"
+              ],
+              "concepts": [
+                "state::idle"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.004086451112885,
+              "token_count": 266
+            },
+            {
+              "path": "tokio/src/fs/file.rs",
+              "start_line": 799,
+              "end_line": 868,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:exact_atom:poll_write_vectored",
+                "facet:symbol:poll_write_vectored",
+                "channel:symbol:9",
+                "multi-query"
+              ],
+              "concepts": [
+                "poll_write_vectored"
+              ],
+              "concept_weight": 2.0,
+              "score": 4.386466774716369,
+              "token_count": 467
+            }
+          ],
+          "omitted_relevant_files": [
+            {
+              "path": "tokio/tests/fs_file.rs",
+              "reason": "generated but not selected"
+            }
+          ],
+          "relevant_files_found": 1,
+          "relevant_file_recall": 0.5,
+          "candidate_relevant_files_found": 2,
+          "candidate_relevant_file_recall": 1.0,
+          "labeled_file_precision": 0.2,
+          "line_anchors": 9,
+          "line_anchors_found": 6,
+          "line_anchor_recall": 0.6666666666666666,
+          "unlabeled_returned_files": [
+            "tokio-util/src/sync/mpsc.rs",
+            "tokio/src/net/tcp/stream.rs",
+            "tokio/tests/fs_uring_file_read.rs",
+            "tokio/tests/io_panic.rs"
+          ],
+          "oracle_source_tokens": 10551,
+          "oracle_minimal_read_json_tokens": 12370,
+          "rg_discovery_tokens": 17101,
+          "rg_discovery_json_tokens": 19254,
+          "scripted_baseline_total_json_tokens": 31627,
+          "leantoken_source_tokens": 1199,
+          "leantoken_total_json_tokens": 1864,
+          "source_savings_against_oracle_fraction": 0.8863614823239503,
+          "total_json_savings_against_scripted_fraction": 0.9410630157776583,
+          "first_context_ms": 297.78729999999996,
+          "warm_context_ms_samples": [
+            251.887584,
+            256.61262400000004,
+            260.65655300000003
+          ],
+          "warm_context_median_ms": 256.61262400000004,
+          "warm_context_p95_ms": 260.65655300000003,
+          "second_response_source_tokens": 1198,
+          "estimated_repeated_range_source_tokens": 281,
+          "repeat_request_json_tokens": 255,
+          "repeat_total_json_tokens": 1924,
+          "two_turn_context_json_tokens": 4043,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 4,
+          "dead_end_source_tokens": 276,
+          "concept_coverage": {
+            "concepts": 3,
+            "candidate_concepts_found": 2,
+            "candidate_concept_recall": 0.6666666666666666,
+            "selected_concepts_found": 2,
+            "selected_concept_recall": 0.6666666666666666,
+            "selection_retention": 1.0,
+            "evidence": [
+              {
+                "id": "blocking-pool-shutdown-regression",
+                "description": "Regression coverage must exercise writes after the mandatory blocking pool shuts down.",
+                "candidate_covered": false,
+                "selected_covered": false,
+                "candidate_anchors_found": [],
+                "selected_anchors_found": []
+              },
+              {
+                "id": "poll-write-state-recovery",
+                "description": "poll_write must retain a valid buffer state after spawn_mandatory_blocking fails.",
+                "candidate_covered": true,
+                "selected_covered": true,
+                "candidate_anchors_found": [
+                  {
+                    "path": "tokio/src/fs/file.rs",
+                    "line": 743
+                  },
+                  {
+                    "path": "tokio/src/fs/file.rs",
+                    "line": 755
+                  },
+                  {
+                    "path": "tokio/src/fs/file.rs",
+                    "line": 764
+                  }
+                ],
+                "selected_anchors_found": [
+                  {
+                    "path": "tokio/src/fs/file.rs",
+                    "line": 743
+                  },
+                  {
+                    "path": "tokio/src/fs/file.rs",
+                    "line": 755
+                  },
+                  {
+                    "path": "tokio/src/fs/file.rs",
+                    "line": 764
+                  }
+                ]
+              },
+              {
+                "id": "poll-write-vectored-state-recovery",
+                "description": "poll_write_vectored must retain a valid buffer state after spawn_mandatory_blocking fails.",
+                "candidate_covered": true,
+                "selected_covered": true,
+                "candidate_anchors_found": [
+                  {
+                    "path": "tokio/src/fs/file.rs",
+                    "line": 814
+                  },
+                  {
+                    "path": "tokio/src/fs/file.rs",
+                    "line": 826
+                  },
+                  {
+                    "path": "tokio/src/fs/file.rs",
+                    "line": 835
+                  }
+                ],
+                "selected_anchors_found": [
+                  {
+                    "path": "tokio/src/fs/file.rs",
+                    "line": 814
+                  },
+                  {
+                    "path": "tokio/src/fs/file.rs",
+                    "line": 826
+                  },
+                  {
+                    "path": "tokio/src/fs/file.rs",
+                    "line": 835
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "The oracle baseline assumes perfect file selection and reads whole files rather than exact decisive ranges.",
+    "The scripted ripgrep baseline uses fixed queries supplied by the manifest and is not an autonomous agent trajectory.",
+    "No model executes an edit, so this runner does not measure pass rate, prewalk handoff quality, or end-to-end task cost.",
+    "Cold indexing and warm latency depend on host hardware and filesystem cache state.",
+    "Validation prompts and labels were frozen from open issue reports and pinned source inspection, then used during retrieval tuning; this is not blind holdout evidence.",
+    "Four validation tasks are retrieval development evidence, not a statistically powered product claim.",
+    "Concept coverage credits a frozen concept when one labeled anchor is present; it does not prove that the complete implementation, test, or explanation was retrieved.",
+    "The concept overlay partitions labels from a consumed development set. Its thresholds are regression floors, not promotion or generalization evidence."
+  ]
+}

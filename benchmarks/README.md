@@ -156,6 +156,10 @@ be read beside line-anchor recall and returned evidence.
 
 `benchmark_ablation` compares these metrics only when both reports use the same
 concept-label BLAKE3. It rejects a labeled/unlabeled pair or different overlays.
+The first checked run and decision record are
+[`reports/context-concept-coverage-v1-2026-07-26.json`](reports/context-concept-coverage-v1-2026-07-26.json)
+and
+[`reports/context-concept-coverage-v1-2026-07-26.md`](reports/context-concept-coverage-v1-2026-07-26.md).
 
 ## Handoff manifest crossover
 
