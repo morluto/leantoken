@@ -598,9 +598,10 @@ as RFC 6901 key paths without values; and labels likely owner tests as `found`,
 on each side. Ambiguity, incomplete parsing, byte or result limits, unsupported
 Git entries, and truncated test scans are emitted as gaps rather than guessed.
 
-Semantic classification shares the diff-evidence cap of 64 changed paths and 64
-symbol or configuration changes, with an 8 MiB aggregate historical-content
-limit. It is absent from plan-only and non-review responses. Review requests
+Semantic classification shares the diff-evidence cap of 64 changed paths and
+separately caps symbol and configuration changes at 64 each, with an 8 MiB
+aggregate historical-content limit. It is absent from plan-only and non-review
+responses. Review requests
 against the working tree or a single base revision retain owner-test coverage
 but report `semantic_change_requires_immutable_range`; no risk score is
 produced.

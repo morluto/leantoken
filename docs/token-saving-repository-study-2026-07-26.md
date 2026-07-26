@@ -18,8 +18,8 @@ The strongest candidates are:
 
 1. Import public retrieval corpora and baselines before changing production
    ranking.
-2. Test a small, local semantic lane behind an experimental boundary, with
-   explicit lane coverage and model identity.
+2. Keep production retrieval lightweight; the proposed model-backed semantic
+   lane was deliberately skipped after review.
 3. Add generation-aware delta responses for repeated exact reads in an edit
    loop.
 4. Improve the existing review workflow with semantic change classification and
@@ -484,10 +484,16 @@ Record immutable repository revisions and evaluate:
 
 The adapter must not change production ranking.
 
-### P0: local semantic lane experiment
+### P0: local semantic lane experiment (skipped)
 
 Prototype a separately gated static embedding lane, starting with Semble's
 Model2Vec approach.
+
+Decision on 2026-07-26: skip this experiment. Even a local Model2Vec lane adds
+model artifacts, lifecycle, index footprint, and runtime policy that do not fit
+the current lightweight product boundary. No branch, tracked artifact, or PR was
+retained. The contract below remains as historical evaluation criteria if that
+boundary is revisited.
 
 Required contract:
 
