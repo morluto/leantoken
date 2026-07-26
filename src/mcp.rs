@@ -480,7 +480,7 @@ struct HistoryMcpRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum HistoryMcpOperation {
-    /// Read one parsed symbol from an immutable Git revision.
+    /// Read one parsed symbol, optionally qualified as `parent.name`, from an immutable revision.
     ReadSymbol {
         #[schemars(length(min = 1, max = 4096))]
         path: String,
@@ -489,7 +489,7 @@ enum HistoryMcpOperation {
         #[schemars(length(min = 1, max = 4096))]
         revision: String,
     },
-    /// Compare one parsed symbol between two immutable Git revisions.
+    /// Compare one parsed symbol across revisions, including added or removed endpoints.
     DiffSymbol {
         #[schemars(length(min = 1, max = 4096))]
         path: String,
@@ -1362,7 +1362,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "history",
-        description = "Read, diff, or trace one parsed symbol across immutable Git revisions. Use read_symbol for historical source, diff_symbol for a bounded unified diff, and symbol_log for commits touching the symbol's tracked lines. For immutable range-scoped context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbol\",\"path\":\"src/services.rs\",\"symbol\":\"meta\",\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}."
+        description = "Read, diff, or trace one parsed symbol across immutable Git revisions. Symbols may use parent.name qualification. diff_symbol returns bounded add/delete diffs when the symbol or file exists at only one endpoint; symbol_log traces tracked lines. For immutable range-scoped context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbol\",\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\",\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}."
     )]
     async fn leantoken_history(
         &self,
