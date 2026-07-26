@@ -894,7 +894,8 @@ fn acquire_setup_lock(runtime_root: &Path) -> Result<SetupLock> {
 
 impl SetupTransaction {
     fn commit(self) -> Result<()> {
-        fs::remove_file(self.path)?;
+        fs::remove_file(&self.path)?;
+        sync_parent_directory(&self.path)?;
         Ok(())
     }
 }
@@ -942,7 +943,8 @@ fn recover_interrupted_transaction(runtime_root: &Path) -> Result<()> {
         }
         restore_path(&entry.path, entry.original.as_deref())?;
     }
-    fs::remove_file(path)?;
+    fs::remove_file(&path)?;
+    sync_parent_directory(&path)?;
     Ok(())
 }
 
@@ -999,6 +1001,7 @@ fn begin_setup_transaction(plan: &ResolvedSetupPlan) -> Result<Option<SetupTrans
             error.error
         ))
     })?;
+    sync_parent_directory(&path)?;
     Ok(Some(SetupTransaction { path }))
 }
 
@@ -1011,6 +1014,7 @@ fn restore_path(path: &Path, original: Option<&str>) -> Result<()> {
         None => {
             if path.exists() {
                 fs::remove_file(path)?;
+                sync_parent_directory(path)?;
             }
             Ok(())
         }
@@ -1338,6 +1342,7 @@ fn apply_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> {
         ClientPlanAction::Remove => {
             if edit.public.path.exists() {
                 fs::remove_file(&edit.public.path)?;
+                sync_parent_directory(&edit.public.path)?;
             }
             Ok(())
         }
@@ -1659,6 +1664,23 @@ fn write_if_changed(path: &Path, original: &str, updated: &str) -> Result<()> {
     temporary
         .persist(path)
         .map_err(|error| Error::Io(error.error))?;
+    sync_parent_directory(path)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_parent_directory(path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| Error::InternalFailure(format!("path has no parent: {}", path.display())))?;
+    fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_parent_directory(_path: &Path) -> Result<()> {
+    // Windows does not expose the Unix directory-fsync contract through
+    // std::fs. File contents are still synced before atomic replacement.
     Ok(())
 }
 
