@@ -693,4 +693,49 @@ mod tests {
                 .contains("context.exclude_paths` must be an array")
         );
     }
+
+    #[test]
+    fn usage_documents_default_context_exclusions() {
+        let usage = include_str!("../docs/usage.md");
+        for pattern in DEFAULT_CONTEXT_EXCLUDE_PATHS {
+            assert!(
+                usage.contains(pattern),
+                "usage guide is missing default context exclusion {pattern}"
+            );
+        }
+    }
+
+    #[test]
+    fn usage_documents_discovery_defaults() {
+        let usage = include_str!("../docs/usage.md");
+        let expected = [
+            (
+                "max-walk-entries",
+                DiscoveryLimits::DEFAULT_MAX_WALK_ENTRIES,
+            ),
+            ("max-files", DiscoveryLimits::DEFAULT_MAX_FILES),
+            (
+                "max-total-source-bytes",
+                DiscoveryLimits::DEFAULT_MAX_TOTAL_SOURCE_BYTES,
+            ),
+            ("max-depth", DiscoveryLimits::DEFAULT_MAX_DEPTH as u64),
+            ("max-file-bytes", DiscoveryLimits::DEFAULT_MAX_FILE_BYTES),
+            (
+                "max-prepare-batch-files",
+                DiscoveryLimits::DEFAULT_MAX_PREPARE_BATCH_FILES as u64,
+            ),
+            (
+                "max-prepare-batch-bytes",
+                DiscoveryLimits::DEFAULT_MAX_PREPARE_BATCH_BYTES,
+            ),
+        ];
+
+        for (option, value) in expected {
+            assert!(usage.contains(&format!("--{option}")));
+            assert!(
+                usage.contains(&format!("default: {value}")),
+                "usage guide is missing {option}'s default {value}"
+            );
+        }
+    }
 }

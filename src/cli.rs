@@ -40,23 +40,86 @@ fn parse_cache_list_limit(value: &str) -> std::result::Result<usize, String> {
     Ok(value)
 }
 
-const ADVANCED_REPOSITORY_OPTION_IDS: [&str; 10] = [
-    "allow_broad_root",
-    "include_generated",
-    "max_walk_entries",
-    "max_files",
-    "max_total_source_bytes",
-    "max_depth",
-    "max_file_bytes",
-    "max_prepare_batch_files",
-    "max_prepare_batch_bytes",
-    "max_index_workers",
+#[derive(Debug, Clone, Copy)]
+struct ScopedGlobalOption {
+    id: &'static str,
+    long: &'static str,
+    advanced: bool,
+}
+
+// Keep command-scope policy beside the option identifiers. Clap owns the
+// parser shape; this table owns the separate rule that repository-free
+// commands must reject repository and tokenizer flags.
+const COMMAND_SCOPE_OPTIONS: &[ScopedGlobalOption] = &[
+    ScopedGlobalOption {
+        id: "root",
+        long: "--root",
+        advanced: false,
+    },
+    ScopedGlobalOption {
+        id: "allow_broad_root",
+        long: "--allow-broad-root",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "include_generated",
+        long: "--include-generated",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "max_walk_entries",
+        long: "--max-walk-entries",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "max_files",
+        long: "--max-files",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "max_total_source_bytes",
+        long: "--max-total-source-bytes",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "max_depth",
+        long: "--max-depth",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "max_file_bytes",
+        long: "--max-file-bytes",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "max_prepare_batch_files",
+        long: "--max-prepare-batch-files",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "max_prepare_batch_bytes",
+        long: "--max-prepare-batch-bytes",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "max_index_workers",
+        long: "--max-index-workers",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "tokenizer",
+        long: "--tokenizer",
+        advanced: false,
+    },
 ];
 
 fn hide_advanced_repository_options(command: Command) -> Command {
     command
         .mut_args(|argument| {
-            if ADVANCED_REPOSITORY_OPTION_IDS.contains(&argument.get_id().as_str()) {
+            if COMMAND_SCOPE_OPTIONS
+                .iter()
+                .any(|option| option.advanced && option.id == argument.get_id().as_str())
+            {
                 argument.hide(true)
             } else {
                 argument
@@ -199,25 +262,11 @@ impl Cli {
         ) {
             return Ok(());
         }
-        const REPOSITORY_OPTIONS: [&str; 11] = [
-            "--root",
-            "--allow-broad-root",
-            "--include-generated",
-            "--max-walk-entries",
-            "--max-files",
-            "--max-total-source-bytes",
-            "--max-depth",
-            "--max-file-bytes",
-            "--max-prepare-batch-files",
-            "--max-prepare-batch-bytes",
-            "--max-index-workers",
-        ];
-        const TOKENIZER: &str = "--tokenizer";
         let supplied = arguments.iter().skip(1).find_map(|argument| {
             let argument = argument.as_os_str().as_encoded_bytes();
-            REPOSITORY_OPTIONS
-                .into_iter()
-                .chain(std::iter::once(TOKENIZER))
+            COMMAND_SCOPE_OPTIONS
+                .iter()
+                .map(|option| option.long)
                 .find(|option| {
                     argument == option.as_bytes()
                         || argument
@@ -333,6 +382,26 @@ impl Cli {
                 check: args.check,
                 yes: args.yes,
             },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn scoped_global_option_registry_matches_clap_arguments() {
+        let command = Cli::command();
+        for option in COMMAND_SCOPE_OPTIONS {
+            assert!(
+                command
+                    .get_arguments()
+                    .any(|argument| argument.get_id().as_str() == option.id),
+                "scoped option {} is not defined by Clap",
+                option.id
+            );
         }
     }
 }

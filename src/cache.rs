@@ -1273,6 +1273,9 @@ mod tests {
         let root = temp.path().join("managed");
         let repository = temp.path().join("repository");
         fs::create_dir(&repository).expect("repository");
+        // Config canonicalizes repository roots before binding cache metadata;
+        // preserve that contract on macOS, where /var is commonly a symlink.
+        let repository = fs::canonicalize(repository).expect("canonical repository");
         let manager = CacheManager::new(root.clone(), 10_000);
         for id in [FIRST_ID, SECOND_ID] {
             let directory = root.join(id);

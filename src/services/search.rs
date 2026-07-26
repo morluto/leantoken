@@ -20,15 +20,15 @@ use crate::text::{
 use crate::{Error, Result};
 
 /// Absolute regex scan candidate cap (independent of max_results multiplier).
-const MAX_REGEX_CANDIDATES: usize = 2_000;
+pub(super) const MAX_REGEX_CANDIDATES: usize = 2_000;
 /// Maximum files examined during a regex scan before early exit.
-const MAX_REGEX_FILES_SCANNED: usize = 10_000;
+pub(super) const MAX_REGEX_FILES_SCANNED: usize = 10_000;
 /// Maximum chunks examined per file during a regex scan.
-const MAX_REGEX_CHUNKS_PER_FILE: usize = 256;
+pub(super) const MAX_REGEX_CHUNKS_PER_FILE: usize = 256;
 /// Maximum trigram rows verified before a planned regex search fails explicitly.
-const MAX_REGEX_CANDIDATE_CHUNKS: usize = 10_000;
+pub(super) const MAX_REGEX_CANDIDATE_CHUNKS: usize = 10_000;
 /// Maximum lightweight FTS rows inspected while applying path-scoped planning.
-const MAX_SCOPED_REGEX_ROWS_SCANNED: usize = 100_000;
+pub(super) const MAX_SCOPED_REGEX_ROWS_SCANNED: usize = 100_000;
 /// Maximum exact matches materialized by one exhaustive occurrence request.
 const MAX_EXHAUSTIVE_OCCURRENCES: usize = 100_000;
 const FILTER_SCAN_PAGE_SIZE: usize = 256;

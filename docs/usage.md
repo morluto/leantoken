@@ -17,6 +17,7 @@ responses are bounded.
 --max-file-bytes <BYTES>         Bytes admitted from one file (default: 2097152)
 --max-prepare-batch-files <COUNT>  Files per preparation batch (default: 256)
 --max-prepare-batch-bytes <BYTES>  Bytes per preparation batch (default: 67108864)
+--max-index-workers <COUNT>        Parallel file-preparation workers
 --database <PATH>  Override the per-repository SQLite cache path
 --tokenizer <ENCODING>  Source and protocol accounting tokenizer
 --json             Emit JSON from CLI commands
@@ -33,7 +34,11 @@ leantoken files <tree|find|glob> [options] [--consistency <mode>]
 leantoken search <query> [options] [--consistency <mode>]
 leantoken outline <path>... [--consistency <mode>]
 leantoken read <path> [--lines START:END] [--symbol NAME] [--consistency <mode>]
+leantoken history <operation> ... [options]
+leantoken json <path> [options]
 leantoken context --task <text> --budget <tokens> [--consistency <mode>]
+leantoken update [--check] [--yes]
+leantoken upgrade [--check] [--yes]
 leantoken mcp [--result-mode dual|text|structured]
 leantoken setup [CLIENT...] [--all] [--refresh] [--yes] [--dry-run] [--allow-outdated]
 leantoken remove [CLIENT...] [--all] [--yes] [--dry-run]
