@@ -7,7 +7,7 @@
 Local-first code intelligence for coding agents. Search code, inspect structure,
 read exact ranges, and explore Git history through a CLI and MCP server.
 
-<img src="assets/leantoken-hero-v2.png" alt="LeanToken distilling a large source repository into focused, token-bounded context" width="100%">
+<img src="assets/leantoken-hero-v2.png" alt="LeanToken narrowing a large codebase to the files and code an AI agent needs" width="100%">
 
 [![npm](https://img.shields.io/npm/v/leantoken?logo=npm&label=npm)](https://www.npmjs.com/package/leantoken)
 [![npm downloads](https://img.shields.io/npm/dm/leantoken?logo=npm&label=downloads)](https://www.npmjs.com/package/leantoken)
@@ -20,11 +20,11 @@ read exact ranges, and explore Git history through a CLI and MCP server.
 
 ---
 
-> **Measured, task-specific evidence:** When enabled, LeanToken helped coding
-> agents send 20.1% fewer input tokens to the model than lightweight repository
-> exploration, and 37.6% fewer than broad repository exploration. These results
-> come from a controlled 60-run comparison using Codex CLI 0.144.1, the same
-> task setup, and four pinned repositories. See the [measurement methodology](docs/measurement.md).
+> **Measured token savings:** In a controlled 60-run study, LeanToken used
+> 20.1% fewer model input tokens than the agent's built-in tools with limited
+> repository exploration, and 37.6% fewer than those tools with broad
+> exploration. See exactly
+> how it was measured in the [measurement methodology](docs/measurement.md).
 
 ## Quick start
 
@@ -57,17 +57,16 @@ root by default.
 
 </details>
 
-Restart or reload the configured clients, then verify the complete MCP
-handshake and first retrieval from a repository:
+Restart or reload the configured clients, then verify the connection and first
+retrieval from a repository:
 
 ```bash
 npx leantoken doctor
 ```
 
-Start with a broad task such as: *Use LeanToken to find the relevant code before
-editing.* The MCP initialization guidance routes the agent to
-`leantoken.context` first and keeps native tools available for edits, builds,
-and tests.
+Try a broad task such as: *Find the code related to request cancellation before
+editing.* LeanToken helps the agent start with `leantoken.context`, while its
+normal tools remain available for edits, builds, and tests.
 
 Check how many tokens LeanToken has saved:
 
@@ -79,8 +78,8 @@ npx leantoken savings
 <tr>
 <td width="33%" valign="top">
 <strong>Local by default</strong><br><br>
-Source is indexed on your machine in SQLite. LeanToken is a read-only discovery
-and retrieval layer.
+Source is indexed on your machine in a local database. LeanToken is a read-only
+discovery and retrieval layer.
 </td>
 <td width="33%" valign="top">
 <strong>Explicit token budgets</strong><br><br>
@@ -89,9 +88,8 @@ request.
 </td>
 <td width="33%" valign="top">
 <strong>Built for agent workflows</strong><br><br>
-Browse paths, search identifiers, inspect outlines, read exact ranges, trace
-symbol history, query structured JSON, and inspect cumulative token accounting through
-eight focused MCP tools.
+Find files, search code, inspect structure, read exact ranges, trace history,
+query JSON, and track token usage through focused tools.
 </td>
 </tr>
 </table>
@@ -146,11 +144,11 @@ that work in stages:
 
 | Typical repository exploration | With LeanToken |
 | --- | --- |
-| Scan broad directory listings | Browse a compact, ignore-aware tree |
-| Read entire files to find structure | Request signatures, definitions, imports, and ranges |
-| Repeat searches after handoffs | Suppress unchanged evidence with content hashes |
-| Let source reads grow with file size | Apply an explicit token limit to every retrieval |
-| Guess which files matter | Rank task-specific evidence when scope is uncertain |
+| Scan broad directory listings | Find relevant paths in a compact tree |
+| Read whole files to find structure | See definitions and imports without loading the entire file |
+| Send the same code again after each turn | Avoid repeating unchanged evidence |
+| Let large files fill the request | Keep every retrieval within a token budget |
+| Guess which files matter | Rank likely relevant code for the task |
 
 Your coding agent still handles editing, commands, tests, and conversation.
 LeanToken finds and returns the code those tasks need.
@@ -170,8 +168,8 @@ Selected evidence:
   src/services/executor.rs        lines 137-147, 251-259
   src/services/reconciliation.rs lines 148-175, 257-272
 
-The response also includes the matching symbols, source excerpts, hashes, and
-any evidence left out by the budget.
+The agent receives these ranges instead of both full files. If the budget is too
+small, the response also says what was left out.
 ```
 
 ## Available tools
@@ -279,12 +277,12 @@ cargo install --git https://github.com/morluto/leantoken
 
 ## Updating
 
-MCP entries created through npx are pinned to the exact version that ran setup.
-They change only when setup is run again for selected clients or with
-`setup --refresh`. The configured launcher may contact npm to obtain that exact
-package, but it never falls forward to `@latest`. Removing the npm cache while
-offline can therefore make startup fail rather than execute an unapproved
-version.
+MCP entries created through `npx` stay pinned to the exact LeanToken version
+that configured them. Update existing client integrations explicitly:
+
+```bash
+npx --yes leantoken@latest setup --refresh --yes
+```
 
 For a globally installed CLI or a CLI installed with Cargo:
 
@@ -293,43 +291,30 @@ leantoken upgrade --check
 leantoken upgrade --yes
 ```
 
-`update` is an alias for `upgrade`. For a project-local npm installation,
-update the dependency with npm:
+`update` is an alias for `upgrade`. For a project-local npm installation:
 
 ```bash
 npm install leantoken@latest
 ```
 
-A persistent CLI upgrade leaves existing MCP entries unchanged so exact pins
-and intentional rollbacks remain stable. After a successful upgrade, LeanToken
-prints the exact version-pinned `setup --refresh --yes` command for users who
-want to advance only their existing registrations.
+Pinned MCP entries never silently move to `@latest`. If the exact package is not
+available locally or online, startup fails rather than selecting another version.
+Updating the CLI does not change existing MCP entries. See the
+[usage guide](docs/usage.md) for rollbacks, cache management, and version details.
 
 ## Cache management
 
-LeanToken keeps one SQLite cache per canonical repository and index-content
-version in the platform cache directory. Compatible builds share that managed
-cache, while an older process cannot downgrade a newer managed index after an
-upgrade. Inspect usage and preview an age- or size-based cleanup before applying
-it:
+Inspect local repository caches or preview cleanup before applying it:
 
 ```bash
 leantoken cache list
 leantoken cache list --summary
-leantoken cache list --state legacy --state corrupt --limit 20
 leantoken cache prune --older-than 30 --dry-run
 leantoken cache prune --max-total-bytes 1073741824 --yes
 ```
 
-List output is paginated by stable cache identifier; pass the returned opaque
-`--cursor` with the same filters for the next page. Use
-`--repository-root PATH` for one exact recorded root.
-
-Active MCP leaders and followers hold a lifetime lease and are skipped. A
-missing repository is retained unless it also meets another criterion or
-`--remove-missing-roots` is passed explicitly, because removable and offline
-volumes can be temporarily unavailable. Cache commands never inspect or delete
-an explicit `--database` outside the managed cache directory.
+See the [usage guide](docs/usage.md) for cache states, pagination, and cleanup
+safety rules.
 
 ## How it works
 
@@ -337,17 +322,17 @@ an explicit `--database` outside the managed cache directory.
 repository
     │
     ▼
-ignore-aware discovery ──► syntax extraction ──► SQLite + FTS5 index
+file discovery ──► code structure extraction ──► local search index
                                                     │
                                                     ▼
-agent request ──► ranked / exact retrieval ──► token-bounded evidence
+agent request ──► ranked / exact retrieval ──► focused code within a token budget
 ```
 
 LeanToken indexes source once, then serves compact paths, ranked matches,
-structural outlines, exact source ranges, and task-specific context. Content
-hashes reduce repeated evidence across turns and model handoffs.
+structural outlines, exact source ranges, and task-specific context. It avoids
+resending unchanged evidence across turns.
 
-The primary metric is useful repository evidence delivered per model token.
+LeanToken's goal is to return the code an agent needs with fewer input tokens.
 
 ## Documentation
 
