@@ -104,7 +104,22 @@ fn summarize_omissions(
     prefiltered_path_omissions: &[String],
     focus_paths: &PathMatcher,
     changed_paths: &HashSet<&str>,
+    verbose_diagnostics: bool,
 ) -> ContextOmissionSummary {
+    let path_excluded = path_omitted
+        .len()
+        .saturating_add(prefiltered_path_omissions.len());
+    let known_hash = known_omitted.len();
+    let budget_or_result_limit = limit_omitted.len();
+    if !verbose_diagnostics {
+        return ContextOmissionSummary {
+            path_excluded,
+            known_hash,
+            budget_or_result_limit,
+            ..ContextOmissionSummary::default()
+        };
+    }
+
     let mut paths = HashMap::new();
     let mut file_types = HashMap::new();
     let mut score_bands = HashMap::new();
@@ -129,11 +144,6 @@ fn summarize_omissions(
         record(path, None);
     }
 
-    let path_excluded = path_omitted
-        .len()
-        .saturating_add(prefiltered_path_omissions.len());
-    let known_hash = known_omitted.len();
-    let budget_or_result_limit = limit_omitted.len();
     let total = path_excluded
         .saturating_add(known_hash)
         .saturating_add(budget_or_result_limit);
@@ -951,6 +961,7 @@ fn select_with_options(
         prefiltered_path_omissions,
         &focus_paths,
         &changed_paths,
+        request.verbose_diagnostics,
     );
     let mut omitted_dto: Vec<OmittedCandidate> = path_omitted
         .into_iter()
@@ -1400,6 +1411,7 @@ mod tests {
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         }
     }
 
@@ -1423,6 +1435,7 @@ mod tests {
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         }
     }
 
@@ -1446,6 +1459,7 @@ mod tests {
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         }
     }
 
@@ -1984,6 +1998,7 @@ mod tests {
         request.changed_paths = vec!["src/changed.rs".into()];
         request.exclude_paths = vec!["tests/**".into()];
         request.known_hashes = vec![known_hash];
+        request.verbose_diagnostics = true;
 
         let response = select_with_tokenizer_and_context_exclusions(
             vec![selected, limited, known, excluded],
@@ -2026,6 +2041,97 @@ mod tests {
                 .sum::<usize>(),
             4
         );
+    }
+
+    #[test]
+    fn compact_omission_diagnostics_preserve_selection_with_lower_response_cost() {
+        let mut candidates = (0..20)
+            .map(|index| {
+                Candidate::new(
+                    format!("src/module_{index:02}.rs"),
+                    1,
+                    2,
+                    format!("fn candidate_{index}() {{}}"),
+                )
+                .exact((20 - index) as f64)
+            })
+            .collect::<Vec<_>>();
+        let known = Candidate::new("src/known.md", 1, 2, "known").exact(1.0);
+        let known_hash = known.content_hash();
+        candidates.push(known);
+        candidates.push(Candidate::new("tests/excluded.rs", 1, 2, "excluded").exact(1.0));
+        let mut compact_request = request_with_budget(100);
+        compact_request.max_fragments = Some(1);
+        compact_request.exclude_paths = vec!["tests/**".into()];
+        compact_request.known_hashes = vec![known_hash];
+        let mut verbose_request = compact_request.clone();
+        verbose_request.verbose_diagnostics = true;
+
+        let compact = select(candidates.clone(), &compact_request, 1);
+        let verbose = select(candidates, &verbose_request, 1);
+
+        assert_eq!(
+            compact
+                .fragments
+                .iter()
+                .map(|fragment| (&fragment.path, &fragment.content_hash))
+                .collect::<Vec<_>>(),
+            verbose
+                .fragments
+                .iter()
+                .map(|fragment| (&fragment.path, &fragment.content_hash))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            compact.receipt.task_fingerprint,
+            verbose.receipt.task_fingerprint
+        );
+        assert_eq!(
+            compact.receipt.fragment_hashes,
+            verbose.receipt.fragment_hashes
+        );
+        assert_eq!(compact.coverage, verbose.coverage);
+        assert_eq!(compact.warnings, verbose.warnings);
+        assert_eq!(compact.omitted.len(), verbose.omitted.len());
+        let compact_counts = (
+            compact.omission_summary.path_excluded,
+            compact.omission_summary.known_hash,
+            compact.omission_summary.budget_or_result_limit,
+        );
+        let verbose_counts = (
+            verbose.omission_summary.path_excluded,
+            verbose.omission_summary.known_hash,
+            verbose.omission_summary.budget_or_result_limit,
+        );
+        assert_eq!(compact_counts, (1, 1, 19));
+        assert_eq!(compact_counts, verbose_counts);
+        assert!(compact.omission_summary.by_path.is_empty());
+        assert!(compact.omission_summary.by_language_or_file_type.is_empty());
+        assert!(compact.omission_summary.by_reason.is_empty());
+        assert!(compact.omission_summary.by_score_band.is_empty());
+        assert_eq!(compact.omission_summary.focused, 0);
+        assert_eq!(compact.omission_summary.not_focused, 0);
+        assert_eq!(compact.omission_summary.changed, 0);
+        assert_eq!(compact.omission_summary.not_changed, 0);
+        assert!(!verbose.omission_summary.by_path.is_empty());
+        assert!(
+            compact.meta.total_response_tokens < verbose.meta.total_response_tokens,
+            "compact={} verbose={}",
+            compact.meta.total_response_tokens,
+            verbose.meta.total_response_tokens
+        );
+
+        let serialized =
+            serde_json::to_value(&compact.omission_summary).expect("compact diagnostics JSON");
+        let object = serialized.as_object().expect("diagnostics object");
+        assert_eq!(
+            object
+                .get("budget_or_result_limit")
+                .and_then(serde_json::Value::as_u64),
+            Some(19)
+        );
+        assert!(!object.contains_key("by_path"));
+        assert!(!object.contains_key("not_focused"));
     }
 
     #[test]

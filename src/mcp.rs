@@ -776,6 +776,9 @@ struct ContextMcpRequest {
     /// Require every returned fragment to belong to the resolved changed paths.
     #[serde(default)]
     strict_changed_paths: bool,
+    /// Include full path, file-type, reason, score-band, focus, and change omission facets.
+    #[serde(default)]
+    verbose_diagnostics: bool,
     /// Attach a compact provenance manifest for a host-triggered executor handoff.
     #[serde(default)]
     handoff: Option<HandoffManifestRequest>,
@@ -830,6 +833,7 @@ impl ContextMcpRequest {
                 base_revision: self.base_revision,
                 changed_paths: self.changed_paths,
                 strict_changed_paths: self.strict_changed_paths,
+                verbose_diagnostics: self.verbose_diagnostics,
             },
             self.workflow,
             self.consistency,
@@ -1412,7 +1416,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "context",
-        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. For uncertain broad tasks, set plan_only=true to preview bounded ranked paths, ranges, reasons, token estimates, focus coverage, and generated-artifact warnings without source or receipt mutation; then repeat the same request with plan_only=false to materialize. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required evidence. Coverage diagnostics fail loud when strict scopes are empty or underfilled. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Set handoff for a compact provenance manifest without copied source. Example: {\"task\":\"Audit MCP tool discovery\"}."
+        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. For uncertain broad tasks, set plan_only=true to preview bounded ranked paths, ranges, reasons, token estimates, focus coverage, and generated-artifact warnings without source or receipt mutation; then repeat the same request with plan_only=false to materialize. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required evidence. Compact omission counts preserve fail-loud coverage by default; set verbose_diagnostics=true only for full omission facets. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Set handoff for a compact provenance manifest without copied source. Example: {\"task\":\"Audit MCP tool discovery\"}."
     )]
     async fn leantoken_context(
         &self,
@@ -2010,6 +2014,7 @@ mod tests {
         .expect("context request without a budget");
         let (request, _, _, _, _) = request.into_parts(37);
         assert_eq!(request.token_budget, 37);
+        assert!(!request.verbose_diagnostics);
 
         let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
             "task": "find answer",
@@ -2018,7 +2023,8 @@ mod tests {
             "strict_focus_paths": true,
             "minimum_fragments_per_focus_path": 2,
             "changed_paths": ["src/lib.rs"],
-            "strict_changed_paths": true
+            "strict_changed_paths": true,
+            "verbose_diagnostics": true
         }))
         .expect("context request with a budget");
         let (request, _, _, _, _) = request.into_parts(37);
@@ -2028,6 +2034,7 @@ mod tests {
         assert_eq!(request.minimum_fragments_per_focus_path, Some(2));
         assert_eq!(request.changed_paths, ["src/lib.rs"]);
         assert!(request.strict_changed_paths);
+        assert!(request.verbose_diagnostics);
     }
 
     #[test]

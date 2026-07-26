@@ -159,7 +159,9 @@ with `strict_changed_paths: true`.
 For an uncertain broad task, set `plan_only: true` to receive bounded ranked
 candidate metadata without source fragments or receipt mutation. Confirm the
 paths and coverage, then repeat the same request with `plan_only: false` to
-materialize the selected source.
+materialize the selected source. Context omission diagnostics are compact by
+default; set `verbose_diagnostics: true` only when full path, file-type, reason,
+score-band, focus, and changed-path facets are needed.
 
 The catalog stays intentionally small because every tool description and
 schema also consumes model context.

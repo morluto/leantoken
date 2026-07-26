@@ -1349,6 +1349,7 @@ async fn contribution_context_routes_to_guidance_validation_and_owner_tests() {
                 base_revision: None,
                 changed_paths: vec!["src/parser.rs".into()],
                 strict_changed_paths: false,
+                verbose_diagnostics: false,
             },
             ContextWorkflow::Contribution,
             IndexConsistency::IndexedGeneration,
@@ -1511,6 +1512,7 @@ fn context_limit_request(token_budget: usize) -> ContextRequest {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
     }
 }
 
@@ -1658,6 +1660,7 @@ async fn context_include_paths_constrain_fragments_and_report_path_omissions() {
     let mut request = context_limit_request(200);
     request.task = "find shared_capture_target".into();
     request.include_paths = vec!["src/browser/**".into()];
+    request.verbose_diagnostics = true;
 
     let response = services.context(request).await.expect("constrained context");
 
@@ -3289,6 +3292,7 @@ async fn five_services_return_bounded_grounded_responses() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         })
         .await
         .expect("context");
@@ -3319,6 +3323,7 @@ async fn five_services_return_bounded_grounded_responses() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         })
         .await
         .expect("repeated context");
@@ -3353,6 +3358,7 @@ async fn five_services_return_bounded_grounded_responses() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         })
         .await
         .expect("context delta");
@@ -3480,6 +3486,7 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             base_revision: None,
             changed_paths: vec![r".\src\lib.rs".into()],
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         })
         .await
         .expect("normalized context path");
@@ -3764,6 +3771,7 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
+            verbose_diagnostics: false,
             })
             .await
             .expect("context");
@@ -3916,6 +3924,7 @@ public sealed class Worker {
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         })
         .await
         .expect("C# context");
@@ -4410,6 +4419,7 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         })
         .await
         .expect("exact evaluation");
@@ -4440,6 +4450,7 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         })
         .await
         .expect("multi-concept evaluation");
@@ -4507,6 +4518,7 @@ async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
     base_revision: None,
     changed_paths: Vec::new(),
     strict_changed_paths: false,
+    verbose_diagnostics: false,
     };
 
     let baseline = services
@@ -6573,6 +6585,7 @@ async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_service
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
+            verbose_diagnostics: false,
             },
             cancellation,
         )
@@ -7015,6 +7028,7 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
             base_revision: Some(format!("{base}..{changed}")),
             changed_paths: Vec::new(),
             strict_changed_paths: true,
+            verbose_diagnostics: false,
         })
         .await
         .expect("immutable range context");
@@ -7492,6 +7506,7 @@ async fn working_tree_diff_boosts_changed_files() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         })
         .await
         .unwrap();
@@ -7543,6 +7558,7 @@ async fn tokenizer_configuration_is_scoped_to_each_service() {
     base_revision: None,
     changed_paths: Vec::new(),
     strict_changed_paths: false,
+    verbose_diagnostics: false,
     };
 
     let (exact_response, estimate_response) =
@@ -7591,6 +7607,7 @@ async fn context_declaration_excerpt_retains_long_body_across_chunks() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         })
         .await
         .expect("context");
@@ -7642,6 +7659,7 @@ async fn context_text_hits_use_bounded_declaration_excerpts() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         })
         .await
         .expect("context");
@@ -7896,6 +7914,7 @@ async fn reconcile_working_tree_consistency_applies_to_each_retrieval_service() 
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
+            verbose_diagnostics: false,
             },
             IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
@@ -8098,6 +8117,7 @@ async fn diff_scoped_context_with_explicit_changed_paths_reports_receipt() {
             base_revision: None,
             changed_paths: vec!["src/lib.rs".into()],
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         })
         .await
         .expect("diff-scoped context");
@@ -8323,6 +8343,7 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
                 base_revision: Some(base_revision),
                 changed_paths: Vec::new(),
                 strict_changed_paths: true,
+                verbose_diagnostics: false,
             },
             HandoffManifestRequest::default(),
             ContextWorkflow::Review,
@@ -8689,6 +8710,7 @@ async fn diff_scoped_context_preserves_task_only_behavior_without_scope() {
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         })
         .await
         .expect("task-only context");
@@ -8724,6 +8746,7 @@ async fn diff_scoped_context_rejects_path_outside_repository() {
             base_revision: None,
             changed_paths: vec!["../escape.rs".into()],
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         })
         .await
         .expect_err("path traversal rejected");
@@ -8759,6 +8782,7 @@ async fn diff_scoped_context_rejects_excessive_changed_path_count() {
             base_revision: None,
             changed_paths: too_many,
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         })
         .await
         .expect_err("too many changed paths rejected");
@@ -8790,6 +8814,7 @@ async fn diff_scoped_context_counts_zero_for_nonexistent_changed_path() {
             base_revision: None,
             changed_paths: vec!["src/nonexistent.rs".into()],
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         })
         .await
         .expect("context with unindexed changed path");

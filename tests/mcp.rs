@@ -914,6 +914,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     base_revision: None,
     changed_paths: Vec::new(),
     strict_changed_paths: false,
+    verbose_diagnostics: false,
     };
     let context_arguments = serde_json::to_value(context)
         .expect("serialize context request")
