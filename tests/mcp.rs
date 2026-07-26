@@ -825,6 +825,41 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
             .is_some_and(|tokens| tokens <= 3_000)
     );
 
+    let handoff_context = call_tool(
+        client.peer(),
+        "context",
+        serde_json::json!({
+            "task": "find the answer definition",
+            "handoff": {
+                "summary": "continue the answer change",
+                "validations": [{
+                    "command": "cargo test answer",
+                    "status": "passed"
+                }],
+                "avoid_rules": ["do not copy source bodies"]
+            }
+        }),
+    )
+    .await
+    .expect("context with handoff manifest");
+    let handoff_manifest = handoff_context
+        .structured_content
+        .as_ref()
+        .and_then(|value| value.pointer("/handoff_manifest"))
+        .expect("structured handoff manifest");
+    assert!(
+        handoff_manifest["evidence"]
+            .as_array()
+            .is_some_and(|evidence| !evidence.is_empty())
+    );
+    assert_eq!(
+        handoff_manifest["validations"][0]["command"],
+        "cargo test answer"
+    );
+    let handoff_json = serde_json::to_string(handoff_manifest).expect("serialize handoff");
+    assert!(!handoff_json.contains("\"content\""));
+    assert!(!handoff_json.contains("pub fn answer"));
+
     let savings = client
         .peer()
         .call_tool(

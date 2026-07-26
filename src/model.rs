@@ -961,6 +961,155 @@ pub struct ContextRequest {
     pub strict_changed_paths: bool,
 }
 
+/// Optional host-supplied state carried into a compact context handoff manifest.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HandoffManifestRequest {
+    /// Compact task summary; the context task is used when omitted.
+    #[serde(default)]
+    #[schemars(length(min = 1, max = 512))]
+    pub summary: Option<String>,
+    /// Commands and checks reported by the caller.
+    #[serde(default)]
+    #[schemars(length(max = 16))]
+    pub validations: Vec<HandoffValidation>,
+    /// Assumptions the next executor must preserve or verify.
+    #[serde(default)]
+    #[schemars(length(max = 16), inner(length(min = 1, max = 512)))]
+    pub assumptions: Vec<String>,
+    /// Questions that remain unresolved at handoff time.
+    #[serde(default)]
+    #[schemars(length(max = 16), inner(length(min = 1, max = 512)))]
+    pub open_questions: Vec<String>,
+    /// Searches or checks that produced no supporting evidence.
+    #[serde(default)]
+    #[schemars(length(max = 16), inner(length(min = 1, max = 512)))]
+    pub negative_evidence: Vec<String>,
+    /// Explicit constraints describing approaches or paths to avoid.
+    #[serde(default)]
+    #[schemars(length(max = 16), inner(length(min = 1, max = 512)))]
+    pub avoid_rules: Vec<String>,
+}
+
+/// Caller-reported validation retained in a handoff manifest.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HandoffValidation {
+    /// Exact command or check identifier.
+    #[schemars(length(min = 1, max = 1024))]
+    pub command: String,
+    /// Caller-reported outcome; LeanToken does not execute this command.
+    pub status: HandoffValidationStatus,
+    /// Optional compact result detail.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1, max = 512))]
+    pub summary: Option<String>,
+}
+
+/// Caller-reported outcome of one handoff validation.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HandoffValidationStatus {
+    /// The caller reports that the check passed.
+    Passed,
+    /// The caller reports that the check failed.
+    Failed,
+}
+
+/// Git working-tree state observed while a handoff manifest was assembled.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HandoffWorkingTreeState {
+    /// Git reported no changed or untracked paths.
+    Clean,
+    /// Git reported at least one changed or untracked path.
+    Dirty,
+    /// Git working-tree state could not be determined.
+    Unknown,
+}
+
+/// Source coordinate and content identity retained without copying source text.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct HandoffEvidence {
+    /// Repository-relative source path.
+    pub path: String,
+    /// Inclusive one-based start line.
+    pub start_line: usize,
+    /// Inclusive one-based end line.
+    pub end_line: usize,
+    /// BLAKE3 identity of the selected source fragment.
+    pub content_hash: String,
+}
+
+/// Compact, provenance-bearing state for a host-triggered executor handoff.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct HandoffManifest {
+    /// Manifest contract version.
+    pub schema_version: u32,
+    /// Compact task summary.
+    pub summary: String,
+    /// Stable fingerprint of the complete context task.
+    pub task_fingerprint: String,
+    /// Stable opaque identity of the canonical repository root.
+    pub repository_id: String,
+    /// Atomic repository generation used to select evidence.
+    pub repository_generation: u64,
+    /// Index freshness observed for the context response.
+    pub freshness: Freshness,
+    /// Resolved Git commit at the handoff boundary, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_revision: Option<String>,
+    /// Working-tree state observed while the response was assembled.
+    pub working_tree_state: HandoffWorkingTreeState,
+    /// Resolved diff base, when the context request supplied one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_revision: Option<String>,
+    /// Resolved diff head, when the context request used an immutable range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_revision: Option<String>,
+    /// Same-process receipt that can suppress already-returned evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_id: Option<String>,
+    /// Selected evidence coordinates and hashes before receipt suppression.
+    pub evidence: Vec<HandoffEvidence>,
+    /// Fragment hashes the requesting host already holds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub held_fragment_hashes: Vec<String>,
+    /// Caller-supplied focus path patterns.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub focus_paths: Vec<String>,
+    /// Caller-supplied focus symbols.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub focus_symbols: Vec<String>,
+    /// Resolved or explicitly supplied changed paths.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changed_paths: Vec<String>,
+    /// Paths related by bounded diff evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_paths: Vec<String>,
+    /// Likely owner-test paths derived from bounded diff evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub test_paths: Vec<String>,
+    /// Commands and checks reported by the caller.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validations: Vec<HandoffValidation>,
+    /// Caller-supplied assumptions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assumptions: Vec<String>,
+    /// Caller-supplied unresolved questions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub open_questions: Vec<String>,
+    /// Caller-supplied negative evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub negative_evidence: Vec<String>,
+    /// Caller-supplied constraints on approaches to avoid.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub avoid_rules: Vec<String>,
+    /// Explicit provenance, coverage, or bounded-output limitations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gaps: Vec<String>,
+}
+
 /// Selected or planned coverage for one caller-supplied focus path pattern.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ContextFocusPathCoverage {
@@ -1425,6 +1574,9 @@ pub struct ContextResponse {
     /// Decomposition guidance for oversized, multi-area diff scopes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routing: Option<ContextRoutingReceipt>,
+    /// Opt-in compact state for a host-triggered executor handoff.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff_manifest: Option<HandoffManifest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
     pub meta: ResponseMeta,
@@ -1911,6 +2063,7 @@ mod tests {
             omission_summary: ContextOmissionSummary::default(),
             coverage: ContextCoverageReceipt::default(),
             routing: None,
+            handoff_manifest: None,
             warnings: Vec::new(),
             meta: ResponseMeta {
                 repository_id: "repository".into(),
@@ -2007,6 +2160,7 @@ mod tests {
             },
             coverage: ContextCoverageReceipt::default(),
             routing: None,
+            handoff_manifest: None,
             warnings: vec!["1 omitted".into()],
             meta: ResponseMeta {
                 repository_id: "repository".into(),

@@ -995,6 +995,7 @@ fn select_with_options(
         omission_summary,
         coverage,
         routing: None,
+        handoff_manifest: None,
         warnings,
         meta,
     };

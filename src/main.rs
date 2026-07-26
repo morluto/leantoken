@@ -174,17 +174,35 @@ async fn run(cli: Cli) -> Result<()> {
         AppRequest::Read(request) => print(&services.read(request).await?, json),
         AppRequest::History(request) => print(&services.history(request).await?, json),
         AppRequest::Json(request) => print(&services.json(request).await?, json),
-        AppRequest::Context { request, workflow } => print(
-            &services
-                .context_with_workflow_consistency_cancellable(
-                    request,
-                    workflow,
-                    leantoken::model::IndexConsistency::IndexedGeneration,
-                    tokio_util::sync::CancellationToken::new(),
-                )
-                .await?,
-            json,
-        ),
+        AppRequest::Context {
+            request,
+            workflow,
+            handoff,
+        } => {
+            let consistency = leantoken::model::IndexConsistency::IndexedGeneration;
+            let cancellation = tokio_util::sync::CancellationToken::new();
+            let response = if let Some(handoff) = handoff {
+                services
+                    .context_with_handoff_workflow_consistency_cancellable(
+                        request,
+                        *handoff,
+                        workflow,
+                        consistency,
+                        cancellation,
+                    )
+                    .await?
+            } else {
+                services
+                    .context_with_workflow_consistency_cancellable(
+                        request,
+                        workflow,
+                        consistency,
+                        cancellation,
+                    )
+                    .await?
+            };
+            print(&response, json)
+        }
         AppRequest::Doctor => unreachable!("handled before service setup"),
         AppRequest::Mcp { .. } => unreachable!("handled before service setup"),
         AppRequest::Setup(_) | AppRequest::Remove(_) => {

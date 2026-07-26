@@ -396,23 +396,56 @@ pub fn git_changed_paths(root: &Path, max: usize) -> Result<HashSet<String>> {
     git_changed_paths_with(root, max, Path::new("git"), Duration::from_millis(500))
 }
 
+/// Bounded working-tree paths plus whether `git status` completed successfully.
+pub(crate) struct GitWorkingTreeStatus {
+    pub(crate) changed_paths: HashSet<String>,
+    pub(crate) available: bool,
+}
+
+/// Observe bounded working-tree state without changing the public empty-set fallback.
+pub(crate) fn git_working_tree_status(root: &Path, max: usize) -> GitWorkingTreeStatus {
+    git_working_tree_status_with(root, max, Path::new("git"), Duration::from_millis(500))
+}
+
 fn git_changed_paths_with(
     root: &Path,
     max: usize,
     program: &Path,
     timeout: Duration,
 ) -> Result<HashSet<String>> {
+    Ok(git_working_tree_status_with(root, max, program, timeout).changed_paths)
+}
+
+fn git_working_tree_status_with(
+    root: &Path,
+    max: usize,
+    program: &Path,
+    timeout: Duration,
+) -> GitWorkingTreeStatus {
     if max == 0 {
-        return Ok(HashSet::new());
+        return GitWorkingTreeStatus {
+            changed_paths: HashSet::new(),
+            available: true,
+        };
     }
     let prefix = git_worktree_prefix(root);
     let mut output = match tempfile::tempfile() {
         Ok(output) => output,
-        Err(_) => return Ok(HashSet::new()),
+        Err(_) => {
+            return GitWorkingTreeStatus {
+                changed_paths: HashSet::new(),
+                available: false,
+            };
+        }
     };
     let child_output = match output.try_clone() {
         Ok(output) => output,
-        Err(_) => return Ok(HashSet::new()),
+        Err(_) => {
+            return GitWorkingTreeStatus {
+                changed_paths: HashSet::new(),
+                available: false,
+            };
+        }
     };
 
     let mut child = match Command::new(program)
@@ -433,7 +466,12 @@ fn git_changed_paths_with(
         .spawn()
     {
         Ok(child) => child,
-        Err(_) => return Ok(HashSet::new()),
+        Err(_) => {
+            return GitWorkingTreeStatus {
+                changed_paths: HashSet::new(),
+                available: false,
+            };
+        }
     };
 
     let status = match child.wait_timeout(timeout) {
@@ -441,13 +479,24 @@ fn git_changed_paths_with(
         Ok(None) | Err(_) => {
             let _ = child.kill();
             let _ = child.wait();
-            return Ok(HashSet::new());
+            return GitWorkingTreeStatus {
+                changed_paths: HashSet::new(),
+                available: false,
+            };
         }
     };
     if !status.success() || output.rewind().is_err() {
-        return Ok(HashSet::new());
+        return GitWorkingTreeStatus {
+            changed_paths: HashSet::new(),
+            available: false,
+        };
     }
-    Ok(parse_git_status(BufReader::new(output), max, &prefix))
+    let (changed_paths, available) =
+        parse_git_status_observation(BufReader::new(output), max, &prefix);
+    GitWorkingTreeStatus {
+        changed_paths,
+        available,
+    }
 }
 
 fn git_worktree_prefix(root: &Path) -> String {
@@ -460,9 +509,18 @@ fn git_worktree_prefix(root: &Path) -> String {
         .unwrap_or_default()
 }
 
+#[cfg(test)]
 fn parse_git_status<R: BufRead>(mut reader: R, max: usize, prefix: &str) -> HashSet<String> {
+    parse_git_status_observation(&mut reader, max, prefix).0
+}
+
+fn parse_git_status_observation<R: BufRead>(
+    mut reader: R,
+    max: usize,
+    prefix: &str,
+) -> (HashSet<String>, bool) {
     if max == 0 {
-        return HashSet::new();
+        return (HashSet::new(), true);
     }
     let mut changed = HashSet::new();
     let mut record = Vec::new();
@@ -472,7 +530,7 @@ fn parse_git_status<R: BufRead>(mut reader: R, max: usize, prefix: &str) -> Hash
         match reader.read_until(0, &mut record) {
             Ok(0) => break,
             Ok(_) => {}
-            Err(_) => break,
+            Err(_) => return (changed, false),
         }
 
         if record.last() == Some(&0) {
@@ -498,7 +556,7 @@ fn parse_git_status<R: BufRead>(mut reader: R, max: usize, prefix: &str) -> Hash
             break;
         }
     }
-    changed
+    (changed, true)
 }
 
 pub fn slash_path(path: &Path) -> String {
@@ -1084,6 +1142,17 @@ pub fn git_diff_paths_between(
     })
 }
 
+/// Resolve the current Git `HEAD` to the same bounded short SHA used by diff receipts.
+pub(crate) fn git_head_revision(root: &Path) -> Result<String> {
+    resolve_revision_sha_for_field(
+        root,
+        Path::new("git"),
+        "HEAD",
+        Duration::from_millis(1_000),
+        "head revision",
+    )
+}
+
 /// Parse bounded target-side hunk ranges between a base revision and the working tree.
 pub fn git_diff_hunks(root: &Path, base_revision: &str, max: usize) -> Result<Vec<GitHunkRange>> {
     git_diff_hunks_with_head(root, base_revision, None, max)
@@ -1553,10 +1622,11 @@ mod tests {
         fs::set_permissions(&program, permissions).expect("executable");
         let started = Instant::now();
 
-        let changed = git_changed_paths_with(root.path(), 64, &program, Duration::from_millis(50))
-            .expect("changed paths");
+        let observation =
+            git_working_tree_status_with(root.path(), 64, &program, Duration::from_millis(50));
 
-        assert!(changed.is_empty());
+        assert!(observation.changed_paths.is_empty());
+        assert!(!observation.available);
         assert!(started.elapsed() < Duration::from_secs(1));
     }
 }

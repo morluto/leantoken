@@ -2,9 +2,10 @@ use std::time::Instant;
 
 use leantoken::{
     Config, ContextRequest, ContextSignalPolicy, ContextWorkflow, Error, FileOperation, FilesRequest,
-    Freshness, HistoryOperation, HistoryRequest, IndexConsistency, IndexState, JsonOperation,
-    JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadDeltaFallback, ReadDeltaOutcome,
-    ReadRequest, ReadStatus, SearchMode, SearchRequest, TokenSavingsOperation,
+    Freshness, HandoffManifestRequest, HandoffValidation, HandoffValidationStatus,
+    HandoffWorkingTreeState, HistoryOperation, HistoryRequest, IndexConsistency, IndexState,
+    JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadDeltaFallback,
+    ReadDeltaOutcome, ReadRequest, ReadStatus, SearchMode, SearchRequest, TokenSavingsOperation,
     coordination::IndexCoordination, services::Services, tokens::Tokenizer,
 };
 use leantoken::{
@@ -173,6 +174,242 @@ async fn server_managed_receipt_suppresses_repeated_search_and_context_evidence(
     );
     assert!(repeated_context.receipt.fragment_hashes.is_empty());
     assert_eq!(repeated_context.meta.source_tokens, 0);
+}
+
+#[tokio::test]
+async fn context_handoff_preserves_coordinates_provenance_and_host_state_without_source() {
+    let (_root, services) = fixture().await;
+    let mut request = context_limit_request(1_000);
+    request.focus_paths = vec!["src".into()];
+    request.focus_symbols = vec!["greet".into()];
+    request.known_hashes = vec!["held-fragment-hash".into()];
+    let response = services
+        .context_with_handoff(
+            request,
+            HandoffManifestRequest {
+                summary: Some("Implement the greeting change".into()),
+                validations: vec![HandoffValidation {
+                    command: "cargo test --test integration services".into(),
+                    status: HandoffValidationStatus::Passed,
+                    summary: Some("service contract passed".into()),
+                }],
+                assumptions: vec!["greet remains the public entrypoint".into()],
+                open_questions: vec!["should caller formatting change?".into()],
+                negative_evidence: vec!["no alternate greeting implementation found".into()],
+                avoid_rules: vec!["do not copy complete files into the handoff".into()],
+            },
+        )
+        .await
+        .expect("context handoff");
+
+    assert!(!response.fragments.is_empty());
+    let manifest = response.handoff_manifest.as_ref().expect("handoff manifest");
+    assert_eq!(manifest.schema_version, 1);
+    assert_eq!(manifest.summary, "Implement the greeting change");
+    assert_eq!(
+        manifest.task_fingerprint,
+        response.receipt.task_fingerprint
+    );
+    assert_eq!(manifest.repository_id, response.meta.repository_id);
+    assert_eq!(
+        manifest.repository_generation,
+        response.meta.repository_generation
+    );
+    assert_eq!(manifest.freshness, response.meta.freshness);
+    assert_eq!(
+        manifest.receipt_id.as_deref(),
+        response.meta.receipt_id.as_deref()
+    );
+    assert_eq!(
+        manifest.held_fragment_hashes,
+        vec!["held-fragment-hash"]
+    );
+    assert_eq!(manifest.focus_paths, vec!["src"]);
+    assert_eq!(manifest.focus_symbols, vec!["greet"]);
+    assert_eq!(manifest.validations.len(), 1);
+    assert_eq!(
+        manifest.assumptions,
+        vec!["greet remains the public entrypoint"]
+    );
+    assert_eq!(
+        manifest.working_tree_state,
+        HandoffWorkingTreeState::Unknown
+    );
+    assert!(manifest.commit_revision.is_none());
+    assert!(
+        manifest
+            .gaps
+            .iter()
+            .any(|gap| gap.contains("commit identity"))
+    );
+
+    let mut expected = response
+        .fragments
+        .iter()
+        .map(|fragment| {
+            (
+                fragment.path.clone(),
+                fragment.start_line,
+                fragment.end_line,
+                fragment.content_hash.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    expected.sort();
+    let actual = manifest
+        .evidence
+        .iter()
+        .map(|evidence| {
+            (
+                evidence.path.clone(),
+                evidence.start_line,
+                evidence.end_line,
+                evidence.content_hash.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(actual, expected);
+    let manifest_json = serde_json::to_string(manifest).expect("serialize manifest");
+    assert!(!manifest_json.contains("pub fn greet"));
+    assert!(!manifest_json.contains("\"content\""));
+    assert_response_token_accounting!(response, Tokenizer::default());
+}
+
+#[tokio::test]
+async fn context_handoff_retains_selected_coordinates_after_receipt_suppression() {
+    let (_root, services) = fixture().await;
+    let first = services
+        .context_with_handoff(
+            context_limit_request(1_000),
+            HandoffManifestRequest::default(),
+        )
+        .await
+        .expect("first handoff");
+    let receipt_id = first.meta.receipt_id.clone().expect("receipt");
+    let first_evidence = first
+        .handoff_manifest
+        .as_ref()
+        .expect("first manifest")
+        .evidence
+        .clone();
+    assert!(!first_evidence.is_empty());
+
+    let mut repeated_request = context_limit_request(1_000);
+    repeated_request.receipt_id = Some(receipt_id.clone());
+    let repeated = services
+        .context_with_handoff(repeated_request, HandoffManifestRequest::default())
+        .await
+        .expect("repeated handoff");
+
+    assert!(repeated.fragments.is_empty());
+    assert_eq!(repeated.meta.source_tokens, 0);
+    assert_eq!(repeated.meta.receipt_id.as_deref(), Some(receipt_id.as_str()));
+    assert_eq!(
+        repeated
+            .handoff_manifest
+            .as_ref()
+            .expect("repeated manifest")
+            .evidence,
+        first_evidence
+    );
+    assert_response_token_accounting!(repeated, Tokenizer::default());
+}
+
+#[tokio::test]
+async fn context_handoff_rejects_plan_previews_and_unbounded_host_state() {
+    let (_root, services) = fixture().await;
+    let generation = services
+        .status()
+        .await
+        .expect("status before invalid handoff")
+        .repository_generation;
+    let mut plan_request = context_limit_request(1_000);
+    plan_request.plan_only = true;
+    let error = services
+        .context_with_handoff_workflow_consistency_cancellable(
+            plan_request,
+            HandoffManifestRequest::default(),
+            ContextWorkflow::Auto,
+            IndexConsistency::ReconcileWorkingTree,
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("plan handoff must fail");
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "plan_only",
+            ..
+        }
+    ));
+    assert_eq!(
+        services
+            .status()
+            .await
+            .expect("status after invalid handoff")
+            .repository_generation,
+        generation,
+        "static handoff errors must not reconcile the index"
+    );
+
+    let error = services
+        .context_with_handoff(
+            context_limit_request(1_000),
+            HandoffManifestRequest {
+                summary: Some("x".repeat(513)),
+                ..HandoffManifestRequest::default()
+            },
+        )
+        .await
+        .expect_err("oversized summary must fail");
+    assert!(matches!(
+        error,
+        Error::InputTooLong {
+            field: "handoff.summary",
+            max_bytes: 512
+        }
+    ));
+}
+
+#[tokio::test]
+async fn context_handoff_reports_clean_git_head_identity() {
+    if !git_available() {
+        return;
+    }
+    let (root, services) = fixture().await;
+    std::fs::write(root.path().join(".gitignore"), "index.sqlite*\n").expect("write ignore");
+    init_git_repo(root.path());
+    let expected_head = String::from_utf8(
+        std::process::Command::new("git")
+            .args(["rev-parse", "--short=12", "HEAD"])
+            .current_dir(root.path())
+            .output()
+            .expect("git head")
+            .stdout,
+    )
+    .expect("utf-8 head")
+    .trim()
+    .to_owned();
+
+    let response = services
+        .context_with_handoff(
+            context_limit_request(1_000),
+            HandoffManifestRequest::default(),
+        )
+        .await
+        .expect("Git context handoff");
+    let manifest = response.handoff_manifest.expect("manifest");
+    assert_eq!(
+        manifest.commit_revision.as_deref(),
+        Some(expected_head.as_str())
+    );
+    assert_eq!(manifest.working_tree_state, HandoffWorkingTreeState::Clean);
+    assert!(
+        !manifest
+            .gaps
+            .iter()
+            .any(|gap| gap.contains("Git commit") || gap.contains("working-tree"))
+    );
 }
 
 #[tokio::test]
@@ -7161,7 +7398,7 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
     let services = Services::open(config).expect("services");
     services.index(false).await.expect("index working tree");
     let response = services
-        .context_with_workflow_consistency_cancellable(
+        .context_with_handoff_workflow_consistency_cancellable(
             ContextRequest {
                 task: "review compute and rust_changed with owning tests".into(),
                 token_budget: 1_500,
@@ -7182,6 +7419,7 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
                 changed_paths: Vec::new(),
                 strict_changed_paths: true,
             },
+            HandoffManifestRequest::default(),
             ContextWorkflow::Review,
             IndexConsistency::IndexedGeneration,
             CancellationToken::new(),
@@ -7202,6 +7440,30 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
         .iter()
         .map(|fragment| fragment.path.clone())
         .collect::<Vec<_>>();
+    let manifest = response
+        .handoff_manifest
+        .as_ref()
+        .expect("diff handoff manifest");
+    assert_eq!(manifest.working_tree_state, HandoffWorkingTreeState::Dirty);
+    assert!(manifest.commit_revision.is_some());
+    assert!(
+        manifest
+            .changed_paths
+            .iter()
+            .any(|path| path == "src/service.py")
+    );
+    assert!(
+        manifest
+            .related_paths
+            .iter()
+            .any(|path| path == "tests/service_test.py")
+    );
+    assert!(
+        manifest
+            .test_paths
+            .iter()
+            .any(|path| path == "tests/service_test.py")
+    );
     let scope = response.diff_scope.expect("diff scope");
     assert!(
         fragment_paths
