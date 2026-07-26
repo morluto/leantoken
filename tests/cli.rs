@@ -1,8 +1,8 @@
 use clap::{Parser, error::ErrorKind};
 use leantoken::cli::{AppRequest, Cli};
 use leantoken::model::{
-    ContextWorkflow, FileOperation, HistoryOperation, JsonOperation, JsonProjection, JsonSelector,
-    SearchMode,
+    ContextWorkflow, FileOperation, HistoryOperation, IndexConsistency, JsonOperation,
+    JsonProjection, JsonSelector, SearchMode,
 };
 use leantoken::tokens::Tokenizer;
 use leantoken::setup::SetupClient;
@@ -380,6 +380,60 @@ fn cli_read_rejects_conflicting_or_invalid_ranges() {
 fn cli_global_json_works_before_or_after_subcommand() {
     assert!(parse(&["--json", "status"]).json);
     assert!(parse(&["status", "--json"]).json);
+}
+
+#[test]
+fn cli_index_backed_retrievals_default_to_live_consistency_with_snapshot_opt_out() {
+    for arguments in [
+        &["files", "tree"][..],
+        &["search", "needle"][..],
+        &["outline", "src/lib.rs"][..],
+        &["read", "src/lib.rs"][..],
+        &["context", "--task", "find the owner"][..],
+    ] {
+        assert_eq!(
+            parse(arguments).retrieval_consistency(),
+            Some(IndexConsistency::ReconcileWorkingTree),
+            "default consistency for {arguments:?}"
+        );
+    }
+
+    for arguments in [
+        &["files", "tree", "--consistency", "indexed_generation"][..],
+        &[
+            "search",
+            "needle",
+            "--consistency",
+            "indexed_generation",
+        ][..],
+        &[
+            "outline",
+            "src/lib.rs",
+            "--consistency",
+            "indexed_generation",
+        ][..],
+        &[
+            "read",
+            "src/lib.rs",
+            "--consistency",
+            "indexed_generation",
+        ][..],
+        &[
+            "context",
+            "--task",
+            "find the owner",
+            "--consistency",
+            "indexed_generation",
+        ][..],
+    ] {
+        assert_eq!(
+            parse(arguments).retrieval_consistency(),
+            Some(IndexConsistency::IndexedGeneration),
+            "snapshot consistency for {arguments:?}"
+        );
+    }
+
+    assert_eq!(parse(&["status"]).retrieval_consistency(), None);
 }
 
 #[cfg(unix)]

@@ -71,6 +71,44 @@ fn cli_indexes_statuses_and_searches_as_json() {
 }
 
 #[test]
+fn cli_retrieval_reconciles_live_changes_unless_snapshot_consistency_is_requested() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let source = root.path().join("lib.rs");
+    std::fs::write(&source, "pub fn answer() -> u8 { 41 }\n").expect("write fixture");
+    let database = root.path().join("index.sqlite");
+
+    run(root.path(), &database, &["index"]);
+    std::fs::write(&source, "pub fn answer() -> u8 { 43 }\n").expect("edit fixture");
+
+    let reconciled = run(
+        root.path(),
+        &database,
+        &["search", "43", "--mode", "text"],
+    );
+    assert_eq!(reconciled["hits"][0]["path"], "lib.rs");
+    assert_eq!(reconciled["meta"]["repository_generation"], 2);
+
+    std::fs::write(&source, "pub fn answer() -> u8 { 47 }\n").expect("edit fixture again");
+    let snapshot = run(
+        root.path(),
+        &database,
+        &[
+            "search",
+            "43",
+            "--mode",
+            "text",
+            "--consistency",
+            "indexed_generation",
+        ],
+    );
+    assert_eq!(snapshot["hits"][0]["path"], "lib.rs");
+    assert_eq!(snapshot["meta"]["repository_generation"], 2);
+
+    let status = run(root.path(), &database, &["status"]);
+    assert_eq!(status["working_tree_checked"], false);
+}
+
+#[test]
 fn cli_savings_renders_a_color_aware_human_table() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(

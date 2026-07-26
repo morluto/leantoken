@@ -151,13 +151,16 @@ Add a custom data structure only after a release-mode profile identifies a
 remaining bottleneck and the replacement preserves snapshot, ordering, and
 limit semantics.
 
-MCP retrieval inputs expose an explicit consistency boundary.
-`indexed_generation`, the default, opens the latest completed snapshot
-immediately without implying Git HEAD. `reconcile_working_tree` first runs a
-non-rebuild reconciliation under the repository-scoped operation lock, then
-opens the resulting completed snapshot. This makes filesystem changes
-completed before reconciliation visible without exposing a partially prepared
-generation. Changes written concurrently may require a later request.
+Index-backed MCP and CLI retrievals expose an explicit consistency boundary.
+For long-lived MCP clients, `indexed_generation` is the default and opens the
+latest completed snapshot immediately without implying Git HEAD. One-shot CLI
+retrievals default to `reconcile_working_tree`; callers can explicitly select
+`indexed_generation` when snapshot latency is more important than scanning live
+changes. `reconcile_working_tree` first runs a non-rebuild reconciliation under
+the repository-scoped operation lock, then opens the resulting completed
+snapshot. This makes filesystem changes completed before reconciliation visible
+without exposing a partially prepared generation. Changes written concurrently
+may require a later request.
 
 ## Indexing and freshness
 
@@ -169,7 +172,9 @@ Generation zero is `index_state: "uninitialized"`; every later generation is
 `uninitialized/current` before indexing, `uninitialized/reconciling` during the
 first build, `ready/current` after a generation commits, and
 `ready/reconciling` while replacing an existing generation. No failed state is
-reported because reconciliation failures are not persisted.
+reported because reconciliation failures are not persisted. Status itself does
+not scan the working tree and therefore reports `working_tree_checked: false`;
+its freshness value describes reconciliation activity only.
 
 Discovery follows Git-compatible ignore rules, skips symlinks and oversized or
 binary files, and normalizes indexed paths to forward slashes. Text files are

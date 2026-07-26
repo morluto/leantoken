@@ -1867,6 +1867,9 @@ pub struct StatusResponse {
     pub repository_generation: u64,
     /// Whether a committed generation is available for retrieval.
     pub index_state: IndexState,
+    /// Whether this read-only status request checked the live working tree.
+    #[serde(default)]
+    pub working_tree_checked: bool,
     pub freshness: Freshness,
     pub file_count: usize,
     pub chunk_count: usize,
@@ -2182,6 +2185,7 @@ mod tests {
                 database_path: "/cache/index.sqlite".into(),
                 repository_generation,
                 index_state,
+                working_tree_checked: false,
                 freshness: freshness.clone(),
                 file_count: 0,
                 chunk_count: 0,
@@ -2209,6 +2213,7 @@ mod tests {
                     Freshness::Reconciling => "reconciling",
                 }
             );
+            assert_eq!(value["working_tree_checked"], false);
         }
     }
 

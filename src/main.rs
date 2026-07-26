@@ -10,6 +10,7 @@ use leantoken::{
     Result, cache,
     cli::{AppRequest, Cli},
     doctor, mcp,
+    model::{IndexConsistency, IndexState},
     services::Services,
     setup::{self, SetupOperation},
     upgrade,
@@ -146,6 +147,7 @@ async fn run(cli: Cli) -> Result<()> {
         return run_mcp(cli, result_mode).await;
     }
 
+    let requested_consistency = cli.retrieval_consistency();
     let config = cli.config()?;
     let request = cli.app_request();
 
@@ -163,15 +165,48 @@ async fn run(cli: Cli) -> Result<()> {
     }
 
     let services = Arc::new(Services::open(config)?);
+    let consistency = match requested_consistency {
+        Some(IndexConsistency::ReconcileWorkingTree)
+            if services.status().await?.index_state == IndexState::Uninitialized =>
+        {
+            IndexConsistency::IndexedGeneration
+        }
+        Some(consistency) => consistency,
+        None => IndexConsistency::IndexedGeneration,
+    };
 
     match request {
         AppRequest::Index { rebuild } => print(&services.index_report(rebuild).await?, json),
         AppRequest::Status => unreachable!("handled before service setup"),
         AppRequest::Savings => savings::print_report(&services.token_savings_report().await?, json),
-        AppRequest::Files(request) => print(&services.files(request).await?, json),
-        AppRequest::Search(request) => print(&services.search(request).await?, json),
-        AppRequest::Outline(request) => print(&services.outline(request).await?, json),
-        AppRequest::Read(request) => print(&services.read(request).await?, json),
+        AppRequest::Files(request) => print(
+            &services
+                .files_with_consistency_cancellable(request, consistency, CancellationToken::new())
+                .await?,
+            json,
+        ),
+        AppRequest::Search(request) => print(
+            &services
+                .search_with_consistency_cancellable(request, consistency, CancellationToken::new())
+                .await?,
+            json,
+        ),
+        AppRequest::Outline(request) => print(
+            &services
+                .outline_with_consistency_cancellable(
+                    request,
+                    consistency,
+                    CancellationToken::new(),
+                )
+                .await?,
+            json,
+        ),
+        AppRequest::Read(request) => print(
+            &services
+                .read_with_consistency_cancellable(request, consistency, CancellationToken::new())
+                .await?,
+            json,
+        ),
         AppRequest::History(request) => print(&services.history(request).await?, json),
         AppRequest::Json(request) => print(&services.json(request).await?, json),
         AppRequest::Context {
@@ -179,7 +214,6 @@ async fn run(cli: Cli) -> Result<()> {
             workflow,
             handoff,
         } => {
-            let consistency = leantoken::model::IndexConsistency::IndexedGeneration;
             let cancellation = tokio_util::sync::CancellationToken::new();
             let response = if let Some(handoff) = handoff {
                 services
