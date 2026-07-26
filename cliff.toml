@@ -9,12 +9,12 @@ body = """
 {%- else -%}\
     ## [unreleased]
 {%- endif -%}\
-{% for group, commits in commits | group_by(attribute="group") %}
+{% for group, commits in commits | filter(attribute="merge_commit", value=false) | group_by(attribute="group") %}
     ### {{ group | upper_first }}
     {% for commit in commits %}
         - {% if commit.scope %}**{{ commit.scope }}:** {% endif %}\
           {{ commit.message | upper_first }}\
-          {% if commit.github.pr_number %} ([#{{ commit.github.pr_number }}]({{ commit.github.pr_url }})){% endif %}\
+          {% if commit.remote.pr_number %} ([#{{ commit.remote.pr_number }}](https://github.com/morluto/leantoken/pull/{{ commit.remote.pr_number }})){% endif %}\
     {%- endfor -%}
 {% endfor %}\n
 """
