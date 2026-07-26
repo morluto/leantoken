@@ -44,6 +44,21 @@ use it to diagnose a frozen candidate before proposing a scoring change.
 Do not alter prompts, labels, budgets, or pinned revisions after inspecting a
 candidate. Freeze a new dataset version instead.
 
+`benchmarks/external_corpora.json` is a separate immutable lock for importing
+third-party retrieval tasks. `examples/external_corpus_adapter.rs` verifies the
+dataset checkout revision before converting Semble primary labels and the
+file-backed Sverklo P1, P2, and P4 families into schema-v4 manifests. Reports
+retain dataset URL, revision, license, prompt provenance, label provenance, and
+upstream limitations. Unsupported or ambiguous labels are skipped explicitly;
+the adapter must never manufacture file or line ground truth.
+
+External corpora answer whether a retrieval experiment transfers to another
+task distribution. They do not replace the prospective validation or sealed
+holdout lifecycle. A production retrieval change still needs a separately
+frozen promotion gate, and a result must be stratified by task family when one
+family measures a capability the current product does not claim to provide.
+The exact preparation and execution commands are in `benchmarks/README.md`.
+
 The prospective-validation report for candidate `2c0388d` and its identical-
 manifest ablation are archived in `benchmarks/reports/`. Against runtime
 revision `0b6f80b`, the candidate improved file recall from 7/11 to 8/11 and
