@@ -56,7 +56,9 @@ guidance to run `leantoken index`; use `leantoken doctor` to verify the complete
 MCP startup and first-retrieval flow. Status also reports SQLite main/WAL/SHM
 bytes, indexed source bytes, their amplification ratio, and current process RSS
 when the platform exposes it. RSS is per process, not a claim about all clients
-sharing the repository cache.
+sharing the repository cache. `index_content_version` identifies the managed
+cache compatibility lane used by the current binary; different values use
+separate managed cache paths.
 
 After the first generation, the one-shot `files`, `search`, `outline`, `read`,
 and `context` commands default to `--consistency reconcile_working_tree`. Each
@@ -215,9 +217,12 @@ verifies its initialization identity and agent instructions, exact eight-tool
 catalog, and first `leantoken.context` retrieval. On a cold repository it
 allows the first retrieval's bounded internal wait, then follows structured
 `retry_after_ms` guidance if the index needs longer. Use `--json` for a
-machine-readable readiness report. Failures use the `doctor_failure` category
-and identify the `launch`, `handshake`, `catalog`, or `first_retrieval` stage so
-repair tooling does not need to parse prose.
+machine-readable readiness report, including the executable's
+`index_content_version`. This doctor launches the current executable; it does
+not claim to identify other running binaries that share an explicit database.
+Failures use the `doctor_failure` category and identify the `launch`,
+`handshake`, `catalog`, or `first_retrieval` stage so repair tooling does not
+need to parse prose.
 
 ## MCP server
 

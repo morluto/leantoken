@@ -11,6 +11,7 @@ use std::{
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use crate::config::INDEX_CONTENT_VERSION;
 use crate::setup::{self, SetupClient};
 use crate::{Config, Error, Result};
 
@@ -35,6 +36,8 @@ pub struct DoctorReport {
     pub server_name: String,
     /// MCP implementation version returned during initialization.
     pub server_version: String,
+    /// Index-content compatibility version used by the executable.
+    pub index_content_version: u32,
     /// Whether server-wide agent workflow guidance was present.
     pub instructions_loaded: bool,
     /// Exact MCP tool names exposed by the server.
@@ -261,6 +264,7 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
         repository_root: config.root.clone(),
         server_name,
         server_version,
+        index_content_version: INDEX_CONTENT_VERSION,
         instructions_loaded,
         tools,
         integration: IntegrationReport {
@@ -302,6 +306,11 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
         output,
         "  ✓ MCP identity: {} {}",
         report.server_name, report.server_version
+    )?;
+    writeln!(
+        output,
+        "  ✓ Index compatibility: v{}",
+        report.index_content_version
     )?;
     writeln!(output, "  ✓ Agent guidance loaded")?;
     writeln!(output, "  ✓ Tool catalog: {} MCP tools", report.tools.len())?;

@@ -1864,6 +1864,9 @@ impl std::ops::Deref for IndexReport {
 pub struct StatusResponse {
     pub repository_root: String,
     pub database_path: String,
+    /// Index-content compatibility version used by this binary.
+    #[serde(default)]
+    pub index_content_version: u32,
     pub repository_generation: u64,
     /// Whether a committed generation is available for retrieval.
     pub index_state: IndexState,
@@ -2183,6 +2186,7 @@ mod tests {
             let response = StatusResponse {
                 repository_root: "/repository".into(),
                 database_path: "/cache/index.sqlite".into(),
+                index_content_version: 12,
                 repository_generation,
                 index_state,
                 working_tree_checked: false,
@@ -2199,6 +2203,7 @@ mod tests {
             };
 
             let value = serde_json::to_value(response).expect("serialize status");
+            assert_eq!(value["index_content_version"], 12);
             assert_eq!(
                 value["index_state"],
                 match index_state {
