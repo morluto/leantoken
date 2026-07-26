@@ -4,8 +4,8 @@ use leantoken::{
     Config, ContextRequest, ContextSignalPolicy, ContextWorkflow, Error, FileOperation, FilesRequest,
     Freshness, HandoffManifestRequest, HandoffValidation, HandoffValidationStatus,
     HandoffWorkingTreeState, HistoryOperation, HistoryRequest, IndexConsistency, IndexState,
-    JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadDeltaFallback,
-    ReadDeltaOutcome, ReadRequest, ReadStatus, SearchMode, SearchRequest,
+    JsonIncompleteReason, JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest,
+    ReadDeltaFallback, ReadDeltaOutcome, ReadRequest, ReadStatus, SearchMode, SearchRequest,
     TokenAccountingOperation, TokenSavingsOperation, coordination::IndexCoordination,
     services::Services, tokens::Tokenizer,
 };
@@ -7345,6 +7345,7 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
             max_tokens: Some(100),
             max_items: None,
             array_sample_size: None,
+            cursor: None,
         })
         .await
         .expect("pointer query");
@@ -7364,6 +7365,7 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
             max_tokens: Some(500),
             max_items: Some(100),
             array_sample_size: Some(1),
+            cursor: None,
         })
         .await
         .expect("collapsed JMESPath query");
@@ -7387,6 +7389,7 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
                 max_tokens: Some(1_000),
                 max_items: Some(100),
                 array_sample_size: None,
+                cursor: None,
             })
             .await
             .expect("structural projection");
@@ -7405,6 +7408,7 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
             max_tokens: None,
             max_items: None,
             array_sample_size: None,
+            cursor: None,
         })
         .await
         .expect("numeric summary");
@@ -7436,6 +7440,7 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
             max_tokens: Some(1_000),
             max_items: Some(100),
             array_sample_size: Some(2),
+            cursor: None,
         })
         .await
         .expect("selected-field diff");
@@ -7465,6 +7470,309 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
         i64::try_from(json.baseline_source_tokens).expect("small JSON baseline")
             - i64::try_from(json.total_response_tokens).expect("small JSON responses")
     );
+}
+
+#[tokio::test]
+async fn json_keys_paginate_by_item_and_token_limits_with_exact_diagnostics() {
+    let root = tempfile::tempdir().expect("root");
+    let path = root.path().join("report.json");
+    std::fs::write(
+        &path,
+        r#"{"alpha":1,"beta":2,"nested":{"first":3,"second":4},"rows":[{"left":5},{"right":6}]}"#,
+    )
+    .expect("JSON fixture");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    let operation = JsonOperation::Query {
+        path: "report.json".into(),
+        selector: None,
+        projection: JsonProjection::Keys,
+    };
+
+    let complete = services
+        .json(JsonRequest {
+            operation: operation.clone(),
+            max_tokens: Some(1_000),
+            max_items: Some(100),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("complete keys");
+    let expected = complete
+        .value
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("key array")
+        .clone();
+    assert!(complete.result_complete);
+    assert_eq!(complete.total_items, Some(expected.len()));
+    assert_eq!(complete.returned_items, Some(expected.len()));
+    assert_eq!(complete.remaining_items, Some(0));
+    assert_eq!(complete.incomplete_reason, None);
+    assert!(complete.meta.next_cursor.is_none());
+
+    let mut cursor = None;
+    let mut observed = Vec::new();
+    let mut previous_remaining = expected.len();
+    loop {
+        let page = services
+            .json(JsonRequest {
+                operation: operation.clone(),
+                max_tokens: Some(1_000),
+                max_items: Some(2),
+                array_sample_size: None,
+                cursor,
+            })
+            .await
+            .expect("keys page");
+        let page_values = page
+            .value
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .expect("page values");
+        assert_eq!(page.total_items, Some(expected.len()));
+        assert_eq!(page.returned_items, Some(page_values.len()));
+        assert!(page_values.len() <= 2);
+        observed.extend(page_values.iter().cloned());
+        let remaining = page.remaining_items.expect("remaining count");
+        assert_eq!(remaining, expected.len().saturating_sub(observed.len()));
+        assert!(remaining <= previous_remaining);
+        previous_remaining = remaining;
+        if page.result_complete {
+            assert_eq!(page.incomplete_reason, None);
+            assert!(page.meta.next_cursor.is_none());
+            break;
+        }
+        assert_eq!(
+            page.incomplete_reason,
+            Some(JsonIncompleteReason::MaxItems)
+        );
+        cursor = page.meta.next_cursor;
+        assert!(cursor.is_some());
+    }
+    assert_eq!(observed, expected);
+
+    let one_item = services
+        .json(JsonRequest {
+            operation: operation.clone(),
+            max_tokens: Some(1_000),
+            max_items: Some(1),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("one key");
+    let token_limited = services
+        .json(JsonRequest {
+            operation,
+            max_tokens: Some(one_item.meta.source_tokens),
+            max_items: Some(100),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("token-limited key page");
+    assert_eq!(token_limited.returned_items, Some(1));
+    assert_eq!(
+        token_limited.incomplete_reason,
+        Some(JsonIncompleteReason::MaxTokens)
+    );
+    assert!(token_limited.meta.source_tokens <= one_item.meta.source_tokens);
+    assert!(token_limited.meta.next_cursor.is_some());
+    assert_response_token_accounting!(token_limited, Tokenizer::default());
+}
+
+#[tokio::test]
+async fn json_cursors_and_incomplete_results_fail_loud_with_typed_diagnostics() {
+    let root = tempfile::tempdir().expect("root");
+    let path = root.path().join("report.json");
+    std::fs::write(&path, r#"{"version":1,"nested":{"answer":42},"tail":true}"#)
+        .expect("JSON fixture");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    let operation = JsonOperation::Query {
+        path: "report.json".into(),
+        selector: None,
+        projection: JsonProjection::Keys,
+    };
+    let first = services
+        .json(JsonRequest {
+            operation: operation.clone(),
+            max_tokens: Some(1_000),
+            max_items: Some(1),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("first page");
+    let cursor = first.meta.next_cursor.expect("continuation cursor");
+
+    let mismatched_query = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "report.json".into(),
+                selector: Some(JsonSelector::Pointer {
+                    pointer: "/nested".into(),
+                }),
+                projection: JsonProjection::Keys,
+            },
+            max_tokens: Some(1_000),
+            max_items: Some(1),
+            array_sample_size: None,
+            cursor: Some(cursor.clone()),
+        })
+        .await
+        .expect_err("cursor query binding");
+    assert!(matches!(mismatched_query, Error::StaleCursor));
+
+    let unsupported_projection = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "report.json".into(),
+                selector: None,
+                projection: JsonProjection::Schema,
+            },
+            max_tokens: Some(1_000),
+            max_items: Some(1),
+            array_sample_size: None,
+            cursor: Some(cursor.clone()),
+        })
+        .await
+        .expect_err("cursor projection boundary");
+    assert!(matches!(
+        unsupported_projection,
+        Error::InvalidInput {
+            field: "cursor",
+            ..
+        }
+    ));
+
+    std::fs::write(
+        &path,
+        r#"{"version":2,"nested":{"answer":42},"tail":true}"#,
+    )
+    .expect("mutated JSON fixture");
+    let stale_source = services
+        .json(JsonRequest {
+            operation: operation.clone(),
+            max_tokens: Some(1_000),
+            max_items: Some(1),
+            array_sample_size: None,
+            cursor: Some(cursor),
+        })
+        .await
+        .expect_err("cursor source binding");
+    assert!(matches!(stale_source, Error::StaleCursor));
+
+    let incomplete_schema = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "report.json".into(),
+                selector: None,
+                projection: JsonProjection::Schema,
+            },
+            max_tokens: Some(1_000),
+            max_items: Some(2),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("bounded schema");
+    assert!(!incomplete_schema.result_complete);
+    assert_eq!(incomplete_schema.returned_items, Some(2));
+    assert!(
+        incomplete_schema.total_items.expect("total") > incomplete_schema.returned_items.unwrap()
+    );
+    assert_eq!(
+        incomplete_schema.remaining_items,
+        Some(
+            incomplete_schema.total_items.unwrap()
+                - incomplete_schema.returned_items.unwrap()
+        )
+    );
+    assert_eq!(
+        incomplete_schema.incomplete_reason,
+        Some(JsonIncompleteReason::MaxItems)
+    );
+    assert!(incomplete_schema.meta.next_cursor.is_none());
+
+    let typed_selector = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "report.json".into(),
+                selector: Some(JsonSelector::Jmespath {
+                    expression: "length(version)".into(),
+                }),
+                projection: JsonProjection::Value,
+            },
+            max_tokens: Some(100),
+            max_items: Some(100),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect_err("typed JMESPath error");
+    assert!(matches!(
+        &typed_selector,
+        Error::InvalidJsonSelector {
+            stage: "evaluate",
+            offset: 6,
+            line: 1,
+            column: 7,
+            reason,
+            ..
+        } if reason.contains("expects type") && reason.contains("given number")
+    ), "{typed_selector:?}");
+
+    let invalid_expression = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "report.json".into(),
+                selector: Some(JsonSelector::Jmespath {
+                    expression: "length(".into(),
+                }),
+                projection: JsonProjection::Value,
+            },
+            max_tokens: Some(100),
+            max_items: Some(100),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect_err("JMESPath compile error");
+    assert!(matches!(
+        invalid_expression,
+        Error::InvalidJsonSelector {
+            stage: "compile",
+            line: 1,
+            ..
+        }
+    ));
+
+    std::fs::write(&path, r#"{"outer":[1,]}"#).expect("invalid JSON fixture");
+    let syntax = services
+        .json(JsonRequest {
+            operation,
+            max_tokens: Some(100),
+            max_items: Some(100),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect_err("JSON syntax error");
+    assert!(matches!(
+        syntax,
+        Error::InvalidJson {
+            syntax_category: "syntax",
+            byte_offset: 12,
+            line: 1,
+            column: 13,
+            ..
+        }
+    ));
 }
 
 #[tokio::test]

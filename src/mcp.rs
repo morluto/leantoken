@@ -582,6 +582,10 @@ struct JsonMcpRequest {
     #[serde(default)]
     #[schemars(range(min = 0, max = 20))]
     array_sample_size: Option<usize>,
+    /// Opaque cursor returned by an incomplete keys projection.
+    #[serde(default)]
+    #[schemars(length(max = 256))]
+    cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -687,6 +691,7 @@ impl JsonMcpRequest {
                 max_tokens: self.max_tokens,
                 max_items: self.max_items,
                 array_sample_size: self.array_sample_size,
+                cursor: self.cursor,
             },
             self.expected_repository_id,
         )
@@ -1392,7 +1397,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "json",
-        description = "Query, summarize, or compare bounded live JSON without indexing raw artifacts. Select with RFC 6901 JSON Pointer or standard JMESPath; use collapsed, keys, or schema projections for large arrays and objects, numeric_summary for count/min/median/p95/max, and diff_fields for selected values across two files. Example: {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"artifacts/results.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"runs[].score\"}}}."
+        description = "Query, summarize, or compare bounded live JSON without indexing raw artifacts. Select with RFC 6901 JSON Pointer or standard JMESPath; use collapsed, keys, or schema projections for large arrays and objects, numeric_summary for count/min/median/p95/max, and diff_fields for selected values across two files. Incomplete keys projections return exact item counts and meta.next_cursor; repeat the same query with cursor to continue. Example: {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"artifacts/results.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"runs[].score\"}}}."
     )]
     async fn leantoken_json(
         &self,
@@ -1573,6 +1578,42 @@ fn into_mcp_error(error: crate::Error) -> ErrorData {
         crate::Error::UnsupportedLanguage(_) => ErrorData::invalid_params(
             "requested structured language is unsupported",
             mcp_error_data("unsupported_language"),
+        ),
+        crate::Error::InvalidJson {
+            syntax_category,
+            byte_offset,
+            line,
+            column,
+            reason,
+        } => ErrorData::invalid_params(
+            format!("file is not valid JSON at line {line}, column {column}"),
+            Some(serde_json::json!({
+                "category": "invalid_json",
+                "field": "path",
+                "syntax_category": syntax_category,
+                "byte_offset": byte_offset,
+                "line": line,
+                "column": column,
+                "reason": reason,
+            })),
+        ),
+        crate::Error::InvalidJsonSelector {
+            stage,
+            offset,
+            line,
+            column,
+            reason,
+        } => ErrorData::invalid_params(
+            format!("JMESPath {stage} failed at line {line}, column {column}"),
+            Some(serde_json::json!({
+                "category": "invalid_json_selector",
+                "field": "JMESPath expression",
+                "stage": stage,
+                "offset": offset,
+                "line": line,
+                "column": column,
+                "reason": reason,
+            })),
         ),
         crate::Error::InvalidInput { field, reason } => ErrorData::invalid_params(
             format!("invalid {field}: {reason}"),
@@ -1845,6 +1886,43 @@ mod tests {
                 "requested": 32_001,
                 "limit": 32_000,
             }))
+        );
+
+        let selector = into_mcp_error(crate::Error::InvalidJsonSelector {
+            stage: "evaluate",
+            offset: 6,
+            line: 1,
+            column: 7,
+            reason: "Runtime error: Argument 0 expects type array, given number".into(),
+        });
+        assert_eq!(selector.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert_eq!(
+            selector.data,
+            Some(serde_json::json!({
+                "category": "invalid_json_selector",
+                "field": "JMESPath expression",
+                "stage": "evaluate",
+                "offset": 6,
+                "line": 1,
+                "column": 7,
+                "reason": "Runtime error: Argument 0 expects type array, given number",
+            }))
+        );
+
+        let syntax = into_mcp_error(crate::Error::InvalidJson {
+            syntax_category: "syntax",
+            byte_offset: 12,
+            line: 1,
+            column: 13,
+            reason: "trailing comma at line 1 column 13".into(),
+        });
+        assert_eq!(syntax.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert_eq!(
+            syntax
+                .data
+                .as_ref()
+                .and_then(|data| data["byte_offset"].as_u64()),
+            Some(12)
         );
 
         let stale_receipt = into_mcp_error(crate::Error::StaleReceipt {
@@ -2363,12 +2441,32 @@ mod tests {
             .expect("JSON limits");
         let (request, _) = request.into_parts();
         assert_eq!(request.max_items, Some(500));
+        assert!(request.cursor.is_none());
         assert!(matches!(
             request.operation,
             JsonOperation::NumericSummary {
                 path,
                 selector: Some(JsonSelector::Jmespath { expression }),
             } if path == "artifacts/results.json" && expression == "runs[].score"
+        ));
+
+        let request = serde_json::from_value::<JsonMcpRequest>(serde_json::json!({
+            "operation": {
+                "kind": "query",
+                "path": "artifacts/results.json",
+                "projection": "keys"
+            },
+            "cursor": "j1:source:query:2"
+        }))
+        .expect("paged JSON request");
+        let (request, _) = request.into_parts();
+        assert_eq!(request.cursor.as_deref(), Some("j1:source:query:2"));
+        assert!(matches!(
+            request.operation,
+            JsonOperation::Query {
+                projection: JsonProjection::Keys,
+                ..
+            }
         ));
     }
 

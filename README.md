@@ -144,7 +144,7 @@ retrieval.
 | `leantoken.outline` | Inspect definitions, signatures, imports, and ranges without whole-file reads. |
 | `leantoken.read` | Prefer over cat/head/sed for one exact symbol or inclusive line range. |
 | `leantoken.history` | Read, diff, or trace one parsed symbol across immutable Git revisions. |
-| `leantoken.json` | Query, summarize, or compare bounded live JSON structures. |
+| `leantoken.json` | Query, summarize, or compare bounded live JSON with paged keys and typed diagnostics. |
 | `leantoken.savings` | Report source compression and cumulative full-response token accounting. |
 
 Every index-backed retrieval tool accepts `consistency: "reconcile_working_tree"` when

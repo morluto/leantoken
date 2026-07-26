@@ -758,6 +758,9 @@ pub struct JsonRequest {
     /// Array elements sampled by `collapsed`; defaults to 3.
     #[serde(default)]
     pub array_sample_size: Option<usize>,
+    /// Opaque cursor returned by an incomplete `keys` projection.
+    #[serde(default)]
+    pub cursor: Option<String>,
 }
 
 /// Descriptive statistics for numeric JSON leaves.
@@ -811,6 +814,16 @@ pub struct JsonSource {
     pub bytes: usize,
 }
 
+/// Bound that prevented a structural JSON response from being complete.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum JsonIncompleteReason {
+    /// The structural item page limit was reached.
+    MaxItems,
+    /// The projected JSON token page limit was reached.
+    MaxTokens,
+}
+
 /// Bounded structural JSON response.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct JsonResponse {
@@ -827,8 +840,20 @@ pub struct JsonResponse {
     pub differences: Vec<JsonFieldDiff>,
     /// Exact live files represented by this response.
     pub sources: Vec<JsonSource>,
-    /// Whether structural item caps omitted no requested output.
+    /// Whether structural item and token caps omitted no requested output.
     pub result_complete: bool,
+    /// Exact structural items in the selected projection when diagnostics apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_items: Option<usize>,
+    /// Structural items emitted in this response page when diagnostics apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub returned_items: Option<usize>,
+    /// Structural items still unread after this response page when diagnostics apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remaining_items: Option<usize>,
+    /// Bound responsible for an incomplete structural projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incomplete_reason: Option<JsonIncompleteReason>,
     pub meta: ResponseMeta,
 }
 
