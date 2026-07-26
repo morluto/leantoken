@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import hashlib
 import json
 import math
@@ -14,6 +15,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -38,6 +40,8 @@ class Occurrence:
 class McpProcess:
     """Minimal newline-delimited JSON-RPC client for one LeanToken process."""
 
+    STDERR_CAPTURE_CHARS = 64 * 1024
+
     def __init__(self, binary: Path, root: Path, database: Path) -> None:
         self.process = subprocess.Popen(
             [
@@ -57,6 +61,15 @@ class McpProcess:
             encoding="utf-8",
             bufsize=1,
         )
+        self._stderr_chunks: collections.deque[str] = collections.deque()
+        self._stderr_chars = 0
+        self._stderr_lock = threading.Lock()
+        self._stderr_thread = threading.Thread(
+            target=self._drain_stderr,
+            name="leantoken-benchmark-stderr",
+            daemon=True,
+        )
+        self._stderr_thread.start()
         self.next_id = 1
 
     def close(self) -> None:
@@ -69,6 +82,42 @@ class McpProcess:
         except subprocess.TimeoutExpired:
             self.process.kill()
             self.process.wait(timeout=5)
+        self._stderr_thread.join(timeout=1)
+        for stream in (self.process.stdout, self.process.stderr):
+            if stream is not None:
+                stream.close()
+
+    def _drain_stderr(self) -> None:
+        stream = self.process.stderr
+        if stream is None:
+            return
+        while True:
+            chunk = stream.read(4096)
+            if not chunk:
+                return
+            with self._stderr_lock:
+                if len(chunk) >= self.STDERR_CAPTURE_CHARS:
+                    self._stderr_chunks.clear()
+                    self._stderr_chunks.append(
+                        chunk[-self.STDERR_CAPTURE_CHARS :]
+                    )
+                    self._stderr_chars = self.STDERR_CAPTURE_CHARS
+                    continue
+                self._stderr_chunks.append(chunk)
+                self._stderr_chars += len(chunk)
+                while self._stderr_chars > self.STDERR_CAPTURE_CHARS:
+                    overflow = self._stderr_chars - self.STDERR_CAPTURE_CHARS
+                    oldest = self._stderr_chunks[0]
+                    if len(oldest) <= overflow:
+                        self._stderr_chunks.popleft()
+                        self._stderr_chars -= len(oldest)
+                    else:
+                        self._stderr_chunks[0] = oldest[overflow:]
+                        self._stderr_chars -= overflow
+
+    def _captured_stderr(self) -> str:
+        with self._stderr_lock:
+            return "".join(self._stderr_chunks)
 
     def _send(self, value: dict[str, Any]) -> None:
         if self.process.stdin is None:
@@ -84,9 +133,10 @@ class McpProcess:
         while True:
             line = self.process.stdout.readline()
             if not line:
-                stderr = ""
-                if self.process.stderr:
-                    stderr = self.process.stderr.read()
+                self._stderr_thread.join(timeout=0.1)
+                stderr = self._captured_stderr().strip()
+                if not stderr:
+                    stderr = "(no stderr captured)"
                 raise InvalidEvidence(f"MCP server closed unexpectedly: {stderr}")
             try:
                 value = json.loads(line)

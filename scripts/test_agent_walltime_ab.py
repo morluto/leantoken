@@ -4,6 +4,7 @@ import importlib.util
 import json
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -17,6 +18,78 @@ SPEC.loader.exec_module(MODULE)
 
 
 class AgentWalltimeAbTests(unittest.TestCase):
+    def test_mcp_process_drains_and_bounds_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            server = root / "noisy-mcp"
+            server.write_text(
+                """#!/usr/bin/env python3
+import json
+import sys
+
+sys.stderr.write("diagnostic-line\\n" * 20_000)
+sys.stderr.flush()
+for line in sys.stdin:
+    request = json.loads(line)
+    if request.get("id") == 0:
+        print(json.dumps({"jsonrpc": "2.0", "id": 0, "result": {}}), flush=True)
+""",
+                encoding="utf-8",
+            )
+            server.chmod(0o755)
+            mcp = MODULE.McpProcess(server, root, root / "index.sqlite3")
+            failures: list[BaseException] = []
+
+            def initialize() -> None:
+                try:
+                    mcp.initialize()
+                except BaseException as error:
+                    failures.append(error)
+
+            worker = threading.Thread(target=initialize)
+            worker.start()
+            worker.join(timeout=5)
+            if worker.is_alive():
+                mcp.close()
+                worker.join(timeout=1)
+                self.fail("MCP initialization deadlocked while stderr was noisy")
+            mcp.close()
+
+            if failures:
+                raise failures[0]
+            captured = mcp._captured_stderr()
+            self.assertIn("diagnostic-line", captured)
+            self.assertLessEqual(
+                len(captured),
+                MODULE.McpProcess.STDERR_CAPTURE_CHARS,
+            )
+
+    def test_mcp_process_surfaces_captured_stderr_on_unexpected_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            server = root / "failing-mcp"
+            server.write_text(
+                """#!/usr/bin/env python3
+import sys
+
+sys.stdin.readline()
+sys.stderr.write("fatal startup diagnostic\\n")
+sys.stderr.flush()
+""",
+                encoding="utf-8",
+            )
+            server.chmod(0o755)
+            mcp = MODULE.McpProcess(server, root, root / "index.sqlite3")
+
+            try:
+                with self.assertRaisesRegex(
+                    MODULE.InvalidEvidence,
+                    "fatal startup diagnostic",
+                ):
+                    mcp.initialize()
+            finally:
+                mcp.close()
+
     def test_percentile_uses_nearest_rank(self) -> None:
         values = [float(value) for value in range(1, 21)]
 
