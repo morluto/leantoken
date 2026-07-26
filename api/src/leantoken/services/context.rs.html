@@ -38,11 +38,11 @@
 <a href=#38 id=38 data-nosnippet>38</a><span class="doccomment">/// Maximum bytes for a base revision string.
 <a href=#39 id=39 data-nosnippet>39</a></span><span class="kw">const </span>MAX_BASE_REVISION_BYTES: usize = <span class="number">256</span>;
 <a href=#40 id=40 data-nosnippet>40</a><span class="doccomment">/// Maximum context query terms (symbols/refs/FTS fan-out budget).
-<a href=#41 id=41 data-nosnippet>41</a></span><span class="kw">const </span>MAX_CONTEXT_QUERIES: usize = <span class="number">12</span>;
+<a href=#41 id=41 data-nosnippet>41</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>MAX_CONTEXT_QUERIES: usize = <span class="number">12</span>;
 <a href=#42 id=42 data-nosnippet>42</a><span class="doccomment">/// Per-term symbol/reference candidate cap for context assembly.
-<a href=#43 id=43 data-nosnippet>43</a></span><span class="kw">const </span>MAX_CONTEXT_HITS_PER_SOURCE: usize = <span class="number">20</span>;
+<a href=#43 id=43 data-nosnippet>43</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>MAX_CONTEXT_HITS_PER_SOURCE: usize = <span class="number">20</span>;
 <a href=#44 id=44 data-nosnippet>44</a><span class="doccomment">/// Per-term FTS candidate cap for context assembly.
-<a href=#45 id=45 data-nosnippet>45</a></span><span class="kw">const </span>MAX_CONTEXT_LEXICAL_HITS: usize = <span class="number">30</span>;
+<a href=#45 id=45 data-nosnippet>45</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>MAX_CONTEXT_LEXICAL_HITS: usize = <span class="number">30</span>;
 <a href=#46 id=46 data-nosnippet>46</a><span class="doccomment">/// Per-import symbol scan cap for concept-corroborated structural expansion.
 <a href=#47 id=47 data-nosnippet>47</a></span><span class="kw">const </span>MAX_IMPORT_SYMBOLS: usize = <span class="number">128</span>;
 <a href=#48 id=48 data-nosnippet>48</a><span class="doccomment">/// Exact constraint names retained per storage batch.

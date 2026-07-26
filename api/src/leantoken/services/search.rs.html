@@ -20,15 +20,15 @@
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>crate::{Error, <span class="prelude-ty">Result</span>};
 <a href=#21 id=21 data-nosnippet>21</a>
 <a href=#22 id=22 data-nosnippet>22</a><span class="doccomment">/// Absolute regex scan candidate cap (independent of max_results multiplier).
-<a href=#23 id=23 data-nosnippet>23</a></span><span class="kw">const </span>MAX_REGEX_CANDIDATES: usize = <span class="number">2_000</span>;
+<a href=#23 id=23 data-nosnippet>23</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>MAX_REGEX_CANDIDATES: usize = <span class="number">2_000</span>;
 <a href=#24 id=24 data-nosnippet>24</a><span class="doccomment">/// Maximum files examined during a regex scan before early exit.
-<a href=#25 id=25 data-nosnippet>25</a></span><span class="kw">const </span>MAX_REGEX_FILES_SCANNED: usize = <span class="number">10_000</span>;
+<a href=#25 id=25 data-nosnippet>25</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>MAX_REGEX_FILES_SCANNED: usize = <span class="number">10_000</span>;
 <a href=#26 id=26 data-nosnippet>26</a><span class="doccomment">/// Maximum chunks examined per file during a regex scan.
-<a href=#27 id=27 data-nosnippet>27</a></span><span class="kw">const </span>MAX_REGEX_CHUNKS_PER_FILE: usize = <span class="number">256</span>;
+<a href=#27 id=27 data-nosnippet>27</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>MAX_REGEX_CHUNKS_PER_FILE: usize = <span class="number">256</span>;
 <a href=#28 id=28 data-nosnippet>28</a><span class="doccomment">/// Maximum trigram rows verified before a planned regex search fails explicitly.
-<a href=#29 id=29 data-nosnippet>29</a></span><span class="kw">const </span>MAX_REGEX_CANDIDATE_CHUNKS: usize = <span class="number">10_000</span>;
+<a href=#29 id=29 data-nosnippet>29</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>MAX_REGEX_CANDIDATE_CHUNKS: usize = <span class="number">10_000</span>;
 <a href=#30 id=30 data-nosnippet>30</a><span class="doccomment">/// Maximum lightweight FTS rows inspected while applying path-scoped planning.
-<a href=#31 id=31 data-nosnippet>31</a></span><span class="kw">const </span>MAX_SCOPED_REGEX_ROWS_SCANNED: usize = <span class="number">100_000</span>;
+<a href=#31 id=31 data-nosnippet>31</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>MAX_SCOPED_REGEX_ROWS_SCANNED: usize = <span class="number">100_000</span>;
 <a href=#32 id=32 data-nosnippet>32</a><span class="doccomment">/// Maximum exact matches materialized by one exhaustive occurrence request.
 <a href=#33 id=33 data-nosnippet>33</a></span><span class="kw">const </span>MAX_EXHAUSTIVE_OCCURRENCES: usize = <span class="number">100_000</span>;
 <a href=#34 id=34 data-nosnippet>34</a><span class="kw">const </span>FILTER_SCAN_PAGE_SIZE: usize = <span class="number">256</span>;
