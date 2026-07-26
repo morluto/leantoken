@@ -574,6 +574,33 @@ The manifest must contain coordinates and hashes, not copied full files. It
 should be host-triggered for compaction or agent handoff, not an always-on
 persistent memory system.
 
+Implemented and adopted with a deliberately narrow scope. The existing
+`context` operation accepts an optional host-supplied handoff request and emits
+a bounded, source-free manifest from the same pinned generation as its selected
+evidence. No model, persistent memory, or new MCP tool is involved. The manifest
+records repository and Git provenance, pre-receipt evidence coordinates and
+hashes, focus and diff projections, host-reported validations, unresolved
+state, and explicit gaps. Caller validations are transported, not executed.
+
+The release benchmark report is
+`benchmarks/reports/handoff-manifest-v1-2026-07-26.json`. All correctness gates
+passed, including exact selection/evidence/reread parity, complete provenance,
+source absence, determinism, host-state fidelity, and response token
+accounting. For the primary eight-fragment workflow, the complete baseline
+payload was 3,345 tokens. The manifest workflow used 2,802 tokens with no
+reread and 3,155 with one exact reread, saving 543 and 190 tokens respectively.
+Reading every fragment raised the payload to 5,481 tokens, a 2,136-token loss.
+
+The crossover probes constrain the adoption claim. Six fragments saved 358
+tokens with no reread but only 8 with one reread. Three fragments saved 83 with
+no reread and lost 259 with one reread. Therefore hosts should opt in only for
+genuine broad context-to-executor handoffs where the recipient is expected to
+need at most a small subset of the selected source. Routine context calls and
+high-reread workflows should keep the normal response. Release timing was
+descriptive rather than a gate: normal context measured 38.32 ms p50 and
+48.35 ms p95; handoff context measured 43.31 ms p50 and 60.14 ms p95 on the
+synthetic fixture.
+
 ### P2: optional semantic-provider boundary
 
 Define an interface experiment for LSP or SCIP facts without owning the full
@@ -628,8 +655,8 @@ favorable examples.
    does not expose a stable session identifier?
 4. Should delta output be a new response mode or a backward-compatible optional
    field in `ReadResponse`?
-5. Is a handoff manifest emitted by LeanToken, or assembled by the host from
-   existing receipts?
+5. Resolved: LeanToken emits an opt-in manifest from the same pinned context
+   generation; the host supplies only state LeanToken cannot observe.
 6. Should tracked credential-file detection be a warning, hard exclusion, or
    separate audit command?
 

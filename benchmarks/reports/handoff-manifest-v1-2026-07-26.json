@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "claim": "For an eight-fragment context-to-executor workflow where the recipient needs at most one selected fragment, a coordinate-and-hash manifest reduces complete serialized payload versus copying all selected source while preserving exact provenance; three- and six-fragment crossover probes are reported separately.",
+  "fixture": {
+    "selected_fragments": 8,
+    "selected_paths": [
+      "src/router.rs",
+      "src/policy.rs",
+      "src/session.rs",
+      "src/audit.rs",
+      "src/rate_limit.rs",
+      "tests/router_test.rs",
+      "tests/policy_test.rs",
+      "tests/session_test.rs"
+    ],
+    "source_tokens": 894,
+    "tokenizer": "cl100k_base",
+    "runs_per_arm": 21
+  },
+  "correctness": {
+    "selection_parity": true,
+    "exact_evidence_parity": true,
+    "exact_reread_hash_parity": true,
+    "provenance_complete": true,
+    "host_state_exact": true,
+    "manifest_has_no_source_bodies": true,
+    "deterministic_manifest": true,
+    "response_token_accounting_exact": true
+  },
+  "payload_tokens": {
+    "normal_context_response": 1715,
+    "handoff_context_response": 2261,
+    "full_source_handoff": 1630,
+    "standalone_manifest": 541,
+    "largest_exact_reread": 353,
+    "all_exact_rereads": 2679,
+    "baseline_two_stage": 3345,
+    "manifest_zero_rereads": 2802,
+    "manifest_one_reread": 3155,
+    "manifest_all_rereads": 5481,
+    "zero_reread_savings": 543,
+    "one_reread_savings": 190,
+    "all_reread_savings": -2136,
+    "small_context_probe": {
+      "selected_fragments": 3,
+      "source_tokens": 329,
+      "baseline_two_stage": 1589,
+      "manifest_zero_rereads": 1506,
+      "manifest_one_reread": 1848,
+      "zero_reread_savings": 83,
+      "one_reread_savings": -259
+    },
+    "medium_context_probe": {
+      "selected_fragments": 6,
+      "source_tokens": 665,
+      "baseline_two_stage": 2590,
+      "manifest_zero_rereads": 2232,
+      "manifest_one_reread": 2582,
+      "zero_reread_savings": 358,
+      "one_reread_savings": 8
+    }
+  },
+  "performance_ms": {
+    "normal_context_p50": 38.321595,
+    "normal_context_p95": 48.347474,
+    "handoff_context_p50": 43.312444,
+    "handoff_context_p95": 60.142063
+  },
+  "decision": {
+    "adopt": true,
+    "reason": "Adopt for broad handoffs: exact evidence and provenance are preserved, and the eight-fragment complete two-stage payload is smaller with zero or one exact reread; three- and six-fragment crossover probes remain disclosed."
+  },
+  "limitations": [
+    "The fixture is synthetic and validates mechanics and payload economics, not task success or repository-scale retrieval quality.",
+    "The all-reread result is a disclosed worst case and is not an adoption gate.",
+    "Small contexts can cost more after an exact reread; hosts should request manifests for genuine multi-fragment handoffs, not routine context calls.",
+    "Caller-reported validations are transported exactly but are not executed by LeanToken.",
+    "Timing is descriptive and is not a correctness gate."
+  ]
+}
