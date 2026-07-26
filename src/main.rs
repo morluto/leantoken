@@ -24,7 +24,8 @@ mod savings;
 const WATCHER_QUEUE_CAPACITY: usize = 1;
 const INDEX_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(500);
 const INDEX_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
-const LEADERSHIP_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const LEADERSHIP_POLL_INITIAL_DELAY: Duration = Duration::from_millis(500);
+const LEADERSHIP_POLL_MAX_DELAY: Duration = Duration::from_secs(8);
 
 fn mcp_index_worker_limit(configured: usize, explicitly_configured: bool) -> usize {
     if explicitly_configured { configured } else { 1 }
@@ -295,6 +296,8 @@ async fn run_mcp_runtime(
     service_state.set_ready(Arc::clone(&services));
     let mut leadership_backoff =
         RetryBackoff::new(INDEX_RETRY_INITIAL_DELAY, INDEX_RETRY_MAX_DELAY);
+    let mut follower_backoff =
+        RetryBackoff::new(LEADERSHIP_POLL_INITIAL_DELAY, LEADERSHIP_POLL_MAX_DELAY);
 
     loop {
         if cancellation.is_cancelled() {
@@ -306,8 +309,9 @@ async fn run_mcp_runtime(
         })
         .await??;
 
-        let mut retry_delay = LEADERSHIP_POLL_INTERVAL;
+        let retry_delay;
         if let Some(leader) = leader {
+            follower_backoff.reset();
             let result = run_index_leader(Arc::clone(&services), cancellation.clone()).await;
             drop(leader);
             if cancellation.is_cancelled() {
@@ -325,7 +329,10 @@ async fn run_mcp_runtime(
                 );
             } else {
                 leadership_backoff.reset();
+                retry_delay = LEADERSHIP_POLL_INITIAL_DELAY;
             }
+        } else {
+            retry_delay = follower_backoff.failure_delay();
         }
 
         tokio::select! {
