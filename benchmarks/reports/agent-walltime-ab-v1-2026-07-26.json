@@ -1,0 +1,2243 @@
+{
+  "aggregate": {
+    "accuracy_gates": {
+      "context_determinism": "pass",
+      "context_token_budgets": "pass",
+      "exact_read_parity": "pass",
+      "exact_search_parity": "pass"
+    },
+    "cold_index_ms": {
+      "maximum_ms": 3521.442511,
+      "mean_ms": 1391.6678935,
+      "median_ms": 756.568986,
+      "minimum_ms": 532.091091,
+      "p95_ms": 3521.442511,
+      "samples": 4
+    },
+    "corpus_count": 4,
+    "discovery_context": {
+      "sum_of_corpus_medians": {
+        "delta": {
+          "absolute_ms": 213.50811000000004,
+          "ratio": 1.8559753413896398,
+          "relative": 0.8559753413896398
+        },
+        "leantoken_ms": 462.94065750000004,
+        "native_ms": 249.4325475
+      }
+    },
+    "exact_read": {
+      "sum_of_corpus_medians": {
+        "delta": {
+          "absolute_ms": 13.8186475,
+          "ratio": 2.40594936560754,
+          "relative": 1.40594936560754
+        },
+        "leantoken_ms": 23.6473425,
+        "native_ms": 9.828695
+      }
+    },
+    "exact_search": {
+      "sum_of_corpus_medians": {
+        "delta": {
+          "absolute_ms": 103.01498300000002,
+          "ratio": 2.692675339993612,
+          "relative": 1.6926753399936119
+        },
+        "leantoken_ms": 163.8742515,
+        "native_ms": 60.8592685
+      }
+    },
+    "mcp_initialize_ms": {
+      "maximum_ms": 5.863329,
+      "mean_ms": 5.0840745,
+      "median_ms": 5.219965,
+      "minimum_ms": 4.033039,
+      "p95_ms": 5.863329,
+      "samples": 4
+    },
+    "mcp_ready_after_initialized_ms": {
+      "maximum_ms": 288.328278,
+      "mean_ms": 178.8736255,
+      "median_ms": 151.8546485,
+      "minimum_ms": 123.456927,
+      "p95_ms": 288.328278,
+      "samples": 4
+    },
+    "quality": {
+      "context_line_anchor_recall": 0.5,
+      "context_line_anchors": 38,
+      "context_line_anchors_found": 19,
+      "context_relevant_file_recall": 0.6363636363636364,
+      "context_relevant_files_found": 7,
+      "native_discovery_relevant_file_recall": 1.0,
+      "native_discovery_relevant_files_found": 11,
+      "relevant_files": 11
+    }
+  },
+  "corpora": [
+    {
+      "base_revision": "36e4a824f340fdee7ed50937ba8e7f6bc7d17f81",
+      "cold_index_ms": 858.060305,
+      "database_bytes": 16194152,
+      "directory": "flask",
+      "discovery_context": {
+        "context_determinism": "pass",
+        "context_observable_sha256": "003457d170b95f7e44d62b1db480744737f444635dfb64b9e2b8ef6527157f6b",
+        "context_payload_tokens": 1874,
+        "context_quality": {
+          "labeled_file_precision": 0.3333333333333333,
+          "line_anchor_recall": 0.5,
+          "line_anchors": 12,
+          "line_anchors_found": 6,
+          "relevant_file_recall": 0.5,
+          "relevant_files": [
+            "src/flask/app.py",
+            "src/flask/testing.py",
+            "tests/test_basic.py",
+            "tests/test_testing.py"
+          ],
+          "relevant_files_found": [
+            "src/flask/testing.py",
+            "tests/test_testing.py"
+          ],
+          "returned_paths": [
+            ".github/ISSUE_TEMPLATE/bug-report.md",
+            "CHANGES.rst",
+            "src/flask/cli.py",
+            "src/flask/testing.py",
+            "tests/test_config.py",
+            "tests/test_testing.py"
+          ]
+        },
+        "context_source_tokens": 1166,
+        "leantoken": {
+          "maximum_ms": 97.695489,
+          "mean_ms": 92.4122677,
+          "median_ms": 92.418674,
+          "minimum_ms": 87.625321,
+          "p95_ms": 97.695489,
+          "samples": 10
+        },
+        "leantoken_payload_bytes": 7514,
+        "median_delta": {
+          "absolute_ms": 40.88615999999999,
+          "ratio": 1.7934051111886369,
+          "relative": 0.7934051111886369
+        },
+        "native": {
+          "maximum_ms": 53.609895,
+          "mean_ms": 51.3738424,
+          "median_ms": 51.532514000000006,
+          "minimum_ms": 49.579825,
+          "p95_ms": 53.609895,
+          "samples": 10
+        },
+        "native_match_count": 76,
+        "native_observable_sha256": "e9218a4e53cec543d51d5b67426037fff07971ed474d28ec1c73bf81275ad6de",
+        "native_payload_bytes": 26501,
+        "native_quality": {
+          "labeled_file_precision": 0.3076923076923077,
+          "line_anchor_recall": null,
+          "line_anchors": null,
+          "line_anchors_found": null,
+          "relevant_file_recall": 1.0,
+          "relevant_files": [
+            "src/flask/app.py",
+            "src/flask/testing.py",
+            "tests/test_basic.py",
+            "tests/test_testing.py"
+          ],
+          "relevant_files_found": [
+            "src/flask/app.py",
+            "src/flask/testing.py",
+            "tests/test_basic.py",
+            "tests/test_testing.py"
+          ],
+          "returned_paths": [
+            "CHANGES.rst",
+            "docs/config.rst",
+            "docs/testing.rst",
+            "src/flask/app.py",
+            "src/flask/sansio/app.py",
+            "src/flask/sessions.py",
+            "src/flask/testing.py",
+            "tests/test_appctx.py",
+            "tests/test_basic.py",
+            "tests/test_blueprints.py",
+            "tests/test_reqctx.py",
+            "tests/test_signals.py",
+            "tests/test_testing.py"
+          ]
+        },
+        "raw_samples": [
+          {
+            "leantoken_ms": 95.37723,
+            "native_ms": 51.648834,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 89.62281,
+            "native_ms": 51.222894,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 92.382849,
+            "native_ms": 51.449834,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 89.70643,
+            "native_ms": 53.609895,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 90.482439,
+            "native_ms": 51.081734,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 94.09425,
+            "native_ms": 51.615194,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 92.454499,
+            "native_ms": 49.579825,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 94.68136,
+            "native_ms": 51.810965,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 87.625321,
+            "native_ms": 51.913144,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 97.695489,
+            "native_ms": 49.806105,
+            "order": "leantoken-native"
+          }
+        ],
+        "semantic_relation": "different-capability-diagnostic"
+      },
+      "exact_read": {
+        "leantoken": {
+          "maximum_ms": 7.46462,
+          "mean_ms": 5.8981651,
+          "median_ms": 5.8712245,
+          "minimum_ms": 4.862539,
+          "p95_ms": 7.189839,
+          "samples": 30
+        },
+        "leantoken_payload_bytes": 2501,
+        "median_delta": {
+          "absolute_ms": 3.4636445,
+          "ratio": 2.438641498932538,
+          "relative": 1.438641498932538
+        },
+        "native": {
+          "maximum_ms": 2.76727,
+          "mean_ms": 2.4070494,
+          "median_ms": 2.4075800000000003,
+          "minimum_ms": 1.93408,
+          "p95_ms": 2.74477,
+          "samples": 30
+        },
+        "native_payload_bytes": 1669,
+        "observable_sha256": "4aa4e50faf1a235ac7bc96b0388ee2cf5829df194bb06d5f63f441a92aeacc2e",
+        "parity": "pass",
+        "raw_samples": [
+          {
+            "leantoken_ms": 6.22367,
+            "native_ms": 2.545519,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.323179,
+            "native_ms": 2.35464,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.85113,
+            "native_ms": 2.3433,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 7.189839,
+            "native_ms": 2.50881,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.93924,
+            "native_ms": 2.11764,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.42953,
+            "native_ms": 2.268799,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.58848,
+            "native_ms": 2.0648,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 4.862539,
+            "native_ms": 2.41364,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.775809,
+            "native_ms": 2.40152,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.16276,
+            "native_ms": 2.232759,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.127859,
+            "native_ms": 2.4433,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.488729,
+            "native_ms": 2.73408,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.96114,
+            "native_ms": 2.17762,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.283079,
+            "native_ms": 2.48818,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.932599,
+            "native_ms": 2.324379,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.35643,
+            "native_ms": 2.53993,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.427099,
+            "native_ms": 1.93408,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.891319,
+            "native_ms": 2.59635,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.600459,
+            "native_ms": 2.22207,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.83826,
+            "native_ms": 2.397509,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.067019,
+            "native_ms": 2.14927,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 7.46462,
+            "native_ms": 2.454729,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.522909,
+            "native_ms": 2.74477,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.74078,
+            "native_ms": 2.665049,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.93374,
+            "native_ms": 2.60467,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.252709,
+            "native_ms": 2.62568,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.31754,
+            "native_ms": 2.442989,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 6.873309,
+            "native_ms": 2.36134,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.119359,
+            "native_ms": 2.76727,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 6.399819,
+            "native_ms": 2.28679,
+            "order": "leantoken-native"
+          }
+        ],
+        "returned_lines": 48
+      },
+      "exact_search": {
+        "leantoken": {
+          "maximum_ms": 31.349747,
+          "mean_ms": 25.94892156666667,
+          "median_ms": 25.847397,
+          "minimum_ms": 21.321578,
+          "p95_ms": 31.177927,
+          "samples": 30
+        },
+        "leantoken_payload_bytes": 6805,
+        "median_delta": {
+          "absolute_ms": 13.0119035,
+          "ratio": 2.0137439203253074,
+          "relative": 1.0137439203253074
+        },
+        "native": {
+          "maximum_ms": 13.994899,
+          "mean_ms": 12.659064366666666,
+          "median_ms": 12.8354935,
+          "minimum_ms": 10.433619,
+          "p95_ms": 13.771659,
+          "samples": 30
+        },
+        "native_payload_bytes": 5708,
+        "observable_sha256": "8873b228d36bc1cfdde945cf81f98cb9544d78e707423343e1ed54aa361ce5de",
+        "occurrences": 15,
+        "parity": "pass",
+        "raw_samples": [
+          {
+            "leantoken_ms": 27.808697,
+            "native_ms": 12.751799,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 26.868997,
+            "native_ms": 12.577259,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 21.321578,
+            "native_ms": 13.619178,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 21.407178,
+            "native_ms": 12.228118,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 23.654238,
+            "native_ms": 10.433619,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 25.352898,
+            "native_ms": 13.084168,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 22.652927,
+            "native_ms": 13.994899,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 21.771768,
+            "native_ms": 12.594978,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 27.923217,
+            "native_ms": 12.702009,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 24.753167,
+            "native_ms": 12.481159,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 26.408597,
+            "native_ms": 12.861769,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 22.271808,
+            "native_ms": 13.108318,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 22.678557,
+            "native_ms": 11.176669,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 24.922377,
+            "native_ms": 10.695369,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 26.658857,
+            "native_ms": 12.979828,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 31.349747,
+            "native_ms": 12.938388,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 23.843727,
+            "native_ms": 10.636049,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 25.454757,
+            "native_ms": 12.64291,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 31.177927,
+            "native_ms": 11.584859,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 29.620467,
+            "native_ms": 13.575158,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 29.281637,
+            "native_ms": 13.771659,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 26.240037,
+            "native_ms": 13.012959,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 28.450427,
+            "native_ms": 13.270699,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 25.290837,
+            "native_ms": 12.336739,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 27.245207,
+            "native_ms": 13.758269,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 28.890147,
+            "native_ms": 12.983049,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 24.883667,
+            "native_ms": 13.553899,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 31.107437,
+            "native_ms": 12.726409,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 22.454878,
+            "native_ms": 12.809218,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 26.721887,
+            "native_ms": 12.882528,
+            "order": "leantoken-native"
+          }
+        ]
+      },
+      "mcp_initialize_ms": 5.48948,
+      "mcp_ready_after_initialized_ms": 159.155453,
+      "name": "flask-validation",
+      "read_target": {
+        "end_line": 183,
+        "path": "src/flask/testing.py",
+        "start_line": 136
+      },
+      "rg_queries": [
+        "partition(\":\")",
+        "session_transaction",
+        "test_run_from_config",
+        "SERVER_NAME"
+      ],
+      "search_query": "session_transaction",
+      "task_id": "flask-ipv6-address-partition",
+      "token_budget": 1200
+    },
+    {
+      "base_revision": "34dac209ffb6ef85cc78c5d217bbb7ad001d68fd",
+      "cold_index_ms": 655.077667,
+      "database_bytes": 13971688,
+      "directory": "gin",
+      "discovery_context": {
+        "context_determinism": "pass",
+        "context_observable_sha256": "db64a5a96fbfa39de1cabfab34d0432db5ae04b1ea7ed9917301b4f345f4cceb",
+        "context_payload_tokens": 1640,
+        "context_quality": {
+          "labeled_file_precision": 0.25,
+          "line_anchor_recall": 0.5,
+          "line_anchors": 6,
+          "line_anchors_found": 3,
+          "relevant_file_recall": 1.0,
+          "relevant_files": [
+            "render/json.go",
+            "render/render_test.go"
+          ],
+          "relevant_files_found": [
+            "render/json.go",
+            "render/render_test.go"
+          ],
+          "returned_paths": [
+            "context.go",
+            "context_test.go",
+            "docs/doc.md",
+            "render/html.go",
+            "render/json.go",
+            "render/render_test.go",
+            "response_writer_test.go",
+            "tree.go"
+          ]
+        },
+        "context_source_tokens": 822,
+        "leantoken": {
+          "maximum_ms": 103.248719,
+          "mean_ms": 94.7569105,
+          "median_ms": 94.4176895,
+          "minimum_ms": 88.4845,
+          "p95_ms": 103.248719,
+          "samples": 10
+        },
+        "leantoken_payload_bytes": 5089,
+        "median_delta": {
+          "absolute_ms": 63.22891799999999,
+          "ratio": 3.027297484288536,
+          "relative": 2.027297484288536
+        },
+        "native": {
+          "maximum_ms": 35.143246,
+          "mean_ms": 31.2701714,
+          "median_ms": 31.1887715,
+          "minimum_ms": 28.554266,
+          "p95_ms": 35.143246,
+          "samples": 10
+        },
+        "native_match_count": 28,
+        "native_observable_sha256": "956b41232914bd48ae8950ce31d0724a37fc26b9797a55d44e2b8694b1e196e9",
+        "native_payload_bytes": 11219,
+        "native_quality": {
+          "labeled_file_precision": 0.25,
+          "line_anchor_recall": null,
+          "line_anchors": null,
+          "line_anchors_found": null,
+          "relevant_file_recall": 1.0,
+          "relevant_files": [
+            "render/json.go",
+            "render/render_test.go"
+          ],
+          "relevant_files_found": [
+            "render/json.go",
+            "render/render_test.go"
+          ],
+          "returned_paths": [
+            "CHANGELOG.md",
+            "context.go",
+            "context_test.go",
+            "docs/doc.md",
+            "render/json.go",
+            "render/render.go",
+            "render/render_test.go",
+            "utils.go"
+          ]
+        },
+        "raw_samples": [
+          {
+            "leantoken_ms": 94.819409,
+            "native_ms": 31.265356,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 97.524049,
+            "native_ms": 29.490057,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 88.4845,
+            "native_ms": 28.739167,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 94.01597,
+            "native_ms": 30.727456,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 91.96976,
+            "native_ms": 32.755356,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 92.20689,
+            "native_ms": 35.143246,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 91.73749,
+            "native_ms": 31.112187,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 95.492979,
+            "native_ms": 31.852176,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 103.248719,
+            "native_ms": 28.554266,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 98.069339,
+            "native_ms": 33.062447,
+            "order": "leantoken-native"
+          }
+        ],
+        "semantic_relation": "different-capability-diagnostic"
+      },
+      "exact_read": {
+        "leantoken": {
+          "maximum_ms": 5.944009,
+          "mean_ms": 4.8929122,
+          "median_ms": 4.9974745,
+          "minimum_ms": 3.757219,
+          "p95_ms": 5.881839,
+          "samples": 30
+        },
+        "leantoken_payload_bytes": 1356,
+        "median_delta": {
+          "absolute_ms": 2.6426995,
+          "ratio": 2.122272616279687,
+          "relative": 1.122272616279687
+        },
+        "native": {
+          "maximum_ms": 2.796849,
+          "mean_ms": 2.3195034333333333,
+          "median_ms": 2.354775,
+          "minimum_ms": 1.86454,
+          "p95_ms": 2.73531,
+          "samples": 30
+        },
+        "native_payload_bytes": 539,
+        "observable_sha256": "5229f7e67c03fcb2d46df05463285632c01e892ed7708b2281a2e3213d156a55",
+        "parity": "pass",
+        "raw_samples": [
+          {
+            "leantoken_ms": 5.01666,
+            "native_ms": 2.32014,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 4.30356,
+            "native_ms": 2.796849,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 4.99917,
+            "native_ms": 2.4354,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.944009,
+            "native_ms": 2.41219,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.21474,
+            "native_ms": 2.33388,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 4.267069,
+            "native_ms": 2.26766,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.881839,
+            "native_ms": 2.28841,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 3.757219,
+            "native_ms": 2.56576,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.11249,
+            "native_ms": 1.9042,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 4.337929,
+            "native_ms": 2.13984,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 4.535309,
+            "native_ms": 1.89917,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 4.32666,
+            "native_ms": 2.44105,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.02782,
+            "native_ms": 2.239039,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.823669,
+            "native_ms": 2.3602,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 4.55759,
+            "native_ms": 1.919639,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 4.0109,
+            "native_ms": 2.468659,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 4.58726,
+            "native_ms": 2.444409,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 4.778899,
+            "native_ms": 2.44034,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 4.375509,
+            "native_ms": 2.51483,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 4.997419,
+            "native_ms": 2.428049,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 4.94952,
+            "native_ms": 2.41855,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 4.40815,
+            "native_ms": 2.0584,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 4.99753,
+            "native_ms": 2.533449,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.143189,
+            "native_ms": 2.34935,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.246669,
+            "native_ms": 2.11276,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.03825,
+            "native_ms": 2.73531,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.70183,
+            "native_ms": 2.09429,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 4.94059,
+            "native_ms": 2.3216,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.266329,
+            "native_ms": 1.86454,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.239589,
+            "native_ms": 2.47714,
+            "order": "leantoken-native"
+          }
+        ],
+        "returned_lines": 22
+      },
+      "exact_search": {
+        "leantoken": {
+          "maximum_ms": 53.190354,
+          "mean_ms": 45.45224966666667,
+          "median_ms": 45.035855,
+          "minimum_ms": 40.277156,
+          "p95_ms": 50.227214,
+          "samples": 30
+        },
+        "leantoken_payload_bytes": 9947,
+        "median_delta": {
+          "absolute_ms": 37.0687205,
+          "ratio": 5.652704243916053,
+          "relative": 4.652704243916053
+        },
+        "native": {
+          "maximum_ms": 10.467538,
+          "mean_ms": 8.097979133333332,
+          "median_ms": 7.9671345,
+          "minimum_ms": 7.166039,
+          "p95_ms": 9.5088,
+          "samples": 30
+        },
+        "native_payload_bytes": 7949,
+        "observable_sha256": "4a7694970592308f6291d2b39513bc2852fadaf37712c16dd38df14d44392809",
+        "occurrences": 23,
+        "parity": "pass",
+        "raw_samples": [
+          {
+            "leantoken_ms": 43.692735,
+            "native_ms": 10.467538,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 41.108885,
+            "native_ms": 8.567269,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 43.697785,
+            "native_ms": 7.718889,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 40.277156,
+            "native_ms": 7.578929,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 44.044746,
+            "native_ms": 7.822479,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 53.190354,
+            "native_ms": 8.403739,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 50.025125,
+            "native_ms": 7.994679,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 49.222703,
+            "native_ms": 9.5088,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 48.898755,
+            "native_ms": 7.560869,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 50.227214,
+            "native_ms": 8.256889,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 46.360175,
+            "native_ms": 9.045279,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 46.321075,
+            "native_ms": 8.284149,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 45.824045,
+            "native_ms": 8.742449,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 44.180925,
+            "native_ms": 8.010599,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 41.892536,
+            "native_ms": 7.411899,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 46.809235,
+            "native_ms": 8.67998,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 45.402775,
+            "native_ms": 7.321199,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 44.231355,
+            "native_ms": 7.253059,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 43.003755,
+            "native_ms": 8.655049,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 43.399095,
+            "native_ms": 7.70585,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 42.076065,
+            "native_ms": 7.279589,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 45.201525,
+            "native_ms": 7.57235,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 46.071665,
+            "native_ms": 8.200589,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 49.604545,
+            "native_ms": 8.370219,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 42.231815,
+            "native_ms": 7.791189,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 47.331255,
+            "native_ms": 7.871659,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 46.916025,
+            "native_ms": 7.958339,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 44.870185,
+            "native_ms": 7.763879,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 43.333275,
+            "native_ms": 7.97593,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 44.120706,
+            "native_ms": 7.166039,
+            "order": "leantoken-native"
+          }
+        ]
+      },
+      "mcp_initialize_ms": 5.863329,
+      "mcp_ready_after_initialized_ms": 144.553844,
+      "name": "gin-validation",
+      "read_target": {
+        "end_line": 176,
+        "path": "render/json.go",
+        "start_line": 155
+      },
+      "rg_queries": [
+        "AsciiJSON",
+        "Appendf",
+        "MaxASCII",
+        "TestRenderAsciiJSON"
+      ],
+      "search_query": "AsciiJSON",
+      "task_id": "gin-ascii-json-non-bmp",
+      "token_budget": 900
+    },
+    {
+      "base_revision": "ae6dd37680e3a00618d6c8a3e522f0ee4eeba1a4",
+      "cold_index_ms": 532.091091,
+      "database_bytes": 9424168,
+      "directory": "express",
+      "discovery_context": {
+        "context_determinism": "pass",
+        "context_observable_sha256": "87876821f76a9435fce0df2b63ea850e5038a84805db6db0c1fdba4ca4355107",
+        "context_payload_tokens": 1546,
+        "context_quality": {
+          "labeled_file_precision": 0.25,
+          "line_anchor_recall": 0.36363636363636365,
+          "line_anchors": 11,
+          "line_anchors_found": 4,
+          "relevant_file_recall": 0.6666666666666666,
+          "relevant_files": [
+            "lib/application.js",
+            "lib/view.js",
+            "test/app.render.js"
+          ],
+          "relevant_files_found": [
+            "lib/application.js",
+            "test/app.render.js"
+          ],
+          "returned_paths": [
+            "History.md",
+            "examples/resource/index.js",
+            "examples/route-separation/index.js",
+            "lib/application.js",
+            "lib/response.js",
+            "test/app.engine.js",
+            "test/app.render.js",
+            "test/res.sendFile.js"
+          ]
+        },
+        "context_source_tokens": 886,
+        "leantoken": {
+          "maximum_ms": 89.12142,
+          "mean_ms": 78.82184409999999,
+          "median_ms": 77.292546,
+          "minimum_ms": 68.417902,
+          "p95_ms": 89.12142,
+          "samples": 10
+        },
+        "leantoken_payload_bytes": 5539,
+        "median_delta": {
+          "absolute_ms": 26.369506,
+          "ratio": 1.5178305537139967,
+          "relative": 0.5178305537139967
+        },
+        "native": {
+          "maximum_ms": 56.144583,
+          "mean_ms": 51.0838932,
+          "median_ms": 50.92304,
+          "minimum_ms": 47.597804,
+          "p95_ms": 56.144583,
+          "samples": 10
+        },
+        "native_match_count": 44,
+        "native_observable_sha256": "1c7fc44dcce8fa2b9a717304d63bfea25285c981be9d15fc8813d0067c98555e",
+        "native_payload_bytes": 16001,
+        "native_quality": {
+          "labeled_file_precision": 0.42857142857142855,
+          "line_anchor_recall": null,
+          "line_anchors": null,
+          "line_anchors_found": null,
+          "relevant_file_recall": 1.0,
+          "relevant_files": [
+            "lib/application.js",
+            "lib/view.js",
+            "test/app.render.js"
+          ],
+          "relevant_files_found": [
+            "lib/application.js",
+            "lib/view.js",
+            "test/app.render.js"
+          ],
+          "returned_paths": [
+            "History.md",
+            "examples/view-constructor/github-view.js",
+            "lib/application.js",
+            "lib/response.js",
+            "lib/view.js",
+            "test/app.engine.js",
+            "test/app.render.js"
+          ]
+        },
+        "raw_samples": [
+          {
+            "leantoken_ms": 74.593681,
+            "native_ms": 52.981524,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 89.12142,
+            "native_ms": 50.313784,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 68.417902,
+            "native_ms": 50.466395,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 69.751872,
+            "native_ms": 49.282074,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 79.991411,
+            "native_ms": 51.379685,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 85.41352,
+            "native_ms": 49.385925,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 87.93832,
+            "native_ms": 51.717034,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 74.447652,
+            "native_ms": 56.144583,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 72.280203,
+            "native_ms": 47.597804,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 86.26246,
+            "native_ms": 51.570124,
+            "order": "leantoken-native"
+          }
+        ],
+        "semantic_relation": "different-capability-diagnostic"
+      },
+      "exact_read": {
+        "leantoken": {
+          "maximum_ms": 7.105019,
+          "mean_ms": 6.0224869666666665,
+          "median_ms": 6.0192345,
+          "minimum_ms": 5.20683,
+          "p95_ms": 7.05243,
+          "samples": 30
+        },
+        "leantoken_payload_bytes": 2160,
+        "median_delta": {
+          "absolute_ms": 3.4934794999999994,
+          "ratio": 2.3831426642726625,
+          "relative": 1.3831426642726625
+        },
+        "native": {
+          "maximum_ms": 3.30951,
+          "mean_ms": 2.6287339666666667,
+          "median_ms": 2.525755,
+          "minimum_ms": 2.33174,
+          "p95_ms": 3.208059,
+          "samples": 30
+        },
+        "native_payload_bytes": 1328,
+        "observable_sha256": "f402e18ec12a451eabacd83a5fe19ebbd736713e48800113d53404e3d4edf76c",
+        "parity": "pass",
+        "raw_samples": [
+          {
+            "leantoken_ms": 6.184149,
+            "native_ms": 2.3473,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.347069,
+            "native_ms": 2.34293,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.104239,
+            "native_ms": 3.30951,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 6.082589,
+            "native_ms": 2.69879,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.684849,
+            "native_ms": 2.33174,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.94018,
+            "native_ms": 2.761789,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.926609,
+            "native_ms": 2.55522,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 6.404509,
+            "native_ms": 2.42065,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.768749,
+            "native_ms": 2.410409,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.41799,
+            "native_ms": 2.5342,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.92203,
+            "native_ms": 2.452449,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.862429,
+            "native_ms": 3.05901,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.400189,
+            "native_ms": 3.208059,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.861108,
+            "native_ms": 3.08056,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.1854,
+            "native_ms": 2.950109,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 6.497808,
+            "native_ms": 2.817789,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.283539,
+            "native_ms": 2.57825,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.41949,
+            "native_ms": 2.948809,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.988349,
+            "native_ms": 2.407679,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.20683,
+            "native_ms": 2.51731,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.4137,
+            "native_ms": 2.474909,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 7.105019,
+            "native_ms": 2.51621,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.37189,
+            "native_ms": 2.419649,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.487479,
+            "native_ms": 2.60641,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.260239,
+            "native_ms": 2.3932,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.922709,
+            "native_ms": 2.92443,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.223759,
+            "native_ms": 2.40053,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 6.29916,
+            "native_ms": 2.56853,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.05012,
+            "native_ms": 2.33479,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 7.05243,
+            "native_ms": 2.490799,
+            "order": "leantoken-native"
+          }
+        ],
+        "returned_lines": 54
+      },
+      "exact_search": {
+        "leantoken": {
+          "maximum_ms": 49.778174,
+          "mean_ms": 45.51570963333334,
+          "median_ms": 45.0152155,
+          "minimum_ms": 41.679055,
+          "p95_ms": 49.214084,
+          "samples": 30
+        },
+        "leantoken_payload_bytes": 14835,
+        "median_delta": {
+          "absolute_ms": 32.444756999999996,
+          "ratio": 3.5810321079378284,
+          "relative": 2.5810321079378284
+        },
+        "native": {
+          "maximum_ms": 14.705538,
+          "mean_ms": 12.515193666666667,
+          "median_ms": 12.5704585,
+          "minimum_ms": 10.408748,
+          "p95_ms": 14.059149,
+          "samples": 30
+        },
+        "native_payload_bytes": 11322,
+        "observable_sha256": "a03c38b679944d33e3dd603d66807866e5edff5ed7998baf10b1ae129b62f78a",
+        "occurrences": 37,
+        "parity": "pass",
+        "raw_samples": [
+          {
+            "leantoken_ms": 44.464685,
+            "native_ms": 14.705538,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 44.903465,
+            "native_ms": 14.059149,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 44.761765,
+            "native_ms": 12.290938,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 45.129315,
+            "native_ms": 13.182549,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 46.943515,
+            "native_ms": 12.708998,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 45.823895,
+            "native_ms": 11.840479,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 44.977966,
+            "native_ms": 11.545848,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 49.778174,
+            "native_ms": 12.771039,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 48.101345,
+            "native_ms": 13.421549,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 48.062955,
+            "native_ms": 12.605358,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 49.214084,
+            "native_ms": 12.456779,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 47.444565,
+            "native_ms": 12.749129,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 49.071175,
+            "native_ms": 14.052879,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 47.074504,
+            "native_ms": 13.461229,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 43.783785,
+            "native_ms": 11.308009,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 46.184975,
+            "native_ms": 10.408748,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 43.418005,
+            "native_ms": 12.122799,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 45.052465,
+            "native_ms": 12.185228,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 43.824396,
+            "native_ms": 12.456559,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 44.188465,
+            "native_ms": 12.019069,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 45.646255,
+            "native_ms": 12.549828,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 42.377806,
+            "native_ms": 11.266819,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 44.590775,
+            "native_ms": 10.435229,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 41.679055,
+            "native_ms": 12.593959,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 43.573805,
+            "native_ms": 11.857619,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 44.388895,
+            "native_ms": 12.949589,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 43.203215,
+            "native_ms": 12.577498,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 45.411935,
+            "native_ms": 13.120868,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 48.065754,
+            "native_ms": 12.563419,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 44.330295,
+            "native_ms": 13.189109,
+            "order": "leantoken-native"
+          }
+        ]
+      },
+      "mcp_initialize_ms": 4.033039,
+      "mcp_ready_after_initialized_ms": 123.456927,
+      "name": "express-validation",
+      "read_target": {
+        "end_line": 575,
+        "path": "lib/application.js",
+        "start_line": 522
+      },
+      "rg_queries": [
+        "extname(name)",
+        "this.ext.slice(1)",
+        "Failed to lookup view",
+        "app.render"
+      ],
+      "search_query": "app.render",
+      "task_id": "express-trailing-dot-view",
+      "token_budget": 1000
+    },
+    {
+      "base_revision": "9cae638de6dc8dd9779c450201df8c102247a242",
+      "cold_index_ms": 3521.442511,
+      "database_bytes": 87229496,
+      "directory": "tokio",
+      "discovery_context": {
+        "context_determinism": "pass",
+        "context_observable_sha256": "b945c24de3a4eebd5df777a92357958134be05964fa2fedf31cf631633cc13bd",
+        "context_payload_tokens": 1839,
+        "context_quality": {
+          "labeled_file_precision": 0.2,
+          "line_anchor_recall": 0.6666666666666666,
+          "line_anchors": 9,
+          "line_anchors_found": 6,
+          "relevant_file_recall": 0.5,
+          "relevant_files": [
+            "tokio/src/fs/file.rs",
+            "tokio/tests/fs_file.rs"
+          ],
+          "relevant_files_found": [
+            "tokio/src/fs/file.rs"
+          ],
+          "returned_paths": [
+            "tokio-util/src/sync/mpsc.rs",
+            "tokio/src/fs/file.rs",
+            "tokio/src/net/tcp/stream.rs",
+            "tokio/tests/fs_uring_file_read.rs",
+            "tokio/tests/io_panic.rs"
+          ]
+        },
+        "context_source_tokens": 1199,
+        "leantoken": {
+          "maximum_ms": 203.377418,
+          "mean_ms": 196.1687782,
+          "median_ms": 198.811748,
+          "minimum_ms": 183.703439,
+          "p95_ms": 203.377418,
+          "samples": 10
+        },
+        "leantoken_payload_bytes": 8209,
+        "median_delta": {
+          "absolute_ms": 83.023526,
+          "ratio": 1.7170291119937917,
+          "relative": 0.7170291119937917
+        },
+        "native": {
+          "maximum_ms": 123.073436,
+          "mean_ms": 116.29402110000001,
+          "median_ms": 115.78822199999999,
+          "minimum_ms": 107.549798,
+          "p95_ms": 123.073436,
+          "samples": 10
+        },
+        "native_match_count": 160,
+        "native_observable_sha256": "a24fd937d0949a68182214bd43e845949b7abc6c481a1d5c06d4a959e01fa827",
+        "native_payload_bytes": 60818,
+        "native_quality": {
+          "labeled_file_precision": 0.04,
+          "line_anchor_recall": null,
+          "line_anchors": null,
+          "line_anchors_found": null,
+          "relevant_file_recall": 1.0,
+          "relevant_files": [
+            "tokio/src/fs/file.rs",
+            "tokio/tests/fs_file.rs"
+          ],
+          "relevant_files_found": [
+            "tokio/src/fs/file.rs",
+            "tokio/tests/fs_file.rs"
+          ],
+          "returned_paths": [
+            "benches/copy.rs",
+            "tests-integration/tests/process_stdio.rs",
+            "tokio-util/src/either.rs",
+            "tokio-util/src/io/inspect.rs",
+            "tokio-util/src/io/simplex.rs",
+            "tokio-util/src/io/write_all_vectored.rs",
+            "tokio-util/src/sync/mpsc.rs",
+            "tokio-util/src/util/poll_buf.rs",
+            "tokio-util/tests/io_inspect.rs",
+            "tokio-util/tests/io_simplex.rs",
+            "tokio-util/tests/io_write_all_vectored.rs",
+            "tokio/CHANGELOG.md",
+            "tokio/src/blocking.rs",
+            "tokio/src/fs/file.rs",
+            "tokio/src/fs/mocks.rs",
+            "tokio/src/fs/read_dir.rs",
+            "tokio/src/io/async_write.rs",
+            "tokio/src/io/blocking.rs",
+            "tokio/src/io/join.rs",
+            "tokio/src/io/poll_evented.rs",
+            "tokio/src/io/split.rs",
+            "tokio/src/io/util/async_write_ext.rs",
+            "tokio/src/io/util/buf_reader.rs",
+            "tokio/src/io/util/buf_stream.rs",
+            "tokio/src/io/util/buf_writer.rs",
+            "tokio/src/io/util/empty.rs",
+            "tokio/src/io/util/mem.rs",
+            "tokio/src/io/util/write_all_buf.rs",
+            "tokio/src/io/util/write_buf.rs",
+            "tokio/src/io/util/write_vectored.rs",
+            "tokio/src/net/tcp/split.rs",
+            "tokio/src/net/tcp/split_owned.rs",
+            "tokio/src/net/tcp/stream.rs",
+            "tokio/src/net/unix/pipe.rs",
+            "tokio/src/net/unix/split.rs",
+            "tokio/src/net/unix/split_owned.rs",
+            "tokio/src/net/unix/stream.rs",
+            "tokio/src/net/windows/named_pipe.rs",
+            "tokio/src/process/mod.rs",
+            "tokio/src/process/unix/mod.rs",
+            "tokio/src/runtime/blocking/mod.rs",
+            "tokio/src/runtime/blocking/pool.rs",
+            "tokio/src/runtime/mod.rs",
+            "tokio/src/runtime/tests/loom_blocking.rs",
+            "tokio/tests/fs_file.rs",
+            "tokio/tests/io_buf_writer.rs",
+            "tokio/tests/io_join.rs",
+            "tokio/tests/io_split.rs",
+            "tokio/tests/io_write_all_buf.rs",
+            "tokio/tests/io_write_buf.rs"
+          ]
+        },
+        "raw_samples": [
+          {
+            "leantoken_ms": 203.377418,
+            "native_ms": 116.164587,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 196.495958,
+            "native_ms": 114.379107,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 202.247417,
+            "native_ms": 114.732338,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 199.207598,
+            "native_ms": 123.073436,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 183.703439,
+            "native_ms": 119.422557,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 191.638489,
+            "native_ms": 120.820057,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 198.415898,
+            "native_ms": 107.549798,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 199.548858,
+            "native_ms": 117.137627,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 202.232658,
+            "native_ms": 114.248847,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 184.820049,
+            "native_ms": 115.411857,
+            "order": "leantoken-native"
+          }
+        ],
+        "semantic_relation": "different-capability-diagnostic"
+      },
+      "exact_read": {
+        "leantoken": {
+          "maximum_ms": 9.243258,
+          "mean_ms": 6.824171433333333,
+          "median_ms": 6.759409,
+          "minimum_ms": 5.5519,
+          "p95_ms": 8.157299,
+          "samples": 30
+        },
+        "leantoken_payload_bytes": 3435,
+        "median_delta": {
+          "absolute_ms": 4.218824,
+          "ratio": 2.6605718761623796,
+          "relative": 1.6605718761623796
+        },
+        "native": {
+          "maximum_ms": 3.372469,
+          "mean_ms": 2.5269253333333332,
+          "median_ms": 2.540585,
+          "minimum_ms": 2.03884,
+          "p95_ms": 2.77327,
+          "samples": 30
+        },
+        "native_payload_bytes": 2593,
+        "observable_sha256": "b398890c4a7eb90c127443a5daea04db7bac59177e0541b5e167e2a74b75f442",
+        "parity": "pass",
+        "raw_samples": [
+          {
+            "leantoken_ms": 7.041349,
+            "native_ms": 2.52043,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 6.848988,
+            "native_ms": 2.735489,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.900529,
+            "native_ms": 2.55214,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 7.657699,
+            "native_ms": 2.6064,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 7.065119,
+            "native_ms": 2.42084,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 6.584329,
+            "native_ms": 2.43782,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.669119,
+            "native_ms": 2.55104,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.944559,
+            "native_ms": 2.53013,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 7.217419,
+            "native_ms": 2.03884,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 7.799529,
+            "native_ms": 2.45731,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.406039,
+            "native_ms": 2.64074,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 6.589679,
+            "native_ms": 2.61594,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 9.243258,
+            "native_ms": 2.136819,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 7.07832,
+            "native_ms": 2.33208,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.95147,
+            "native_ms": 2.722669,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 7.115819,
+            "native_ms": 2.52777,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 7.012559,
+            "native_ms": 3.372469,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 6.165779,
+            "native_ms": 2.633419,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.725419,
+            "native_ms": 2.622289,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 6.793399,
+            "native_ms": 2.57426,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.887679,
+            "native_ms": 2.59048,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 6.19999,
+            "native_ms": 2.506509,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 5.878869,
+            "native_ms": 2.77327,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 6.253009,
+            "native_ms": 2.56464,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.439429,
+            "native_ms": 2.13537,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 6.434059,
+            "native_ms": 2.467379,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 6.515329,
+            "native_ms": 2.61167,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 6.5972,
+            "native_ms": 2.368369,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 8.157299,
+            "native_ms": 2.39528,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 5.5519,
+            "native_ms": 2.365899,
+            "order": "leantoken-native"
+          }
+        ],
+        "returned_lines": 70
+      },
+      "exact_search": {
+        "leantoken": {
+          "maximum_ms": 83.040461,
+          "mean_ms": 49.2371789,
+          "median_ms": 47.975784000000004,
+          "minimum_ms": 45.501635,
+          "p95_ms": 52.715614,
+          "samples": 30
+        },
+        "leantoken_payload_bytes": 8925,
+        "median_delta": {
+          "absolute_ms": 20.489602000000005,
+          "ratio": 1.745451005163249,
+          "relative": 0.745451005163249
+        },
+        "native": {
+          "maximum_ms": 32.064306,
+          "mean_ms": 27.714827300000003,
+          "median_ms": 27.486182,
+          "minimum_ms": 24.078958,
+          "p95_ms": 31.743187,
+          "samples": 30
+        },
+        "native_payload_bytes": 8225,
+        "observable_sha256": "477bb8472375a50d9d8173a6ca887559c6e8fffa6e6ce0dcd948c9816957d41a",
+        "occurrences": 19,
+        "parity": "pass",
+        "raw_samples": [
+          {
+            "leantoken_ms": 47.011885,
+            "native_ms": 29.547057,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 50.700844,
+            "native_ms": 25.744307,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 46.964615,
+            "native_ms": 27.571847,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 49.113155,
+            "native_ms": 30.845096,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 46.160306,
+            "native_ms": 28.774867,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 49.381065,
+            "native_ms": 26.433727,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 48.416435,
+            "native_ms": 24.917048,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 46.352245,
+            "native_ms": 26.790377,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 48.665575,
+            "native_ms": 24.379137,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 47.755094,
+            "native_ms": 29.121368,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 47.185595,
+            "native_ms": 29.428877,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 47.598165,
+            "native_ms": 27.014857,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 47.430925,
+            "native_ms": 28.598226,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 48.302895,
+            "native_ms": 26.106397,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 50.081274,
+            "native_ms": 30.354977,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 48.508625,
+            "native_ms": 27.458877,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 48.196474,
+            "native_ms": 27.513487,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 50.949795,
+            "native_ms": 27.059657,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 52.715614,
+            "native_ms": 29.913826,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 46.154794,
+            "native_ms": 29.432607,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 48.756625,
+            "native_ms": 26.090167,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 49.095904,
+            "native_ms": 26.523457,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 46.094974,
+            "native_ms": 29.021696,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 47.155355,
+            "native_ms": 24.829447,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 50.198604,
+            "native_ms": 31.743187,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 46.921375,
+            "native_ms": 32.064306,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 45.501635,
+            "native_ms": 24.078958,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 45.528395,
+            "native_ms": 27.947067,
+            "order": "leantoken-native"
+          },
+          {
+            "leantoken_ms": 83.040461,
+            "native_ms": 26.761967,
+            "order": "native-leantoken"
+          },
+          {
+            "leantoken_ms": 47.176664,
+            "native_ms": 25.377948,
+            "order": "leantoken-native"
+          }
+        ]
+      },
+      "mcp_initialize_ms": 4.95045,
+      "mcp_ready_after_initialized_ms": 288.328278,
+      "name": "tokio-validation",
+      "read_target": {
+        "end_line": 797,
+        "path": "tokio/src/fs/file.rs",
+        "start_line": 728
+      },
+      "rg_queries": [
+        "spawn_mandatory_blocking",
+        "State::Idle",
+        "poll_write_vectored",
+        "basic_write"
+      ],
+      "search_query": "spawn_mandatory_blocking",
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "token_budget": 1200
+    }
+  ],
+  "hypothesis": "Persistent indexed exact operations should remain within small absolute wall-time overhead while preserving exact search/read results; ranked context cost is measured separately and must not be interpreted as an equivalent ripgrep operation.",
+  "limitations": [
+    "This is a local retrieval microbenchmark, not an end-to-end agent task-time result.",
+    "Exact search and exact read are observable-parity comparisons; multi-query ripgrep discovery and ranked context are not semantically equivalent.",
+    "Wall time depends on this host, filesystem cache, process scheduler, and pinned corpus sizes.",
+    "Cold index cost is paid once per repository generation and must be amortized over a real session.",
+    "CPU time, peak RSS, provider latency, model turns, patch quality, and task success are outside this report.",
+    "The prospective validation tasks are consumed development evidence rather than a blind holdout."
+  ],
+  "protocol": {
+    "accuracy_gates": [
+      "exhaustive exact-search occurrence coordinates match ripgrep",
+      "exact line-read content and coordinates match sed",
+      "context responses are deterministic after receipt identity is removed",
+      "context source tokens do not exceed the frozen task budget",
+      "every measured tool call completes without retry or error"
+    ],
+    "build_profile": "release",
+    "context_iterations": 10,
+    "iterations": 30,
+    "result_mode": "structured",
+    "sample_order": "alternating native-leantoken / leantoken-native",
+    "source_manifest": "benchmarks/validation.json",
+    "transport": "persistent newline-delimited MCP stdio",
+    "warmups": 3
+  },
+  "provenance": {
+    "binary_sha256": "7291a2a71e56f6a91bde1970284ebb8ef07694bd7fcd82046271a416fafa2563",
+    "cpu": null,
+    "generated_at": "2026-07-26T09:30:47.031874+00:00",
+    "host_arch": "x86_64",
+    "host_os": "linux",
+    "leantoken_version": "leantoken 0.1.15",
+    "manifest_sha256": "42a7fb8d39e51e7dfac5a4137dce56f9575e8a26abf90a0599d109592d2678ca",
+    "python_version": "3.11.2",
+    "ripgrep_version": "ripgrep 15.1.0 (rev af60c2de9d)",
+    "rustc_version": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "sed_version": "/usr/bin/sed (GNU sed) 4.9",
+    "source_dirty": false,
+    "source_revision": "5e2b31da5d4be52c900e6c291d09544a19b5d20b",
+    "source_tree": "7451bc422e895e1a2b5f499083086d38e8dcb1f1",
+    "validation_manifest_sha256": "88663bc2770ed59d33d5f674afc3c3450a517df87a8ff661bd4a1ef80190c8c1"
+  },
+  "report_kind": "agent_walltime_ab",
+  "schema_version": 1,
+  "status": "passed_accuracy_gates"
+}

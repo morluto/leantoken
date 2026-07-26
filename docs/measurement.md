@@ -593,6 +593,19 @@ payload bytes, database bytes, and raw alternating samples. It does not include
 provider latency, model turns, editing, validation, or task success and
 therefore cannot explain an end-to-end agent duration by itself.
 
+The first clean-tree report is
+[`../benchmarks/reports/agent-walltime-ab-v1-2026-07-26.json`](../benchmarks/reports/agent-walltime-ab-v1-2026-07-26.json),
+with a
+[`Markdown summary`](../benchmarks/reports/agent-walltime-ab-v1-2026-07-26.md).
+Every parity and determinism gate passed. Sums of the four corpus medians were
+60.86 ms native versus 163.87 ms MCP for exhaustive search, 9.83 ms versus
+23.65 ms for exact reads, and 249.43 ms for the frozen `rg` discovery sequences
+versus 462.94 ms for context. The last pair is not semantically equivalent.
+Native discovery reached 11/11 labeled files while context reached 7/11, so the
+report is a negative local baseline: direct tool latency is far too small to
+explain model-scale task delays, while incomplete retrieval can still cause
+expensive downstream refinement.
+
 ## Multi-agent context pilot
 
 `multi_agent_context_pilot.json` freezes a small read-only Codex experiment for
