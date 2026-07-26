@@ -14,8 +14,10 @@ pre-commit install --install-hooks
 ```
 
 This installs both commit and push hooks. Commit-time checks are deliberately
-limited to formatting and inexpensive file validation. The push hook runs full
-Clippy when pushed commits change Rust sources or the Cargo manifests.
+limited to formatting and inexpensive file validation. The push hook runs a
+product compile check when pushed commits change Rust sources or the Cargo
+manifests. Full Clippy remains a CI quality gate, so it need not block every
+local push.
 
 ## Development checks
 
@@ -29,6 +31,12 @@ cargo fmt --all -- --check
 Before pushing Rust or dependency changes, the push hook runs:
 
 ```bash
+cargo check-product
+```
+
+CI runs the full Clippy command on every relevant Rust change:
+
+```bash
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
@@ -39,10 +47,17 @@ cargo test --test integration services::
 ```
 
 Run the complete product-behavior suite without compiling or executing the
-benchmark examples:
+benchmark contract or examples:
 
 ```bash
 cargo test-product
+```
+
+Run the token-economy contract explicitly when changing retrieval accounting or
+its fixture. CI runs it on every supported OS for every Rust change:
+
+```bash
+cargo test-contract
 ```
 
 Benchmark and example tests are a separate target group because Cargo executes
@@ -71,11 +86,13 @@ change:
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test-product
+cargo test-contract
 ```
 
-CI runs benchmark, example, and documentation tests once on Linux, and runs
-product behavior on Linux, macOS, and Windows. It is also authoritative for
-rustdoc warnings. Run rustdoc locally when changing public APIs or
+CI runs example and documentation tests once on Linux, and runs product
+behavior plus the token-economy contract on Linux, macOS, and Windows. It is
+also authoritative for rustdoc warnings. Run rustdoc locally when changing
+public APIs or
 documentation:
 
 ```bash
@@ -256,10 +273,11 @@ classify it as internal. Do not infer error categories from rendered strings.
 
 ## Benchmarks
 
-The fixture benchmark is a fast regression check:
+The fixture benchmark is an opt-in regression check because it performs a cold
+index and several context requests:
 
 ```bash
-cargo test --test integration benchmark_contract:: -- --nocapture
+cargo test-contract
 ```
 
 The representative benchmark requires pinned external worktrees and `rg`. See

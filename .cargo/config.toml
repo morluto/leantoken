@@ -1,5 +1,9 @@
 [alias]
+# Fast product compile loop; catches errors without linking or running tests.
+check-product = "check --all-features --lib --bins --test integration"
 # Fast product-behavior loop; excludes benchmark/example targets.
 test-product = "test --all-features --lib --bins --test integration"
+# Opt-in token-economy contract; CI runs this separately from product behavior.
+test-contract = "test --all-features --test integration benchmark_contract:: -- --ignored --nocapture"
 # Less-frequent benchmark and example target group.
 test-extras = "test --all-features --examples"

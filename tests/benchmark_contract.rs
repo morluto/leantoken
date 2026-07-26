@@ -75,6 +75,7 @@ struct Report {
 }
 
 #[tokio::test]
+#[ignore = "CI contract suite; run cargo test-contract explicitly"]
 async fn benchmark_token_economy() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/sample_repo");
     let temp = tempfile::tempdir().expect("temporary benchmark repository");

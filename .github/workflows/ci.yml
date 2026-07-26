@@ -263,7 +263,11 @@ jobs:
 
       - name: Test library, binary, and integration behavior
         if: needs.changes.outputs.rust == 'true'
-        run: cargo test --all-features --lib --bins --test integration
+        run: cargo test-product
+
+      - name: Test token-economy contract
+        if: needs.changes.outputs.rust == 'true'
+        run: cargo test-contract
 
   example-tests:
     name: Benchmark and example tests

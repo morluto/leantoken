@@ -24,9 +24,9 @@ repos:
         types: [rust]
         pass_filenames: false
 
-      - id: cargo-clippy
-        name: cargo clippy
-        entry: cargo clippy --all-targets --all-features -- -D warnings
+      - id: cargo-check
+        name: cargo check product
+        entry: cargo check-product
         language: system
         files: '(^|/).*\.rs$|^Cargo\.(toml|lock)$'
         pass_filenames: false
