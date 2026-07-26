@@ -1420,6 +1420,8 @@ impl McpServices {
     pub async fn wait_initialized(&self) {
         loop {
             let notified = self.initialized.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             if self.protocol_initialized.load(Ordering::Acquire) {
                 return;
             }
@@ -2328,6 +2330,24 @@ mod tests {
         .expect_err("terminal runtime failure must supersede readiness error");
 
         assert!(matches!(error, crate::Error::McpRuntimeStopped));
+    }
+
+    #[tokio::test]
+    async fn protocol_initialization_wait_observes_transition() {
+        let (_server, services) = LeanTokenMcp::pending();
+        let waiting_services = services.clone();
+        let waiting = tokio::spawn(async move {
+            waiting_services.wait_initialized().await;
+        });
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished());
+
+        services.mark_protocol_initialized();
+
+        tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .expect("initialization wait must wake")
+            .expect("join initialization wait");
     }
 
     #[tokio::test(start_paused = true)]
