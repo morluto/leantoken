@@ -253,6 +253,11 @@ update the dependency with npm:
 npm install leantoken@latest
 ```
 
+A persistent CLI upgrade leaves existing MCP entries unchanged so exact pins
+and intentional rollbacks remain stable. After a successful upgrade, LeanToken
+prints the exact version-pinned `setup --refresh --yes` command for users who
+want to advance only their existing registrations.
+
 ## Cache management
 
 LeanToken keeps one SQLite cache per canonical repository in the platform cache

@@ -68,6 +68,8 @@ struct UpgradeReport {
     latest_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mcp_refresh_command: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -100,6 +102,7 @@ pub fn run(options: UpgradeOptions) -> Result<()> {
                 current_version: env!("CARGO_PKG_VERSION"),
                 latest_version: None,
                 command: None,
+                mcp_refresh_command: None,
             },
             options.json,
         );
@@ -114,6 +117,7 @@ pub fn run(options: UpgradeOptions) -> Result<()> {
                 current_version: env!("CARGO_PKG_VERSION"),
                 latest_version: Some(latest),
                 command: None,
+                mcp_refresh_command: None,
             },
             options.json,
         );
@@ -127,6 +131,7 @@ pub fn run(options: UpgradeOptions) -> Result<()> {
                 current_version: env!("CARGO_PKG_VERSION"),
                 latest_version: Some(latest),
                 command: None,
+                mcp_refresh_command: None,
             },
             options.json,
         );
@@ -143,6 +148,7 @@ pub fn run(options: UpgradeOptions) -> Result<()> {
                 current_version: env!("CARGO_PKG_VERSION"),
                 latest_version: Some(latest),
                 command: Some(refresh_command),
+                mcp_refresh_command: None,
             },
             options.json,
         );
@@ -156,6 +162,7 @@ pub fn run(options: UpgradeOptions) -> Result<()> {
                 current_version: env!("CARGO_PKG_VERSION"),
                 latest_version: Some(latest),
                 command: None,
+                mcp_refresh_command: None,
             },
             options.json,
         );
@@ -169,6 +176,7 @@ pub fn run(options: UpgradeOptions) -> Result<()> {
                 current_version: env!("CARGO_PKG_VERSION"),
                 latest_version: Some(latest),
                 command: Some(command.display()),
+                mcp_refresh_command: None,
             },
             options.json,
         );
@@ -190,22 +198,14 @@ pub fn run(options: UpgradeOptions) -> Result<()> {
                 current_version: env!("CARGO_PKG_VERSION"),
                 latest_version: Some(latest),
                 command: Some(command.display()),
+                mcp_refresh_command: None,
             },
             options.json,
         );
     }
 
     run_command(&command, options.json)?;
-    print_report(
-        UpgradeReport {
-            status: UpgradeStatus::Updated,
-            context,
-            current_version: env!("CARGO_PKG_VERSION"),
-            latest_version: Some(latest),
-            command: Some(command.display()),
-        },
-        options.json,
-    )
+    print_report(updated_report(context, latest, &command), options.json)
 }
 
 pub(crate) fn version_update_available(current: &str, latest: &str) -> Option<bool> {
@@ -276,6 +276,28 @@ fn upgrade_command(context: InstallContext, latest_version: Option<&str>) -> Opt
 
 fn npx_refresh_command(version: &str) -> String {
     format!("npx --yes leantoken@{version} setup --refresh --yes")
+}
+
+fn persistent_upgrade_guidance(refresh_command: &str) -> String {
+    format!(
+        "Existing MCP entries were left unchanged. Refresh them explicitly with: {refresh_command}"
+    )
+}
+
+fn updated_report(
+    context: InstallContext,
+    latest_version: String,
+    command: &CommandSpec,
+) -> UpgradeReport {
+    let mcp_refresh_command = npx_refresh_command(&latest_version);
+    UpgradeReport {
+        status: UpgradeStatus::Updated,
+        context,
+        current_version: env!("CARGO_PKG_VERSION"),
+        latest_version: Some(latest_version),
+        command: Some(command.display()),
+        mcp_refresh_command: Some(mcp_refresh_command),
+    }
 }
 
 fn latest_version(context: InstallContext) -> Option<String> {
@@ -351,56 +373,80 @@ fn require_success(command: &CommandSpec, output: &Output) -> Result<()> {
 }
 
 fn print_report(report: UpgradeReport, json: bool) -> Result<()> {
+    let stdout = std::io::stdout();
+    let mut output = stdout.lock();
+    write_report(&mut output, report, json)?;
+    output.flush()?;
+    Ok(())
+}
+
+fn write_report(output: &mut impl Write, report: UpgradeReport, json: bool) -> Result<()> {
     if json {
-        println!("{}", serde_json::to_string(&report)?);
+        writeln!(output, "{}", serde_json::to_string(&report)?)?;
         return Ok(());
     }
 
     match report.status {
-        UpgradeStatus::UpToDate => {
-            println!("LeanToken is up to date (v{}).", report.current_version)
-        }
+        UpgradeStatus::UpToDate => writeln!(
+            output,
+            "LeanToken is up to date (v{}).",
+            report.current_version
+        )?,
         UpgradeStatus::Ephemeral => {
-            println!(
+            writeln!(
+                output,
                 "Update available: v{} -> v{}",
                 report.current_version,
                 report.latest_version.as_deref().unwrap_or("unknown")
-            );
-            println!("You are running LeanToken through npx; nothing is installed globally.");
+            )?;
+            writeln!(
+                output,
+                "You are running LeanToken through npx; nothing is installed globally."
+            )?;
             if let Some(command) = report.command {
-                println!("Refresh existing MCP entries with: {command}");
+                writeln!(output, "Refresh existing MCP entries with: {command}")?;
             }
-            println!("Or install the shell command with: npm install --global leantoken@latest");
+            writeln!(
+                output,
+                "Or install the shell command with: npm install --global leantoken@latest"
+            )?;
         }
         UpgradeStatus::UpdateAvailable => {
-            println!(
+            writeln!(
+                output,
                 "Update available: v{} -> v{}",
                 report.current_version,
                 report.latest_version.as_deref().unwrap_or("unknown")
-            );
+            )?;
             if let Some(command) = report.command {
-                println!("Run: {command}");
+                writeln!(output, "Run: {command}")?;
             }
         }
-        UpgradeStatus::Updated => println!(
-            "LeanToken updated to v{}.",
-            report.latest_version.as_deref().unwrap_or("latest")
-        ),
-        UpgradeStatus::Skipped => println!("Update skipped."),
-        UpgradeStatus::ManualUpdateRequired => print_manual_commands(),
+        UpgradeStatus::Updated => {
+            writeln!(
+                output,
+                "LeanToken updated to v{}.",
+                report.latest_version.as_deref().unwrap_or("latest")
+            )?;
+            if let Some(command) = report.mcp_refresh_command {
+                writeln!(output, "{}", persistent_upgrade_guidance(&command))?;
+            }
+        }
+        UpgradeStatus::Skipped => writeln!(output, "Update skipped.")?,
+        UpgradeStatus::ManualUpdateRequired => print_manual_commands(output)?,
         UpgradeStatus::CheckFailed => {
-            println!("Could not check for LeanToken updates right now.");
-            print_manual_commands();
+            writeln!(output, "Could not check for LeanToken updates right now.")?;
+            print_manual_commands(output)?;
         }
     }
-    std::io::stdout().flush()?;
     Ok(())
 }
 
-fn print_manual_commands() {
-    println!("Update manually with one of:");
-    println!("  npm install --global {NPM_PACKAGE}");
-    println!("  cargo install --git {GIT_REPOSITORY} --force");
+fn print_manual_commands(output: &mut impl Write) -> Result<()> {
+    writeln!(output, "Update manually with one of:")?;
+    writeln!(output, "  npm install --global {NPM_PACKAGE}")?;
+    writeln!(output, "  cargo install --git {GIT_REPOSITORY} --force")?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -455,6 +501,37 @@ mod tests {
             "npx --yes leantoken@1.2.3 setup --refresh --yes"
         );
         assert!(!npx_refresh_command("1.2.3").contains("@latest"));
+    }
+
+    #[test]
+    fn persistent_upgrade_guidance_preserves_pins_and_names_exact_refresh() {
+        let report = updated_report(
+            InstallContext::GlobalNpm,
+            "1.2.3".into(),
+            &CommandSpec::new("npm", ["install", "--global", "leantoken@latest"]),
+        );
+
+        let mut text = Vec::new();
+        write_report(&mut text, report, false).unwrap();
+        let text = String::from_utf8(text).unwrap();
+        assert!(text.contains("LeanToken updated to v1.2.3."));
+        assert!(text.contains(
+            "Existing MCP entries were left unchanged. Refresh them explicitly with: \
+             npx --yes leantoken@1.2.3 setup --refresh --yes"
+        ));
+
+        let report = updated_report(
+            InstallContext::GlobalNpm,
+            "1.2.3".into(),
+            &CommandSpec::new("npm", ["install", "--global", "leantoken@latest"]),
+        );
+        let mut json = Vec::new();
+        write_report(&mut json, report, true).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&json).unwrap();
+        assert_eq!(
+            json["mcp_refresh_command"],
+            "npx --yes leantoken@1.2.3 setup --refresh --yes"
+        );
     }
 
     #[test]
