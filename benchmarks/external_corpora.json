@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "frozen_at": "2026-07-26",
+  "semble": {
+    "dataset_url": "https://github.com/MinishLab/semble",
+    "dataset_revision": "906319556a46bca45d8809b4733e05dd51cd5ba2",
+    "dataset_license": "MIT",
+    "repositories_file": "benchmarks/repos.json",
+    "annotations_directory": "benchmarks/annotations",
+    "prompt_provenance": "Public queries from Semble benchmarks/annotations at the pinned dataset revision.",
+    "label_provenance": "Primary relevance labels from Semble annotations. Semble documents that Claude Sonnet 4.6 generated queries and relevance labels and also judged label quality.",
+    "limitations": [
+      "Secondary and find-related labels are not promoted to primary relevant files.",
+      "File-only labels measure file recall but do not provide line-anchor recall.",
+      "The source benchmark compares against grep plus matched-file reads, not an autonomous coding-agent trajectory."
+    ]
+  },
+  "sverklo": {
+    "dataset_url": "https://github.com/sverklo/sverklo-bench",
+    "dataset_revision": "a0c3017c819452012fee69cd727913ba50fee865",
+    "dataset_license": "CC-BY-4.0",
+    "tasks_file": "tasks/sverklo.jsonl",
+    "repository": {
+      "name": "sverklo",
+      "url": "https://github.com/sverklo/sverklo.git",
+      "directory": "sverklo",
+      "revision": "eaf17512a462bd5fc9cf282804b7158b80356f1a",
+      "language": "typescript"
+    },
+    "supported_categories": [
+      "P1",
+      "P2",
+      "P4"
+    ],
+    "prompt_provenance": "Public primitive queries mirrored in sverklo-bench tasks/sverklo.jsonl at the pinned dataset revision.",
+    "label_provenance": "Sverklo documents P1/P2 locations and P4 dependency sets as hand-verified. Task files are CC-BY-4.0.",
+    "limitations": [
+      "P5 dead-code name sets are excluded because they do not identify source files or line coordinates.",
+      "P1 and P2 are evaluated with exact source anchors; the source benchmark allows category-specific line tolerances.",
+      "The pinned public suite is TypeScript-only and does not measure cross-language references or update freshness."
+    ]
+  }
+}

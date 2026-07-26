@@ -413,6 +413,79 @@ It improves file and line recall at a 228-token complete first-response JSON
 cost and a 43-token complete two-turn JSON cost. This is tuned prospective
 validation evidence, not a blind generalization result.
 
+## External retrieval corpora
+
+`external_corpora.json` pins the dataset and target-repository revisions used
+to import Semble and Sverklo tasks. The lock also records the upstream license,
+prompt and label provenance, supported task families, and known limitations.
+The source datasets remain upstream; do not commit generated manifests or
+repository clones.
+
+Prepare the pinned dataset checkouts and target repositories:
+
+```bash
+git clone https://github.com/MinishLab/semble \
+  target/external-corpus-datasets/semble
+git -C target/external-corpus-datasets/semble checkout \
+  906319556a46bca45d8809b4733e05dd51cd5ba2
+git clone https://github.com/sverklo/sverklo-bench \
+  target/external-corpus-datasets/sverklo-bench
+git -C target/external-corpus-datasets/sverklo-bench checkout \
+  a0c3017c819452012fee69cd727913ba50fee865
+
+git clone https://github.com/psf/requests target/external-corpus-repos/requests
+git -C target/external-corpus-repos/requests checkout \
+  ef439eb779c1eba7cbdeeeb302b11e1e061b4b7d
+git clone https://github.com/sverklo/sverklo target/external-corpus-repos/sverklo
+git -C target/external-corpus-repos/sverklo checkout \
+  eaf17512a462bd5fc9cf282804b7158b80356f1a
+```
+
+Convert only the supported labels, preflight the generated manifests, then run
+the release benchmark:
+
+```bash
+cargo run --release --example external_corpus_adapter -- \
+  --lock benchmarks/external_corpora.json \
+  semble \
+  --source target/external-corpus-datasets/semble \
+  --repository requests \
+  --output target/external-corpora/semble-requests.json
+
+cargo run --release --example external_corpus_adapter -- \
+  --lock benchmarks/external_corpora.json \
+  sverklo \
+  --source target/external-corpus-datasets/sverklo-bench \
+  --output target/external-corpora/sverklo.json
+
+cargo run --release --example representative_benchmark -- \
+  --manifest target/external-corpora/semble-requests.json \
+  --repos-root target/external-corpus-repos \
+  --output target/external-corpora/semble-requests-report.json \
+  --preflight-only
+cargo run --release --example representative_benchmark -- \
+  --manifest target/external-corpora/sverklo.json \
+  --repos-root target/external-corpus-repos \
+  --output target/external-corpora/sverklo-report.json \
+  --preflight-only
+
+cargo run --release --example representative_benchmark -- \
+  --manifest target/external-corpora/semble-requests.json \
+  --repos-root target/external-corpus-repos \
+  --output target/external-corpora/semble-requests-report.json
+cargo run --release --example representative_benchmark -- \
+  --manifest target/external-corpora/sverklo.json \
+  --repos-root target/external-corpus-repos \
+  --output target/external-corpora/sverklo-report.json
+```
+
+The adapter preserves Semble primary file and region labels. It does not
+promote secondary or find-related annotations. For Sverklo it imports P1
+definition, P2 reference, and P4 dependency-file tasks; name-only P5 tasks are
+reported and skipped because they have no file or line ground truth. External
+results are diagnostics for frozen experiments. They are not blind evidence
+and cannot by themselves promote a ranking change.
+
 ## Measurements
 
 For each task, the runner reports:

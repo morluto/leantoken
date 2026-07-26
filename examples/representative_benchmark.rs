@@ -60,6 +60,14 @@ struct CorpusSpec {
     prompt_provenance: Option<String>,
     #[serde(default)]
     label_provenance: Option<String>,
+    #[serde(default)]
+    dataset_url: Option<String>,
+    #[serde(default)]
+    dataset_revision: Option<String>,
+    #[serde(default)]
+    dataset_license: Option<String>,
+    #[serde(default)]
+    external_limitations: Vec<String>,
     tasks: Vec<TaskSpec>,
 }
 
@@ -160,6 +168,10 @@ struct CorpusReport {
     issue_url: Option<String>,
     prompt_provenance: Option<String>,
     label_provenance: Option<String>,
+    dataset_url: Option<String>,
+    dataset_revision: Option<String>,
+    dataset_license: Option<String>,
+    external_limitations: Vec<String>,
     indexed_files: usize,
     indexed_chunks: usize,
     index_warnings: Vec<String>,
@@ -270,7 +282,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let manifest_json = fs::read_to_string(&args.manifest)?;
     let manifest_blake3 = blake3::hash(manifest_json.as_bytes()).to_hex().to_string();
     let manifest: Manifest = serde_json::from_str(&manifest_json)?;
-    if !matches!(manifest.schema_version, 1..=3) {
+    if !matches!(manifest.schema_version, 1..=4) {
         return Err(format!(
             "unsupported benchmark manifest schema version {}",
             manifest.schema_version
@@ -345,6 +357,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             issue_url: corpus.issue_url,
             prompt_provenance: corpus.prompt_provenance,
             label_provenance: corpus.label_provenance,
+            dataset_url: corpus.dataset_url,
+            dataset_revision: corpus.dataset_revision,
+            dataset_license: corpus.dataset_license,
+            external_limitations: corpus.external_limitations,
             indexed_files: status.file_count,
             indexed_chunks: status.chunk_count,
             index_warnings: indexed.warnings,
@@ -423,6 +439,46 @@ fn default_dataset_kind() -> String {
 }
 
 fn validate_manifest(manifest: &Manifest) -> Result<(), Box<dyn Error>> {
+    if manifest.dataset_kind == "external_retrieval_corpus" {
+        if manifest.schema_version < 4 {
+            return Err("external retrieval corpora require manifest schema v4".into());
+        }
+        if manifest.frozen_at.as_deref().is_none_or(str::is_empty) {
+            return Err("external retrieval corpora require frozen_at".into());
+        }
+        for corpus in &manifest.corpora {
+            if corpus.fix_commit.is_some() {
+                return Err(
+                    format!("external corpus {} must not name a future fix", corpus.name).into(),
+                );
+            }
+            for (field, value) in [
+                ("dataset_url", corpus.dataset_url.as_deref()),
+                ("dataset_revision", corpus.dataset_revision.as_deref()),
+                ("dataset_license", corpus.dataset_license.as_deref()),
+                ("prompt_provenance", corpus.prompt_provenance.as_deref()),
+                ("label_provenance", corpus.label_provenance.as_deref()),
+            ] {
+                if value.is_none_or(str::is_empty) {
+                    return Err(format!("external corpus {} requires {field}", corpus.name).into());
+                }
+            }
+            let revision = corpus
+                .dataset_revision
+                .as_deref()
+                .expect("validated dataset revision");
+            if revision.len() != 40 || !revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(format!(
+                    "external corpus {} dataset revision is not a full Git object ID",
+                    corpus.name
+                )
+                .into());
+            }
+            if corpus.tasks.is_empty() {
+                return Err(format!("external corpus {} has no tasks", corpus.name).into());
+            }
+        }
+    }
     if is_patch_free_dataset(&manifest.dataset_kind) {
         if manifest.frozen_at.as_deref().is_none_or(str::is_empty) {
             return Err(format!("{} set requires frozen_at", manifest.dataset_kind).into());
@@ -537,6 +593,16 @@ fn benchmark_limitations(dataset_kind: &str, consumed_diagnostic: bool) -> Vec<&
         limitations.push(
             "Four validation tasks are retrieval development evidence, not a statistically powered product claim.",
         );
+    } else if dataset_kind == "external_retrieval_corpus" {
+        limitations.push(
+            "External labels retain their source methodology and limitations; this diagnostic does not make them blind or independently validated.",
+        );
+        limitations.push(
+            "File-only tasks do not contribute line-anchor recall, and unsupported task families remain excluded rather than inferred.",
+        );
+        limitations.push(
+            "External-corpus results are comparison evidence for retrieval experiments, not permission to change production ranking without a separately frozen promotion gate.",
+        );
     } else {
         limitations.push(
             "Development prompts and labels were derived retrospectively from public future fixes and must not be reported as blind generalization evidence.",
@@ -616,14 +682,14 @@ async fn run_task(
     let response = evaluation.response;
     let first_context_ms = elapsed_ms(started);
     verify_token_accounting(&response)?;
-    let canonical_response = serde_json::to_string(&response)?;
+    let canonical_response = deterministic_context_json(&response)?;
     let mut warm_context_ms_samples = Vec::with_capacity(3);
     for _ in 0..3 {
         let started = Instant::now();
         let warm = services.context(request.clone()).await?;
         warm_context_ms_samples.push(elapsed_ms(started));
         verify_token_accounting(&warm)?;
-        if serde_json::to_string(&warm)? != canonical_response {
+        if deterministic_context_json(&warm)? != canonical_response {
             return Err(format!("{} returned nondeterministic context", task.id).into());
         }
     }
@@ -915,7 +981,9 @@ fn preflight(manifest: &Manifest, repos_root: &Path) -> Result<(), Box<dyn Error
                     format!("{} is not the parent of {fix_commit}", corpus.base_revision).into(),
                 );
             }
-        } else if !is_patch_free_dataset(&manifest.dataset_kind) {
+        } else if !is_patch_free_dataset(&manifest.dataset_kind)
+            && manifest.dataset_kind != "external_retrieval_corpus"
+        {
             return Err(format!(
                 "{} has no fix_commit for dataset kind {}",
                 corpus.name, manifest.dataset_kind
@@ -1116,6 +1184,12 @@ fn verify_token_accounting(response: &ContextResponse) -> Result<(), Box<dyn Err
     Ok(())
 }
 
+fn deterministic_context_json(response: &ContextResponse) -> Result<String, serde_json::Error> {
+    let mut deterministic = response.clone();
+    deterministic.meta.receipt_id = None;
+    serde_json::to_string(&deterministic)
+}
+
 fn database_footprint(database: &Path) -> Result<u64, Box<dyn Error>> {
     let Some(file_name) = database.file_name().and_then(|name| name.to_str()) else {
         return Ok(0);
@@ -1236,6 +1310,76 @@ fn accumulate(aggregate: &mut AggregateReport, task: &TaskReport) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use leantoken::{
+        ContextCoverageReceipt, ContextOmissionSummary, ContextWorkflow, EvidenceReceipt,
+        Freshness, ResponseMeta,
+    };
+
+    fn external_manifest() -> Manifest {
+        serde_json::from_value(serde_json::json!({
+            "schema_version": 4,
+            "dataset_kind": "external_retrieval_corpus",
+            "frozen_at": "2026-07-26",
+            "description": "external fixture",
+            "corpora": [{
+                "name": "fixture",
+                "url": "https://example.com/source",
+                "directory": "fixture",
+                "base_revision": "1111111111111111111111111111111111111111",
+                "prompt_provenance": "prompts from the pinned dataset",
+                "label_provenance": "labels from the pinned dataset",
+                "dataset_url": "https://example.com/dataset",
+                "dataset_revision": "2222222222222222222222222222222222222222",
+                "dataset_license": "MIT",
+                "tasks": [{
+                    "id": "fixture:001",
+                    "prompt": "Find the fixture.",
+                    "task_shapes": ["fixture"],
+                    "rg_queries": ["fixture"],
+                    "relevant_files": [{"path": "src/lib.rs"}],
+                    "token_budget": 1000
+                }]
+            }]
+        }))
+        .expect("parse external manifest")
+    }
+
+    fn context_response(receipt_id: &str) -> ContextResponse {
+        ContextResponse {
+            workflow: ContextWorkflow::Implementation,
+            workflow_receipt: None,
+            plan: None,
+            fragments: Vec::new(),
+            receipt: EvidenceReceipt {
+                task_fingerprint: "task".into(),
+                fragment_hashes: Vec::new(),
+            },
+            diff_scope: None,
+            omitted: Vec::new(),
+            omission_summary: ContextOmissionSummary::default(),
+            coverage: ContextCoverageReceipt::default(),
+            routing: None,
+            warnings: Vec::new(),
+            meta: ResponseMeta {
+                repository_id: "repository".into(),
+                repository_generation: 7,
+                freshness: Freshness::Current,
+                source_tokens: 0,
+                protocol_tokens: 0,
+                path_and_metadata_tokens: 0,
+                total_response_tokens: 0,
+                payload_tokens: 0,
+                tokenizer: "cl100k_base".into(),
+                emitted_tokens: 0,
+                token_count_exact: true,
+                receipt_id: Some(receipt_id.into()),
+                receipt_suppressed_exact: 0,
+                receipt_suppressed_overlap: 0,
+                receipt_near_duplicates: 0,
+                next_cursor: None,
+            },
+        }
+    }
 
     #[test]
     fn repeated_range_tokens_include_partial_overlap_with_a_different_hash() {
@@ -1289,6 +1433,45 @@ mod tests {
             verify_candidate_runtime_tree(&manifest, Path::new(env!("CARGO_MANIFEST_DIR")))
                 .expect("verification decision"),
             None
+        );
+    }
+
+    #[test]
+    fn external_manifest_requires_pinned_provenance_without_future_fix() {
+        let mut manifest = external_manifest();
+        validate_manifest(&manifest).expect("valid external manifest");
+
+        manifest.corpora[0].dataset_revision = Some("not-a-full-revision".into());
+        assert!(
+            validate_manifest(&manifest)
+                .expect_err("reject unpinned dataset")
+                .to_string()
+                .contains("full Git object ID")
+        );
+
+        let mut manifest = external_manifest();
+        manifest.corpora[0].fix_commit = Some("3333333333333333333333333333333333333333".into());
+        assert!(
+            validate_manifest(&manifest)
+                .expect_err("reject future fix")
+                .to_string()
+                .contains("must not name a future fix")
+        );
+    }
+
+    #[test]
+    fn deterministic_context_comparison_ignores_only_receipt_identity() {
+        let first = context_response("first");
+        let mut second = context_response("second");
+        assert_eq!(
+            deterministic_context_json(&first).expect("serialize first response"),
+            deterministic_context_json(&second).expect("serialize second response")
+        );
+
+        second.meta.repository_generation += 1;
+        assert_ne!(
+            deterministic_context_json(&first).expect("serialize first response"),
+            deterministic_context_json(&second).expect("serialize changed response")
         );
     }
 }
