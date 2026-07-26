@@ -18,10 +18,11 @@ use crate::storage::{CURRENT_MIGRATION_VERSION, CURRENT_SCHEMA_VERSION};
 use crate::{Error, Result};
 
 const DATABASE_NAME: &str = "index.sqlite";
+const WAL_NAME: &str = "index.sqlite-wal";
 const LEASE_NAME: &str = "index.sqlite.lease.lock";
 const PRUNABLE_ARTIFACTS: &[&str] = &[
     DATABASE_NAME,
-    "index.sqlite-wal",
+    WAL_NAME,
     "index.sqlite-shm",
     "index.sqlite-journal",
     "index.sqlite.init.lock",
@@ -229,7 +230,7 @@ struct InspectedCache {
 #[derive(Debug)]
 struct ArtifactScan {
     size_bytes: u64,
-    latest_mtime: Option<u64>,
+    latest_access_mtime: Option<u64>,
     has_artifacts: bool,
     unexpected: bool,
 }
@@ -443,7 +444,7 @@ impl CacheManager {
         let path = self.root.join(id);
         let database = path.join(DATABASE_NAME);
         let initial_scan = scan_artifacts(&path)?;
-        let latest_mtime = initial_scan.latest_mtime;
+        let latest_access_mtime = initial_scan.latest_access_mtime;
         let mut unexpected = initial_scan.unexpected;
         let mut metadata_safe = true;
 
@@ -459,9 +460,9 @@ impl CacheManager {
             path,
             repository_root: None,
             repository_available: None,
-            last_access_unix_seconds: latest_mtime,
-            access_time_source: latest_mtime.map(|_| AccessTimeSource::FileMtime),
-            age_seconds: latest_mtime.map(|accessed| self.now.saturating_sub(accessed)),
+            last_access_unix_seconds: latest_access_mtime,
+            access_time_source: latest_access_mtime.map(|_| AccessTimeSource::FileMtime),
+            age_seconds: latest_access_mtime.map(|accessed| self.now.saturating_sub(accessed)),
             schema_version: None,
             size_bytes: initial_scan.size_bytes,
             active,
@@ -525,7 +526,7 @@ impl CacheManager {
 fn scan_artifacts(path: &Path) -> Result<ArtifactScan> {
     let mut scan = ArtifactScan {
         size_bytes: 0,
-        latest_mtime: None,
+        latest_access_mtime: None,
         has_artifacts: false,
         unexpected: false,
     };
@@ -545,10 +546,14 @@ fn scan_artifacts(path: &Path) -> Result<ArtifactScan> {
         }
         scan.has_artifacts = true;
         scan.size_bytes = scan.size_bytes.saturating_add(metadata.len());
-        if let Ok(modified) = metadata.modified() {
+        let name = child.file_name();
+        // Read-only WAL inspection can refresh SHM and lock-file mtimes.
+        if (name == OsStr::new(DATABASE_NAME) || name == OsStr::new(WAL_NAME))
+            && let Ok(modified) = metadata.modified()
+        {
             let modified = unix_seconds(modified);
-            scan.latest_mtime = Some(
-                scan.latest_mtime
+            scan.latest_access_mtime = Some(
+                scan.latest_access_mtime
                     .map_or(modified, |current| current.max(modified)),
             );
         }
@@ -909,6 +914,63 @@ mod tests {
         (id, database)
     }
 
+    fn create_legacy_wal_cache(manager: &CacheManager, id: &str, accessed_at: u64) {
+        let directory = manager.root.join(id);
+        fs::create_dir_all(&directory).expect("cache directory");
+        let source_database = manager
+            .root
+            .parent()
+            .expect("managed cache parent")
+            .join("legacy-source.sqlite");
+        let connection = Connection::open(&source_database).expect("legacy database");
+        connection
+            .execute_batch(
+                "PRAGMA journal_mode = WAL;
+                 PRAGMA wal_autocheckpoint = 0;
+                 CREATE TABLE meta (
+                     id INTEGER PRIMARY KEY,
+                     schema_version INTEGER NOT NULL,
+                     repository_root TEXT NOT NULL
+                 );
+                 INSERT INTO meta VALUES (1, 4, '');",
+            )
+            .expect("legacy WAL schema");
+
+        for name in [DATABASE_NAME, WAL_NAME, "index.sqlite-shm"] {
+            let source = if name == DATABASE_NAME {
+                source_database.clone()
+            } else {
+                source_database.with_file_name(format!(
+                    "{}{}",
+                    source_database
+                        .file_name()
+                        .expect("source database name")
+                        .to_string_lossy(),
+                    &name[DATABASE_NAME.len()..]
+                ))
+            };
+            fs::copy(source, directory.join(name)).expect("copy WAL artifact");
+        }
+        drop(connection);
+
+        let modified = UNIX_EPOCH + Duration::from_secs(accessed_at);
+        for name in [DATABASE_NAME, WAL_NAME, "index.sqlite-shm"] {
+            let artifact = directory.join(name);
+            assert!(
+                artifact.exists(),
+                "missing WAL artifact {}",
+                artifact.display()
+            );
+            fs::File::options()
+                .read(true)
+                .write(true)
+                .open(&artifact)
+                .expect("open WAL artifact")
+                .set_times(fs::FileTimes::new().set_modified(modified))
+                .expect("set WAL artifact mtime");
+        }
+    }
+
     #[test]
     fn list_reports_current_metadata_and_ignores_non_cache_directories() {
         let temp = tempfile::tempdir().expect("temporary directory");
@@ -1077,6 +1139,47 @@ mod tests {
         );
         assert!(corrupt.join(DATABASE_NAME).exists());
         assert!(legacy.join(DATABASE_NAME).exists());
+    }
+
+    #[test]
+    fn legacy_wal_list_keeps_file_mtime_access_age_stable() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let manager = CacheManager::new(temp.path().join("managed"), 20 * SECONDS_PER_DAY);
+        create_legacy_wal_cache(&manager, FIRST_ID, SECONDS_PER_DAY);
+
+        let first = manager.list().expect("first cache list");
+        let second = manager.list().expect("second cache list");
+
+        assert_eq!(first.entries[0].state, CacheState::Legacy);
+        assert_eq!(
+            first.entries[0].access_time_source,
+            Some(AccessTimeSource::FileMtime)
+        );
+        assert_eq!(
+            first.entries[0].last_access_unix_seconds,
+            Some(SECONDS_PER_DAY)
+        );
+        assert_eq!(
+            second.entries[0].last_access_unix_seconds,
+            first.entries[0].last_access_unix_seconds
+        );
+        assert_eq!(second.entries[0].age_seconds, first.entries[0].age_seconds);
+    }
+
+    #[test]
+    fn legacy_wal_dry_run_keeps_age_selection_stable() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let manager = CacheManager::new(temp.path().join("managed"), 20 * SECONDS_PER_DAY);
+        create_legacy_wal_cache(&manager, FIRST_ID, SECONDS_PER_DAY);
+        let mut request = request();
+        request.older_than_days = Some(7);
+
+        let first = manager.prune(&request).expect("first prune plan");
+        let second = manager.prune(&request).expect("second prune plan");
+
+        assert_eq!(first.results[0].action, CachePruneAction::WouldDelete);
+        assert_eq!(first.results[0].reasons, ["older_than"]);
+        assert_eq!(second.results[0], first.results[0]);
     }
 
     #[test]
