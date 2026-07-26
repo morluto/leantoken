@@ -11,6 +11,7 @@ use cap_std::fs::Dir;
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
+use crate::config::INDEX_CONTENT_VERSION;
 use crate::coordination::{CacheLease, IndexCoordination, IndexLeadership};
 use crate::error::RetryableOperation;
 use crate::indexer::Indexer;
@@ -823,6 +824,7 @@ fn status_response(
     StatusResponse {
         repository_root: config.root.display().to_string(),
         database_path: config.database_path.display().to_string(),
+        index_content_version: INDEX_CONTENT_VERSION,
         repository_generation: generation,
         index_state: if generation == 0 {
             IndexState::Uninitialized
