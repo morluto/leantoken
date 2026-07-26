@@ -204,13 +204,13 @@ fn cli_read_does_not_expose_process_local_delta_state() {
 fn cli_history_request() {
     let cli = parse(&[
         "history",
-        "--max-tokens",
-        "500",
         "diff-symbol",
         "src/lib.rs",
         "Services",
         "main~1",
         "main",
+        "--max-tokens",
+        "500",
     ]);
     let AppRequest::History(request) = cli.app_request() else {
         panic!("expected history request");
@@ -234,10 +234,6 @@ fn cli_history_request() {
 fn cli_json_request() {
     let cli = parse(&[
         "json",
-        "--max-items",
-        "50",
-        "--array-sample-size",
-        "2",
         "diff-fields",
         "before.json",
         "after.json",
@@ -247,6 +243,10 @@ fn cli_json_request() {
         "runs[].score",
         "--projection",
         "collapsed",
+        "--max-items",
+        "50",
+        "--array-sample-size",
+        "2",
     ]);
     let AppRequest::Json(request) = cli.app_request() else {
         panic!("expected JSON request");
@@ -294,6 +294,89 @@ fn cli_json_request() {
             projection: JsonProjection::Keys,
         } if path == "report.json"
     ));
+}
+
+#[test]
+fn cli_nested_leaf_help_describes_inherited_limits_and_positionals() {
+    let history_help = help(&["history", "read-symbol"]);
+    assert!(history_help.contains("<PATH>"));
+    assert!(history_help.contains("Repository-relative source file path"));
+    assert!(history_help.contains("<SYMBOL>"));
+    assert!(history_help.contains("Exact parsed symbol name"));
+    assert!(history_help.contains("<REVISION>"));
+    assert!(history_help.contains("Immutable Git revision"));
+    assert!(history_help.contains("--max-tokens <MAX_TOKENS>"));
+
+    let json_help = help(&["json", "query"]);
+    assert!(json_help.contains("<PATH>"));
+    assert!(json_help.contains("Repository-relative JSON file path"));
+    assert!(json_help.contains("--max-tokens <MAX_TOKENS>"));
+    assert!(json_help.contains("--max-items <MAX_ITEMS>"));
+    assert!(json_help.contains("--array-sample-size <ARRAY_SAMPLE_SIZE>"));
+    assert!(json_help.contains("--cursor <CURSOR>"));
+
+    let context_help = help(&["context"]);
+    assert!(context_help.contains("Maximum source tokens across returned fragments"));
+    assert!(!context_help.contains("Token budget for the response"));
+}
+
+#[test]
+fn cli_nested_limits_accept_parent_and_leaf_placement() {
+    for args in [
+        [
+            "history",
+            "--max-tokens",
+            "500",
+            "symbol-log",
+            "src/lib.rs",
+            "Cli",
+        ],
+        [
+            "history",
+            "symbol-log",
+            "src/lib.rs",
+            "Cli",
+            "--max-tokens",
+            "500",
+        ],
+    ] {
+        let AppRequest::History(request) = parse(&args).app_request() else {
+            panic!("expected history request");
+        };
+        assert_eq!(request.max_tokens, Some(500));
+    }
+
+    for args in [
+        ["json", "--max-items", "50", "query", "report.json"],
+        ["json", "query", "report.json", "--max-items", "50"],
+    ] {
+        let AppRequest::Json(request) = parse(&args).app_request() else {
+            panic!("expected JSON request");
+        };
+        assert_eq!(request.max_items, Some(50));
+    }
+}
+
+#[test]
+fn cli_advanced_repository_options_are_discoverable_once_and_remain_global() {
+    let root_help = help(&[]);
+    assert!(root_help.contains("Advanced repository options:"));
+    assert!(root_help.contains("--max-files <COUNT>"));
+
+    let leaf_help = help(&["history", "read-symbol"]);
+    assert!(!leaf_help.contains("Advanced repository options:"));
+    assert!(!leaf_help.contains("--max-files <COUNT>"));
+
+    let cli = parse(&[
+        "history",
+        "read-symbol",
+        "src/lib.rs",
+        "Cli",
+        "main",
+        "--max-files",
+        "17",
+    ]);
+    assert_eq!(cli.max_files.map(|value| value.get()), Some(17));
 }
 
 #[test]
