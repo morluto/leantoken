@@ -24,7 +24,7 @@ use super::{Services, retrieval_primitive_key};
 use crate::model::*;
 use crate::ranking::{self, Candidate};
 use crate::repository::{
-    git_diff_hunks, git_diff_hunks_between, git_diff_paths, git_diff_paths_between,
+    git_diff_hunks_scoped, git_diff_identity, git_diff_paths, git_diff_paths_between,
     git_head_revision, git_working_tree_status, normalize_relative, validate_relative,
 };
 use crate::storage::ChunkHit;
@@ -1460,6 +1460,8 @@ impl Services {
     /// that revision, including untracked files. `BASE..HEAD` instead resolves
     /// an immutable revision range. Explicit `changed_paths` are merged with
     /// either result. When neither input is supplied, strict changed-path
+    /// either result unless strict changed-path scope makes the explicit paths
+    /// authoritative. When neither input is supplied, strict changed-path
     /// requests use the current working tree; otherwise `None` preserves
     /// task-only behavior.
     fn resolve_diff_scope(
@@ -1476,7 +1478,14 @@ impl Services {
             .as_deref()
             .filter(|revision| !revision.trim().is_empty());
         let immutable_range = revision.map(parse_revision_range).transpose()?.flatten();
+        let explicit_hard_scope = has_paths && request.strict_changed_paths;
         let git_result = match (revision, immutable_range) {
+            (Some(_), Some((base, head))) if explicit_hard_scope => {
+                Some(git_diff_identity(&self.config.root, base, Some(head))?)
+            }
+            (Some(revision), None) if explicit_hard_scope => {
+                Some(git_diff_identity(&self.config.root, revision, None)?)
+            }
             (Some(_), Some((base, head))) => Some(git_diff_paths_between(
                 &self.config.root,
                 base,
@@ -1502,18 +1511,20 @@ impl Services {
         }
         if let Some(git_result) = git_result {
             let mut changed_paths = request.changed_paths.clone();
-            let mut resolved_paths = git_result.changed_paths;
-            if immutable_range.is_none() {
-                resolved_paths.extend(working_tree_paths.iter().cloned());
-            }
-            resolved_paths.sort();
-            resolved_paths.dedup();
-            for path in resolved_paths {
-                if changed_paths.len() == MAX_DIFF_CHANGED_PATHS {
-                    break;
+            if !explicit_hard_scope {
+                let mut resolved_paths = git_result.changed_paths;
+                if immutable_range.is_none() {
+                    resolved_paths.extend(working_tree_paths.iter().cloned());
                 }
-                if !changed_paths.contains(&path) {
-                    changed_paths.push(path);
+                resolved_paths.sort();
+                resolved_paths.dedup();
+                for path in resolved_paths {
+                    if changed_paths.len() == MAX_DIFF_CHANGED_PATHS {
+                        break;
+                    }
+                    if !changed_paths.contains(&path) {
+                        changed_paths.push(path);
+                    }
                 }
             }
             changed_paths.sort();
@@ -1868,23 +1879,20 @@ impl Services {
             .and_then(|revision| parse_revision_range(revision).ok().flatten())
             .is_some();
         let changed_hunks = if let Some(base_revision) = &scope.base_revision {
-            let mut hunks = if immutable_range {
-                let head_revision = scope.head_revision.as_deref().ok_or_else(|| {
+            let head_revision = if immutable_range {
+                Some(scope.head_revision.as_deref().ok_or_else(|| {
                     Error::InternalFailure("immutable diff scope has no head revision".into())
-                })?;
-                git_diff_hunks_between(
-                    &self.config.root,
-                    base_revision,
-                    head_revision,
-                    MAX_DIFF_EVIDENCE_SYMBOLS + 1,
-                )?
+                })?)
             } else {
-                git_diff_hunks(
-                    &self.config.root,
-                    base_revision,
-                    MAX_DIFF_EVIDENCE_SYMBOLS + 1,
-                )?
+                None
             };
+            let mut hunks = git_diff_hunks_scoped(
+                &self.config.root,
+                base_revision,
+                head_revision,
+                &scope.changed_paths,
+                MAX_DIFF_EVIDENCE_SYMBOLS + 1,
+            )?;
             if hunks.len() > MAX_DIFF_EVIDENCE_SYMBOLS {
                 gaps.push("changed_hunk_evidence_truncated".into());
                 hunks.truncate(MAX_DIFF_EVIDENCE_SYMBOLS);
@@ -2118,6 +2126,13 @@ impl Services {
             changed_paths.extend(scope.changed_paths.iter().cloned());
         }
         let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
+        let strict_changed_paths = request.strict_changed_paths.then(|| {
+            scoped_request
+                .changed_paths
+                .iter()
+                .map(String::as_str)
+                .collect::<HashSet<_>>()
+        });
         self.consistent(|session, generation| {
             let facet_plan = facets::plan(&request.task, MAX_CONTEXT_QUERIES);
             let queries = facet_plan.queries;
@@ -2173,7 +2188,11 @@ impl Services {
                     .enumerate()
                 {
                     check_cancelled(cancellation)?;
-                    if path_filter.allows(&hit.path) {
+                    if path_filter.allows(&hit.path)
+                        && strict_changed_paths
+                            .as_ref()
+                            .is_none_or(|paths| paths.contains(hit.path.as_str()))
+                    {
                         symbol_hits.push((rank, hit));
                     } else {
                         path_excluded_candidates.push(hit.path);
@@ -2262,7 +2281,11 @@ impl Services {
                 let mut reference_hits = Vec::new();
                 for (rank, hit) in reference_results.into_iter().enumerate() {
                     check_cancelled(cancellation)?;
-                    if path_filter.allows(&hit.path) {
+                    if path_filter.allows(&hit.path)
+                        && strict_changed_paths
+                            .as_ref()
+                            .is_none_or(|paths| paths.contains(hit.path.as_str()))
+                    {
                         reference_hits.push((rank, hit));
                     } else {
                         path_excluded_candidates.push(hit.path);
@@ -2399,7 +2422,11 @@ impl Services {
                 let lexical_verify_started = phases.timer();
                 for (rank, hit) in lexical.into_iter().enumerate() {
                     check_cancelled(cancellation)?;
-                    if !path_filter.allows(&hit.path) {
+                    if !path_filter.allows(&hit.path)
+                        || strict_changed_paths
+                            .as_ref()
+                            .is_some_and(|paths| !paths.contains(hit.path.as_str()))
+                    {
                         path_excluded_candidates.push(hit.path);
                         continue;
                     }
@@ -2534,6 +2561,10 @@ impl Services {
                 .reverse_dependency
                 .then(|| self.apply_reverse_dependency_boost(session, &queries, &mut candidates))
                 .transpose()?;
+            if let Some(paths) = &strict_changed_paths {
+                candidates.retain(|candidate| paths.contains(candidate.path.as_str()));
+                path_excluded_candidates.retain(|path| paths.contains(path.as_str()));
+            }
             if let Some(started) = workflow_started {
                 phases.timings.workflow_generation_ms =
                     started.elapsed().as_secs_f64() * 1_000.0;

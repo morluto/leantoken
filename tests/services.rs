@@ -7336,6 +7336,122 @@ async fn diff_scoped_context_with_explicit_changed_paths_reports_receipt() {
 }
 
 #[tokio::test]
+async fn strict_explicit_changed_paths_do_not_expand_to_working_tree_changes() {
+    if !git_available() {
+        return;
+    }
+
+    let root = tempfile::tempdir().expect("root");
+    let database = tempfile::tempdir().expect("database");
+    std::fs::create_dir_all(root.path().join("src")).expect("source directory");
+    std::fs::write(
+        root.path().join("src/selected.rs"),
+        "pub fn strict_scope_marker_selected() -> bool { false }\n",
+    )
+    .expect("selected base");
+    std::fs::write(
+        root.path().join("src/unrelated.rs"),
+        "pub fn strict_scope_marker_unrelated() -> bool { false }\n",
+    )
+    .expect("unrelated base");
+    init_git_repo(root.path());
+    std::fs::write(
+        root.path().join("src/selected.rs"),
+        "pub fn strict_scope_marker_selected() -> bool { true }\n",
+    )
+    .expect("selected change");
+    std::fs::write(
+        root.path().join("src/unrelated.rs"),
+        "pub fn strict_scope_marker_unrelated() -> bool { true }\n",
+    )
+    .expect("unrelated change");
+    std::fs::write(
+        root.path().join("private-notes.md"),
+        "# strict_scope_marker private workspace state\n",
+    )
+    .expect("private untracked path");
+
+    let config = Config::discover(
+        root.path(),
+        Some(database.path().join("strict-scope.sqlite")),
+    )
+    .expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index working tree");
+    let mut request = context_limit_request(500);
+    request.task = "review strict_scope_marker".into();
+    request.base_revision = Some("HEAD".into());
+    request.changed_paths = vec!["src/selected.rs".into()];
+    request.strict_changed_paths = true;
+
+    let response = services.context(request).await.expect("strict context");
+
+    let scope = response.diff_scope.as_ref().expect("diff scope");
+    assert_eq!(scope.changed_paths, ["src/selected.rs"]);
+    assert!(
+        !response.fragments.is_empty()
+            && response
+                .fragments
+                .iter()
+                .all(|fragment| fragment.path == "src/selected.rs")
+    );
+    assert_eq!(response.coverage.strict_scope_satisfied, Some(true));
+    let coverage = response
+        .coverage
+        .changed_path_coverage
+        .as_ref()
+        .expect("changed path coverage");
+    assert_eq!(coverage.resolved_paths, 1);
+    assert_eq!(coverage.indexed_paths, 1);
+    assert!(coverage.selected_fragments > 0);
+    let evidence = scope.evidence.as_ref().expect("diff evidence");
+    assert!(
+        evidence
+            .changed_symbols
+            .iter()
+            .all(|symbol| symbol.path == "src/selected.rs")
+    );
+    let serialized = serde_json::to_string(&response).expect("serialize response");
+    assert!(!serialized.contains("src/unrelated.rs"));
+    assert!(!serialized.contains("private-notes.md"));
+
+    for args in [
+        &["add", "src/selected.rs", "src/unrelated.rs"][..],
+        &["commit", "-m", "change both tracked files"][..],
+    ] {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root.path())
+            .output()
+            .expect("git command");
+        assert!(output.status.success());
+    }
+    let mut range_request = context_limit_request(500);
+    range_request.task = "review strict_scope_marker".into();
+    range_request.base_revision = Some("HEAD~1..HEAD".into());
+    range_request.changed_paths = vec!["src/selected.rs".into()];
+    range_request.strict_changed_paths = true;
+
+    let range_response = services
+        .context(range_request)
+        .await
+        .expect("strict immutable context");
+    let range_scope = range_response.diff_scope.as_ref().expect("range diff scope");
+    assert_eq!(range_scope.changed_paths, ["src/selected.rs"]);
+    assert!(
+        !range_response.fragments.is_empty()
+            && range_response
+                .fragments
+                .iter()
+                .all(|fragment| fragment.path == "src/selected.rs")
+    );
+    let range_serialized =
+        serde_json::to_string(&range_response).expect("serialize range response");
+    assert!(!range_serialized.contains("src/unrelated.rs"));
+    assert!(!range_serialized.contains("private-notes.md"));
+}
+
+#[tokio::test]
 async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracked_owner_tests() {
     if !git_available() {
         return;

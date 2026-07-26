@@ -1142,6 +1142,30 @@ pub fn git_diff_paths_between(
     })
 }
 
+/// Resolve diff endpoint identities without enumerating changed paths.
+pub(crate) fn git_diff_identity(
+    root: &Path,
+    base_revision: &str,
+    head_revision: Option<&str>,
+) -> Result<GitDiffResult> {
+    let timeout = Duration::from_millis(1_000);
+    let program = Path::new("git");
+    let base_sha =
+        resolve_revision_sha_for_field(root, program, base_revision, timeout, "base revision")?;
+    let head_sha = resolve_revision_sha_for_field(
+        root,
+        program,
+        head_revision.unwrap_or("HEAD"),
+        timeout,
+        "head revision",
+    )?;
+    Ok(GitDiffResult {
+        base_revision: base_sha,
+        head_revision: head_sha,
+        changed_paths: Vec::new(),
+    })
+}
+
 /// Resolve the current Git `HEAD` to the same bounded short SHA used by diff receipts.
 pub(crate) fn git_head_revision(root: &Path) -> Result<String> {
     resolve_revision_sha_for_field(
@@ -1155,7 +1179,7 @@ pub(crate) fn git_head_revision(root: &Path) -> Result<String> {
 
 /// Parse bounded target-side hunk ranges between a base revision and the working tree.
 pub fn git_diff_hunks(root: &Path, base_revision: &str, max: usize) -> Result<Vec<GitHunkRange>> {
-    git_diff_hunks_with_head(root, base_revision, None, max)
+    git_diff_hunks_with_head(root, base_revision, None, &[], max)
 }
 
 /// Parse bounded target-side hunk ranges between two immutable Git revisions.
@@ -1165,13 +1189,25 @@ pub fn git_diff_hunks_between(
     head_revision: &str,
     max: usize,
 ) -> Result<Vec<GitHunkRange>> {
-    git_diff_hunks_with_head(root, base_revision, Some(head_revision), max)
+    git_diff_hunks_with_head(root, base_revision, Some(head_revision), &[], max)
+}
+
+/// Parse bounded target-side hunk ranges only for explicit repository paths.
+pub(crate) fn git_diff_hunks_scoped(
+    root: &Path,
+    base_revision: &str,
+    head_revision: Option<&str>,
+    paths: &[String],
+    max: usize,
+) -> Result<Vec<GitHunkRange>> {
+    git_diff_hunks_with_head(root, base_revision, head_revision, paths, max)
 }
 
 fn git_diff_hunks_with_head(
     root: &Path,
     base_revision: &str,
     head_revision: Option<&str>,
+    paths: &[String],
     max: usize,
 ) -> Result<Vec<GitHunkRange>> {
     if max == 0 {
@@ -1201,7 +1237,12 @@ fn git_diff_hunks_with_head(
         base_sha,
     ];
     args.extend(head_sha);
-    args.extend(["--".to_owned(), ".".to_owned()]);
+    args.push("--".to_owned());
+    if paths.is_empty() {
+        args.push(".".to_owned());
+    } else {
+        args.extend(paths.iter().cloned());
+    }
     let mut child = Command::new(program)
         .args(args)
         .current_dir(root)
