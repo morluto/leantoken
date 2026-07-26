@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     sync::LazyLock,
+    time::Instant,
 };
 
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
@@ -10,22 +11,23 @@ use tokio_util::sync::CancellationToken;
 
 mod facets;
 
-use super::Services;
 use super::read::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
-use super::search::{chunk_search_hit, compile_literal_regex, fts_quote, matching_line};
+use super::search::{chunk_search_hit_for_range, compile_literal_regex, fts_quote};
 use super::validation::{
     MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, PathFilter, PathMatcher,
     check_cancelled, validate_glob_patterns, validate_input,
 };
+use super::{Services, retrieval_primitive_key};
 use crate::model::*;
 use crate::ranking::{self, Candidate};
 use crate::repository::{
     git_changed_paths, git_diff_hunks, git_diff_hunks_between, git_diff_paths,
     git_diff_paths_between, normalize_relative, validate_relative,
 };
+use crate::storage::ChunkHit;
 use crate::storage::{FileRecord, ReadSession, SymbolHit, SymbolRecord};
-use crate::text::{expand_terms, identifier_words};
+use crate::text::{byte_to_line, expand_terms, identifier_words, line_starts};
 use crate::{Error, Result};
 use facets::{ContextQuery, FacetKind};
 const GIT_CHANGED_PATHS_MAX: usize = 512;
@@ -41,6 +43,8 @@ const MAX_CONTEXT_HITS_PER_SOURCE: usize = 20;
 const MAX_CONTEXT_LEXICAL_HITS: usize = 30;
 /// Per-import symbol scan cap for concept-corroborated structural expansion.
 const MAX_IMPORT_SYMBOLS: usize = 128;
+/// Exact constraint names retained per storage batch.
+const MAX_EXACT_SYMBOL_BATCH_NAMES: usize = 32;
 const MIN_CORROBORATED_QUERY_WEIGHT: f64 = 0.65;
 const SYMBOL_CONTEXT_TOKEN_CAP: usize = 768;
 const REFERENCE_CONTEXT_TOKEN_CAP: usize = 256;
@@ -56,6 +60,7 @@ const OVERSIZED_CHANGE_PATHS: usize = 32;
 const MIN_OVERSIZED_PATH_GROUPS: usize = 3;
 const MAX_ROUTING_GROUPS: usize = 5;
 const MAX_ROUTING_SUGGESTIONS: usize = 3;
+const LEXICAL_OCCURRENCE_SATURATION: usize = 25;
 
 fn parse_revision_range(revision: &str) -> Result<Option<(&str, &str)>> {
     let Some((base, head)) = revision.split_once("..") else {
@@ -411,6 +416,239 @@ fn contains_filename_token(path: &str, token: &str) -> bool {
 enum CandidateDiagnostics {
     Omit,
     Collect,
+}
+
+#[derive(Default)]
+struct ContextPhaseTracker {
+    enabled: bool,
+    generation: u64,
+    counters: ContextPhaseCounters,
+    timings: ContextPhaseTimings,
+    started: Option<Instant>,
+    enclosing_locations: BTreeSet<(i64, usize)>,
+    adaptive_excerpts: BTreeSet<(i64, usize, usize, usize, usize)>,
+    stored_excerpts: BTreeSet<(i64, usize, usize, usize, usize, usize)>,
+    primitive_keys: Vec<RetrievalPrimitiveKey>,
+}
+
+#[derive(Clone, Copy)]
+enum ContextTimedPhase {
+    ExactSymbolLookup,
+    SymbolSearch,
+    ReferenceSearch,
+    LexicalSearch,
+    LexicalVerify,
+    EnclosingLookup,
+    AdaptiveExcerpt,
+    StoredExcerpt,
+}
+
+impl ContextPhaseTracker {
+    fn new(diagnostics: CandidateDiagnostics, generation: u64) -> Self {
+        Self {
+            enabled: diagnostics == CandidateDiagnostics::Collect,
+            generation,
+            started: (diagnostics == CandidateDiagnostics::Collect).then(Instant::now),
+            ..Self::default()
+        }
+    }
+
+    fn measure<T>(
+        &mut self,
+        phase: ContextTimedPhase,
+        operation: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        if !self.enabled {
+            return operation();
+        }
+        let started = Instant::now();
+        let output = operation()?;
+        self.record_elapsed(phase, Some(started));
+        Ok(output)
+    }
+
+    fn record_elapsed(&mut self, phase: ContextTimedPhase, started: Option<Instant>) {
+        let Some(started) = started else { return };
+        let elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0;
+        let target = match phase {
+            ContextTimedPhase::ExactSymbolLookup => &mut self.timings.exact_symbol_lookup_ms,
+            ContextTimedPhase::SymbolSearch => &mut self.timings.symbol_search_ms,
+            ContextTimedPhase::ReferenceSearch => &mut self.timings.reference_search_ms,
+            ContextTimedPhase::LexicalSearch => &mut self.timings.lexical_search_ms,
+            ContextTimedPhase::LexicalVerify => &mut self.timings.lexical_verify_ms,
+            ContextTimedPhase::EnclosingLookup => &mut self.timings.enclosing_lookup_ms,
+            ContextTimedPhase::AdaptiveExcerpt => &mut self.timings.adaptive_excerpt_ms,
+            ContextTimedPhase::StoredExcerpt => &mut self.timings.stored_excerpt_ms,
+        };
+        *target += elapsed_ms;
+    }
+
+    fn timer(&self) -> Option<Instant> {
+        self.enabled.then(Instant::now)
+    }
+
+    fn record_primitive(&mut self, kind: &str, normalized_inputs: impl FnOnce() -> String) {
+        if self.enabled {
+            self.primitive_keys.push(retrieval_primitive_key(
+                self.generation,
+                kind,
+                &normalized_inputs(),
+            ));
+        }
+    }
+
+    fn record_enclosing_locations(&mut self, locations: &[(i64, usize)]) {
+        if !self.enabled {
+            return;
+        }
+        self.counters.enclosing_location_batches = self
+            .counters
+            .enclosing_location_batches
+            .saturating_add(usize::from(!locations.is_empty()));
+        self.counters.enclosing_location_requests = self
+            .counters
+            .enclosing_location_requests
+            .saturating_add(locations.len());
+        self.enclosing_locations.extend(locations.iter().copied());
+        for (file_id, line) in locations {
+            self.record_primitive("enclosing_symbol", || format!("{file_id}:{line}"));
+        }
+    }
+
+    fn record_adaptive_excerpts(&mut self, requests: &[AdaptiveExcerptRequest]) {
+        if !self.enabled {
+            return;
+        }
+        self.counters.adaptive_excerpt_batches = self
+            .counters
+            .adaptive_excerpt_batches
+            .saturating_add(usize::from(!requests.is_empty()));
+        self.counters.adaptive_excerpt_requests = self
+            .counters
+            .adaptive_excerpt_requests
+            .saturating_add(requests.len());
+        self.adaptive_excerpts
+            .extend(requests.iter().map(|request| {
+                (
+                    request.file_id,
+                    request.declaration_start,
+                    request.declaration_end,
+                    request.matched_line,
+                    request.token_budget,
+                )
+            }));
+        for request in requests {
+            self.record_primitive("adaptive_excerpt", || {
+                format!(
+                    "{}:{}:{}:{}:{}",
+                    request.file_id,
+                    request.declaration_start,
+                    request.declaration_end,
+                    request.matched_line,
+                    request.token_budget
+                )
+            });
+        }
+    }
+
+    fn record_stored_excerpts(&mut self, requests: &[StoredExcerptRequest]) {
+        if !self.enabled {
+            return;
+        }
+        self.counters.stored_excerpt_batches = self
+            .counters
+            .stored_excerpt_batches
+            .saturating_add(usize::from(!requests.is_empty()));
+        self.counters.stored_excerpt_requests = self
+            .counters
+            .stored_excerpt_requests
+            .saturating_add(requests.len());
+        self.stored_excerpts.extend(requests.iter().map(|request| {
+            (
+                request.file_id,
+                request.desired_start_line,
+                request.desired_end_line,
+                request.required_start_line,
+                request.required_end_line,
+                request.max_lines,
+            )
+        }));
+        for request in requests {
+            self.record_primitive("stored_excerpt", || {
+                format!(
+                    "{}:{}:{}:{}:{}:{}",
+                    request.file_id,
+                    request.desired_start_line,
+                    request.desired_end_line,
+                    request.required_start_line,
+                    request.required_end_line,
+                    request.max_lines
+                )
+            });
+        }
+    }
+
+    fn finish(
+        mut self,
+        generated_candidates: usize,
+    ) -> (
+        ContextPhaseCounters,
+        ContextPhaseTimings,
+        Vec<RetrievalPrimitiveKey>,
+    ) {
+        if !self.enabled {
+            return (
+                ContextPhaseCounters::default(),
+                ContextPhaseTimings::default(),
+                Vec::new(),
+            );
+        }
+        self.counters.unique_enclosing_locations = self.enclosing_locations.len();
+        self.counters.unique_adaptive_excerpt_requests = self.adaptive_excerpts.len();
+        self.counters.unique_stored_excerpt_requests = self.stored_excerpts.len();
+        self.counters.generated_candidates = generated_candidates;
+        self.timings.total_ms = self
+            .started
+            .map(|started| started.elapsed().as_secs_f64() * 1_000.0)
+            .unwrap_or(0.0);
+        (self.counters, self.timings, self.primitive_keys)
+    }
+}
+
+struct LexicalMatchFacts {
+    search_hit: SearchHit,
+    matched_line: usize,
+    occurrences: usize,
+}
+
+fn analyze_lexical_match(
+    hit: &ChunkHit,
+    matcher: &regex::Regex,
+    context_lines: usize,
+) -> Option<LexicalMatchFacts> {
+    let mut matches = matcher.find_iter(&hit.content);
+    let first = matches.next()?;
+    let occurrences = 1usize.saturating_add(
+        matches
+            .take(LEXICAL_OCCURRENCE_SATURATION.saturating_sub(1))
+            .count(),
+    );
+    let starts = line_starts(&hit.content);
+    let search_hit = chunk_search_hit_for_range(
+        hit,
+        first.start(),
+        first.end(),
+        context_lines,
+        false,
+        false,
+        &starts,
+    );
+    let local_start = byte_to_line(&starts, hit.content.len(), first.start());
+    Some(LexicalMatchFacts {
+        search_hit,
+        matched_line: hit.start_line + local_start - 1,
+        occurrences,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -769,6 +1007,7 @@ impl Services {
         request: &ContextRequest,
         cancellation: &CancellationToken,
         candidates: &mut Vec<Candidate>,
+        phases: &mut ContextPhaseTracker,
     ) -> Result<ContextCoverageReceipt> {
         let mut coverage = ContextCoverageReceipt::default();
         let mut focus_path_matches = vec![0usize; request.focus_paths.len()];
@@ -875,12 +1114,16 @@ impl Services {
                 max_lines: 40,
             })
             .collect::<Vec<_>>();
+        phases.record_stored_excerpts(&path_excerpt_requests);
+        let path_excerpts = phases.measure(ContextTimedPhase::StoredExcerpt, || {
+            self.stored_excerpts(session, &path_excerpt_requests)
+        })?;
         for ((pattern, file), excerpt) in request
             .must_include_paths
             .iter()
             .zip(required_path_files)
             .filter_map(|(pattern, file)| file.map(|file| (pattern, file)))
-            .zip(self.stored_excerpts(session, &path_excerpt_requests)?)
+            .zip(path_excerpts)
         {
             let Some(excerpt) = excerpt else { continue };
             candidates.push(
@@ -898,33 +1141,64 @@ impl Services {
             );
         }
 
-        let mut required_symbol_hits = Vec::<(&String, SymbolHit)>::new();
+        let mut exact_names = Vec::new();
+        let mut seen_exact_names = HashSet::new();
+        for name in request
+            .focus_symbols
+            .iter()
+            .chain(&request.must_include_symbols)
+        {
+            if seen_exact_names.insert(name.clone()) {
+                exact_names.push(name.clone());
+            }
+        }
+        phases.counters.exact_symbol_names = exact_names.len();
+        let required_names = request
+            .must_include_symbols
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        let mut exact_presence = HashSet::new();
+        let mut allowed_required_hits = HashMap::<String, SymbolHit>::new();
+        for names in exact_names.chunks(MAX_EXACT_SYMBOL_BATCH_NAMES) {
+            check_cancelled(cancellation)?;
+            phases.counters.exact_symbol_batches =
+                phases.counters.exact_symbol_batches.saturating_add(1);
+            let results = phases.measure(ContextTimedPhase::ExactSymbolLookup, || {
+                session.find_symbols_exact_batch(names, MAX_IMPORT_SYMBOLS)
+            })?;
+            for (name, hits) in names.iter().zip(results) {
+                phases.record_primitive("exact_symbol", || {
+                    format!("case_sensitive:true:limit:{MAX_IMPORT_SYMBOLS}:name:{name}")
+                });
+                phases.counters.exact_symbol_hits =
+                    phases.counters.exact_symbol_hits.saturating_add(hits.len());
+                if hits.is_empty() {
+                    continue;
+                }
+                exact_presence.insert(name.clone());
+                if required_names.contains(name.as_str())
+                    && let Some(hit) = hits.into_iter().find(|hit| path_filter.allows(&hit.path))
+                {
+                    allowed_required_hits.insert(name.clone(), hit);
+                }
+            }
+        }
         for symbol in &request.focus_symbols {
             check_cancelled(cancellation)?;
-            let matched = session
-                .search_symbols(symbol, true, MAX_IMPORT_SYMBOLS)?
-                .into_iter()
-                .any(|hit| hit.symbol.name == *symbol);
-            if !matched {
+            if !exact_presence.contains(symbol) {
                 coverage.unmatched_focus_symbols.push(symbol.clone());
             }
         }
+        let mut required_symbol_hits = Vec::<(String, SymbolHit)>::new();
         for symbol in &request.must_include_symbols {
             check_cancelled(cancellation)?;
-            let hits = session.search_symbols(symbol, true, MAX_IMPORT_SYMBOLS)?;
-            let exact_hits = hits
-                .into_iter()
-                .filter(|hit| hit.symbol.name == *symbol)
-                .collect::<Vec<_>>();
-            if exact_hits.is_empty() {
+            if !exact_presence.contains(symbol) {
                 coverage.unmatched_must_include_symbols.push(symbol.clone());
                 continue;
             }
-            if let Some(hit) = exact_hits
-                .into_iter()
-                .find(|hit| path_filter.allows(&hit.path))
-            {
-                required_symbol_hits.push((symbol, hit));
+            if let Some(hit) = allowed_required_hits.get(symbol).cloned() {
+                required_symbol_hits.push((symbol.clone(), hit));
             }
         }
         let symbol_excerpt_requests = required_symbol_hits
@@ -937,9 +1211,13 @@ impl Services {
                 token_budget: excerpt_budget(request.token_budget, ContextExcerptKind::Symbol),
             })
             .collect::<Vec<_>>();
+        phases.record_adaptive_excerpts(&symbol_excerpt_requests);
+        let symbol_excerpts = phases.measure(ContextTimedPhase::AdaptiveExcerpt, || {
+            self.adaptive_context_excerpts(session, &symbol_excerpt_requests)
+        })?;
         for (((symbol, hit), excerpt), rank) in required_symbol_hits
             .into_iter()
-            .zip(self.adaptive_context_excerpts(session, &symbol_excerpt_requests)?)
+            .zip(symbol_excerpts)
             .zip(0usize..)
         {
             let Some(excerpt) = excerpt else { continue };
@@ -1720,6 +1998,13 @@ impl Services {
         self.consistent(|session, generation| {
             let facet_plan = facets::plan(&request.task, MAX_CONTEXT_QUERIES);
             let queries = facet_plan.queries;
+            let mut phases = ContextPhaseTracker::new(diagnostics, generation);
+            let candidate_generation_started = phases.timer();
+            phases.counters.queries_planned = queries.len();
+            phases.counters.queries_executed = queries
+                .iter()
+                .filter(|query| !query.has_facet(FacetKind::TestIntent))
+                .count();
             let terms = queries
                 .iter()
                 .map(|query| query.value.clone())
@@ -1733,6 +2018,7 @@ impl Services {
                 &request,
                 cancellation,
                 &mut candidates,
+                &mut phases,
             )?;
 
             // Workflow words such as `test` are useful path priors but terrible
@@ -1745,9 +2031,21 @@ impl Services {
                 let term = &query.value;
                 let concept = query.fusion_key.as_str();
                 check_cancelled(cancellation)?;
+                let symbol_results = phases.measure(ContextTimedPhase::SymbolSearch, || {
+                    session.search_symbols(term, false, MAX_CONTEXT_HITS_PER_SOURCE)
+                })?;
+                phases.record_primitive(
+                    "symbol_search",
+                    || format!(
+                        "case_sensitive:false:limit:{MAX_CONTEXT_HITS_PER_SOURCE}:query:{term}"
+                    ),
+                );
+                phases.counters.symbol_candidates = phases
+                    .counters
+                    .symbol_candidates
+                    .saturating_add(symbol_results.len());
                 let mut symbol_hits = Vec::new();
-                for (rank, hit) in session
-                    .search_symbols(term, false, MAX_CONTEXT_HITS_PER_SOURCE)?
+                for (rank, hit) in symbol_results
                     .into_iter()
                     .enumerate()
                 {
@@ -1771,9 +2069,13 @@ impl Services {
                         ),
                     })
                     .collect::<Vec<_>>();
+                phases.record_adaptive_excerpts(&symbol_excerpt_requests);
+                let symbol_excerpts = phases.measure(ContextTimedPhase::AdaptiveExcerpt, || {
+                    self.adaptive_context_excerpts(session, &symbol_excerpt_requests)
+                })?;
                 for ((rank, hit), excerpt) in symbol_hits
                     .into_iter()
-                    .zip(self.adaptive_context_excerpts(session, &symbol_excerpt_requests)?)
+                    .zip(symbol_excerpts)
                 {
                     check_cancelled(cancellation)?;
                     let Some(excerpt) = excerpt else { continue };
@@ -1815,11 +2117,25 @@ impl Services {
                     .change_boost(change_boost);
                     candidates.push(annotate_candidate(candidate, query, "symbol", rank));
                 }
-                let reference_results = signals
-                    .caller
-                    .then(|| session.search_references(term, false, MAX_CONTEXT_HITS_PER_SOURCE))
-                    .transpose()?
-                    .unwrap_or_default();
+                let reference_results = if signals.caller {
+                    phases.measure(ContextTimedPhase::ReferenceSearch, || {
+                        session.search_references(term, false, MAX_CONTEXT_HITS_PER_SOURCE)
+                    })?
+                } else {
+                    Vec::new()
+                };
+                if signals.caller {
+                    phases.record_primitive(
+                        "reference_search",
+                        || format!(
+                            "case_sensitive:false:limit:{MAX_CONTEXT_HITS_PER_SOURCE}:query:{term}"
+                        ),
+                    );
+                }
+                phases.counters.reference_candidates = phases
+                    .counters
+                    .reference_candidates
+                    .saturating_add(reference_results.len());
                 let mut reference_hits = Vec::new();
                 for (rank, hit) in reference_results.into_iter().enumerate() {
                     check_cancelled(cancellation)?;
@@ -1833,7 +2149,10 @@ impl Services {
                     .iter()
                     .map(|(_, hit)| (hit.reference.file_id, hit.reference.start_line))
                     .collect::<Vec<_>>();
-                let enclosing = session.find_enclosing_symbols_batch(&reference_locations)?;
+                phases.record_enclosing_locations(&reference_locations);
+                let enclosing = phases.measure(ContextTimedPhase::EnclosingLookup, || {
+                    session.find_enclosing_symbols_batch(&reference_locations)
+                })?;
                 let mut adaptive_indices = Vec::new();
                 let mut adaptive_requests = Vec::new();
                 for (index, ((_, hit), symbol)) in reference_hits.iter().zip(enclosing).enumerate()
@@ -1852,10 +2171,15 @@ impl Services {
                         });
                     }
                 }
+                phases.record_adaptive_excerpts(&adaptive_requests);
                 let mut adaptive_excerpts = vec![None; reference_hits.len()];
+                let hydrated_adaptive =
+                    phases.measure(ContextTimedPhase::AdaptiveExcerpt, || {
+                        self.adaptive_context_excerpts(session, &adaptive_requests)
+                    })?;
                 for (index, excerpt) in adaptive_indices
                     .into_iter()
-                    .zip(self.adaptive_context_excerpts(session, &adaptive_requests)?)
+                    .zip(hydrated_adaptive)
                 {
                     adaptive_excerpts[index] = excerpt;
                 }
@@ -1877,10 +2201,14 @@ impl Services {
                         max_lines: 12,
                     });
                 }
+                phases.record_stored_excerpts(&fallback_requests);
                 let mut fallback_excerpts = vec![None; reference_hits.len()];
+                let hydrated_fallback = phases.measure(ContextTimedPhase::StoredExcerpt, || {
+                    self.stored_excerpts(session, &fallback_requests)
+                })?;
                 for (index, excerpt) in fallback_indices
                     .into_iter()
-                    .zip(self.stored_excerpts(session, &fallback_requests)?)
+                    .zip(hydrated_fallback)
                 {
                     fallback_excerpts[index] = excerpt;
                 }
@@ -1924,35 +2252,62 @@ impl Services {
                     candidates.push(annotate_candidate(candidate, query, "reference", rank));
                 }
                 let term_regex = compile_literal_regex(term, false)?;
-                let lexical = if term.chars().count() >= 3 {
-                    session.search_trigram(term, MAX_CONTEXT_LEXICAL_HITS)?
+                let lexical = phases.measure(ContextTimedPhase::LexicalSearch, || {
+                    if term.chars().count() >= 3 {
+                        session.search_trigram(term, MAX_CONTEXT_LEXICAL_HITS)
+                    } else {
+                        session.search_word(&fts_quote(term), MAX_CONTEXT_LEXICAL_HITS)
+                    }
+                })?;
+                let lexical_kind = if term.chars().count() >= 3 {
+                    "trigram"
                 } else {
-                    session.search_word(&fts_quote(term), MAX_CONTEXT_LEXICAL_HITS)?
+                    "word"
                 };
+                phases.record_primitive(
+                    lexical_kind,
+                    || format!("limit:{MAX_CONTEXT_LEXICAL_HITS}:query:{term}"),
+                );
+                phases.counters.lexical_candidate_chunks = phases
+                    .counters
+                    .lexical_candidate_chunks
+                    .saturating_add(lexical.len());
                 let mut lexical_hits = Vec::new();
+                let lexical_verify_started = phases.timer();
                 for (rank, hit) in lexical.into_iter().enumerate() {
                     check_cancelled(cancellation)?;
                     if !path_filter.allows(&hit.path) {
                         path_excluded_candidates.push(hit.path);
                         continue;
                     }
-                    let Some(search_hit) =
-                        chunk_search_hit(&hit, term, false, 2, term_regex.as_ref(), false)?
+                    phases.counters.lexical_chunks_verified =
+                        phases.counters.lexical_chunks_verified.saturating_add(1);
+                    let Some(facts) =
+                        term_regex
+                            .as_ref()
+                            .and_then(|matcher| analyze_lexical_match(&hit, matcher, 2))
                     else {
                         continue;
                     };
-                    let matched_line = matching_line(&hit, term, false, term_regex.as_ref())
-                        .unwrap_or(search_hit.start_line);
-                    lexical_hits.push((rank, hit, search_hit, matched_line));
+                    phases.counters.lexical_matches =
+                        phases.counters.lexical_matches.saturating_add(1);
+                    lexical_hits.push((rank, hit, facts));
                 }
+                phases.record_elapsed(
+                    ContextTimedPhase::LexicalVerify,
+                    lexical_verify_started,
+                );
                 let lexical_locations = lexical_hits
                     .iter()
-                    .map(|(_, hit, _, matched_line)| (hit.file_id, *matched_line))
+                    .map(|(_, hit, facts)| (hit.file_id, facts.matched_line))
                     .collect::<Vec<_>>();
-                let enclosing = session.find_enclosing_symbols_batch(&lexical_locations)?;
+                phases.record_enclosing_locations(&lexical_locations);
+                let enclosing = phases.measure(ContextTimedPhase::EnclosingLookup, || {
+                    session.find_enclosing_symbols_batch(&lexical_locations)
+                })?;
                 let mut adaptive_indices = Vec::new();
                 let mut adaptive_requests = Vec::new();
-                for (index, ((_, hit, _, matched_line), symbol)) in
+                for (index, ((_, hit, facts), symbol)) in
                     lexical_hits.iter().zip(enclosing).enumerate()
                 {
                     if let Some(symbol) = symbol {
@@ -1961,7 +2316,7 @@ impl Services {
                             file_id: hit.file_id,
                             declaration_start: symbol.start_line,
                             declaration_end: symbol.end_line,
-                            matched_line: *matched_line,
+                            matched_line: facts.matched_line,
                             token_budget: excerpt_budget(
                                 request.token_budget,
                                 ContextExcerptKind::Text,
@@ -1969,42 +2324,44 @@ impl Services {
                         });
                     }
                 }
+                phases.record_adaptive_excerpts(&adaptive_requests);
                 let mut adaptive_excerpts = vec![None; lexical_hits.len()];
+                let hydrated_adaptive =
+                    phases.measure(ContextTimedPhase::AdaptiveExcerpt, || {
+                        self.adaptive_context_excerpts(session, &adaptive_requests)
+                    })?;
                 for (index, excerpt) in adaptive_indices
                     .into_iter()
-                    .zip(self.adaptive_context_excerpts(session, &adaptive_requests)?)
+                    .zip(hydrated_adaptive)
                 {
                     adaptive_excerpts[index] = excerpt;
                 }
-                for ((rank, hit, search_hit, _), adaptive) in
+                for ((rank, hit, facts), adaptive) in
                     lexical_hits.into_iter().zip(adaptive_excerpts)
                 {
                     check_cancelled(cancellation)?;
                     let excerpt = adaptive.unwrap_or(StoredExcerpt {
-                        content: search_hit.excerpt.clone(),
-                        start_line: search_hit.start_line,
-                        end_line: search_hit.end_line,
+                        content: facts.search_hit.excerpt.clone(),
+                        start_line: facts.search_hit.start_line,
+                        end_line: facts.search_hit.end_line,
                     });
                     if query.fuse {
                         record_query_hit(
                             &mut query_fusion,
-                            &search_hit.path,
+                            &facts.search_hit.path,
                             &query.fusion_key,
                             query.weight,
                             rank,
                         );
                     }
-                    let occurrences = term_regex
-                        .as_ref()
-                        .map_or(0, |matcher| matcher.find_iter(&hit.content).count());
                     let change_boost = Self::file_change_boost(
                         Some(hit.generation),
-                        &search_hit.path,
+                        &facts.search_hit.path,
                         &changed_paths,
                         request.prior_repository_generation,
                     );
                     let candidate = Candidate::new(
-                        &search_hit.path,
+                        &facts.search_hit.path,
                         excerpt.start_line,
                         excerpt.end_line,
                         excerpt.content,
@@ -2013,9 +2370,9 @@ impl Services {
                     .concept(concept, query.concept_weight)
                     .exact(query.weight)
                     .bm25((-hit.score).max(0.0) * 1_000_000.0)
-                    .path_score(path_scorer.score(&search_hit.path))
+                    .path_score(path_scorer.score(&facts.search_hit.path))
                     .lexical_frequency_penalty(
-                        (occurrences.saturating_sub(5) as f64 / 20.0).min(1.0),
+                        (facts.occurrences.saturating_sub(5) as f64 / 20.0).min(1.0),
                     )
                     .change_boost(change_boost);
                     candidates.push(annotate_candidate(candidate, query, "text", rank));
@@ -2024,6 +2381,7 @@ impl Services {
 
             apply_query_fusion(&mut candidates, &query_fusion);
             let resolved_workflow = resolve_context_workflow(workflow, &request.task);
+            let workflow_started = phases.timer();
             let (workflow_receipt, workflow_path_excluded) = self.append_workflow_candidates(
                 session,
                 &scoped_request,
@@ -2053,7 +2411,16 @@ impl Services {
                 .reverse_dependency
                 .then(|| self.apply_reverse_dependency_boost(session, &queries, &mut candidates))
                 .transpose()?;
+            if let Some(started) = workflow_started {
+                phases.timings.workflow_generation_ms =
+                    started.elapsed().as_secs_f64() * 1_000.0;
+            }
+            if let Some(started) = candidate_generation_started {
+                phases.timings.candidate_generation_ms =
+                    started.elapsed().as_secs_f64() * 1_000.0;
+            }
 
+            let ranking_started = phases.timer();
             let candidate_path_count = candidates
                 .iter()
                 .map(|candidate| candidate.path.as_str())
@@ -2298,16 +2665,22 @@ impl Services {
                     .collect::<BTreeSet<_>>()
                     .into_iter()
                     .collect::<Vec<_>>();
-                session.whole_file_source_tokens(
-                    &paths,
-                    self.config.tokenizer.name(),
-                )?
+                session.whole_file_source_tokens(&paths, self.config.tokenizer.name())?
             };
+            if let Some(started) = ranking_started {
+                phases.timings.ranking_finalize_ms =
+                    started.elapsed().as_secs_f64() * 1_000.0;
+            }
+            let (phases, timings, primitive_keys) =
+                phases.finish(generated_candidates.len());
             Ok((
                 ContextEvaluation {
                     response,
                     generated_candidate_paths,
                     generated_candidates,
+                    phases,
+                    timings,
+                    primitive_keys,
                 },
                 baseline_source_tokens,
             ))
@@ -2324,6 +2697,37 @@ fn set_routing_consistency(response: &mut ContextResponse, consistency: IndexCon
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lexical_match_facts_share_first_match_and_saturate_frequency_count() {
+        let content = (0..100)
+            .map(|index| format!("needle_{index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let hit = ChunkHit {
+            chunk_id: 1,
+            file_id: 1,
+            path: "src/lib.rs".into(),
+            content,
+            start_line: 10,
+            end_line: 109,
+            start_byte: 100,
+            end_byte: 1_000,
+            token_count: 100,
+            generation: 1,
+            score: 0.0,
+        };
+        let matcher = regex::RegexBuilder::new("needle")
+            .case_insensitive(true)
+            .build()
+            .expect("matcher");
+
+        let facts = analyze_lexical_match(&hit, &matcher, 2).expect("match facts");
+
+        assert_eq!(facts.matched_line, 10);
+        assert_eq!(facts.search_hit.start_line, 10);
+        assert_eq!(facts.occurrences, LEXICAL_OCCURRENCE_SATURATION);
+    }
 
     #[test]
     fn revision_ranges_require_two_explicit_endpoints() {

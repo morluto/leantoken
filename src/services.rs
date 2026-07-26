@@ -35,6 +35,24 @@ pub(crate) const MAX_EXPECTED_REPOSITORY_ID_BYTES: usize = 128;
 const TOKEN_SAVINGS_ESTIMATE_BASIS: &str =
     "requested read ranges or whole source files represented in each response";
 
+pub(crate) fn retrieval_primitive_key(
+    generation: u64,
+    kind: &str,
+    normalized_inputs: &str,
+) -> RetrievalPrimitiveKey {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"leantoken-retrieval-primitive-v1\0");
+    hasher.update(&generation.to_le_bytes());
+    hasher.update(&(kind.len() as u64).to_le_bytes());
+    hasher.update(kind.as_bytes());
+    hasher.update(&(normalized_inputs.len() as u64).to_le_bytes());
+    hasher.update(normalized_inputs.as_bytes());
+    RetrievalPrimitiveKey {
+        kind: kind.to_owned(),
+        key_blake3: hasher.finalize().to_hex().to_string(),
+    }
+}
+
 pub(crate) fn validate_positive_request_limit(
     field: &'static str,
     requested: usize,

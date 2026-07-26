@@ -135,9 +135,42 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
   caller boost and expose no graph metadata. Reconsider only with newly frozen
   evidence that beats lexical retrieval on the same recall, dead-end, complete
   response, and precision gates.
-- Do not add a hot-file cache yet. The release profile measured warm live reads
-  in tens of microseconds on this host; cache ownership, invalidation, and
-  memory cost need end-to-end evidence first.
+- Do not add a hot-file or retrieval-result LRU. Complete live reads now fuse
+  hashing and range extraction into one forward stream, while truncated reads
+  retain a verification pass. Frozen progressive traces contain only 4 exact
+  range rereads across 141 retrieval calls; 57 overlapping rereads do not prove
+  identical generation-scoped primitive reuse. A controlled 12-request OpenClaw
+  replay did find 1,796 exact reuses among 2,224 generation-scoped primitive
+  calls, but it deliberately repeated identical request shapes. Collect
+  production-like arrival order, repeat distance, and byte-weighted hit
+  potential before prototyping a cross-request primitive cache.
+- Keep context hydration batched per query for now. The 2,000-file hot-path
+  diagnostic found no duplicate hydration work. On OpenClaw, a realistic
+  request made 12 adaptive, 8 enclosing-symbol, and 4 stored-excerpt batches,
+  but all 410 requested facts were unique. Diagnostic timings place lexical FTS
+  at roughly 0.37–0.46 seconds, while enclosing lookup is 6–8 ms, stored
+  hydration is under 1 ms, and lexical verification is 2–3 ms. A request-wide
+  design could collapse 24 statements to 3 without reducing row or content
+  work, so address lexical query cost before restructuring hydration.
+- Keep FTS `columnsize=1`. The OpenClaw A/B saved only 1.80% of database bytes
+  with `columnsize=0`, while BM25-backed realistic context regressed from
+  1,066 ms to 2,682 ms p50 and reproduced in reverse order. Do not trade stored
+  token counts for on-demand retokenization.
+- Keep full mandatory literals in regex trigram MATCH expressions. Dynamic
+  `fts5vocab` frequency lookup cost 8–45 ms on OpenClaw, while rare trigram
+  pairs expanded sparse and compound candidate sets by 4.4× and 12.4×.
+  Reconsider only with generation-built frequency metadata and end-to-end
+  candidate loading and verification evidence.
+- Keep the current deterministic BM25 query. SQLite rank-first hydration
+  preserved the top-128 set and order for four OpenClaw queries, but was faster
+  for two and slower for two. A future ranking change must preserve frozen-task
+  context coverage and avoided follow-up retrieval calls, not merely top-k
+  overlap.
+- Keep canonical-compatible token counting. Exact tokenization owned 57.6% of
+  summed preparation worker time, but a 6.1–7.3× faster Rust implementation
+  disagreed on 3,550 OpenClaw files and by as many as 1,483 tokens in one file.
+  Pursue a no-allocation counter in the canonical-compatible implementation
+  instead of changing token-budget semantics.
 - `notify-debouncer-full` was evaluated as a replacement for the watcher state
   machine. Its file-ID rename pairing is useful, but its unbounded internal
   queue and blocking shutdown do not preserve LeanToken's bounded-overflow and

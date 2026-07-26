@@ -31,6 +31,169 @@ pub const HARD_MAX_RESULTS: usize = 10_000;
 const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_millis(5_000);
 const READ_ONLY_STATUS_BUSY_TIMEOUT: Duration = Duration::from_millis(100);
 
+pub(crate) fn process_write_bytes() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        fs::read_to_string("/proc/self/io")
+            .ok()?
+            .lines()
+            .find_map(|line| line.strip_prefix("write_bytes: "))
+            .and_then(|value| value.trim().parse().ok())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+fn measured_storage_phase<T>(
+    enabled: bool,
+    operation: impl FnOnce() -> Result<T>,
+) -> Result<(T, f64, Option<u64>)> {
+    let write_before = enabled.then(process_write_bytes).flatten();
+    let started = enabled.then(std::time::Instant::now);
+    let output = operation()?;
+    let elapsed_ms = started
+        .map(|started| started.elapsed().as_secs_f64() * 1_000.0)
+        .unwrap_or(0.0);
+    let write_after = enabled.then(process_write_bytes).flatten();
+    let write_bytes = write_before
+        .zip(write_after)
+        .map(|(before, after)| after.saturating_sub(before));
+    Ok((output, elapsed_ms, write_bytes))
+}
+
+fn wal_path(database: &Path) -> PathBuf {
+    let mut path = database.as_os_str().to_os_string();
+    path.push("-wal");
+    PathBuf::from(path)
+}
+
+fn fts_storage_footprint(conn: &Connection) -> Result<FtsStorageFootprint> {
+    let (chunk_word, chunk_trigram, symbol, reference) = conn.query_row(
+        "SELECT
+             COALESCE(SUM(CASE WHEN name GLOB 'chunks_fts_word_*' THEN pgsize ELSE 0 END), 0),
+             COALESCE(SUM(CASE WHEN name GLOB 'chunks_fts_trigram_*' THEN pgsize ELSE 0 END), 0),
+             COALESCE(SUM(CASE WHEN name GLOB 'symbols_fts_trigram_*' THEN pgsize ELSE 0 END), 0),
+             COALESCE(SUM(CASE WHEN name GLOB 'symbol_refs_fts_trigram_*' THEN pgsize ELSE 0 END), 0)
+         FROM dbstat",
+        [],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        },
+    )?;
+    Ok(FtsStorageFootprint {
+        chunk_word_bytes: i64_to_u64(chunk_word),
+        chunk_trigram_bytes: i64_to_u64(chunk_trigram),
+        symbol_bytes: i64_to_u64(symbol),
+        reference_bytes: i64_to_u64(reference),
+    })
+}
+
+fn populate_post_commit_diagnostics(
+    conn: &Connection,
+    database: &Path,
+    diagnostics: &mut PublicationDiagnostics,
+) -> Result<()> {
+    let ((busy, log_frames, checkpointed_frames), elapsed_ms, write_bytes) =
+        measured_storage_phase(true, || {
+            Ok(
+                conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                })?,
+            )
+        })?;
+    diagnostics.checkpoint_ms = elapsed_ms;
+    diagnostics.checkpoint_write_bytes = write_bytes;
+    diagnostics.checkpoint_busy = busy;
+    diagnostics.checkpoint_log_frames = log_frames;
+    diagnostics.checkpointed_frames = checkpointed_frames;
+    diagnostics.database_bytes = fs::metadata(database)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    diagnostics.wal_bytes = fs::metadata(wal_path(database))
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    diagnostics.fts_storage = fts_storage_footprint(conn)?;
+    Ok(())
+}
+
+/// Logical on-disk bytes owned by each FTS5 search index.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct FtsStorageFootprint {
+    /// Word-tokenized chunk index bytes.
+    pub chunk_word_bytes: u64,
+    /// Trigram-tokenized chunk index bytes.
+    pub chunk_trigram_bytes: u64,
+    /// Trigram-tokenized symbol index bytes.
+    pub symbol_bytes: u64,
+    /// Trigram-tokenized symbol-reference index bytes.
+    pub reference_bytes: u64,
+}
+
+/// Storage phases and footprint captured only by profiled reconciliation.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct PublicationDiagnostics {
+    /// Import resolution and relational insertion time supplied by the indexer.
+    pub relational_write_ms: f64,
+    /// Linux process write bytes observed during relational insertion.
+    pub relational_write_bytes: Option<u64>,
+    /// Chunk word-index rebuild time.
+    pub chunk_word_fts_rebuild_ms: f64,
+    /// Linux process write bytes observed during the chunk word-index rebuild.
+    pub chunk_word_fts_rebuild_write_bytes: Option<u64>,
+    /// Chunk trigram-index rebuild time.
+    pub chunk_trigram_fts_rebuild_ms: f64,
+    /// Linux process write bytes observed during the chunk trigram-index rebuild.
+    pub chunk_trigram_fts_rebuild_write_bytes: Option<u64>,
+    /// Symbol trigram-index rebuild time.
+    pub symbol_fts_rebuild_ms: f64,
+    /// Linux process write bytes observed during the symbol-index rebuild.
+    pub symbol_fts_rebuild_write_bytes: Option<u64>,
+    /// Reference trigram-index rebuild time.
+    pub reference_fts_rebuild_ms: f64,
+    /// Linux process write bytes observed during the reference-index rebuild.
+    pub reference_fts_rebuild_write_bytes: Option<u64>,
+    /// Transaction commit time with auto-checkpointing disabled for this profile.
+    pub commit_ms: f64,
+    /// Linux process write bytes observed during commit.
+    pub commit_write_bytes: Option<u64>,
+    /// Explicit post-commit checkpoint time.
+    pub checkpoint_ms: f64,
+    /// Linux process write bytes observed during the checkpoint.
+    pub checkpoint_write_bytes: Option<u64>,
+    /// Busy readers reported by the explicit checkpoint.
+    pub checkpoint_busy: i64,
+    /// WAL frames reported after the explicit checkpoint.
+    ///
+    /// A successful `TRUNCATE` checkpoint reports zero after truncating the log.
+    pub checkpoint_log_frames: i64,
+    /// Checkpointed frames reported after the explicit checkpoint.
+    ///
+    /// A successful `TRUNCATE` checkpoint reports zero after truncating the log.
+    pub checkpointed_frames: i64,
+    /// Main database bytes after the explicit checkpoint.
+    pub database_bytes: u64,
+    /// WAL bytes remaining after the explicit checkpoint.
+    pub wal_bytes: u64,
+    /// Per-index logical bytes from SQLite's `dbstat` virtual table.
+    pub fts_storage: FtsStorageFootprint,
+    /// Whether every post-commit checkpoint and footprint diagnostic completed.
+    ///
+    /// Publication success does not depend on diagnostic collection after the
+    /// transaction has committed.
+    pub post_commit_diagnostics_complete: bool,
+}
+
 struct DatabaseTriggerGuard<'connection> {
     connection: &'connection Connection,
     previous: Option<bool>,
@@ -1144,84 +1307,154 @@ impl Storage {
         rebuild: bool,
         write: impl FnOnce(&mut ReconciliationWriter<'_, '_>) -> Result<T>,
     ) -> Result<(u64, T)> {
-        let mut conn = self
+        self.publish_reconciliation_inner(baseline, config_hash, rebuild, false, write)
+            .map(|(generation, output, _)| (generation, output))
+    }
+
+    /// Build and publish one generation with storage-level profiling enabled.
+    pub(crate) fn publish_reconciliation_profiled_at<T>(
+        &self,
+        baseline: &MetaRecord,
+        config_hash: &str,
+        rebuild: bool,
+        write: impl FnOnce(&mut ReconciliationWriter<'_, '_>) -> Result<T>,
+    ) -> Result<(u64, T, PublicationDiagnostics)> {
+        self.publish_reconciliation_inner(baseline, config_hash, rebuild, true, write)
+    }
+
+    fn publish_reconciliation_inner<T>(
+        &self,
+        baseline: &MetaRecord,
+        config_hash: &str,
+        rebuild: bool,
+        profile: bool,
+        write: impl FnOnce(&mut ReconciliationWriter<'_, '_>) -> Result<T>,
+    ) -> Result<(u64, T, PublicationDiagnostics)> {
+        let mut writer = self
             .writer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let (current_generation, current_config): (i64, String) = tx.query_row(
-            "SELECT repository_generation, config_hash FROM meta WHERE id = 1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        verify_baseline(baseline, current_generation, &current_config)?;
-
-        // Initial and replacement publications can build the external-content
-        // FTS indexes once instead of maintaining them for every chunk mutation.
-        let bulk_fts = rebuild || current_generation == 0;
-        let mut trigger_guard = bulk_fts
-            .then(|| DatabaseTriggerGuard::disable(&tx))
-            .transpose()?;
-
-        if rebuild {
-            tx.execute("DELETE FROM files", [])?;
-            tx.execute("DELETE FROM path_entries", [])?;
-        }
-
-        let next_generation = current_generation.saturating_add(1);
-        let mut writer = ReconciliationWriter {
-            transaction: &tx,
-            generation: next_generation,
-            rebuild,
-            replacements: 0,
-            deletions: HashSet::new(),
+        // Profiling uses a disposable writer connection so its temporary
+        // auto-checkpoint policy can never leak into ordinary publications.
+        // Holding the normal writer lock still serializes in-process mutation.
+        let mut profiled_connection = if profile {
+            let mut connection = Connection::open(&self.path)?;
+            Self::configure(&mut connection, DEFAULT_BUSY_TIMEOUT)?;
+            connection.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
+            connection.pragma_update(None, "wal_autocheckpoint", 0)?;
+            Some(connection)
+        } else {
+            None
         };
-        let output = write(&mut writer)?;
-        let changed = rebuild
-            || writer.replacements > 0
-            || !writer.deletions.is_empty()
-            || current_config != config_hash;
-        if !rebuild && !writer.deletions.is_empty() {
-            Self::remove_orphan_path_entries(&tx)?;
-        }
-        drop(writer);
+        let conn = match profiled_connection.as_mut() {
+            Some(connection) => connection,
+            None => &mut *writer,
+        };
+        (|| {
+            let mut diagnostics = PublicationDiagnostics::default();
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let (current_generation, current_config): (i64, String) = tx.query_row(
+                "SELECT repository_generation, config_hash FROM meta WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            verify_baseline(baseline, current_generation, &current_config)?;
 
-        if !changed {
+            // Initial and replacement publications can build the external-content
+            // FTS indexes once instead of maintaining them for every chunk mutation.
+            let bulk_fts = rebuild || current_generation == 0;
+            let mut trigger_guard = bulk_fts
+                .then(|| DatabaseTriggerGuard::disable(&tx))
+                .transpose()?;
+
+            if rebuild {
+                tx.execute("DELETE FROM files", [])?;
+                tx.execute("DELETE FROM path_entries", [])?;
+            }
+
+            let next_generation = current_generation.saturating_add(1);
+            let mut writer = ReconciliationWriter {
+                transaction: &tx,
+                generation: next_generation,
+                rebuild,
+                replacements: 0,
+                deletions: HashSet::new(),
+            };
+            let output = write(&mut writer)?;
+            let changed = rebuild
+                || writer.replacements > 0
+                || !writer.deletions.is_empty()
+                || current_config != config_hash;
+            if !rebuild && !writer.deletions.is_empty() {
+                Self::remove_orphan_path_entries(&tx)?;
+            }
+            drop(writer);
+
+            if changed && bulk_fts {
+                let (_, elapsed_ms, write_bytes) = measured_storage_phase(profile, || {
+                    tx.execute(
+                        "INSERT INTO chunks_fts_word(chunks_fts_word) VALUES('rebuild')",
+                        [],
+                    )?;
+                    Ok(())
+                })?;
+                diagnostics.chunk_word_fts_rebuild_ms = elapsed_ms;
+                diagnostics.chunk_word_fts_rebuild_write_bytes = write_bytes;
+
+                let (_, elapsed_ms, write_bytes) = measured_storage_phase(profile, || {
+                    tx.execute(
+                        "INSERT INTO chunks_fts_trigram(chunks_fts_trigram) VALUES('rebuild')",
+                        [],
+                    )?;
+                    Ok(())
+                })?;
+                diagnostics.chunk_trigram_fts_rebuild_ms = elapsed_ms;
+                diagnostics.chunk_trigram_fts_rebuild_write_bytes = write_bytes;
+
+                let (_, elapsed_ms, write_bytes) = measured_storage_phase(profile, || {
+                    tx.execute(
+                        "INSERT INTO symbols_fts_trigram(symbols_fts_trigram) VALUES('rebuild')",
+                        [],
+                    )?;
+                    Ok(())
+                })?;
+                diagnostics.symbol_fts_rebuild_ms = elapsed_ms;
+                diagnostics.symbol_fts_rebuild_write_bytes = write_bytes;
+
+                let (_, elapsed_ms, write_bytes) = measured_storage_phase(profile, || {
+                    tx.execute(
+                        "INSERT INTO symbol_refs_fts_trigram(symbol_refs_fts_trigram) VALUES('rebuild')",
+                        [],
+                    )?;
+                    Ok(())
+                })?;
+                diagnostics.reference_fts_rebuild_ms = elapsed_ms;
+                diagnostics.reference_fts_rebuild_write_bytes = write_bytes;
+            }
+            let published_generation = if changed {
+                tx.execute(
+                    "UPDATE meta SET config_hash = ?1, repository_generation = ?2, index_version = index_version + 1 WHERE id = 1",
+                    params![config_hash, next_generation],
+                )?;
+                next_generation
+            } else {
+                current_generation
+            };
             if let Some(guard) = trigger_guard.take() {
                 guard.restore()?;
             }
             drop(trigger_guard);
-            tx.commit()?;
-            return Ok((i64_to_u64(current_generation), output));
-        }
-        if bulk_fts {
-            tx.execute(
-                "INSERT INTO chunks_fts_word(chunks_fts_word) VALUES('rebuild')",
-                [],
-            )?;
-            tx.execute(
-                "INSERT INTO chunks_fts_trigram(chunks_fts_trigram) VALUES('rebuild')",
-                [],
-            )?;
-            tx.execute(
-                "INSERT INTO symbols_fts_trigram(symbols_fts_trigram) VALUES('rebuild')",
-                [],
-            )?;
-            tx.execute(
-                "INSERT INTO symbol_refs_fts_trigram(symbol_refs_fts_trigram) VALUES('rebuild')",
-                [],
-            )?;
-        }
-        tx.execute(
-            "UPDATE meta SET config_hash = ?1, repository_generation = ?2, index_version = index_version + 1 WHERE id = 1",
-            params![config_hash, next_generation],
-        )?;
-        if let Some(guard) = trigger_guard.take() {
-            guard.restore()?;
-        }
-        drop(trigger_guard);
-        tx.commit()?;
-        Ok((i64_to_u64(next_generation), output))
+            let (_, elapsed_ms, write_bytes) =
+                measured_storage_phase(profile, || Ok(tx.commit()?))?;
+            diagnostics.commit_ms = elapsed_ms;
+            diagnostics.commit_write_bytes = write_bytes;
+
+            if profile {
+                diagnostics.post_commit_diagnostics_complete =
+                    populate_post_commit_diagnostics(conn, &self.path, &mut diagnostics).is_ok();
+            }
+            Ok((i64_to_u64(published_generation), output, diagnostics))
+        })()
     }
 
     fn insert_file(
@@ -1697,6 +1930,14 @@ impl ReadSession {
         Ok(i64_to_u64(generation))
     }
 
+    pub(crate) fn file_count(&self) -> Result<usize> {
+        Ok(i64_to_usize(self.conn.query_row(
+            "SELECT COUNT(*) FROM files",
+            [],
+            |row| row.get(0),
+        )?))
+    }
+
     pub(crate) fn whole_file_source_tokens(
         &self,
         paths: &[String],
@@ -1764,6 +2005,24 @@ impl ReadSession {
             files.push(row?);
         }
         Ok(files)
+    }
+
+    pub(crate) fn regex_scan_files(&self, max_results: usize) -> Result<Vec<(FileRecord, usize)>> {
+        let limit = bounded_limit(max_results);
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT f.id, f.path, f.language, f.size_bytes, f.modified_ns,
+                    f.content_hash, f.generation, f.structurally_complete,
+                    COUNT(c.id)
+             FROM files f
+             LEFT JOIN chunks c ON c.file_id = f.id
+             GROUP BY f.id
+             ORDER BY f.id
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            Ok((Storage::map_file(row)?, i64_to_usize(row.get::<_, i64>(8)?)))
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     /// Read a lexicographically ordered keyset page from the relational path projection.
@@ -2351,6 +2610,107 @@ impl ReadSession {
         self.search_fts(FtsTable::Trigram, &quoted, max_results, offset)
     }
 
+    pub(crate) fn search_regex_candidates_page(
+        &self,
+        query: &str,
+        max_results: usize,
+        offset: usize,
+    ) -> Result<Vec<ChunkHit>> {
+        let limit = bounded_limit(max_results);
+        let offset = i64::try_from(offset).unwrap_or(i64::MAX);
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT c.id, c.file_id, f.path, c.content, c.start_line, c.end_line,
+                    c.start_byte, c.end_byte, c.token_count, f.generation, 0.0
+             FROM chunks_fts_trigram
+             JOIN chunks c ON chunks_fts_trigram.rowid = c.rowid
+             JOIN files f ON c.file_id = f.id
+             WHERE chunks_fts_trigram MATCH ?1
+             ORDER BY f.id, c.start_byte, c.id
+             LIMIT ?2 OFFSET ?3",
+        )?;
+        let rows = stmt.query_map(params![query, limit, offset], Storage::map_chunk_hit)?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub(crate) fn select_scoped_regex_candidate_ids(
+        &self,
+        query: &str,
+        max_rows_scanned: usize,
+        max_candidates: usize,
+        mut allows_path: impl FnMut(&str) -> bool,
+    ) -> Result<Vec<i64>> {
+        let limit = i64::try_from(max_rows_scanned.saturating_add(1)).unwrap_or(i64::MAX);
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT c.id, f.path
+             FROM chunks_fts_trigram
+             JOIN chunks c ON chunks_fts_trigram.rowid = c.rowid
+             JOIN files f ON c.file_id = f.id
+             WHERE chunks_fts_trigram MATCH ?1
+             ORDER BY f.id, c.start_byte, c.id
+             LIMIT ?2",
+        )?;
+        let mut rows = stmt.query(params![query, limit])?;
+        let mut rows_scanned = 0usize;
+        let mut candidate_ids = Vec::new();
+        while let Some(row) = rows.next()? {
+            rows_scanned = rows_scanned.saturating_add(1);
+            if rows_scanned > max_rows_scanned {
+                return Err(Error::LimitExceeded);
+            }
+            let path: String = row.get(1)?;
+            if !allows_path(&path) {
+                continue;
+            }
+            if candidate_ids.len() == max_candidates {
+                return Err(Error::LimitExceeded);
+            }
+            candidate_ids.push(row.get(0)?);
+        }
+        Ok(candidate_ids)
+    }
+
+    pub(crate) fn regex_candidates_by_ids(&self, chunk_ids: &[i64]) -> Result<Vec<ChunkHit>> {
+        if chunk_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let input = serde_json::to_string(chunk_ids)?;
+        let mut stmt = self.conn.prepare_cached(
+            "WITH requested AS (
+                 SELECT CAST(key AS INTEGER) AS request_index,
+                        CAST(value AS INTEGER) AS chunk_id
+                 FROM json_each(?1)
+             )
+             SELECT c.id, c.file_id, f.path, c.content, c.start_line, c.end_line,
+                    c.start_byte, c.end_byte, c.token_count, f.generation, 0.0
+             FROM requested
+             JOIN chunks c ON c.id = requested.chunk_id
+             JOIN files f ON c.file_id = f.id
+             ORDER BY requested.request_index",
+        )?;
+        let rows = stmt.query_map(params![input], Storage::map_chunk_hit)?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub(crate) fn regex_candidate_count_up_to(
+        &self,
+        query: &str,
+        max_results: usize,
+    ) -> Result<usize> {
+        let limit = i64::try_from(max_results).unwrap_or(i64::MAX);
+        let count = self.conn.query_row(
+            "SELECT COUNT(*)
+             FROM (
+                 SELECT rowid
+                 FROM chunks_fts_trigram
+                 WHERE chunks_fts_trigram MATCH ?1
+                 LIMIT ?2
+             )",
+            params![query, limit],
+            |row| row.get::<_, i64>(0),
+        )?;
+        Ok(i64_to_usize(count))
+    }
+
     pub fn search_symbols(
         &self,
         query: &str,
@@ -2396,6 +2756,70 @@ impl ReadSession {
             Storage::map_symbol_hit,
         )?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub(crate) fn find_symbols_exact_batch(
+        &self,
+        names: &[String],
+        max_results_per_name: usize,
+    ) -> Result<Vec<Vec<SymbolHit>>> {
+        if names.is_empty() {
+            return Ok(Vec::new());
+        }
+        let input = serde_json::to_string(names)?;
+        let limit = bounded_limit(max_results_per_name);
+        let mut stmt = self.conn.prepare_cached(
+            "WITH requested AS (
+                 SELECT CAST(key AS INTEGER) AS request_index,
+                        CAST(value AS TEXT) AS name
+                 FROM json_each(?1)
+             )
+             SELECT requested.request_index,
+                    f.path, f.content_hash, f.generation,
+                    s.id, s.file_id, s.name, s.kind, s.parent, s.signature,
+                    s.start_line, s.end_line, s.start_byte, s.end_byte
+             FROM requested
+             JOIN symbols AS s ON s.id IN (
+                 SELECT exact.id
+                 FROM symbols AS exact INDEXED BY symbols_name_idx
+                 JOIN files AS exact_file ON exact_file.id = exact.file_id
+                 WHERE exact.name = requested.name COLLATE NOCASE
+                   AND exact.name = requested.name COLLATE BINARY
+                 ORDER BY exact_file.path, exact.start_byte
+                 LIMIT ?2
+             )
+             JOIN files f ON f.id = s.file_id
+             ORDER BY requested.request_index, f.path, s.start_byte, s.id",
+        )?;
+        let rows = stmt.query_map(params![input, limit], |row| {
+            let request_index = i64_to_usize(row.get(0)?);
+            let hit = SymbolHit {
+                path: row.get(1)?,
+                content_hash: row.get(2)?,
+                generation: i64_to_u64(row.get(3)?),
+                symbol: SymbolRecord {
+                    id: row.get(4)?,
+                    file_id: row.get(5)?,
+                    name: row.get(6)?,
+                    kind: row.get(7)?,
+                    parent: row.get(8)?,
+                    signature: row.get(9)?,
+                    start_line: i64_to_usize(row.get(10)?),
+                    end_line: i64_to_usize(row.get(11)?),
+                    start_byte: i64_to_usize(row.get(12)?),
+                    end_byte: i64_to_usize(row.get(13)?),
+                },
+            };
+            Ok((request_index, hit))
+        })?;
+        let mut matches = vec![Vec::new(); names.len()];
+        for row in rows {
+            let (request_index, hit) = row?;
+            if let Some(slot) = matches.get_mut(request_index) {
+                slot.push(hit);
+            }
+        }
+        Ok(matches)
     }
 
     pub fn search_references(

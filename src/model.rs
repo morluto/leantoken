@@ -302,6 +302,65 @@ pub struct SearchResponse {
     pub meta: ResponseMeta,
 }
 
+#[derive(Debug, Clone)]
+/// Evaluation-only search result with deterministic execution counters.
+///
+/// This is not part of the MCP surface. Benchmarks use it to distinguish
+/// candidate reduction from response behavior without adding timing assertions
+/// or diagnostics to normal responses.
+pub struct SearchEvaluation {
+    /// Normal token-bounded search response.
+    pub response: SearchResponse,
+    /// Request-local counts for the lexical execution phases.
+    pub phases: SearchPhaseCounters,
+    /// Privacy-safe generation-scoped storage primitive identities.
+    pub primitive_keys: Vec<RetrievalPrimitiveKey>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// Evaluation-only identity for one logical retrieval primitive.
+///
+/// The digest includes the pinned repository generation and normalized
+/// primitive inputs. Raw queries, paths, symbols, and file identifiers are not
+/// exposed.
+pub struct RetrievalPrimitiveKey {
+    /// Primitive family, such as `trigram` or `adaptive_excerpt`.
+    pub kind: String,
+    /// BLAKE3 digest of the versioned generation-scoped normalized inputs.
+    pub key_blake3: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+/// Candidate source used to verify a regex request.
+pub enum RegexCandidateStrategy {
+    /// The regex had no sound bounded trigram plan and scanned indexed chunks.
+    #[default]
+    FullScan,
+    /// A sound trigram expression selected candidate chunks before verification.
+    Trigram,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+/// Deterministic phase and candidate counts for an evaluation-only search.
+pub struct SearchPhaseCounters {
+    /// Candidate source selected for a regex request.
+    pub regex_candidate_strategy: RegexCandidateStrategy,
+    /// Mandatory trigram terms in the selected candidate plan.
+    pub regex_plan_terms: usize,
+    /// Indexed files in the pinned repository snapshot.
+    ///
+    /// Candidate plans report corpus scale without scanning these files. The
+    /// full-scan fallback checks each file against its structural bounds.
+    pub regex_files_considered: usize,
+    /// Chunks loaded by the full-scan fallback.
+    pub regex_chunks_loaded: usize,
+    /// Rows returned by the trigram candidate query.
+    pub regex_candidate_chunks: usize,
+    /// Candidate chunks verified with the compiled regex.
+    pub regex_chunks_verified: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 /// Input for `leantoken.outline`.
 pub struct OutlineRequest {
@@ -1216,6 +1275,89 @@ pub struct ContextEvaluation {
     pub generated_candidate_paths: Vec<String>,
     /// Candidate signal summaries before deduplication and selection.
     pub generated_candidates: Vec<ContextCandidateEvaluation>,
+    /// Request-local counts for candidate generation and excerpt hydration.
+    pub phases: ContextPhaseCounters,
+    /// Evaluation-only wall-time breakdown without behavioral assertions.
+    pub timings: ContextPhaseTimings,
+    /// Privacy-safe generation-scoped storage primitive identities in call order.
+    pub primitive_keys: Vec<RetrievalPrimitiveKey>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+/// Diagnostic-only context wall-time phases in milliseconds.
+///
+/// Candidate generation includes its nested storage phases, so it should not be
+/// added to those fields. Timings are measurements, never correctness gates.
+pub struct ContextPhaseTimings {
+    /// Complete pinned-snapshot context request.
+    pub total_ms: f64,
+    /// Candidate generation, including nested lookup and hydration phases.
+    pub candidate_generation_ms: f64,
+    /// Batched exact-symbol constraint lookups.
+    pub exact_symbol_lookup_ms: f64,
+    /// General symbol searches.
+    pub symbol_search_ms: f64,
+    /// Reference searches.
+    pub reference_search_ms: f64,
+    /// Word or trigram lexical candidate queries.
+    pub lexical_search_ms: f64,
+    /// Full literal verification and occurrence analysis over lexical candidates.
+    pub lexical_verify_ms: f64,
+    /// Batched enclosing-symbol lookups.
+    pub enclosing_lookup_ms: f64,
+    /// Adaptive declaration excerpt hydration.
+    pub adaptive_excerpt_ms: f64,
+    /// Stored line-window hydration.
+    pub stored_excerpt_ms: f64,
+    /// Workflow, import-neighbor, and reverse-dependency candidate generation.
+    pub workflow_generation_ms: f64,
+    /// Candidate scoring, selection, coverage finalization, and response assembly.
+    pub ranking_finalize_ms: f64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+/// Deterministic phase and candidate counts for an evaluation-only context run.
+pub struct ContextPhaseCounters {
+    /// Facet queries retained by the bounded planner.
+    pub queries_planned: usize,
+    /// Non-test-intent queries used for candidate generation.
+    pub queries_executed: usize,
+    /// Exact symbol names submitted in one constraint lookup.
+    pub exact_symbol_names: usize,
+    /// Non-empty bounded exact-symbol storage batches.
+    pub exact_symbol_batches: usize,
+    /// Exact symbol rows returned for focus and must-cover constraints.
+    pub exact_symbol_hits: usize,
+    /// Symbol rows returned before path filtering and excerpt hydration.
+    pub symbol_candidates: usize,
+    /// Reference rows returned before path filtering and excerpt hydration.
+    pub reference_candidates: usize,
+    /// FTS chunk rows returned before lexical verification.
+    pub lexical_candidate_chunks: usize,
+    /// FTS chunks verified with the compiled literal matcher.
+    pub lexical_chunks_verified: usize,
+    /// Verified lexical chunks retained for excerpt generation.
+    pub lexical_matches: usize,
+    /// Enclosing-symbol locations submitted to storage.
+    pub enclosing_location_requests: usize,
+    /// Non-empty enclosing-symbol storage batches.
+    pub enclosing_location_batches: usize,
+    /// Distinct enclosing-symbol locations across the complete request.
+    pub unique_enclosing_locations: usize,
+    /// Adaptive declaration excerpt requests submitted to storage.
+    pub adaptive_excerpt_requests: usize,
+    /// Non-empty adaptive excerpt storage batches.
+    pub adaptive_excerpt_batches: usize,
+    /// Distinct adaptive excerpt requests across the complete request.
+    pub unique_adaptive_excerpt_requests: usize,
+    /// Stored line-window requests submitted to storage.
+    pub stored_excerpt_requests: usize,
+    /// Non-empty stored excerpt storage batches.
+    pub stored_excerpt_batches: usize,
+    /// Distinct stored line-window requests across the complete request.
+    pub unique_stored_excerpt_requests: usize,
+    /// Candidate representations handed to ranking before selection.
+    pub generated_candidates: usize,
 }
 
 /// Graph-signal policy used only by frozen context-retrieval evaluations.

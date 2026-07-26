@@ -270,6 +270,17 @@ while three executor failures remain unknown. The post-hoc decision is
 `no_go`: no tool-description, receipt, next-action, or session-state change is
 authorized.
 
+`retrieval_reuse_report` aggregates the same frozen exact-trace runs before any
+cross-request cache work. In the progressive arm, 141 retrieval calls contained
+4 exact range rereads (2.84%) and 57 overlapping rereads (40.43%). Overlap is
+not an LRU hit, and the traces do not contain normalized generation-scoped
+primitive keys. The result therefore defers a cross-request LRU and treats the
+overlap signal as a reason to inspect request-local batching instead.
+
+```bash
+cargo run --release --example retrieval_reuse_report
+```
+
 ### Dependency and caller signal ablation
 
 The frozen [graph-signal controls](graph_signal_ablation_v1.json) and
@@ -414,6 +425,111 @@ cost and a 43-token complete two-turn JSON cost. This is tuned prospective
 validation evidence, not a blind generalization result.
 
 ## Measurements
+
+The synthetic `hot_path_bounds` report includes deterministic phase counters
+next to elapsed-time diagnostics. Regex counters distinguish trigram candidates,
+full-scan chunk loads, and verified chunks. Context counters distinguish query
+fan-out, candidate sources, storage batch counts, and raw versus unique
+hydration requests. On the 2,000-file development corpus, regex planning
+selected one mandatory term and verified zero chunks for an absent literal.
+Context produced 80 adaptive requests and 60 enclosing-location requests, with
+80 and 60 unique keys respectively. That sample shows no duplicate hydration
+work to remove; its four adaptive and three enclosing batches are too small to
+justify restructuring candidate generation without broader profile evidence.
+
+The separate deep-read diagnostic exercises explicit ranges at both ends of a
+near-default-limit synthetic file:
+
+```bash
+cargo run --release --example deep_live_read -- --iterations 100
+```
+
+The local 30-sample run used a 2,093,034-byte, 35,069-line file. Complete reads
+used one file stream, returned the same 32 requested lines without stale or
+truncated status, and measured 15.55 ms shallow versus 16.43 ms deep p50.
+Those host-local times are sanity diagnostics, not assertions or release
+thresholds.
+
+### OpenClaw real-repository profile
+
+The real-repository diagnostic indexed clean OpenClaw commit
+`42515c4f07ea3b02e191d30cf97865d4e6229ef0` outside its source tree. LeanToken
+saw 28,560 files, indexed 28,186, and skipped 374. A fresh SQLite index measured
+276.4 seconds and produced a 1,781,661,696-byte database. Its new storage
+breakdown measured 100.7 seconds of file preparation, 30.7 seconds of
+relational insertion, 91.2 seconds for chunk trigram FTS, 25.1 seconds for
+reference FTS, 10.0 seconds for word FTS, 7.1 seconds for symbol FTS, 3.6
+seconds for commit, and 5.8 seconds for the explicit diagnostic checkpoint.
+Preparation and insertion occur inside publication and must not be added to the
+other rows. GNU `time` reported 473.2 user seconds, 41.7 system seconds, 178%
+average CPU, 125,108 KiB peak RSS, and zero swaps for the complete baseline
+index-and-profile run. Cold indexing is CPU- and write-intensive, not
+memory-intensive on this corpus.
+
+A second profiled cold run split preparation into summed worker time. Parsing
+owned 205.7 seconds, whole-file exact token counting 190.4 seconds, per-chunk
+token counting 179.0 seconds, and reads 63.1 seconds. The 641.5 seconds of
+worker work overlapped into 170.6 seconds of preparation wall time, so the
+existing four-worker pipeline is effective. Exact tokenization is the largest
+combined owner.
+
+Five warmed steady-state samples on the final tree used 40,316 KiB peak RSS,
+zero swaps, and produced:
+
+- absent planned regex: zero candidate or verified chunks, 15.1 ms p50;
+- sparse planned regex: 171 candidate and verified chunks, 91 returned hits,
+  50.3 ms p50;
+- common planned regex: 15,417 FTS candidates, rejected by the 10,000-candidate
+  bound in 14.1 ms p50 after a capped count preflight;
+- case-insensitive regex: soundly selected the bounded fallback and rejected
+  the 28,186-file corpus;
+- realistic context: 280 generated candidates and 849.5 ms p50;
+- constraint-heavy context: 38 generated candidates and 803.3 ms p50; its
+  overlapping focus/must constraints were deduplicated from four logical
+  exact-symbol lookups and 26 repeated rows to two unique names, one storage
+  batch, and 13 rows;
+- complete shallow and deep reads of a 269,375-byte, 7,134-line TypeScript file:
+  6.6 and 5.6 ms p50; the token-truncated whole-file read retained its second
+  verification stream and measured 44.5 ms p50.
+
+The realistic context request made 12 adaptive-excerpt, 8 enclosing-symbol, and
+4 stored-excerpt batches. All 410 hydration keys were unique within the
+request. Diagnostic phases locate the owner in lexical FTS (roughly 0.37–0.46
+seconds), not enclosing lookup (6–8 ms), stored hydration (under 1 ms), or
+lexical verification (2–3 ms). Request-wide hydration batching would reduce
+statement executions without removing meaningful content work.
+
+The controlled 12-request trace made 2,224 primitive calls with 428
+unique generation-scoped keys. Its 1,796 exact reuses show that identical
+requests have cacheable primitives, but the replay deliberately repeats three
+request shapes and is not a production arrival trace. It is evidence for
+measuring a byte-weighted primitive cache, not for caching complete context
+responses or shipping an LRU yet.
+
+An OpenClaw A/B rejected `columnsize=0` for all four FTS indexes. It reduced the
+database by only 1.80%, while realistic context regressed from 1,066 ms to
+2,682 ms p50 and repeated reverse-order sampling reproduced the regression.
+LeanToken ranks lexical rows with `bm25()`, and SQLite must retokenize
+external-content rows on demand when stored column sizes are absent. Dynamic
+`fts5vocab` probes for a Zoekt-style rare trigram pair also lost end to end:
+frequency lookup cost 8–45 ms and positive candidate sets expanded by 4.4× to
+12.4×. SQLite rank-first hydration preserved the top-128 set, order, and exact
+score for four queries, but alternated between 31–36% faster and 27–53% slower,
+so production BM25 ordering remains unchanged.
+
+A no-allocation alternative Rust tokenizer was 6.1–7.3× faster on exact indexed
+OpenClaw paths, but disagreed with the canonical tokenizer on 3,550 files.
+Python `tiktoken` matched LeanToken's current counts on every indexed file.
+Exact token budgets and context coverage take precedence over that incompatible
+speedup. See the full
+[storage and retrieval report](reports/openclaw-storage-profile-2026-07-25.md).
+
+Reproduce the matrix with:
+
+```bash
+cargo run --release --example real_repository_profile -- \
+  --repository /path/to/openclaw --iterations 5
+```
 
 For each task, the runner reports:
 

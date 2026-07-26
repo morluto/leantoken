@@ -527,6 +527,354 @@ async fn exhaustive_regex_search_counts_repeated_matches_in_one_chunk() {
     );
 }
 
+#[tokio::test]
+async fn regex_candidate_plans_match_full_scan_and_report_fallback_selection() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    for (path, source) in [
+        (
+            "alpha.rs",
+            "const needle_value: usize = 42;\nconst marker_value: usize = 7;\n",
+        ),
+        ("bravo.rs", "const needle_value: usize = 7;\n"),
+        ("digits.rs", "const value_123: usize = 123;\n"),
+        ("negative.rs", "const unrelated: usize = 0;\n"),
+    ] {
+        std::fs::write(root.path().join(path), source).expect("write source");
+    }
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    for (pattern, expected_strategy) in [
+        (
+            r"needle_value\s*:\s*usize\s*=\s*42",
+            leantoken::RegexCandidateStrategy::Trigram,
+        ),
+        (
+            r"(?:needle|marker)_value",
+            leantoken::RegexCandidateStrategy::Trigram,
+        ),
+        (
+            r"(?:needle|)value",
+            leantoken::RegexCandidateStrategy::Trigram,
+        ),
+        (
+            r"(?:needle)?\d+",
+            leantoken::RegexCandidateStrategy::FullScan,
+        ),
+        (
+            r"needle|value_\d+",
+            leantoken::RegexCandidateStrategy::Trigram,
+        ),
+        (
+            r"needle|\d+",
+            leantoken::RegexCandidateStrategy::FullScan,
+        ),
+    ] {
+        let request = SearchRequest {
+            query: pattern.into(),
+            mode: SearchMode::Regex,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(20),
+            max_tokens: Some(4_000),
+            context_lines: Some(0),
+            case_sensitive: true,
+            all_occurrences: true,
+            prefer_structural: false,
+            receipt_id: None,
+            cursor: None,
+        };
+        let optimized = services
+            .search_evaluation(request.clone())
+            .await
+            .expect("optimized regex");
+        let full_scan = services
+            .search_full_scan_evaluation(request)
+            .await
+            .expect("full-scan regex");
+
+        let mut optimized_response = optimized.response.clone();
+        optimized_response.meta.receipt_id = None;
+        let mut full_scan_response = full_scan.response.clone();
+        full_scan_response.meta.receipt_id = None;
+        assert_eq!(
+            serde_json::to_value(optimized_response).expect("optimized JSON"),
+            serde_json::to_value(full_scan_response).expect("full scan JSON"),
+            "{pattern}"
+        );
+        assert_eq!(
+            optimized.phases.regex_candidate_strategy, expected_strategy,
+            "{pattern}"
+        );
+        assert_eq!(
+            full_scan.phases.regex_candidate_strategy,
+            leantoken::RegexCandidateStrategy::FullScan,
+            "{pattern}"
+        );
+        assert_eq!(
+            optimized.phases.regex_chunks_verified,
+            optimized
+                .phases
+                .regex_candidate_chunks
+                .max(optimized.phases.regex_chunks_loaded),
+            "{pattern}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn regex_candidate_plan_preserves_candidate_limit_errors() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    for index in 0..21 {
+        std::fs::write(
+            root.path().join(format!("match_{index:02}.rs")),
+            format!("const overflow_needle_{index:02}: usize = {index};\n"),
+        )
+        .expect("write source");
+    }
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+    let request = SearchRequest {
+        query: "overflow_needle".into(),
+        mode: SearchMode::Regex,
+        include_paths: Vec::new(),
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(1),
+        max_tokens: Some(1_000),
+        context_lines: Some(0),
+        case_sensitive: true,
+        all_occurrences: false,
+        prefer_structural: false,
+        receipt_id: None,
+        cursor: None,
+    };
+
+    let optimized = services
+        .search_evaluation(request.clone())
+        .await
+        .expect_err("optimized candidate cap");
+    let full_scan = services
+        .search_full_scan_evaluation(request)
+        .await
+        .expect_err("full-scan candidate cap");
+
+    assert!(matches!(optimized, Error::LimitExceeded));
+    assert!(matches!(full_scan, Error::LimitExceeded));
+}
+
+#[tokio::test]
+async fn regex_candidate_plan_applies_path_scope_before_candidate_limit() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let included = root.path().join("included");
+    std::fs::create_dir(&included).expect("create included directory");
+    std::fs::write(
+        included.join("match.rs"),
+        "const scoped_overflow_needle: usize = 42;\n",
+    )
+    .expect("write source");
+    let database = root.path().join("index.sqlite");
+    let config = Config::discover(root.path(), Some(database.clone())).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let mut connection = rusqlite::Connection::open(database).expect("writer connection");
+    let transaction = connection.transaction().expect("transaction");
+    transaction
+        .execute_batch(
+            "WITH RECURSIVE sequence(value) AS (
+                 SELECT 1
+                 UNION ALL
+                 SELECT value + 1 FROM sequence WHERE value < 40
+             )
+             INSERT INTO files(path, content_hash, generation)
+             SELECT printf('excluded/%02d.rs', value), 'dummy', 1 FROM sequence;
+
+             WITH RECURSIVE sequence(value) AS (
+                 SELECT 1
+                 UNION ALL
+                 SELECT value + 1 FROM sequence WHERE value < 250
+             )
+             INSERT INTO chunks(
+                 file_id, content, start_line, end_line,
+                 start_byte, end_byte, token_count
+             )
+             SELECT f.id, 'scoped_overflow_needle', sequence.value, sequence.value,
+                    0, 22, 1
+             FROM files f
+             CROSS JOIN sequence
+             WHERE f.path GLOB 'excluded/*';",
+        )
+        .expect("populate excluded candidates");
+    transaction.commit().expect("commit candidates");
+
+    let request = SearchRequest {
+        query: "scoped_overflow_needle".into(),
+        mode: SearchMode::Regex,
+        include_paths: vec!["included/**".into()],
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(20),
+        max_tokens: Some(1_000),
+        context_lines: Some(0),
+        case_sensitive: true,
+        all_occurrences: false,
+        prefer_structural: false,
+        receipt_id: None,
+        cursor: None,
+    };
+    let optimized = services
+        .search_evaluation(request.clone())
+        .await
+        .expect("scoped candidate plan");
+    let full_scan = services
+        .search_full_scan_evaluation(request)
+        .await
+        .expect("scoped full scan");
+
+    let mut optimized_response = optimized.response.clone();
+    optimized_response.meta.receipt_id = None;
+    let mut full_scan_response = full_scan.response.clone();
+    full_scan_response.meta.receipt_id = None;
+    assert_eq!(
+        serde_json::to_value(optimized_response).expect("optimized JSON"),
+        serde_json::to_value(full_scan_response).expect("full-scan JSON")
+    );
+    assert_eq!(optimized.phases.regex_candidate_chunks, 1);
+    assert_eq!(optimized.phases.regex_chunks_verified, 1);
+}
+
+#[tokio::test]
+async fn regex_candidate_plan_bypasses_only_the_full_scan_file_bound() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let database = root.path().join("index.sqlite");
+    std::fs::write(
+        root.path().join("match.rs"),
+        "const openclaw_scale_needle: usize = 42;\n",
+    )
+    .expect("write source");
+    let config = Config::discover(root.path(), Some(database.clone())).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    // Populate the relational file inventory without creating 10,000 physical
+    // files. Only the indexed source owns a chunk, which isolates whether a
+    // sound candidate query is incorrectly gated by the fallback scan bound.
+    let mut connection = rusqlite::Connection::open(database).expect("writer connection");
+    let transaction = connection.transaction().expect("transaction");
+    transaction
+        .execute_batch(
+            "WITH RECURSIVE sequence(value) AS (
+                 SELECT 1
+                 UNION ALL
+                 SELECT value + 1 FROM sequence WHERE value < 10000
+             )
+             INSERT INTO files(path, content_hash, generation)
+             SELECT printf('dummy/%05d.rs', value), 'dummy', 1 FROM sequence;",
+        )
+        .expect("populate large file inventory");
+    transaction.commit().expect("commit inventory");
+
+    let planned_request = SearchRequest {
+        query: "openclaw_scale_needle".into(),
+        mode: SearchMode::Regex,
+        include_paths: Vec::new(),
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(20),
+        max_tokens: Some(1_000),
+        context_lines: Some(0),
+        case_sensitive: true,
+        all_occurrences: false,
+        prefer_structural: false,
+        receipt_id: None,
+        cursor: None,
+    };
+    let optimized = services
+        .search_evaluation(planned_request.clone())
+        .await
+        .expect("sound candidate plan should not scan the file inventory");
+    assert_eq!(optimized.response.hits.len(), 1);
+    assert_eq!(
+        optimized.phases.regex_candidate_strategy,
+        leantoken::RegexCandidateStrategy::Trigram
+    );
+    assert_eq!(optimized.phases.regex_files_considered, 10_001);
+    assert_eq!(optimized.phases.regex_candidate_chunks, 1);
+    assert_eq!(optimized.phases.regex_chunks_verified, 1);
+    assert_eq!(optimized.phases.regex_chunks_loaded, 0);
+
+    let full_scan = services
+        .search_full_scan_evaluation(planned_request)
+        .await
+        .expect_err("full scan remains bounded by the file inventory");
+    assert!(matches!(full_scan, Error::LimitExceeded));
+
+    let fallback = services
+        .search_evaluation(SearchRequest {
+            query: "openclaw_scale_needle".into(),
+            mode: SearchMode::Regex,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(20),
+            max_tokens: Some(1_000),
+            context_lines: Some(0),
+            case_sensitive: false,
+            all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect_err("case-insensitive fallback remains bounded");
+    assert!(matches!(fallback, Error::LimitExceeded));
+
+    let mut connection =
+        rusqlite::Connection::open(root.path().join("index.sqlite")).expect("writer connection");
+    let transaction = connection.transaction().expect("transaction");
+    transaction
+        .execute_batch(
+            "WITH RECURSIVE sequence(value) AS (
+                 SELECT 1
+                 UNION ALL
+                 SELECT value + 1 FROM sequence WHERE value < 10000
+             )
+             INSERT INTO chunks(
+                 file_id, content, start_line, end_line, start_byte, end_byte, token_count
+             )
+             SELECT files.id, 'openclaw_scale_needle', value, value, 0, 22, 1
+             FROM sequence
+             JOIN files ON files.path = 'dummy/00001.rs';",
+        )
+        .expect("populate candidate overflow");
+    transaction.commit().expect("commit candidate overflow");
+    let candidate_overflow = services
+        .search_evaluation(SearchRequest {
+            query: "openclaw_scale_needle".into(),
+            mode: SearchMode::Regex,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(100),
+            max_tokens: Some(1_000),
+            context_lines: Some(0),
+            case_sensitive: true,
+            all_occurrences: true,
+            prefer_structural: false,
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect_err("planned candidate query remains bounded");
+    assert!(matches!(candidate_overflow, Error::LimitExceeded));
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn live_read_cannot_escape_through_replaced_path_components() {
@@ -1457,12 +1805,23 @@ async fn context_must_cover_generates_evidence_and_reports_unmatched_constraints
     request.task = "investigate a different subsystem".into();
     request.include_paths = vec!["src/**".into(), "absent/**".into()];
     request.focus_paths = vec!["missing-focus/**".into()];
-    request.focus_symbols = vec!["missing_focus_symbol".into()];
+    request.focus_symbols = vec!["missing_focus_symbol".into(), "required_symbol".into()];
     request.must_include_paths = vec!["src/required.rs".into(), "src/missing.rs".into()];
     request.must_include_symbols = vec!["required_symbol".into(), "missing_symbol".into()];
     request.max_fragments = Some(2);
 
-    let response = services.context(request).await.expect("must-cover context");
+    let evaluation = services
+        .context_evaluation(request.clone())
+        .await
+        .expect("must-cover evaluation");
+    let repeated = services
+        .context_evaluation(request.clone())
+        .await
+        .expect("repeated must-cover evaluation");
+    let response = services
+        .context(request.clone())
+        .await
+        .expect("must-cover context");
 
     assert!(
         response
@@ -1500,6 +1859,53 @@ async fn context_must_cover_generates_evidence_and_reports_unmatched_constraints
     );
     assert!(response.coverage.uncovered_must_include_paths.is_empty());
     assert!(response.coverage.uncovered_must_include_symbols.is_empty());
+    assert_eq!(evaluation.phases.exact_symbol_names, 3);
+    assert_eq!(evaluation.phases.exact_symbol_batches, 1);
+    assert_eq!(evaluation.phases.exact_symbol_hits, 1);
+    assert!(
+        evaluation.phases.unique_adaptive_excerpt_requests
+            <= evaluation.phases.adaptive_excerpt_requests
+    );
+    assert!(!evaluation.primitive_keys.is_empty());
+    assert_eq!(evaluation.primitive_keys, repeated.primitive_keys);
+
+    let mut batched_request = context_limit_request(300);
+    batched_request.task = "investigate a different subsystem".into();
+    batched_request.focus_symbols = (0..33)
+        .map(|index| format!("missing_symbol_{index:02}"))
+        .collect();
+    let batched = services
+        .context_evaluation(batched_request)
+        .await
+        .expect("bounded exact-symbol batches");
+    assert_eq!(batched.phases.exact_symbol_names, 33);
+    assert_eq!(batched.phases.exact_symbol_batches, 2);
+    assert_eq!(batched.phases.exact_symbol_hits, 0);
+
+    std::fs::write(
+        root.path().join("src/required.rs"),
+        "pub fn required_symbol() -> bool { false }\n",
+    )
+    .expect("change required source");
+    services
+        .index_paths(vec!["src/required.rs".into()])
+        .await
+        .expect("advance generation");
+    let next_generation = services
+        .context_evaluation(request)
+        .await
+        .expect("next-generation evaluation");
+    let previous_keys = evaluation
+        .primitive_keys
+        .iter()
+        .map(|key| key.key_blake3.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    assert!(
+        next_generation
+            .primitive_keys
+            .iter()
+            .all(|key| !previous_keys.contains(key.key_blake3.as_str()))
+    );
 }
 
 #[tokio::test]

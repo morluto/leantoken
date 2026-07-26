@@ -88,9 +88,10 @@ async fn main() -> leantoken::Result<()> {
     let index_elapsed = index_started.elapsed();
 
     let regex_request = SearchRequest {
-        // Deliberately absent so regex exercises the configured file-scan
-        // boundary instead of returning early after its candidate cap.
-        query: r"needle\s*=\s*-1".into(),
+        // The mandatory literal is deliberately absent. A sound candidate
+        // plan should therefore verify zero chunks while preserving the same
+        // zero-hit response as the bounded full scan.
+        query: r"missing_needle\s*=\s*-1".into(),
         mode: SearchMode::Regex,
         include_paths: Vec::new(),
         exclude_paths: Vec::new(),
@@ -98,7 +99,7 @@ async fn main() -> leantoken::Result<()> {
         max_results: Some(100),
         max_tokens: Some(8_000),
         context_lines: Some(0),
-        case_sensitive: false,
+        case_sensitive: true,
         all_occurrences: false,
         prefer_structural: false,
         receipt_id: None,
@@ -137,6 +138,8 @@ async fn main() -> leantoken::Result<()> {
     services.search(regex_request.clone()).await?;
     services.context(context_request.clone()).await?;
     services.files(tree_request.clone()).await?;
+    let regex_evaluation = services.search_evaluation(regex_request.clone()).await?;
+    let context_evaluation = services.context_evaluation(context_request.clone()).await?;
 
     let mut regex_durations = Vec::with_capacity(args.iterations);
     let mut regex_response = None;
@@ -242,13 +245,17 @@ async fn main() -> leantoken::Result<()> {
         "regex": {
             "hits": regex_hits,
             "timing_ms": timing_stats(regex_durations),
-            "candidate_cap": 2_000,
-            "files_scanned_cap": 10_000,
-            "chunks_per_file_cap": 256,
+            "phases": regex_evaluation.phases,
+            "matching_chunk_cap": 2_000,
+            "trigram_candidate_chunk_cap": 10_000,
+            "fallback_files_scanned_cap": 10_000,
+            "fallback_chunks_per_file_cap": 256,
         },
         "context": {
             "fragments": context_fragments,
             "timing_ms": timing_stats(context_durations),
+            "phases": context_evaluation.phases,
+            "phase_timings_ms": context_evaluation.timings,
             "query_cap": 12,
             "symbol_and_reference_hits_per_query": 20,
             "lexical_hits_per_query": 30,

@@ -38,4 +38,3 @@ All notable changes to this project will be documented in this file.
 ### Testing
 
 - **windows:** Initialize read continuation cursor
-
