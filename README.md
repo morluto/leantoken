@@ -7,7 +7,7 @@
 Local-first code intelligence for coding agents. Search code, inspect structure,
 read exact ranges, and explore Git history through a CLI and MCP server.
 
-<img src="assets/leantoken-hero.png" alt="LeanToken distilling a large source repository into focused, token-bounded context" width="100%">
+<img src="assets/leantoken-hero-v2.png" alt="LeanToken distilling a large source repository into focused, token-bounded context" width="100%">
 
 [![npm](https://img.shields.io/npm/v/leantoken?logo=npm&label=npm)](https://www.npmjs.com/package/leantoken)
 [![npm downloads](https://img.shields.io/npm/dm/leantoken?logo=npm&label=downloads)](https://www.npmjs.com/package/leantoken)
