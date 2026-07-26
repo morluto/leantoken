@@ -1,11 +1,12 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
-    io::{BufRead, BufReader, Seek, Write},
+    io::{BufRead, Write},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, UNIX_EPOCH},
 };
 
+use command_group::CommandGroup;
 use ignore::WalkBuilder;
 use tokio_util::sync::CancellationToken;
 use wait_timeout::ChildExt;
@@ -15,6 +16,9 @@ use crate::error::IndexLimitKind;
 use crate::{Error, Result};
 
 const LEANTOKEN_IGNORE_FILE: &str = ".leantokenignore";
+const GIT_PATH_OUTPUT_BYTES_PER_RESULT: usize = 4_096;
+const GIT_HUNK_OUTPUT_BYTES_PER_RESULT: usize = 64 * 1024;
+const MAX_GIT_DISCOVERY_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const GENERATED_DIRECTORY_NAMES: &[&str] = &[
     ".cache",
     ".gradle",
@@ -429,74 +433,47 @@ fn git_working_tree_status_with(
         };
     }
     let prefix = git_worktree_prefix(root);
-    let mut output = match tempfile::tempfile() {
-        Ok(output) => output,
-        Err(_) => {
-            return GitWorkingTreeStatus {
-                changed_paths: HashSet::new(),
-                available: false,
-            };
-        }
-    };
-    let child_output = match output.try_clone() {
-        Ok(output) => output,
-        Err(_) => {
-            return GitWorkingTreeStatus {
-                changed_paths: HashSet::new(),
-                available: false,
-            };
-        }
-    };
-
-    let mut child = match Command::new(program)
-        .args([
-            "-c",
-            "core.fsmonitor=false",
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=all",
-            "--no-renames",
-            "--",
-            ".",
-        ])
-        .current_dir(root)
-        .stdout(Stdio::from(child_output))
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(_) => {
-            return GitWorkingTreeStatus {
-                changed_paths: HashSet::new(),
-                available: false,
-            };
-        }
-    };
-
-    let status = match child.wait_timeout(timeout) {
-        Ok(Some(status)) => status,
-        Ok(None) | Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return GitWorkingTreeStatus {
-                changed_paths: HashSet::new(),
-                available: false,
-            };
-        }
-    };
-    if !status.success() || output.rewind().is_err() {
+    let args = [
+        "-c",
+        "core.fsmonitor=false",
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--no-renames",
+        "--",
+        ".",
+    ]
+    .map(str::to_owned);
+    let Ok(output) = run_git_capture(
+        root,
+        program,
+        &args,
+        GitCaptureOptions {
+            timeout,
+            field: "git status",
+            timeout_reason: "git status timed out",
+            failure_reason: "git status failed",
+            max_output_bytes: bounded_git_output(max, GIT_PATH_OUTPUT_BYTES_PER_RESULT),
+        },
+    ) else {
         return GitWorkingTreeStatus {
             changed_paths: HashSet::new(),
             available: false,
         };
-    }
-    let (changed_paths, available) =
-        parse_git_status_observation(BufReader::new(output), max, &prefix);
+    };
+    let (changed_paths, available) = parse_git_status_observation(output.as_slice(), max, &prefix);
     GitWorkingTreeStatus {
         changed_paths,
         available,
     }
+}
+
+fn bounded_git_output(max_results: usize, bytes_per_result: usize) -> usize {
+    max_results
+        .saturating_mul(bytes_per_result)
+        .max(bytes_per_result)
+        .min(MAX_GIT_DISCOVERY_OUTPUT_BYTES)
 }
 
 fn git_worktree_prefix(root: &Path) -> String {
@@ -981,55 +958,7 @@ fn run_git_capture(
     args: &[String],
     options: GitCaptureOptions,
 ) -> Result<Vec<u8>> {
-    use std::io::Read;
-
-    let mut output =
-        tempfile::tempfile().map_err(|error| Error::InternalFailure(error.to_string()))?;
-    let child_output = output
-        .try_clone()
-        .map_err(|error| Error::InternalFailure(error.to_string()))?;
-    let mut child = Command::new(program)
-        .args(args)
-        .current_dir(root)
-        .stdout(Stdio::from(child_output))
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| Error::InvalidInput {
-            field: options.field,
-            reason: "git is unavailable",
-        })?;
-    let status = match child.wait_timeout(options.timeout) {
-        Ok(Some(status)) => status,
-        Ok(None) | Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(Error::InvalidInput {
-                field: options.field,
-                reason: options.timeout_reason,
-            });
-        }
-    };
-    if !status.success() {
-        return Err(Error::InvalidInput {
-            field: options.field,
-            reason: options.failure_reason,
-        });
-    }
-    let output_bytes = output
-        .metadata()
-        .map_err(|error| Error::InternalFailure(error.to_string()))?
-        .len();
-    if output_bytes > options.max_output_bytes as u64 {
-        return Err(Error::RequestLimitExceeded {
-            field: "git output bytes",
-            requested: usize::try_from(output_bytes).unwrap_or(usize::MAX),
-            limit: options.max_output_bytes,
-        });
-    }
-    output.rewind()?;
-    let mut bytes = Vec::new();
-    output.read_to_end(&mut bytes)?;
-    Ok(bytes)
+    run_git_capture_bounded(root, program, args, None, options)
 }
 
 fn run_git_capture_with_input(
@@ -1039,61 +968,165 @@ fn run_git_capture_with_input(
     input: &[u8],
     options: GitCaptureOptions,
 ) -> Result<Vec<u8>> {
-    use std::io::Read;
+    run_git_capture_bounded(root, program, args, Some(input), options)
+}
 
-    let mut output =
-        tempfile::tempfile().map_err(|error| Error::InternalFailure(error.to_string()))?;
-    let child_output = output
-        .try_clone()
-        .map_err(|error| Error::InternalFailure(error.to_string()))?;
-    let mut child = Command::new(program)
+fn run_git_capture_bounded(
+    root: &Path,
+    program: &Path,
+    args: &[String],
+    input: Option<&[u8]>,
+    options: GitCaptureOptions,
+) -> Result<Vec<u8>> {
+    use std::io::Read;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use std::thread;
+    use std::time::Instant;
+
+    let mut command = Command::new(program);
+    command
         .args(args)
         .current_dir(root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::from(child_output))
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| Error::InvalidInput {
-            field: options.field,
-            reason: "git is unavailable",
-        })?;
-    child
-        .stdin
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = command.group_spawn().map_err(|_| Error::InvalidInput {
+        field: options.field,
+        reason: "git is unavailable",
+    })?;
+
+    let output_limit_exceeded = Arc::new(AtomicBool::new(false));
+    let reader_exceeded = Arc::clone(&output_limit_exceeded);
+    let (release_reader, reader_release) = std::sync::mpsc::channel();
+    let max_output_bytes = options.max_output_bytes;
+    let mut stdout = child
+        .inner()
+        .stdout
         .take()
-        .ok_or_else(|| Error::InternalFailure("git stdin unavailable".into()))?
-        .write_all(input)?;
-    let status = match child.wait_timeout(options.timeout) {
-        Ok(Some(status)) => status,
-        Ok(None) | Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
+        .ok_or_else(|| Error::InternalFailure("git stdout unavailable".into()))?;
+    let reader = thread::spawn(move || -> std::io::Result<Vec<u8>> {
+        let mut output = Vec::with_capacity(max_output_bytes.min(64 * 1024));
+        let mut chunk = [0u8; 8 * 1024];
+        loop {
+            let read = stdout.read(&mut chunk)?;
+            if read == 0 {
+                return Ok(output);
+            }
+            if output.len().saturating_add(read) > max_output_bytes {
+                reader_exceeded.store(true, Ordering::Release);
+                // Keep the pipe open without draining it until the parent has
+                // killed the producer. Otherwise a fast producer can observe
+                // SIGPIPE, let a shell wrapper continue to its next command,
+                // and perform work after the limit was crossed.
+                let _ = reader_release.recv();
+                return Ok(output);
+            }
+            output.extend_from_slice(&chunk[..read]);
+        }
+    });
+    let writer = input.map(|input| {
+        let input = input.to_vec();
+        let mut stdin = child.inner().stdin.take();
+        thread::spawn(move || -> std::io::Result<()> {
+            stdin
+                .as_mut()
+                .ok_or_else(|| std::io::Error::other("git stdin unavailable"))?
+                .write_all(&input)
+        })
+    });
+
+    enum ChildOutcome {
+        Exited(std::process::ExitStatus),
+        OutputLimit,
+        Timeout,
+        WaitError(std::io::Error),
+    }
+
+    let deadline = Instant::now() + options.timeout;
+    let outcome = loop {
+        if output_limit_exceeded.load(Ordering::Acquire) {
+            break ChildOutcome::OutputLimit;
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break ChildOutcome::Exited(status),
+            Ok(None) => {}
+            Err(error) => break ChildOutcome::WaitError(error),
+        }
+        if Instant::now() >= deadline {
+            break ChildOutcome::Timeout;
+        }
+        thread::sleep(Duration::from_millis(5));
+    };
+
+    // Terminate the whole process group even after the direct child exits:
+    // external helpers can otherwise retain stdout and block the reader join.
+    let _ = child.kill();
+    let _ = child.wait();
+    // If the reader crossed the bound just as the child exited, it may be
+    // waiting for this signal even though the polling loop observed normal
+    // exit first.
+    let _ = release_reader.send(());
+
+    let status = match outcome {
+        ChildOutcome::Exited(status) => status,
+        ChildOutcome::OutputLimit => {
+            let _ = reader.join();
+            if let Some(writer) = writer {
+                let _ = writer.join();
+            }
+            return Err(Error::RequestLimitExceeded {
+                field: "git output bytes",
+                requested: options.max_output_bytes.saturating_add(1),
+                limit: options.max_output_bytes,
+            });
+        }
+        ChildOutcome::Timeout => {
+            let _ = reader.join();
+            if let Some(writer) = writer {
+                let _ = writer.join();
+            }
             return Err(Error::InvalidInput {
                 field: options.field,
                 reason: options.timeout_reason,
             });
         }
+        ChildOutcome::WaitError(error) => {
+            let _ = reader.join();
+            if let Some(writer) = writer {
+                let _ = writer.join();
+            }
+            return Err(error.into());
+        }
     };
+    if let Some(writer) = writer {
+        writer
+            .join()
+            .map_err(|_| Error::InternalFailure("git stdin task panicked".into()))??;
+    }
+    let output = reader
+        .join()
+        .map_err(|_| Error::InternalFailure("git stdout task panicked".into()))??;
+    if output_limit_exceeded.load(Ordering::Acquire) {
+        return Err(Error::RequestLimitExceeded {
+            field: "git output bytes",
+            requested: options.max_output_bytes.saturating_add(1),
+            limit: options.max_output_bytes,
+        });
+    }
     if !status.success() {
         return Err(Error::InvalidInput {
             field: options.field,
             reason: options.failure_reason,
         });
     }
-    let output_bytes = output
-        .metadata()
-        .map_err(|error| Error::InternalFailure(error.to_string()))?
-        .len();
-    if output_bytes > options.max_output_bytes as u64 {
-        return Err(Error::RequestLimitExceeded {
-            field: "git output bytes",
-            requested: usize::try_from(output_bytes).unwrap_or(usize::MAX),
-            limit: options.max_output_bytes,
-        });
-    }
-    output.rewind()?;
-    let mut bytes = Vec::new();
-    output.read_to_end(&mut bytes)?;
-    Ok(bytes)
+    Ok(output)
 }
 
 /// Resolve changed paths between a base revision and the working tree.
@@ -1223,11 +1256,6 @@ fn git_diff_hunks_with_head(
         })
         .transpose()?;
     let prefix = git_worktree_prefix(root);
-    let mut output =
-        tempfile::tempfile().map_err(|error| Error::InternalFailure(error.to_string()))?;
-    let child_output = output
-        .try_clone()
-        .map_err(|error| Error::InternalFailure(error.to_string()))?;
     let mut args = vec![
         "-c".to_owned(),
         "core.fsmonitor=false".to_owned(),
@@ -1243,37 +1271,19 @@ fn git_diff_hunks_with_head(
     } else {
         args.extend(paths.iter().cloned());
     }
-    let mut child = Command::new(program)
-        .args(args)
-        .current_dir(root)
-        .stdout(Stdio::from(child_output))
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| Error::InvalidInput {
+    let output = run_git_capture(
+        root,
+        program,
+        &args,
+        GitCaptureOptions {
+            timeout,
             field: "base revision",
-            reason: "git is unavailable",
-        })?;
-    let status = match child.wait_timeout(timeout) {
-        Ok(Some(status)) => status,
-        Ok(None) | Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(Error::InvalidInput {
-                field: "base revision",
-                reason: "git diff timed out",
-            });
-        }
-    };
-    if !status.success() {
-        return Err(Error::InvalidInput {
-            field: "base revision",
-            reason: "could not diff revision",
-        });
-    }
-    output
-        .rewind()
-        .map_err(|error| Error::InternalFailure(error.to_string()))?;
-    parse_git_diff_hunks(BufReader::new(output), max, &prefix)
+            timeout_reason: "git diff timed out",
+            failure_reason: "could not diff revision",
+            max_output_bytes: bounded_git_output(max, GIT_HUNK_OUTPUT_BYTES_PER_RESULT),
+        },
+    )?;
+    parse_git_diff_hunks(output.as_slice(), max, &prefix)
 }
 
 fn parse_git_diff_hunks<R: BufRead>(
@@ -1456,14 +1466,6 @@ fn diff_name_only(
     timeout: Duration,
     prefix: &str,
 ) -> Result<Vec<String>> {
-    let mut output = match tempfile::tempfile() {
-        Ok(output) => output,
-        Err(_) => return Ok(Vec::new()),
-    };
-    let child_output = match output.try_clone() {
-        Ok(output) => output,
-        Err(_) => return Ok(Vec::new()),
-    };
     let mut args = vec![
         "-c".to_owned(),
         "core.fsmonitor=false".to_owned(),
@@ -1475,28 +1477,21 @@ fn diff_name_only(
     ];
     args.extend(head_sha.map(str::to_owned));
     args.extend(["--".to_owned(), ".".to_owned()]);
-    let mut child = match Command::new(program)
-        .args(args)
-        .current_dir(root)
-        .stdout(Stdio::from(child_output))
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(_) => return Ok(Vec::new()),
-    };
-    let status = match child.wait_timeout(timeout) {
-        Ok(Some(status)) => status,
-        Ok(None) | Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Ok(Vec::new());
-        }
-    };
-    if !status.success() || output.rewind().is_err() {
+    let Ok(output) = run_git_capture(
+        root,
+        program,
+        &args,
+        GitCaptureOptions {
+            timeout,
+            field: "base revision",
+            timeout_reason: "git diff timed out",
+            failure_reason: "could not diff revision",
+            max_output_bytes: bounded_git_output(max, GIT_PATH_OUTPUT_BYTES_PER_RESULT),
+        },
+    ) else {
         return Ok(Vec::new());
-    }
-    Ok(parse_diff_names(BufReader::new(output), max, prefix))
+    };
+    Ok(parse_diff_names(output.as_slice(), max, prefix))
 }
 
 fn parse_diff_names<R: BufRead>(mut reader: R, max: usize, prefix: &str) -> Vec<String> {
@@ -1669,5 +1664,152 @@ mod tests {
         assert!(observation.changed_paths.is_empty());
         assert!(!observation.available);
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_capture_kills_the_producer_when_output_crosses_the_budget() {
+        let root = tempfile::tempdir().expect("root");
+        let program = root.path().join("large-git");
+        let marker = root.path().join("producer-finished");
+        fs::write(
+            &program,
+            format!(
+                "#!/bin/sh\nhead -c 1048576 /dev/zero\ntouch '{}'\n",
+                marker.display()
+            ),
+        )
+        .expect("script");
+        let mut permissions = fs::metadata(&program).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&program, permissions).expect("executable");
+
+        let error = run_git_capture(
+            root.path(),
+            &program,
+            &[],
+            GitCaptureOptions {
+                timeout: Duration::from_secs(2),
+                field: "test",
+                timeout_reason: "timed out",
+                failure_reason: "failed",
+                max_output_bytes: 1_024,
+            },
+        )
+        .expect_err("capture must stop at its byte budget");
+
+        assert!(
+            matches!(
+                &error,
+                Error::RequestLimitExceeded {
+                    field: "git output bytes",
+                    requested: 1_025,
+                    limit: 1_024,
+                }
+            ),
+            "unexpected capture error: {error:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(
+            !marker.exists(),
+            "producer ran after its output was rejected"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn name_only_probe_preserves_best_effort_failure_semantics() {
+        let root = tempfile::tempdir().expect("root");
+        let program = root.path().join("large-git");
+        fs::write(&program, "#!/bin/sh\nhead -c 1048576 /dev/zero\n").expect("script");
+        let mut permissions = fs::metadata(&program).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&program, permissions).expect("executable");
+
+        let changed = diff_name_only(
+            root.path(),
+            &program,
+            "base",
+            None,
+            1,
+            Duration::from_secs(2),
+            "",
+        )
+        .expect("name-only probe remains best effort");
+
+        assert!(changed.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_capture_releases_an_oversized_reader_after_the_child_exits() {
+        let root = tempfile::tempdir().expect("root");
+        let program = root.path().join("fast-git");
+        fs::write(&program, "#!/bin/sh\nprintf xx\n").expect("script");
+        let mut permissions = fs::metadata(&program).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&program, permissions).expect("executable");
+
+        let (result_sender, result_receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = run_git_capture(
+                root.path(),
+                &program,
+                &[],
+                GitCaptureOptions {
+                    timeout: Duration::from_secs(2),
+                    field: "test",
+                    timeout_reason: "timed out",
+                    failure_reason: "failed",
+                    max_output_bytes: 1,
+                },
+            );
+            let _ = result_sender.send(result);
+        });
+
+        let error = result_receiver
+            .recv_timeout(Duration::from_secs(3))
+            .expect("oversized reader must be released after child exit")
+            .expect_err("capture must reject output above its byte budget");
+        assert!(matches!(
+            error,
+            Error::RequestLimitExceeded {
+                field: "git output bytes",
+                requested: 2,
+                limit: 1,
+            }
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_capture_terminates_descendants_that_inherit_stdout() {
+        let root = tempfile::tempdir().expect("root");
+        let program = root.path().join("forking-git");
+        fs::write(&program, "#!/bin/sh\nsleep 30 &\nexit 0\n").expect("script");
+        let mut permissions = fs::metadata(&program).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&program, permissions).expect("executable");
+
+        let started = Instant::now();
+        let output = run_git_capture(
+            root.path(),
+            &program,
+            &[],
+            GitCaptureOptions {
+                timeout: Duration::from_secs(2),
+                field: "test",
+                timeout_reason: "timed out",
+                failure_reason: "failed",
+                max_output_bytes: 1_024,
+            },
+        )
+        .expect("capture");
+
+        assert!(output.is_empty());
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "inherited stdout kept the capture alive"
+        );
     }
 }

@@ -22,6 +22,7 @@ use crate::{Error, Result};
 
 const MAX_SCHEDULED_PATHS: usize = 4_096;
 const MAX_WATCHED_DIRECTORIES: usize = 50_000;
+const MAX_WATCH_ADMISSION_ENTRIES: usize = 100_000;
 const RECONCILE_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(500);
 const RECONCILE_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 const FULL_RECONCILE_INITIAL_DELAY: Duration = Duration::from_secs(1);
@@ -299,7 +300,18 @@ impl RepositoryWatcher {
             let config = Config::default().with_follow_symlinks(false);
             let callback_root = watched_root.clone();
 
-            let directory_count = count_watch_directories(&watched_root, MAX_WATCHED_DIRECTORIES);
+            let admission_root = watched_root.clone();
+            let admission_cancellation = cancellation.clone();
+            let directory_count = tokio::task::spawn_blocking(move || {
+                count_watch_directories(
+                    &admission_root,
+                    MAX_WATCHED_DIRECTORIES,
+                    MAX_WATCH_ADMISSION_ENTRIES,
+                    &admission_cancellation,
+                )
+            })
+            .await
+            .unwrap_or(MAX_WATCHED_DIRECTORIES.saturating_add(1));
             let mut watcher = None;
             let mut watch_enabled = false;
             if directory_count <= MAX_WATCHED_DIRECTORIES {
@@ -476,7 +488,12 @@ impl RepositoryWatcher {
 
 /// Count every directory that a recursive backend may register before
 /// enabling the watcher. Callback filtering does not reduce kernel watches.
-fn count_watch_directories(root: &Path, cap: usize) -> usize {
+fn count_watch_directories(
+    root: &Path,
+    directory_cap: usize,
+    entry_cap: usize,
+    cancellation: &CancellationToken,
+) -> usize {
     use ignore::WalkBuilder;
     let mut builder = WalkBuilder::new(root);
     builder.hidden(false);
@@ -488,20 +505,23 @@ fn count_watch_directories(root: &Path, cap: usize) -> usize {
     builder.follow_links(false);
     let walker = builder.build();
     let mut count = 0usize;
-    for entry in walker {
+    for (entries, entry) in walker.enumerate() {
+        if entries >= entry_cap || cancellation.is_cancelled() {
+            return directory_cap.saturating_add(1);
+        }
         match entry {
             Ok(entry) => {
                 if !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
                     continue;
                 }
                 count += 1;
-                if count > cap {
+                if count > directory_cap {
                     return count;
                 }
             }
             // Failure to inspect a subtree means the recursive backend's
             // watch count cannot be proven bounded. Use polling instead.
-            Err(_) => return cap.saturating_add(1),
+            Err(_) => return directory_cap.saturating_add(1),
         }
     }
     count
@@ -1242,8 +1262,34 @@ mod tests {
         std::fs::create_dir_all(root.path().join("ignored/nested")).unwrap();
         std::fs::create_dir_all(root.path().join("node_modules/pkg")).unwrap();
 
-        assert_eq!(count_watch_directories(root.path(), 100), 5);
-        assert_eq!(count_watch_directories(root.path(), 2), 3);
+        let cancellation = CancellationToken::new();
+        assert_eq!(
+            count_watch_directories(root.path(), 100, 100, &cancellation),
+            5
+        );
+        assert_eq!(
+            count_watch_directories(root.path(), 2, 100, &cancellation),
+            3
+        );
+    }
+
+    #[test]
+    fn watch_admission_is_bounded_by_entries_and_cancellation() {
+        let root = tempfile::tempdir().unwrap();
+        for index in 0..10 {
+            std::fs::write(root.path().join(format!("{index}.txt")), "").unwrap();
+        }
+        let cancellation = CancellationToken::new();
+        assert_eq!(
+            count_watch_directories(root.path(), 100, 4, &cancellation),
+            101
+        );
+
+        cancellation.cancel();
+        assert_eq!(
+            count_watch_directories(root.path(), 100, 100, &cancellation),
+            101
+        );
     }
 
     #[test]
