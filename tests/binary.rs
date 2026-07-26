@@ -1073,7 +1073,7 @@ fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
     }));
 
     drop(operation_blocker);
-    let first = follower.response(Duration::from_secs(3));
+    let first = follower.response(Duration::from_secs(10));
     if first["result"]["isError"] != true {
         assert_eq!(
             first["result"]["structuredContent"]["reason"],
@@ -1081,7 +1081,10 @@ fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
             "{first}"
         );
     }
-    follower.wait_until_unavailable(Duration::from_secs(5));
+    // Coverage instrumentation and concurrent process tests can delay terminal
+    // propagation without changing the one-second leadership grace, which is
+    // verified deterministically in the Services tests.
+    follower.wait_until_unavailable(Duration::from_secs(15));
     assert_eq!(database_state(&database).map(|state| state.0), Some(0));
 }
 

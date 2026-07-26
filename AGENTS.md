@@ -13,7 +13,14 @@ retrieval through CLI and MCP adapters.
 
 ## Development
 
-Run focused tests while iterating. For normal Rust pull-request readiness:
+Run focused tests while iterating. Before the first push, format the tree and
+run the smallest relevant check or behavioral test that proves the change. Do
+not block opening a pull request on the complete CI-equivalent suite.
+Use `cargo test-focused <module-or-test>` to filter the library, binary, and
+integration targets, and use the ownership map in `docs/development.md` when
+choosing affected tests.
+
+GitHub Actions owns normal Rust merge readiness and must pass:
 
 ```bash
 cargo fmt --all -- --check
@@ -21,8 +28,9 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test-product
 ```
 
-Run `cargo test-extras` when changing examples or benchmark behavior. Run
-rustdoc checks when changing public APIs or documentation. See
+It also runs `cargo test-extras` for examples and benchmark behavior and checks
+rustdoc for public APIs and documentation. Run a complete gate locally only
+when reproducing CI, working without CI, or changing the gate itself. See
 `docs/development.md` for the complete development, packaging, and release
 workflow.
 

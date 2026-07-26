@@ -312,20 +312,31 @@ mod tests {
         }
     }
 
+    struct OpenGateOnDrop(Arc<Gate>);
+
+    impl Drop for OpenGateOnDrop {
+        fn drop(&mut self) {
+            self.0.open();
+        }
+    }
+
     async fn wait_until(predicate: impl Fn() -> bool) {
-        for _ in 0..1_000 {
-            if predicate() {
-                return;
-            }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !predicate() {
+            assert!(
+                Instant::now() < deadline,
+                "condition was not reached before the test deadline"
+            );
+            std::thread::yield_now();
             tokio::task::yield_now().await;
         }
-        panic!("condition was not reached");
     }
 
     #[tokio::test]
     async fn queued_work_boundary_rejects_without_starting_more_work() {
         let executor = BlockingExecutor::new(2, 1, Duration::from_secs(30));
         let gate = Arc::new(Gate::default());
+        let _open_gate_on_drop = OpenGateOnDrop(Arc::clone(&gate));
         let started = Arc::new(AtomicUsize::new(0));
 
         let running = {
@@ -367,6 +378,7 @@ mod tests {
     async fn queue_timeout_never_starts_the_operation() {
         let executor = BlockingExecutor::new(2, 1, Duration::from_millis(500));
         let gate = Arc::new(Gate::default());
+        let _open_gate_on_drop = OpenGateOnDrop(Arc::clone(&gate));
         let running_started = Arc::new(AtomicBool::new(false));
 
         let running = {
@@ -418,6 +430,7 @@ mod tests {
     async fn queued_cancellation_never_starts_the_operation() {
         let executor = BlockingExecutor::new(2, 1, Duration::from_secs(30));
         let gate = Arc::new(Gate::default());
+        let _open_gate_on_drop = OpenGateOnDrop(Arc::clone(&gate));
         let running_started = Arc::new(AtomicBool::new(false));
 
         let running = {
@@ -473,6 +486,7 @@ mod tests {
     async fn execution_never_exceeds_its_limit() {
         let executor = BlockingExecutor::new(6, 2, Duration::from_secs(30));
         let gate = Arc::new(Gate::default());
+        let _open_gate_on_drop = OpenGateOnDrop(Arc::clone(&gate));
         let current = Arc::new(AtomicUsize::new(0));
         let peak = Arc::new(AtomicUsize::new(0));
         let mut tasks = Vec::new();
@@ -508,6 +522,7 @@ mod tests {
     async fn aborting_a_running_caller_does_not_release_capacity_early() {
         let executor = BlockingExecutor::new(1, 1, Duration::from_secs(30));
         let gate = Arc::new(Gate::default());
+        let _open_gate_on_drop = OpenGateOnDrop(Arc::clone(&gate));
         let first_started = Arc::new(AtomicBool::new(false));
 
         let first = {
@@ -526,7 +541,10 @@ mod tests {
         };
         wait_until(|| first_started.load(Ordering::SeqCst)).await;
         first.abort();
-        assert!(first.await.expect_err("aborted caller").is_cancelled());
+        let aborted = tokio::time::timeout(Duration::from_secs(5), first)
+            .await
+            .expect("aborted caller must finish before the test deadline");
+        assert!(aborted.expect_err("aborted caller").is_cancelled());
 
         assert!(matches!(
             executor.run(CancellationToken::new(), |_| Ok(())).await,

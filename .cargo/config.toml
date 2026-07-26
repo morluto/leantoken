@@ -1,5 +1,7 @@
 [alias]
-# Fast product-behavior loop; excludes benchmark/example targets.
-test-product = "test --all-features --lib --bins --test integration"
+# Focused product-test loop; append a module or exact test-name filter.
+test-focused = "test --all-features --lib --bins --test integration"
+# Complete product-behavior suite with stable nested-process concurrency.
+test-product = "test --all-features --lib --bins --test integration -- --test-threads=2"
 # Less-frequent benchmark and example target group.
 test-extras = "test --all-features --examples"
