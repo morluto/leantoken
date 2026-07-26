@@ -31,6 +31,7 @@ rayon = "1.11.0"
 r2d2 = "0.8.10"
 r2d2_sqlite = { version = "0.35.0", default-features = false }
 regex = "1.12.2"
+regex-syntax = "0.8.11"
 # Temporary v2.2.0-compatible response-task fix. Remove after rust-sdk#1026 ships.
 rmcp = { version = "2.2.0", git = "https://github.com/N0zoM1z0/rust-sdk", rev = "58b75588dd884f4e28bb6bc60d255d91e8ce2deb", default-features = false, features = ["server", "macros", "schemars", "transport-io"] }
 rusqlite = { version = "0.40.1", default-features = false, features = ["bundled", "cache"] }

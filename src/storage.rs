@@ -1684,6 +1684,14 @@ impl ReadSession {
         Ok(i64_to_u64(generation))
     }
 
+    pub(crate) fn file_count(&self) -> Result<usize> {
+        Ok(i64_to_usize(self.conn.query_row(
+            "SELECT COUNT(*) FROM files",
+            [],
+            |row| row.get(0),
+        )?))
+    }
+
     pub(crate) fn whole_file_source_tokens(
         &self,
         paths: &[String],
@@ -1751,6 +1759,24 @@ impl ReadSession {
             files.push(row?);
         }
         Ok(files)
+    }
+
+    pub(crate) fn regex_scan_files(&self, max_results: usize) -> Result<Vec<(FileRecord, usize)>> {
+        let limit = bounded_limit(max_results);
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT f.id, f.path, f.language, f.size_bytes, f.modified_ns,
+                    f.content_hash, f.generation, f.structurally_complete,
+                    COUNT(c.id)
+             FROM files f
+             LEFT JOIN chunks c ON c.file_id = f.id
+             GROUP BY f.id
+             ORDER BY f.id
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            Ok((Storage::map_file(row)?, i64_to_usize(row.get::<_, i64>(8)?)))
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     /// Read a lexicographically ordered keyset page from the relational path projection.
@@ -2336,6 +2362,107 @@ impl ReadSession {
         }
         let quoted = quoted_fts_phrase(query);
         self.search_fts(FtsTable::Trigram, &quoted, max_results, offset)
+    }
+
+    pub(crate) fn search_regex_candidates_page(
+        &self,
+        query: &str,
+        max_results: usize,
+        offset: usize,
+    ) -> Result<Vec<ChunkHit>> {
+        let limit = bounded_limit(max_results);
+        let offset = i64::try_from(offset).unwrap_or(i64::MAX);
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT c.id, c.file_id, f.path, c.content, c.start_line, c.end_line,
+                    c.start_byte, c.end_byte, c.token_count, f.generation, 0.0
+             FROM chunks_fts_trigram
+             JOIN chunks c ON chunks_fts_trigram.rowid = c.rowid
+             JOIN files f ON c.file_id = f.id
+             WHERE chunks_fts_trigram MATCH ?1
+             ORDER BY f.id, c.start_byte, c.id
+             LIMIT ?2 OFFSET ?3",
+        )?;
+        let rows = stmt.query_map(params![query, limit, offset], Storage::map_chunk_hit)?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub(crate) fn select_scoped_regex_candidate_ids(
+        &self,
+        query: &str,
+        max_rows_scanned: usize,
+        max_candidates: usize,
+        mut allows_path: impl FnMut(&str) -> bool,
+    ) -> Result<Vec<i64>> {
+        let limit = i64::try_from(max_rows_scanned.saturating_add(1)).unwrap_or(i64::MAX);
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT c.id, f.path
+             FROM chunks_fts_trigram
+             JOIN chunks c ON chunks_fts_trigram.rowid = c.rowid
+             JOIN files f ON c.file_id = f.id
+             WHERE chunks_fts_trigram MATCH ?1
+             ORDER BY f.id, c.start_byte, c.id
+             LIMIT ?2",
+        )?;
+        let mut rows = stmt.query(params![query, limit])?;
+        let mut rows_scanned = 0usize;
+        let mut candidate_ids = Vec::new();
+        while let Some(row) = rows.next()? {
+            rows_scanned = rows_scanned.saturating_add(1);
+            if rows_scanned > max_rows_scanned {
+                return Err(Error::LimitExceeded);
+            }
+            let path: String = row.get(1)?;
+            if !allows_path(&path) {
+                continue;
+            }
+            if candidate_ids.len() == max_candidates {
+                return Err(Error::LimitExceeded);
+            }
+            candidate_ids.push(row.get(0)?);
+        }
+        Ok(candidate_ids)
+    }
+
+    pub(crate) fn regex_candidates_by_ids(&self, chunk_ids: &[i64]) -> Result<Vec<ChunkHit>> {
+        if chunk_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let input = serde_json::to_string(chunk_ids)?;
+        let mut stmt = self.conn.prepare_cached(
+            "WITH requested AS (
+                 SELECT CAST(key AS INTEGER) AS request_index,
+                        CAST(value AS INTEGER) AS chunk_id
+                 FROM json_each(?1)
+             )
+             SELECT c.id, c.file_id, f.path, c.content, c.start_line, c.end_line,
+                    c.start_byte, c.end_byte, c.token_count, f.generation, 0.0
+             FROM requested
+             JOIN chunks c ON c.id = requested.chunk_id
+             JOIN files f ON c.file_id = f.id
+             ORDER BY requested.request_index",
+        )?;
+        let rows = stmt.query_map(params![input], Storage::map_chunk_hit)?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub(crate) fn regex_candidate_count_up_to(
+        &self,
+        query: &str,
+        max_results: usize,
+    ) -> Result<usize> {
+        let limit = i64::try_from(max_results).unwrap_or(i64::MAX);
+        let count = self.conn.query_row(
+            "SELECT COUNT(*)
+             FROM (
+                 SELECT rowid
+                 FROM chunks_fts_trigram
+                 WHERE chunks_fts_trigram MATCH ?1
+                 LIMIT ?2
+             )",
+            params![query, limit],
+            |row| row.get::<_, i64>(0),
+        )?;
+        Ok(i64_to_usize(count))
     }
 
     pub fn search_symbols(

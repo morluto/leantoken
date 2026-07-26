@@ -2,15 +2,15 @@
 
 use std::collections::HashSet;
 
+use regex_syntax::hir::{Hir, HirKind};
 use tokio_util::sync::CancellationToken;
 
-use super::Services;
-use super::files::FILE_LIST_PAGE_SIZE;
 use super::read::{StoredExcerpt, StoredExcerptRequest};
 use super::validation::{
     MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled, make_cursor, parse_cursor,
     validate_cursor, validate_glob_patterns, validate_input,
 };
+use super::{Services, retrieval_primitive_key};
 use crate::model::*;
 use crate::storage::{ChunkHit, ReadSession, ReferenceHit, SymbolHit};
 use crate::text::{
@@ -24,10 +24,168 @@ const MAX_REGEX_CANDIDATES: usize = 2_000;
 const MAX_REGEX_FILES_SCANNED: usize = 10_000;
 /// Maximum chunks examined per file during a regex scan.
 const MAX_REGEX_CHUNKS_PER_FILE: usize = 256;
+/// Maximum trigram rows verified before a planned regex search fails explicitly.
+const MAX_REGEX_CANDIDATE_CHUNKS: usize = 10_000;
+/// Maximum lightweight FTS rows inspected while applying path-scoped planning.
+const MAX_SCOPED_REGEX_ROWS_SCANNED: usize = 100_000;
 /// Maximum exact matches materialized by one exhaustive occurrence request.
 const MAX_EXHAUSTIVE_OCCURRENCES: usize = 100_000;
 const FILTER_SCAN_PAGE_SIZE: usize = 256;
 const MAX_FILTER_SCAN_ROWS: usize = 10_000;
+const REGEX_CANDIDATE_PAGE_SIZE: usize = 512;
+const MAX_REGEX_PLAN_NODES: usize = 256;
+const MAX_REGEX_PLAN_TERMS: usize = 32;
+const MAX_REGEX_PLAN_TERM_BYTES: usize = 256;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RegexPlanning {
+    Enabled,
+    Disabled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchDiagnostics {
+    Omit,
+    Collect,
+}
+
+struct RegexScan {
+    hits: Vec<ChunkHit>,
+    phases: SearchPhaseCounters,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RegexCandidateExpr {
+    Term(String),
+    All(Vec<RegexCandidateExpr>),
+    Any(Vec<RegexCandidateExpr>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegexCandidatePlan {
+    expression: RegexCandidateExpr,
+    term_count: usize,
+}
+
+#[derive(Default)]
+struct RegexPlanBudget {
+    nodes: usize,
+    terms: usize,
+    term_bytes: usize,
+}
+
+impl RegexPlanBudget {
+    fn visit(&mut self) -> std::result::Result<(), ()> {
+        self.nodes = self.nodes.saturating_add(1);
+        (self.nodes <= MAX_REGEX_PLAN_NODES).then_some(()).ok_or(())
+    }
+
+    fn add_term(&mut self, term: &str) -> std::result::Result<(), ()> {
+        self.terms = self.terms.saturating_add(1);
+        self.term_bytes = self.term_bytes.saturating_add(term.len());
+        (self.terms <= MAX_REGEX_PLAN_TERMS && self.term_bytes <= MAX_REGEX_PLAN_TERM_BYTES)
+            .then_some(())
+            .ok_or(())
+    }
+}
+
+impl RegexCandidateExpr {
+    fn fts_query(&self) -> String {
+        match self {
+            Self::Term(term) => fts_quote(term),
+            Self::All(expressions) => expressions
+                .iter()
+                .map(|expression| format!("({})", expression.fts_query()))
+                .collect::<Vec<_>>()
+                .join(" AND "),
+            Self::Any(expressions) => expressions
+                .iter()
+                .map(|expression| format!("({})", expression.fts_query()))
+                .collect::<Vec<_>>()
+                .join(" OR "),
+        }
+    }
+}
+
+fn regex_candidate_plan(request: &SearchRequest) -> Option<RegexCandidatePlan> {
+    // SQLite's default trigram tokenizer folds ASCII only. Rust regexes use
+    // Unicode simple case folding, so a case-insensitive ASCII literal can
+    // also match non-ASCII code points (for example, Kelvin sign for `k`).
+    // Falling back avoids false negatives until those semantics can be
+    // represented by the candidate index.
+    if !request.case_sensitive {
+        return None;
+    }
+    let hir = regex_syntax::parse(&request.query).ok()?;
+    let mut budget = RegexPlanBudget::default();
+    let expression = regex_candidate_expr(&hir, &mut budget).ok()??;
+    Some(RegexCandidatePlan {
+        expression,
+        term_count: budget.terms,
+    })
+}
+
+fn regex_candidate_expr(
+    hir: &Hir,
+    budget: &mut RegexPlanBudget,
+) -> std::result::Result<Option<RegexCandidateExpr>, ()> {
+    budget.visit()?;
+    match hir.kind() {
+        HirKind::Literal(literal) => literal_candidate_expr(&literal.0, budget),
+        HirKind::Capture(capture) => regex_candidate_expr(&capture.sub, budget),
+        HirKind::Repetition(repetition) if repetition.min > 0 => {
+            regex_candidate_expr(&repetition.sub, budget)
+        }
+        HirKind::Concat(expressions) => {
+            let mut plans = Vec::new();
+            for expression in expressions {
+                if let Some(plan) = regex_candidate_expr(expression, budget)? {
+                    plans.push(plan);
+                }
+            }
+            Ok(combine_candidate_expr(plans, true))
+        }
+        HirKind::Alternation(expressions) => {
+            let mut plans = Vec::with_capacity(expressions.len());
+            for expression in expressions {
+                let Some(plan) = regex_candidate_expr(expression, budget)? else {
+                    return Ok(None);
+                };
+                plans.push(plan);
+            }
+            Ok(combine_candidate_expr(plans, false))
+        }
+        HirKind::Empty | HirKind::Class(_) | HirKind::Look(_) | HirKind::Repetition(_) => Ok(None),
+    }
+}
+
+fn literal_candidate_expr(
+    literal: &[u8],
+    budget: &mut RegexPlanBudget,
+) -> std::result::Result<Option<RegexCandidateExpr>, ()> {
+    let mut terms = Vec::new();
+    for bytes in literal.split(|byte| !byte.is_ascii_alphanumeric() && *byte != b'_') {
+        if bytes.len() < 3 {
+            continue;
+        }
+        let term = std::str::from_utf8(bytes).map_err(|_| ())?.to_owned();
+        budget.add_term(&term)?;
+        terms.push(RegexCandidateExpr::Term(term));
+    }
+    Ok(combine_candidate_expr(terms, true))
+}
+
+fn combine_candidate_expr(
+    mut expressions: Vec<RegexCandidateExpr>,
+    all: bool,
+) -> Option<RegexCandidateExpr> {
+    match expressions.len() {
+        0 => None,
+        1 => expressions.pop(),
+        _ if all => Some(RegexCandidateExpr::All(expressions)),
+        _ => Some(RegexCandidateExpr::Any(expressions)),
+    }
+}
 
 fn collect_filtered_hits<T>(
     request: &SearchRequest,
@@ -143,7 +301,7 @@ fn chunk_search_hits(
     Ok(hits)
 }
 
-fn chunk_search_hit_for_range(
+pub(super) fn chunk_search_hit_for_range(
     hit: &ChunkHit,
     start: usize,
     end: usize,
@@ -323,14 +481,62 @@ impl Services {
         cancellation: CancellationToken,
     ) -> Result<SearchResponse> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.search_sync(request, &cancellation)).await?
+        tokio::task::spawn_blocking(move || {
+            this.search_sync(
+                request,
+                &cancellation,
+                RegexPlanning::Enabled,
+                SearchDiagnostics::Omit,
+            )
+            .map(|evaluation| evaluation.response)
+        })
+        .await?
+    }
+
+    /// Search and expose deterministic candidate-phase counts for evaluation.
+    ///
+    /// Production adapters should use [`Self::search`]. This method does not
+    /// alter the normal response or MCP schemas.
+    pub async fn search_evaluation(&self, request: SearchRequest) -> Result<SearchEvaluation> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            this.search_sync(
+                request,
+                &CancellationToken::new(),
+                RegexPlanning::Enabled,
+                SearchDiagnostics::Collect,
+            )
+        })
+        .await?
+    }
+
+    /// Search with regex candidate planning disabled for differential evaluation.
+    ///
+    /// This API is not exposed through CLI or MCP adapters. It retains the
+    /// bounded legacy scan so tests and benchmarks can prove optimized parity.
+    pub async fn search_full_scan_evaluation(
+        &self,
+        request: SearchRequest,
+    ) -> Result<SearchEvaluation> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            this.search_sync(
+                request,
+                &CancellationToken::new(),
+                RegexPlanning::Disabled,
+                SearchDiagnostics::Collect,
+            )
+        })
+        .await?
     }
 
     fn search_sync(
         &self,
         request: SearchRequest,
         cancellation: &CancellationToken,
-    ) -> Result<SearchResponse> {
+        regex_planning: RegexPlanning,
+        diagnostics: SearchDiagnostics,
+    ) -> Result<SearchEvaluation> {
         check_cancelled(cancellation)?;
         validate_search_input(&request)?;
         let regex = matches!(request.mode, SearchMode::Regex)
@@ -348,9 +554,11 @@ impl Services {
         let limit = self.result_limit(request.max_results)?;
         let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         let context_lines = self.context_line_limit(request.context_lines)?;
-        let (mut response, baseline_source_tokens) = self.consistent(|session, generation| {
+        let search_result = self.consistent(|session, generation| {
             let offset = parse_cursor(request.cursor.as_deref(), generation)?;
             let mut hits = Vec::new();
+            let mut phases = SearchPhaseCounters::default();
+            let mut primitive_keys = Vec::new();
             if matches!(
                 request.mode,
                 SearchMode::Auto | SearchMode::Identifier | SearchMode::Symbol
@@ -437,22 +645,49 @@ impl Services {
             }
 
             let lexical = match request.mode {
-                SearchMode::Regex => self.regex_hits(
-                    session,
-                    &request,
-                    regex.as_ref().expect("regex mode compiles a pattern"),
-                    (!request.all_occurrences).then_some(limit.saturating_mul(20)),
-                    cancellation,
-                )?,
-                SearchMode::Text if request.all_occurrences => self.regex_hits(
-                    session,
-                    &request,
-                    occurrence_literal_regex
-                        .as_ref()
-                        .expect("exhaustive text mode compiles a literal pattern"),
-                    None,
-                    cancellation,
-                )?,
+                SearchMode::Regex => {
+                    let scan = self.regex_hits(
+                        session,
+                        &request,
+                        regex.as_ref().expect("regex mode compiles a pattern"),
+                        (!request.all_occurrences).then_some(limit.saturating_mul(20)),
+                        cancellation,
+                        regex_planning,
+                    )?;
+                    phases = scan.phases;
+                    let primitive_kind = match phases.regex_candidate_strategy {
+                        RegexCandidateStrategy::Trigram => "regex_trigram_candidates",
+                        RegexCandidateStrategy::FullScan => "regex_full_scan",
+                    };
+                    if diagnostics == SearchDiagnostics::Collect {
+                        primitive_keys.push(retrieval_primitive_key(
+                            generation,
+                            primitive_kind,
+                            &format!(
+                                "case_sensitive:{}:include:{:?}:exclude:{:?}:query:{}",
+                                request.case_sensitive,
+                                request.include_paths,
+                                request.exclude_paths,
+                                request.query
+                            ),
+                        ));
+                    }
+                    scan.hits
+                }
+                SearchMode::Text if request.all_occurrences => {
+                    let scan = self.regex_hits(
+                        session,
+                        &request,
+                        occurrence_literal_regex
+                            .as_ref()
+                            .expect("exhaustive text mode compiles a literal pattern"),
+                        None,
+                        cancellation,
+                        RegexPlanning::Disabled,
+                    )?;
+                    phases = scan.phases;
+                    scan.hits
+                }
                 SearchMode::Text | SearchMode::Auto | SearchMode::Identifier => {
                     let fetch_page = |offset, page_limit| {
                         if matches!(request.mode, SearchMode::Identifier)
@@ -604,8 +839,11 @@ impl Services {
                     ),
                 },
                 baseline_source_tokens,
+                phases,
+                primitive_keys,
             ))
-        })?;
+        });
+        let (mut response, baseline_source_tokens, phases, primitive_keys) = search_result?;
         if let Some(baseline_source_tokens) = baseline_source_tokens {
             self.record_token_savings(
                 TokenSavingsOperation::Search,
@@ -614,7 +852,11 @@ impl Services {
             );
         }
         self.finalize_response(&mut response)?;
-        Ok(response)
+        Ok(SearchEvaluation {
+            response,
+            phases,
+            primitive_keys,
+        })
     }
 
     fn symbol_search_hit(&self, hit: SymbolHit, query: &str, excerpt: StoredExcerpt) -> SearchHit {
@@ -673,61 +915,159 @@ impl Services {
         regex: &regex::Regex,
         max_candidates: Option<usize>,
         cancellation: &CancellationToken,
-    ) -> Result<Vec<ChunkHit>> {
+        planning: RegexPlanning,
+    ) -> Result<RegexScan> {
         // Hard caps prevent repository-wide lexical scans from running
         // unbounded. Exhaustive modes lift only the candidate-chunk cap and
         // fail explicitly if another cap would make the result incomplete.
         let max_candidates = max_candidates.map(|limit| limit.min(MAX_REGEX_CANDIDATES));
         let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
-        let mut hits = Vec::new();
-        let mut files_scanned = 0usize;
-        let mut cursor = None;
-        loop {
+        let has_path_filters =
+            !request.include_paths.is_empty() || !request.exclude_paths.is_empty();
+        let file_count = session.file_count()?;
+        let plan = (planning == RegexPlanning::Enabled)
+            .then(|| regex_candidate_plan(request))
+            .flatten();
+        if let Some(plan) = plan {
+            return self.regex_candidate_hits(
+                session,
+                regex,
+                max_candidates,
+                cancellation,
+                path_filter,
+                has_path_filters,
+                file_count,
+                plan,
+            );
+        }
+
+        if file_count > MAX_REGEX_FILES_SCANNED {
+            return Err(Error::LimitExceeded);
+        }
+        let files = session.regex_scan_files(MAX_REGEX_FILES_SCANNED)?;
+        for (file, chunk_count) in &files {
             check_cancelled(cancellation)?;
-            let page = session.list_files(FILE_LIST_PAGE_SIZE, cursor)?;
-            if page.is_empty() {
-                break;
+            if path_filter.allows(&file.path) && *chunk_count > MAX_REGEX_CHUNKS_PER_FILE {
+                return Err(Error::LimitExceeded);
             }
-            cursor = page.last().map(|file| file.id);
-            for file in page {
+        }
+        let mut hits = Vec::new();
+        let mut phases = SearchPhaseCounters {
+            regex_candidate_strategy: RegexCandidateStrategy::FullScan,
+            regex_files_considered: files.len(),
+            ..SearchPhaseCounters::default()
+        };
+        for (file, _) in files {
+            check_cancelled(cancellation)?;
+            if !path_filter.allows(&file.path) {
+                continue;
+            }
+            let chunks = session.get_chunks_for_file(file.id, MAX_REGEX_CHUNKS_PER_FILE)?;
+            for chunk in chunks {
                 check_cancelled(cancellation)?;
-                if files_scanned == MAX_REGEX_FILES_SCANNED {
-                    return Err(Error::LimitExceeded);
-                }
-                files_scanned += 1;
-                if !path_filter.allows(&file.path) {
-                    continue;
-                }
-                let chunks = session
-                    .get_chunks_for_file(file.id, MAX_REGEX_CHUNKS_PER_FILE.saturating_add(1))?;
-                let chunks_truncated = chunks.len() > MAX_REGEX_CHUNKS_PER_FILE;
-                for chunk in chunks.into_iter().take(MAX_REGEX_CHUNKS_PER_FILE) {
-                    check_cancelled(cancellation)?;
-                    if regex.is_match(&chunk.content) {
-                        if max_candidates.is_some_and(|limit| hits.len() == limit) {
-                            return Err(Error::LimitExceeded);
-                        }
-                        hits.push(ChunkHit {
-                            chunk_id: chunk.id,
-                            file_id: chunk.file_id,
-                            path: file.path.clone(),
-                            content: chunk.content,
-                            start_line: chunk.start_line,
-                            end_line: chunk.end_line,
-                            start_byte: chunk.start_byte,
-                            end_byte: chunk.end_byte,
-                            token_count: chunk.token_count,
-                            generation: file.generation,
-                            score: 0.0,
-                        });
+                phases.regex_chunks_loaded = phases.regex_chunks_loaded.saturating_add(1);
+                phases.regex_chunks_verified = phases.regex_chunks_verified.saturating_add(1);
+                if regex.is_match(&chunk.content) {
+                    if max_candidates.is_some_and(|limit| hits.len() == limit) {
+                        return Err(Error::LimitExceeded);
                     }
-                }
-                if chunks_truncated {
-                    return Err(Error::LimitExceeded);
+                    hits.push(ChunkHit {
+                        chunk_id: chunk.id,
+                        file_id: chunk.file_id,
+                        path: file.path.clone(),
+                        content: chunk.content,
+                        start_line: chunk.start_line,
+                        end_line: chunk.end_line,
+                        start_byte: chunk.start_byte,
+                        end_byte: chunk.end_byte,
+                        token_count: chunk.token_count,
+                        generation: file.generation,
+                        score: 0.0,
+                    });
                 }
             }
         }
-        Ok(hits)
+        Ok(RegexScan { hits, phases })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn regex_candidate_hits(
+        &self,
+        session: &ReadSession,
+        regex: &regex::Regex,
+        max_candidates: Option<usize>,
+        cancellation: &CancellationToken,
+        path_filter: PathFilter,
+        has_path_filters: bool,
+        files_considered: usize,
+        plan: RegexCandidatePlan,
+    ) -> Result<RegexScan> {
+        let mut phases = SearchPhaseCounters {
+            regex_candidate_strategy: RegexCandidateStrategy::Trigram,
+            regex_plan_terms: plan.term_count,
+            regex_files_considered: files_considered,
+            ..SearchPhaseCounters::default()
+        };
+        let query = plan.expression.fts_query();
+        if has_path_filters {
+            let candidate_ids = session.select_scoped_regex_candidate_ids(
+                &query,
+                MAX_SCOPED_REGEX_ROWS_SCANNED,
+                MAX_REGEX_CANDIDATE_CHUNKS,
+                |path| path_filter.allows(path),
+            )?;
+            phases.regex_candidate_chunks = candidate_ids.len();
+            let mut hits = Vec::new();
+            for candidate_batch in candidate_ids.chunks(REGEX_CANDIDATE_PAGE_SIZE) {
+                check_cancelled(cancellation)?;
+                for hit in session.regex_candidates_by_ids(candidate_batch)? {
+                    check_cancelled(cancellation)?;
+                    phases.regex_chunks_verified = phases.regex_chunks_verified.saturating_add(1);
+                    if regex.is_match(&hit.content) {
+                        if max_candidates.is_some_and(|limit| hits.len() == limit) {
+                            return Err(Error::LimitExceeded);
+                        }
+                        hits.push(hit);
+                    }
+                }
+            }
+            return Ok(RegexScan { hits, phases });
+        }
+        let candidate_count = session
+            .regex_candidate_count_up_to(&query, MAX_REGEX_CANDIDATE_CHUNKS.saturating_add(1))?;
+        if candidate_count > MAX_REGEX_CANDIDATE_CHUNKS {
+            return Err(Error::LimitExceeded);
+        }
+        phases.regex_candidate_chunks = candidate_count;
+        let mut hits = Vec::new();
+        let mut offset = 0usize;
+        loop {
+            check_cancelled(cancellation)?;
+            let page =
+                session.search_regex_candidates_page(&query, REGEX_CANDIDATE_PAGE_SIZE, offset)?;
+            let page_len = page.len();
+            if page_len == 0 {
+                break;
+            }
+            for hit in page {
+                check_cancelled(cancellation)?;
+                if !path_filter.allows(&hit.path) {
+                    continue;
+                }
+                phases.regex_chunks_verified = phases.regex_chunks_verified.saturating_add(1);
+                if regex.is_match(&hit.content) {
+                    if max_candidates.is_some_and(|limit| hits.len() == limit) {
+                        return Err(Error::LimitExceeded);
+                    }
+                    hits.push(hit);
+                }
+            }
+            offset = offset.saturating_add(page_len);
+            if page_len < REGEX_CANDIDATE_PAGE_SIZE {
+                break;
+            }
+        }
+        Ok(RegexScan { hits, phases })
     }
 }
 

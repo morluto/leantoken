@@ -242,6 +242,65 @@ pub struct SearchResponse {
     pub meta: ResponseMeta,
 }
 
+#[derive(Debug, Clone)]
+/// Evaluation-only search result with deterministic execution counters.
+///
+/// This is not part of the MCP surface. Benchmarks use it to distinguish
+/// candidate reduction from response behavior without adding timing assertions
+/// or diagnostics to normal responses.
+pub struct SearchEvaluation {
+    /// Normal token-bounded search response.
+    pub response: SearchResponse,
+    /// Request-local counts for the lexical execution phases.
+    pub phases: SearchPhaseCounters,
+    /// Privacy-safe generation-scoped storage primitive identities.
+    pub primitive_keys: Vec<RetrievalPrimitiveKey>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// Evaluation-only identity for one logical retrieval primitive.
+///
+/// The digest includes the pinned repository generation and normalized
+/// primitive inputs. Raw queries, paths, symbols, and file identifiers are not
+/// exposed.
+pub struct RetrievalPrimitiveKey {
+    /// Primitive family, such as `trigram` or `adaptive_excerpt`.
+    pub kind: String,
+    /// BLAKE3 digest of the versioned generation-scoped normalized inputs.
+    pub key_blake3: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+/// Candidate source used to verify a regex request.
+pub enum RegexCandidateStrategy {
+    /// The regex had no sound bounded trigram plan and scanned indexed chunks.
+    #[default]
+    FullScan,
+    /// A sound trigram expression selected candidate chunks before verification.
+    Trigram,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+/// Deterministic phase and candidate counts for an evaluation-only search.
+pub struct SearchPhaseCounters {
+    /// Candidate source selected for a regex request.
+    pub regex_candidate_strategy: RegexCandidateStrategy,
+    /// Mandatory trigram terms in the selected candidate plan.
+    pub regex_plan_terms: usize,
+    /// Indexed files in the pinned repository snapshot.
+    ///
+    /// Candidate plans report corpus scale without scanning these files. The
+    /// full-scan fallback checks each file against its structural bounds.
+    pub regex_files_considered: usize,
+    /// Chunks loaded by the full-scan fallback.
+    pub regex_chunks_loaded: usize,
+    /// Rows returned by the trigram candidate query.
+    pub regex_candidate_chunks: usize,
+    /// Candidate chunks verified with the compiled regex.
+    pub regex_chunks_verified: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 /// Input for `leantoken.outline`.
 pub struct OutlineRequest {
