@@ -570,6 +570,29 @@ target/release/examples/graph_signal_ablation \
   --output target/graph-signal-ablation-v1.json
 ```
 
+## Agent wall-time microbenchmark
+
+The agent wall-time A/B isolates local repository-tool latency from model and
+trajectory latency. Its frozen workload manifest is
+[`../benchmarks/agent_walltime_ab.json`](../benchmarks/agent_walltime_ab.json),
+and the clean-worktree runner is
+[`../benchmarks/run_agent_walltime_ab.sh`](../benchmarks/run_agent_walltime_ab.sh).
+It uses the four prospective validation repositories and alternates
+native-first with LeanToken-first samples after warmup.
+
+Two comparisons have observable parity gates. Exhaustive fixed-string search
+must return the same occurrence coordinates as sorted `rg`, and exact line
+reads must return the same content and coordinates as `sed`. The third
+comparison times all frozen task discovery queries against one ranked
+`context` call. That comparison also reports payload and relevance diagnostics,
+but its latency ratio is not a speedup or regression claim because the
+operations have different semantics.
+
+The report separates cold indexing, MCP initialization/readiness, warm p50/p95,
+payload bytes, database bytes, and raw alternating samples. It does not include
+provider latency, model turns, editing, validation, or task success and
+therefore cannot explain an end-to-end agent duration by itself.
+
 ## Multi-agent context pilot
 
 `multi_agent_context_pilot.json` freezes a small read-only Codex experiment for

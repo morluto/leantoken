@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "frozen_at": "2026-07-26",
+  "description": "Persistent LeanToken MCP versus native repository-tool wall-time diagnostics on the pinned prospective validation corpora.",
+  "source_manifest": "benchmarks/validation.json",
+  "source_manifest_sha256": "88663bc2770ed59d33d5f674afc3c3450a517df87a8ff661bd4a1ef80190c8c1",
+  "methodology": "Alternate native-first and LeanToken-first samples after warmup. Exact search and exact read require observable parity. Native multi-query discovery and ranked context are reported side by side but are not treated as semantically equivalent.",
+  "iterations": 30,
+  "context_iterations": 10,
+  "warmups": 3,
+  "max_search_results": 100,
+  "context_max_fragments": 8,
+  "accuracy_gates": [
+    "exhaustive exact-search occurrence coordinates match ripgrep",
+    "exact line-read content and coordinates match sed",
+    "context responses are deterministic after receipt identity is removed",
+    "context source tokens do not exceed the frozen task budget",
+    "every measured tool call completes without retry or error"
+  ],
+  "corpora": [
+    {
+      "name": "flask-validation",
+      "task_id": "flask-ipv6-address-partition",
+      "search_query": "session_transaction",
+      "read_path": "src/flask/testing.py",
+      "read_start_line": 136,
+      "read_end_line": 183
+    },
+    {
+      "name": "gin-validation",
+      "task_id": "gin-ascii-json-non-bmp",
+      "search_query": "AsciiJSON",
+      "read_path": "render/json.go",
+      "read_start_line": 155,
+      "read_end_line": 176
+    },
+    {
+      "name": "express-validation",
+      "task_id": "express-trailing-dot-view",
+      "search_query": "app.render",
+      "read_path": "lib/application.js",
+      "read_start_line": 522,
+      "read_end_line": 575
+    },
+    {
+      "name": "tokio-validation",
+      "task_id": "tokio-file-write-after-spawn-failure",
+      "search_query": "spawn_mandatory_blocking",
+      "read_path": "tokio/src/fs/file.rs",
+      "read_start_line": 728,
+      "read_end_line": 797
+    }
+  ]
+}
