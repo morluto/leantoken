@@ -1,6 +1,7 @@
 use similar::TextDiff;
 use tokio_util::sync::CancellationToken;
 
+use super::change_receipt::classify_historical_symbol_change;
 use super::validation::{MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input};
 use super::{Services, validate_positive_request_limit};
 use crate::model::{
@@ -15,6 +16,7 @@ const DEFAULT_HISTORY_TOKENS: usize = 8_000;
 
 struct ResolvedHistoricalSymbol {
     symbol: HistoricalSymbol,
+    signature: Option<String>,
     content: String,
 }
 
@@ -146,6 +148,7 @@ impl Services {
                     after: None,
                     diff: None,
                     diff_truncated: false,
+                    semantic_change: None,
                     commits: Vec::new(),
                     result_complete: !truncated,
                     meta: self.meta(generation, emitted_tokens, None),
@@ -172,6 +175,15 @@ impl Services {
                 let total_diff_tokens = self.config.tokenizer.count(&full_diff);
                 let (diff, emitted_tokens) = self.config.tokenizer.truncate(&full_diff, max_tokens);
                 let diff_truncated = emitted_tokens < total_diff_tokens;
+                let semantic_change = classify_historical_symbol_change(
+                    &path,
+                    &before.symbol,
+                    before.signature.as_deref(),
+                    &before.content,
+                    &after.symbol,
+                    after.signature.as_deref(),
+                    &after.content,
+                );
                 before.symbol.content = None;
                 before.symbol.returned_end_line = 0;
                 after.symbol.content = None;
@@ -183,6 +195,7 @@ impl Services {
                     after: Some(after.symbol),
                     diff: Some(diff.to_owned()),
                     diff_truncated,
+                    semantic_change,
                     commits: Vec::new(),
                     result_complete: !diff_truncated,
                     meta: self.meta(generation, emitted_tokens, None),
@@ -217,6 +230,7 @@ impl Services {
                     after: None,
                     diff: None,
                     diff_truncated: false,
+                    semantic_change: None,
                     commits: commits
                         .into_iter()
                         .map(|commit| SymbolHistoryCommit {
@@ -275,6 +289,7 @@ impl Services {
                 content: None,
                 content_hash,
             },
+            signature: symbol.signature,
             content,
         })
     }

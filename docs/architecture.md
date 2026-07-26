@@ -449,6 +449,16 @@ selects only complete fragments that fit the source-token budget. Fragment
 hashes live once in an aligned receipt table rather than repeating beside every
 fragment.
 
+Immutable review context can derive a model-free semantic change receipt after
+ranking. The repository layer resolves each revision once, maps the bounded path
+set with `git ls-tree`, and reads selected unique objects with one
+`git cat-file --batch` call per side. Per-file and 8 MiB aggregate byte limits
+apply before parsing. Classification uses parser signatures, exact symbol
+identity, and unique normalized body fingerprints; ambiguous overloads or
+renames are omitted with gaps. Recognized JSON configuration is compared through
+canonical value fingerprints, but only RFC 6901 key paths and change kinds leave
+the service.
+
 Each service instance owns its tokenizer configuration. Exact OpenAI BPE
 encodings use `tiktoken-rs` singleton vocabularies; the explicit estimate mode
 is marked inexact. Protocol-cost benchmarks serialize the actual tool catalog,
@@ -485,6 +495,9 @@ appropriate for that repository.
 - File replacement and multi-file reconciliation roll back on storage errors.
 - Reconciliation publication rejects stale baseline generations before making
   mutations.
+- Optional semantic classification fails open into bounded coverage gaps for
+  unreadable, oversized, unsupported, non-UTF-8, or structurally incomplete
+  historical files; it does not fail an otherwise valid context response.
 - Committed WAL state survives process failure. Confirmed corruption in a
   LeanToken-owned cache is deleted and rebuilt; an explicitly configured
   caller-owned database is preserved and the error is returned.
