@@ -38,11 +38,11 @@ const MAX_DIFF_CHANGED_PATHS: usize = 512;
 /// Maximum bytes for a base revision string.
 const MAX_BASE_REVISION_BYTES: usize = 256;
 /// Maximum context query terms (symbols/refs/FTS fan-out budget).
-const MAX_CONTEXT_QUERIES: usize = 12;
+pub(super) const MAX_CONTEXT_QUERIES: usize = 12;
 /// Per-term symbol/reference candidate cap for context assembly.
-const MAX_CONTEXT_HITS_PER_SOURCE: usize = 20;
+pub(super) const MAX_CONTEXT_HITS_PER_SOURCE: usize = 20;
 /// Per-term FTS candidate cap for context assembly.
-const MAX_CONTEXT_LEXICAL_HITS: usize = 30;
+pub(super) const MAX_CONTEXT_LEXICAL_HITS: usize = 30;
 /// Per-import symbol scan cap for concept-corroborated structural expansion.
 const MAX_IMPORT_SYMBOLS: usize = 128;
 /// Exact constraint names retained per storage batch.

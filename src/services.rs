@@ -1038,6 +1038,53 @@ mod tests {
         assert_eq!(completed.active_waves, 0);
     }
 
+    #[test]
+    fn architecture_documents_runtime_retrieval_bounds() {
+        let architecture = include_str!("../docs/architecture.md");
+        let expected_rows = [
+            format!(
+                "| Context query terms | {} (`MAX_CONTEXT_QUERIES`) |",
+                context::MAX_CONTEXT_QUERIES
+            ),
+            format!(
+                "| Context hits per term/source | {} symbols/refs, {} FTS |",
+                context::MAX_CONTEXT_HITS_PER_SOURCE,
+                context::MAX_CONTEXT_LEXICAL_HITS
+            ),
+            format!(
+                "| Regex matching chunks | `min(max_results × 20, {})` |",
+                search::MAX_REGEX_CANDIDATES
+            ),
+            format!(
+                "| Trigram candidate chunks | {} |",
+                search::MAX_REGEX_CANDIDATE_CHUNKS
+            ),
+            format!(
+                "| Lightweight rows inspected for path-scoped trigram planning | {} |",
+                search::MAX_SCOPED_REGEX_ROWS_SCANNED
+            ),
+            format!(
+                "| Full-scan fallback files | {} |",
+                search::MAX_REGEX_FILES_SCANNED
+            ),
+            format!(
+                "| Full-scan fallback chunks per file | {} |",
+                search::MAX_REGEX_CHUNKS_PER_FILE
+            ),
+            format!(
+                "| File scan page size | {} for find/glob; tree queries `max_results + 1` projected paths |",
+                files::FILE_LIST_PAGE_SIZE
+            ),
+        ];
+
+        for row in expected_rows {
+            assert!(
+                architecture.contains(&row),
+                "architecture bound drifted: {row}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn failed_wave_fans_out_one_error_without_retry_scans() {
         let (_root, services) = indexed_services().await;

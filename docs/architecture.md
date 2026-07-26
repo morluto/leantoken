@@ -345,11 +345,11 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | Context query terms | 12 (`MAX_CONTEXT_QUERIES`) |
 | Context hits per term/source | 20 symbols/refs, 30 FTS |
 | Regex matching chunks | `min(max_results × 20, 2000)` |
-| Trigram candidate chunks | 10_000 |
-| Lightweight rows inspected for path-scoped trigram planning | 100_000 |
-| Full-scan fallback files | 10_000 |
+| Trigram candidate chunks | 10000 |
+| Lightweight rows inspected for path-scoped trigram planning | 100000 |
+| Full-scan fallback files | 10000 |
 | Full-scan fallback chunks per file | 256 |
-| File scan page size | 1_000 for find/glob; tree queries `max_results + 1` projected paths |
+| File scan page size | 1000 for find/glob; tree queries `max_results + 1` projected paths |
 
 Regex mode first parses a bounded HIR candidate plan. Mandatory case-sensitive
 ASCII word literals of at least three bytes become trigram `AND`/`OR`
