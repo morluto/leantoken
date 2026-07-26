@@ -529,6 +529,12 @@ silently broadens another. `must_include_paths` and
 focus minimums and ordinary ranking. `max_fragments` defaults to 8 and accepts
 values through 100.
 
+Required symbols share the request token budget. A definition that fits its
+share is returned completely. When it does not fit, the fragment and plan
+candidate report `truncated: true` together with the complete
+`target_start_line` and `target_end_line`; coverage reports the name under
+`partial_must_include_symbols` instead of claiming complete coverage.
+
 Set `plan_only=true` to run the same hard scopes, ranking, must-cover selection,
 token budget, and fragment limit without returning source. The response has an
 empty `fragments` array and no server-managed receipt mutation; `plan` contains

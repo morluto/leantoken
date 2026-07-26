@@ -2073,6 +2073,14 @@ async fn context_must_cover_generates_evidence_and_reports_unmatched_constraints
             .iter()
             .any(|fragment| fragment.path == "src/required.rs")
     );
+    let required_fragment = response
+        .fragments
+        .iter()
+        .find(|fragment| fragment.representation == "required_symbol")
+        .expect("required symbol fragment");
+    assert_eq!(required_fragment.target_start_line, Some(1));
+    assert_eq!(required_fragment.target_end_line, Some(1));
+    assert!(!required_fragment.truncated);
     assert_eq!(
         response.coverage.covered_must_include_paths,
         vec!["src/required.rs"]
@@ -2149,6 +2157,96 @@ async fn context_must_cover_generates_evidence_and_reports_unmatched_constraints
             .primitive_keys
             .iter()
             .all(|key| !previous_keys.contains(key.key_blake3.as_str()))
+    );
+}
+
+#[tokio::test]
+async fn context_marks_partial_required_symbols_without_claiming_complete_coverage() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir_all(root.path().join("src")).expect("source directory");
+    let mut source = String::from("pub fn required_long_symbol() -> usize {\n");
+    for index in 0..160 {
+        source.push_str(&format!("    let value_{index} = {index};\n"));
+    }
+    source.push_str("    value_159\n}\n");
+    std::fs::write(root.path().join("src/required.rs"), source).expect("required source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+    let mut request = context_limit_request(300);
+    request.task = "inspect required_long_symbol".into();
+    request.must_include_symbols = vec!["required_long_symbol".into()];
+    request.max_fragments = Some(1);
+
+    let response = services
+        .context(request.clone())
+        .await
+        .expect("partial required symbol context");
+
+    let fragment = response.fragments.first().expect("partial fragment");
+    assert_eq!(fragment.representation, "required_symbol");
+    assert_eq!(fragment.target_start_line, Some(1));
+    assert_eq!(fragment.target_end_line, Some(163));
+    assert_eq!(fragment.start_line, 1);
+    assert!(fragment.end_line < 163);
+    assert!(fragment.truncated);
+    assert!(response.coverage.covered_must_include_symbols.is_empty());
+    assert_eq!(
+        response.coverage.partial_must_include_symbols,
+        vec!["required_long_symbol"]
+    );
+    assert!(response.coverage.uncovered_must_include_symbols.is_empty());
+    assert!(
+        response
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("required symbol was returned only partially"))
+    );
+
+    request.plan_only = true;
+    let plan_response = services
+        .context(request)
+        .await
+        .expect("partial required symbol plan");
+    assert!(plan_response.fragments.is_empty());
+    let candidate = plan_response
+        .plan
+        .as_ref()
+        .and_then(|plan| plan.candidates.first())
+        .expect("partial plan candidate");
+    assert_eq!(candidate.target_start_line, Some(1));
+    assert_eq!(candidate.target_end_line, Some(163));
+    assert!(candidate.end_line < 163);
+    assert!(candidate.truncated);
+    assert_eq!(
+        plan_response.coverage.partial_must_include_symbols,
+        vec!["required_long_symbol"]
+    );
+
+    let mut full_request = context_limit_request(2_000);
+    full_request.task = "inspect required_long_symbol".into();
+    full_request.must_include_symbols = vec!["required_long_symbol".into()];
+    full_request.max_fragments = Some(1);
+    let full_response = services
+        .context(full_request)
+        .await
+        .expect("complete required symbol context");
+    let full_fragment = full_response.fragments.first().expect("complete fragment");
+    assert_eq!(full_fragment.start_line, 1);
+    assert_eq!(full_fragment.end_line, 163);
+    assert_eq!(full_fragment.target_start_line, Some(1));
+    assert_eq!(full_fragment.target_end_line, Some(163));
+    assert!(!full_fragment.truncated);
+    assert_eq!(
+        full_response.coverage.covered_must_include_symbols,
+        vec!["required_long_symbol"]
+    );
+    assert!(
+        full_response
+            .coverage
+            .partial_must_include_symbols
+            .is_empty()
     );
 }
 

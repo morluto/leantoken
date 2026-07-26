@@ -1162,9 +1162,12 @@ pub struct ContextCoverageReceipt {
     /// Required path patterns represented by returned, planned, or already-held evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub covered_must_include_paths: Vec<String>,
-    /// Required exact symbols represented by returned, planned, or already-held evidence.
+    /// Required exact symbols completely represented by returned, planned, or already-held evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub covered_must_include_symbols: Vec<String>,
+    /// Required exact symbols represented only by explicitly truncated evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub partial_must_include_symbols: Vec<String>,
     /// Required path patterns that matched no indexed path.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmatched_must_include_paths: Vec<String>,
@@ -1189,6 +1192,7 @@ impl ContextCoverageReceipt {
             && self.unmatched_include_paths.is_empty()
             && self.covered_must_include_paths.is_empty()
             && self.covered_must_include_symbols.is_empty()
+            && self.partial_must_include_symbols.is_empty()
             && self.unmatched_must_include_paths.is_empty()
             && self.unmatched_must_include_symbols.is_empty()
             && self.uncovered_must_include_paths.is_empty()
@@ -1201,6 +1205,15 @@ pub struct ContextFragment {
     pub path: String,
     pub start_line: usize,
     pub end_line: usize,
+    /// First line of the complete required symbol, when this is required-symbol evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_start_line: Option<usize>,
+    /// Last line of the complete required symbol, when this is required-symbol evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_end_line: Option<usize>,
+    /// Whether this fragment contains only part of its required symbol target.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub truncated: bool,
     #[serde(
         default = "source_representation",
         skip_serializing_if = "is_source_representation"
@@ -1225,6 +1238,15 @@ pub struct ContextPlanCandidate {
     pub start_line: usize,
     /// Last one-based source line that materialization would return.
     pub end_line: usize,
+    /// First line of the complete required symbol, when this is required-symbol evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_start_line: Option<usize>,
+    /// Last line of the complete required symbol, when this is required-symbol evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_end_line: Option<usize>,
+    /// Whether materialization would contain only part of its required symbol target.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub truncated: bool,
     /// Source representation selected by the retrieval pipeline.
     pub representation: String,
     /// Deterministic final ranking score.
@@ -1907,6 +1929,10 @@ fn is_source_representation(value: &String) -> bool {
     value == "source"
 }
 
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
 fn source_representation() -> String {
     "source".to_owned()
 }
@@ -2047,6 +2073,9 @@ mod tests {
                 path: "src/lib.rs".into(),
                 start_line: 1,
                 end_line: 2,
+                target_start_line: None,
+                target_end_line: None,
+                truncated: false,
                 representation: "source".into(),
                 content: "fn answer() {}".into(),
                 content_hash: "receipt-hash".into(),
@@ -2136,6 +2165,9 @@ mod tests {
                 path: "src/lib.rs".into(),
                 start_line: 4,
                 end_line: 6,
+                target_start_line: None,
+                target_end_line: None,
+                truncated: false,
                 representation: "source".into(),
                 content: "pub fn answer() -> u8 { 42 }".into(),
                 content_hash: "fragment-hash".into(),
