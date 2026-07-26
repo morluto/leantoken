@@ -1456,7 +1456,7 @@
 <a href=#1456 id=1456 data-nosnippet>1456</a>
 <a href=#1457 id=1457 data-nosnippet>1457</a>    <span class="attr">#[tool(
 <a href=#1458 id=1458 data-nosnippet>1458</a>        name = <span class="string">"savings"</span>,
-<a href=#1459 id=1459 data-nosnippet>1459</a>        description = <span class="string">"Report cumulative repository-local estimated source-token savings. Use when asked how many tokens LeanToken saved. Example: {}."</span>,
+<a href=#1459 id=1459 data-nosnippet>1459</a>        description = <span class="string">"Report repository-local source compression and full successful-response token accounting. Use when asked how many tokens LeanToken saved. Example: {}."</span>,
 <a href=#1460 id=1460 data-nosnippet>1460</a>        annotations(read_only_hint = <span class="bool-val">true</span>, open_world_hint = <span class="bool-val">false</span>)
 <a href=#1461 id=1461 data-nosnippet>1461</a>    )]
 <a href=#1462 id=1462 data-nosnippet>1462</a>    </span><span class="kw">async fn </span>leantoken_savings(
@@ -1468,7 +1468,7 @@
 <a href=#1468 id=1468 data-nosnippet>1468</a>            <span class="prelude-val">Ok</span>(services) =&gt; services,
 <a href=#1469 id=1469 data-nosnippet>1469</a>            <span class="prelude-val">Err</span>(result) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(result),
 <a href=#1470 id=1470 data-nosnippet>1470</a>        };
-<a href=#1471 id=1471 data-nosnippet>1471</a>        <span class="self">self</span>.service_result(services.token_savings().<span class="kw">await</span>)
+<a href=#1471 id=1471 data-nosnippet>1471</a>        <span class="self">self</span>.service_result(services.token_savings_report().<span class="kw">await</span>)
 <a href=#1472 id=1472 data-nosnippet>1472</a>    }
 <a href=#1473 id=1473 data-nosnippet>1473</a>}
 <a href=#1474 id=1474 data-nosnippet>1474</a>
