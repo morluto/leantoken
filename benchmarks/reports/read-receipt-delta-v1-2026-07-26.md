@@ -5,7 +5,7 @@ Date: 2026-07-26
 Experiment: `read-receipt-delta-v1`
 
 Harness revision:
-`8fa8c80e4627eb61c43e047550b43b4ce57c4a70`
+`a19f3b996984184fca2e5a04b2f0958b9c41b144`
 
 The release-mode run used a detached worktree at the harness revision and
 reported `harness_worktree_dirty: false`:
@@ -38,15 +38,15 @@ unit tests enforce the 30-minute TTL, 128-entry limit, 512 KiB per-entry limit,
 
 | Case | Decision | Source tokens full/returned | Complete JSON full/returned | Delta |
 | --- | --- | ---: | ---: | ---: |
-| real source line edit | delta | 10,970 / 115 | 12,889 / 434 | -12,455 |
-| small uneconomic edit | `delta_not_smaller` fallback | 4 / 4 | 185 / 309 | +124 |
-| moved symbol | `target_changed` fallback | 9 / 9 | 194 / 319 | +125 |
-| missing base | `base_unavailable` fallback | 8 / 8 | 192 / 308 | +116 |
+| real source line edit | delta | 11,049 / 115 | 12,999 / 451 | -12,548 |
+| small uneconomic edit | `delta_not_smaller` fallback | 4 / 4 | 207 / 326 | +119 |
+| moved symbol | `target_changed` fallback | 9 / 9 | 217 / 338 | +121 |
+| missing base | `base_unavailable` fallback | 8 / 8 | 216 / 337 | +121 |
 
-Across the four cases, the opt-in responses avoided 10,855 of 10,991 full
-source tokens (98.76%) and reduced complete serialized responses from 13,460
-to 1,370 tokens (89.82%). The useful large-edit case accounts for the savings.
-Safe fallback diagnostics add 116 to 125 complete-response tokens over a
+Across the four cases, the opt-in responses avoided 10,934 of 11,070 full
+source tokens (98.77%) and reduced complete serialized responses from 13,639
+to 1,452 tokens (89.35%). The useful large-edit case accounts for the savings.
+Safe fallback diagnostics add 119 to 121 complete-response tokens over a
 delta-disabled full read.
 
 ## Decision
