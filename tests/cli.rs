@@ -175,7 +175,6 @@ fn cli_read_request() {
         "100",
         "--expected-hash",
         "abc123",
-        "--delta",
     ]);
     let AppRequest::Read(request) = cli.app_request() else {
         panic!("expected read request");
@@ -189,7 +188,16 @@ fn cli_read_request() {
     assert_eq!(request.continuation_cursor, None);
     assert_eq!(request.max_tokens, Some(100));
     assert_eq!(request.expected_hash, Some("abc123".into()));
-    assert!(request.delta);
+    assert!(!request.delta);
+}
+
+#[test]
+fn cli_read_does_not_expose_process_local_delta_state() {
+    let error = Cli::try_parse_from(["leantoken", "read", "src/lib.rs", "--delta"])
+        .expect_err("one-shot CLI must not advertise process-local delta state");
+
+    assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+    assert!(!help(&["read"]).contains("--delta"));
 }
 
 #[test]
