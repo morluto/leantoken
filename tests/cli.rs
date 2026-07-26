@@ -435,9 +435,15 @@ fn cli_context_request() {
         "--workflow",
         "contribution",
     ]);
-    let AppRequest::Context { request, workflow } = cli.app_request() else {
+    let AppRequest::Context {
+        request,
+        workflow,
+        handoff,
+    } = cli.app_request()
+    else {
         panic!("expected context request");
     };
+    assert!(handoff.is_none());
     assert_eq!(workflow, ContextWorkflow::Contribution);
     assert_eq!(request.task, "fix the bug");
     assert_eq!(request.token_budget, 1024);
@@ -474,6 +480,37 @@ fn cli_context_requires_task_and_defaults_budget() {
         panic!("expected context request");
     };
     assert_eq!(request.token_budget, 3_000);
+}
+
+#[test]
+fn cli_context_maps_opt_in_handoff_summary() {
+    let cli = parse(&[
+        "context",
+        "--task",
+        "continue the implementation",
+        "--handoff",
+        "--handoff-summary",
+        "bounded executor state",
+    ]);
+    let AppRequest::Context { handoff, .. } = cli.app_request() else {
+        panic!("expected context request");
+    };
+    assert_eq!(
+        handoff.expect("handoff").summary.as_deref(),
+        Some("bounded executor state")
+    );
+
+    assert!(
+        Cli::try_parse_from([
+            "leantoken",
+            "context",
+            "--task",
+            "continue",
+            "--handoff-summary",
+            "missing opt in",
+        ])
+        .is_err()
+    );
 }
 
 #[test]

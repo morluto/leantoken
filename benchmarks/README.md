@@ -120,6 +120,22 @@ cargo run --release --example benchmark_ablation -- \
 The command rejects different manifest hashes so an apparent improvement cannot
 come from changing tasks or labels.
 
+## Handoff manifest crossover
+
+`handoff_manifest_benchmark` validates the opt-in handoff contract on a
+deterministic Git fixture. It checks normal/handoff selection parity, exact
+path/line/hash rereads, commit and generation provenance, source exclusion,
+caller-state transport, deterministic ordering, and complete response token
+accounting. Payload results include zero, largest-one, and all exact rereads,
+plus three- and six-fragment crossover probes. Only the eight-fragment zero- and
+one-reread cases are adoption gates; the synthetic fixture makes no task-success
+or scalability claim.
+
+```bash
+cargo run --release --example handoff_manifest_benchmark -- \
+  benchmarks/reports/handoff-manifest-v1.json
+```
+
 ## Ranked-region evaluator
 
 `ranked_region_benchmark` provides a versioned JSONL boundary between retrieval

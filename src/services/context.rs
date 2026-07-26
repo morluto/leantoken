@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 mod facets;
 
 use super::change_receipt::{classify_revision_changes, owner_test_coverage};
+use super::handoff::{self, HandoffProvenance};
 use super::read::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::search::{chunk_search_hit_for_range, compile_literal_regex, fts_quote};
@@ -23,8 +24,8 @@ use super::{Services, retrieval_primitive_key};
 use crate::model::*;
 use crate::ranking::{self, Candidate};
 use crate::repository::{
-    git_changed_paths, git_diff_hunks, git_diff_hunks_between, git_diff_paths,
-    git_diff_paths_between, normalize_relative, validate_relative,
+    git_diff_hunks, git_diff_hunks_between, git_diff_paths, git_diff_paths_between,
+    git_head_revision, git_working_tree_status, normalize_relative, validate_relative,
 };
 use crate::storage::ChunkHit;
 use crate::storage::{FileRecord, ReadSession, SymbolHit, SymbolRecord};
@@ -1464,7 +1465,7 @@ impl Services {
     fn resolve_diff_scope(
         &self,
         request: &ContextRequest,
-    ) -> Result<(Option<DiffScopeReceipt>, HashSet<String>)> {
+    ) -> Result<(Option<DiffScopeReceipt>, HashSet<String>, bool)> {
         let has_base = request
             .base_revision
             .as_deref()
@@ -1490,13 +1491,14 @@ impl Services {
             (None, None) => None,
             (None, Some(_)) => unreachable!("a range comes from a revision"),
         };
-        let working_tree_paths = git_changed_paths(&self.config.root, GIT_CHANGED_PATHS_MAX)
-            .unwrap_or_else(|error| {
-                tracing::debug!(%error, "working-tree signal unavailable");
-                HashSet::new()
-            });
+        let working_tree_status = git_working_tree_status(&self.config.root, GIT_CHANGED_PATHS_MAX);
+        if !working_tree_status.available {
+            tracing::debug!("working-tree signal unavailable");
+        }
+        let working_tree_paths = working_tree_status.changed_paths;
+        let working_tree_state_available = working_tree_status.available;
         if !has_base && !has_paths && !request.strict_changed_paths {
-            return Ok((None, working_tree_paths));
+            return Ok((None, working_tree_paths, working_tree_state_available));
         }
         if let Some(git_result) = git_result {
             let mut changed_paths = request.changed_paths.clone();
@@ -1525,6 +1527,7 @@ impl Services {
                     evidence: None,
                 }),
                 working_tree_paths,
+                working_tree_state_available,
             ));
         }
         let mut resolved_paths = if has_paths {
@@ -1543,6 +1546,7 @@ impl Services {
                 evidence: None,
             }),
             working_tree_paths,
+            working_tree_state_available,
         ))
     }
 
@@ -1551,6 +1555,21 @@ impl Services {
         self.context_cancellable_with_workflow(
             request,
             ContextWorkflow::Auto,
+            CancellationToken::new(),
+        )
+        .await
+    }
+
+    /// Select context and attach compact provenance for a host-triggered handoff.
+    pub async fn context_with_handoff(
+        &self,
+        request: ContextRequest,
+        handoff: HandoffManifestRequest,
+    ) -> Result<ContextResponse> {
+        self.context_cancellable_with_workflow_and_handoff(
+            request,
+            ContextWorkflow::Auto,
+            Some(handoff),
             CancellationToken::new(),
         )
         .await
@@ -1593,6 +1612,32 @@ impl Services {
         Ok(response)
     }
 
+    /// Retrieve context with an opt-in handoff manifest under explicit adapter policy.
+    pub async fn context_with_handoff_workflow_consistency_cancellable(
+        &self,
+        request: ContextRequest,
+        handoff: HandoffManifestRequest,
+        workflow: ContextWorkflow,
+        consistency: IndexConsistency,
+        cancellation: CancellationToken,
+    ) -> Result<ContextResponse> {
+        self.validate_context_request(&request)?;
+        validate_handoff_context_request(&request, &handoff)?;
+        self.apply_consistency(consistency, cancellation.clone())
+            .await?;
+        let mut response = self
+            .context_cancellable_with_workflow_and_handoff(
+                request,
+                workflow,
+                Some(handoff),
+                cancellation,
+            )
+            .await?;
+        set_routing_consistency(&mut response, consistency);
+        self.finalize_response(&mut response)?;
+        Ok(response)
+    }
+
     pub async fn context_cancellable(
         &self,
         request: ContextRequest,
@@ -1608,11 +1653,23 @@ impl Services {
         workflow: ContextWorkflow,
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
+        self.context_cancellable_with_workflow_and_handoff(request, workflow, None, cancellation)
+            .await
+    }
+
+    async fn context_cancellable_with_workflow_and_handoff(
+        &self,
+        request: ContextRequest,
+        workflow: ContextWorkflow,
+        handoff: Option<HandoffManifestRequest>,
+        cancellation: CancellationToken,
+    ) -> Result<ContextResponse> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || {
             let (evaluation, baseline_source_tokens) = this.context_sync(
                 request,
                 workflow,
+                handoff,
                 &cancellation,
                 CandidateDiagnostics::Omit,
                 ContextSignals::PRODUCTION,
@@ -1640,6 +1697,7 @@ impl Services {
             this.context_sync(
                 request,
                 ContextWorkflow::Implementation,
+                None,
                 &cancellation,
                 CandidateDiagnostics::Collect,
                 ContextSignals::PRODUCTION,
@@ -1664,6 +1722,7 @@ impl Services {
             this.context_sync(
                 request,
                 ContextWorkflow::Implementation,
+                None,
                 &cancellation,
                 CandidateDiagnostics::Collect,
                 ContextSignals::evaluation(policy),
@@ -2026,18 +2085,31 @@ impl Services {
         &self,
         mut request: ContextRequest,
         workflow: ContextWorkflow,
+        handoff: Option<HandoffManifestRequest>,
         cancellation: &CancellationToken,
         diagnostics: CandidateDiagnostics,
         signals: ContextSignals,
     ) -> Result<(ContextEvaluation, Option<usize>)> {
         check_cancelled(cancellation)?;
         self.validate_context_request(&request)?;
+        if let Some(handoff) = &handoff {
+            validate_handoff_context_request(&request, handoff)?;
+        }
         request.changed_paths = request
             .changed_paths
             .iter()
             .map(|path| normalize_relative(path))
             .collect::<Result<Vec<_>>>()?;
-        let (diff_scope, mut changed_paths) = self.resolve_diff_scope(&request)?;
+        let (diff_scope, mut changed_paths, working_tree_state_available) =
+            self.resolve_diff_scope(&request)?;
+        let working_tree_state = if !working_tree_state_available {
+            HandoffWorkingTreeState::Unknown
+        } else if changed_paths.is_empty() {
+            HandoffWorkingTreeState::Clean
+        } else {
+            HandoffWorkingTreeState::Dirty
+        };
+        let working_tree_paths = changed_paths.iter().cloned().collect::<Vec<_>>();
         let mut scoped_request = request.clone();
         if let Some(scope) = &diff_scope {
             scoped_request.changed_paths = scope.changed_paths.clone();
@@ -2642,6 +2714,18 @@ impl Services {
                 }
                 response.diff_scope = Some(scope);
             }
+            let handoff_evidence = handoff.as_ref().map(|_| {
+                response
+                    .fragments
+                    .iter()
+                    .map(|fragment| HandoffEvidence {
+                        path: fragment.path.clone(),
+                        start_line: fragment.start_line,
+                        end_line: fragment.end_line,
+                        content_hash: fragment.content_hash.clone(),
+                    })
+                    .collect::<Vec<_>>()
+            });
             if !request.plan_only {
                 let receipt_candidates = response
                     .fragments
@@ -2706,6 +2790,40 @@ impl Services {
                     }
                 }
             }
+            if let (Some(handoff), Some(evidence)) = (&handoff, handoff_evidence) {
+                let resolved_head = response
+                    .diff_scope
+                    .as_ref()
+                    .and_then(|scope| scope.head_revision.clone());
+                let (commit_revision, commit_revision_available) =
+                    if let Some(head) = resolved_head {
+                        (Some(head), true)
+                    } else {
+                        match git_head_revision(&self.config.root) {
+                            Ok(head) => (Some(head), true),
+                            Err(error) => {
+                                tracing::debug!(%error, "handoff Git identity unavailable");
+                                (None, false)
+                            }
+                        }
+                    };
+                response.handoff_manifest = Some(handoff::build(
+                    &request,
+                    handoff,
+                    &response,
+                    evidence,
+                    HandoffProvenance {
+                        commit_revision,
+                        commit_revision_available,
+                        working_tree_state: if commit_revision_available {
+                            working_tree_state
+                        } else {
+                            HandoffWorkingTreeState::Unknown
+                        },
+                        working_tree_paths: working_tree_paths.clone(),
+                    },
+                ));
+            }
             self.finalize_response(&mut response)?;
             let baseline_source_tokens = if request.plan_only {
                 None
@@ -2738,6 +2856,20 @@ impl Services {
             ))
         })
     }
+}
+
+fn validate_handoff_context_request(
+    request: &ContextRequest,
+    handoff: &HandoffManifestRequest,
+) -> Result<()> {
+    handoff::validate_request(handoff)?;
+    if request.plan_only {
+        return Err(Error::InvalidInput {
+            field: "plan_only",
+            reason: "cannot be combined with a handoff manifest",
+        });
+    }
+    Ok(())
 }
 
 fn set_routing_consistency(response: &mut ContextResponse, consistency: IndexConsistency) {

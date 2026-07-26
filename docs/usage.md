@@ -621,10 +621,33 @@ exact duplicates and overlapping ranges across context, search, outline, and
 read. `fragment_hashes` plus `known_hashes` remains the stateless fallback for
 clients that cannot retain a server receipt.
 
-For a frontier-to-executor handoff in the same live server session, transfer the
-grounded fragments, receipt ID, repository generation, current todo list, and
-first validated edit. A later server process cannot recover the in-memory
-receipt; use the aligned fragment hashes when persistence is required.
+Set the optional `handoff` object on a materialized request when a host is about
+to compact a broad context or transfer work to another executor. The response
+then includes `handoff_manifest`: a source-free task summary, repository and
+generation identity, Git commit and working-tree state, diff identities,
+selected path/line/hash coordinates captured before receipt suppression, held
+hashes, focus inputs, changed/related/test paths, and caller-supplied
+validations, assumptions, questions, negative evidence, and avoid rules.
+Validations are transported as caller reports; LeanToken does not execute them.
+`plan_only` and `handoff` are rejected together because a plan has not
+materialized grounded evidence.
+
+The manifest is a host-triggered transfer artifact, not persistent memory.
+`receipt_id` is useful only in the same server process; coordinates and hashes
+remain the persistent verification boundary. If Git identity or working-tree
+state cannot be established, the corresponding field is absent or `unknown`
+and `gaps` explains the missing provenance. Receipt suppression can leave
+`fragments` empty while the manifest still records the selected pre-suppression
+coordinates.
+
+Host state is capped at 16 validations and 16 entries in each note list.
+Summaries and notes accept 512 UTF-8 bytes per item; validation commands accept
+1,024. Output retains at most 100 evidence coordinates, 64 held hashes, 32
+focus paths, 32 focus symbols, 64 changed paths, 64 related paths, 32 test
+paths, and 64 explicit gaps. Deterministic truncation adds a gap rather than
+claiming completeness. Because the manifest itself has protocol cost, request
+it for genuine multi-fragment handoffs rather than routine small context calls;
+the repository benchmark reports the zero-, one-, and all-reread crossover.
 
 Every retrieval response also includes an opaque `meta.repository_id`. MCP
 callers can pass it back as `expected_repository_id`; a server bound to another
@@ -637,6 +660,8 @@ CLI equivalents make the reuse contract explicit:
 leantoken --json read src/lib.rs --lines 40:90 --expected-hash HASH
 leantoken --json context --task "finish the validated fix" --budget 1200 \
   --known-hash HASH_FROM_RECEIPT --prior-generation 7
+leantoken --json context --task "transfer the grounded implementation state" \
+  --handoff --handoff-summary "Continue the validated parser fix"
 ```
 
 ## Token accounting

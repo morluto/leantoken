@@ -21,6 +21,7 @@ use crate::{Config, Error, Result};
 mod change_receipt;
 mod context;
 mod files;
+mod handoff;
 mod history;
 mod json;
 mod read;

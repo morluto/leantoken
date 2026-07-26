@@ -449,6 +449,14 @@ selects only complete fragments that fit the source-token budget. Fragment
 hashes live once in an aligned receipt table rather than repeating beside every
 fragment.
 
+An opt-in handoff manifest is assembled inside the same pinned context
+generation. It captures selected coordinates and hashes before server-receipt
+suppression, then derives bounded changed, related, and likely test paths from
+the completed diff receipt. No source body enters the manifest. Git probes are
+time-bounded; unavailable commit or working-tree provenance becomes an explicit
+gap instead of a clean-state guess. The final response is token-accounted only
+after the manifest is attached, so protocol cost remains visible.
+
 Immutable review context can derive a model-free semantic change receipt after
 ranking. The repository layer resolves each revision once, maps the bounded path
 set with `git ls-tree`, and reads selected unique objects with one

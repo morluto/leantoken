@@ -13,9 +13,9 @@ use crate::cache::CachePruneRequest;
 use crate::config::DEFAULT_CONTEXT_TOKENS;
 use crate::mcp::McpResultMode;
 use crate::model::{
-    ContextRequest, FileOperation, FilesRequest, HistoryOperation, HistoryRequest, JsonOperation,
-    JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadRequest, SearchMode,
-    SearchRequest,
+    ContextRequest, FileOperation, FilesRequest, HandoffManifestRequest, HistoryOperation,
+    HistoryRequest, JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest,
+    ReadRequest, SearchMode, SearchRequest,
 };
 use crate::setup::{SetupClient, SetupRequest};
 use crate::tokens::Tokenizer;
@@ -258,9 +258,11 @@ impl Cli {
             Commands::Json(args) => AppRequest::Json(args.into()),
             Commands::Context(args) => {
                 let workflow = args.workflow.into();
+                let handoff = args.handoff_request();
                 AppRequest::Context {
                     request: args.into(),
                     workflow,
+                    handoff: handoff.map(Box::new),
                 }
             }
             Commands::Doctor => AppRequest::Doctor,
@@ -298,6 +300,7 @@ pub enum AppRequest {
     Context {
         request: ContextRequest,
         workflow: crate::model::ContextWorkflow,
+        handoff: Option<Box<HandoffManifestRequest>>,
     },
     Doctor,
     Mcp {
@@ -1149,6 +1152,23 @@ pub struct ContextArgs {
     /// Restrict returned fragments to resolved changed paths.
     #[arg(long)]
     pub strict_changed_paths: bool,
+
+    /// Attach compact provenance for a host-triggered executor handoff.
+    #[arg(long)]
+    pub handoff: bool,
+
+    /// Override the compact handoff task summary.
+    #[arg(long, value_name = "TEXT", requires = "handoff")]
+    pub handoff_summary: Option<String>,
+}
+
+impl ContextArgs {
+    fn handoff_request(&self) -> Option<HandoffManifestRequest> {
+        self.handoff.then(|| HandoffManifestRequest {
+            summary: self.handoff_summary.clone(),
+            ..HandoffManifestRequest::default()
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]

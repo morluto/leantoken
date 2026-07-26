@@ -1405,6 +1405,7 @@ mod tests {
             omission_summary: ContextOmissionSummary::default(),
             coverage: ContextCoverageReceipt::default(),
             routing: None,
+            handoff_manifest: None,
             warnings: Vec::new(),
             meta: ResponseMeta {
                 repository_id: "repository".into(),
