@@ -156,11 +156,16 @@ for deliberate manual or project-scoped configurations.
 
 ## Managed cache lifecycle
 
-`cache list` reports every recognized per-repository cache in the platform
-`ProjectDirs` cache directory, including its recorded root, schema, last access,
-direct SQLite/sidecar bytes, metadata state, and active lease status. It does
-not open repository services and therefore works from any directory. JSON output
-contains Unix timestamps for automation.
+`cache list` reports every recognized per-repository, per-index-content-version
+cache in the platform `ProjectDirs` cache directory, including its compatibility
+version, recorded root, schema, last access, direct SQLite/sidecar bytes,
+metadata state, and active lease status. Legacy repository-only cache identities
+remain visible and prunable. It does not open repository services and therefore
+works from any directory. JSON output contains Unix timestamps for automation.
+
+The versioned identity applies to automatically managed caches. An explicit
+`--database` path remains unchanged and must not be shared concurrently by
+incompatible index-content versions.
 
 `cache prune` requires at least one explicit selection policy:
 

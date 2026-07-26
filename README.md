@@ -262,9 +262,11 @@ want to advance only their existing registrations.
 
 ## Cache management
 
-LeanToken keeps one SQLite cache per canonical repository in the platform cache
-directory. Inspect usage and preview an age- or size-based cleanup before
-applying it:
+LeanToken keeps one SQLite cache per canonical repository and index-content
+version in the platform cache directory. Compatible builds share that managed
+cache, while an older process cannot downgrade a newer managed index after an
+upgrade. Inspect usage and preview an age- or size-based cleanup before applying
+it:
 
 ```bash
 leantoken cache list

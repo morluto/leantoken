@@ -236,9 +236,16 @@ active leaders and read-only followers are both protected rather than relying on
 the shorter leadership or operation locks. The lease identity remains after
 large cache artifacts and coordination sidecars are removed; replacing or
 unlinking the lock itself would let a returning process lock a different inode.
-Only strict hash directories under the platform-managed cache root participate;
-unexpected directory content and explicit databases outside that root fail
-closed from automatic deletion.
+Only strict legacy hashes or `v<index-content-version>-<hash>` directories under
+the platform-managed cache root participate; unexpected directory content,
+future content versions, and explicit databases outside that root fail closed
+from automatic deletion. Versioned identities let compatible builds share a
+cache without allowing an older process left alive during an upgrade to
+downgrade the newer index.
+
+An explicit database path preserves the caller-selected identity and is not
+rewritten by the managed-cache policy. Callers must not concurrently share one
+explicit database across incompatible index-content versions.
 
 MCP processes sharing one cache compete for a repository-scoped leadership
 lock. The leader alone owns automatic indexing and one filesystem watcher;
