@@ -1247,14 +1247,28 @@ where
     tokio::pin!(readiness);
     loop {
         let state_changed = mcp_services.state_changed.notified();
+        tokio::pin!(state_changed);
+        state_changed.as_mut().enable();
         if matches!(mcp_services.get(), McpServiceState::Failed(_)) {
             wait_cancellation.cancel();
             return Err(crate::Error::McpRuntimeStopped);
         }
         tokio::select! {
             ready = &mut readiness => {
+                if matches!(mcp_services.get(), McpServiceState::Failed(_)) {
+                    wait_cancellation.cancel();
+                    return Err(crate::Error::McpRuntimeStopped);
+                }
                 ready?;
+                if matches!(mcp_services.get(), McpServiceState::Failed(_)) {
+                    wait_cancellation.cancel();
+                    return Err(crate::Error::McpRuntimeStopped);
+                }
                 let result = operation().await;
+                if matches!(mcp_services.get(), McpServiceState::Failed(_)) {
+                    wait_cancellation.cancel();
+                    return Err(crate::Error::McpRuntimeStopped);
+                }
                 tracing::debug!(
                     tool,
                     waited_ms = started.elapsed().as_millis(),
@@ -1277,7 +1291,7 @@ where
                 );
                 return result;
             }
-            _ = state_changed => {}
+            _ = &mut state_changed => {}
         }
         if matches!(mcp_services.get(), McpServiceState::Failed(_)) {
             wait_cancellation.cancel();
@@ -1326,6 +1340,8 @@ impl McpServices {
         let started = Instant::now();
         loop {
             let state_changed = self.state_changed.notified();
+            tokio::pin!(state_changed);
+            state_changed.as_mut().enable();
             let state = self.get();
             if !matches!(state, McpServiceState::Starting(_)) {
                 tracing::debug!(
@@ -1347,7 +1363,7 @@ impl McpServices {
             tokio::select! {
                 _ = cancellation.cancelled() => return Err(crate::Error::Cancelled),
                 _ = tokio::time::sleep(remaining) => {},
-                _ = state_changed => {}
+                _ = &mut state_changed => {}
             }
         }
     }
@@ -2284,6 +2300,33 @@ mod tests {
             .await
             .expect("join initial-index retry")
             .expect_err("runtime failure must interrupt readiness retry");
+        assert!(matches!(error, crate::Error::McpRuntimeStopped));
+    }
+
+    #[tokio::test]
+    async fn initial_index_retry_prefers_runtime_failure_over_readiness_error() {
+        let (_server, mcp_services) = LeanTokenMcp::pending();
+        let failed_services = mcp_services.clone();
+
+        let error = retry_after_initial_index_with_policy(
+            "files",
+            &mcp_services,
+            CancellationToken::new(),
+            Duration::from_secs(30),
+            move |_| async move {
+                let mut state = failed_services
+                    .state
+                    .write()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let limits = state.limits();
+                *state = McpServiceState::Failed(limits);
+                Err(crate::Error::IndexNotReady)
+            },
+            || std::future::ready(Err::<(), _>(crate::Error::IndexNotReady)),
+        )
+        .await
+        .expect_err("terminal runtime failure must supersede readiness error");
+
         assert!(matches!(error, crate::Error::McpRuntimeStopped));
     }
 
