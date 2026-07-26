@@ -116,7 +116,11 @@ impl Services {
     ) -> Result<HistoryResponse> {
         validate_history_request(&request)?;
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.history_sync(request, &cancellation)).await?
+        self.blocking_executor
+            .run(cancellation, move |cancellation| {
+                this.history_sync(request, cancellation)
+            })
+            .await
     }
 
     fn history_sync(

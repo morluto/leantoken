@@ -1681,25 +1681,26 @@ impl Services {
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let (evaluation, baseline_source_tokens) = this.context_sync(
-                request,
-                workflow,
-                handoff,
-                &cancellation,
-                CandidateDiagnostics::Omit,
-                ContextSignals::PRODUCTION,
-            )?;
-            if let Some(baseline_source_tokens) = baseline_source_tokens {
-                this.record_token_savings(
-                    TokenSavingsOperation::Context,
-                    baseline_source_tokens,
-                    evaluation.response.meta.emitted_tokens,
-                );
-            }
-            Ok(evaluation.response)
-        })
-        .await?
+        self.blocking_executor
+            .run(cancellation, move |cancellation| {
+                let (evaluation, baseline_source_tokens) = this.context_sync(
+                    request,
+                    workflow,
+                    handoff,
+                    cancellation,
+                    CandidateDiagnostics::Omit,
+                    ContextSignals::PRODUCTION,
+                )?;
+                if let Some(baseline_source_tokens) = baseline_source_tokens {
+                    this.record_token_savings(
+                        TokenSavingsOperation::Context,
+                        baseline_source_tokens,
+                        evaluation.response.meta.emitted_tokens,
+                    );
+                }
+                Ok(evaluation.response)
+            })
+            .await
     }
 
     /// Retrieve context and expose pre-selection candidate paths for evaluation.
@@ -1708,19 +1709,19 @@ impl Services {
     /// frozen retrieval benchmarks and does not alter the MCP response schema.
     pub async fn context_evaluation(&self, request: ContextRequest) -> Result<ContextEvaluation> {
         let this = self.clone();
-        let cancellation = CancellationToken::new();
-        tokio::task::spawn_blocking(move || {
-            this.context_sync(
-                request,
-                ContextWorkflow::Implementation,
-                None,
-                &cancellation,
-                CandidateDiagnostics::Collect,
-                ContextSignals::PRODUCTION,
-            )
-            .map(|(evaluation, _)| evaluation)
-        })
-        .await?
+        self.blocking_executor
+            .run(CancellationToken::new(), move |cancellation| {
+                this.context_sync(
+                    request,
+                    ContextWorkflow::Implementation,
+                    None,
+                    cancellation,
+                    CandidateDiagnostics::Collect,
+                    ContextSignals::PRODUCTION,
+                )
+                .map(|(evaluation, _)| evaluation)
+            })
+            .await
     }
 
     /// Retrieve context under one evaluation-only dependency or caller policy.
@@ -1733,19 +1734,19 @@ impl Services {
         policy: ContextSignalPolicy,
     ) -> Result<ContextEvaluation> {
         let this = self.clone();
-        let cancellation = CancellationToken::new();
-        tokio::task::spawn_blocking(move || {
-            this.context_sync(
-                request,
-                ContextWorkflow::Implementation,
-                None,
-                &cancellation,
-                CandidateDiagnostics::Collect,
-                ContextSignals::evaluation(policy),
-            )
-            .map(|(evaluation, _)| evaluation)
-        })
-        .await?
+        self.blocking_executor
+            .run(CancellationToken::new(), move |cancellation| {
+                this.context_sync(
+                    request,
+                    ContextWorkflow::Implementation,
+                    None,
+                    cancellation,
+                    CandidateDiagnostics::Collect,
+                    ContextSignals::evaluation(policy),
+                )
+                .map(|(evaluation, _)| evaluation)
+            })
+            .await
     }
 
     fn append_workflow_candidates(

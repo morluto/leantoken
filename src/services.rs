@@ -19,7 +19,10 @@ use crate::tokens::response_token_accounting;
 use crate::{Config, Error, Result};
 
 mod change_receipt;
+#[cfg(test)]
+mod concurrency_profile;
 mod context;
+mod executor;
 mod files;
 mod handoff;
 mod history;
@@ -27,6 +30,7 @@ mod json;
 mod read;
 mod read_delta;
 mod receipts;
+mod reconciliation;
 mod search;
 pub(crate) mod validation;
 
@@ -102,6 +106,8 @@ pub struct Services {
     receipts: Arc<receipts::ReceiptRegistry>,
     read_deltas: Arc<read_delta::ReadDeltaRegistry>,
     next_receipt_id: Arc<AtomicU64>,
+    blocking_executor: executor::BlockingExecutor,
+    reconciliation: reconciliation::ReconciliationCoordinator,
 }
 
 trait RetrievalResponse: Serialize {
@@ -203,6 +209,12 @@ impl Services {
         let indexer = Indexer::new(Arc::clone(&config), storage.clone())?;
         let repository_root = indexer.repository_root();
         let coordination = IndexCoordination::for_database(&config.database_path);
+        let active_reconciliations = Arc::new(AtomicUsize::new(0));
+        let reconciliation = reconciliation::ReconciliationCoordinator::new(
+            indexer.clone(),
+            coordination.clone(),
+            Arc::clone(&active_reconciliations),
+        );
         Ok(Self {
             config,
             storage,
@@ -210,10 +222,12 @@ impl Services {
             repository_root,
             coordination,
             _cache_lease: cache_lease,
-            active_reconciliations: Arc::new(AtomicUsize::new(0)),
+            active_reconciliations,
             receipts: Arc::new(receipts::ReceiptRegistry::default()),
             read_deltas: Arc::new(read_delta::ReadDeltaRegistry::default()),
             next_receipt_id: Arc::new(AtomicU64::new(1)),
+            blocking_executor: executor::BlockingExecutor::default(),
+            reconciliation,
         })
     }
 
@@ -341,7 +355,9 @@ impl Services {
     /// Return index counts, generation, and freshness.
     pub async fn status(&self) -> Result<StatusResponse> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.status_sync()).await?
+        self.blocking_executor
+            .run(CancellationToken::new(), move |_| this.status_sync())
+            .await
     }
 
     /// Return status without initializing an existing SQLite cache.
@@ -391,7 +407,9 @@ impl Services {
     /// Return cumulative source-token savings estimates for this repository and tokenizer.
     pub async fn token_savings(&self) -> Result<TokenSavingsResponse> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.token_savings_sync()).await?
+        self.blocking_executor
+            .run(CancellationToken::new(), move |_| this.token_savings_sync())
+            .await
     }
 
     fn token_savings_sync(&self) -> Result<TokenSavingsResponse> {
@@ -515,7 +533,7 @@ impl Services {
         cancellation: CancellationToken,
     ) -> Result<()> {
         if consistency == IndexConsistency::ReconcileWorkingTree {
-            self.index_cancellable(false, cancellation).await?;
+            self.reconciliation.reconcile(cancellation).await?;
         }
         Ok(())
     }
@@ -712,6 +730,13 @@ fn remove_database_artifacts(database: &std::path::Path) -> Result<()> {
 
 struct ActiveReconciliation(Arc<AtomicUsize>);
 
+impl ActiveReconciliation {
+    fn new(counter: Arc<AtomicUsize>) -> Self {
+        counter.fetch_add(1, Ordering::AcqRel);
+        Self(counter)
+    }
+}
+
 impl Drop for ActiveReconciliation {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
@@ -734,7 +759,427 @@ fn wait_cancellable(cancellation: &CancellationToken, duration: Duration) -> Res
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::{Condvar, Mutex};
     use tokio_util::sync::CancellationToken;
+
+    #[derive(Default)]
+    struct ScanGate {
+        entered: Mutex<bool>,
+        open: Mutex<bool>,
+        changed: Condvar,
+    }
+
+    impl ScanGate {
+        fn wait(&self) {
+            *self.entered.lock().expect("scan gate entered") = true;
+            self.changed.notify_all();
+            let mut open = self.open.lock().expect("scan gate open");
+            while !*open {
+                open = self.changed.wait(open).expect("scan gate wait");
+            }
+        }
+
+        fn entered(&self) -> bool {
+            *self.entered.lock().expect("scan gate entered")
+        }
+
+        fn open(&self) {
+            *self.open.lock().expect("scan gate open") = true;
+            self.changed.notify_all();
+        }
+    }
+
+    async fn wait_until(predicate: impl Fn() -> bool) {
+        for _ in 0..10_000 {
+            if predicate() {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("condition was not reached");
+    }
+
+    async fn indexed_services() -> (tempfile::TempDir, Services) {
+        let root = tempfile::tempdir().expect("root");
+        fs::write(root.path().join("lib.rs"), "pub fn existing() {}\n").expect("source");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+        let services = Services::open(config).expect("services");
+        services.index(false).await.expect("initial index");
+        services.reconciliation.reset_diagnostics();
+        (root, services)
+    }
+
+    #[tokio::test]
+    async fn concurrent_consistency_requests_share_one_waiting_wave() {
+        let (_root, services) = indexed_services().await;
+        let held_operation = services
+            .coordination
+            .acquire_operation(&CancellationToken::new())
+            .expect("hold operation lock");
+
+        let calls = (0..8)
+            .map(|_| {
+                let services = services.clone();
+                tokio::spawn(async move {
+                    services
+                        .apply_consistency(
+                            IndexConsistency::ReconcileWorkingTree,
+                            CancellationToken::new(),
+                        )
+                        .await
+                })
+            })
+            .collect::<Vec<_>>();
+
+        wait_until(|| services.reconciliation.diagnostics().requests == 8).await;
+        let waiting = services.reconciliation.diagnostics();
+        assert_eq!(waiting.waves_created, 1);
+        assert_eq!(waiting.waves_started, 0);
+        assert_eq!(waiting.coalesced_requests, 7);
+
+        held_operation.release().expect("release operation lock");
+        for call in calls {
+            call.await.expect("join reconciliation").expect("reconcile");
+        }
+
+        let completed = services.reconciliation.diagnostics();
+        assert_eq!(completed.requests, 8);
+        assert_eq!(completed.waves_started, 1);
+        assert_eq!(completed.waves_completed, 1);
+        assert_eq!(completed.active_waves, 0);
+    }
+
+    #[tokio::test]
+    async fn failed_wave_fans_out_one_error_without_retry_scans() {
+        let (_root, services) = indexed_services().await;
+        let held_operation = services
+            .coordination
+            .acquire_operation(&CancellationToken::new())
+            .expect("hold operation lock");
+        services
+            .reconciliation
+            .set_before_scan_hook(Some(Arc::new(|| panic!("injected shared failure"))));
+
+        let calls = (0..8)
+            .map(|_| {
+                let services = services.clone();
+                tokio::spawn(async move {
+                    services
+                        .apply_consistency(
+                            IndexConsistency::ReconcileWorkingTree,
+                            CancellationToken::new(),
+                        )
+                        .await
+                })
+            })
+            .collect::<Vec<_>>();
+        wait_until(|| services.reconciliation.diagnostics().requests == 8).await;
+        assert_eq!(services.reconciliation.diagnostics().waves_created, 1);
+        held_operation.release().expect("release operation lock");
+
+        let mut failures = Vec::new();
+        for call in calls {
+            let Err(Error::ReconciliationFailed(error)) = call.await.expect("join reconciliation")
+            else {
+                panic!("coalesced caller should receive the shared failure");
+            };
+            assert!(matches!(error.as_ref(), Error::Join(join) if join.is_panic()));
+            failures.push(error);
+        }
+        assert!(
+            failures
+                .iter()
+                .all(|failure| Arc::ptr_eq(failure, &failures[0]))
+        );
+
+        let diagnostics = services.reconciliation.diagnostics();
+        assert_eq!(diagnostics.waves_created, 1);
+        assert_eq!(diagnostics.waves_started, 1);
+        assert_eq!(diagnostics.waves_failed, 1);
+        assert_eq!(diagnostics.active_waves, 0);
+        services.reconciliation.set_before_scan_hook(None);
+    }
+
+    #[tokio::test]
+    async fn reconciliation_waiter_admission_has_an_exact_boundary() {
+        let (_root, services) = indexed_services().await;
+        let held_operation = services
+            .coordination
+            .acquire_operation(&CancellationToken::new())
+            .expect("hold operation lock");
+
+        let calls = (0..reconciliation::DEFAULT_RECONCILIATION_ACTIVE_CAPACITY)
+            .map(|_| {
+                let services = services.clone();
+                tokio::spawn(async move {
+                    services
+                        .apply_consistency(
+                            IndexConsistency::ReconcileWorkingTree,
+                            CancellationToken::new(),
+                        )
+                        .await
+                })
+            })
+            .collect::<Vec<_>>();
+        wait_until(|| {
+            services.reconciliation.diagnostics().requests
+                == reconciliation::DEFAULT_RECONCILIATION_ACTIVE_CAPACITY as u64
+        })
+        .await;
+
+        assert!(matches!(
+            services
+                .apply_consistency(
+                    IndexConsistency::ReconcileWorkingTree,
+                    CancellationToken::new(),
+                )
+                .await,
+            Err(Error::RetrievalOverloaded)
+        ));
+        assert_eq!(services.reconciliation.diagnostics().rejected_requests, 1);
+
+        held_operation.release().expect("release operation lock");
+        for call in calls {
+            call.await.expect("join reconciliation").expect("reconcile");
+        }
+    }
+
+    #[tokio::test]
+    async fn caller_after_scan_start_waits_for_the_next_wave() {
+        let (root, services) = indexed_services().await;
+        let gate = Arc::new(ScanGate::default());
+        let hook_gate = Arc::clone(&gate);
+        services
+            .reconciliation
+            .set_before_scan_hook(Some(Arc::new(move || hook_gate.wait())));
+
+        let first_services = services.clone();
+        let first = tokio::spawn(async move {
+            first_services
+                .apply_consistency(
+                    IndexConsistency::ReconcileWorkingTree,
+                    CancellationToken::new(),
+                )
+                .await
+        });
+        wait_until(|| gate.entered()).await;
+
+        fs::write(
+            root.path().join("later.rs"),
+            "pub fn created_after_wave_started() {}\n",
+        )
+        .expect("later source");
+        let second_services = services.clone();
+        let second = tokio::spawn(async move {
+            second_services
+                .apply_consistency(
+                    IndexConsistency::ReconcileWorkingTree,
+                    CancellationToken::new(),
+                )
+                .await
+        });
+        wait_until(|| services.reconciliation.diagnostics().pending_waiters == 1).await;
+        gate.open();
+
+        first.await.expect("join first").expect("first wave");
+        second.await.expect("join second").expect("second wave");
+        services.reconciliation.set_before_scan_hook(None);
+
+        let diagnostics = services.reconciliation.diagnostics();
+        assert_eq!(diagnostics.requests, 2);
+        assert_eq!(diagnostics.waves_started, 2);
+        assert_eq!(diagnostics.waves_completed, 2);
+        let search = services
+            .search(SearchRequest {
+                query: "created_after_wave_started".into(),
+                mode: SearchMode::Identifier,
+                include_paths: Vec::new(),
+                exclude_paths: Vec::new(),
+                focus_paths: Vec::new(),
+                max_results: Some(5),
+                max_tokens: Some(100),
+                context_lines: Some(1),
+                case_sensitive: false,
+                all_occurrences: false,
+                prefer_structural: false,
+                receipt_id: None,
+                cursor: None,
+            })
+            .await
+            .expect("search later source");
+        assert!(search.hits.iter().any(|hit| hit.path == "later.rs"));
+    }
+
+    #[tokio::test]
+    async fn cancelling_the_only_pending_waiter_never_starts_its_wave() {
+        let (_root, services) = indexed_services().await;
+        let gate = Arc::new(ScanGate::default());
+        let hook_gate = Arc::clone(&gate);
+        services
+            .reconciliation
+            .set_before_scan_hook(Some(Arc::new(move || hook_gate.wait())));
+
+        let first_services = services.clone();
+        let first = tokio::spawn(async move {
+            first_services
+                .apply_consistency(
+                    IndexConsistency::ReconcileWorkingTree,
+                    CancellationToken::new(),
+                )
+                .await
+        });
+        wait_until(|| gate.entered()).await;
+
+        let cancellation = CancellationToken::new();
+        let second_services = services.clone();
+        let second_cancellation = cancellation.clone();
+        let second = tokio::spawn(async move {
+            second_services
+                .apply_consistency(IndexConsistency::ReconcileWorkingTree, second_cancellation)
+                .await
+        });
+        wait_until(|| services.reconciliation.diagnostics().pending_waiters == 1).await;
+        cancellation.cancel();
+        assert!(matches!(
+            second.await.expect("join cancelled waiter"),
+            Err(Error::Cancelled)
+        ));
+
+        gate.open();
+        first.await.expect("join first").expect("first wave");
+        services.reconciliation.set_before_scan_hook(None);
+        let diagnostics = services.reconciliation.diagnostics();
+        assert_eq!(diagnostics.waves_started, 1);
+        assert_eq!(diagnostics.waves_completed, 1);
+        assert_eq!(diagnostics.waves_cancelled_before_start, 1);
+        assert_eq!(diagnostics.cancelled_waiters, 1);
+    }
+
+    #[tokio::test]
+    async fn caller_after_a_cancelled_waiting_wave_uses_a_fresh_wave() {
+        let (_root, services) = indexed_services().await;
+        let held_operation = services
+            .coordination
+            .acquire_operation(&CancellationToken::new())
+            .expect("hold operation lock");
+
+        let cancellation = CancellationToken::new();
+        let first_services = services.clone();
+        let first_cancellation = cancellation.clone();
+        let first = tokio::spawn(async move {
+            first_services
+                .apply_consistency(IndexConsistency::ReconcileWorkingTree, first_cancellation)
+                .await
+        });
+        wait_until(|| services.reconciliation.diagnostics().requests == 1).await;
+        cancellation.cancel();
+        assert!(matches!(
+            first.await.expect("join cancelled first waiter"),
+            Err(Error::Cancelled)
+        ));
+
+        let second_services = services.clone();
+        let second = tokio::spawn(async move {
+            second_services
+                .apply_consistency(
+                    IndexConsistency::ReconcileWorkingTree,
+                    CancellationToken::new(),
+                )
+                .await
+        });
+        wait_until(|| {
+            let diagnostics = services.reconciliation.diagnostics();
+            diagnostics.requests == 2 && diagnostics.waves_created == 2
+        })
+        .await;
+        held_operation.release().expect("release operation lock");
+
+        second.await.expect("join second").expect("fresh wave");
+        let diagnostics = services.reconciliation.diagnostics();
+        assert_eq!(diagnostics.waves_created, 2);
+        assert_eq!(diagnostics.waves_started, 1);
+        assert_eq!(diagnostics.waves_completed, 1);
+        assert_eq!(diagnostics.waves_cancelled_before_start, 1);
+    }
+
+    #[tokio::test]
+    async fn aborting_a_running_waiter_does_not_cancel_its_wave() {
+        let (_root, services) = indexed_services().await;
+        let gate = Arc::new(ScanGate::default());
+        let hook_gate = Arc::clone(&gate);
+        services
+            .reconciliation
+            .set_before_scan_hook(Some(Arc::new(move || hook_gate.wait())));
+
+        let first_services = services.clone();
+        let first = tokio::spawn(async move {
+            first_services
+                .apply_consistency(
+                    IndexConsistency::ReconcileWorkingTree,
+                    CancellationToken::new(),
+                )
+                .await
+        });
+        wait_until(|| gate.entered()).await;
+        first.abort();
+        assert!(first.await.expect_err("aborted waiter").is_cancelled());
+
+        let second_services = services.clone();
+        let second = tokio::spawn(async move {
+            second_services
+                .apply_consistency(
+                    IndexConsistency::ReconcileWorkingTree,
+                    CancellationToken::new(),
+                )
+                .await
+        });
+        wait_until(|| services.reconciliation.diagnostics().pending_waiters == 1).await;
+        gate.open();
+
+        second.await.expect("join second").expect("second wave");
+        services.reconciliation.set_before_scan_hook(None);
+        let diagnostics = services.reconciliation.diagnostics();
+        assert_eq!(diagnostics.waves_started, 2);
+        assert_eq!(diagnostics.waves_completed, 2);
+        assert_eq!(diagnostics.cancelled_waiters, 1);
+    }
+
+    #[tokio::test]
+    async fn reconciliation_panic_releases_wave_state_and_keeps_services_usable() {
+        let (_root, services) = indexed_services().await;
+        services
+            .reconciliation
+            .set_before_scan_hook(Some(Arc::new(|| panic!("injected reconciliation panic"))));
+
+        assert!(matches!(
+            services
+                .apply_consistency(
+                    IndexConsistency::ReconcileWorkingTree,
+                    CancellationToken::new(),
+                )
+                .await,
+            Err(Error::ReconciliationFailed(error))
+                if matches!(error.as_ref(), Error::Join(join) if join.is_panic())
+        ));
+        let failed = services.reconciliation.diagnostics();
+        assert_eq!(failed.waves_started, 1);
+        assert_eq!(failed.waves_failed, 1);
+        assert_eq!(failed.active_waves, 0);
+
+        services.reconciliation.set_before_scan_hook(None);
+        services
+            .apply_consistency(
+                IndexConsistency::ReconcileWorkingTree,
+                CancellationToken::new(),
+            )
+            .await
+            .expect("later reconciliation");
+        let recovered = services.reconciliation.diagnostics();
+        assert_eq!(recovered.waves_started, 2);
+        assert_eq!(recovered.waves_completed, 1);
+        assert_eq!(recovered.active_waves, 0);
+    }
 
     #[tokio::test]
     async fn index_search_read_and_hash_delta() {
@@ -949,6 +1394,52 @@ mod tests {
             .await
             .expect_err("pre-cancelled request should stop");
         assert!(matches!(error, Error::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn token_savings_uses_the_shared_blocking_executor() {
+        let root = tempfile::tempdir().expect("root");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+        let mut services = Services::open(config).expect("services");
+        services.blocking_executor = executor::BlockingExecutor::new(1, 1, Duration::from_secs(30));
+
+        let gate = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let blocker = {
+            let executor = services.blocking_executor.clone();
+            let gate = Arc::clone(&gate);
+            let started = Arc::clone(&started);
+            tokio::spawn(async move {
+                executor
+                    .run(CancellationToken::new(), move |_| {
+                        started.store(true, Ordering::SeqCst);
+                        let (open, changed) = &*gate;
+                        let mut open = open.lock().expect("gate lock");
+                        while !*open {
+                            open = changed.wait(open).expect("gate wait");
+                        }
+                        Ok(())
+                    })
+                    .await
+            })
+        };
+        while !started.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+
+        assert!(matches!(
+            services.token_savings().await,
+            Err(Error::RetrievalOverloaded)
+        ));
+
+        let (open, changed) = &*gate;
+        *open.lock().expect("gate lock") = true;
+        changed.notify_all();
+        blocker
+            .await
+            .expect("blocker task")
+            .expect("blocker result");
     }
 
     #[test]

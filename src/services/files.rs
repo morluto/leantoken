@@ -428,7 +428,11 @@ impl Services {
         cancellation: CancellationToken,
     ) -> Result<FilesResponse> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.files_sync(request, &cancellation)).await?
+        self.blocking_executor
+            .run(cancellation, move |cancellation| {
+                this.files_sync(request, cancellation)
+            })
+            .await
     }
 
     fn files_sync(
