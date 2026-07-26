@@ -163,6 +163,34 @@ pub(super) fn classify_historical_symbol_change(
     })
 }
 
+pub(super) fn classify_historical_symbol_added(
+    path: &str,
+    after: &HistoricalSymbol,
+    after_signature: Option<&str>,
+) -> DiffSymbolChange {
+    DiffSymbolChange {
+        kind: DiffSymbolChangeKind::Added,
+        before: None,
+        after: Some(historical_evidence(path, after)),
+        modification: None,
+        public_contract_changed: explicitly_public(after_signature),
+    }
+}
+
+pub(super) fn classify_historical_symbol_removed(
+    path: &str,
+    before: &HistoricalSymbol,
+    before_signature: Option<&str>,
+) -> DiffSymbolChange {
+    DiffSymbolChange {
+        kind: DiffSymbolChangeKind::Removed,
+        before: Some(historical_evidence(path, before)),
+        after: None,
+        modification: None,
+        public_contract_changed: explicitly_public(before_signature),
+    }
+}
+
 pub(super) fn owner_test_coverage(
     changed_paths: &[&String],
     relationships: &BTreeSet<(String, String, String)>,

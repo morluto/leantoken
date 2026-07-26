@@ -6644,6 +6644,268 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
 }
 
 #[tokio::test]
+async fn symbol_history_resolves_qualified_names_and_absent_diff_endpoints() {
+    if !git_available() {
+        return;
+    }
+
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("src")).expect("source directory");
+    std::fs::write(
+        root.path().join("src/service.rs"),
+        "pub struct Services;\n\nimpl Services {\n    pub fn existing() -> bool { true }\n}\n",
+    )
+    .expect("base service");
+    std::fs::write(
+        root.path().join("src/deleted.rs"),
+        "pub fn deleted_endpoint() -> bool { true }\n",
+    )
+    .expect("deleted source");
+    init_git_repo(root.path());
+    let revision = |name: &str| {
+        String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", name])
+                .current_dir(root.path())
+                .output()
+                .expect("resolve revision")
+                .stdout,
+        )
+        .expect("UTF-8 revision")
+        .trim()
+        .to_owned()
+    };
+    let base = revision("HEAD");
+
+    std::fs::write(
+        root.path().join("src/service.rs"),
+        "pub struct Services;\n\nimpl Services {\n    pub fn existing() -> bool { true }\n\n    pub fn evaluate_read_receipt() -> bool { true }\n}\n",
+    )
+    .expect("head service");
+    std::fs::write(
+        root.path().join("src/added.rs"),
+        "pub fn introduced_endpoint() -> bool { true }\n",
+    )
+    .expect("added source");
+    std::fs::remove_file(root.path().join("src/deleted.rs")).expect("delete source");
+    for args in [
+        &["add", "-A"][..],
+        &["commit", "-m", "change symbol endpoints"][..],
+    ] {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root.path())
+            .output()
+            .expect("git commit command");
+        assert!(output.status.success());
+    }
+    let head = revision("HEAD");
+
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let qualified = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::ReadSymbol {
+                path: "src/service.rs".into(),
+                symbol: "Services.evaluate_read_receipt".into(),
+                revision: head.clone(),
+            },
+            max_results: None,
+            max_tokens: Some(200),
+        })
+        .await
+        .expect("qualified historical read");
+    let qualified_symbol = qualified.symbol.expect("qualified symbol");
+    assert_eq!(qualified_symbol.name, "evaluate_read_receipt");
+    assert_eq!(qualified_symbol.parent.as_deref(), Some("Services"));
+
+    let qualified_log = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::SymbolLog {
+                path: "src/service.rs".into(),
+                symbol: "Services.evaluate_read_receipt".into(),
+                revision: Some(head.clone()),
+            },
+            max_results: Some(10),
+            max_tokens: None,
+        })
+        .await
+        .expect("qualified symbol log");
+    assert!(
+        qualified_log
+            .commits
+            .iter()
+            .any(|commit| commit.subject == "change symbol endpoints")
+    );
+
+    let added_symbol = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::DiffSymbol {
+                path: "src/service.rs".into(),
+                symbol: "Services.evaluate_read_receipt".into(),
+                base_revision: base.clone(),
+                head_revision: head.clone(),
+            },
+            max_results: None,
+            max_tokens: Some(500),
+        })
+        .await
+        .expect("added nested symbol diff");
+    assert!(added_symbol.before.is_none());
+    assert_eq!(
+        added_symbol
+            .after
+            .as_ref()
+            .and_then(|symbol| symbol.parent.as_deref()),
+        Some("Services")
+    );
+    assert_eq!(
+        added_symbol
+            .semantic_change
+            .as_ref()
+            .map(|change| change.kind),
+        Some(DiffSymbolChangeKind::Added)
+    );
+    assert!(
+        added_symbol
+            .semantic_change
+            .as_ref()
+            .expect("added semantic change")
+            .public_contract_changed
+    );
+    assert!(
+        added_symbol
+            .diff
+            .as_deref()
+            .expect("added symbol patch")
+            .contains("+pub fn evaluate_read_receipt() -> bool { true }")
+    );
+
+    let added_file = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::DiffSymbol {
+                path: "src/added.rs".into(),
+                symbol: "introduced_endpoint".into(),
+                base_revision: base.clone(),
+                head_revision: head.clone(),
+            },
+            max_results: None,
+            max_tokens: Some(500),
+        })
+        .await
+        .expect("added file symbol diff");
+    assert!(added_file.before.is_none());
+    assert_eq!(
+        added_file
+            .semantic_change
+            .as_ref()
+            .map(|change| change.kind),
+        Some(DiffSymbolChangeKind::Added)
+    );
+    assert!(added_file.result_complete);
+
+    let truncated_added_file = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::DiffSymbol {
+                path: "src/added.rs".into(),
+                symbol: "introduced_endpoint".into(),
+                base_revision: base.clone(),
+                head_revision: head.clone(),
+            },
+            max_results: None,
+            max_tokens: Some(1),
+        })
+        .await
+        .expect("truncated added file symbol diff");
+    assert!(truncated_added_file.diff_truncated);
+    assert!(!truncated_added_file.result_complete);
+    assert!(truncated_added_file.before.is_none());
+    assert!(truncated_added_file.after.is_some());
+    assert_eq!(
+        truncated_added_file
+            .semantic_change
+            .as_ref()
+            .map(|change| change.kind),
+        Some(DiffSymbolChangeKind::Added)
+    );
+
+    let deleted_file = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::DiffSymbol {
+                path: "src/deleted.rs".into(),
+                symbol: "deleted_endpoint".into(),
+                base_revision: base.clone(),
+                head_revision: head.clone(),
+            },
+            max_results: None,
+            max_tokens: Some(500),
+        })
+        .await
+        .expect("deleted file symbol diff");
+    assert!(deleted_file.after.is_none());
+    assert_eq!(
+        deleted_file
+            .semantic_change
+            .as_ref()
+            .map(|change| change.kind),
+        Some(DiffSymbolChangeKind::Removed)
+    );
+    assert!(
+        deleted_file
+            .semantic_change
+            .as_ref()
+            .expect("removed semantic change")
+            .public_contract_changed
+    );
+    assert!(
+        deleted_file
+            .diff
+            .as_deref()
+            .expect("deleted symbol patch")
+            .contains("-pub fn deleted_endpoint() -> bool { true }")
+    );
+    assert_response_token_accounting!(deleted_file, Tokenizer::default());
+
+    let missing_file_read = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::ReadSymbol {
+                path: "src/added.rs".into(),
+                symbol: "introduced_endpoint".into(),
+                revision: base.clone(),
+            },
+            max_results: None,
+            max_tokens: Some(500),
+        })
+        .await
+        .expect_err("ordinary historical reads keep missing-file errors");
+    assert!(matches!(
+        missing_file_read,
+        Error::InvalidInput {
+            field: "path",
+            reason: "file does not exist at revision"
+        }
+    ));
+
+    let missing = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::DiffSymbol {
+                path: "src/service.rs".into(),
+                symbol: "Services.never_existed".into(),
+                base_revision: base,
+                head_revision: head,
+            },
+            max_results: None,
+            max_tokens: Some(500),
+        })
+        .await
+        .expect_err("both absent symbol endpoints must fail");
+    assert!(matches!(missing, Error::SymbolNotFound { .. }));
+}
+
+#[tokio::test]
 async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
     let root = tempfile::tempdir().expect("root");
     std::fs::create_dir(root.path().join("artifacts")).expect("artifact directory");

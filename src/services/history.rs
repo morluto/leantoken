@@ -1,13 +1,18 @@
 use similar::TextDiff;
 use tokio_util::sync::CancellationToken;
 
-use super::change_receipt::classify_historical_symbol_change;
+use super::change_receipt::{
+    classify_historical_symbol_added, classify_historical_symbol_change,
+    classify_historical_symbol_removed,
+};
 use super::validation::{MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input};
 use super::{Services, validate_positive_request_limit};
 use crate::model::{
     HistoricalSymbol, HistoryOperation, HistoryRequest, HistoryResponse, SymbolHistoryCommit,
 };
-use crate::repository::{git_blob_at_revision, git_line_history, normalize_relative};
+use crate::repository::{
+    GitBlob, git_blob_at_revision, git_diff_identity, git_line_history, normalize_relative,
+};
 use crate::{Error, Result, parser};
 
 const DEFAULT_HISTORY_RESULTS: usize = 20;
@@ -160,39 +165,77 @@ impl Services {
                 base_revision,
                 head_revision,
             } => {
+                let revisions =
+                    git_diff_identity(&self.config.root, &base_revision, Some(&head_revision))?;
                 check_cancelled(cancellation)?;
-                let mut before = self.historical_symbol(&path, &symbol, &base_revision)?;
+                let before =
+                    self.historical_symbol_optional(&path, &symbol, &revisions.base_revision)?;
                 check_cancelled(cancellation)?;
-                let mut after = self.historical_symbol(&path, &symbol, &head_revision)?;
-                let full_diff = TextDiff::from_lines(&before.content, &after.content)
+                let after =
+                    self.historical_symbol_optional(&path, &symbol, &revisions.head_revision)?;
+                if before.is_none() && after.is_none() {
+                    return Err(Error::SymbolNotFound {
+                        path: format!(
+                            "{path}@{}..{}",
+                            revisions.base_revision, revisions.head_revision
+                        ),
+                        symbol,
+                    });
+                }
+                let before_content = before
+                    .as_ref()
+                    .map_or("", |resolved| resolved.content.as_str());
+                let after_content = after
+                    .as_ref()
+                    .map_or("", |resolved| resolved.content.as_str());
+                let full_diff = TextDiff::from_lines(before_content, after_content)
                     .unified_diff()
                     .context_radius(3)
                     .header(
-                        &format!("{}:{}", before.symbol.revision, path),
-                        &format!("{}:{}", after.symbol.revision, path),
+                        &format!("{}:{path}", revisions.base_revision),
+                        &format!("{}:{path}", revisions.head_revision),
                     )
                     .to_string();
                 let total_diff_tokens = self.config.tokenizer.count(&full_diff);
                 let (diff, emitted_tokens) = self.config.tokenizer.truncate(&full_diff, max_tokens);
                 let diff_truncated = emitted_tokens < total_diff_tokens;
-                let semantic_change = classify_historical_symbol_change(
-                    &path,
-                    &before.symbol,
-                    before.signature.as_deref(),
-                    &before.content,
-                    &after.symbol,
-                    after.signature.as_deref(),
-                    &after.content,
-                );
-                before.symbol.content = None;
-                before.symbol.returned_end_line = 0;
-                after.symbol.content = None;
-                after.symbol.returned_end_line = 0;
+                let semantic_change = match (&before, &after) {
+                    (Some(before), Some(after)) => classify_historical_symbol_change(
+                        &path,
+                        &before.symbol,
+                        before.signature.as_deref(),
+                        &before.content,
+                        &after.symbol,
+                        after.signature.as_deref(),
+                        &after.content,
+                    ),
+                    (None, Some(after)) => Some(classify_historical_symbol_added(
+                        &path,
+                        &after.symbol,
+                        after.signature.as_deref(),
+                    )),
+                    (Some(before), None) => Some(classify_historical_symbol_removed(
+                        &path,
+                        &before.symbol,
+                        before.signature.as_deref(),
+                    )),
+                    (None, None) => unreachable!("both absent endpoints returned above"),
+                };
+                let before = before.map(|mut resolved| {
+                    resolved.symbol.content = None;
+                    resolved.symbol.returned_end_line = 0;
+                    resolved.symbol
+                });
+                let after = after.map(|mut resolved| {
+                    resolved.symbol.content = None;
+                    resolved.symbol.returned_end_line = 0;
+                    resolved.symbol
+                });
                 HistoryResponse {
                     kind: "diff_symbol".into(),
                     symbol: None,
-                    before: Some(before.symbol),
-                    after: Some(after.symbol),
+                    before,
+                    after,
                     diff: Some(diff.to_owned()),
                     diff_truncated,
                     semantic_change,
@@ -260,22 +303,68 @@ impl Services {
             path,
             usize::try_from(self.config.max_file_bytes).unwrap_or(usize::MAX),
         )?;
-        let parsed = parser::parse(path, &blob.content)?;
-        let symbol = parsed
-            .symbols
-            .into_iter()
-            .find(|symbol| symbol.name == symbol_name)
+        let resolved_revision = blob.revision.clone();
+        self.resolve_historical_symbol(path, symbol_name, blob)?
             .ok_or_else(|| Error::SymbolNotFound {
-                path: format!("{path}@{}", blob.revision),
+                path: format!("{path}@{resolved_revision}"),
                 symbol: symbol_name.to_owned(),
-            })?;
+            })
+    }
+
+    fn historical_symbol_optional(
+        &self,
+        path: &str,
+        symbol_name: &str,
+        revision: &str,
+    ) -> Result<Option<ResolvedHistoricalSymbol>> {
+        let blob = match git_blob_at_revision(
+            &self.config.root,
+            revision,
+            path,
+            usize::try_from(self.config.max_file_bytes).unwrap_or(usize::MAX),
+        ) {
+            Ok(blob) => blob,
+            Err(Error::InvalidInput {
+                field: "path",
+                reason: "file does not exist at revision",
+            }) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        self.resolve_historical_symbol(path, symbol_name, blob)
+    }
+
+    fn resolve_historical_symbol(
+        &self,
+        path: &str,
+        symbol_name: &str,
+        blob: GitBlob,
+    ) -> Result<Option<ResolvedHistoricalSymbol>> {
+        let parsed = parser::parse(path, &blob.content)?;
+        let mut symbols = parsed.symbols;
+        let symbol_index = symbols
+            .iter()
+            .position(|symbol| symbol.name == symbol_name)
+            .or_else(|| {
+                symbols.iter().position(|symbol| {
+                    symbol.parent.as_deref().is_some_and(|parent| {
+                        symbol_name
+                            .strip_prefix(parent)
+                            .and_then(|suffix| suffix.strip_prefix('.'))
+                            == Some(symbol.name.as_str())
+                    })
+                })
+            });
+        let Some(symbol_index) = symbol_index else {
+            return Ok(None);
+        };
+        let symbol = symbols.remove(symbol_index);
         let content = blob
             .content
             .get(symbol.start_byte..symbol.end_byte)
             .ok_or_else(|| Error::InternalFailure("invalid historical symbol range".into()))?
             .to_owned();
         let content_hash = crate::text::hash(&content);
-        Ok(ResolvedHistoricalSymbol {
+        Ok(Some(ResolvedHistoricalSymbol {
             symbol: HistoricalSymbol {
                 revision: blob.revision,
                 path: path.to_owned(),
@@ -291,7 +380,7 @@ impl Services {
             },
             signature: symbol.signature,
             content,
-        })
+        }))
     }
 }
 

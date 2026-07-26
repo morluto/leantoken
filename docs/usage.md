@@ -489,6 +489,11 @@ working tree or index:
 
 Historical paths are repository-relative, revisions are resolved before object
 lookup, and blobs remain subject to the configured per-file byte limit.
+Nested symbols use the same `parent.name` qualification accepted by exact live
+reads. `diff_symbol` permits the file or symbol to be absent at one endpoint:
+`before` or `after` is omitted, the unified diff contains the complete bounded
+addition or deletion, and `semantic_change.kind` is `added` or `removed`. A
+symbol absent at both endpoints remains a typed `symbol_not_found` error.
 `max_tokens` defaults to 8,000 and applies to historical source or unified diff;
 truncation is explicit through `result_complete`, `HistoricalSymbol.truncated`,
 or `diff_truncated`. `max_results` defaults to 20 and is capped at 100 for
@@ -499,10 +504,10 @@ has no index consistency mode because Git objects are immutable.
 `diff_symbol` also returns `semantic_change` when the matched symbol content
 differs. The receipt classifies the change as `modified`, distinguishes
 `signature_changed` from `body_only`, and marks `public_contract_changed` only
-when an explicitly `pub`, `public`, or `export` signature changes. The unified
-diff remains the source of truth. Added, removed, and renamed definitions are
-classified by immutable review context, where both changed paths and symbol
-names can vary.
+when an explicitly `pub`, `public`, or `export` signature changes. Added and
+removed exact symbols use the same public-contract rule. The unified diff
+remains the source of truth. Renames are classified by immutable review context,
+where both changed paths and symbol names can vary.
 
 For context restricted to immutable history, pass `BASE..HEAD` as
 `leantoken.context.base_revision` with `strict_changed_paths: true`. A single

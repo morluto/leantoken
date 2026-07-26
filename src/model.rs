@@ -569,7 +569,7 @@ pub enum HistoryOperation {
     ReadSymbol {
         /// Repository-relative source path.
         path: String,
-        /// Exact parsed symbol name.
+        /// Exact parsed symbol name, optionally qualified as `parent.name`.
         symbol: String,
         /// Git revision containing the source blob.
         revision: String,
@@ -578,7 +578,7 @@ pub enum HistoryOperation {
     DiffSymbol {
         /// Repository-relative source path at both revisions.
         path: String,
-        /// Exact parsed symbol name.
+        /// Exact parsed symbol name, optionally qualified as `parent.name`.
         symbol: String,
         /// Older Git revision.
         base_revision: String,
@@ -589,7 +589,7 @@ pub enum HistoryOperation {
     SymbolLog {
         /// Repository-relative source path.
         path: String,
-        /// Exact parsed symbol name at `revision`.
+        /// Exact parsed symbol name at `revision`, optionally qualified as `parent.name`.
         symbol: String,
         /// Revision from which line history starts; defaults to `HEAD`.
         #[serde(default)]
