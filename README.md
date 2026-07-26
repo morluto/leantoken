@@ -20,10 +20,11 @@ read exact ranges, and explore Git history through a CLI and MCP server.
 
 ---
 
-> **Measured, task-specific evidence:** In a frozen 60-run study using Codex
-> CLI 0.144.1 across four pinned repositories, an opt-in LeanToken context
-> bundle used 20.1% less total model input than thin native exploration and
-> 37.6% less than full native exploration. See the [measurement methodology](docs/measurement.md).
+> **Measured, task-specific evidence:** When enabled, LeanToken helped coding
+> agents send 20.1% fewer input tokens to the model than lightweight repository
+> exploration, and 37.6% fewer than broad repository exploration. These results
+> come from a controlled 60-run comparison using Codex CLI 0.144.1, the same
+> task setup, and four pinned repositories. See the [measurement methodology](docs/measurement.md).
 
 ## Quick start
 
