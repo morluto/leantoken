@@ -89,6 +89,20 @@ storage, or cancellation error rolls back every earlier batch. Replacements,
 deletions, and generation advancement become visible together at the final
 commit.
 
+Profiled reconciliation can additionally attribute relational insertion, each
+of the four FTS rebuilds, commit, checkpoint, Linux process write bytes, and
+`dbstat` FTS footprints. It also sums per-file worker durations for reads, text
+preparation, hashing, parsing, whole-file token counting, chunk token counting,
+and record projection. Worker durations overlap and are not wall-clock phases.
+This diagnostic path uses a disposable serialized writer connection with
+automatic checkpointing disabled and performs an explicit post-commit
+`TRUNCATE` checkpoint; the ordinary writer retains normal WAL behavior.
+Post-commit diagnostic failure is reported as incomplete profiling rather than
+turning an already committed publication into a failed operation. The OpenClaw
+profile keeps `columnsize=1`: removing the four FTS docsize tables saved only
+1.80% of database bytes and made BM25-backed context roughly 2.5–3.1× slower
+because SQLite retokenized external content on demand.
+
 Each multi-step retrieval (search, context, outline, files, read) opens one
 checked-out read-only connection from an established, bounded `r2d2_sqlite`
 pool and holds a DEFERRED transaction for the request
@@ -287,26 +301,56 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | --- | --- |
 | Context query terms | 12 (`MAX_CONTEXT_QUERIES`) |
 | Context hits per term/source | 20 symbols/refs, 30 FTS |
-| Regex match candidates | `min(max_results × 20, 2000)` |
-| Regex files scanned | 10_000 |
-| Regex chunks per file | 256 |
-| File scan page size | 1_000 for regex/find/glob; tree queries `max_results + 1` projected paths |
+| Regex matching chunks | `min(max_results × 20, 2000)` |
+| Trigram candidate chunks | 10_000 |
+| Lightweight rows inspected for path-scoped trigram planning | 100_000 |
+| Full-scan fallback files | 10_000 |
+| Full-scan fallback chunks per file | 256 |
+| File scan page size | 1_000 for find/glob; tree queries `max_results + 1` projected paths |
 
-Regex mode verifies patterns over snapshot file pages without materializing the
-repository path list. Prefer symbol/identifier/text modes when a full-repo scan
-is unnecessary. Compiled regex size and DFA cache are also limited so
+Regex mode first parses a bounded HIR candidate plan. Mandatory case-sensitive
+ASCII word literals of at least three bytes become trigram `AND`/`OR`
+expressions; the compiled Rust regex then verifies only those candidate chunks.
+Alternations with an unplanned branch, optional-only literals,
+case-insensitive Unicode semantics, short literals, and planner budget
+exhaustion retain the bounded full-scan fallback. A capped FTS row-count
+preflight rejects plans with more than 10,000 candidate chunks without loading
+their bodies. Sound plans do not inherit the fallback's 10,000-file or
+256-chunk-per-file scan bounds because they do not enumerate those rows.
+Path-scoped plans apply include/exclude filters to lightweight chunk ID/path
+rows before the 10,000-candidate bound, hydrate only admitted IDs, and fail
+explicitly if more than 100,000 FTS rows would need inspection. Both paths
+retain the matching-chunk limit, while the fallback retains its file and
+per-file chunk limits. Compiled regex size and DFA cache are also limited so
 pathological patterns fail closed.
 
 Run the reproducible hot-path profile with, for example,
 `cargo run --example hot_path_bounds --release -- --files 10000 --iterations 20`.
-It reports warm p50/p95 wall time; run the command under `/usr/bin/time -v` when
-process CPU and peak RSS are required. Results are host-local and should only be
-compared on the same machine and release profile.
+It reports warm p50/p95 wall time plus deterministic regex and context phase
+counters. Evaluation-only context output also includes diagnostic wall-time
+phases; candidate generation includes its nested lookup phases, so those fields
+must not be summed. Use counters—not timing thresholds—to assert candidate
+selection and fallback behavior. Run the command under `/usr/bin/time -v` when
+process CPU and peak RSS are required. Results are host-local and should only
+be compared on the same machine and release profile.
+
+`real_repository_profile` applies the same counters to an existing checkout
+while keeping its SQLite index outside the source tree. Omit `--database` for a
+disposable index, or provide it and use `--skip-index` for subsequent
+steady-state samples:
+
+```bash
+cargo run --release --example real_repository_profile -- \
+  --repository /path/to/repository --iterations 5
+```
 
 ## Live read vs index
 
 `leantoken.read` always reads the live filesystem for the returned body while
-symbol resolution and path admission use the index. Responses include:
+symbol resolution and path admission use the index. A complete read hashes the
+file and extracts its bounded range during one forward stream. A
+token-truncated read performs one additional full-hash verification before
+issuing a continuation cursor. Responses include:
 
 - `meta.repository_generation` — committed generation used for index lookups;
 - `meta.freshness` — `current` or `reconciling` (local activity or the shared

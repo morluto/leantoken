@@ -923,8 +923,28 @@ fn profiled_reconcile_reports_bounded_batch_high_water_and_phases() {
     assert_eq!(profiled.diagnostics.preparation_batches, 2);
     assert_eq!(profiled.diagnostics.max_batch_files, 2);
     assert!(profiled.diagnostics.max_batch_source_bytes <= total_bytes);
+    assert_eq!(
+        profiled.diagnostics.preparation_detail.files_profiled,
+        profiled.response.files_indexed
+    );
     assert!(profiled.diagnostics.total_ms >= profiled.diagnostics.discovery_ms);
     assert!(profiled.diagnostics.publication_ms >= profiled.diagnostics.preparation_ms);
+    let publication = &profiled.diagnostics.publication_detail;
+    assert!(publication.post_commit_diagnostics_complete);
+    assert!(publication.database_bytes > 0);
+    assert!(publication.fts_storage.chunk_word_bytes > 0);
+    assert!(publication.fts_storage.chunk_trigram_bytes > 0);
+    assert!(publication.fts_storage.symbol_bytes > 0);
+    assert!(publication.fts_storage.reference_bytes > 0);
+    assert!(
+        publication.database_bytes
+            >= publication
+                .fts_storage
+                .chunk_word_bytes
+                .saturating_add(publication.fts_storage.chunk_trigram_bytes)
+                .saturating_add(publication.fts_storage.symbol_bytes)
+                .saturating_add(publication.fts_storage.reference_bytes)
+    );
 }
 
 #[test]

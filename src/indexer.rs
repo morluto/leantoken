@@ -19,7 +19,8 @@ use crate::repository::{
     validate_relative,
 };
 use crate::storage::{
-    ChunkInput, ImportInput, ImportProjection, IndexedFile, ReferenceInput, Storage, SymbolInput,
+    ChunkInput, ImportInput, ImportProjection, IndexedFile, PublicationDiagnostics,
+    ReconciliationWriter, ReferenceInput, Storage, SymbolInput, process_write_bytes,
 };
 use crate::text::{PreparedText, TextKind, hash_bytes};
 use crate::{Config, Error, Result};
@@ -52,10 +53,17 @@ pub struct IndexingDiagnostics {
     pub hash_and_plan_ms: f64,
     /// Parallel file read, chunk, tokenize, and parse time.
     pub preparation_ms: f64,
+    /// Summed worker time for profiled preparation subphases.
+    ///
+    /// These durations overlap across Rayon workers and therefore describe
+    /// aggregate work, not additional wall time.
+    pub preparation_detail: PreparationDiagnostics,
     /// Import resolution and SQLite insertion time inside batch callbacks.
     pub insertion_ms: f64,
     /// Total lifetime of the generation publication transaction.
     pub publication_ms: f64,
+    /// Storage-level phases and footprint captured only by profiled reconciliation.
+    pub publication_detail: PublicationDiagnostics,
     /// Number of bounded preparation batches consumed.
     pub preparation_batches: usize,
     /// Largest number of files held in one prepared batch.
@@ -68,6 +76,29 @@ pub struct IndexingDiagnostics {
     pub discovered_files: u64,
     /// Aggregate metadata bytes admitted by discovery.
     pub discovered_source_bytes: u64,
+}
+
+/// Diagnostic-only worker-time attribution for parallel file preparation.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct PreparationDiagnostics {
+    /// Files for which subphase measurements were collected.
+    pub files_profiled: usize,
+    /// Summed end-to-end worker time across files.
+    pub total_worker_ms: f64,
+    /// Bounded source-file reads.
+    pub read_ms: f64,
+    /// UTF-8 validation, binary classification, and chunk boundary construction.
+    pub text_prepare_ms: f64,
+    /// Content hashing.
+    pub hash_ms: f64,
+    /// Tree-sitter language parsing and syntax extraction.
+    pub parse_ms: f64,
+    /// Whole-file source-token counting.
+    pub source_token_count_ms: f64,
+    /// Per-chunk token counting.
+    pub chunk_token_count_ms: f64,
+    /// Conversion from parser/text output into storage input records.
+    pub projection_ms: f64,
 }
 
 /// Full reconciliation response paired with diagnostics excluded from MCP output.
@@ -91,10 +122,59 @@ pub struct ProfiledIndexReport {
 #[derive(Debug, Default)]
 struct PreparationMetrics {
     preparation: Duration,
+    detail: FilePreparationDiagnostics,
     insertion: Duration,
+    insertion_write_bytes: Option<u64>,
     batches: usize,
     max_batch_files: usize,
     max_batch_source_bytes: u64,
+}
+
+#[derive(Debug, Default)]
+struct FilePreparationDiagnostics {
+    files_profiled: usize,
+    total: Duration,
+    read: Duration,
+    text_prepare: Duration,
+    hash: Duration,
+    parse: Duration,
+    source_token_count: Duration,
+    chunk_token_count: Duration,
+    projection: Duration,
+}
+
+impl FilePreparationDiagnostics {
+    fn add(&mut self, other: Self) {
+        self.files_profiled = self.files_profiled.saturating_add(other.files_profiled);
+        self.total += other.total;
+        self.read += other.read;
+        self.text_prepare += other.text_prepare;
+        self.hash += other.hash;
+        self.parse += other.parse;
+        self.source_token_count += other.source_token_count;
+        self.chunk_token_count += other.chunk_token_count;
+        self.projection += other.projection;
+    }
+
+    fn report(&self) -> PreparationDiagnostics {
+        PreparationDiagnostics {
+            files_profiled: self.files_profiled,
+            total_worker_ms: duration_ms(self.total),
+            read_ms: duration_ms(self.read),
+            text_prepare_ms: duration_ms(self.text_prepare),
+            hash_ms: duration_ms(self.hash),
+            parse_ms: duration_ms(self.parse),
+            source_token_count_ms: duration_ms(self.source_token_count),
+            chunk_token_count_ms: duration_ms(self.chunk_token_count),
+            projection_ms: duration_ms(self.projection),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StorageProfiling {
+    Omit,
+    Collect,
 }
 
 struct LazyWorkerPool {
@@ -240,8 +320,7 @@ impl Indexer {
 
     /// Reconcile filesystem state and include bounded preparation skip reasons.
     pub fn reconcile_report(&self, rebuild: bool) -> Result<IndexReport> {
-        self.reconcile_profiled_report(rebuild)
-            .map(|profiled| profiled.report)
+        self.reconcile_cancellable_report(rebuild, &CancellationToken::new())
     }
 
     /// Reconcile a full repository and return phase diagnostics for benchmarks.
@@ -274,7 +353,7 @@ impl Indexer {
         rebuild: bool,
         cancellation: &CancellationToken,
     ) -> Result<IndexReport> {
-        self.reconcile_cancellable_profiled_report(rebuild, cancellation)
+        self.reconcile_cancellable_report_inner(rebuild, cancellation, StorageProfiling::Omit)
             .map(|profiled| profiled.report)
     }
 
@@ -296,8 +375,17 @@ impl Indexer {
         rebuild: bool,
         cancellation: &CancellationToken,
     ) -> Result<ProfiledIndexReport> {
+        self.reconcile_cancellable_report_inner(rebuild, cancellation, StorageProfiling::Collect)
+    }
+
+    fn reconcile_cancellable_report_inner(
+        &self,
+        rebuild: bool,
+        cancellation: &CancellationToken,
+        profiling: StorageProfiling,
+    ) -> Result<ProfiledIndexReport> {
         for _ in 0..3 {
-            match self.reconcile_once(rebuild, cancellation) {
+            match self.reconcile_once(rebuild, cancellation, profiling) {
                 Err(Error::StaleReconciliation { .. }) => continue,
                 result => return result,
             }
@@ -309,14 +397,31 @@ impl Indexer {
         &self,
         rebuild: bool,
         cancellation: &CancellationToken,
+        profiling: StorageProfiling,
     ) -> Result<ProfiledIndexReport> {
-        self.reconcile_once_with_preparation_hook(rebuild, cancellation, || {})
+        self.reconcile_once_with_profiling_hook(rebuild, cancellation, profiling, || {})
     }
 
+    #[cfg(test)]
     fn reconcile_once_with_preparation_hook(
         &self,
         rebuild: bool,
         cancellation: &CancellationToken,
+        before_preparation: impl FnOnce(),
+    ) -> Result<ProfiledIndexReport> {
+        self.reconcile_once_with_profiling_hook(
+            rebuild,
+            cancellation,
+            StorageProfiling::Omit,
+            before_preparation,
+        )
+    }
+
+    fn reconcile_once_with_profiling_hook(
+        &self,
+        rebuild: bool,
+        cancellation: &CancellationToken,
+        profiling: StorageProfiling,
         before_preparation: impl FnOnce(),
     ) -> Result<ProfiledIndexReport> {
         let total_started = Instant::now();
@@ -396,71 +501,87 @@ impl Indexer {
         let mut files_indexed = 0usize;
         before_preparation();
         let publication_started = Instant::now();
-        let (generation, preparation) =
-            self.storage
-                .publish_reconciliation_at(&baseline, &config_hash, rebuild, |writer| {
-                    for path in &removed_paths {
-                        writer.delete(path)?;
-                    }
-                    let preparation =
-                        self.prepare_candidate_batches(&candidates, cancellation, |prepared| {
-                            let mut indexed = Vec::with_capacity(prepared.len());
-                            let mut source_token_counts = HashMap::with_capacity(prepared.len());
-                            for result in prepared {
-                                check_cancelled(cancellation)?;
-                                match result {
-                                    PreparedFile::Indexed(file, source_token_count, warning) => {
-                                        source_bytes.replace(&file.path, file.size_bytes);
-                                        source_token_counts
-                                            .insert(file.path.clone(), source_token_count);
-                                        indexed.push(*file);
-                                        if let Some(warning) = warning {
-                                            push_warning(&mut warnings, warning);
-                                        }
-                                    }
-                                    PreparedFile::Binary(path) => {
-                                        source_bytes.remove(&path);
-                                        skip_reasons.binary = skip_reasons.binary.saturating_add(1);
-                                        if existing.contains_key(&path)
-                                            && removed_paths.insert(path.clone())
-                                        {
-                                            writer.delete(&path)?;
-                                        }
-                                    }
-                                    PreparedFile::Oversized(path) => {
-                                        source_bytes.remove(&path);
-                                        skip_reasons.oversized_during_read =
-                                            skip_reasons.oversized_during_read.saturating_add(1);
-                                        if existing.contains_key(&path)
-                                            && removed_paths.insert(path.clone())
-                                        {
-                                            writer.delete(&path)?;
-                                        }
-                                    }
-                                    PreparedFile::Failed(path, error) => {
-                                        skip_reasons.failed = skip_reasons.failed.saturating_add(1);
-                                        push_warning(&mut warnings, format!("{path}: {error}"));
-                                    }
+        let publish = |writer: &mut ReconciliationWriter<'_, '_>| {
+            for path in &removed_paths {
+                writer.delete(path)?;
+            }
+            let preparation =
+                self.prepare_candidate_batches(&candidates, cancellation, profiling, |prepared| {
+                    let mut indexed = Vec::with_capacity(prepared.len());
+                    let mut source_token_counts = HashMap::with_capacity(prepared.len());
+                    for result in prepared {
+                        check_cancelled(cancellation)?;
+                        match result {
+                            PreparedFile::Indexed(file, source_token_count, warning) => {
+                                source_bytes.replace(&file.path, file.size_bytes);
+                                source_token_counts.insert(file.path.clone(), source_token_count);
+                                indexed.push(*file);
+                                if let Some(warning) = warning {
+                                    push_warning(&mut warnings, warning);
                                 }
                             }
-                            resolve_imports(&mut indexed, &repository_paths, cancellation)?;
-                            files_indexed = files_indexed.saturating_add(indexed.len());
-                            for file in indexed {
-                                check_cancelled(cancellation)?;
-                                let source_token_count = source_token_counts
-                                    .remove(&file.path)
-                                    .expect("prepared file has a source token count");
-                                writer.replace_with_source_tokens(
-                                    file,
-                                    self.config.tokenizer.name(),
-                                    source_token_count,
-                                )?;
+                            PreparedFile::Binary(path) => {
+                                source_bytes.remove(&path);
+                                skip_reasons.binary = skip_reasons.binary.saturating_add(1);
+                                if existing.contains_key(&path)
+                                    && removed_paths.insert(path.clone())
+                                {
+                                    writer.delete(&path)?;
+                                }
                             }
-                            Ok(())
-                        })?;
-                    source_bytes.enforce()?;
-                    Ok(preparation)
+                            PreparedFile::Oversized(path) => {
+                                source_bytes.remove(&path);
+                                skip_reasons.oversized_during_read =
+                                    skip_reasons.oversized_during_read.saturating_add(1);
+                                if existing.contains_key(&path)
+                                    && removed_paths.insert(path.clone())
+                                {
+                                    writer.delete(&path)?;
+                                }
+                            }
+                            PreparedFile::Failed(path, error) => {
+                                skip_reasons.failed = skip_reasons.failed.saturating_add(1);
+                                push_warning(&mut warnings, format!("{path}: {error}"));
+                            }
+                        }
+                    }
+                    resolve_imports(&mut indexed, &repository_paths, cancellation)?;
+                    files_indexed = files_indexed.saturating_add(indexed.len());
+                    for file in indexed {
+                        check_cancelled(cancellation)?;
+                        let source_token_count = source_token_counts
+                            .remove(&file.path)
+                            .expect("prepared file has a source token count");
+                        writer.replace_with_source_tokens(
+                            file,
+                            self.config.tokenizer.name(),
+                            source_token_count,
+                        )?;
+                    }
+                    Ok(())
                 })?;
+            source_bytes.enforce()?;
+            Ok(preparation)
+        };
+        let (generation, preparation, mut publication_detail) =
+            if profiling == StorageProfiling::Collect {
+                self.storage.publish_reconciliation_profiled_at(
+                    &baseline,
+                    &config_hash,
+                    rebuild,
+                    publish,
+                )?
+            } else {
+                let (generation, preparation) = self.storage.publish_reconciliation_at(
+                    &baseline,
+                    &config_hash,
+                    rebuild,
+                    publish,
+                )?;
+                (generation, preparation, PublicationDiagnostics::default())
+            };
+        publication_detail.relational_write_ms = duration_ms(preparation.insertion);
+        publication_detail.relational_write_bytes = preparation.insertion_write_bytes;
         let publication_elapsed = publication_started.elapsed();
 
         check_cancelled(cancellation)?;
@@ -483,8 +604,10 @@ impl Indexer {
             discovery_ms: duration_ms(discovery_elapsed),
             hash_and_plan_ms: duration_ms(planning_elapsed),
             preparation_ms: duration_ms(preparation.preparation),
+            preparation_detail: preparation.detail.report(),
             insertion_ms: duration_ms(preparation.insertion),
             publication_ms: duration_ms(publication_elapsed),
+            publication_detail,
             preparation_batches: preparation.batches,
             max_batch_files: preparation.max_batch_files,
             max_batch_source_bytes: preparation.max_batch_source_bytes,
@@ -825,8 +948,11 @@ impl Indexer {
                         )?;
                     }
                     writer.refresh_import_projections(&import_projections)?;
-                    let preparation =
-                        self.prepare_candidate_batches(&candidates, cancellation, |prepared| {
+                    let preparation = self.prepare_candidate_batches(
+                        &candidates,
+                        cancellation,
+                        StorageProfiling::Omit,
+                        |prepared| {
                             let mut indexed = Vec::with_capacity(prepared.len());
                             let mut source_token_counts = HashMap::with_capacity(prepared.len());
                             for result in prepared {
@@ -889,7 +1015,8 @@ impl Indexer {
                                 )?;
                             }
                             Ok(())
-                        })?;
+                        },
+                    )?;
                     source_bytes.enforce()?;
                     Ok(preparation)
                 })?;
@@ -918,6 +1045,7 @@ impl Indexer {
         &self,
         candidates: &[DiscoveredFile],
         cancellation: &CancellationToken,
+        profiling: StorageProfiling,
         mut consume: impl FnMut(Vec<PreparedFile>) -> Result<()>,
     ) -> Result<PreparationMetrics> {
         check_cancelled(cancellation)?;
@@ -951,29 +1079,74 @@ impl Indexer {
             metrics.max_batch_files = metrics.max_batch_files.max(end - start);
             metrics.max_batch_source_bytes = metrics.max_batch_source_bytes.max(batch_source_bytes);
             let preparation_started = Instant::now();
-            let batch = pool.install(|| {
-                candidates[start..end]
-                    .par_iter()
-                    .map(|file| {
-                        check_cancelled(cancellation)?;
-                        let prepared = prepare_file(
-                            &self.repository_root,
-                            file,
-                            chunk_lines,
-                            chunk_bytes,
-                            tokenizer,
-                            limits.max_file_bytes,
-                            cancellation,
-                        )?;
-                        check_cancelled(cancellation)?;
-                        Ok(prepared)
-                    })
-                    .collect::<Result<Vec<_>>>()
-            })?;
+            let batch = if profiling == StorageProfiling::Collect {
+                let profiled = pool.install(|| {
+                    candidates[start..end]
+                        .par_iter()
+                        .map(|file| {
+                            check_cancelled(cancellation)?;
+                            let mut detail = FilePreparationDiagnostics::default();
+                            let prepared = prepare_file_profiled(
+                                &self.repository_root,
+                                file,
+                                chunk_lines,
+                                chunk_bytes,
+                                tokenizer,
+                                limits.max_file_bytes,
+                                cancellation,
+                                &mut detail,
+                            )?;
+                            check_cancelled(cancellation)?;
+                            Ok((prepared, detail))
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })?;
+                let mut batch = Vec::with_capacity(profiled.len());
+                for (prepared, detail) in profiled {
+                    metrics.detail.add(detail);
+                    batch.push(prepared);
+                }
+                batch
+            } else {
+                pool.install(|| {
+                    candidates[start..end]
+                        .par_iter()
+                        .map(|file| {
+                            check_cancelled(cancellation)?;
+                            let prepared = prepare_file(
+                                &self.repository_root,
+                                file,
+                                chunk_lines,
+                                chunk_bytes,
+                                tokenizer,
+                                limits.max_file_bytes,
+                                cancellation,
+                            )?;
+                            check_cancelled(cancellation)?;
+                            Ok(prepared)
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })?
+            };
             metrics.preparation += preparation_started.elapsed();
+            let write_before = (profiling == StorageProfiling::Collect)
+                .then(process_write_bytes)
+                .flatten();
             let insertion_started = Instant::now();
             consume(batch)?;
             metrics.insertion += insertion_started.elapsed();
+            let write_after = (profiling == StorageProfiling::Collect)
+                .then(process_write_bytes)
+                .flatten();
+            let batch_write_bytes = write_before
+                .zip(write_after)
+                .map(|(before, after)| after.saturating_sub(before));
+            metrics.insertion_write_bytes = match (metrics.insertion_write_bytes, batch_write_bytes)
+            {
+                (Some(total), Some(current)) => Some(total.saturating_add(current)),
+                (None, Some(current)) if metrics.batches == 1 => Some(current),
+                _ => None,
+            };
             start = end;
         }
         Ok(metrics)
@@ -1277,23 +1450,94 @@ fn prepare_file(
     max_file_bytes: u64,
     cancellation: &CancellationToken,
 ) -> Result<PreparedFile> {
+    prepare_file_inner(
+        root,
+        file,
+        chunk_lines,
+        chunk_bytes,
+        tokenizer,
+        max_file_bytes,
+        cancellation,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_file_profiled(
+    root: &Dir,
+    file: &DiscoveredFile,
+    chunk_lines: usize,
+    chunk_bytes: usize,
+    tokenizer: crate::tokens::Tokenizer,
+    max_file_bytes: u64,
+    cancellation: &CancellationToken,
+    diagnostics: &mut FilePreparationDiagnostics,
+) -> Result<PreparedFile> {
+    diagnostics.files_profiled = 1;
+    let started = Instant::now();
+    let result = prepare_file_inner(
+        root,
+        file,
+        chunk_lines,
+        chunk_bytes,
+        tokenizer,
+        max_file_bytes,
+        cancellation,
+        Some(diagnostics),
+    );
+    diagnostics.total = started.elapsed();
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_file_inner(
+    root: &Dir,
+    file: &DiscoveredFile,
+    chunk_lines: usize,
+    chunk_bytes: usize,
+    tokenizer: crate::tokens::Tokenizer,
+    max_file_bytes: u64,
+    cancellation: &CancellationToken,
+    mut diagnostics: Option<&mut FilePreparationDiagnostics>,
+) -> Result<PreparedFile> {
+    let read_started = diagnostics.is_some().then(Instant::now);
     let bytes = match read_bounded(root, &file.relative_path, max_file_bytes) {
         Ok(Some(bytes)) => bytes,
-        Ok(None) => return Ok(PreparedFile::Oversized(file.relative_path.clone())),
+        Ok(None) => {
+            record_preparation_duration(diagnostics.as_deref_mut(), read_started, |detail| {
+                &mut detail.read
+            });
+            return Ok(PreparedFile::Oversized(file.relative_path.clone()));
+        }
         Err(error) => {
+            record_preparation_duration(diagnostics.as_deref_mut(), read_started, |detail| {
+                &mut detail.read
+            });
             return Ok(PreparedFile::Failed(
                 file.relative_path.clone(),
                 error.to_string(),
             ));
         }
     };
+    record_preparation_duration(diagnostics.as_deref_mut(), read_started, |detail| {
+        &mut detail.read
+    });
     let size_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let text_prepare_started = diagnostics.is_some().then(Instant::now);
     let prepared = PreparedText::from_vec(bytes, chunk_lines, chunk_bytes);
+    record_preparation_duration(diagnostics.as_deref_mut(), text_prepare_started, |detail| {
+        &mut detail.text_prepare
+    });
     if prepared.kind == TextKind::Binary {
         return Ok(PreparedFile::Binary(file.relative_path.clone()));
     }
+    let hash_started = diagnostics.is_some().then(Instant::now);
     let content_hash = hash_bytes(prepared.content.as_bytes());
+    record_preparation_duration(diagnostics.as_deref_mut(), hash_started, |detail| {
+        &mut detail.hash
+    });
 
+    let parse_started = diagnostics.is_some().then(Instant::now);
     let (parsed, warning) =
         match parser::parse_with_cancellation(&file.relative_path, &prepared.content, cancellation)
         {
@@ -1313,8 +1557,18 @@ fn prepare_file(
                 )),
             ),
         };
+    record_preparation_duration(diagnostics.as_deref_mut(), parse_started, |detail| {
+        &mut detail.parse
+    });
 
+    let source_tokens_started = diagnostics.is_some().then(Instant::now);
     let source_token_count = tokenizer.count(&prepared.content);
+    record_preparation_duration(
+        diagnostics.as_deref_mut(),
+        source_tokens_started,
+        |detail| &mut detail.source_token_count,
+    );
+    let chunk_tokens_started = diagnostics.is_some().then(Instant::now);
     let chunks = prepared
         .chunks
         .into_iter()
@@ -1327,6 +1581,10 @@ fn prepare_file(
             end_byte: chunk.end_byte,
         })
         .collect();
+    record_preparation_duration(diagnostics.as_deref_mut(), chunk_tokens_started, |detail| {
+        &mut detail.chunk_token_count
+    });
+    let projection_started = diagnostics.is_some().then(Instant::now);
     let symbols = parsed
         .symbols
         .into_iter()
@@ -1365,6 +1623,9 @@ fn prepare_file(
             line: import.line,
         })
         .collect();
+    record_preparation_duration(diagnostics, projection_started, |detail| {
+        &mut detail.projection
+    });
 
     Ok(PreparedFile::Indexed(
         Box::new(IndexedFile {
@@ -1382,6 +1643,16 @@ fn prepare_file(
         source_token_count,
         warning,
     ))
+}
+
+fn record_preparation_duration(
+    diagnostics: Option<&mut FilePreparationDiagnostics>,
+    started: Option<Instant>,
+    select: impl FnOnce(&mut FilePreparationDiagnostics) -> &mut Duration,
+) {
+    if let (Some(diagnostics), Some(started)) = (diagnostics, started) {
+        *select(diagnostics) += started.elapsed();
+    }
 }
 
 fn read_bounded(root: &Dir, path: &str, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
@@ -2398,11 +2669,16 @@ mod tests {
         let mut consumed = 0usize;
 
         let metrics = indexer
-            .prepare_candidate_batches(&candidates, &CancellationToken::new(), |prepared| {
-                batches += 1;
-                consumed += prepared.len();
-                Ok(())
-            })
+            .prepare_candidate_batches(
+                &candidates,
+                &CancellationToken::new(),
+                StorageProfiling::Omit,
+                |prepared| {
+                    batches += 1;
+                    consumed += prepared.len();
+                    Ok(())
+                },
+            )
             .expect("oversized first candidate must not stall preparation");
 
         assert_eq!(batches, 2);
@@ -2429,10 +2705,15 @@ mod tests {
         assert!(indexer_b.pool.pool.get().is_none());
         let mut consumed = false;
         indexer_a
-            .prepare_candidate_batches(&[], &CancellationToken::new(), |_| {
-                consumed = true;
-                Ok(())
-            })
+            .prepare_candidate_batches(
+                &[],
+                &CancellationToken::new(),
+                StorageProfiling::Omit,
+                |_| {
+                    consumed = true;
+                    Ok(())
+                },
+            )
             .expect("empty prepare");
         assert!(!consumed);
         assert!(indexer_a.pool.pool.get().is_none());
@@ -2487,7 +2768,7 @@ mod tests {
         let mut batches = 0usize;
 
         let error = indexer
-            .prepare_candidate_batches(&candidates, &cancellation, |_| {
+            .prepare_candidate_batches(&candidates, &cancellation, StorageProfiling::Omit, |_| {
                 batches += 1;
                 cancellation.cancel();
                 Ok(())
