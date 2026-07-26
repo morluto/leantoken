@@ -1456,7 +1456,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "savings",
-        description = "Report cumulative repository-local estimated source-token savings. Use when asked how many tokens LeanToken saved. Example: {}.",
+        description = "Report repository-local source compression and full successful-response token accounting. Use when asked how many tokens LeanToken saved. Example: {}.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn leantoken_savings(
@@ -1468,7 +1468,7 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        self.service_result(services.token_savings().await)
+        self.service_result(services.token_savings_report().await)
     }
 }
 

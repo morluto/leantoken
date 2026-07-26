@@ -209,6 +209,71 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
 }
 
 #[test]
+fn storage_adds_full_response_accounting_to_existing_savings_table() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("index.sqlite");
+    drop(Storage::open(&db).expect("initial storage"));
+    let connection = rusqlite::Connection::open(&db).expect("legacy connection");
+    connection
+        .execute_batch(
+            "ALTER TABLE token_savings DROP COLUMN response_tracked_requests;
+             ALTER TABLE token_savings DROP COLUMN response_baseline_requests;
+             ALTER TABLE token_savings DROP COLUMN response_baseline_source_tokens;
+             ALTER TABLE token_savings DROP COLUMN response_source_tokens;
+             ALTER TABLE token_savings DROP COLUMN path_and_metadata_tokens;
+             ALTER TABLE token_savings DROP COLUMN protocol_tokens;
+             ALTER TABLE token_savings DROP COLUMN total_response_tokens;
+             ALTER TABLE token_savings DROP COLUMN receipt_suppressed_exact;
+             ALTER TABLE token_savings DROP COLUMN receipt_suppressed_overlap;",
+        )
+        .expect("simulate source-only savings table");
+    connection
+        .execute(
+            "INSERT INTO token_savings(
+                 tokenizer, operation, tracked_requests, baseline_source_tokens,
+                 emitted_source_tokens, estimated_source_tokens_saved
+             ) VALUES ('cl100k_base', 'search', 2, 100, 20, 80)",
+            [],
+        )
+        .expect("legacy savings row");
+    drop(connection);
+
+    drop(Storage::open(&db).expect("upgrade savings accounting"));
+    let connection = rusqlite::Connection::open(&db).expect("inspect upgraded table");
+    for column in [
+        "response_tracked_requests",
+        "response_baseline_requests",
+        "response_baseline_source_tokens",
+        "response_source_tokens",
+        "path_and_metadata_tokens",
+        "protocol_tokens",
+        "total_response_tokens",
+        "receipt_suppressed_exact",
+        "receipt_suppressed_overlap",
+    ] {
+        let present: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('token_savings') WHERE name = ?1",
+                [column],
+                |row| row.get(0),
+            )
+            .expect("accounting column");
+        assert_eq!(present, 1, "missing {column}");
+    }
+    let legacy: (i64, i64, i64, i64) = connection
+        .query_row(
+            "SELECT tracked_requests, baseline_source_tokens,
+                    response_tracked_requests, response_baseline_source_tokens
+             FROM token_savings
+             WHERE tokenizer = 'cl100k_base' AND operation = 'search'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("legacy row");
+    assert_eq!(legacy, (2, 100, 0, 0));
+}
+
+#[test]
 fn structural_search_preserves_substring_case_and_short_query_behavior() {
     let dir = tempfile::tempdir().expect("tempdir");
     let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");

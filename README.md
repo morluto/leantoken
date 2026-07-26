@@ -72,7 +72,7 @@ out the task.
 <td width="33%" valign="top">
 <strong>Built for agent workflows</strong><br><br>
 Browse paths, search identifiers, inspect outlines, read exact ranges, trace
-symbol history, query structured JSON, and inspect cumulative savings through
+symbol history, query structured JSON, and inspect cumulative token accounting through
 eight focused MCP tools.
 </td>
 </tr>
@@ -145,7 +145,7 @@ retrieval.
 | `leantoken.read` | Prefer over cat/head/sed for one exact symbol or inclusive line range. |
 | `leantoken.history` | Read, diff, or trace one parsed symbol across immutable Git revisions. |
 | `leantoken.json` | Query, summarize, or compare bounded live JSON structures. |
-| `leantoken.savings` | Report cumulative repository-local estimated source-token savings. |
+| `leantoken.savings` | Report source compression and cumulative full-response token accounting. |
 
 Every index-backed retrieval tool accepts `consistency: "reconcile_working_tree"` when
 completed edits must be reconciled before the query. The default,

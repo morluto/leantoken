@@ -328,7 +328,7 @@ pub enum Commands {
     /// Show index status.
     Status,
 
-    /// Show cumulative estimated source tokens saved.
+    /// Show source compression and full-response token accounting.
     Savings,
 
     /// List, find, or glob repository paths.

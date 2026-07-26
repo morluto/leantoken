@@ -3,7 +3,9 @@ use std::{
     io::{IsTerminal, Write},
 };
 
-use leantoken::{Result, TokenSavingsByOperation, TokenSavingsOperation, TokenSavingsResponse};
+use leantoken::{
+    ResponseTokenAccountingByOperation, Result, TokenAccountingOperation, TokenSavingsReport,
+};
 
 const RESET: &str = "\x1b[0m";
 const BOLD_CYAN: &str = "\x1b[1;36m";
@@ -16,11 +18,14 @@ const DIM: &str = "\x1b[2m";
 struct DisplayRow {
     operation: &'static str,
     requests: String,
+    baseline_requests: String,
     baseline: String,
-    emitted: String,
-    saved: String,
-    reduction: String,
-    has_savings: bool,
+    source: String,
+    metadata: String,
+    protocol: String,
+    total: String,
+    net: String,
+    net_tokens: i64,
 }
 
 #[derive(Clone, Copy)]
@@ -38,7 +43,7 @@ impl Palette {
     }
 }
 
-pub(crate) fn print_report(report: &TokenSavingsResponse, json_output: bool) -> Result<()> {
+pub(crate) fn print_report(report: &TokenSavingsReport, json_output: bool) -> Result<()> {
     let stdout = std::io::stdout();
     let color = color_enabled(stdout.is_terminal());
     let mut output = stdout.lock();
@@ -52,25 +57,29 @@ pub(crate) fn print_report(report: &TokenSavingsResponse, json_output: bool) -> 
 
 fn write_human_report(
     output: &mut impl Write,
-    report: &TokenSavingsResponse,
+    report: &TokenSavingsReport,
     color: bool,
 ) -> Result<()> {
     let palette = Palette { enabled: color };
-    let total_reduction = format_reduction(
-        report.estimated_source_tokens_saved,
-        report.baseline_source_tokens,
-    );
-    let saved = format_count(report.estimated_source_tokens_saved);
-    let saved_summary = if report.estimated_source_tokens_saved == 0 {
-        palette.paint(DIM, &saved)
+    let source = &report.source_savings;
+    let accounting = &report.response_accounting;
+    let net = format_signed_count(accounting.estimated_net_tokens_saved);
+    let net_summary = if accounting.estimated_net_tokens_saved > 0 {
+        format!("{net} net response tokens saved")
+    } else if accounting.estimated_net_tokens_saved < 0 {
+        format!(
+            "{} net response token cost",
+            format_count(accounting.estimated_net_tokens_saved.unsigned_abs())
+        )
     } else {
-        palette.paint(BOLD_GREEN, &saved)
+        "0 net response tokens".into()
     };
-    let reduction_summary = match total_reduction.as_str() {
-        "--" => palette.paint(DIM, "--"),
-        reduction => palette.paint(BOLD_GREEN, reduction),
+    let net_style = match accounting.estimated_net_tokens_saved.cmp(&0) {
+        std::cmp::Ordering::Greater => BOLD_GREEN,
+        std::cmp::Ordering::Less => YELLOW,
+        std::cmp::Ordering::Equal => DIM,
     };
-    let count_quality = if report.token_count_exact {
+    let count_quality = if source.token_count_exact {
         palette.paint(GREEN, "exact token count")
     } else {
         palette.paint(YELLOW, "estimated token count")
@@ -80,46 +89,87 @@ fn write_human_report(
     writeln!(output, "{}", palette.paint(DIM, "================="))?;
     writeln!(
         output,
-        "{saved_summary} source tokens saved  ({reduction_summary} reduction)"
+        "{}  ({} vs represented source)",
+        palette.paint(net_style, &net_summary),
+        format_net_reduction(
+            accounting.estimated_net_tokens_saved,
+            accounting.baseline_source_tokens
+        )
     )?;
     writeln!(
         output,
-        "{} baseline  ->  {} emitted",
-        format_count(report.baseline_source_tokens),
-        format_count(report.emitted_source_tokens)
+        "{} baseline  ->  {} total response",
+        format_count(accounting.baseline_source_tokens),
+        format_count(accounting.total_response_tokens)
     )?;
     writeln!(
         output,
-        "{} tracked requests  |  {} ({count_quality})",
-        format_count(report.tracked_requests),
-        palette.paint(CYAN, &report.tokenizer)
+        "{} source + {} metadata + {} protocol",
+        format_count(accounting.response_source_tokens),
+        format_count(accounting.path_and_metadata_tokens),
+        format_count(accounting.protocol_tokens)
+    )?;
+    writeln!(
+        output,
+        "{} successful responses  |  {} with baselines  |  {} ({count_quality})",
+        format_count(accounting.tracked_requests),
+        format_count(accounting.baseline_requests),
+        palette.paint(CYAN, &source.tokenizer)
+    )?;
+    writeln!(
+        output,
+        "Source compression: {} baseline -> {} emitted ({} source tokens saved, {} Reduction)",
+        format_count(source.baseline_source_tokens),
+        format_count(source.emitted_source_tokens),
+        format_count(source.estimated_source_tokens_saved),
+        format_reduction(
+            source.estimated_source_tokens_saved,
+            source.baseline_source_tokens
+        )
     )?;
     writeln!(output)?;
 
-    let rows = report
+    let rows = accounting
         .by_operation
         .iter()
         .map(display_row)
         .collect::<Vec<_>>();
     let operation_width = column_width("Operation", rows.iter().map(|row| row.operation));
     let requests_width = column_width("Requests", rows.iter().map(|row| row.requests.as_str()));
+    let baseline_requests_width = column_width(
+        "Compared",
+        rows.iter().map(|row| row.baseline_requests.as_str()),
+    );
     let baseline_width = column_width("Baseline", rows.iter().map(|row| row.baseline.as_str()));
-    let emitted_width = column_width("Emitted", rows.iter().map(|row| row.emitted.as_str()));
-    let saved_width = column_width("Saved", rows.iter().map(|row| row.saved.as_str()));
-    let reduction_width = column_width("Reduction", rows.iter().map(|row| row.reduction.as_str()));
+    let source_width = column_width("Source", rows.iter().map(|row| row.source.as_str()));
+    let metadata_width = column_width("Metadata", rows.iter().map(|row| row.metadata.as_str()));
+    let protocol_width = column_width("Protocol", rows.iter().map(|row| row.protocol.as_str()));
+    let total_width = column_width("Total", rows.iter().map(|row| row.total.as_str()));
+    let net_width = column_width("Net", rows.iter().map(|row| row.net.as_str()));
 
     let header = format!(
-        "{:<operation_width$}  {:>requests_width$}  {:>baseline_width$}  {:>emitted_width$}  {:>saved_width$}  {:>reduction_width$}",
-        "Operation", "Requests", "Baseline", "Emitted", "Saved", "Reduction"
+        "{:<operation_width$}  {:>requests_width$}  {:>baseline_requests_width$}  {:>baseline_width$}  {:>source_width$}  {:>metadata_width$}  {:>protocol_width$}  {:>total_width$}  {:>net_width$}",
+        "Operation",
+        "Requests",
+        "Compared",
+        "Baseline",
+        "Source",
+        "Metadata",
+        "Protocol",
+        "Total",
+        "Net"
     );
     let rule = format!(
-        "{}  {}  {}  {}  {}  {}",
+        "{}  {}  {}  {}  {}  {}  {}  {}  {}",
         "-".repeat(operation_width),
         "-".repeat(requests_width),
+        "-".repeat(baseline_requests_width),
         "-".repeat(baseline_width),
-        "-".repeat(emitted_width),
-        "-".repeat(saved_width),
-        "-".repeat(reduction_width)
+        "-".repeat(source_width),
+        "-".repeat(metadata_width),
+        "-".repeat(protocol_width),
+        "-".repeat(total_width),
+        "-".repeat(net_width)
     );
     writeln!(output, "{}", palette.paint(CYAN, &header))?;
     writeln!(output, "{}", palette.paint(DIM, &rule))?;
@@ -127,17 +177,23 @@ fn write_human_report(
     for row in rows {
         let operation = format!("{:<operation_width$}", row.operation);
         let requests = format!("{:>requests_width$}", row.requests);
+        let baseline_requests = format!("{:>baseline_requests_width$}", row.baseline_requests);
         let baseline = format!("{:>baseline_width$}", row.baseline);
-        let emitted = format!("{:>emitted_width$}", row.emitted);
-        let saved = format!("{:>saved_width$}", row.saved);
-        let reduction = format!("{:>reduction_width$}", row.reduction);
-        let metric_style = if row.has_savings { GREEN } else { DIM };
+        let source = format!("{:>source_width$}", row.source);
+        let metadata = format!("{:>metadata_width$}", row.metadata);
+        let protocol = format!("{:>protocol_width$}", row.protocol);
+        let total = format!("{:>total_width$}", row.total);
+        let net = format!("{:>net_width$}", row.net);
+        let metric_style = match row.net_tokens.cmp(&0) {
+            std::cmp::Ordering::Greater => GREEN,
+            std::cmp::Ordering::Less => YELLOW,
+            std::cmp::Ordering::Equal => DIM,
+        };
         writeln!(
             output,
-            "{}  {requests}  {baseline}  {emitted}  {}  {}",
+            "{}  {requests}  {baseline_requests}  {baseline}  {source}  {metadata}  {protocol}  {total}  {}",
             palette.paint(CYAN, &operation),
-            palette.paint(metric_style, &saved),
-            palette.paint(metric_style, &reduction)
+            palette.paint(metric_style, &net)
         )?;
     }
 
@@ -145,40 +201,41 @@ fn write_human_report(
     writeln!(
         output,
         "{}",
-        palette.paint(DIM, &format!("Basis: {}", report.estimate_basis))
+        palette.paint(DIM, &format!("Net basis: {}", accounting.estimate_basis))
     )?;
     writeln!(
         output,
         "{}",
-        palette.paint(
-            DIM,
-            "Source only; excludes protocol overhead, billing, caching, and evidence quality."
-        )
+        palette.paint(DIM, &format!("Scope: {}", accounting.accounting_scope))
     )?;
     Ok(())
 }
 
-fn display_row(row: &TokenSavingsByOperation) -> DisplayRow {
+fn display_row(row: &ResponseTokenAccountingByOperation) -> DisplayRow {
     DisplayRow {
         operation: operation_label(row.operation),
         requests: format_count(row.tracked_requests),
+        baseline_requests: format_count(row.baseline_requests),
         baseline: format_count(row.baseline_source_tokens),
-        emitted: format_count(row.emitted_source_tokens),
-        saved: format_count(row.estimated_source_tokens_saved),
-        reduction: format_reduction(
-            row.estimated_source_tokens_saved,
-            row.baseline_source_tokens,
-        ),
-        has_savings: row.estimated_source_tokens_saved > 0,
+        source: format_count(row.response_source_tokens),
+        metadata: format_count(row.path_and_metadata_tokens),
+        protocol: format_count(row.protocol_tokens),
+        total: format_count(row.total_response_tokens),
+        net: format_signed_count(row.estimated_net_tokens_saved),
+        net_tokens: row.estimated_net_tokens_saved,
     }
 }
 
-fn operation_label(operation: TokenSavingsOperation) -> &'static str {
+fn operation_label(operation: TokenAccountingOperation) -> &'static str {
     match operation {
-        TokenSavingsOperation::Search => "Search",
-        TokenSavingsOperation::Outline => "Outline",
-        TokenSavingsOperation::Read => "Read",
-        TokenSavingsOperation::Context => "Context",
+        TokenAccountingOperation::Files => "Files",
+        TokenAccountingOperation::Search => "Search",
+        TokenAccountingOperation::Outline => "Outline",
+        TokenAccountingOperation::Read => "Read",
+        TokenAccountingOperation::ContextPlan => "Context plan",
+        TokenAccountingOperation::Context => "Context",
+        TokenAccountingOperation::Json => "JSON",
+        TokenAccountingOperation::History => "History",
     }
 }
 
@@ -200,12 +257,35 @@ fn format_count(value: u64) -> String {
     formatted
 }
 
+fn format_signed_count(value: i64) -> String {
+    if value < 0 {
+        format!("-{}", format_count(value.unsigned_abs()))
+    } else {
+        format_count(value as u64)
+    }
+}
+
 fn format_reduction(saved: u64, baseline: u64) -> String {
     if baseline == 0 {
         return "--".into();
     }
     let tenths = (u128::from(saved) * 1_000 + u128::from(baseline) / 2) / u128::from(baseline);
     format!("{}.{:01}%", tenths / 10, tenths % 10)
+}
+
+fn format_net_reduction(saved: i64, baseline: u64) -> String {
+    if baseline == 0 {
+        return "--".into();
+    }
+    let negative = saved < 0;
+    let tenths = (u128::from(saved.unsigned_abs()) * 1_000 + u128::from(baseline) / 2)
+        / u128::from(baseline);
+    format!(
+        "{}{}.{:01}%",
+        if negative { "-" } else { "" },
+        tenths / 10,
+        tenths % 10
+    )
 }
 
 fn color_enabled(is_terminal: bool) -> bool {
@@ -223,33 +303,74 @@ fn color_enabled(is_terminal: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use leantoken::{
+        ResponseTokenAccounting, TokenSavingsByOperation, TokenSavingsOperation,
+        TokenSavingsResponse,
+    };
 
-    fn report() -> TokenSavingsResponse {
-        TokenSavingsResponse {
-            tokenizer: "o200k_base".into(),
-            token_count_exact: true,
-            estimate_basis:
-                "requested read ranges or whole source files represented in each response".into(),
-            tracked_requests: 24,
-            baseline_source_tokens: 324_656,
-            emitted_source_tokens: 9_263,
-            estimated_source_tokens_saved: 315_393,
-            by_operation: vec![
-                TokenSavingsByOperation {
+    fn report() -> TokenSavingsReport {
+        TokenSavingsReport {
+            source_savings: TokenSavingsResponse {
+                tokenizer: "o200k_base".into(),
+                token_count_exact: true,
+                estimate_basis:
+                    "requested read ranges or whole source files represented in each response"
+                        .into(),
+                tracked_requests: 24,
+                baseline_source_tokens: 324_656,
+                emitted_source_tokens: 9_263,
+                estimated_source_tokens_saved: 315_393,
+                by_operation: vec![TokenSavingsByOperation {
                     operation: TokenSavingsOperation::Search,
                     tracked_requests: 9,
                     baseline_source_tokens: 224_396,
                     emitted_source_tokens: 3_513,
                     estimated_source_tokens_saved: 220_883,
-                },
-                TokenSavingsByOperation {
-                    operation: TokenSavingsOperation::Read,
-                    tracked_requests: 13,
-                    baseline_source_tokens: 4_198,
-                    emitted_source_tokens: 4_198,
-                    estimated_source_tokens_saved: 0,
-                },
-            ],
+                }],
+            },
+            response_accounting: ResponseTokenAccounting {
+                accounting_scope: "successful responses; excludes pre-response failures".into(),
+                estimate_basis:
+                    "represented-source baseline minus complete serialized response tokens".into(),
+                tracked_requests: 27,
+                baseline_requests: 24,
+                baseline_source_tokens: 324_656,
+                response_source_tokens: 9_263,
+                path_and_metadata_tokens: 12_000,
+                protocol_tokens: 2_400,
+                total_response_tokens: 23_663,
+                estimated_net_tokens_saved: 300_993,
+                receipt_suppressed_exact: 2,
+                receipt_suppressed_overlap: 1,
+                by_operation: vec![
+                    ResponseTokenAccountingByOperation {
+                        operation: TokenAccountingOperation::Search,
+                        tracked_requests: 9,
+                        baseline_requests: 9,
+                        baseline_source_tokens: 224_396,
+                        response_source_tokens: 3_513,
+                        path_and_metadata_tokens: 2_000,
+                        protocol_tokens: 487,
+                        total_response_tokens: 6_000,
+                        estimated_net_tokens_saved: 218_396,
+                        receipt_suppressed_exact: 1,
+                        receipt_suppressed_overlap: 0,
+                    },
+                    ResponseTokenAccountingByOperation {
+                        operation: TokenAccountingOperation::Files,
+                        tracked_requests: 1,
+                        baseline_requests: 0,
+                        baseline_source_tokens: 0,
+                        response_source_tokens: 0,
+                        path_and_metadata_tokens: 400,
+                        protocol_tokens: 100,
+                        total_response_tokens: 500,
+                        estimated_net_tokens_saved: -500,
+                        receipt_suppressed_exact: 0,
+                        receipt_suppressed_overlap: 0,
+                    },
+                ],
+            },
         }
     }
 
@@ -260,13 +381,21 @@ mod tests {
         let output = String::from_utf8(output).expect("UTF-8 report");
 
         assert!(output.starts_with("LeanToken Savings\n=================\n"));
-        assert!(output.contains("315,393 source tokens saved  (97.1% reduction)"));
-        assert!(output.contains("324,656 baseline  ->  9,263 emitted"));
-        assert!(output.contains("24 tracked requests  |  o200k_base (exact token count)"));
-        assert!(output.contains("Operation  Requests  Baseline  Emitted    Saved  Reduction"));
-        assert!(output.contains("Search            9   224,396    3,513  220,883      98.4%"));
-        assert!(output.contains("Read             13     4,198    4,198        0       0.0%"));
-        assert!(output.contains("Source only; excludes protocol overhead"));
+        assert!(
+            output.contains("300,993 net response tokens saved  (92.7% vs represented source)")
+        );
+        assert!(output.contains("324,656 baseline  ->  23,663 total response"));
+        assert!(output.contains("9,263 source + 12,000 metadata + 2,400 protocol"));
+        assert!(output.contains(
+            "27 successful responses  |  24 with baselines  |  o200k_base (exact token count)"
+        ));
+        assert!(output.contains("Source compression: 324,656 baseline -> 9,263 emitted"));
+        assert!(output.contains("Operation  Requests  Compared"));
+        assert!(output.contains("Search"));
+        assert!(output.contains("218,396"));
+        assert!(output.contains("Files"));
+        assert!(output.contains("-500"));
+        assert!(output.contains("Scope: successful responses; excludes pre-response failures"));
         assert!(!output.contains("\x1b["));
     }
 
@@ -295,5 +424,7 @@ mod tests {
         assert_eq!(format_reduction(0, 10), "0.0%");
         assert_eq!(format_reduction(1, 3), "33.3%");
         assert_eq!(format_reduction(2, 3), "66.7%");
+        assert_eq!(format_signed_count(-1_234), "-1,234");
+        assert_eq!(format_net_reduction(-1, 3), "-33.3%");
     }
 }
