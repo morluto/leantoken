@@ -13,7 +13,8 @@ use crate::cache::CachePruneRequest;
 use crate::config::DEFAULT_CONTEXT_TOKENS;
 use crate::mcp::McpResultMode;
 use crate::model::{
-    ContextRequest, FileOperation, FilesRequest, OutlineRequest, ReadRequest, SearchMode,
+    ContextRequest, FileOperation, FilesRequest, HistoryOperation, HistoryRequest, JsonOperation,
+    JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadRequest, SearchMode,
     SearchRequest,
 };
 use crate::setup::{SetupClient, SetupRequest};
@@ -253,6 +254,8 @@ impl Cli {
             Commands::Search(args) => AppRequest::Search(args.into()),
             Commands::Outline(args) => AppRequest::Outline(args.into()),
             Commands::Read(args) => AppRequest::Read(args.into()),
+            Commands::History(args) => AppRequest::History(args.into()),
+            Commands::Json(args) => AppRequest::Json(args.into()),
             Commands::Context(args) => {
                 let workflow = args.workflow.into();
                 AppRequest::Context {
@@ -290,6 +293,8 @@ pub enum AppRequest {
     Search(SearchRequest),
     Outline(OutlineRequest),
     Read(ReadRequest),
+    History(HistoryRequest),
+    Json(JsonRequest),
     Context {
         request: ContextRequest,
         workflow: crate::model::ContextWorkflow,
@@ -334,6 +339,12 @@ pub enum Commands {
 
     /// Read a bounded source range.
     Read(ReadArgs),
+
+    /// Read, diff, or trace a symbol across Git revisions.
+    History(HistoryArgs),
+
+    /// Query, summarize, or compare live JSON structures.
+    Json(JsonArgs),
 
     /// Retrieve ranked task context within a token budget.
     Context(ContextArgs),
@@ -635,6 +646,10 @@ pub struct SearchArgs {
     #[arg(long)]
     pub all_occurrences: bool,
 
+    /// Prefer structural definitions when identifier channels find the same definition.
+    #[arg(long)]
+    pub prefer_structural: bool,
+
     /// Pagination cursor.
     #[arg(long)]
     pub cursor: Option<String>,
@@ -653,6 +668,8 @@ impl From<SearchArgs> for SearchRequest {
             context_lines: args.context_lines,
             case_sensitive: args.case_sensitive,
             all_occurrences: args.all_occurrences,
+            prefer_structural: args.prefer_structural,
+            receipt_id: None,
             cursor: args.cursor,
         }
     }
@@ -692,6 +709,7 @@ impl From<OutlineArgs> for OutlineRequest {
             symbol_kind: args.symbol_kind,
             max_results: args.max_results,
             max_tokens: args.max_tokens,
+            receipt_id: None,
             cursor: args.cursor,
         }
     }
@@ -822,6 +840,228 @@ impl From<ReadArgs> for ReadRequest {
             continuation_cursor: args.cursor,
             max_tokens: args.max_tokens,
             expected_hash: args.expected_hash,
+            receipt_id: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct HistoryArgs {
+    #[command(subcommand)]
+    pub operation: HistoryCommand,
+
+    /// Maximum commits returned by symbol-log.
+    #[arg(long, value_parser = parse_positive_usize)]
+    pub max_results: Option<usize>,
+
+    /// Maximum source or diff tokens to return.
+    #[arg(long, value_parser = parse_positive_usize)]
+    pub max_tokens: Option<usize>,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum HistoryCommand {
+    /// Read one parsed symbol from a Git revision.
+    ReadSymbol {
+        path: String,
+        symbol: String,
+        revision: String,
+    },
+    /// Diff one parsed symbol between two Git revisions.
+    DiffSymbol {
+        path: String,
+        symbol: String,
+        base_revision: String,
+        head_revision: String,
+    },
+    /// List recent commits that touched a symbol's tracked lines.
+    SymbolLog {
+        path: String,
+        symbol: String,
+        /// Revision from which history starts.
+        #[arg(long)]
+        revision: Option<String>,
+    },
+}
+
+impl From<HistoryArgs> for HistoryRequest {
+    fn from(args: HistoryArgs) -> Self {
+        let operation = match args.operation {
+            HistoryCommand::ReadSymbol {
+                path,
+                symbol,
+                revision,
+            } => HistoryOperation::ReadSymbol {
+                path,
+                symbol,
+                revision,
+            },
+            HistoryCommand::DiffSymbol {
+                path,
+                symbol,
+                base_revision,
+                head_revision,
+            } => HistoryOperation::DiffSymbol {
+                path,
+                symbol,
+                base_revision,
+                head_revision,
+            },
+            HistoryCommand::SymbolLog {
+                path,
+                symbol,
+                revision,
+            } => HistoryOperation::SymbolLog {
+                path,
+                symbol,
+                revision,
+            },
+        };
+        Self {
+            operation,
+            max_results: args.max_results,
+            max_tokens: args.max_tokens,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct JsonArgs {
+    #[command(subcommand)]
+    pub operation: JsonCommand,
+
+    /// Maximum tokens across selected/projected JSON.
+    #[arg(long, value_parser = parse_positive_usize)]
+    pub max_tokens: Option<usize>,
+
+    /// Maximum structural items returned.
+    #[arg(long, value_parser = parse_positive_usize)]
+    pub max_items: Option<usize>,
+
+    /// Array elements sampled by collapsed projections.
+    #[arg(long)]
+    pub array_sample_size: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum JsonProjectionArg {
+    Value,
+    Collapsed,
+    Keys,
+    Schema,
+}
+
+impl From<JsonProjectionArg> for JsonProjection {
+    fn from(value: JsonProjectionArg) -> Self {
+        match value {
+            JsonProjectionArg::Value => Self::Value,
+            JsonProjectionArg::Collapsed => Self::Collapsed,
+            JsonProjectionArg::Keys => Self::Keys,
+            JsonProjectionArg::Schema => Self::Schema,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum JsonCommand {
+    /// Select and project one JSON value.
+    Query {
+        path: String,
+        /// RFC 6901 JSON Pointer.
+        #[arg(long, conflicts_with = "jmespath")]
+        pointer: Option<String>,
+        /// Standard JMESPath expression.
+        #[arg(long, conflicts_with = "pointer")]
+        jmespath: Option<String>,
+        /// Structural result projection.
+        #[arg(long, value_enum, default_value_t = JsonProjectionArg::Value)]
+        projection: JsonProjectionArg,
+    },
+    /// Summarize numeric leaves below one JSON selection.
+    NumericSummary {
+        path: String,
+        /// RFC 6901 JSON Pointer.
+        #[arg(long, conflicts_with = "jmespath")]
+        pointer: Option<String>,
+        /// Standard JMESPath expression.
+        #[arg(long, conflicts_with = "pointer")]
+        jmespath: Option<String>,
+    },
+    /// Compare selected fields between two JSON files.
+    #[command(group(
+        clap::ArgGroup::new("selectors")
+            .required(true)
+            .multiple(true)
+            .args(["pointer", "jmespath"])
+    ))]
+    DiffFields {
+        base_path: String,
+        head_path: String,
+        /// RFC 6901 JSON Pointer (repeatable).
+        #[arg(long)]
+        pointer: Vec<String>,
+        /// Standard JMESPath expression (repeatable).
+        #[arg(long)]
+        jmespath: Vec<String>,
+        /// Structural projection for selected values.
+        #[arg(long, value_enum, default_value_t = JsonProjectionArg::Value)]
+        projection: JsonProjectionArg,
+    },
+}
+
+fn json_selector(pointer: Option<String>, jmespath: Option<String>) -> Option<JsonSelector> {
+    pointer
+        .map(|pointer| JsonSelector::Pointer { pointer })
+        .or_else(|| jmespath.map(|expression| JsonSelector::Jmespath { expression }))
+}
+
+impl From<JsonArgs> for JsonRequest {
+    fn from(args: JsonArgs) -> Self {
+        let operation = match args.operation {
+            JsonCommand::Query {
+                path,
+                pointer,
+                jmespath,
+                projection,
+            } => JsonOperation::Query {
+                path,
+                selector: json_selector(pointer, jmespath),
+                projection: projection.into(),
+            },
+            JsonCommand::NumericSummary {
+                path,
+                pointer,
+                jmespath,
+            } => JsonOperation::NumericSummary {
+                path,
+                selector: json_selector(pointer, jmespath),
+            },
+            JsonCommand::DiffFields {
+                base_path,
+                head_path,
+                pointer,
+                jmespath,
+                projection,
+            } => JsonOperation::DiffFields {
+                base_path,
+                head_path,
+                selectors: pointer
+                    .into_iter()
+                    .map(|pointer| JsonSelector::Pointer { pointer })
+                    .chain(
+                        jmespath
+                            .into_iter()
+                            .map(|expression| JsonSelector::Jmespath { expression }),
+                    )
+                    .collect(),
+                projection: projection.into(),
+            },
+        };
+        Self {
+            operation,
+            max_tokens: args.max_tokens,
+            max_items: args.max_items,
+            array_sample_size: args.array_sample_size,
         }
     }
 }
@@ -861,6 +1101,10 @@ pub struct ContextArgs {
     #[arg(long, value_parser = parse_positive_usize)]
     pub max_fragments: Option<usize>,
 
+    /// Preview ranked candidates without returning source fragments.
+    #[arg(long)]
+    pub plan_only: bool,
+
     /// Focus on these paths (repeatable).
     #[arg(long = "focus")]
     pub focus_paths: Vec<String>,
@@ -889,7 +1133,7 @@ pub struct ContextArgs {
     #[arg(long = "prior-generation")]
     pub prior_repository_generation: Option<u64>,
 
-    /// Base revision for diff-scoped context (e.g. "origin/main").
+    /// Base revision or immutable range (e.g. "origin/main" or "BASE..HEAD").
     #[arg(long = "base-revision")]
     pub base_revision: Option<String>,
 
@@ -933,12 +1177,14 @@ impl From<ContextArgs> for ContextRequest {
             must_include_paths: args.must_include_paths,
             must_include_symbols: args.must_include_symbols,
             max_fragments: args.max_fragments,
+            plan_only: args.plan_only,
             focus_paths: args.focus_paths,
             strict_focus_paths: args.strict_focus_paths,
             minimum_fragments_per_focus_path: args.minimum_fragments_per_focus_path,
             focus_symbols: args.focus_symbols,
             exclude_paths: args.exclude_paths,
             known_hashes: args.known_hashes,
+            receipt_id: None,
             prior_repository_generation: args.prior_repository_generation,
             base_revision: args.base_revision,
             changed_paths: args.changed_paths,

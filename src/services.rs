@@ -1,7 +1,7 @@
 use std::fs;
 use std::sync::{
     Arc,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 use std::thread;
 use std::time::{Duration, Instant};
@@ -15,11 +15,15 @@ use crate::error::RetryableOperation;
 use crate::indexer::Indexer;
 use crate::model::*;
 use crate::storage::{ReadSession, Storage, StorageCounts};
+use crate::tokens::response_token_accounting;
 use crate::{Config, Error, Result};
 
 mod context;
 mod files;
+mod history;
+mod json;
 mod read;
+mod receipts;
 mod search;
 pub(crate) mod validation;
 
@@ -92,6 +96,8 @@ pub struct Services {
     coordination: IndexCoordination,
     _cache_lease: CacheLease,
     active_reconciliations: Arc<AtomicUsize>,
+    receipts: Arc<receipts::ReceiptRegistry>,
+    next_receipt_id: Arc<AtomicU64>,
 }
 
 trait RetrievalResponse: Serialize {
@@ -112,6 +118,8 @@ macro_rules! impl_retrieval_response {
 
 impl_retrieval_response!(
     FilesResponse,
+    HistoryResponse,
+    JsonResponse,
     SearchResponse,
     OutlineResponse,
     ReadResponse,
@@ -199,6 +207,8 @@ impl Services {
             coordination,
             _cache_lease: cache_lease,
             active_reconciliations: Arc::new(AtomicUsize::new(0)),
+            receipts: Arc::new(receipts::ReceiptRegistry::default()),
+            next_receipt_id: Arc::new(AtomicU64::new(1)),
         })
     }
 
@@ -209,9 +219,21 @@ impl Services {
     }
 
     fn finalize_response<T: RetrievalResponse>(&self, response: &mut T) -> Result<()> {
-        response.meta_mut().payload_tokens = 0;
-        let payload = serde_json::to_string(response)?;
-        response.meta_mut().payload_tokens = self.config.tokenizer.count(&payload);
+        let source_tokens = {
+            let meta = response.meta_mut();
+            meta.protocol_tokens = 0;
+            meta.path_and_metadata_tokens = 0;
+            meta.total_response_tokens = 0;
+            meta.payload_tokens = 0;
+            meta.source_tokens
+        };
+        let accounting =
+            response_token_accounting(&*response, source_tokens, &self.config.tokenizer)?;
+        let meta = response.meta_mut();
+        meta.protocol_tokens = accounting.protocol_tokens;
+        meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
+        meta.total_response_tokens = accounting.total_response_tokens;
+        meta.payload_tokens = accounting.total_response_tokens;
         Ok(())
     }
 
@@ -487,7 +509,7 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<()> {
-        if consistency == IndexConsistency::WorkingTree {
+        if consistency == IndexConsistency::ReconcileWorkingTree {
             self.index_cancellable(false, cancellation).await?;
         }
         Ok(())
@@ -514,10 +536,17 @@ impl Services {
             repository_generation: generation,
             freshness: self.freshness(),
             source_tokens: emitted_tokens,
+            protocol_tokens: 0,
+            path_and_metadata_tokens: 0,
+            total_response_tokens: 0,
             payload_tokens: 0,
             tokenizer: self.config.tokenizer.name().into(),
             emitted_tokens,
             token_count_exact: self.config.tokenizer.is_exact(),
+            receipt_id: None,
+            receipt_suppressed_exact: 0,
+            receipt_suppressed_overlap: 0,
+            receipt_near_duplicates: 0,
             next_cursor,
         }
     }
@@ -587,6 +616,9 @@ fn status_response(
     counts: StorageCounts,
     freshness: Freshness,
 ) -> StatusResponse {
+    let index_storage_bytes = sqlite_storage_bytes(&config.database_path);
+    let index_amplification_ratio =
+        (counts.source_bytes > 0).then(|| index_storage_bytes as f64 / counts.source_bytes as f64);
     StatusResponse {
         repository_root: config.root.display().to_string(),
         database_path: config.database_path.display().to_string(),
@@ -600,6 +632,10 @@ fn status_response(
         file_count: counts.files,
         chunk_count: counts.chunks,
         symbol_count: counts.symbols,
+        index_storage_bytes,
+        indexed_source_bytes: counts.source_bytes,
+        index_amplification_ratio,
+        process_rss_bytes: process_rss_bytes(),
         languages: counts
             .languages
             .into_iter()
@@ -607,6 +643,34 @@ fn status_response(
             .collect(),
         warnings: Vec::new(),
     }
+}
+
+fn sqlite_storage_bytes(path: &std::path::Path) -> u64 {
+    ["", "-wal", "-shm"]
+        .into_iter()
+        .map(|suffix| {
+            let mut candidate = path.as_os_str().to_os_string();
+            candidate.push(suffix);
+            fs::metadata(candidate).map_or(0, |metadata| metadata.len())
+        })
+        .fold(0, u64::saturating_add)
+}
+
+#[cfg(target_os = "linux")]
+fn process_rss_bytes() -> Option<u64> {
+    fs::read_to_string("/proc/self/status")
+        .ok()?
+        .lines()
+        .find_map(|line| {
+            let value = line.strip_prefix("VmRSS:")?.trim();
+            let kibibytes = value.strip_suffix("kB")?.trim().parse::<u64>().ok()?;
+            kibibytes.checked_mul(1024)
+        })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_rss_bytes() -> Option<u64> {
+    None
 }
 
 fn is_database_contention(error: &Error) -> bool {
@@ -692,6 +756,8 @@ mod tests {
                 context_lines: Some(1),
                 case_sensitive: false,
                 all_occurrences: false,
+                prefer_structural: false,
+                receipt_id: None,
                 cursor: None,
             })
             .await
@@ -710,6 +776,7 @@ mod tests {
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
+                receipt_id: None,
             })
             .await
             .expect("read");
@@ -724,6 +791,7 @@ mod tests {
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: Some(first.content_hash),
+                receipt_id: None,
             })
             .await
             .expect("read delta");
@@ -824,6 +892,8 @@ mod tests {
             context_lines: Some(0),
             case_sensitive: false,
             all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         };
         let response = services.search(request.clone()).await.expect("search");
@@ -985,6 +1055,8 @@ mod tests {
                 context_lines: Some(0),
                 case_sensitive: true,
                 all_occurrences: false,
+                prefer_structural: false,
+                receipt_id: None,
                 cursor: None,
             })
             .await

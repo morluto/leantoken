@@ -172,12 +172,14 @@ async fn run(cli: Cli) -> Result<()> {
         AppRequest::Search(request) => print(&services.search(request).await?, json),
         AppRequest::Outline(request) => print(&services.outline(request).await?, json),
         AppRequest::Read(request) => print(&services.read(request).await?, json),
+        AppRequest::History(request) => print(&services.history(request).await?, json),
+        AppRequest::Json(request) => print(&services.json(request).await?, json),
         AppRequest::Context { request, workflow } => print(
             &services
                 .context_with_workflow_consistency_cancellable(
                     request,
                     workflow,
-                    leantoken::model::IndexConsistency::Committed,
+                    leantoken::model::IndexConsistency::IndexedGeneration,
                     tokio_util::sync::CancellationToken::new(),
                 )
                 .await?,
@@ -604,6 +606,8 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         leantoken::Error::HeadingNotFound { .. } => ("heading_not_found", None, None, None, None),
         leantoken::Error::IndexNotReady => ("index_not_ready", None, None, None, None),
         leantoken::Error::StaleCursor => ("stale_cursor", None, None, None, None),
+        leantoken::Error::UnknownReceipt(_) => ("unknown_receipt", None, None, None, None),
+        leantoken::Error::StaleReceipt { .. } => ("stale_receipt", None, None, None, None),
         leantoken::Error::Cancelled => ("request_cancelled", None, None, None, None),
         leantoken::Error::PathOutsideRoot(_) => ("path_outside_root", None, None, None, None),
         leantoken::Error::UnsupportedPathEncoding(_) => {

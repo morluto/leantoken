@@ -1,11 +1,12 @@
 //! Lexical and structural search over a request-scoped snapshot.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use regex_syntax::hir::{Hir, HirKind};
 use tokio_util::sync::CancellationToken;
 
 use super::read::{StoredExcerpt, StoredExcerptRequest};
+use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
     MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled, make_cursor, parse_cursor,
     validate_cursor, validate_glob_patterns, validate_input,
@@ -187,6 +188,161 @@ fn combine_candidate_expr(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct DefinitionIdentity {
+    path: String,
+    start_line: usize,
+    end_line: usize,
+}
+
+#[derive(Clone)]
+struct CandidateSearchHit {
+    hit: SearchHit,
+    definition: Option<DefinitionIdentity>,
+}
+
+fn hit_has_kind(hit: &SearchHit, kind: &str) -> bool {
+    hit.match_kind == kind || hit.match_kinds.iter().any(|candidate| candidate == kind)
+}
+
+fn merge_search_hits(primary: &mut SearchHit, secondary: SearchHit) {
+    primary.score = primary.score.max(secondary.score);
+    for kind in secondary.match_kinds {
+        if !primary.match_kinds.contains(&kind) {
+            primary.match_kinds.push(kind);
+        }
+    }
+    for reason in secondary.score_reasons {
+        if !primary.score_reasons.contains(&reason) {
+            primary.score_reasons.push(reason);
+        }
+    }
+    if primary.role.is_none() {
+        primary.role = secondary.role;
+    }
+    if primary.symbol.is_none() {
+        primary.symbol = secondary.symbol;
+    }
+    if primary.enclosing_symbol.is_none() {
+        primary.enclosing_symbol = secondary.enclosing_symbol;
+    }
+}
+
+fn deduplicate_definition_channels(
+    hits: Vec<CandidateSearchHit>,
+    prefer_structural: bool,
+) -> Vec<CandidateSearchHit> {
+    let mut deduplicated: Vec<CandidateSearchHit> = Vec::with_capacity(hits.len());
+    for mut candidate in hits {
+        let candidate_structural = hit_has_kind(&candidate.hit, "symbol");
+        let candidate_lexical =
+            hit_has_kind(&candidate.hit, "text") || hit_has_kind(&candidate.hit, "regex");
+        let duplicate = candidate.definition.as_ref().and_then(|identity| {
+            deduplicated.iter().position(|existing| {
+                existing.definition.as_ref() == Some(identity)
+                    && ((candidate_structural
+                        && (hit_has_kind(&existing.hit, "text")
+                            || hit_has_kind(&existing.hit, "regex")))
+                        || (candidate_lexical && hit_has_kind(&existing.hit, "symbol")))
+            })
+        });
+        let Some(index) = duplicate else {
+            deduplicated.push(candidate);
+            continue;
+        };
+        if prefer_structural
+            && candidate_structural
+            && !hit_has_kind(&deduplicated[index].hit, "symbol")
+        {
+            std::mem::swap(&mut candidate, &mut deduplicated[index]);
+        }
+        merge_search_hits(&mut deduplicated[index].hit, candidate.hit);
+    }
+    deduplicated
+}
+
+fn deduplicate_exact_hits(
+    hits: Vec<CandidateSearchHit>,
+    prefer_structural: bool,
+) -> Vec<CandidateSearchHit> {
+    let mut deduplicated: Vec<CandidateSearchHit> = Vec::with_capacity(hits.len());
+    let mut positions = HashMap::new();
+    for mut candidate in hits {
+        let key = (
+            candidate.hit.path.clone(),
+            candidate.hit.start_line,
+            candidate.hit.end_line,
+            candidate.hit.content_hash.clone(),
+            candidate
+                .hit
+                .occurrence
+                .as_ref()
+                .map(|occurrence| (occurrence.start_byte, occurrence.end_byte)),
+        );
+        let Some(&index) = positions.get(&key) else {
+            positions.insert(key, deduplicated.len());
+            deduplicated.push(candidate);
+            continue;
+        };
+        if prefer_structural
+            && hit_has_kind(&candidate.hit, "symbol")
+            && !hit_has_kind(&deduplicated[index].hit, "symbol")
+        {
+            std::mem::swap(&mut candidate, &mut deduplicated[index]);
+        }
+        if deduplicated[index].definition.is_none() {
+            deduplicated[index].definition = candidate.definition.clone();
+        }
+        merge_search_hits(&mut deduplicated[index].hit, candidate.hit);
+    }
+    deduplicated
+}
+
+fn normalize_search_scores(hits: &mut [CandidateSearchHit]) {
+    let max_score = hits
+        .iter()
+        .map(|candidate| candidate.hit.score)
+        .filter(|score| score.is_finite())
+        .fold(0.0_f64, f64::max);
+    for candidate in hits {
+        candidate.hit.normalized_score = if max_score > 0.0 && candidate.hit.score.is_finite() {
+            (candidate.hit.score / max_score).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+    }
+}
+
+fn coverage_count(
+    all: &[CandidateSearchHit],
+    returned: &[CandidateSearchHit],
+    matches: impl Fn(&SearchHit) -> bool,
+) -> SearchCoverageCount {
+    let total = all
+        .iter()
+        .filter(|candidate| matches(&candidate.hit))
+        .count();
+    let returned = returned
+        .iter()
+        .filter(|candidate| matches(&candidate.hit))
+        .count();
+    SearchCoverageCount {
+        total,
+        returned,
+        truncated: total.saturating_sub(returned),
+    }
+}
+
+fn search_coverage(all: &[CandidateSearchHit], returned: &[CandidateSearchHit]) -> SearchCoverage {
+    SearchCoverage {
+        definitions: coverage_count(all, returned, |hit| hit_has_kind(hit, "symbol")),
+        references: coverage_count(all, returned, |hit| hit_has_kind(hit, "reference")),
+        text_matches: coverage_count(all, returned, |hit| {
+            hit_has_kind(hit, "text") || hit_has_kind(hit, "regex")
+        }),
+    }
+}
+
 fn collect_filtered_hits<T>(
     request: &SearchRequest,
     max_candidates: usize,
@@ -334,6 +490,11 @@ pub(super) fn chunk_search_hit_for_range(
         } else {
             "text".into()
         },
+        match_kinds: vec![if regex_match {
+            "regex".into()
+        } else {
+            "text".into()
+        }],
         role: None,
         symbol: None,
         enclosing_symbol: None,
@@ -344,6 +505,7 @@ pub(super) fn chunk_search_hit_for_range(
             end_byte: hit.start_byte + end,
         }),
         score: 3.0 + (-hit.score).max(0.0) * 1_000_000.0,
+        normalized_score: 0.0,
         score_reasons: vec![if regex_match {
             "regex match".into()
         } else {
@@ -374,12 +536,12 @@ pub(super) fn matching_line(
         .map(|offset| hit.start_line + offset)
 }
 
-fn apply_focus(hits: &mut [SearchHit], focus_paths: &[String]) -> Result<()> {
+fn apply_focus(hits: &mut [CandidateSearchHit], focus_paths: &[String]) -> Result<()> {
     let focus_paths = PathMatcher::new(focus_paths)?;
-    for hit in hits {
-        if focus_paths.is_match(&hit.path) {
-            hit.score += 2.0;
-            hit.score_reasons.push("focus path".into());
+    for candidate in hits {
+        if focus_paths.is_match(&candidate.hit.path) {
+            candidate.hit.score += 2.0;
+            candidate.hit.score_reasons.push("focus path".into());
         }
     }
     Ok(())
@@ -442,6 +604,14 @@ fn validate_search_input(request: &SearchRequest) -> Result<()> {
         return Err(Error::InvalidInput {
             field: "all occurrences",
             reason: "requires text or regex mode",
+        });
+    }
+    if request.prefer_structural
+        && !matches!(request.mode, SearchMode::Auto | SearchMode::Identifier)
+    {
+        return Err(Error::InvalidInput {
+            field: "prefer structural",
+            reason: "requires auto or identifier mode",
         });
     }
     if matches!(request.mode, SearchMode::Regex) {
@@ -597,7 +767,15 @@ impl Services {
                     .zip(self.stored_excerpts(session, &excerpt_requests)?)
                 {
                     if let Some(excerpt) = excerpt {
-                        hits.push(self.symbol_search_hit(hit, &request.query, excerpt));
+                        let definition = DefinitionIdentity {
+                            path: hit.path.clone(),
+                            start_line: hit.symbol.start_line,
+                            end_line: hit.symbol.end_line,
+                        };
+                        hits.push(CandidateSearchHit {
+                            hit: self.symbol_search_hit(hit, &request.query, excerpt),
+                            definition: Some(definition),
+                        });
                     }
                 }
             }
@@ -639,7 +817,10 @@ impl Services {
                     .zip(self.stored_excerpts(session, &excerpt_requests)?)
                 {
                     if let Some(excerpt) = excerpt {
-                        hits.push(self.reference_search_hit(hit, &request.query, excerpt));
+                        hits.push(CandidateSearchHit {
+                            hit: self.reference_search_hit(hit, &request.query, excerpt),
+                            definition: None,
+                        });
                     }
                 }
             }
@@ -766,82 +947,120 @@ impl Services {
                 enclosing.extend(session.find_enclosing_symbols_batch(locations)?);
             }
             for ((_, mut hit, _), symbol) in lexical_hits.into_iter().zip(enclosing) {
-                hit.enclosing_symbol = symbol.map(|symbol| symbol.name);
-                hits.push(hit);
+                let definition = symbol.map(|symbol| {
+                    hit.enclosing_symbol = Some(symbol.name);
+                    DefinitionIdentity {
+                        path: hit.path.clone(),
+                        start_line: symbol.start_line,
+                        end_line: symbol.end_line,
+                    }
+                });
+                hits.push(CandidateSearchHit { hit, definition });
             }
 
             apply_focus(&mut hits, &request.focus_paths)?;
             hits.sort_by(|left, right| {
                 right
+                    .hit
                     .score
-                    .total_cmp(&left.score)
-                    .then_with(|| left.path.cmp(&right.path))
-                    .then_with(|| left.start_line.cmp(&right.start_line))
+                    .total_cmp(&left.hit.score)
+                    .then_with(|| left.hit.path.cmp(&right.hit.path))
+                    .then_with(|| left.hit.start_line.cmp(&right.hit.start_line))
                     .then_with(|| {
-                        left.occurrence
+                        left.hit
+                            .occurrence
                             .as_ref()
                             .map(|occurrence| occurrence.start_byte)
                             .cmp(
                                 &right
+                                    .hit
                                     .occurrence
                                     .as_ref()
                                     .map(|occurrence| occurrence.start_byte),
                             )
                     })
             });
-            let mut seen = HashSet::new();
-            hits.retain(|hit| {
-                seen.insert((
-                    hit.path.clone(),
-                    hit.start_line,
-                    hit.end_line,
-                    hit.content_hash.clone(),
-                    hit.occurrence
-                        .as_ref()
-                        .map(|occurrence| (occurrence.start_byte, occurrence.end_byte)),
-                ))
-            });
+            hits = deduplicate_exact_hits(hits, request.prefer_structural);
+            if matches!(request.mode, SearchMode::Auto | SearchMode::Identifier) {
+                hits = deduplicate_definition_channels(hits, request.prefer_structural);
+            }
+            normalize_search_scores(&mut hits);
 
             let mut emitted_tokens = 0usize;
             let mut selected = Vec::new();
             let total_candidates = hits.len();
-            let page = hits.into_iter().skip(offset).take(limit);
+            let page = hits.iter().skip(offset).take(limit).cloned();
             let mut consumed = 0usize;
-            for hit in page {
+            for candidate in page {
                 check_cancelled(cancellation)?;
                 consumed += 1;
-                let count = self.config.tokenizer.count(&hit.excerpt);
+                let count = self.config.tokenizer.count(&candidate.hit.excerpt);
                 if emitted_tokens.saturating_add(count) > token_limit {
                     continue;
                 }
                 emitted_tokens += count;
-                selected.push(hit);
+                selected.push(candidate);
             }
             let has_more = offset.saturating_add(consumed) < total_candidates;
+            let receipt_candidates = selected
+                .iter()
+                .map(|candidate| {
+                    ReceiptEvidence::new(
+                        candidate.hit.path.clone(),
+                        candidate.hit.start_line,
+                        candidate.hit.end_line,
+                        candidate.hit.content_hash.clone(),
+                        Some(&candidate.hit.excerpt),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let receipt = self.evaluate_receipt(
+                request.receipt_id.as_deref(),
+                generation,
+                &receipt_candidates,
+            )?;
+            selected = selected
+                .into_iter()
+                .zip(&receipt.decisions)
+                .filter_map(|(candidate, decision)| {
+                    matches!(
+                        decision,
+                        ReceiptDecision::Return | ReceiptDecision::ReturnNearDuplicate
+                    )
+                    .then_some(candidate)
+                })
+                .collect();
+            emitted_tokens = selected
+                .iter()
+                .map(|candidate| self.config.tokenizer.count(&candidate.hit.excerpt))
+                .sum();
             let paths = selected
                 .iter()
-                .map(|hit| hit.path.clone())
+                .map(|candidate| candidate.hit.path.clone())
                 .collect::<HashSet<_>>()
                 .into_iter()
                 .collect::<Vec<_>>();
             let occurrences_returned = selected.len();
+            let coverage = search_coverage(&hits, &selected);
+            let selected = selected
+                .into_iter()
+                .map(|candidate| candidate.hit)
+                .collect();
             let baseline_source_tokens =
                 session.whole_file_source_tokens(&paths, self.config.tokenizer.name())?;
-            Ok((
-                SearchResponse {
-                    hits: selected,
-                    occurrences_returned,
-                    occurrences_total: request.all_occurrences.then_some(total_candidates),
-                    meta: self.meta(
-                        generation,
-                        emitted_tokens,
-                        has_more.then(|| make_cursor(generation, offset + consumed)),
-                    ),
-                },
-                baseline_source_tokens,
-                phases,
-                primitive_keys,
-            ))
+            let mut response = SearchResponse {
+                hits: selected,
+                coverage,
+                occurrences_returned,
+                occurrences_total: request.all_occurrences.then_some(total_candidates),
+                meta: self.meta(
+                    generation,
+                    emitted_tokens,
+                    has_more.then(|| make_cursor(generation, offset + consumed)),
+                ),
+            };
+            receipt.apply_meta(&mut response.meta);
+            Ok((response, baseline_source_tokens, phases, primitive_keys))
         });
         let (mut response, baseline_source_tokens, phases, primitive_keys) = search_result?;
         if let Some(baseline_source_tokens) = baseline_source_tokens {
@@ -868,11 +1087,13 @@ impl Services {
             content_hash: hash(&excerpt.content),
             excerpt: excerpt.content,
             match_kind: "symbol".into(),
+            match_kinds: vec!["symbol".into()],
             role: Some(ReferenceRole::Definition),
             symbol: Some(hit.symbol.name),
             enclosing_symbol: hit.symbol.parent,
             occurrence: None,
             score: if exact { 10.0 } else { 7.0 },
+            normalized_score: 0.0,
             score_reasons: vec![if exact {
                 "exact symbol".into()
             } else {
@@ -895,11 +1116,13 @@ impl Services {
             content_hash: hash(&excerpt.content),
             excerpt: excerpt.content,
             match_kind: "reference".into(),
+            match_kinds: vec!["reference".into()],
             role: Some(hit.reference.role),
             symbol: Some(hit.reference.name),
             enclosing_symbol: hit.reference.enclosing_symbol,
             occurrence: None,
             score: if exact { 8.0 } else { 5.0 },
+            normalized_score: 0.0,
             score_reasons: vec![if exact {
                 "exact reference".into()
             } else {

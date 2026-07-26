@@ -50,7 +50,10 @@ afterward. `freshness` is `current` while idle and `reconciling` while an index
 operation is active, so a cold idle repository reports
 `uninitialized`/`current`. Before the first generation, direct CLI retrieval
 exits with guidance to run `leantoken index`; use `leantoken doctor` to verify
-the complete MCP startup and first-retrieval flow.
+the complete MCP startup and first-retrieval flow. Status also reports SQLite
+main/WAL/SHM bytes, indexed source bytes, their amplification ratio, and current
+process RSS when the platform exposes it. RSS is per process, not a claim about
+all clients sharing the repository cache.
 
 `leantoken savings` reports a persistent, repository-local estimate for
 successful `search`, `outline`, `read`, and `context` responses. Search,
@@ -93,7 +96,7 @@ Setup writes only the `leantoken` entry in each selected global client config.
 It also manages a concise `leantoken` discovery skill in
 `~/.agents/skills/leantoken/SKILL.md` and
 `~/.claude/skills/leantoken/SKILL.md`. Hosts preload only its name and routing
-description, then load the instructions on selection; the six MCP schemas
+description, then load the instructions on selection; the eight MCP schemas
 remain deferred. Repeated setup updates only marker-owned copies, removal
 preserves an unowned file at either path, and partial client removal retains the
 skill while another LeanToken registration remains. JSON setup reports the
@@ -179,7 +182,7 @@ pruning during a mixed-version rollout.
 ## First-run doctor
 
 `leantoken doctor` launches the current executable as a real MCP subprocess and
-verifies its initialization identity and agent instructions, exact six-tool
+verifies its initialization identity and agent instructions, exact eight-tool
 catalog, and first `leantoken.context` retrieval. On a cold repository it
 follows structured `retry_after_ms` guidance until the first index generation
 is ready. Use `--json` for a machine-readable readiness report. Failures use
@@ -245,11 +248,14 @@ representation. The catalog publishes documented input schemas but omits
 optional output schemas; repeating full response DTOs in every `tools/list`
 result costs model context without changing tool behavior.
 
-Context receipts serialize only `fragment_hashes`, aligned by index with the
-returned fragments. The internal task fingerprint is not part of the wire
-contract because the originating request already carries the task and no
-follow-up request consumes that fingerprint. Pass the aligned hashes through
-`known_hashes` to suppress exact-content resends.
+Search, outline, read, and context responses return an opaque
+`meta.receipt_id`. Within one live MCP or programmatic service session, pass
+that ID to a later retrieval to suppress exact content and overlapping source
+ranges already returned. Near-duplicate evidence remains visible and increments
+`meta.receipt_near_duplicates`. Receipts are bounded, server-managed, and tied
+to one repository generation; unknown, evicted, and stale receipts fail
+explicitly. Context `fragment_hashes` and `known_hashes` remain available for
+stateless compatibility.
 
 Prefer LeanToken over shell discovery and whole-file reads. For a broad coding,
 debugging, review, or architecture task, start with `leantoken.context`. Use the
@@ -264,17 +270,19 @@ unknown path -> files
 
 All five MCP retrieval tools accept an optional `consistency` input:
 
-- `committed` (default) queries the latest completed index generation without
-  waiting for filesystem changes;
-- `working_tree` first reconciles the current working tree, then queries the
-  resulting committed generation.
+- `indexed_generation` (default) queries the latest completed index generation
+  without scanning or waiting for filesystem changes. It does not mean Git
+  HEAD and may include files indexed from an earlier working-tree state;
+- `reconcile_working_tree` first reconciles the current working tree, then
+  queries the resulting completed generation.
 
-Use `working_tree` when edits, generated files, branch changes, or external
-commits must be visible to the current call. Reconciliation uses the same
-ignore rules and cross-process operation lock as automatic indexing, and the
-request remains cancellable. Writes that begin concurrently with the call may
-require another `working_tree` request. CLI users can run `leantoken index`
-immediately before retrieval when they need to reconcile first.
+Use `reconcile_working_tree` when edits, generated files, branch changes, or
+external commits must be visible to the current call. Reconciliation uses the
+same ignore rules and cross-process operation lock as automatic indexing, and
+the request remains cancellable. Writes that begin concurrently with the call
+may require another `reconcile_working_tree` request. CLI users can run
+`leantoken index` immediately before retrieval when they need to reconcile
+first.
 
 Numeric retrieval limits are inclusive and validated uniformly by the CLI,
 MCP, and direct service APIs. `max_results` must be in `1..=100`;
@@ -319,8 +327,18 @@ Returns ranked source excerpts. Modes are `auto`, `text`, `regex`,
 Inputs include path filters, focus paths, result and token limits, context-line
 count, case sensitivity, and a generation-bound cursor. Defaults are 20 results,
 8,000 source tokens, and two context lines. Each hit includes its
-path, one-based returned line range, excerpt, match kind, score reasons, and
-content hash. Structural fields appear only when syntax supports them.
+path, one-based returned line range, excerpt, primary `match_kind`, all merged
+`match_kinds`, score reasons, content hash, raw score, and a `normalized_score`
+from 0 to 1 relative to the strongest candidate in the query. Structural fields
+appear only when syntax supports them.
+
+`auto` and `identifier` searches merge lexical and structural hits that resolve
+to the same indexed definition coordinates. Set `prefer_structural=true` to
+retain the structural definition excerpt as the primary hit when channels are
+merged; merged channel and score-reason diagnostics are preserved either way.
+The response `coverage` reports `total`, current-page `returned`, and
+`truncated` counts separately for definitions, references, and text/regex
+matches. One merged hit can represent more than one channel.
 
 Set `all_occurrences` in `text` or `regex` mode to return one hit for every
 non-overlapping match, including repeated matches in one indexed chunk or line.
@@ -417,8 +435,54 @@ is active on this cache.
 When the index has never completed a generation, retrieval tools return a
 successful retry result such as `{"status":"retryable","reason":"index_building",
 "retry_after_ms":500}`. Retry the same call after that delay. After local edits,
-set `consistency` to `working_tree` on the next MCP retrieval. A committed read
-may still use `index_stale` and `expected_hash` to detect or suppress live ranges.
+set `consistency` to `reconcile_working_tree` on the next MCP retrieval. An
+`indexed_generation` read may still use `index_stale` and `expected_hash` to
+detect or suppress live ranges.
+
+## `leantoken.json`
+
+Reads exact repository-relative JSON files without requiring them to be indexed,
+including ignored artifact paths. Operations are:
+
+- `query`: select the root, an RFC 6901 JSON Pointer, or a standard JMESPath
+  expression, then return `value`, `collapsed`, `keys`, or `schema`.
+- `numeric_summary`: collect numeric leaves below the selection and return exact
+  count, min, median, nearest-rank p95, max, and ignored non-numeric count.
+- `diff_fields`: evaluate up to 100 selectors against two files and report
+  presence, projected before/after values, and whether each field changed.
+
+`collapsed` replaces arrays with their total count and a bounded sample.
+`max_items` defaults to 1,000 (maximum 10,000), `array_sample_size` defaults to
+3 (maximum 20), and `max_tokens` defaults to 8,000. Exact source hashes bind
+responses to the complete live files. Raw values that exceed a cap fail loud;
+structural projections report `result_complete: false` when the item cap omits
+structure.
+
+## `leantoken.history`
+
+Reads symbol-aware evidence from immutable Git revisions without changing the
+working tree or index:
+
+- `operation: {"kind":"read_symbol","path":"src/lib.rs","symbol":"Services",
+  "revision":"main~1"}` parses the historical blob and returns that symbol.
+- `operation: {"kind":"diff_symbol",...}` parses the symbol independently at
+  `base_revision` and `head_revision`, then returns a bounded unified diff.
+- `operation: {"kind":"symbol_log",...}` starts at `revision` (default `HEAD`)
+  and uses Git line-history traversal for the resolved symbol range.
+
+Historical paths are repository-relative, revisions are resolved before object
+lookup, and blobs remain subject to the configured per-file byte limit.
+`max_tokens` defaults to 8,000 and applies to historical source or unified diff;
+truncation is explicit through `result_complete`, `HistoricalSymbol.truncated`,
+or `diff_truncated`. `max_results` defaults to 20 and is capped at 100 for
+`symbol_log`. Symbol metadata includes the resolved 12-character revision,
+complete line range, kind, parent, and full-content hash. This tool deliberately
+has no index consistency mode because Git objects are immutable.
+
+For context restricted to immutable history, pass `BASE..HEAD` as
+`leantoken.context.base_revision` with `strict_changed_paths: true`. A single
+commit uses `COMMIT^..COMMIT`; the resolved diff scope and coverage receipt make
+the hard boundary explicit.
 
 ## `leantoken.context`
 
@@ -432,22 +496,63 @@ pattern, while `focus_paths` remains a ranking boost unless
 `strict_focus_paths=true`. `minimum_fragments_per_focus_path` reserves the
 requested number of fragments for every focus pattern before ordinary ranking.
 `strict_changed_paths=true` restricts fragments to the resolved explicit paths,
-base-revision diff, or current Git working-tree changes when neither diff input
-is supplied. Include, strict focus, strict changed, and exclude constraints are
-intersected; no constraint silently broadens another. `must_include_paths` and
+an immutable `BASE..HEAD` range, a base-revision-to-working-tree diff, or current
+Git working-tree changes when neither diff input is supplied. Include, strict
+focus, strict changed, and exclude constraints are intersected; no constraint
+silently broadens another. `must_include_paths` and
 `must_include_symbols` generate and select required indexed evidence before
 focus minimums and ordinary ranking. `max_fragments` defaults to 8 and accepts
 values through 100.
+
+Set `plan_only=true` to run the same hard scopes, ranking, must-cover selection,
+token budget, and fragment limit without returning source. The response has an
+empty `fragments` array and no server-managed receipt mutation; `plan` contains
+bounded paths and ranges, final scores and reasons, exact source-token
+estimates, focus coverage, completeness, and a generated-artifact warning.
+`receipt_id` is rejected in plan mode; use `known_hashes` for stateless
+suppression that must apply to both preview and materialization.
+After confirming a broad plan, repeat the same request with `plan_only=false`
+to materialize those candidates against the selected index consistency
+boundary.
+
+Context ranking excludes known generated report trees by default:
+`artifacts/runtime_reports/**`, `artifacts/viability_audit/**`,
+`artifacts/replay_reports/**`, `notes/runs/**`, and `node_modules/**`. Exact
+`files`, `search`, and `read` operations are unaffected. A matching
+`include_paths` pattern explicitly admits an indexed artifact to context; an
+explicit `exclude_paths` or strict scope still wins.
+
+Repositories can append context-only exclusions in `.leantoken.toml`:
+
+```toml
+[context]
+exclude_paths = ["generated/**", "reports/audit/**"]
+```
+
+These patterns do not remove files from the index. Known cache trees that are
+not indexed by default, including `node_modules`, still require the global
+`--include-generated` indexing override before exact lookup or explicit context
+inclusion can find them. Repository configuration is resolved when LeanToken
+opens the repository.
+
 The `coverage` receipt distinguishes unmatched focus/include constraints,
 covered requirements, indexed requirements blocked by path or budget limits,
-and requirements absent from the index. Strict/minimum requests also return
-per-focus counts, resolved changed-path counts, and
-`strict_scope_satisfied`. An empty strict scope therefore returns an explicit
-coverage failure rather than unrelated evidence. Already-held matching hashes
-satisfy a must-cover requirement without resending source. `omission_summary`
-distinguishes path filtering, known hashes, and budget or result limits. The
-selector merges overlapping candidates, suppresses duplicate or known content,
-preserves file diversity, and returns short reasons for each chosen fragment.
+and requirements absent from the index. Every focus path returns indexed and
+selected fragment counts with an implicit minimum of one; strict or explicit
+minimum requests additionally contribute to `strict_scope_satisfied`. Strict
+changed-path requests return resolved and selected changed-path counts. An empty
+strict scope therefore returns an explicit coverage failure rather than
+unrelated evidence. Already-held matching hashes satisfy a must-cover
+requirement without resending source.
+
+`omission_summary` distinguishes path filtering, known hashes, and budget or
+result limits. It also groups omitted candidates by path, language or file type,
+reason, score band, focus membership, and changed-path membership. Facet lists
+are deterministic and bounded to 12 values; longer path or file-type tails are
+combined into `[other]`. Candidates rejected before scoring use the `not scored`
+band. The selector merges overlapping candidates, suppresses duplicate or known
+content, preserves file diversity, and returns short reasons for each chosen
+fragment.
 
 `workflow` accepts `auto`, `implementation`, `contribution`, `review`, or
 `investigation`. Contribution and review modes add bounded repository guidance,
@@ -466,16 +571,17 @@ boundary, base revision, and held fragment hashes once; callers overlay a
 suggested scope while reusing the original diff inputs. It is decomposition
 guidance, not a completeness claim.
 
-The evidence receipt contains a task fingerprint and a compact hash list aligned
-by index with the returned fragments. Repository generation appears once in
-response metadata. The receipt is returned but not persisted. Passing its
-`fragment_hashes` as `known_hashes` prevents those exact fragments from being
-resent; other relevant evidence may still be returned.
+The context evidence receipt retains a compact hash list aligned by index with
+the returned fragments. For normal same-session reuse, pass
+`meta.receipt_id` instead of copying those hashes. The server then suppresses
+exact duplicates and overlapping ranges across context, search, outline, and
+read. `fragment_hashes` plus `known_hashes` remains the stateless fallback for
+clients that cannot retain a server receipt.
 
-For a frontier-to-executor handoff, transfer the grounded fragments, receipt,
-repository generation, current todo list, and first validated edit. This is a
-compact trajectory manifest, not a LeanToken session. The executor can pass the
-receipt hashes back without rereading the same evidence.
+For a frontier-to-executor handoff in the same live server session, transfer the
+grounded fragments, receipt ID, repository generation, current todo list, and
+first validated edit. A later server process cannot recover the in-memory
+receipt; use the aligned fragment hashes when persistence is required.
 
 Every retrieval response also includes an opaque `meta.repository_id`. MCP
 callers can pass it back as `expected_repository_id`; a server bound to another
@@ -498,15 +604,25 @@ tokens. Assembled context has a separate 3,000-token default. Programmatic
 configurations may lower these defaults and ceilings; omitted MCP fields use
 the active service defaults rather than the static tool-schema examples.
 
-Every retrieval response reports both source and serialized response cost:
+Every retrieval response separates budgeted evidence from model-facing response
+overhead:
 
-- `source_tokens` counts selected source text. Path-only `files` responses
-  therefore report zero source tokens.
-- `payload_tokens` counts the compact JSON response DTO, including paths,
-  metadata, and source text. To make the self-reported value deterministic, the
-  count excludes the `payload_tokens` field itself. It also excludes transport
-  wrappers, MCP dual-mode duplication, tool schemas, and JSON-RPC envelopes.
-- `tokenizer` identifies the tokenizer used for both counts.
+- `source_tokens` counts the selected evidence text. Path-only `files`
+  responses therefore report zero source tokens.
+- `protocol_tokens` counts the compact JSON response envelope with scalar
+  values neutralized and result arrays emptied.
+- `path_and_metadata_tokens` counts the remaining non-source response cost,
+  including paths, metadata values, and repeated result structure.
+- `total_response_tokens` counts the complete compact JSON response DTO.
+- `payload_tokens` is a compatibility alias for `total_response_tokens`.
+- `tokenizer` identifies the tokenizer used for every count.
+
+The accounting fields themselves are zeroed before counting, which avoids a
+self-referential total. For current responses,
+`source_tokens + protocol_tokens + path_and_metadata_tokens` equals
+`total_response_tokens`. These counts describe the service response DTO, not
+MCP text/structured-content duplication, tool schemas, provider framing, or
+JSON-RPC envelopes.
 - `emitted_tokens` remains a compatibility alias for `source_tokens`.
 
 The default tokenizer is `cl100k_base`. Exact built-in modes are `cl100k_base`,

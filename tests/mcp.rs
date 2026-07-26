@@ -516,8 +516,10 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     assert!(instructions.contains("preferred repository discovery"));
     assert!(instructions.contains("call leantoken.savings directly"));
     assert!(instructions.contains("call leantoken.context first"));
+    assert!(instructions.contains("context plan_only=true"));
     assert!(instructions.contains("leantoken.search over grep or rg"));
-    assert!(instructions.contains("consistency=working_tree"));
+    assert!(instructions.contains("leantoken.history over git show"));
+    assert!(instructions.contains("consistency=reconcile_working_tree"));
     assert!(instructions.contains("native tools for edits, builds, tests"));
 
     let tools = client.peer().list_all_tools().await.expect("list tools");
@@ -525,12 +527,13 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .iter()
         .map(|tool| tool.name.as_ref())
         .collect::<std::collections::HashSet<_>>();
-    assert_eq!(tools.len(), 6);
+    assert_eq!(tools.len(), 8);
     for name in [
         "files",
         "search",
         "outline",
         "read",
+        "history",
         "context",
         "savings",
     ] {
@@ -555,6 +558,34 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     assert_ne!(response.is_error, Some(true));
     let structured = response.structured_content.expect("structured response");
     assert_eq!(structured["entries"][0]["path"], "lib.rs");
+
+    let response = call_tool(
+        client.peer(),
+        "context",
+        serde_json::json!({
+            "task": "find the answer definition",
+            "plan_only": true,
+            "max_fragments": 2
+        }),
+    )
+    .await
+    .expect("call context plan");
+    assert_ne!(response.is_error, Some(true));
+    let structured = response.structured_content.expect("structured response");
+    assert_eq!(structured["fragments"], serde_json::json!([]));
+    assert_eq!(structured["meta"]["source_tokens"], 0);
+    assert!(
+        structured["plan"]["candidates"]
+            .as_array()
+            .is_some_and(|candidates| !candidates.is_empty())
+    );
+    assert!(
+        structured["plan"]["candidates"]
+            .as_array()
+            .expect("plan candidates")
+            .iter()
+            .all(|candidate| candidate.get("content").is_none())
+    );
 
     for (arguments, expected_path) in [
         (
@@ -603,12 +634,12 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         "pub fn newly_committed_package() {}\n",
     )
     .expect("write source after initial index");
-    let working_tree_arguments = serde_json::json!({
+    let reconcile_working_tree_arguments = serde_json::json!({
         "query": "newly_committed_package",
         "mode": "identifier",
         "max_results": 5,
         "max_tokens": 100,
-        "consistency": "working_tree"
+        "consistency": "reconcile_working_tree"
     })
     .as_object()
     .expect("working-tree search arguments")
@@ -617,7 +648,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .peer()
         .call_tool(
             CallToolRequestParams::new("search")
-                .with_arguments(working_tree_arguments),
+                .with_arguments(reconcile_working_tree_arguments),
         )
         .await
         .expect("working-tree search");
@@ -836,12 +867,14 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         must_include_paths: Vec::new(),
         must_include_symbols: Vec::new(),
         max_fragments: None,
+        plan_only: false,
         focus_paths: Vec::new(),
         strict_focus_paths: false,
         minimum_fragments_per_focus_path: None,
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
+        receipt_id: None,
         prior_repository_generation: None,
     base_revision: None,
     changed_paths: Vec::new(),

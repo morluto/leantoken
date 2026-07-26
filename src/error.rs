@@ -158,6 +158,19 @@ pub enum Error {
     },
     #[error("stale cursor")]
     StaleCursor,
+    /// Retrieval receipt is unknown or has been evicted from the bounded session registry.
+    #[error("unknown retrieval receipt: {0}")]
+    UnknownReceipt(String),
+    /// Retrieval receipt belongs to an earlier committed repository generation.
+    #[error(
+        "stale retrieval receipt: receipt generation {receipt_generation}, repository generation {repository_generation}"
+    )]
+    StaleReceipt {
+        /// Repository generation recorded when the receipt was created.
+        receipt_generation: u64,
+        /// Repository generation serving the current retrieval.
+        repository_generation: u64,
+    },
     #[error("request cancelled")]
     Cancelled,
     #[error("repository index is not ready")]

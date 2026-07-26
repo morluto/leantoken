@@ -71,8 +71,9 @@ out the task.
 </td>
 <td width="33%" valign="top">
 <strong>Built for agent workflows</strong><br><br>
-Browse paths, search identifiers, inspect outlines, read exact ranges, and
-inspect cumulative savings through six focused MCP tools.
+Browse paths, search identifiers, inspect outlines, read exact ranges, trace
+symbol history, query structured JSON, and inspect cumulative savings through
+eight focused MCP tools.
 </td>
 </tr>
 </table>
@@ -137,16 +138,28 @@ retrieval.
 
 | Tool | Purpose |
 | --- | --- |
-| `leantoken.context` | Default first call for broad tasks; rank relevant evidence under a token budget. |
+| `leantoken.context` | Default first call for broad tasks; preview or materialize ranked evidence under a token budget. |
 | `leantoken.search` | Prefer over grep/rg for ranked text, regex, identifier, symbol, or reference search. |
 | `leantoken.files` | Prefer over find/ls/glob for compact, ignore-aware path discovery. |
 | `leantoken.outline` | Inspect definitions, signatures, imports, and ranges without whole-file reads. |
 | `leantoken.read` | Prefer over cat/head/sed for one exact symbol or inclusive line range. |
+| `leantoken.history` | Read, diff, or trace one parsed symbol across immutable Git revisions. |
+| `leantoken.json` | Query, summarize, or compare bounded live JSON structures. |
 | `leantoken.savings` | Report cumulative repository-local estimated source-token savings. |
 
-Every retrieval tool accepts `consistency: "working_tree"` when completed edits
-must be reconciled before the query. The default, `"committed"`, returns the
-latest completed index generation without waiting for filesystem changes.
+Every index-backed retrieval tool accepts `consistency: "reconcile_working_tree"` when
+completed edits must be reconciled before the query. The default,
+`"indexed_generation"`, returns the latest completed index generation without
+scanning or waiting for filesystem changes; it is not a Git revision boundary.
+`leantoken.history` reads immutable Git objects and `leantoken.json` reads exact
+live files, so neither accepts an index consistency mode. To constrain context
+to immutable history, pass `BASE..HEAD` as `leantoken.context.base_revision`
+with `strict_changed_paths: true`.
+
+For an uncertain broad task, set `plan_only: true` to receive bounded ranked
+candidate metadata without source fragments or receipt mutation. Confirm the
+paths and coverage, then repeat the same request with `plan_only: false` to
+materialize the selected source.
 
 The catalog stays intentionally small because every tool description and
 schema also consumes model context.

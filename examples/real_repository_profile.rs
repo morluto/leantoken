@@ -688,6 +688,8 @@ fn regex_request(query: &str, case_sensitive: bool) -> SearchRequest {
         context_lines: Some(1),
         case_sensitive,
         all_occurrences: false,
+        prefer_structural: false,
+        receipt_id: None,
         cursor: None,
     }
 }
@@ -771,12 +773,14 @@ fn context_request(constrained: bool) -> ContextRequest {
         must_include_paths,
         must_include_symbols: symbols.clone(),
         max_fragments: Some(12),
+        plan_only: false,
         focus_paths: include_paths,
         strict_focus_paths: false,
         minimum_fragments_per_focus_path: None,
         focus_symbols: symbols,
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
+        receipt_id: None,
         prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
@@ -902,6 +906,7 @@ async fn profile_reads(
                     continuation_cursor: Some(cursor),
                     max_tokens: Some(128),
                     expected_hash: None,
+                    receipt_id: None,
                 })
                 .await?,
         ),
@@ -976,6 +981,7 @@ fn read_request(
         continuation_cursor: None,
         max_tokens: Some(max_tokens),
         expected_hash: None,
+        receipt_id: None,
     }
 }
 
@@ -1078,6 +1084,8 @@ mod tests {
                 context_lines: Some(0),
                 case_sensitive: true,
                 all_occurrences: false,
+                prefer_structural: false,
+                receipt_id: None,
                 cursor: None,
             })
             .await

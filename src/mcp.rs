@@ -21,7 +21,8 @@ use crate::config::{
     DEFAULT_RESULTS, MAX_CONTEXT_LINES, MAX_OUTPUT_TOKENS, MAX_RESULTS,
 };
 use crate::model::{
-    ContextRequest, ContextWorkflow, FileOperation, FilesRequest, IndexConsistency, OutlineRequest,
+    ContextRequest, ContextWorkflow, FileOperation, FilesRequest, HistoryOperation, HistoryRequest,
+    IndexConsistency, JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest,
     ReadRequest, SearchMode, SearchRequest,
 };
 use crate::services::{Services, validate_positive_request_limit, validate_request_limit};
@@ -61,7 +62,7 @@ struct FilesMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 4096))]
     cursor: Option<String>,
-    /// Use `working_tree` after edits; otherwise `committed`.
+    /// Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
@@ -140,11 +141,18 @@ struct SearchMcpRequest {
     /// Return every text or regex occurrence with exact coordinates and counts.
     #[serde(default)]
     all_occurrences: bool,
+    /// Prefer structural definitions when identifier channels find the same definition.
+    #[serde(default)]
+    prefer_structural: bool,
+    /// Suppress evidence already returned under this server-managed receipt.
+    #[serde(default)]
+    #[schemars(length(max = 128))]
+    receipt_id: Option<String>,
     /// Cursor returned by the same search and repository generation.
     #[serde(default)]
     #[schemars(length(max = 4096))]
     cursor: Option<String>,
-    /// Use `working_tree` after edits; otherwise `committed`.
+    /// Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
@@ -174,6 +182,8 @@ impl SearchMcpRequest {
                 context_lines: self.context_lines,
                 case_sensitive: self.case_sensitive,
                 all_occurrences: self.all_occurrences,
+                prefer_structural: self.prefer_structural,
+                receipt_id: self.receipt_id,
                 cursor: self.cursor,
             },
             self.consistency,
@@ -208,11 +218,15 @@ struct OutlineMcpRequest {
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
     #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
     max_tokens: Option<usize>,
+    /// Suppress evidence already returned under this server-managed receipt.
+    #[serde(default)]
+    #[schemars(length(max = 128))]
+    receipt_id: Option<String>,
     /// Opaque cursor from a result-limited outline response.
     #[serde(default)]
     #[schemars(length(max = 256))]
     cursor: Option<String>,
-    /// Use `working_tree` after edits; otherwise `committed`.
+    /// Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
@@ -232,6 +246,7 @@ impl OutlineMcpRequest {
                 symbol_kind: self.symbol_kind,
                 max_results: self.max_results,
                 max_tokens: self.max_tokens,
+                receipt_id: self.receipt_id,
                 cursor: self.cursor,
             },
             self.consistency,
@@ -345,7 +360,11 @@ struct ReadMcpRequest {
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
     expected_hash: Option<String>,
-    /// Use `working_tree` after edits; otherwise `committed`.
+    /// Suppress evidence already returned under this server-managed receipt.
+    #[serde(default)]
+    #[schemars(length(max = 128))]
+    receipt_id: Option<String>,
+    /// Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
@@ -427,8 +446,244 @@ impl ReadMcpRequest {
                 continuation_cursor,
                 max_tokens: self.max_tokens,
                 expected_hash: self.expected_hash,
+                receipt_id: self.receipt_id,
             },
             self.consistency,
+            self.expected_repository_id,
+        )
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct HistoryMcpRequest {
+    /// Expected opaque repository identity from an earlier response.
+    #[serde(default)]
+    #[schemars(schema_with = "expected_repository_id_schema")]
+    expected_repository_id: Option<String>,
+    /// Git-backed symbol history operation.
+    operation: HistoryMcpOperation,
+    /// Maximum commits returned by `symbol_log` (default 20, maximum 100).
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(schema_with = "result_limit_schema", default = "default_result_option")]
+    max_results: Option<usize>,
+    /// Maximum source or diff tokens to return (default 8000, maximum 32000).
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
+    max_tokens: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum HistoryMcpOperation {
+    /// Read one parsed symbol from an immutable Git revision.
+    ReadSymbol {
+        #[schemars(length(min = 1, max = 4096))]
+        path: String,
+        #[schemars(length(min = 1, max = 4096))]
+        symbol: String,
+        #[schemars(length(min = 1, max = 4096))]
+        revision: String,
+    },
+    /// Compare one parsed symbol between two immutable Git revisions.
+    DiffSymbol {
+        #[schemars(length(min = 1, max = 4096))]
+        path: String,
+        #[schemars(length(min = 1, max = 4096))]
+        symbol: String,
+        #[schemars(length(min = 1, max = 4096))]
+        base_revision: String,
+        #[schemars(length(min = 1, max = 4096))]
+        head_revision: String,
+    },
+    /// List commits that touched the symbol's tracked historical lines.
+    SymbolLog {
+        #[schemars(length(min = 1, max = 4096))]
+        path: String,
+        #[schemars(length(min = 1, max = 4096))]
+        symbol: String,
+        #[serde(default)]
+        #[schemars(length(min = 1, max = 4096))]
+        revision: Option<String>,
+    },
+}
+
+impl HistoryMcpRequest {
+    fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
+        validate_optional_positive_limit("max_results", self.max_results, MAX_RESULTS)?;
+        validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)
+    }
+
+    fn into_parts(self) -> (HistoryRequest, Option<String>) {
+        let operation = match self.operation {
+            HistoryMcpOperation::ReadSymbol {
+                path,
+                symbol,
+                revision,
+            } => HistoryOperation::ReadSymbol {
+                path,
+                symbol,
+                revision,
+            },
+            HistoryMcpOperation::DiffSymbol {
+                path,
+                symbol,
+                base_revision,
+                head_revision,
+            } => HistoryOperation::DiffSymbol {
+                path,
+                symbol,
+                base_revision,
+                head_revision,
+            },
+            HistoryMcpOperation::SymbolLog {
+                path,
+                symbol,
+                revision,
+            } => HistoryOperation::SymbolLog {
+                path,
+                symbol,
+                revision,
+            },
+        };
+        (
+            HistoryRequest {
+                operation,
+                max_results: self.max_results,
+                max_tokens: self.max_tokens,
+            },
+            self.expected_repository_id,
+        )
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct JsonMcpRequest {
+    /// Expected opaque repository identity from an earlier response.
+    #[serde(default)]
+    #[schemars(schema_with = "expected_repository_id_schema")]
+    expected_repository_id: Option<String>,
+    /// Structural JSON operation.
+    operation: JsonMcpOperation,
+    /// Maximum tokens across selected/projected JSON (default 8000, maximum 32000).
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
+    max_tokens: Option<usize>,
+    /// Maximum structural items returned (default 1000, maximum 10000).
+    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[schemars(range(min = 1, max = 10000))]
+    max_items: Option<usize>,
+    /// Array elements sampled by collapsed projections (default 3, maximum 20).
+    #[serde(default)]
+    #[schemars(range(min = 0, max = 20))]
+    array_sample_size: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum JsonMcpSelector {
+    /// RFC 6901 JSON Pointer.
+    Pointer {
+        #[schemars(length(max = 4096))]
+        pointer: String,
+    },
+    /// Standard JMESPath expression.
+    Jmespath {
+        #[schemars(length(min = 1, max = 4096))]
+        expression: String,
+    },
+}
+
+impl From<JsonMcpSelector> for JsonSelector {
+    fn from(value: JsonMcpSelector) -> Self {
+        match value {
+            JsonMcpSelector::Pointer { pointer } => Self::Pointer { pointer },
+            JsonMcpSelector::Jmespath { expression } => Self::Jmespath { expression },
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum JsonMcpOperation {
+    /// Select and project one JSON value.
+    Query {
+        #[schemars(length(min = 1, max = 4096))]
+        path: String,
+        #[serde(default)]
+        selector: Option<JsonMcpSelector>,
+        #[serde(default)]
+        projection: JsonProjection,
+    },
+    /// Summarize numeric leaves below one JSON selection.
+    NumericSummary {
+        #[schemars(length(min = 1, max = 4096))]
+        path: String,
+        #[serde(default)]
+        selector: Option<JsonMcpSelector>,
+    },
+    /// Compare selected fields between two JSON files.
+    DiffFields {
+        #[schemars(length(min = 1, max = 4096))]
+        base_path: String,
+        #[schemars(length(min = 1, max = 4096))]
+        head_path: String,
+        #[schemars(length(min = 1, max = 100))]
+        selectors: Vec<JsonMcpSelector>,
+        #[serde(default)]
+        projection: JsonProjection,
+    },
+}
+
+impl JsonMcpRequest {
+    fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
+        validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)?;
+        validate_optional_positive_limit("max_items", self.max_items, 10_000)?;
+        if self.array_sample_size.is_some_and(|value| value > 20) {
+            return Err(crate::Error::RequestLimitExceeded {
+                field: "array_sample_size",
+                requested: self.array_sample_size.unwrap_or_default(),
+                limit: 20,
+            });
+        }
+        Ok(())
+    }
+
+    fn into_parts(self) -> (JsonRequest, Option<String>) {
+        let operation = match self.operation {
+            JsonMcpOperation::Query {
+                path,
+                selector,
+                projection,
+            } => JsonOperation::Query {
+                path,
+                selector: selector.map(Into::into),
+                projection,
+            },
+            JsonMcpOperation::NumericSummary { path, selector } => JsonOperation::NumericSummary {
+                path,
+                selector: selector.map(Into::into),
+            },
+            JsonMcpOperation::DiffFields {
+                base_path,
+                head_path,
+                selectors,
+                projection,
+            } => JsonOperation::DiffFields {
+                base_path,
+                head_path,
+                selectors: selectors.into_iter().map(Into::into).collect(),
+                projection,
+            },
+        };
+        (
+            JsonRequest {
+                operation,
+                max_tokens: self.max_tokens,
+                max_items: self.max_items,
+                array_sample_size: self.array_sample_size,
+            },
             self.expected_repository_id,
         )
     }
@@ -473,6 +728,9 @@ struct ContextMcpRequest {
         default = "default_context_fragment_option"
     )]
     max_fragments: Option<usize>,
+    /// Preview ranked candidates without source or receipt mutation; omit `receipt_id`.
+    #[serde(default)]
+    plan_only: bool,
     /// Boost matching paths without filtering other candidates.
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 4096)))]
@@ -496,10 +754,14 @@ struct ContextMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 128)))]
     known_hashes: Vec<String>,
+    /// Suppress evidence already returned under this server-managed receipt.
+    #[serde(default)]
+    #[schemars(length(max = 128))]
+    receipt_id: Option<String>,
     /// Earlier generation used to boost files indexed since that response.
     #[serde(default)]
     prior_repository_generation: Option<u64>,
-    /// Base revision for diff-scoped context.
+    /// Base revision or `BASE..HEAD` range for diff-scoped context.
     #[serde(default)]
     #[schemars(length(max = 256))]
     base_revision: Option<String>,
@@ -510,7 +772,7 @@ struct ContextMcpRequest {
     /// Require every returned fragment to belong to the resolved changed paths.
     #[serde(default)]
     strict_changed_paths: bool,
-    /// Use `working_tree` after edits; otherwise `committed`.
+    /// Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
@@ -548,12 +810,14 @@ impl ContextMcpRequest {
                 must_include_paths: self.must_include_paths,
                 must_include_symbols: self.must_include_symbols,
                 max_fragments: self.max_fragments,
+                plan_only: self.plan_only,
                 focus_paths: self.focus_paths,
                 strict_focus_paths: self.strict_focus_paths,
                 minimum_fragments_per_focus_path: self.minimum_fragments_per_focus_path,
                 focus_symbols: self.focus_symbols,
                 exclude_paths: self.exclude_paths,
                 known_hashes: self.known_hashes,
+                receipt_id: self.receipt_id,
                 prior_repository_generation: self.prior_repository_generation,
                 base_revision: self.base_revision,
                 changed_paths: self.changed_paths,
@@ -740,7 +1004,7 @@ impl RetryableToolResponse {
 fn index_consistency_schema(_: &mut SchemaGenerator) -> Schema {
     schemars::json_schema!({
         "type": "string",
-        "enum": ["committed", "working_tree"]
+        "enum": ["indexed_generation", "reconcile_working_tree"]
     })
 }
 
@@ -1088,8 +1352,58 @@ impl LeanTokenMcp {
     }
 
     #[tool(
+        name = "history",
+        description = "Read, diff, or trace one parsed symbol across immutable Git revisions. Use read_symbol for historical source, diff_symbol for a bounded unified diff, and symbol_log for commits touching the symbol's tracked lines. For immutable range-scoped context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbol\",\"path\":\"src/services.rs\",\"symbol\":\"meta\",\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}."
+    )]
+    async fn leantoken_history(
+        &self,
+        Parameters(req): Parameters<HistoryMcpRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let state = self.services.get();
+        req.validate_limits(state.limits())
+            .map_err(into_mcp_error)?;
+        let services = match self.services(&state) {
+            Ok(services) => services,
+            Err(result) => return Ok(result),
+        };
+        let (request, expected_repository_id) = req.into_parts();
+        services
+            .validate_repository_id(expected_repository_id.as_deref())
+            .map_err(into_mcp_error)?;
+        let resp = services
+            .history_cancellable(request, context.ct.clone())
+            .await;
+        self.service_result(resp)
+    }
+
+    #[tool(
+        name = "json",
+        description = "Query, summarize, or compare bounded live JSON without indexing raw artifacts. Select with RFC 6901 JSON Pointer or standard JMESPath; use collapsed, keys, or schema projections for large arrays and objects, numeric_summary for count/min/median/p95/max, and diff_fields for selected values across two files. Example: {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"artifacts/results.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"runs[].score\"}}}."
+    )]
+    async fn leantoken_json(
+        &self,
+        Parameters(req): Parameters<JsonMcpRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let state = self.services.get();
+        req.validate_limits(state.limits())
+            .map_err(into_mcp_error)?;
+        let services = match self.services(&state) {
+            Ok(services) => services,
+            Err(result) => return Ok(result),
+        };
+        let (request, expected_repository_id) = req.into_parts();
+        services
+            .validate_repository_id(expected_repository_id.as_deref())
+            .map_err(into_mcp_error)?;
+        let resp = services.json_cancellable(request, context.ct.clone()).await;
+        self.service_result(resp)
+    }
+
+    #[tool(
         name = "context",
-        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; use minimum_fragments_per_focus_path and must-include constraints for required evidence. Coverage diagnostics fail loud when strict scopes are empty or underfilled. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}."
+        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. For uncertain broad tasks, set plan_only=true to preview bounded ranked paths, ranges, reasons, token estimates, focus coverage, and generated-artifact warnings without source or receipt mutation; then repeat the same request with plan_only=false to materialize. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required evidence. Coverage diagnostics fail loud when strict scopes are empty or underfilled. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Example: {\"task\":\"Audit MCP tool discovery\"}."
     )]
     async fn leantoken_context(
         &self,
@@ -1139,7 +1453,7 @@ impl LeanTokenMcp {
 
 #[tool_handler(
     name = "leantoken",
-    instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken.context first with the user's task. PREFER leantoken.search over grep or rg for source search; leantoken.files over find, ls, or glob for paths; leantoken.outline over opening whole files to discover structure; and leantoken.read over cat, head, or sed for exact symbols and ranges. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=working_tree after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, generated artifacts, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
+    instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken.context first with the user's task. For an uncertain broad task, first use context plan_only=true, inspect its bounded metadata and coverage, then repeat the same request with plan_only=false to materialize source. PREFER leantoken.search over grep or rg for source search; leantoken.files over find, ls, or glob for paths; leantoken.outline over opening whole files to discover structure; leantoken.read over cat, head, or sed for exact current symbols and ranges; leantoken.history over git show, diff, or log -L for one symbol across immutable revisions; and leantoken.json over jq or whole-file reads for structural JSON queries, summaries, and selected-field diffs. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=reconcile_working_tree on index-backed tools after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, runtime probes, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
 )]
 impl ServerHandler for LeanTokenMcp {
     fn on_initialized(
@@ -1257,6 +1571,14 @@ fn into_mcp_error(error: crate::Error) -> ErrorData {
         crate::Error::StaleCursor => {
             ErrorData::invalid_params("cursor is stale or invalid", mcp_error_data("stale_cursor"))
         }
+        crate::Error::UnknownReceipt(_) => ErrorData::invalid_params(
+            "retrieval receipt is unknown or expired",
+            mcp_error_data("unknown_receipt"),
+        ),
+        crate::Error::StaleReceipt { .. } => ErrorData::invalid_params(
+            "retrieval receipt belongs to a stale repository generation",
+            mcp_error_data("stale_receipt"),
+        ),
         crate::Error::Regex(_) => ErrorData::invalid_params(
             "regular expression is invalid",
             mcp_error_data("invalid_regex"),
@@ -1371,13 +1693,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mcp_exposes_six_tools() {
+    fn mcp_exposes_eight_tools() {
         let router = LeanTokenMcp::tool_router();
         let tools = router.list_all();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 8);
 
         let names: std::collections::HashSet<_> = tools.iter().map(|t| t.name.as_ref()).collect();
-        for name in ["files", "search", "outline", "read", "context", "savings"] {
+        for name in [
+            "files", "search", "outline", "read", "history", "json", "context", "savings",
+        ] {
             assert!(names.contains(name), "missing tool {name}");
         }
     }
@@ -1496,6 +1820,19 @@ mod tests {
                 "requested": 32_001,
                 "limit": 32_000,
             }))
+        );
+
+        let stale_receipt = into_mcp_error(crate::Error::StaleReceipt {
+            receipt_generation: 4,
+            repository_generation: 5,
+        });
+        assert_eq!(stale_receipt.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert_eq!(
+            stale_receipt
+                .data
+                .as_ref()
+                .and_then(|data| data["category"].as_str()),
+            Some("stale_receipt")
         );
 
         let internal = [
@@ -1728,7 +2065,7 @@ mod tests {
         for tool in LeanTokenMcp::tool_router()
             .list_all()
             .into_iter()
-            .filter(|tool| tool.name != "savings")
+            .filter(|tool| tool.name != "savings" && tool.name != "history" && tool.name != "json")
         {
             let consistency = tool
                 .input_schema
@@ -1738,23 +2075,39 @@ mod tests {
                 .unwrap_or_else(|| panic!("{} consistency schema missing", tool.name));
             assert_eq!(
                 consistency.get("default"),
-                Some(&serde_json::json!("committed"))
+                Some(&serde_json::json!("indexed_generation"))
             );
             assert_eq!(
                 consistency.get("enum"),
-                Some(&serde_json::json!(["committed", "working_tree"]))
+                Some(&serde_json::json!([
+                    "indexed_generation",
+                    "reconcile_working_tree"
+                ]))
             );
             assert!(
                 consistency
                     .get("description")
                     .and_then(serde_json::Value::as_str)
                     .is_some_and(|description| {
-                        description.contains("working_tree") && description.contains("edits")
+                        description.contains("reconcile_working_tree")
+                            && description.contains("edits")
                     }),
                 "{}.consistency must tell agents when to synchronize",
                 tool.name
             );
         }
+        let history = LeanTokenMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|tool| tool.name == "history")
+            .expect("history tool");
+        assert!(
+            history
+                .input_schema
+                .get("properties")
+                .and_then(serde_json::Value::as_object)
+                .is_none_or(|properties| !properties.contains_key("consistency"))
+        );
     }
 
     #[test]
@@ -1884,6 +2237,78 @@ mod tests {
         assert!(continuation.heading_occurrence.is_none());
         assert!(continuation.start_line.is_none());
         assert!(continuation.end_line.is_none());
+    }
+
+    #[test]
+    fn receipt_id_maps_to_the_service_request() {
+        let request = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+            "path": "README.md",
+            "receipt_id": "r0000000000000001",
+            "target": {"kind": "lines", "start": 1, "end": 2}
+        }))
+        .expect("read request with receipt");
+        let (request, _, _) = request.into_parts();
+        assert_eq!(request.receipt_id.as_deref(), Some("r0000000000000001"));
+    }
+
+    #[test]
+    fn history_operation_maps_to_the_service_request() {
+        let request = serde_json::from_value::<HistoryMcpRequest>(serde_json::json!({
+            "operation": {
+                "kind": "diff_symbol",
+                "path": "src/lib.rs",
+                "symbol": "Services",
+                "base_revision": "main~1",
+                "head_revision": "main"
+            },
+            "max_tokens": 500
+        }))
+        .expect("history request");
+        request
+            .validate_limits(McpLimitPolicy::DEFAULT)
+            .expect("history limits");
+        let (request, _) = request.into_parts();
+        assert_eq!(request.max_tokens, Some(500));
+        assert!(matches!(
+            request.operation,
+            HistoryOperation::DiffSymbol {
+                path,
+                symbol,
+                base_revision,
+                head_revision,
+            } if path == "src/lib.rs"
+                && symbol == "Services"
+                && base_revision == "main~1"
+                && head_revision == "main"
+        ));
+    }
+
+    #[test]
+    fn json_operation_maps_to_the_service_request() {
+        let request = serde_json::from_value::<JsonMcpRequest>(serde_json::json!({
+            "operation": {
+                "kind": "numeric_summary",
+                "path": "artifacts/results.json",
+                "selector": {
+                    "kind": "jmespath",
+                    "expression": "runs[].score"
+                }
+            },
+            "max_items": 500
+        }))
+        .expect("JSON request");
+        request
+            .validate_limits(McpLimitPolicy::DEFAULT)
+            .expect("JSON limits");
+        let (request, _) = request.into_parts();
+        assert_eq!(request.max_items, Some(500));
+        assert!(matches!(
+            request.operation,
+            JsonOperation::NumericSummary {
+                path,
+                selector: Some(JsonSelector::Jmespath { expression }),
+            } if path == "artifacts/results.json" && expression == "runs[].score"
+        ));
     }
 
     #[test]

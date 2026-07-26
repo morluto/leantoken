@@ -19,10 +19,12 @@
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
-use crate::config::DEFAULT_CONTEXT_FRAGMENTS;
+use crate::config::{DEFAULT_CONTEXT_FRAGMENTS, default_context_exclude_paths};
 use crate::model::{
-    ContextCoverageReceipt, ContextFragment, ContextOmissionSummary, ContextRequest,
+    ContextCoverageReceipt, ContextFragment, ContextOmissionFacet, ContextOmissionSummary,
+    ContextPlanCandidate, ContextPlanFocusCoverage, ContextQueryPlan, ContextRequest,
     ContextResponse, EvidenceReceipt, Freshness, OmittedCandidate, ResponseMeta,
 };
 use crate::services::validation::{PathMatcher, path_matches};
@@ -40,7 +42,126 @@ const OVERLAP_THRESHOLD: f64 = 0.5;
 /// breadth.
 const DIVERSITY_DIVISOR: usize = 600;
 const MAX_OMITTED_DETAILS: usize = 1;
+const MAX_OMISSION_FACETS: usize = 12;
 const MIN_RELATIVE_CONTEXT_SCORE: f64 = 0.25;
+
+fn increment_facet(counts: &mut HashMap<String, usize>, value: impl Into<String>) {
+    let count = counts.entry(value.into()).or_default();
+    *count = count.saturating_add(1);
+}
+
+fn bounded_facets(counts: HashMap<String, usize>) -> Vec<ContextOmissionFacet> {
+    let mut facets = counts
+        .into_iter()
+        .map(|(value, count)| ContextOmissionFacet { value, count })
+        .collect::<Vec<_>>();
+    facets.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.value.cmp(&right.value))
+    });
+    if facets.len() > MAX_OMISSION_FACETS {
+        let other = facets
+            .drain(MAX_OMISSION_FACETS - 1..)
+            .map(|facet| facet.count)
+            .sum();
+        facets.push(ContextOmissionFacet {
+            value: "[other]".into(),
+            count: other,
+        });
+    }
+    facets
+}
+
+fn candidate_file_type(path: &str) -> String {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .filter(|extension| !extension.is_empty())
+        .map_or_else(
+            || "[no extension]".into(),
+            |extension| format!(".{}", extension.to_ascii_lowercase()),
+        )
+}
+
+fn score_band(score: f64) -> &'static str {
+    if score >= 1.0 {
+        "score >= 1.0"
+    } else if score >= 0.5 {
+        "0.5 <= score < 1.0"
+    } else if score > 0.0 {
+        "0 < score < 0.5"
+    } else {
+        "score = 0"
+    }
+}
+
+fn summarize_omissions(
+    path_omitted: &[ScoredCandidate],
+    known_omitted: &[ScoredCandidate],
+    limit_omitted: &[ScoredCandidate],
+    prefiltered_path_omissions: &[String],
+    focus_paths: &PathMatcher,
+    changed_paths: &HashSet<&str>,
+) -> ContextOmissionSummary {
+    let mut paths = HashMap::new();
+    let mut file_types = HashMap::new();
+    let mut score_bands = HashMap::new();
+    let mut focused = 0usize;
+    let mut changed = 0usize;
+
+    let mut record = |path: &str, score: Option<f64>| {
+        increment_facet(&mut paths, path);
+        increment_facet(&mut file_types, candidate_file_type(path));
+        increment_facet(&mut score_bands, score.map_or("not scored", score_band));
+        focused = focused.saturating_add(usize::from(focus_paths.is_match(path)));
+        changed = changed.saturating_add(usize::from(changed_paths.contains(path)));
+    };
+    for candidate in path_omitted
+        .iter()
+        .chain(known_omitted)
+        .chain(limit_omitted)
+    {
+        record(&candidate.candidate.path, Some(candidate.score));
+    }
+    for path in prefiltered_path_omissions {
+        record(path, None);
+    }
+
+    let path_excluded = path_omitted
+        .len()
+        .saturating_add(prefiltered_path_omissions.len());
+    let known_hash = known_omitted.len();
+    let budget_or_result_limit = limit_omitted.len();
+    let total = path_excluded
+        .saturating_add(known_hash)
+        .saturating_add(budget_or_result_limit);
+    let mut reasons = HashMap::new();
+    if path_excluded > 0 {
+        reasons.insert("path_excluded".into(), path_excluded);
+    }
+    if known_hash > 0 {
+        reasons.insert("known_hash".into(), known_hash);
+    }
+    if budget_or_result_limit > 0 {
+        reasons.insert("budget_or_result_limit".into(), budget_or_result_limit);
+    }
+
+    ContextOmissionSummary {
+        path_excluded,
+        known_hash,
+        budget_or_result_limit,
+        by_path: bounded_facets(paths),
+        by_language_or_file_type: bounded_facets(file_types),
+        by_reason: bounded_facets(reasons),
+        by_score_band: bounded_facets(score_bands),
+        focused,
+        not_focused: total.saturating_sub(focused),
+        changed,
+        not_changed: total.saturating_sub(changed),
+    }
+}
 
 /// Linear scoring weights for ranking signals.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -544,12 +665,32 @@ pub fn select_with_tokenizer(
     repository_generation: u64,
     tokenizer: tokens::Tokenizer,
 ) -> ContextResponse {
+    select_with_tokenizer_and_context_exclusions(
+        candidates,
+        request,
+        repository_generation,
+        tokenizer,
+        &default_context_exclude_paths(),
+        &[],
+    )
+}
+
+pub(crate) fn select_with_tokenizer_and_context_exclusions(
+    candidates: Vec<Candidate>,
+    request: &ContextRequest,
+    repository_generation: u64,
+    tokenizer: tokens::Tokenizer,
+    context_exclude_paths: &[String],
+    prefiltered_path_omissions: &[String],
+) -> ContextResponse {
     select_with_options(
         candidates,
         request,
         repository_generation,
         &Weights::default(),
         tokenizer,
+        context_exclude_paths,
+        prefiltered_path_omissions,
     )
 }
 
@@ -585,6 +726,8 @@ pub fn select_with_weights_and_tokenizer(
         repository_generation,
         weights,
         tokenizer,
+        &default_context_exclude_paths(),
+        &[],
     )
 }
 
@@ -594,11 +737,14 @@ fn select_with_options(
     repository_generation: u64,
     weights: &Weights,
     tokenizer: tokens::Tokenizer,
+    context_exclude_paths: &[String],
+    prefiltered_path_omissions: &[String],
 ) -> ContextResponse {
     let mut candidates = candidates;
     let focus_paths = PathMatcher::new_lossy(&request.focus_paths);
     let include_paths = PathMatcher::new_lossy(&request.include_paths);
     let exclude_paths = PathMatcher::new_lossy(&request.exclude_paths);
+    let context_exclude_paths = PathMatcher::new_lossy(context_exclude_paths);
     let changed_paths = request
         .changed_paths
         .iter()
@@ -611,10 +757,15 @@ fn select_with_options(
     let mut path_omitted: Vec<ScoredCandidate> = Vec::new();
     let mut known_omitted: Vec<ScoredCandidate> = Vec::new();
     let mut eligible: Vec<Candidate> = Vec::with_capacity(candidates.len());
+    let mut generated_artifact_warning = false;
 
     for candidate in candidates {
+        let explicitly_included =
+            !request.include_paths.is_empty() && include_paths.is_match(&candidate.path);
+        generated_artifact_warning |= context_exclude_paths.is_match(&candidate.path);
         if (!request.include_paths.is_empty() && !include_paths.is_match(&candidate.path))
             || exclude_paths.is_match(&candidate.path)
+            || (context_exclude_paths.is_match(&candidate.path) && !explicitly_included)
             || (request.strict_focus_paths && !focus_paths.is_match(&candidate.path))
             || (request.strict_changed_paths && !changed_paths.contains(candidate.path.as_str()))
         {
@@ -636,6 +787,11 @@ fn select_with_options(
 
     let ranked = rank_with_tokenizer(eligible, weights, tokenizer);
     let deduped = deduplicate_with_options(ranked, weights);
+    let candidate_paths_total = deduped
+        .iter()
+        .map(|candidate| candidate.candidate.path.as_str())
+        .collect::<HashSet<_>>()
+        .len();
 
     let budget = request.token_budget;
     let max_per_file = (budget / DIVERSITY_DIVISOR).clamp(1, 3);
@@ -657,6 +813,7 @@ fn select_with_options(
         max_fragments.saturating_sub(selected.len()),
     );
     selected.extend(additional);
+    let result_complete = omitted.is_empty();
 
     let covered_candidates = selected.iter().chain(&known_omitted);
     let mut coverage = ContextCoverageReceipt::default();
@@ -681,32 +838,86 @@ fn select_with_options(
         }
     }
 
-    // Build DTOs.
-    let mut fragments: Vec<ContextFragment> = Vec::with_capacity(selected.len());
+    let estimated_source_tokens = selected.iter().map(|candidate| candidate.token_count).sum();
+    let plan = request.plan_only.then(|| {
+        let minimum_fragments = request.minimum_fragments_per_focus_path.unwrap_or(1);
+        let focus_coverage = request
+            .focus_paths
+            .iter()
+            .map(|pattern| {
+                let matcher = PathMatcher::new_lossy(std::slice::from_ref(pattern));
+                let candidate_fragments = selected
+                    .iter()
+                    .filter(|candidate| matcher.is_match(&candidate.candidate.path))
+                    .count();
+                ContextPlanFocusCoverage {
+                    pattern: pattern.clone(),
+                    candidate_fragments,
+                    minimum_fragments,
+                    satisfied: candidate_fragments >= minimum_fragments,
+                }
+            })
+            .collect();
+        let candidates = selected
+            .iter()
+            .map(|scored| ContextPlanCandidate {
+                path: scored.candidate.path.clone(),
+                start_line: scored.candidate.start_line,
+                end_line: scored.candidate.end_line,
+                representation: scored.candidate.representation.clone(),
+                score: (scored.score * 10_000.0).round() / 10_000.0,
+                reasons: scored
+                    .candidate
+                    .reason()
+                    .split("; ")
+                    .map(str::to_owned)
+                    .collect(),
+                estimated_tokens: scored.token_count,
+            })
+            .collect();
+        ContextQueryPlan {
+            candidates,
+            candidate_paths_total,
+            estimated_source_tokens,
+            focus_coverage,
+            generated_artifact_warning,
+            result_complete,
+        }
+    });
+
+    // Materialized responses carry source; plans carry only the same selection's metadata.
+    let mut fragments = Vec::with_capacity(selected.len());
     let mut fragment_hashes = Vec::with_capacity(selected.len());
-    let mut emitted_tokens = 0usize;
-
-    for scored in selected {
-        emitted_tokens += scored.token_count;
-        fragments.push(ContextFragment {
-            path: scored.candidate.path.clone(),
-            start_line: scored.candidate.start_line,
-            end_line: scored.candidate.end_line,
-            representation: scored.candidate.representation.clone(),
-            content: scored.candidate.content.clone(),
-            content_hash: scored.content_hash.clone(),
-            score: (scored.score * 10_000.0).round() / 10_000.0,
-            reason: scored.candidate.reason(),
-            token_count: scored.token_count,
-        });
-        fragment_hashes.push(scored.content_hash);
+    if !request.plan_only {
+        for scored in &selected {
+            fragments.push(ContextFragment {
+                path: scored.candidate.path.clone(),
+                start_line: scored.candidate.start_line,
+                end_line: scored.candidate.end_line,
+                representation: scored.candidate.representation.clone(),
+                content: scored.candidate.content.clone(),
+                content_hash: scored.content_hash.clone(),
+                score: (scored.score * 10_000.0).round() / 10_000.0,
+                reason: scored.candidate.reason(),
+                token_count: scored.token_count,
+            });
+            fragment_hashes.push(scored.content_hash.clone());
+        }
     }
-
-    let omission_summary = ContextOmissionSummary {
-        path_excluded: path_omitted.len(),
-        known_hash: known_omitted.len(),
-        budget_or_result_limit: omitted.len(),
+    let emitted_tokens = if request.plan_only {
+        0
+    } else {
+        estimated_source_tokens
     };
+
+    let omission_summary = summarize_omissions(
+        &path_omitted,
+        &known_omitted,
+        &omitted,
+        prefiltered_path_omissions,
+        &focus_paths,
+        &changed_paths,
+    );
     let mut omitted_dto: Vec<OmittedCandidate> = path_omitted
         .into_iter()
         .map(|scored| OmittedCandidate {
@@ -730,11 +941,20 @@ fn select_with_options(
         reason: "budget or result limit".to_string(),
     }));
 
-    let omitted_count = omitted_dto.len();
+    let omitted_count = omission_summary
+        .path_excluded
+        .saturating_add(omission_summary.known_hash)
+        .saturating_add(omission_summary.budget_or_result_limit);
     omitted_dto.truncate(MAX_OMITTED_DETAILS);
     let mut warnings = Vec::new();
     if omitted_count > 0 {
         warnings.push(format!("{omitted_count} omitted"));
+    }
+    if request.plan_only && generated_artifact_warning {
+        warnings.push(
+            "generated-artifact candidates matched context exclusion defaults; review their explicit inclusion before materializing source"
+                .into(),
+        );
     }
 
     let task_hash = blake3::hash(request.task.as_bytes()).to_hex().to_string();
@@ -750,16 +970,24 @@ fn select_with_options(
         repository_generation,
         freshness: Freshness::Current,
         source_tokens: emitted_tokens,
+        protocol_tokens: 0,
+        path_and_metadata_tokens: 0,
+        total_response_tokens: 0,
         payload_tokens: 0,
         tokenizer: tokenizer.name().into(),
         emitted_tokens,
         token_count_exact: tokenizer.is_exact(),
+        receipt_id: None,
+        receipt_suppressed_exact: 0,
+        receipt_suppressed_overlap: 0,
+        receipt_near_duplicates: 0,
         next_cursor: None,
     };
 
     let mut response = ContextResponse {
         workflow: crate::model::ContextWorkflow::Implementation,
         workflow_receipt: None,
+        plan,
         fragments,
         receipt,
         diff_scope: None,
@@ -770,9 +998,12 @@ fn select_with_options(
         warnings,
         meta,
     };
-    let payload =
-        serde_json::to_string(&response).expect("context response metadata is serializable");
-    response.meta.payload_tokens = tokenizer.count(&payload);
+    let accounting = tokens::response_token_accounting(&response, emitted_tokens, &tokenizer)
+        .expect("context response metadata is serializable");
+    response.meta.protocol_tokens = accounting.protocol_tokens;
+    response.meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
+    response.meta.total_response_tokens = accounting.total_response_tokens;
+    response.meta.payload_tokens = accounting.total_response_tokens;
     response
 }
 
@@ -1116,12 +1347,14 @@ mod tests {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: Vec::new(),
@@ -1137,12 +1370,14 @@ mod tests {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: vec![focus_path.into()],
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: Vec::new(),
@@ -1158,12 +1393,14 @@ mod tests {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: vec![exclude.into()],
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: Vec::new(),
@@ -1643,6 +1880,77 @@ mod tests {
     }
 
     #[test]
+    fn omission_summary_reports_bounded_coverage_facets() {
+        let selected = Candidate::new("src/selected.rs", 1, 2, "selected").exact(3.0);
+        let limited = Candidate::new("src/changed.rs", 1, 2, "limited").exact(2.0);
+        let known = Candidate::new("src/known.md", 1, 2, "known").exact(1.0);
+        let known_hash = known.content_hash();
+        let excluded = Candidate::new("tests/helper.ts", 1, 2, "excluded").exact(1.0);
+        let mut request = request_with_budget(100);
+        request.max_fragments = Some(1);
+        request.focus_paths = vec!["src/**".into()];
+        request.changed_paths = vec!["src/changed.rs".into()];
+        request.exclude_paths = vec!["tests/**".into()];
+        request.known_hashes = vec![known_hash];
+
+        let response = select_with_tokenizer_and_context_exclusions(
+            vec![selected, limited, known, excluded],
+            &request,
+            1,
+            tokens::Tokenizer::default(),
+            &[],
+            &["generated/tool.js".into()],
+        );
+
+        let summary = response.omission_summary;
+        assert_eq!(summary.path_excluded, 2);
+        assert_eq!(summary.known_hash, 1);
+        assert_eq!(summary.budget_or_result_limit, 1);
+        assert_eq!(summary.focused, 2);
+        assert_eq!(summary.not_focused, 2);
+        assert_eq!(summary.changed, 1);
+        assert_eq!(summary.not_changed, 3);
+        assert!(summary.by_reason.contains(&ContextOmissionFacet {
+            value: "path_excluded".into(),
+            count: 2,
+        }));
+        assert!(
+            summary
+                .by_language_or_file_type
+                .iter()
+                .any(|facet| facet.value == ".js" && facet.count == 1)
+        );
+        assert!(
+            summary
+                .by_score_band
+                .iter()
+                .any(|facet| facet.value == "not scored" && facet.count == 1)
+        );
+        assert_eq!(
+            summary
+                .by_path
+                .iter()
+                .map(|facet| facet.count)
+                .sum::<usize>(),
+            4
+        );
+    }
+
+    #[test]
+    fn omission_facets_fold_long_tails_into_other() {
+        let counts = (0..20)
+            .map(|index| (format!("path-{index:02}"), 1))
+            .collect();
+
+        let facets = bounded_facets(counts);
+
+        assert_eq!(facets.len(), MAX_OMISSION_FACETS);
+        assert_eq!(facets.last().expect("other").value, "[other]");
+        assert_eq!(facets.last().expect("other").count, 9);
+        assert_eq!(facets.iter().map(|facet| facet.count).sum::<usize>(), 20);
+    }
+
+    #[test]
     fn include_paths_are_a_hard_fragment_boundary() {
         let included = Candidate::new("src/browser/capture.rs", 1, 2, "alpha").exact(0.5);
         let unrelated = Candidate::new("src/managed/evidence.rs", 1, 2, "beta").exact(10.0);
@@ -1655,6 +1963,116 @@ mod tests {
         assert_eq!(response.fragments[0].path, "src/browser/capture.rs");
         assert_eq!(response.omission_summary.path_excluded, 1);
         assert_eq!(response.omitted[0].reason, "path excluded");
+    }
+
+    #[test]
+    fn generated_context_defaults_require_an_explicit_include() {
+        let generated =
+            Candidate::new("artifacts/runtime_reports/latest.json", 1, 2, "generated").exact(10.0);
+        let source = Candidate::new("src/runtime.rs", 1, 2, "source").exact(0.5);
+        let request = request_with_budget(20);
+
+        let response = select(vec![generated.clone(), source], &request, 1);
+
+        assert_eq!(response.fragments.len(), 1);
+        assert_eq!(response.fragments[0].path, "src/runtime.rs");
+        assert_eq!(response.omission_summary.path_excluded, 1);
+
+        let mut included_request = request_with_budget(20);
+        included_request.include_paths = vec!["artifacts/runtime_reports/**".into()];
+        let included = select(vec![generated], &included_request, 1);
+
+        assert_eq!(included.fragments.len(), 1);
+        assert_eq!(
+            included.fragments[0].path,
+            "artifacts/runtime_reports/latest.json"
+        );
+    }
+
+    #[test]
+    fn context_plan_matches_materialized_selection_without_source() {
+        let focused = Candidate::new("src/ranking.rs", 10, 12, "focused evidence")
+            .match_kind("symbol")
+            .exact(2.0);
+        let other = Candidate::new("src/other.rs", 20, 21, "other evidence").match_kind("text");
+        let candidates = vec![other, focused];
+        let mut request = request_focused(100, "src/ranking.rs");
+        request.max_fragments = Some(1);
+        request.plan_only = true;
+
+        let preview = select(candidates.clone(), &request, 7);
+        let plan = preview.plan.as_ref().expect("query plan");
+
+        assert!(preview.fragments.is_empty());
+        assert!(preview.receipt.fragment_hashes.is_empty());
+        assert_eq!(preview.meta.source_tokens, 0);
+        assert_eq!(preview.meta.emitted_tokens, 0);
+        assert!(!plan.candidates.is_empty());
+        assert_eq!(plan.candidates.len(), 1);
+        assert!(!plan.result_complete);
+        assert!(
+            plan.candidates
+                .iter()
+                .all(|candidate| candidate.score >= 0.0)
+        );
+        assert!(
+            plan.candidates
+                .iter()
+                .all(|candidate| !candidate.reasons.is_empty())
+        );
+        assert_eq!(
+            plan.estimated_source_tokens,
+            plan.candidates
+                .iter()
+                .map(|candidate| candidate.estimated_tokens)
+                .sum::<usize>()
+        );
+        assert_eq!(plan.focus_coverage.len(), 1);
+        assert!(plan.focus_coverage[0].satisfied);
+
+        request.plan_only = false;
+        let materialized = select(candidates, &request, 7);
+        assert!(materialized.plan.is_none());
+        assert_eq!(
+            plan.candidates
+                .iter()
+                .map(|candidate| (&candidate.path, candidate.start_line, candidate.end_line))
+                .collect::<Vec<_>>(),
+            materialized
+                .fragments
+                .iter()
+                .map(|fragment| (&fragment.path, fragment.start_line, fragment.end_line))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            plan.estimated_source_tokens,
+            materialized.meta.source_tokens
+        );
+    }
+
+    #[test]
+    fn context_plan_warns_when_generated_defaults_match() {
+        let generated =
+            Candidate::new("artifacts/runtime_reports/latest.json", 1, 2, "generated").exact(10.0);
+        let source = Candidate::new("src/runtime.rs", 1, 2, "source").exact(0.5);
+        let mut request = request_with_budget(20);
+        request.plan_only = true;
+
+        let response = select(vec![generated, source], &request, 1);
+        let plan = response.plan.expect("query plan");
+
+        assert!(plan.generated_artifact_warning);
+        assert!(
+            response
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("generated-artifact"))
+        );
+        assert!(
+            plan.candidates
+                .iter()
+                .all(|candidate| candidate.path != "artifacts/runtime_reports/latest.json")
+        );
     }
 
     #[test]
@@ -1724,11 +2142,21 @@ mod tests {
         assert_eq!(resp.meta.source_tokens, resp.meta.emitted_tokens);
         assert_eq!(resp.meta.tokenizer, tokens::Tokenizer::default().name());
         let mut countable = resp.clone();
+        countable.meta.protocol_tokens = 0;
+        countable.meta.path_and_metadata_tokens = 0;
+        countable.meta.total_response_tokens = 0;
         countable.meta.payload_tokens = 0;
         let payload = serde_json::to_string(&countable).expect("serialize context response");
         assert_eq!(
-            resp.meta.payload_tokens,
+            resp.meta.total_response_tokens,
             tokens::Tokenizer::default().count(&payload)
+        );
+        assert_eq!(resp.meta.payload_tokens, resp.meta.total_response_tokens);
+        assert_eq!(
+            resp.meta.total_response_tokens,
+            resp.meta.source_tokens
+                + resp.meta.protocol_tokens
+                + resp.meta.path_and_metadata_tokens
         );
         assert!(resp.meta.token_count_exact);
     }

@@ -43,12 +43,14 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
         must_include_paths: Vec::new(),
         must_include_symbols: Vec::new(),
         max_fragments: None,
+        plan_only: false,
         focus_paths: vec!["src/mcp.rs".into()],
         strict_focus_paths: false,
         minimum_fragments_per_focus_path: None,
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
+        receipt_id: None,
         prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
@@ -57,6 +59,7 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
     let response = ContextResponse {
         workflow: ContextWorkflow::Implementation,
         workflow_receipt: None,
+        plan: None,
         fragments: vec![ContextFragment {
             path: "src/mcp.rs".into(),
             start_line: 298,
@@ -85,10 +88,17 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
             repository_generation: 7,
             freshness: Freshness::Current,
             source_tokens: 21,
+            protocol_tokens: 0,
+            path_and_metadata_tokens: 0,
+            total_response_tokens: 0,
             payload_tokens: 0,
             tokenizer: "cl100k_base".into(),
             emitted_tokens: 21,
             token_count_exact: true,
+            receipt_id: None,
+            receipt_suppressed_exact: 0,
+            receipt_suppressed_overlap: 0,
+            receipt_near_duplicates: 0,
             next_cursor: None,
         },
     };
@@ -267,7 +277,7 @@ mod tests {
                 .as_array()
                 .expect("tools array")
                 .len(),
-            6
+            8
         );
         let result: serde_json::Value =
             serde_json::from_str(trace.events[6].raw_json.as_deref().expect("result raw"))

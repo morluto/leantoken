@@ -2,9 +2,10 @@ use std::time::Instant;
 
 use leantoken::{
     Config, ContextRequest, ContextSignalPolicy, ContextWorkflow, Error, FileOperation, FilesRequest,
-    Freshness, IndexConsistency, IndexState, OutlineRequest, ReadRequest, ReadStatus, SearchMode,
-    SearchRequest, TokenSavingsOperation, coordination::IndexCoordination, services::Services,
-    tokens::Tokenizer,
+    Freshness, HistoryOperation, HistoryRequest, IndexConsistency, IndexState, JsonOperation,
+    JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadRequest, ReadStatus, SearchMode,
+    SearchRequest, TokenSavingsOperation,
+    coordination::IndexCoordination, services::Services, tokens::Tokenizer,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -15,12 +16,29 @@ macro_rules! assert_response_token_accounting {
         assert_eq!(response.meta.source_tokens, response.meta.emitted_tokens);
         assert_eq!(response.meta.tokenizer, tokenizer.name());
         assert_eq!(response.meta.token_count_exact, tokenizer.is_exact());
+        assert!(response.meta.protocol_tokens > 0);
+        assert_eq!(
+            response.meta.total_response_tokens,
+            response.meta.source_tokens
+                + response.meta.protocol_tokens
+                + response.meta.path_and_metadata_tokens
+        );
+        assert_eq!(
+            response.meta.payload_tokens,
+            response.meta.total_response_tokens
+        );
         assert!(response.meta.payload_tokens > 0);
 
         let mut countable = response.clone();
+        countable.meta.protocol_tokens = 0;
+        countable.meta.path_and_metadata_tokens = 0;
+        countable.meta.total_response_tokens = 0;
         countable.meta.payload_tokens = 0;
         let payload = serde_json::to_string(&countable).expect("serialize counted payload");
-        assert_eq!(response.meta.payload_tokens, tokenizer.count(&payload));
+        assert_eq!(
+            response.meta.total_response_tokens,
+            tokenizer.count(&payload)
+        );
     }};
 }
 
@@ -91,6 +109,132 @@ async fn retrieval_receipt_identifies_bound_repository_and_rejects_mismatch() {
 }
 
 #[tokio::test]
+async fn server_managed_receipt_suppresses_repeated_search_and_context_evidence() {
+    let (_root, services) = fixture().await;
+
+    let first_search = services
+        .search(search_limit_request(Some(100), Some(2_000), Some(1)))
+        .await
+        .expect("first search");
+    assert!(!first_search.hits.is_empty());
+    let search_receipt = first_search
+        .meta
+        .receipt_id
+        .clone()
+        .expect("search receipt");
+    let mut repeated_search_request = search_limit_request(Some(100), Some(2_000), Some(1));
+    repeated_search_request.receipt_id = Some(search_receipt.clone());
+    let repeated_search = services
+        .search(repeated_search_request)
+        .await
+        .expect("repeated search");
+
+    assert_eq!(
+        repeated_search.meta.receipt_id.as_deref(),
+        Some(search_receipt.as_str())
+    );
+    assert!(repeated_search.hits.is_empty());
+    assert!(
+        repeated_search.meta.receipt_suppressed_exact
+            + repeated_search.meta.receipt_suppressed_overlap
+            > 0
+    );
+    assert_eq!(repeated_search.meta.source_tokens, 0);
+
+    let first_context = services
+        .context(context_limit_request(1_000))
+        .await
+        .expect("first context");
+    assert!(!first_context.fragments.is_empty());
+    let context_receipt = first_context
+        .meta
+        .receipt_id
+        .clone()
+        .expect("context receipt");
+    let mut repeated_context_request = context_limit_request(1_000);
+    repeated_context_request.receipt_id = Some(context_receipt.clone());
+    let repeated_context = services
+        .context(repeated_context_request)
+        .await
+        .expect("repeated context");
+
+    assert_eq!(
+        repeated_context.meta.receipt_id.as_deref(),
+        Some(context_receipt.as_str())
+    );
+    assert!(repeated_context.fragments.is_empty());
+    assert!(
+        repeated_context.meta.receipt_suppressed_exact
+            + repeated_context.meta.receipt_suppressed_overlap
+            > 0
+    );
+    assert!(repeated_context.receipt.fragment_hashes.is_empty());
+    assert_eq!(repeated_context.meta.source_tokens, 0);
+}
+
+#[tokio::test]
+async fn server_managed_receipt_suppresses_overlapping_evidence_across_tools() {
+    let (_root, services) = fixture().await;
+    let mut read_request = read_limit_request(Some(1_000));
+    read_request.end_line = Some(3);
+    let read = services.read(read_request).await.expect("read");
+    let receipt_id = read.meta.receipt_id.clone().expect("read receipt");
+
+    let mut outline_request = outline_limit_request(Some(100), Some(2_000));
+    outline_request.receipt_id = Some(receipt_id.clone());
+    let outline = services.outline(outline_request).await.expect("outline");
+
+    assert_eq!(
+        outline.meta.receipt_id.as_deref(),
+        Some(receipt_id.as_str())
+    );
+    assert!(outline.meta.receipt_suppressed_overlap > 0);
+    assert!(
+        outline
+            .files
+            .iter()
+            .flat_map(|file| &file.symbols)
+            .all(|symbol| symbol.name != "greet")
+    );
+}
+
+#[tokio::test]
+async fn server_managed_receipt_rejects_unknown_and_stale_generations() {
+    let (root, services) = fixture().await;
+    let mut unknown_request = read_limit_request(Some(1_000));
+    unknown_request.receipt_id = Some("missing-receipt".into());
+    assert!(matches!(
+        services.read(unknown_request).await,
+        Err(Error::UnknownReceipt(id)) if id == "missing-receipt"
+    ));
+
+    let first = services
+        .read(read_limit_request(Some(1_000)))
+        .await
+        .expect("first read");
+    let receipt_id = first.meta.receipt_id.expect("read receipt");
+    let receipt_generation = first.meta.repository_generation;
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn greet(name: &str) -> String {\n    format!(\"hi {name}\")\n}\n",
+    )
+    .expect("update fixture");
+    let indexed = services.index(false).await.expect("reindex");
+    assert!(indexed.repository_generation > receipt_generation);
+
+    let mut stale_request = read_limit_request(Some(1_000));
+    stale_request.receipt_id = Some(receipt_id);
+    assert!(matches!(
+        services.read(stale_request).await,
+        Err(Error::StaleReceipt {
+            receipt_generation: actual_receipt,
+            repository_generation
+        }) if actual_receipt == receipt_generation
+            && repository_generation == indexed.repository_generation
+    ));
+}
+
+#[tokio::test]
 async fn search_applies_path_filters_before_candidate_limits() {
     let root = tempfile::tempdir().expect("temporary repository");
     let source = "pub fn shared_target() {\n    let shared_lexical_needle = 1;\n}\npub fn caller() { shared_target(); }\n";
@@ -115,12 +259,14 @@ async fn search_applies_path_filters_before_candidate_limits() {
                 mode,
                 case_sensitive: true,
                 all_occurrences: false,
+                prefer_structural: false,
                 include_paths: vec!["z_included.rs".into()],
                 exclude_paths: Vec::new(),
                 focus_paths: Vec::new(),
                 max_results: Some(1),
                 max_tokens: Some(200),
                 context_lines: Some(0),
+                receipt_id: None,
                 cursor: None,
             })
             .await
@@ -134,12 +280,14 @@ async fn search_applies_path_filters_before_candidate_limits() {
                 mode,
                 case_sensitive: true,
                 all_occurrences: false,
+                prefer_structural: false,
                 include_paths: Vec::new(),
                 exclude_paths: vec!["a*.rs".into()],
                 focus_paths: Vec::new(),
                 max_results: Some(1),
                 max_tokens: Some(200),
                 context_lines: Some(0),
+                receipt_id: None,
                 cursor: None,
             })
             .await
@@ -171,6 +319,8 @@ async fn exhaustive_text_search_returns_each_occurrence_with_exact_total_and_pag
         context_lines: Some(0),
         case_sensitive: true,
         all_occurrences: true,
+        prefer_structural: false,
+        receipt_id: None,
         cursor: None,
     };
 
@@ -261,6 +411,81 @@ async fn exhaustive_occurrence_search_requires_text_or_regex_mode() {
             ..
         }
     ));
+
+    let mut prefer = search_limit_request(Some(20), Some(1_000), Some(0));
+    prefer.mode = SearchMode::Text;
+    prefer.prefer_structural = true;
+    let error = services
+        .search(prefer)
+        .await
+        .expect_err("text mode must not accept structural preference");
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "prefer structural",
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn identifier_search_merges_definition_channels_and_reports_coverage() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(
+        root.path().join("search.rs"),
+        "fn shared_identifier() {}\nfn caller() { shared_identifier(); }\n",
+    )
+    .expect("source");
+    std::fs::write(
+        root.path().join("other.rs"),
+        "fn other_caller() { shared_identifier(); }\n",
+    )
+    .expect("second source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let response = services
+        .search(SearchRequest {
+            query: "shared_identifier".into(),
+            mode: SearchMode::Identifier,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(1),
+            max_tokens: Some(1_000),
+            context_lines: Some(1),
+            case_sensitive: true,
+            all_occurrences: false,
+            prefer_structural: true,
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect("identifier search");
+
+    assert_eq!(response.hits.len(), 1);
+    let merged = &response.hits[0];
+    assert_eq!(merged.match_kind, "symbol");
+    assert!(merged.match_kinds.iter().any(|kind| kind == "symbol"));
+    assert!(merged.match_kinds.iter().any(|kind| kind == "text"));
+    assert_eq!(merged.normalized_score, 1.0);
+    assert_eq!(response.coverage.definitions.total, 1);
+    assert_eq!(response.coverage.definitions.returned, 1);
+    assert_eq!(response.coverage.definitions.truncated, 0);
+    assert!(response.coverage.references.total >= 2);
+    assert_eq!(response.coverage.references.returned, 1);
+    assert_eq!(
+        response.coverage.references.truncated,
+        response.coverage.references.total - 1
+    );
+    assert!(response.coverage.text_matches.total >= 1);
+    assert_eq!(response.coverage.text_matches.returned, 1);
+    assert_eq!(
+        response.coverage.text_matches.total,
+        response.coverage.text_matches.returned + response.coverage.text_matches.truncated
+    );
 }
 
 #[tokio::test]
@@ -284,6 +509,8 @@ async fn exhaustive_regex_search_counts_repeated_matches_in_one_chunk() {
             context_lines: Some(0),
             case_sensitive: true,
             all_occurrences: true,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -356,6 +583,8 @@ async fn regex_candidate_plans_match_full_scan_and_report_fallback_selection() {
             context_lines: Some(0),
             case_sensitive: true,
             all_occurrences: true,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         };
         let optimized = services
@@ -367,9 +596,13 @@ async fn regex_candidate_plans_match_full_scan_and_report_fallback_selection() {
             .await
             .expect("full-scan regex");
 
+        let mut optimized_response = optimized.response.clone();
+        optimized_response.meta.receipt_id = None;
+        let mut full_scan_response = full_scan.response.clone();
+        full_scan_response.meta.receipt_id = None;
         assert_eq!(
-            serde_json::to_value(&optimized.response).expect("optimized JSON"),
-            serde_json::to_value(&full_scan.response).expect("full scan JSON"),
+            serde_json::to_value(optimized_response).expect("optimized JSON"),
+            serde_json::to_value(full_scan_response).expect("full scan JSON"),
             "{pattern}"
         );
         assert_eq!(
@@ -417,6 +650,8 @@ async fn regex_candidate_plan_preserves_candidate_limit_errors() {
         context_lines: Some(0),
         case_sensitive: true,
         all_occurrences: false,
+        prefer_structural: false,
+        receipt_id: None,
         cursor: None,
     };
 
@@ -489,6 +724,8 @@ async fn regex_candidate_plan_applies_path_scope_before_candidate_limit() {
         context_lines: Some(0),
         case_sensitive: true,
         all_occurrences: false,
+        prefer_structural: false,
+        receipt_id: None,
         cursor: None,
     };
     let optimized = services
@@ -500,9 +737,13 @@ async fn regex_candidate_plan_applies_path_scope_before_candidate_limit() {
         .await
         .expect("scoped full scan");
 
+    let mut optimized_response = optimized.response.clone();
+    optimized_response.meta.receipt_id = None;
+    let mut full_scan_response = full_scan.response.clone();
+    full_scan_response.meta.receipt_id = None;
     assert_eq!(
-        serde_json::to_value(&optimized.response).expect("optimized JSON"),
-        serde_json::to_value(&full_scan.response).expect("full-scan JSON")
+        serde_json::to_value(optimized_response).expect("optimized JSON"),
+        serde_json::to_value(full_scan_response).expect("full-scan JSON")
     );
     assert_eq!(optimized.phases.regex_candidate_chunks, 1);
     assert_eq!(optimized.phases.regex_chunks_verified, 1);
@@ -550,6 +791,8 @@ async fn regex_candidate_plan_bypasses_only_the_full_scan_file_bound() {
         context_lines: Some(0),
         case_sensitive: true,
         all_occurrences: false,
+        prefer_structural: false,
+        receipt_id: None,
         cursor: None,
     };
     let optimized = services
@@ -584,6 +827,8 @@ async fn regex_candidate_plan_bypasses_only_the_full_scan_file_bound() {
             context_lines: Some(0),
             case_sensitive: false,
             all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -621,6 +866,8 @@ async fn regex_candidate_plan_bypasses_only_the_full_scan_file_bound() {
             context_lines: Some(0),
             case_sensitive: true,
             all_occurrences: true,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -667,6 +914,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
+                receipt_id: None,
             })
             .await
             .is_err()
@@ -720,6 +968,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
+                receipt_id: None,
             })
             .await
             .is_err()
@@ -780,12 +1029,14 @@ async fn repository_identity_distinguishes_linked_worktrees_before_empty_search_
             mode: SearchMode::Symbol,
             case_sensitive: true,
             all_occurrences: false,
+            prefer_structural: false,
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
             focus_paths: Vec::new(),
             max_results: Some(10),
             max_tokens: Some(200),
             context_lines: Some(0),
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -843,19 +1094,21 @@ async fn contribution_context_routes_to_guidance_validation_and_owner_tests() {
                 must_include_paths: Vec::new(),
                 must_include_symbols: Vec::new(),
                 max_fragments: None,
+                plan_only: false,
                 focus_paths: Vec::new(),
                 strict_focus_paths: false,
                 minimum_fragments_per_focus_path: None,
                 focus_symbols: vec!["parse_contribution_target".into()],
                 exclude_paths: Vec::new(),
                 known_hashes: Vec::new(),
+                receipt_id: None,
                 prior_repository_generation: None,
                 base_revision: None,
                 changed_paths: vec!["src/parser.rs".into()],
                 strict_changed_paths: false,
             },
             ContextWorkflow::Contribution,
-            IndexConsistency::Committed,
+            IndexConsistency::IndexedGeneration,
             CancellationToken::new(),
         )
         .await
@@ -958,6 +1211,8 @@ fn search_limit_request(
         context_lines,
         case_sensitive: false,
         all_occurrences: false,
+        prefer_structural: false,
+        receipt_id: None,
         cursor: None,
     }
 }
@@ -972,6 +1227,7 @@ fn outline_limit_request(
         symbol_kind: None,
         max_results,
         max_tokens,
+        receipt_id: None,
         cursor: None,
     }
 }
@@ -987,6 +1243,7 @@ fn read_limit_request(max_tokens: Option<usize>) -> ReadRequest {
         continuation_cursor: None,
         max_tokens,
         expected_hash: None,
+        receipt_id: None,
     }
 }
 
@@ -998,17 +1255,79 @@ fn context_limit_request(token_budget: usize) -> ContextRequest {
         must_include_paths: Vec::new(),
         must_include_symbols: Vec::new(),
         max_fragments: None,
+        plan_only: false,
         focus_paths: Vec::new(),
         strict_focus_paths: false,
         minimum_fragments_per_focus_path: None,
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
+        receipt_id: None,
         prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
     }
+}
+
+#[tokio::test]
+async fn context_plan_previews_materialization_without_receipt_or_source() {
+    let (_root, services) = fixture().await;
+    let mut request = context_limit_request(100);
+    request.focus_paths = vec!["src/**".into()];
+    request.strict_focus_paths = true;
+    request.plan_only = true;
+    let savings_before = services.token_savings().await.expect("savings before plan");
+
+    let preview = services
+        .context(request.clone())
+        .await
+        .expect("context plan");
+    let plan = preview.plan.as_ref().expect("query plan");
+
+    assert!(preview.fragments.is_empty());
+    assert!(preview.receipt.fragment_hashes.is_empty());
+    assert_eq!(preview.meta.source_tokens, 0);
+    assert_eq!(preview.meta.emitted_tokens, 0);
+    assert!(preview.meta.receipt_id.is_none());
+    assert!(!plan.candidates.is_empty());
+    assert!(plan.focus_coverage[0].satisfied);
+    assert!(
+        preview
+            .coverage
+            .focus_path_coverage
+            .iter()
+            .all(|coverage| coverage.satisfied)
+    );
+    assert_response_token_accounting!(preview, Tokenizer::default());
+    let savings_after = services.token_savings().await.expect("savings after plan");
+    assert_eq!(
+        savings_after.tracked_requests,
+        savings_before.tracked_requests
+    );
+    assert_eq!(
+        savings_after.estimated_source_tokens_saved,
+        savings_before.estimated_source_tokens_saved
+    );
+
+    request.plan_only = false;
+    let materialized = services.context(request).await.expect("materialized context");
+    assert!(materialized.plan.is_none());
+    assert_eq!(
+        plan.candidates
+            .iter()
+            .map(|candidate| (&candidate.path, candidate.start_line, candidate.end_line))
+            .collect::<Vec<_>>(),
+        materialized
+            .fragments
+            .iter()
+            .map(|fragment| (&fragment.path, fragment.start_line, fragment.end_line))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        plan.estimated_source_tokens,
+        materialized.meta.source_tokens
+    );
 }
 
 #[tokio::test]
@@ -1027,6 +1346,21 @@ async fn context_rejects_empty_include_patterns() {
         Error::InvalidInput {
             field: "include paths",
             reason: "must not contain empty patterns"
+        }
+    ));
+
+    let mut plan_with_receipt = context_limit_request(100);
+    plan_with_receipt.plan_only = true;
+    plan_with_receipt.receipt_id = Some("existing".into());
+    let error = services
+        .context(plan_with_receipt)
+        .await
+        .expect_err("plan receipt mutation");
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "receipt_id",
+            reason: "must be omitted when plan_only is true"
         }
     ));
 
@@ -1073,9 +1407,143 @@ async fn context_include_paths_constrain_fragments_and_report_path_omissions() {
     assert!(response.omission_summary.path_excluded > 0);
     assert!(
         response
+            .omission_summary
+            .by_reason
+            .iter()
+            .any(|facet| facet.value == "path_excluded"
+                && facet.count == response.omission_summary.path_excluded)
+    );
+    assert!(
+        response
+            .omission_summary
+            .by_path
+            .iter()
+            .any(|facet| facet.value == "src/managed/evidence.rs")
+    );
+    assert!(
+        response
             .warnings
             .iter()
-            .any(|warning| warning.contains("excluded by path constraints"))
+            .any(|warning| warning.contains("omitted"))
+    );
+}
+
+#[tokio::test]
+async fn repository_context_exclusions_preserve_exact_artifact_access() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir(root.path().join("src")).expect("source directory");
+    std::fs::create_dir(root.path().join("generated")).expect("generated directory");
+    std::fs::write(
+        root.path().join(".leantoken.toml"),
+        "[context]\nexclude_paths = [\"generated/**\"]\n",
+    )
+    .expect("repository config");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn active_contract() -> bool { true }\n",
+    )
+    .expect("source");
+    std::fs::write(
+        root.path().join("generated/report.rs"),
+        "pub fn generated_only_target() -> bool { true }\n",
+    )
+    .expect("generated artifact");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let files = services
+        .files(FilesRequest {
+            operation: FileOperation::Find,
+            path: None,
+            query: Some("generated/report".into()),
+            pattern: None,
+            max_results: Some(10),
+            cursor: None,
+            depth: None,
+        })
+        .await
+        .expect("exact files");
+    assert!(
+        files
+            .entries
+            .iter()
+            .any(|entry| entry.path == "generated/report.rs")
+    );
+
+    let search = services
+        .search(SearchRequest {
+            query: "generated_only_target".into(),
+            mode: SearchMode::Identifier,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(10),
+            max_tokens: Some(200),
+            context_lines: Some(1),
+            case_sensitive: true,
+            all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect("exact search");
+    assert!(
+        search
+            .hits
+            .iter()
+            .any(|hit| hit.path == "generated/report.rs")
+    );
+
+    let read = services
+        .read(ReadRequest {
+            path: "generated/report.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: Some("generated_only_target".into()),
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(200),
+            expected_hash: None,
+            receipt_id: None,
+        })
+        .await
+        .expect("exact read");
+    assert!(
+        read.content
+            .expect("read content")
+            .contains("generated_only_target")
+    );
+
+    let mut default_request = context_limit_request(200);
+    default_request.task = "change generated_only_target".into();
+    let default_context = services
+        .context(default_request)
+        .await
+        .expect("default context");
+    assert!(
+        default_context
+            .fragments
+            .iter()
+            .all(|fragment| fragment.path != "generated/report.rs")
+    );
+    assert!(default_context.omission_summary.path_excluded > 0);
+
+    let mut included_request = context_limit_request(200);
+    included_request.task = "change generated_only_target".into();
+    included_request.include_paths = vec!["generated/**".into()];
+    let included_context = services
+        .context(included_request)
+        .await
+        .expect("included context");
+    assert!(
+        included_context
+            .fragments
+            .iter()
+            .any(|fragment| fragment.path == "generated/report.rs")
     );
 }
 
@@ -1099,6 +1567,33 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
     )
     .expect("services");
     services.index(false).await.expect("index fixture");
+
+    let mut ordinary_focus = context_limit_request(1_000);
+    ordinary_focus.task = "change shared_scope_target".into();
+    ordinary_focus.focus_paths = vec!["src/alpha/**".into(), "src/beta/**".into()];
+    ordinary_focus.max_fragments = Some(1);
+    let ordinary_focus = services
+        .context(ordinary_focus)
+        .await
+        .expect("ordinary focus context");
+    assert_eq!(ordinary_focus.coverage.strict_scope_satisfied, None);
+    assert_eq!(ordinary_focus.coverage.focus_path_coverage.len(), 2);
+    assert!(
+        ordinary_focus
+            .coverage
+            .focus_path_coverage
+            .iter()
+            .all(|focus| focus.indexed_paths == 2 && focus.minimum_fragments == 1)
+    );
+    assert_eq!(
+        ordinary_focus
+            .coverage
+            .focus_path_coverage
+            .iter()
+            .filter(|focus| focus.satisfied)
+            .count(),
+        1
+    );
 
     let mut request = context_limit_request(1_000);
     request.task = "change shared_scope_target".into();
@@ -1414,7 +1909,7 @@ async fn context_must_cover_generates_evidence_and_reports_unmatched_constraints
 }
 
 #[tokio::test]
-async fn oversized_context_reports_bounded_routing_with_working_tree_retries() {
+async fn oversized_context_reports_bounded_routing_with_reconcile_working_tree_retries() {
     let (_root, services) = fixture().await;
     let changed_paths = (0..12)
         .flat_map(|index| {
@@ -1432,7 +1927,7 @@ async fn oversized_context_reports_bounded_routing_with_working_tree_retries() {
         .context_with_workflow_consistency_cancellable(
             request,
             ContextWorkflow::Review,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             tokio_util::sync::CancellationToken::new(),
         )
         .await
@@ -1444,7 +1939,7 @@ async fn oversized_context_reports_bounded_routing_with_working_tree_retries() {
     assert!(routing.path_groups.len() <= 5);
     assert!(routing.suggestions.len() <= 3);
     assert!(
-        routing.consistency == IndexConsistency::WorkingTree
+        routing.consistency == IndexConsistency::ReconcileWorkingTree
     );
     assert!(
         response
@@ -1642,7 +2137,7 @@ async fn context_enforces_token_budget_contract() {
 }
 
 #[tokio::test]
-async fn working_tree_limit_errors_do_not_reconcile_the_index() {
+async fn reconcile_working_tree_limit_errors_do_not_reconcile_the_index() {
     let (root, services) = fixture().await;
     let generation = services
         .status()
@@ -1658,7 +2153,7 @@ async fn working_tree_limit_errors_do_not_reconcile_the_index() {
     let error = services
         .files_with_consistency_cancellable(
             files_limit_request(Some(0)),
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -1672,7 +2167,7 @@ async fn working_tree_limit_errors_do_not_reconcile_the_index() {
         let error = services
             .search_with_consistency_cancellable(
                 request,
-                IndexConsistency::WorkingTree,
+                IndexConsistency::ReconcileWorkingTree,
                 CancellationToken::new(),
             )
             .await
@@ -1682,7 +2177,7 @@ async fn working_tree_limit_errors_do_not_reconcile_the_index() {
     let error = services
         .search_with_consistency_cancellable(
             search_limit_request(Some(1), Some(1), Some(21)),
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -1696,7 +2191,7 @@ async fn working_tree_limit_errors_do_not_reconcile_the_index() {
         let error = services
             .outline_with_consistency_cancellable(
                 request,
-                IndexConsistency::WorkingTree,
+                IndexConsistency::ReconcileWorkingTree,
                 CancellationToken::new(),
             )
             .await
@@ -1707,7 +2202,7 @@ async fn working_tree_limit_errors_do_not_reconcile_the_index() {
     let error = services
         .read_with_consistency_cancellable(
             read_limit_request(Some(0)),
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -1716,7 +2211,7 @@ async fn working_tree_limit_errors_do_not_reconcile_the_index() {
     let error = services
         .context_with_consistency_cancellable(
             context_limit_request(0),
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -1741,7 +2236,7 @@ async fn working_tree_limit_errors_do_not_reconcile_the_index() {
 }
 
 #[tokio::test]
-async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
+async fn reconcile_working_tree_static_input_errors_do_not_reconcile_the_index() {
     let (root, services) = fixture().await;
     let generation = services
         .status()
@@ -1776,7 +2271,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
                 cursor: None,
                 depth: None,
             },
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "missing find query"
@@ -1792,7 +2287,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
                 cursor: None,
                 depth: None,
             },
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "unsafe tree root"
@@ -1808,7 +2303,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
                 cursor: None,
                 depth: None,
             },
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "invalid files glob"
@@ -1818,7 +2313,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.files_with_consistency_cancellable(
             files,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "malformed files cursor"
@@ -1829,7 +2324,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.search_with_consistency_cancellable(
             search,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "empty search query"
@@ -1840,7 +2335,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.search_with_consistency_cancellable(
             search,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "invalid search regex"
@@ -1850,7 +2345,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.search_with_consistency_cancellable(
             search,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "invalid search path glob"
@@ -1860,7 +2355,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.search_with_consistency_cancellable(
             search,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "oversized search query"
@@ -1870,7 +2365,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.search_with_consistency_cancellable(
             search,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "malformed search cursor"
@@ -1881,7 +2376,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.outline_with_consistency_cancellable(
             outline,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "empty outline paths"
@@ -1891,7 +2386,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.outline_with_consistency_cancellable(
             outline,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "excessive outline paths"
@@ -1901,7 +2396,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.outline_with_consistency_cancellable(
             outline,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "unsafe outline path"
@@ -1912,7 +2407,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.read_with_consistency_cancellable(
             read,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "invalid read range"
@@ -1922,7 +2417,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.read_with_consistency_cancellable(
             read,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "conflicting read target"
@@ -1934,7 +2429,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     let error = services
         .read_with_consistency_cancellable(
             read,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -1963,7 +2458,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.context_with_consistency_cancellable(
             context,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "empty context task"
@@ -1973,7 +2468,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.context_with_consistency_cancellable(
             context,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "invalid context path glob"
@@ -1983,7 +2478,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.context_with_consistency_cancellable(
             context,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "excessive context symbols"
@@ -1993,7 +2488,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.context_with_consistency_cancellable(
             context,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "unsafe context changed path"
@@ -2003,7 +2498,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.context_with_consistency_cancellable(
             context,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "oversized context base revision"
@@ -2013,7 +2508,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.context_with_consistency_cancellable(
             context,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "excessive context changed paths"
@@ -2023,7 +2518,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
     assert_static_error!(
         services.context_with_consistency_cancellable(
             context,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         ),
         "oversized derived context matcher"
@@ -2045,7 +2540,7 @@ async fn working_tree_static_input_errors_do_not_reconcile_the_index() {
 }
 
 #[tokio::test]
-async fn working_tree_generation_checks_run_after_reconciliation() {
+async fn reconcile_working_tree_generation_checks_run_after_reconciliation() {
     let (root, services) = fixture().await;
     let generation = services
         .status()
@@ -2063,7 +2558,7 @@ async fn working_tree_generation_checks_run_after_reconciliation() {
     let error = services
         .search_with_consistency_cancellable(
             request,
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -2327,6 +2822,7 @@ async fn five_services_return_bounded_grounded_responses() {
     assert!(files.entries.iter().any(|entry| entry.path == "src/lib.rs"));
     assert_eq!(files.meta.source_tokens, 0);
     assert_response_token_accounting!(files, Tokenizer::Cl100kBase);
+    assert!(files.meta.path_and_metadata_tokens > 0);
 
     let search = services
         .search(SearchRequest {
@@ -2340,6 +2836,8 @@ async fn five_services_return_bounded_grounded_responses() {
             context_lines: Some(1),
             case_sensitive: false,
             all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -2356,6 +2854,7 @@ async fn five_services_return_bounded_grounded_responses() {
             symbol_kind: None,
             max_results: Some(10),
             max_tokens: Some(100),
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -2380,6 +2879,7 @@ async fn five_services_return_bounded_grounded_responses() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("first read");
@@ -2395,6 +2895,7 @@ async fn five_services_return_bounded_grounded_responses() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first.content_hash.clone()),
+            receipt_id: None,
         })
         .await
         .expect("conditional read");
@@ -2411,12 +2912,14 @@ async fn five_services_return_bounded_grounded_responses() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
@@ -2439,12 +2942,14 @@ async fn five_services_return_bounded_grounded_responses() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
@@ -2452,9 +2957,13 @@ async fn five_services_return_bounded_grounded_responses() {
         })
         .await
         .expect("repeated context");
+    let mut deterministic_context = context.clone();
+    deterministic_context.meta.receipt_id = None;
+    let mut deterministic_repeat = repeated_context.clone();
+    deterministic_repeat.meta.receipt_id = None;
     assert_eq!(
-        serde_json::to_string(&repeated_context).expect("serialize repeated context"),
-        serde_json::to_string(&context).expect("serialize context"),
+        serde_json::to_string(&deterministic_repeat).expect("serialize repeated context"),
+        serde_json::to_string(&deterministic_context).expect("serialize context"),
         "the same repository generation and request must be deterministic"
     );
 
@@ -2467,12 +2976,14 @@ async fn five_services_return_bounded_grounded_responses() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: vec![known.clone()],
+            receipt_id: None,
             prior_repository_generation: Some(context.meta.repository_generation),
         base_revision: None,
         changed_paths: Vec::new(),
@@ -2503,6 +3014,7 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("normalized read");
@@ -2515,6 +3027,7 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             symbol_kind: None,
             max_results: Some(10),
             max_tokens: Some(100),
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -2547,6 +3060,8 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             context_lines: Some(1),
             case_sensitive: false,
             all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -2567,12 +3082,14 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: vec![r".\src\lib.rs".into()],
@@ -2612,6 +3129,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("first read");
@@ -2626,6 +3144,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first_read.content_hash),
+            receipt_id: None,
         })
         .await
         .expect("conditional read");
@@ -2735,6 +3254,7 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
                 symbol_kind: None,
                 max_results: Some(10),
                 max_tokens: Some(200),
+                receipt_id: None,
                 cursor: None,
             })
             .await
@@ -2756,12 +3276,14 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
                 must_include_paths: Vec::new(),
                 must_include_symbols: Vec::new(),
                 max_fragments: None,
+                plan_only: false,
                 focus_paths: Vec::new(),
                 strict_focus_paths: false,
                 minimum_fragments_per_focus_path: None,
                 focus_symbols: Vec::new(),
                 exclude_paths: Vec::new(),
                 known_hashes: Vec::new(),
+                receipt_id: None,
                 prior_repository_generation: None,
             base_revision: None,
             changed_paths: Vec::new(),
@@ -2822,6 +3344,7 @@ function helper() {
                 symbol_kind: None,
                 max_results: Some(20),
                 max_tokens: Some(2_000),
+                receipt_id: None,
                 cursor: None,
             })
             .await
@@ -2853,6 +3376,8 @@ function helper() {
                 context_lines: Some(0),
                 case_sensitive: true,
                 all_occurrences: false,
+                prefer_structural: false,
+                receipt_id: None,
                 cursor: None,
             })
             .await
@@ -2875,6 +3400,7 @@ function helper() {
                 continuation_cursor: None,
                 max_tokens: Some(2_000),
                 expected_hash: None,
+                receipt_id: None,
             })
             .await
             .expect("symbol read");
@@ -2946,6 +3472,7 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
             symbol_kind: None,
             max_results: Some(100),
             max_tokens: Some(4_000),
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -3013,6 +3540,8 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
                 context_lines: Some(0),
                 case_sensitive: true,
                 all_occurrences: false,
+                prefer_structural: false,
+                receipt_id: None,
                 cursor: None,
             })
             .await
@@ -3039,6 +3568,7 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
                 continuation_cursor: None,
                 max_tokens: Some(2_000),
                 expected_hash: None,
+                receipt_id: None,
             })
             .await
             .expect("structural symbol read");
@@ -3087,6 +3617,7 @@ Setext
             symbol_kind: Some("markdown_heading".into()),
             max_results: Some(20),
             max_tokens: Some(2_000),
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -3145,6 +3676,7 @@ Setext
                 continuation_cursor: None,
                 max_tokens: Some(2_000),
                 expected_hash: None,
+                receipt_id: None,
             })
             .await
             .expect("Markdown heading read");
@@ -3166,6 +3698,7 @@ Setext
             continuation_cursor: None,
             max_tokens: Some(2_000),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect_err("missing duplicate occurrence");
@@ -3189,6 +3722,7 @@ Setext
             continuation_cursor: None,
             max_tokens: Some(2_000),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect_err("zero heading occurrence");
@@ -3233,12 +3767,14 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
@@ -3261,12 +3797,14 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
@@ -3326,12 +3864,14 @@ async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
         must_include_paths: Vec::new(),
         must_include_symbols: Vec::new(),
         max_fragments: None,
+        plan_only: false,
         focus_paths: Vec::new(),
         strict_focus_paths: false,
         minimum_fragments_per_focus_path: None,
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
+        receipt_id: None,
         prior_repository_generation: None,
     base_revision: None,
     changed_paths: Vec::new(),
@@ -3578,6 +4118,8 @@ async fn invalid_focus_glob_is_a_typed_error() {
             context_lines: None,
             case_sensitive: false,
             all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -3619,6 +4161,8 @@ async fn search_range_covers_the_returned_context_lines() {
             context_lines: Some(1),
             case_sensitive: false,
             all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -3659,6 +4203,8 @@ async fn text_search_windows_keep_case_insensitive_matches_across_a_chunk() {
                 context_lines: Some(20),
                 case_sensitive: false,
                 all_occurrences: false,
+                prefer_structural: false,
+                receipt_id: None,
                 cursor: None,
             })
             .await
@@ -3701,6 +4247,8 @@ async fn maximum_text_context_keeps_the_original_read_bounded_range_match() {
             context_lines: Some(20),
             case_sensitive: true,
             all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -3735,6 +4283,8 @@ async fn regex_search_keeps_a_multiline_match_that_exceeds_the_line_cap() {
             context_lines: Some(20),
             case_sensitive: true,
             all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -3776,6 +4326,8 @@ async fn symbol_search_caps_a_long_definition_without_losing_its_declaration() {
             context_lines: Some(20),
             case_sensitive: true,
             all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -3810,6 +4362,8 @@ async fn reference_search_window_keeps_the_required_reference_span() {
             context_lines: Some(20),
             case_sensitive: true,
             all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -3861,6 +4415,8 @@ async fn text_search_reports_enclosing_symbols_across_languages() {
             context_lines: Some(1),
             case_sensitive: true,
             all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -3911,6 +4467,8 @@ async fn text_search_preserves_multiline_matches_without_a_single_matching_line(
             context_lines: Some(1),
             case_sensitive: true,
             all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -3936,6 +4494,7 @@ async fn read_reports_live_content_that_differs_from_the_index() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("indexed read");
@@ -3957,6 +4516,7 @@ async fn read_reports_live_content_that_differs_from_the_index() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first.content_hash.clone()),
+            receipt_id: None,
         })
         .await
         .expect("live read");
@@ -3986,6 +4546,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("exact range");
@@ -4003,6 +4564,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(exact.content_hash.clone()),
+            receipt_id: None,
         })
         .await
         .expect("conditional exact range");
@@ -4021,6 +4583,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("open-ended range");
@@ -4038,6 +4601,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("open-start range");
@@ -4055,6 +4619,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("whole file");
@@ -4069,6 +4634,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("exact whole file");
@@ -4087,6 +4653,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("range through EOF");
@@ -4109,6 +4676,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(exact.content_hash.clone()),
+            receipt_id: None,
         })
         .await
         .expect("changed exact range");
@@ -4134,6 +4702,7 @@ async fn symbol_read_after_first_line_returns_the_complete_definition() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("symbol range");
@@ -4165,6 +4734,7 @@ async fn open_ended_read_bounds_live_suffix_before_returning_content() {
             continuation_cursor: None,
             max_tokens: Some(12),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("bounded open-ended read");
@@ -4192,6 +4762,7 @@ async fn live_read_rejects_malformed_utf8_at_eof() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect_err("malformed UTF-8 must fail");
@@ -4220,6 +4791,7 @@ async fn live_read_rejects_line_after_terminal_newline() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect_err("line after terminal newline must fail");
@@ -4248,6 +4820,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("exact CRLF range");
@@ -4262,6 +4835,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("open CRLF range");
@@ -4282,6 +4856,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("final line");
@@ -4303,6 +4878,7 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("empty file");
@@ -4321,6 +4897,7 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
+                receipt_id: None,
             })
             .await
             .expect_err("invalid range");
@@ -4338,6 +4915,7 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             continuation_cursor: Some("not-a-read-cursor".into()),
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect_err("malformed cursor");
@@ -4356,6 +4934,7 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             ),
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect_err("cursor and target conflict");
@@ -4384,6 +4963,7 @@ async fn token_truncated_read_reports_the_returned_line_range() {
             continuation_cursor: None,
             max_tokens: Some(3),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("token-truncated range");
@@ -4425,6 +5005,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
                 continuation_cursor: cursor.take(),
                 max_tokens: Some(12),
                 expected_hash: None,
+                receipt_id: None,
             })
             .await
             .expect("read symbol page");
@@ -4463,6 +5044,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             continuation_cursor: None,
             max_tokens: Some(12),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("first page");
@@ -4477,6 +5059,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             continuation_cursor: None,
             max_tokens: Some(12),
             expected_hash: Some(first.content_hash.clone()),
+            receipt_id: None,
         })
         .await
         .expect("conditional first page");
@@ -4499,6 +5082,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             continuation_cursor: first.continuation_cursor,
             max_tokens: Some(12),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect_err("cursor must not cross index generations");
@@ -4515,6 +5099,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             continuation_cursor: None,
             max_tokens: Some(12),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("current first page");
@@ -4531,6 +5116,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             continuation_cursor: current.continuation_cursor,
             max_tokens: Some(12),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect_err("cursor must not cross live file versions");
@@ -4561,6 +5147,7 @@ async fn read_rejects_ignored_files() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect_err("ignored file must not be readable");
@@ -4580,6 +5167,7 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
             symbol_kind: Some("function".into()),
             max_results: Some(10),
             max_tokens: Some(100),
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -4603,6 +5191,7 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("qualified symbol");
@@ -4625,6 +5214,7 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect_err("missing qualified symbol");
@@ -4659,6 +5249,7 @@ async fn symbol_reads_and_outline_filters_search_beyond_result_caps() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("late symbol read");
@@ -4676,6 +5267,7 @@ async fn symbol_reads_and_outline_filters_search_beyond_result_caps() {
             symbol_kind: Some("function".into()),
             max_results: Some(1),
             max_tokens: Some(100),
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -4717,6 +5309,7 @@ async fn outline_distinguishes_parse_completeness_from_result_completeness() {
             symbol_kind: None,
             max_results: Some(100),
             max_tokens: Some(32_000),
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -4742,6 +5335,7 @@ async fn outline_distinguishes_parse_completeness_from_result_completeness() {
             symbol_kind: Some("function".into()),
             max_results: Some(100),
             max_tokens: Some(32_000),
+            receipt_id: None,
             cursor: Some(cursor.clone()),
         })
         .await
@@ -4755,6 +5349,7 @@ async fn outline_distinguishes_parse_completeness_from_result_completeness() {
             symbol_kind: None,
             max_results: Some(41),
             max_tokens: Some(32_000),
+            receipt_id: None,
             cursor: Some(cursor),
         })
         .await
@@ -4775,6 +5370,7 @@ async fn outline_distinguishes_parse_completeness_from_result_completeness() {
             symbol_kind: None,
             max_results: Some(100),
             max_tokens: Some(32_000),
+            receipt_id: None,
             cursor: Some(final_cursor),
         })
         .await
@@ -4807,6 +5403,7 @@ async fn outline_distinguishes_parse_completeness_from_result_completeness() {
             symbol_kind: None,
             max_results: Some(100),
             max_tokens: Some(1),
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -4825,6 +5422,7 @@ async fn outline_distinguishes_parse_completeness_from_result_completeness() {
             symbol_kind: None,
             max_results: Some(100),
             max_tokens: Some(1_000),
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -4866,6 +5464,7 @@ async fn fixture_outlines_deduplicate_methods_and_report_receiver_owners() {
             symbol_kind: None,
             max_results: Some(100),
             max_tokens: Some(2_000),
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -4907,6 +5506,8 @@ async fn oversized_query_is_rejected_without_stopping_services() {
             context_lines: None,
             case_sensitive: false,
             all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -4936,6 +5537,8 @@ async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_service
                 context_lines: Some(2),
                 case_sensitive: false,
                 all_occurrences: false,
+                prefer_structural: false,
+                receipt_id: None,
                 cursor: None,
             },
             cancellation.child_token(),
@@ -4953,12 +5556,14 @@ async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_service
                 must_include_paths: Vec::new(),
                 must_include_symbols: Vec::new(),
                 max_fragments: None,
+                plan_only: false,
                 focus_paths: Vec::new(),
                 strict_focus_paths: false,
                 minimum_fragments_per_focus_path: None,
                 focus_symbols: Vec::new(),
                 exclude_paths: Vec::new(),
                 known_hashes: Vec::new(),
+                receipt_id: None,
                 prior_repository_generation: None,
             base_revision: None,
             changed_paths: Vec::new(),
@@ -5007,6 +5612,8 @@ async fn concurrent_queries_observe_one_committed_generation_during_reconciliati
                     context_lines: Some(1),
                     case_sensitive: false,
                     all_occurrences: false,
+                    prefer_structural: false,
+                    receipt_id: None,
                     cursor: None,
                 })
                 .await
@@ -5144,6 +5751,319 @@ fn init_git_repo(root: &std::path::Path) {
 }
 
 #[tokio::test]
+async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
+    if !git_available() {
+        return;
+    }
+
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("src")).expect("source directory");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn tracked() -> u32 { 1 }\n\npub fn unrelated() -> u32 { 10 }\n",
+    )
+    .expect("base source");
+    init_git_repo(root.path());
+    let revision = |name: &str| {
+        String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", name])
+                .current_dir(root.path())
+                .output()
+                .expect("resolve revision")
+                .stdout,
+        )
+        .expect("UTF-8 revision")
+        .trim()
+        .to_owned()
+    };
+    let commit = |message: &str| {
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-m", message],
+        ] {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(root.path())
+                .output()
+                .expect("git commit command");
+            assert!(output.status.success());
+        }
+    };
+    let base = revision("HEAD");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn tracked() -> u32 { 2 }\n\npub fn unrelated() -> u32 { 10 }\n",
+    )
+    .expect("updated symbol");
+    commit("update tracked");
+    let changed = revision("HEAD");
+    std::fs::write(
+        root.path().join("src/other.rs"),
+        "pub fn later_change() -> u32 { 11 }\n",
+    )
+    .expect("unrelated update");
+    commit("update unrelated");
+
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let read = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::ReadSymbol {
+                path: "src/lib.rs".into(),
+                symbol: "tracked".into(),
+                revision: base.clone(),
+            },
+            max_results: None,
+            max_tokens: Some(100),
+        })
+        .await
+        .expect("historical read");
+    let historical = read.symbol.as_ref().expect("historical symbol");
+    assert_eq!(
+        historical.content.as_deref(),
+        Some("pub fn tracked() -> u32 { 1 }")
+    );
+    assert!(!historical.truncated);
+    assert_response_token_accounting!(read, Tokenizer::default());
+
+    let truncated = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::ReadSymbol {
+                path: "src/lib.rs".into(),
+                symbol: "tracked".into(),
+                revision: historical.revision.clone(),
+            },
+            max_results: None,
+            max_tokens: Some(1),
+        })
+        .await
+        .expect("truncated historical read");
+    assert!(!truncated.result_complete);
+    assert!(truncated.symbol.as_ref().expect("symbol").truncated);
+
+    let diff = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::DiffSymbol {
+                path: "src/lib.rs".into(),
+                symbol: "tracked".into(),
+                base_revision: base.clone(),
+                head_revision: changed.clone(),
+            },
+            max_results: None,
+            max_tokens: Some(100),
+        })
+        .await
+        .expect("historical diff");
+    let patch = diff.diff.as_deref().expect("symbol diff");
+    assert!(patch.contains("-pub fn tracked() -> u32 { 1 }"));
+    assert!(patch.contains("+pub fn tracked() -> u32 { 2 }"));
+    assert!(diff.result_complete);
+    assert_response_token_accounting!(diff, Tokenizer::default());
+
+    let log = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::SymbolLog {
+                path: "src/lib.rs".into(),
+                symbol: "tracked".into(),
+                revision: None,
+            },
+            max_results: Some(1),
+            max_tokens: None,
+        })
+        .await
+        .expect("symbol history");
+    assert!(!log.result_complete);
+    assert_eq!(log.commits.len(), 1);
+    assert_eq!(log.commits[0].subject, "update tracked");
+    assert!(
+        log.commits
+            .iter()
+            .all(|commit| commit.subject != "update unrelated")
+    );
+    assert_response_token_accounting!(log, Tokenizer::default());
+
+    let context = services
+        .context(ContextRequest {
+            task: "review tracked".into(),
+            token_budget: 500,
+            include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            max_fragments: None,
+            plan_only: false,
+            focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
+            focus_symbols: vec!["tracked".into()],
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            receipt_id: None,
+            prior_repository_generation: None,
+            base_revision: Some(format!("{base}..{changed}")),
+            changed_paths: Vec::new(),
+            strict_changed_paths: true,
+        })
+        .await
+        .expect("immutable range context");
+    let scope = context.diff_scope.expect("immutable range scope");
+    assert_eq!(scope.base_revision.as_deref(), Some(&base[..12]));
+    assert_eq!(scope.head_revision.as_deref(), Some(&changed[..12]));
+    assert_eq!(scope.changed_paths, vec!["src/lib.rs"]);
+    assert!(
+        context
+            .fragments
+            .iter()
+            .all(|fragment| fragment.path == "src/lib.rs")
+    );
+    assert!(
+        scope
+            .evidence
+            .expect("range evidence")
+            .changed_hunks
+            .iter()
+            .all(|hunk| hunk.path == "src/lib.rs")
+    );
+}
+
+#[tokio::test]
+async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("artifacts")).expect("artifact directory");
+    std::fs::write(root.path().join(".gitignore"), "artifacts/\n").expect("ignore file");
+    std::fs::write(
+        root.path().join("artifacts/before.json"),
+        r#"{"runs":[{"score":1,"name":"a"},{"score":2,"name":"b"},{"score":3,"name":"c"},{"score":100,"name":"d"}],"version":1}"#,
+    )
+    .expect("base JSON");
+    std::fs::write(
+        root.path().join("artifacts/after.json"),
+        r#"{"runs":[{"score":2,"name":"a"},{"score":4,"name":"b"}],"status":"done"}"#,
+    )
+    .expect("head JSON");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+
+    let query = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "artifacts/before.json".into(),
+                selector: Some(JsonSelector::Pointer {
+                    pointer: "/version".into(),
+                }),
+                projection: JsonProjection::Value,
+            },
+            max_tokens: Some(100),
+            max_items: None,
+            array_sample_size: None,
+        })
+        .await
+        .expect("pointer query");
+    assert_eq!(query.value, Some(serde_json::json!(1)));
+    assert_eq!(query.sources[0].path, "artifacts/before.json");
+    assert_response_token_accounting!(query, Tokenizer::default());
+
+    let collapsed = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "artifacts/before.json".into(),
+                selector: Some(JsonSelector::Jmespath {
+                    expression: "runs".into(),
+                }),
+                projection: JsonProjection::Collapsed,
+            },
+            max_tokens: Some(500),
+            max_items: Some(100),
+            array_sample_size: Some(1),
+        })
+        .await
+        .expect("collapsed JMESPath query");
+    assert_eq!(collapsed.value.as_ref().expect("value")["$array"]["count"], 4);
+    assert_eq!(
+        collapsed.value.as_ref().expect("value")["$array"]["sample"]
+            .as_array()
+            .expect("sample")
+            .len(),
+        1
+    );
+
+    for projection in [JsonProjection::Keys, JsonProjection::Schema] {
+        let projected = services
+            .json(JsonRequest {
+                operation: JsonOperation::Query {
+                    path: "artifacts/before.json".into(),
+                    selector: None,
+                    projection,
+                },
+                max_tokens: Some(1_000),
+                max_items: Some(100),
+                array_sample_size: None,
+            })
+            .await
+            .expect("structural projection");
+        assert!(projected.value.is_some());
+        assert!(projected.result_complete);
+    }
+
+    let summary = services
+        .json(JsonRequest {
+            operation: JsonOperation::NumericSummary {
+                path: "artifacts/before.json".into(),
+                selector: Some(JsonSelector::Jmespath {
+                    expression: "runs[].score".into(),
+                }),
+            },
+            max_tokens: None,
+            max_items: None,
+            array_sample_size: None,
+        })
+        .await
+        .expect("numeric summary");
+    let statistics = summary.numeric_summary.expect("statistics");
+    assert_eq!(statistics.count, 4);
+    assert_eq!(statistics.min, Some(1.0));
+    assert_eq!(statistics.median, Some(2.5));
+    assert_eq!(statistics.p95, Some(100.0));
+    assert_eq!(statistics.max, Some(100.0));
+
+    let diff = services
+        .json(JsonRequest {
+            operation: JsonOperation::DiffFields {
+                base_path: "artifacts/before.json".into(),
+                head_path: "artifacts/after.json".into(),
+                selectors: vec![
+                    JsonSelector::Pointer {
+                        pointer: "/version".into(),
+                    },
+                    JsonSelector::Pointer {
+                        pointer: "/status".into(),
+                    },
+                    JsonSelector::Jmespath {
+                        expression: "runs[].score".into(),
+                    },
+                ],
+                projection: JsonProjection::Collapsed,
+            },
+            max_tokens: Some(1_000),
+            max_items: Some(100),
+            array_sample_size: Some(2),
+        })
+        .await
+        .expect("selected-field diff");
+    assert_eq!(diff.differences.len(), 3);
+    assert!(diff.differences.iter().all(|field| field.changed));
+    assert!(diff.differences[0].before_present);
+    assert!(!diff.differences[0].after_present);
+    assert!(!diff.differences[1].before_present);
+    assert!(diff.differences[1].after_present);
+    assert_response_token_accounting!(diff, Tokenizer::default());
+}
+
+#[tokio::test]
 async fn working_tree_diff_boosts_changed_files() {
     if !git_available() {
         return;
@@ -5170,12 +6090,14 @@ async fn working_tree_diff_boosts_changed_files() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
@@ -5219,12 +6141,14 @@ async fn tokenizer_configuration_is_scoped_to_each_service() {
         must_include_paths: Vec::new(),
         must_include_symbols: Vec::new(),
         max_fragments: None,
+        plan_only: false,
         focus_paths: Vec::new(),
         strict_focus_paths: false,
         minimum_fragments_per_focus_path: None,
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
+        receipt_id: None,
         prior_repository_generation: None,
     base_revision: None,
     changed_paths: Vec::new(),
@@ -5265,12 +6189,14 @@ async fn context_declaration_excerpt_retains_long_body_across_chunks() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
@@ -5314,12 +6240,14 @@ async fn context_text_hits_use_bounded_declaration_excerpts() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
@@ -5371,6 +6299,8 @@ async fn regex_search_respects_absolute_candidate_cap() {
             context_lines: Some(0),
             case_sensitive: false,
             all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
             cursor: None,
         })
         .await
@@ -5383,7 +6313,7 @@ async fn regex_search_respects_absolute_candidate_cap() {
 }
 
 #[tokio::test]
-async fn working_tree_search_reconciles_file_created_after_index() {
+async fn reconcile_working_tree_search_reconciles_file_created_after_index() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(root.path().join("lib.rs"), "fn existing() {}\n").expect("initial source");
     let config =
@@ -5410,9 +6340,11 @@ async fn working_tree_search_reconciles_file_created_after_index() {
                 context_lines: Some(0),
                 case_sensitive: false,
                 all_occurrences: false,
+                prefer_structural: false,
+                receipt_id: None,
                 cursor: None,
             },
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -5424,7 +6356,7 @@ async fn working_tree_search_reconciles_file_created_after_index() {
 }
 
 #[tokio::test]
-async fn committed_search_does_not_reconcile_file_created_after_index() {
+async fn indexed_generation_search_does_not_reconcile_file_created_after_index() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(root.path().join("lib.rs"), "fn existing() {}\n").expect("initial source");
     let config =
@@ -5451,9 +6383,11 @@ async fn committed_search_does_not_reconcile_file_created_after_index() {
                 context_lines: Some(0),
                 case_sensitive: false,
                 all_occurrences: false,
+                prefer_structural: false,
+                receipt_id: None,
                 cursor: None,
             },
-            IndexConsistency::Committed,
+            IndexConsistency::IndexedGeneration,
             CancellationToken::new(),
         )
         .await
@@ -5467,7 +6401,7 @@ async fn committed_search_does_not_reconcile_file_created_after_index() {
 }
 
 #[tokio::test]
-async fn working_tree_consistency_applies_to_each_retrieval_service() {
+async fn reconcile_working_tree_consistency_applies_to_each_retrieval_service() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(root.path().join("lib.rs"), "fn existing() {}\n").expect("initial source");
     let config =
@@ -5488,7 +6422,7 @@ async fn working_tree_consistency_applies_to_each_retrieval_service() {
                 cursor: None,
                 depth: None,
             },
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -5508,9 +6442,10 @@ async fn working_tree_consistency_applies_to_each_retrieval_service() {
                 symbol_kind: None,
                 max_results: Some(10),
                 max_tokens: Some(100),
+                receipt_id: None,
                 cursor: None,
             },
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -5534,8 +6469,9 @@ async fn working_tree_consistency_applies_to_each_retrieval_service() {
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
+                receipt_id: None,
             },
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -5557,18 +6493,20 @@ async fn working_tree_consistency_applies_to_each_retrieval_service() {
                 must_include_paths: Vec::new(),
                 must_include_symbols: Vec::new(),
                 max_fragments: None,
+                plan_only: false,
                 focus_paths: vec!["context_package.rs".into()],
                 strict_focus_paths: false,
                 minimum_fragments_per_focus_path: None,
                 focus_symbols: vec!["contextual_package_marker".into()],
                 exclude_paths: Vec::new(),
                 known_hashes: Vec::new(),
+                receipt_id: None,
                 prior_repository_generation: None,
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
             },
-            IndexConsistency::WorkingTree,
+            IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
         )
         .await
@@ -5602,6 +6540,7 @@ async fn read_reports_index_stale_when_live_file_diverges() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("read");
@@ -5637,6 +6576,7 @@ async fn read_not_modified_still_reports_index_stale_against_live_file() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            receipt_id: None,
         })
         .await
         .expect("first read");
@@ -5656,6 +6596,7 @@ async fn read_not_modified_still_reports_index_stale_against_live_file() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first.content_hash.clone()),
+            receipt_id: None,
         })
         .await
         .expect("second read");
@@ -5736,12 +6677,14 @@ async fn diff_scoped_context_with_explicit_changed_paths_reports_receipt() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: vec!["src/lib.rs".into()],
@@ -5843,19 +6786,21 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
                 must_include_paths: Vec::new(),
                 must_include_symbols: Vec::new(),
                 max_fragments: None,
+                plan_only: false,
                 focus_paths: Vec::new(),
                 strict_focus_paths: false,
                 minimum_fragments_per_focus_path: None,
                 focus_symbols: Vec::new(),
                 exclude_paths: Vec::new(),
                 known_hashes: Vec::new(),
+                receipt_id: None,
                 prior_repository_generation: None,
                 base_revision: Some(base_revision),
                 changed_paths: Vec::new(),
                 strict_changed_paths: true,
             },
             ContextWorkflow::Review,
-            IndexConsistency::Committed,
+            IndexConsistency::IndexedGeneration,
             CancellationToken::new(),
         )
         .await
@@ -5950,12 +6895,14 @@ async fn diff_scoped_context_preserves_task_only_behavior_without_scope() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: Vec::new(),
@@ -5983,12 +6930,14 @@ async fn diff_scoped_context_rejects_path_outside_repository() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: vec!["../escape.rs".into()],
@@ -6016,12 +6965,14 @@ async fn diff_scoped_context_rejects_excessive_changed_path_count() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: too_many,
@@ -6045,12 +6996,14 @@ async fn diff_scoped_context_counts_zero_for_nonexistent_changed_path() {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: vec!["src/nonexistent.rs".into()],

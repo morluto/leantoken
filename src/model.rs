@@ -27,11 +27,13 @@ pub enum IndexState {
 #[serde(rename_all = "snake_case")]
 /// Consistency boundary applied before repository retrieval.
 pub enum IndexConsistency {
-    /// Query the latest committed index generation without waiting for filesystem changes.
+    /// Query the latest completed index generation without scanning filesystem changes.
     #[default]
-    Committed,
+    #[serde(alias = "committed")]
+    IndexedGeneration,
     /// Reconcile the current working tree before querying the resulting generation.
-    WorkingTree,
+    #[serde(alias = "working_tree")]
+    ReconcileWorkingTree,
 }
 
 /// Requested or resolved evidence workflow for context retrieval.
@@ -60,16 +62,37 @@ pub struct ResponseMeta {
     /// Tokens in source content selected for the response.
     #[serde(default)]
     pub source_tokens: usize,
-    /// Tokens in the compact serialized response, excluding this field itself.
+    /// Tokens in the compact JSON response envelope after values and result items are removed.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub protocol_tokens: usize,
+    /// Tokens attributed to paths, metadata values, and repeated result structure.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub path_and_metadata_tokens: usize,
+    /// Tokens in the compact serialized response, excluding accounting fields themselves.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub total_response_tokens: usize,
+    /// Compatibility alias for `total_response_tokens`.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub payload_tokens: usize,
-    /// Tokenizer used for source and payload accounting.
+    /// Tokenizer used for source and serialized response accounting.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub tokenizer: String,
     /// Compatibility alias for `source_tokens`.
     pub emitted_tokens: usize,
     /// Whether the configured tokenizer produces exact local counts.
     pub token_count_exact: bool,
+    /// Opaque server-managed retrieval receipt for suppressing repeated evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_id: Option<String>,
+    /// Evidence omitted because its content hash was already recorded by the receipt.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub receipt_suppressed_exact: usize,
+    /// Evidence omitted because its source range overlaps evidence recorded by the receipt.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub receipt_suppressed_overlap: usize,
+    /// Returned evidence that is semantically close to evidence recorded by the receipt.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub receipt_near_duplicates: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
 }
@@ -191,6 +214,12 @@ pub struct SearchRequest {
     /// Return every text or regex occurrence instead of one hit per indexed chunk.
     #[serde(default)]
     pub all_occurrences: bool,
+    /// Prefer a structural definition when lexical and structural channels find the same definition.
+    #[serde(default)]
+    pub prefer_structural: bool,
+    /// Server-managed receipt whose previously returned evidence should be suppressed.
+    #[serde(default)]
+    pub receipt_id: Option<String>,
     /// Cursor returned by an earlier response from the same generation.
     #[serde(default)]
     pub cursor: Option<String>,
@@ -216,6 +245,9 @@ pub struct SearchHit {
     pub end_line: usize,
     pub excerpt: String,
     pub match_kind: String,
+    /// Search channels represented by this possibly merged hit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub match_kinds: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<ReferenceRole>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -226,13 +258,41 @@ pub struct SearchHit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occurrence: Option<SearchOccurrence>,
     pub score: f64,
+    /// Score normalized against the strongest candidate in this response query.
+    #[serde(default)]
+    pub normalized_score: f64,
     pub score_reasons: Vec<String>,
     pub content_hash: String,
+}
+
+/// Returned and omitted hit counts for one search channel.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SearchCoverageCount {
+    /// Deduplicated hits available before pagination and token limits.
+    pub total: usize,
+    /// Hits from this channel returned in the current response.
+    pub returned: usize,
+    /// Available hits from this channel not returned in the current response.
+    pub truncated: usize,
+}
+
+/// Search coverage separated by evidence channel.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SearchCoverage {
+    /// Structural definition hits.
+    pub definitions: SearchCoverageCount,
+    /// Structural reference hits.
+    pub references: SearchCoverageCount,
+    /// Lexical text and regex hits.
+    pub text_matches: SearchCoverageCount,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SearchResponse {
     pub hits: Vec<SearchHit>,
+    /// Per-channel availability and current-page coverage.
+    #[serde(default)]
+    pub coverage: SearchCoverage,
     /// Occurrences returned in this response page after token limits.
     #[serde(default)]
     pub occurrences_returned: usize,
@@ -318,6 +378,9 @@ pub struct OutlineRequest {
     /// Maximum tokens across signatures and import targets.
     #[serde(default)]
     pub max_tokens: Option<usize>,
+    /// Server-managed receipt whose previously returned evidence should be suppressed.
+    #[serde(default)]
+    pub receipt_id: Option<String>,
     /// Opaque cursor returned when `max_results` leaves outline entries unread.
     #[serde(default)]
     pub cursor: Option<String>,
@@ -443,6 +506,9 @@ pub struct ReadRequest {
     /// Hash from the same prior range; matching content returns `not_modified`.
     #[serde(default)]
     pub expected_hash: Option<String>,
+    /// Server-managed receipt whose previously returned evidence should be suppressed.
+    #[serde(default)]
+    pub receipt_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -486,6 +552,274 @@ pub struct ReadResponse {
     pub meta: ResponseMeta,
 }
 
+/// Git-backed symbol history operation.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HistoryOperation {
+    /// Read one parsed symbol from a historical file blob.
+    ReadSymbol {
+        /// Repository-relative source path.
+        path: String,
+        /// Exact parsed symbol name.
+        symbol: String,
+        /// Git revision containing the source blob.
+        revision: String,
+    },
+    /// Compare one parsed symbol between two revisions.
+    DiffSymbol {
+        /// Repository-relative source path at both revisions.
+        path: String,
+        /// Exact parsed symbol name.
+        symbol: String,
+        /// Older Git revision.
+        base_revision: String,
+        /// Newer Git revision.
+        head_revision: String,
+    },
+    /// List recent commits that touched the symbol's tracked line history.
+    SymbolLog {
+        /// Repository-relative source path.
+        path: String,
+        /// Exact parsed symbol name at `revision`.
+        symbol: String,
+        /// Revision from which line history starts; defaults to `HEAD`.
+        #[serde(default)]
+        revision: Option<String>,
+    },
+}
+
+/// Input for Git-backed symbol history retrieval.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct HistoryRequest {
+    /// Historical operation and its exact target.
+    pub operation: HistoryOperation,
+    /// Maximum commits returned by `symbol_log`; defaults to 20.
+    #[serde(default)]
+    pub max_results: Option<usize>,
+    /// Maximum source or diff tokens returned; defaults to 8000.
+    #[serde(default)]
+    pub max_tokens: Option<usize>,
+}
+
+/// One parsed symbol read from an immutable Git revision.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct HistoricalSymbol {
+    /// Resolved 12-character revision.
+    pub revision: String,
+    pub path: String,
+    pub name: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    /// First line of the complete historical symbol.
+    pub target_start_line: usize,
+    /// Last line of the complete historical symbol.
+    pub target_end_line: usize,
+    /// Last line represented by `content`, or zero when source is omitted.
+    pub returned_end_line: usize,
+    /// Whether source remains after `content`.
+    pub truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    pub content_hash: String,
+}
+
+/// One commit returned by symbol line-history traversal.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SymbolHistoryCommit {
+    /// Full commit object ID.
+    pub commit: String,
+    /// Commit author date in strict ISO 8601 format.
+    pub authored_at: String,
+    /// Commit subject.
+    pub subject: String,
+}
+
+/// Git-backed symbol history response.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct HistoryResponse {
+    /// Resolved operation kind.
+    pub kind: String,
+    /// Historical symbol for `read_symbol`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<HistoricalSymbol>,
+    /// Base-side symbol for `diff_symbol`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<HistoricalSymbol>,
+    /// Head-side symbol for `diff_symbol`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<HistoricalSymbol>,
+    /// Unified symbol diff for `diff_symbol`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff: Option<String>,
+    /// Whether the unified diff was truncated by `max_tokens`.
+    #[serde(default)]
+    pub diff_truncated: bool,
+    /// Recent commits for `symbol_log`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commits: Vec<SymbolHistoryCommit>,
+    /// Whether all matching commits fit `max_results`.
+    #[serde(default)]
+    pub result_complete: bool,
+    pub meta: ResponseMeta,
+}
+
+/// Selector used by structural JSON operations.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum JsonSelector {
+    /// RFC 6901 JSON Pointer.
+    Pointer {
+        /// Empty for the root or a slash-prefixed JSON Pointer.
+        pointer: String,
+    },
+    /// Standard JMESPath expression.
+    Jmespath {
+        /// Expression evaluated against the complete JSON document.
+        expression: String,
+    },
+}
+
+/// Structural projection applied after JSON selection.
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum JsonProjection {
+    /// Preserve the selected JSON value.
+    #[default]
+    Value,
+    /// Replace arrays with count and bounded sample summaries.
+    Collapsed,
+    /// Return JSON Pointer-shaped key paths and value types only.
+    Keys,
+    /// Return an inferred structural schema without leaf values.
+    Schema,
+}
+
+/// Structural JSON retrieval operation.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum JsonOperation {
+    /// Select and structurally project one JSON value.
+    Query {
+        /// Repository-relative JSON file.
+        path: String,
+        /// Optional root-relative selector.
+        #[serde(default)]
+        selector: Option<JsonSelector>,
+        /// Projection applied to the selected value.
+        #[serde(default)]
+        projection: JsonProjection,
+    },
+    /// Summarize every numeric leaf below one selected value.
+    NumericSummary {
+        /// Repository-relative JSON file.
+        path: String,
+        /// Optional root-relative selector.
+        #[serde(default)]
+        selector: Option<JsonSelector>,
+    },
+    /// Compare selected fields between two live JSON files.
+    DiffFields {
+        /// Repository-relative base JSON file.
+        base_path: String,
+        /// Repository-relative comparison JSON file.
+        head_path: String,
+        /// Non-empty selectors evaluated independently against both files.
+        selectors: Vec<JsonSelector>,
+        /// Projection applied to each present selected value.
+        #[serde(default)]
+        projection: JsonProjection,
+    },
+}
+
+/// Input for bounded structural JSON retrieval.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct JsonRequest {
+    /// Structural operation and its file targets.
+    pub operation: JsonOperation,
+    /// Maximum tokens across returned selected/projected JSON; defaults to 8000.
+    #[serde(default)]
+    pub max_tokens: Option<usize>,
+    /// Maximum structural items returned; defaults to 1000.
+    #[serde(default)]
+    pub max_items: Option<usize>,
+    /// Array elements sampled by `collapsed`; defaults to 3.
+    #[serde(default)]
+    pub array_sample_size: Option<usize>,
+}
+
+/// Descriptive statistics for numeric JSON leaves.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct JsonNumericSummary {
+    /// Finite numeric leaves included in the statistics.
+    pub count: usize,
+    /// Non-numeric scalar leaves ignored below the selection.
+    pub non_numeric_count: usize,
+    /// Minimum numeric value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    /// Median numeric value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub median: Option<f64>,
+    /// Nearest-rank 95th percentile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p95: Option<f64>,
+    /// Maximum numeric value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+}
+
+/// One selector comparison between two JSON files.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct JsonFieldDiff {
+    /// Selector evaluated against both documents.
+    pub selector: JsonSelector,
+    /// Whether the selector exists in the base document.
+    pub before_present: bool,
+    /// Projected base value when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<serde_json::Value>,
+    /// Whether the selector exists in the comparison document.
+    pub after_present: bool,
+    /// Projected comparison value when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<serde_json::Value>,
+    /// Whether presence or the selected value changed.
+    pub changed: bool,
+}
+
+/// Exact live JSON source represented by a structural response.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct JsonSource {
+    /// Repository-relative file path.
+    pub path: String,
+    /// Hash of the complete UTF-8 file contents.
+    pub content_hash: String,
+    /// Complete source byte length.
+    pub bytes: usize,
+}
+
+/// Bounded structural JSON response.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct JsonResponse {
+    /// Resolved operation kind.
+    pub kind: String,
+    /// Selected/projected value for `query`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<serde_json::Value>,
+    /// Statistics for `numeric_summary`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numeric_summary: Option<JsonNumericSummary>,
+    /// Selector comparisons for `diff_fields`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub differences: Vec<JsonFieldDiff>,
+    /// Exact live files represented by this response.
+    pub sources: Vec<JsonSource>,
+    /// Whether structural item caps omitted no requested output.
+    pub result_complete: bool,
+    pub meta: ResponseMeta,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadStatus {
@@ -514,6 +848,9 @@ pub struct ContextRequest {
     /// Maximum number of returned fragments.
     #[serde(default)]
     pub max_fragments: Option<usize>,
+    /// Return a bounded ranked query plan without source fragments.
+    #[serde(default)]
+    pub plan_only: bool,
     /// Boost matching paths without filtering other candidates.
     #[serde(default)]
     pub focus_paths: Vec<String>,
@@ -532,10 +869,13 @@ pub struct ContextRequest {
     /// Fragment hashes already held by the caller and not to resend.
     #[serde(default)]
     pub known_hashes: Vec<String>,
+    /// Server-managed receipt whose previously returned evidence should be suppressed.
+    #[serde(default)]
+    pub receipt_id: Option<String>,
     /// Earlier generation used to boost files indexed since that response.
     #[serde(default)]
     pub prior_repository_generation: Option<u64>,
-    /// Base revision for diff-scoped context; resolved against the repository.
+    /// Base revision or `BASE..HEAD` range for diff-scoped context.
     #[serde(default)]
     pub base_revision: Option<String>,
     /// Explicit changed paths for diff-scoped context; bounded and validated.
@@ -546,7 +886,7 @@ pub struct ContextRequest {
     pub strict_changed_paths: bool,
 }
 
-/// Selected coverage for one caller-supplied focus path pattern.
+/// Selected or planned coverage for one caller-supplied focus path pattern.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ContextFocusPathCoverage {
     /// Original focus path pattern.
@@ -555,7 +895,7 @@ pub struct ContextFocusPathCoverage {
     pub indexed_paths: usize,
     /// Minimum fragments required by this request.
     pub minimum_fragments: usize,
-    /// Returned fragments matched by the pattern.
+    /// Returned or planned fragments matched by the pattern.
     pub selected_fragments: usize,
     /// Whether indexed and selected evidence met the requested minimum.
     pub satisfied: bool,
@@ -574,7 +914,7 @@ pub struct ContextChangedPathCoverage {
     pub satisfied: bool,
 }
 
-/// Indexed and selected evidence coverage for caller-supplied context constraints.
+/// Indexed and selected or planned evidence coverage for context constraints.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ContextCoverageReceipt {
     /// Focus path patterns that matched no indexed path.
@@ -583,7 +923,7 @@ pub struct ContextCoverageReceipt {
     /// Focus symbols that matched no exact indexed symbol.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmatched_focus_symbols: Vec<String>,
-    /// Per-pattern selection coverage when focus paths are strict or carry a minimum.
+    /// Per-pattern selection or plan coverage; ordinary focus paths require one fragment.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub focus_path_coverage: Vec<ContextFocusPathCoverage>,
     /// Coverage of the resolved changed-path boundary when it is strict.
@@ -595,10 +935,10 @@ pub struct ContextCoverageReceipt {
     /// Hard include patterns that matched no indexed path.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmatched_include_paths: Vec<String>,
-    /// Required path patterns represented by returned or already-held evidence.
+    /// Required path patterns represented by returned, planned, or already-held evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub covered_must_include_paths: Vec<String>,
-    /// Required exact symbols represented by returned or already-held evidence.
+    /// Required exact symbols represented by returned, planned, or already-held evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub covered_must_include_symbols: Vec<String>,
     /// Required path patterns that matched no indexed path.
@@ -652,6 +992,56 @@ pub struct ContextFragment {
     pub token_count: usize,
 }
 
+/// One ranked source candidate in a metadata-only context query plan.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ContextPlanCandidate {
+    /// Repository-relative candidate path.
+    pub path: String,
+    /// First one-based source line that materialization would return.
+    pub start_line: usize,
+    /// Last one-based source line that materialization would return.
+    pub end_line: usize,
+    /// Source representation selected by the retrieval pipeline.
+    pub representation: String,
+    /// Deterministic final ranking score.
+    pub score: f64,
+    /// Bounded human-readable ranking signals.
+    pub reasons: Vec<String>,
+    /// Exact source-token estimate for this candidate.
+    pub estimated_tokens: usize,
+}
+
+/// Planned evidence coverage for one caller-supplied focus path.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ContextPlanFocusCoverage {
+    /// Original focus path pattern.
+    pub pattern: String,
+    /// Planned candidate fragments matched by the pattern.
+    pub candidate_fragments: usize,
+    /// Minimum candidate fragments requested for the pattern.
+    pub minimum_fragments: usize,
+    /// Whether the planned candidates meet the requested minimum.
+    pub satisfied: bool,
+}
+
+/// Bounded metadata-only preview of context source materialization.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ContextQueryPlan {
+    /// Ranked candidates that the same materialized request would select.
+    pub candidates: Vec<ContextPlanCandidate>,
+    /// Distinct eligible candidate paths considered before source selection.
+    pub candidate_paths_total: usize,
+    /// Exact source tokens the planned candidates would materialize.
+    pub estimated_source_tokens: usize,
+    /// Planned coverage for each requested focus path pattern.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub focus_coverage: Vec<ContextPlanFocusCoverage>,
+    /// Whether generated-artifact defaults matched any generated candidate.
+    pub generated_artifact_warning: bool,
+    /// Whether every eligible candidate fit the token and fragment limits.
+    pub result_complete: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceReceipt {
     /// Internal task identity used by evaluation; the originating request already carries the task.
@@ -678,12 +1068,45 @@ pub struct ContextOmissionSummary {
     pub known_hash: usize,
     /// Ranked candidates that did not fit the token or result limit.
     pub budget_or_result_limit: usize,
+    /// Highest-frequency omitted paths, bounded with an `[other]` bucket.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_path: Vec<ContextOmissionFacet>,
+    /// Omitted candidates grouped by language or file extension.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_language_or_file_type: Vec<ContextOmissionFacet>,
+    /// Omitted candidates grouped by the boundary that rejected them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_reason: Vec<ContextOmissionFacet>,
+    /// Omitted candidates grouped by deterministic final-score ranges.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_score_band: Vec<ContextOmissionFacet>,
+    /// Omitted candidates matching at least one requested focus path.
+    #[serde(default)]
+    pub focused: usize,
+    /// Omitted candidates outside every requested focus path.
+    #[serde(default)]
+    pub not_focused: usize,
+    /// Omitted candidates belonging to an explicitly resolved changed path.
+    #[serde(default)]
+    pub changed: usize,
+    /// Omitted candidates outside the explicitly resolved changed paths.
+    #[serde(default)]
+    pub not_changed: usize,
 }
 
 impl ContextOmissionSummary {
     fn is_empty(&self) -> bool {
         self.path_excluded == 0 && self.known_hash == 0 && self.budget_or_result_limit == 0
     }
+}
+
+/// One value and count in a bounded context omission breakdown.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ContextOmissionFacet {
+    /// Stable facet value such as a path, file type, reason, or score range.
+    pub value: String,
+    /// Number of omitted candidates represented by this value.
+    pub count: usize,
 }
 
 /// One deterministic path group inferred from an oversized diff scope.
@@ -800,6 +1223,9 @@ pub struct ContextResponse {
     /// Bounded routing evidence for specialized workflows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow_receipt: Option<WorkflowReceipt>,
+    /// Metadata-only selection preview when `plan_only` was requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<ContextQueryPlan>,
     pub fragments: Vec<ContextFragment>,
     pub receipt: EvidenceReceipt,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1056,6 +1482,16 @@ pub struct StatusResponse {
     pub file_count: usize,
     pub chunk_count: usize,
     pub symbol_count: usize,
+    /// Bytes occupied by the SQLite main, WAL, and shared-memory files.
+    pub index_storage_bytes: u64,
+    /// Sum of complete source bytes represented by indexed files.
+    pub indexed_source_bytes: u64,
+    /// Index storage divided by indexed source bytes, when source is non-empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_amplification_ratio: Option<f64>,
+    /// Resident memory for the current LeanToken process when the platform exposes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_rss_bytes: Option<u64>,
     pub languages: Vec<LanguageCount>,
     pub warnings: Vec<String>,
 }
@@ -1144,6 +1580,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn consistency_names_are_explicit_and_legacy_inputs_remain_readable() {
+        assert_eq!(
+            serde_json::to_string(&IndexConsistency::IndexedGeneration)
+                .expect("serialize indexed generation"),
+            "\"indexed_generation\""
+        );
+        assert_eq!(
+            serde_json::to_string(&IndexConsistency::ReconcileWorkingTree)
+                .expect("serialize working-tree reconciliation"),
+            "\"reconcile_working_tree\""
+        );
+        assert_eq!(
+            serde_json::from_str::<IndexConsistency>("\"committed\"")
+                .expect("legacy committed alias"),
+            IndexConsistency::IndexedGeneration
+        );
+        assert_eq!(
+            serde_json::from_str::<IndexConsistency>("\"working_tree\"")
+                .expect("legacy working-tree alias"),
+            IndexConsistency::ReconcileWorkingTree
+        );
+    }
+
+    #[test]
     fn index_report_preserves_unknown_legacy_skip_reasons_and_serializes_known_counts() {
         let legacy: IndexReport = serde_json::from_value(serde_json::json!({
             "repository_generation": 1,
@@ -1215,6 +1675,10 @@ mod tests {
                 file_count: 0,
                 chunk_count: 0,
                 symbol_count: 0,
+                index_storage_bytes: 0,
+                indexed_source_bytes: 0,
+                index_amplification_ratio: None,
+                process_rss_bytes: None,
                 languages: Vec::new(),
                 warnings: Vec::new(),
             };
@@ -1242,6 +1706,7 @@ mod tests {
         let response = ContextResponse {
             workflow: ContextWorkflow::Implementation,
             workflow_receipt: None,
+            plan: None,
             fragments: vec![ContextFragment {
                 path: "src/lib.rs".into(),
                 start_line: 1,
@@ -1268,10 +1733,17 @@ mod tests {
                 repository_generation: 7,
                 freshness: Freshness::Current,
                 source_tokens: 4,
+                protocol_tokens: 0,
+                path_and_metadata_tokens: 0,
+                total_response_tokens: 0,
                 payload_tokens: 0,
                 tokenizer: "cl100k_base".into(),
                 emitted_tokens: 4,
                 token_count_exact: true,
+                receipt_id: None,
+                receipt_suppressed_exact: 0,
+                receipt_suppressed_overlap: 0,
+                receipt_near_duplicates: 0,
                 next_cursor: None,
             },
         };
@@ -1302,11 +1774,17 @@ mod tests {
             .as_object_mut()
             .expect("response metadata object");
         legacy_meta.remove("source_tokens");
+        legacy_meta.remove("protocol_tokens");
+        legacy_meta.remove("path_and_metadata_tokens");
+        legacy_meta.remove("total_response_tokens");
         legacy_meta.remove("payload_tokens");
         legacy_meta.remove("tokenizer");
         let legacy: ContextResponse =
             serde_json::from_value(legacy_value).expect("deserialize legacy response");
         assert_eq!(legacy.meta.source_tokens, 0);
+        assert_eq!(legacy.meta.protocol_tokens, 0);
+        assert_eq!(legacy.meta.path_and_metadata_tokens, 0);
+        assert_eq!(legacy.meta.total_response_tokens, 0);
         assert_eq!(legacy.meta.payload_tokens, 0);
         assert!(legacy.meta.tokenizer.is_empty());
     }
@@ -1316,6 +1794,7 @@ mod tests {
         let response = ContextResponse {
             workflow: ContextWorkflow::Implementation,
             workflow_receipt: None,
+            plan: None,
             fragments: vec![ContextFragment {
                 path: "src/lib.rs".into(),
                 start_line: 4,
@@ -1350,10 +1829,17 @@ mod tests {
                 repository_generation: 7,
                 freshness: Freshness::Reconciling,
                 source_tokens: 9,
+                protocol_tokens: 17,
+                path_and_metadata_tokens: 97,
+                total_response_tokens: 123,
                 payload_tokens: 123,
                 tokenizer: "cl100k_base".into(),
                 emitted_tokens: 9,
                 token_count_exact: true,
+                receipt_id: None,
+                receipt_suppressed_exact: 0,
+                receipt_suppressed_overlap: 0,
+                receipt_near_duplicates: 0,
                 next_cursor: None,
             },
         };

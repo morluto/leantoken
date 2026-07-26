@@ -264,12 +264,14 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
         must_include_paths: Vec::new(),
         must_include_symbols: Vec::new(),
         max_fragments: None,
+        plan_only: false,
         focus_paths: Vec::new(),
         strict_focus_paths: false,
         minimum_fragments_per_focus_path: None,
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
+        receipt_id: None,
         prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),
@@ -285,6 +287,7 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
     let follow_up_response = services
         .context(ContextRequest {
             known_hashes: response.receipt.fragment_hashes.clone(),
+            receipt_id: None,
             prior_repository_generation: Some(response.meta.repository_generation),
             ..request.clone()
         })
@@ -298,6 +301,7 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
             symbol_kind: None,
             max_results: Some(20),
             max_tokens: Some(8_000),
+            receipt_id: None,
             cursor: None,
         })
         .await?;
@@ -312,6 +316,7 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
             symbol_kind: None,
             max_results: Some(20),
             max_tokens: Some(8_000),
+            receipt_id: None,
             cursor: None,
         })
         .await?;

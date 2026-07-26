@@ -7,6 +7,7 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use tokio_util::sync::CancellationToken;
 
 use super::Services;
+use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
     MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input,
     validate_optional_input,
@@ -580,6 +581,87 @@ impl Services {
                 baseline_source_tokens,
             ))
         })?;
+        let receipt_candidates = response
+            .files
+            .iter()
+            .flat_map(|file| {
+                let symbol_evidence = file.symbols.iter().map(|symbol| {
+                    let content = symbol.signature.as_deref().unwrap_or(&symbol.name);
+                    ReceiptEvidence::new(
+                        file.path.clone(),
+                        symbol.start_line,
+                        symbol.end_line,
+                        hash(content),
+                        Some(content),
+                    )
+                });
+                let import_evidence = file.imports.iter().map(|import| {
+                    ReceiptEvidence::new(
+                        file.path.clone(),
+                        import.line,
+                        import.line,
+                        hash(&import.raw_target),
+                        Some(&import.raw_target),
+                    )
+                });
+                symbol_evidence.chain(import_evidence)
+            })
+            .collect::<Vec<_>>();
+        let receipt = self.evaluate_receipt(
+            request.receipt_id.as_deref(),
+            response.meta.repository_generation,
+            &receipt_candidates,
+        )?;
+        let mut decision_index = 0usize;
+        for file in &mut response.files {
+            file.symbols.retain(|_| {
+                let keep = matches!(
+                    receipt.decisions[decision_index],
+                    ReceiptDecision::Return | ReceiptDecision::ReturnNearDuplicate
+                );
+                decision_index += 1;
+                keep
+            });
+            file.imports.retain(|_| {
+                let keep = matches!(
+                    receipt.decisions[decision_index],
+                    ReceiptDecision::Return | ReceiptDecision::ReturnNearDuplicate
+                );
+                decision_index += 1;
+                keep
+            });
+        }
+        response.returned_symbols = response.files.iter().map(|file| file.symbols.len()).sum();
+        response.returned_imports = response.files.iter().map(|file| file.imports.len()).sum();
+        response.result_complete = response.result_complete
+            && response.returned_symbols == response.total_symbols
+            && response.returned_imports == response.total_imports;
+        let symbol_tokens = response
+            .files
+            .iter()
+            .flat_map(|file| &file.symbols)
+            .map(|symbol| {
+                symbol
+                    .signature
+                    .as_deref()
+                    .map_or(1, |signature| self.config.tokenizer.count(signature))
+            })
+            .sum::<usize>();
+        let import_tokens = response
+            .files
+            .iter()
+            .flat_map(|file| &file.imports)
+            .map(|import| {
+                self.config.tokenizer.count(&import.raw_target)
+                    + import
+                        .resolved_path
+                        .as_deref()
+                        .map_or(0, |path| self.config.tokenizer.count(path))
+            })
+            .sum::<usize>();
+        response.meta.source_tokens = symbol_tokens.saturating_add(import_tokens);
+        response.meta.emitted_tokens = response.meta.source_tokens;
+        receipt.apply_meta(&mut response.meta);
         if let Some(baseline_source_tokens) = baseline_source_tokens {
             self.record_token_savings(
                 TokenSavingsOperation::Outline,
@@ -604,6 +686,37 @@ impl Services {
             check_cancelled(cancellation)?;
             self.read_at_generation(session, &request, generation, max_tokens)
         })?;
+        let receipt_candidates = response
+            .content
+            .as_deref()
+            .map(|content| {
+                vec![ReceiptEvidence::new(
+                    response.path.clone(),
+                    response.returned_start_line,
+                    response.returned_end_line,
+                    response.content_hash.clone(),
+                    Some(content),
+                )]
+            })
+            .unwrap_or_default();
+        let receipt = self.evaluate_receipt(
+            request.receipt_id.as_deref(),
+            response.meta.repository_generation,
+            &receipt_candidates,
+        )?;
+        if receipt.decisions.first().is_some_and(|decision| {
+            matches!(
+                decision,
+                ReceiptDecision::SuppressExact | ReceiptDecision::SuppressOverlap
+            )
+        }) {
+            response.content = None;
+            response.status = ReadStatus::NotModified;
+            response.not_modified = true;
+            response.meta.source_tokens = 0;
+            response.meta.emitted_tokens = 0;
+        }
+        receipt.apply_meta(&mut response.meta);
         self.record_token_savings(
             TokenSavingsOperation::Read,
             baseline_source_tokens,
@@ -798,7 +911,7 @@ fn returned_end_line(start_line: usize, content: &str) -> usize {
         .saturating_sub(usize::from(content.ends_with('\n') && newline_count > 0))
 }
 
-fn open_live_file(services: &Services, path: &str) -> Result<File> {
+pub(super) fn open_live_file(services: &Services, path: &str) -> Result<File> {
     services
         .repository_root
         .open(path)

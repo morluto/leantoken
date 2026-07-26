@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 mod facets;
 
 use super::read::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
+use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::search::{chunk_search_hit_for_range, compile_literal_regex, fts_quote};
 use super::validation::{
     MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, PathFilter, PathMatcher,
@@ -21,7 +22,8 @@ use super::{Services, retrieval_primitive_key};
 use crate::model::*;
 use crate::ranking::{self, Candidate};
 use crate::repository::{
-    git_changed_paths, git_diff_hunks, git_diff_paths, normalize_relative, validate_relative,
+    git_changed_paths, git_diff_hunks, git_diff_hunks_between, git_diff_paths,
+    git_diff_paths_between, normalize_relative, validate_relative,
 };
 use crate::storage::ChunkHit;
 use crate::storage::{FileRecord, ReadSession, SymbolHit, SymbolRecord};
@@ -59,6 +61,24 @@ const MIN_OVERSIZED_PATH_GROUPS: usize = 3;
 const MAX_ROUTING_GROUPS: usize = 5;
 const MAX_ROUTING_SUGGESTIONS: usize = 3;
 const LEXICAL_OCCURRENCE_SATURATION: usize = 25;
+
+fn parse_revision_range(revision: &str) -> Result<Option<(&str, &str)>> {
+    let Some((base, head)) = revision.split_once("..") else {
+        return Ok(None);
+    };
+    if base.trim().is_empty()
+        || head.trim().is_empty()
+        || base.ends_with('.')
+        || head.starts_with('.')
+        || head.contains("..")
+    {
+        return Err(Error::InvalidInput {
+            field: "base revision",
+            reason: "revision range must be BASE..HEAD",
+        });
+    }
+    Ok(Some((base, head)))
+}
 
 #[derive(Clone, Copy)]
 enum ContextExcerptKind {
@@ -189,7 +209,7 @@ fn build_context_routing(
     request: &ContextRequest,
     scope: &DiffScopeReceipt,
     candidate_paths: usize,
-    fragments: &[ContextFragment],
+    selected_paths: &[String],
 ) -> Option<ContextRoutingReceipt> {
     if scope.changed_paths.len() < OVERSIZED_CHANGE_PATHS {
         return None;
@@ -213,19 +233,19 @@ fn build_context_routing(
             .cmp(&left.1.len())
             .then_with(|| left.0.cmp(&right.0))
     });
-    let selected_groups = fragments.iter().fold(
+    let selected_groups = selected_paths.iter().fold(
         BTreeMap::<String, BTreeSet<&str>>::new(),
-        |mut paths, fragment| {
+        |mut paths, path| {
             paths
-                .entry(context_path_group(&fragment.path))
+                .entry(context_path_group(path))
                 .or_default()
-                .insert(&fragment.path);
+                .insert(path);
             paths
         },
     );
-    let selected_paths = fragments
+    let selected_path_count = selected_paths
         .iter()
-        .map(|fragment| fragment.path.as_str())
+        .map(String::as_str)
         .collect::<BTreeSet<_>>()
         .len();
     let strongest_selected_group = selected_groups
@@ -233,8 +253,8 @@ fn build_context_routing(
         .map(BTreeSet::len)
         .max()
         .unwrap_or(0);
-    let weakly_concentrated =
-        selected_paths > 1 && strongest_selected_group.saturating_mul(2) <= selected_paths;
+    let weakly_concentrated = selected_path_count > 1
+        && strongest_selected_group.saturating_mul(2) <= selected_path_count;
 
     let suggestions = groups
         .iter()
@@ -258,9 +278,9 @@ fn build_context_routing(
     Some(ContextRoutingReceipt {
         candidate_paths,
         changed_paths: scope.changed_paths.len(),
-        selected_paths,
+        selected_paths: selected_path_count,
         weakly_concentrated,
-        consistency: IndexConsistency::Committed,
+        consistency: IndexConsistency::IndexedGeneration,
         base_revision: request.base_revision.clone(),
         known_hashes: request.known_hashes.clone(),
         path_groups_total,
@@ -883,6 +903,12 @@ impl Services {
         if let Some(minimum) = request.minimum_fragments_per_focus_path {
             self.result_limit(Some(minimum))?;
         }
+        if request.plan_only && request.receipt_id.is_some() {
+            return Err(Error::InvalidInput {
+                field: "receipt_id",
+                reason: "must be omitted when plan_only is true",
+            });
+        }
         validate_input(&request.task, "task", MAX_QUERY_BYTES)?;
         validate_glob_patterns(&request.include_paths)?;
         if request
@@ -963,6 +989,7 @@ impl Services {
             .filter(|revision| !revision.trim().is_empty())
         {
             validate_input(revision, "base revision", MAX_BASE_REVISION_BYTES)?;
+            parse_revision_range(revision)?;
         }
         for query in facets::plan(&request.task, MAX_CONTEXT_QUERIES)
             .queries
@@ -1045,10 +1072,8 @@ impl Services {
             .filter(|(_, matched)| **matched == 0)
             .map(|(pattern, _)| pattern.clone())
             .collect();
-        let minimum_focus_fragments = request
-            .minimum_fragments_per_focus_path
-            .unwrap_or(usize::from(request.strict_focus_paths));
-        if minimum_focus_fragments > 0 {
+        let minimum_focus_fragments = request.minimum_fragments_per_focus_path.unwrap_or(1);
+        if !request.focus_paths.is_empty() {
             coverage.focus_path_coverage = request
                 .focus_paths
                 .iter()
@@ -1221,14 +1246,14 @@ impl Services {
         &self,
         session: &ReadSession,
         request: &ContextRequest,
-        fragments: &[ContextFragment],
+        selected_paths: &[String],
         coverage: &mut ContextCoverageReceipt,
     ) -> Result<()> {
         for focus in &mut coverage.focus_path_coverage {
             let matcher = PathMatcher::new(std::slice::from_ref(&focus.pattern))?;
-            focus.selected_fragments = fragments
+            focus.selected_fragments = selected_paths
                 .iter()
-                .filter(|fragment| matcher.is_match(&fragment.path))
+                .filter(|path| matcher.is_match(path))
                 .count();
             focus.satisfied =
                 focus.indexed_paths > 0 && focus.selected_fragments >= focus.minimum_fragments;
@@ -1246,9 +1271,9 @@ impl Services {
                     indexed_paths = indexed_paths.saturating_add(1);
                 }
             }
-            let selected_fragments = fragments
+            let selected_fragments = selected_paths
                 .iter()
-                .filter(|fragment| changed_paths.contains(fragment.path.as_str()))
+                .filter(|path| changed_paths.contains(path.as_str()))
                 .count();
             coverage.changed_path_coverage = Some(ContextChangedPathCoverage {
                 resolved_paths: changed_paths.len(),
@@ -1258,12 +1283,15 @@ impl Services {
             });
         }
 
-        if !coverage.focus_path_coverage.is_empty() || request.strict_changed_paths {
+        let focus_coverage_is_required =
+            request.strict_focus_paths || request.minimum_fragments_per_focus_path.is_some();
+        if focus_coverage_is_required || request.strict_changed_paths {
             coverage.strict_scope_satisfied = Some(
-                coverage
-                    .focus_path_coverage
-                    .iter()
-                    .all(|focus| focus.satisfied)
+                (!focus_coverage_is_required
+                    || coverage
+                        .focus_path_coverage
+                        .iter()
+                        .all(|focus| focus.satisfied))
                     && coverage
                         .changed_path_coverage
                         .as_ref()
@@ -1426,11 +1454,12 @@ impl Services {
 
     /// Resolve a diff scope from the request into a receipt, if one is supplied.
     ///
-    /// When `base_revision` is set, committed and working-tree paths since that
-    /// revision are resolved from the repository, including untracked files.
-    /// Explicit `changed_paths` are merged with that result. When neither input
-    /// is supplied, strict changed-path requests use the current working tree;
-    /// otherwise `None` preserves task-only behavior.
+    /// A single `base_revision` resolves committed and working-tree paths since
+    /// that revision, including untracked files. `BASE..HEAD` instead resolves
+    /// an immutable revision range. Explicit `changed_paths` are merged with
+    /// either result. When neither input is supplied, strict changed-path
+    /// requests use the current working tree; otherwise `None` preserves
+    /// task-only behavior.
     fn resolve_diff_scope(
         &self,
         request: &ContextRequest,
@@ -1440,12 +1469,26 @@ impl Services {
             .as_deref()
             .is_some_and(|rev| !rev.trim().is_empty());
         let has_paths = !request.changed_paths.is_empty();
-        let git_result = request
+        let revision = request
             .base_revision
             .as_deref()
-            .filter(|revision| !revision.trim().is_empty())
-            .map(|revision| git_diff_paths(&self.config.root, revision, MAX_DIFF_CHANGED_PATHS))
-            .transpose()?;
+            .filter(|revision| !revision.trim().is_empty());
+        let immutable_range = revision.map(parse_revision_range).transpose()?.flatten();
+        let git_result = match (revision, immutable_range) {
+            (Some(_), Some((base, head))) => Some(git_diff_paths_between(
+                &self.config.root,
+                base,
+                head,
+                MAX_DIFF_CHANGED_PATHS,
+            )?),
+            (Some(revision), None) => Some(git_diff_paths(
+                &self.config.root,
+                revision,
+                MAX_DIFF_CHANGED_PATHS,
+            )?),
+            (None, None) => None,
+            (None, Some(_)) => unreachable!("a range comes from a revision"),
+        };
         let working_tree_paths = git_changed_paths(&self.config.root, GIT_CHANGED_PATHS_MAX)
             .unwrap_or_else(|error| {
                 tracing::debug!(%error, "working-tree signal unavailable");
@@ -1457,7 +1500,9 @@ impl Services {
         if let Some(git_result) = git_result {
             let mut changed_paths = request.changed_paths.clone();
             let mut resolved_paths = git_result.changed_paths;
-            resolved_paths.extend(working_tree_paths.iter().cloned());
+            if immutable_range.is_none() {
+                resolved_paths.extend(working_tree_paths.iter().cloned());
+            }
             resolved_paths.sort();
             resolved_paths.dedup();
             for path in resolved_paths {
@@ -1634,17 +1679,17 @@ impl Services {
         workflow: ContextWorkflow,
         cancellation: &CancellationToken,
         candidates: &mut Vec<Candidate>,
-    ) -> Result<(Option<WorkflowReceipt>, usize)> {
+    ) -> Result<(Option<WorkflowReceipt>, Vec<String>)> {
         if !matches!(
             workflow,
             ContextWorkflow::Contribution | ContextWorkflow::Review
         ) {
-            return Ok((None, 0));
+            return Ok((None, Vec::new()));
         }
 
         let mut matches = Vec::new();
         let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
-        let mut path_excluded = 0usize;
+        let mut path_excluded = Vec::new();
         let mut cursor = None;
         let mut scanned_files = 0;
         let mut scan_truncated = false;
@@ -1665,7 +1710,7 @@ impl Services {
                     if path_filter.allows(&file.path) {
                         matches.push((file, score, family));
                     } else {
-                        path_excluded += 1;
+                        path_excluded.push(file.path);
                     }
                 }
             }
@@ -1757,11 +1802,28 @@ impl Services {
         let mut relationships = BTreeSet::new();
         let mut gaps = Vec::new();
         let changed_hunks = if let Some(base_revision) = &scope.base_revision {
-            let mut hunks = git_diff_hunks(
-                &self.config.root,
-                base_revision,
-                MAX_DIFF_EVIDENCE_SYMBOLS + 1,
-            )?;
+            let immutable_range = request
+                .base_revision
+                .as_deref()
+                .and_then(|revision| parse_revision_range(revision).ok().flatten())
+                .is_some();
+            let mut hunks = if immutable_range {
+                let head_revision = scope.head_revision.as_deref().ok_or_else(|| {
+                    Error::InternalFailure("immutable diff scope has no head revision".into())
+                })?;
+                git_diff_hunks_between(
+                    &self.config.root,
+                    base_revision,
+                    head_revision,
+                    MAX_DIFF_EVIDENCE_SYMBOLS + 1,
+                )?
+            } else {
+                git_diff_hunks(
+                    &self.config.root,
+                    base_revision,
+                    MAX_DIFF_EVIDENCE_SYMBOLS + 1,
+                )?
+            };
             if hunks.len() > MAX_DIFF_EVIDENCE_SYMBOLS {
                 gaps.push("changed_hunk_evidence_truncated".into());
                 hunks.truncate(MAX_DIFF_EVIDENCE_SYMBOLS);
@@ -1949,7 +2011,7 @@ impl Services {
                 .collect::<Vec<_>>();
             let path_scorer = ContextPathScorer::new(&terms, &request.task);
             let mut candidates = Vec::new();
-            let mut path_excluded_candidates = 0usize;
+            let mut path_excluded_candidates = Vec::new();
             let mut query_fusion = HashMap::<String, HashMap<String, f64>>::new();
             let mut coverage = self.append_constraint_candidates(
                 session,
@@ -1991,7 +2053,7 @@ impl Services {
                     if path_filter.allows(&hit.path) {
                         symbol_hits.push((rank, hit));
                     } else {
-                        path_excluded_candidates += 1;
+                        path_excluded_candidates.push(hit.path);
                     }
                 }
                 let symbol_excerpt_requests = symbol_hits
@@ -2080,7 +2142,7 @@ impl Services {
                     if path_filter.allows(&hit.path) {
                         reference_hits.push((rank, hit));
                     } else {
-                        path_excluded_candidates += 1;
+                        path_excluded_candidates.push(hit.path);
                     }
                 }
                 let reference_locations = reference_hits
@@ -2215,7 +2277,7 @@ impl Services {
                 for (rank, hit) in lexical.into_iter().enumerate() {
                     check_cancelled(cancellation)?;
                     if !path_filter.allows(&hit.path) {
-                        path_excluded_candidates += 1;
+                        path_excluded_candidates.push(hit.path);
                         continue;
                     }
                     phases.counters.lexical_chunks_verified =
@@ -2327,8 +2389,7 @@ impl Services {
                 cancellation,
                 &mut candidates,
             )?;
-            path_excluded_candidates =
-                path_excluded_candidates.saturating_add(workflow_path_excluded);
+            path_excluded_candidates.extend(workflow_path_excluded);
 
             signals
                 .import_neighbor
@@ -2396,11 +2457,13 @@ impl Services {
             } else {
                 Vec::new()
             };
-            let mut response = ranking::select_with_tokenizer(
+            let mut response = ranking::select_with_tokenizer_and_context_exclusions(
                 candidates,
                 &scoped_request,
                 generation,
                 self.config.tokenizer,
+                &self.config.context_exclude_paths,
+                &path_excluded_candidates,
             );
             coverage.covered_must_include_paths =
                 std::mem::take(&mut response.coverage.covered_must_include_paths);
@@ -2416,10 +2479,25 @@ impl Services {
             coverage
                 .uncovered_must_include_symbols
                 .retain(|symbol| !coverage.unmatched_must_include_symbols.contains(symbol));
+            let selected_paths: Vec<String> = response.plan.as_ref().map_or_else(
+                || {
+                    response
+                        .fragments
+                        .iter()
+                        .map(|fragment| fragment.path.clone())
+                        .collect()
+                },
+                |plan| {
+                    plan.candidates
+                        .iter()
+                        .map(|candidate| candidate.path.clone())
+                        .collect()
+                },
+            );
             self.finalize_strict_scope_coverage(
                 session,
                 &scoped_request,
-                &response.fragments,
+                &selected_paths,
                 &mut coverage,
             )?;
             response.coverage = coverage;
@@ -2477,15 +2555,6 @@ impl Services {
             }
             response.workflow = resolved_workflow;
             response.workflow_receipt = workflow_receipt;
-            if path_excluded_candidates > 0 {
-                response.omission_summary.path_excluded = response
-                    .omission_summary
-                    .path_excluded
-                    .saturating_add(path_excluded_candidates);
-                response.warnings.push(format!(
-                    "{path_excluded_candidates} candidates excluded by path constraints"
-                ));
-            }
             response.meta.freshness = self.freshness();
             response.meta.repository_id = self.repository_id();
             if let Some(mut scope) = diff_scope.clone() {
@@ -2506,7 +2575,7 @@ impl Services {
                     &request,
                     &scope,
                     candidate_path_count,
-                    &response.fragments,
+                    &selected_paths,
                 );
                 if let Some(routing) = &response.routing {
                     let concentration = if routing.weakly_concentrated {
@@ -2521,21 +2590,83 @@ impl Services {
                 }
                 response.diff_scope = Some(scope);
             }
-            if response.fragments.is_empty() {
-                response
-                    .warnings
-                    .push("no relevant indexed evidence found".into());
+            if !request.plan_only {
+                let receipt_candidates = response
+                    .fragments
+                    .iter()
+                    .map(|fragment| {
+                        ReceiptEvidence::new(
+                            fragment.path.clone(),
+                            fragment.start_line,
+                            fragment.end_line,
+                            fragment.content_hash.clone(),
+                            Some(&fragment.content),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let receipt = self.evaluate_receipt(
+                    request.receipt_id.as_deref(),
+                    generation,
+                    &receipt_candidates,
+                )?;
+                response.fragments = response
+                    .fragments
+                    .into_iter()
+                    .zip(&receipt.decisions)
+                    .filter_map(|(fragment, decision)| {
+                        matches!(
+                            decision,
+                            ReceiptDecision::Return | ReceiptDecision::ReturnNearDuplicate
+                        )
+                        .then_some(fragment)
+                    })
+                    .collect();
+                response.receipt.fragment_hashes = response
+                    .fragments
+                    .iter()
+                    .map(|fragment| fragment.content_hash.clone())
+                    .collect();
+                response.meta.source_tokens = response
+                    .fragments
+                    .iter()
+                    .map(|fragment| self.config.tokenizer.count(&fragment.content))
+                    .sum();
+                response.meta.emitted_tokens = response.meta.source_tokens;
+                receipt.apply_meta(&mut response.meta);
+                if response.meta.receipt_near_duplicates > 0 {
+                    response.warnings.push(format!(
+                        "{} returned fragments are semantic near-duplicates of prior receipt evidence",
+                        response.meta.receipt_near_duplicates
+                    ));
+                }
+                if response.fragments.is_empty() {
+                    if response.meta.receipt_suppressed_exact
+                        + response.meta.receipt_suppressed_overlap
+                        > 0
+                    {
+                        response
+                            .warnings
+                            .push("all selected evidence was already covered by the receipt".into());
+                    } else {
+                        response
+                            .warnings
+                            .push("no relevant indexed evidence found".into());
+                    }
+                }
             }
             self.finalize_response(&mut response)?;
-            let paths = response
-                .fragments
-                .iter()
-                .map(|fragment| fragment.path.clone())
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>();
-            let baseline_source_tokens =
-                session.whole_file_source_tokens(&paths, self.config.tokenizer.name())?;
+            let baseline_source_tokens = if request.plan_only {
+                None
+            } else {
+                let paths = response
+                    .fragments
+                    .iter()
+                    .map(|fragment| fragment.path.clone())
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                session.whole_file_source_tokens(&paths, self.config.tokenizer.name())?
+            };
             if let Some(started) = ranking_started {
                 phases.timings.ranking_finalize_ms =
                     started.elapsed().as_secs_f64() * 1_000.0;
@@ -2599,6 +2730,21 @@ mod tests {
     }
 
     #[test]
+    fn revision_ranges_require_two_explicit_endpoints() {
+        assert_eq!(
+            parse_revision_range("main~1..main").expect("valid range"),
+            Some(("main~1", "main"))
+        );
+        assert_eq!(
+            parse_revision_range("origin/main").expect("single revision"),
+            None
+        );
+        for invalid in ["..main", "main..", "main...head"] {
+            assert!(parse_revision_range(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
     fn workflow_auto_detection_requires_high_confidence_language() {
         assert_eq!(
             resolve_context_workflow(ContextWorkflow::Auto, "prepare this pull request"),
@@ -2654,12 +2800,14 @@ mod tests {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: Vec::new(),
+            receipt_id: None,
             prior_repository_generation: None,
             base_revision: None,
             changed_paths: vec!["src/core.rs".into()],
@@ -2758,12 +2906,14 @@ mod tests {
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
             max_fragments: None,
+            plan_only: false,
             focus_paths: Vec::new(),
             strict_focus_paths: false,
             minimum_fragments_per_focus_path: None,
             focus_symbols: Vec::new(),
             exclude_paths: Vec::new(),
             known_hashes: vec!["held".into()],
+            receipt_id: None,
             prior_repository_generation: None,
             base_revision: Some("origin/main".into()),
             changed_paths: Vec::new(),
@@ -2785,7 +2935,7 @@ mod tests {
             indexed_changed_paths: 36,
             evidence: None,
         };
-        let fragments = vec![
+        let fragments = [
             ContextFragment {
                 path: "src/browser/file_0.rs".into(),
                 start_line: 1,
@@ -2810,8 +2960,12 @@ mod tests {
             },
         ];
 
-        let routing =
-            build_context_routing(&request, &scope, 24, &fragments).expect("oversized routing");
+        let selected_paths = fragments
+            .iter()
+            .map(|fragment| fragment.path.clone())
+            .collect::<Vec<_>>();
+        let routing = build_context_routing(&request, &scope, 24, &selected_paths)
+            .expect("oversized routing");
 
         assert_eq!(routing.changed_paths, 36);
         assert_eq!(routing.path_groups_total, 3);

@@ -33,12 +33,19 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 - Add a language grammar only when a pinned task and parser fixture demonstrate
   recall value that outweighs its binary, indexing, and schema cost. The
   expanded task set uses existing grammars, so no grammar was added.
+- Structural JSON retrieval now handles exact ignored artifacts through
+  Pointer/JMESPath selection, collapsed/key/schema projections, numeric
+  summaries, and selected-field diffs without indexing raw reports.
+- Context can now return a bounded metadata-only query plan before source
+  materialization. Plans reuse hard scopes and ranking, expose scores, reasons,
+  exact token estimates, focus coverage, and generated-artifact warnings, and
+  do not create or update receipts.
 
 ## Token accounting
 
 - Exact local modes now cover the bundled `tiktoken-rs` encodings; an explicit
   inexact estimate mode covers providers without a local vocabulary.
-- MCP accounting includes initialization, the six-tool catalog,
+- MCP accounting includes initialization, the eight-tool catalog,
   `notifications/initialized`, JSON-RPC envelopes, results, and handoffs. A
   transparent stdio proxy can capture exact exchanges from real hosts.
 - Compare dual, text-only, and structured-only results per host/version. Keep
@@ -89,6 +96,17 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
   JSON token counts.
 - Add model input framing and provider-native counts where hosts expose them.
   Never silently substitute a local tokenizer for provider billing counts.
+
+## Runtime footprint
+
+- MCP processes already share one repository cache, cross-process
+  reconciliation lock, indexing leader, and watcher; followers take over after
+  leader failure. Private-runtime setup registers the versioned native binary
+  directly instead of retaining npm and Node wrappers.
+- Status now exposes current-process RSS, SQLite main/WAL/SHM bytes, indexed
+  source bytes, and index amplification. Cross-process follower counts and
+  aggregate RSS remain future work because file-lock ownership alone cannot
+  identify every live client accurately.
 
 ## Model behavior
 

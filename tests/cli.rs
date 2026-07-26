@@ -1,6 +1,9 @@
 use clap::{Parser, error::ErrorKind};
 use leantoken::cli::{AppRequest, Cli};
-use leantoken::model::{ContextWorkflow, FileOperation, SearchMode};
+use leantoken::model::{
+    ContextWorkflow, FileOperation, HistoryOperation, JsonOperation, JsonProjection, JsonSelector,
+    SearchMode,
+};
 use leantoken::tokens::Tokenizer;
 use leantoken::setup::SetupClient;
 
@@ -111,6 +114,23 @@ fn cli_search_request() {
 }
 
 #[test]
+fn cli_identifier_search_prefers_structural_hits() {
+    let cli = parse(&[
+        "search",
+        "target",
+        "--mode",
+        "identifier",
+        "--prefer-structural",
+    ]);
+    let AppRequest::Search(request) = cli.app_request() else {
+        panic!("expected search request");
+    };
+
+    assert_eq!(request.mode, SearchMode::Identifier);
+    assert!(request.prefer_structural);
+}
+
+#[test]
 fn cli_search_default_mode_is_auto() {
     let cli = parse(&["search", "bar"]);
     let AppRequest::Search(request) = cli.app_request() else {
@@ -168,6 +188,79 @@ fn cli_read_request() {
     assert_eq!(request.continuation_cursor, None);
     assert_eq!(request.max_tokens, Some(100));
     assert_eq!(request.expected_hash, Some("abc123".into()));
+}
+
+#[test]
+fn cli_history_request() {
+    let cli = parse(&[
+        "history",
+        "--max-tokens",
+        "500",
+        "diff-symbol",
+        "src/lib.rs",
+        "Services",
+        "main~1",
+        "main",
+    ]);
+    let AppRequest::History(request) = cli.app_request() else {
+        panic!("expected history request");
+    };
+    assert_eq!(request.max_tokens, Some(500));
+    assert!(matches!(
+        request.operation,
+        HistoryOperation::DiffSymbol {
+            path,
+            symbol,
+            base_revision,
+            head_revision,
+        } if path == "src/lib.rs"
+            && symbol == "Services"
+            && base_revision == "main~1"
+            && head_revision == "main"
+    ));
+}
+
+#[test]
+fn cli_json_request() {
+    let cli = parse(&[
+        "json",
+        "--max-items",
+        "50",
+        "--array-sample-size",
+        "2",
+        "diff-fields",
+        "before.json",
+        "after.json",
+        "--pointer",
+        "/version",
+        "--jmespath",
+        "runs[].score",
+        "--projection",
+        "collapsed",
+    ]);
+    let AppRequest::Json(request) = cli.app_request() else {
+        panic!("expected JSON request");
+    };
+    assert_eq!(request.max_items, Some(50));
+    assert_eq!(request.array_sample_size, Some(2));
+    assert!(matches!(
+        request.operation,
+        JsonOperation::DiffFields {
+            base_path,
+            head_path,
+            selectors,
+            projection: JsonProjection::Collapsed,
+        } if base_path == "before.json"
+            && head_path == "after.json"
+            && selectors == vec![
+                JsonSelector::Pointer {
+                    pointer: "/version".into()
+                },
+                JsonSelector::Jmespath {
+                    expression: "runs[].score".into()
+                }
+            ]
+    ));
 }
 
 #[test]
@@ -322,6 +415,7 @@ fn cli_context_request() {
         "owner_symbol",
         "--max-fragments",
         "12",
+        "--plan-only",
         "--focus",
         "src",
         "--strict-focus-paths",
@@ -355,6 +449,7 @@ fn cli_context_request() {
         vec!["owner_symbol".to_string()]
     );
     assert_eq!(request.max_fragments, Some(12));
+    assert!(request.plan_only);
     assert_eq!(request.focus_paths, vec!["src".to_string()]);
     assert!(request.strict_focus_paths);
     assert_eq!(request.minimum_fragments_per_focus_path, Some(2));

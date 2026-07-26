@@ -25,6 +25,20 @@ fn cli_indexes_statuses_and_searches_as_json() {
 
     let status = run(root.path(), &database, &["status"]);
     assert_eq!(status["file_count"], 1);
+    assert_eq!(
+        status["indexed_source_bytes"],
+        "pub fn answer() -> u8 { 42 }\n".len()
+    );
+    assert!(
+        status["index_storage_bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes > 0)
+    );
+    assert!(
+        status["index_amplification_ratio"]
+            .as_f64()
+            .is_some_and(|ratio| ratio > 1.0)
+    );
 
     let search = run(
         root.path(),
@@ -388,7 +402,7 @@ fn doctor_verifies_identity_catalog_and_first_retrieval() {
     assert_eq!(report["server_name"], "leantoken");
     assert_eq!(report["server_version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(report["instructions_loaded"], true);
-    assert_eq!(report["tools"].as_array().map(Vec::len), Some(6));
+    assert_eq!(report["tools"].as_array().map(Vec::len), Some(8));
     assert!(
         matches!(
             report["integration"]["registration_status"].as_str(),
@@ -477,7 +491,7 @@ fn doctor_human_output_uses_context_distillery_handoff() {
     assert!(stderr.contains("Context Distillery is checking"));
     assert!(stdout.contains("LeanToken // Context Distillery"));
     assert!(stdout.contains("MCP identity: leantoken"));
-    assert!(stdout.contains("Tool catalog: 6 MCP tools"));
+    assert!(stdout.contains("Tool catalog: 8 MCP tools"));
     assert!(stdout.contains("leantoken.context first"));
 }
 
@@ -628,6 +642,8 @@ fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
         [
             "context",
             "files",
+            "history",
+            "json",
             "outline",
             "read",
             "savings",
@@ -1441,6 +1457,8 @@ fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
         serde_json::json!([
             "context",
             "files",
+            "history",
+            "json",
             "outline",
             "read",
             "savings",

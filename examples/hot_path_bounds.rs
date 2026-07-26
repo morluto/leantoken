@@ -101,6 +101,8 @@ async fn main() -> leantoken::Result<()> {
         context_lines: Some(0),
         case_sensitive: true,
         all_occurrences: false,
+        prefer_structural: false,
+        receipt_id: None,
         cursor: None,
     };
     let context_request = ContextRequest {
@@ -110,12 +112,14 @@ async fn main() -> leantoken::Result<()> {
         must_include_paths: Vec::new(),
         must_include_symbols: Vec::new(),
         max_fragments: None,
+        plan_only: false,
         focus_paths: Vec::new(),
         strict_focus_paths: false,
         minimum_fragments_per_focus_path: None,
         focus_symbols: Vec::new(),
         exclude_paths: Vec::new(),
         known_hashes: Vec::new(),
+        receipt_id: None,
         prior_repository_generation: None,
         base_revision: None,
         changed_paths: Vec::new(),

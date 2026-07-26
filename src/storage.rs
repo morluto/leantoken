@@ -705,6 +705,7 @@ pub struct StorageCounts {
     pub files: usize,
     pub chunks: usize,
     pub symbols: usize,
+    pub source_bytes: u64,
     pub languages: Vec<(String, usize)>,
 }
 
@@ -952,6 +953,7 @@ impl Storage {
                     files: 0,
                     chunks: 0,
                     symbols: 0,
+                    source_bytes: 0,
                     languages: Vec::new(),
                 },
             });
@@ -1002,6 +1004,16 @@ impl Storage {
         let files = count_table_rows(&conn, "files")?;
         let chunks = count_table_rows(&conn, "chunks")?;
         let symbols = count_table_rows(&conn, "symbols")?;
+        let source_bytes =
+            if table_exists(&conn, "files")? && column_exists(&conn, "files", "size_bytes")? {
+                i64_to_u64(conn.query_row(
+                    "SELECT coalesce(sum(size_bytes), 0) FROM files",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            } else {
+                0
+            };
         let languages = if table_exists(&conn, "files")? {
             let mut statement = conn.prepare(
                 "SELECT language, count(*) FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY language",
@@ -1019,6 +1031,7 @@ impl Storage {
                 files,
                 chunks,
                 symbols,
+                source_bytes,
                 languages,
             },
         })
@@ -2871,6 +2884,11 @@ impl ReadSession {
             [],
             |row| row.get(0),
         )?);
+        let source_bytes = i64_to_u64(self.conn.query_row(
+            "SELECT coalesce(sum(size_bytes), 0) FROM files",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?);
         let mut stmt = self.conn.prepare_cached(
             "SELECT language, count(*) FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY language",
         )?;
@@ -2881,6 +2899,7 @@ impl ReadSession {
             files,
             chunks,
             symbols,
+            source_bytes,
             languages,
         })
     }
