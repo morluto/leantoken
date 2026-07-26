@@ -2,9 +2,10 @@
 
 <h1>LeanToken</h1>
 
-**Token-bounded repository context for coding agents**
+**Make every AI coding token go further**
 
-Give agents the source they need without repeatedly sending whole files.
+Local-first code intelligence for coding agents. Search code, inspect structure,
+read exact ranges, and explore Git history through a CLI and MCP server.
 
 <img src="assets/leantoken-hero.png" alt="LeanToken distilling a large source repository into focused, token-bounded context" width="100%">
 
@@ -19,6 +20,11 @@ Give agents the source they need without repeatedly sending whole files.
 
 ---
 
+> **Measured, task-specific evidence:** In a frozen 60-run study using Codex
+> CLI 0.144.1 across four pinned repositories, an opt-in LeanToken context
+> bundle used 20.1% less total model input than thin native exploration and
+> 37.6% less than full native exploration. See the [measurement methodology](docs/measurement.md).
+
 ## Quick start
 
 Add LeanToken to Claude Code, Cursor, OpenCode, Codex, Gemini CLI, or
@@ -27,6 +33,9 @@ Antigravity:
 ```bash
 npx leantoken setup
 ```
+
+<details>
+<summary><strong>Setup behavior and safety</strong></summary>
 
 Current releases stop setup before writing when `npx` resolves a stale
 project-local or ancestor install, and point to
@@ -45,6 +54,8 @@ from the workspace cwd selected by the host. If a host instead starts it from
 the home directory or a filesystem root, LeanToken refuses to index that broad
 root by default.
 
+</details>
+
 Restart or reload the configured clients, then verify the complete MCP
 handshake and first retrieval from a repository:
 
@@ -52,10 +63,16 @@ handshake and first retrieval from a repository:
 npx leantoken doctor
 ```
 
-Start with a broad task such as: *Use LeanToken to map the relevant repository
-context before editing.* The MCP initialization guidance routes the agent to
+Start with a broad task such as: *Use LeanToken to find the relevant code before
+editing.* The MCP initialization guidance routes the agent to
 `leantoken.context` first and keeps native tools available for edits, builds,
 and tests.
+
+Check how many tokens LeanToken has saved:
+
+```bash
+npx leantoken savings
+```
 
 <table>
 <tr>
@@ -66,8 +83,8 @@ and retrieval layer.
 </td>
 <td width="33%" valign="top">
 <strong>Explicit token budgets</strong><br><br>
-Every source response is bounded, so repository context does not quietly crowd
-out the task.
+Every response has an explicit token limit, so large files cannot take over the
+request.
 </td>
 <td width="33%" valign="top">
 <strong>Built for agent workflows</strong><br><br>
@@ -77,6 +94,9 @@ eight focused MCP tools.
 </td>
 </tr>
 </table>
+
+<details>
+<summary><strong>Advanced setup and version management</strong></summary>
 
 To skip the wizard, select clients explicitly or configure all supported
 clients:
@@ -116,11 +136,12 @@ npx --yes leantoken@latest setup --refresh --yes
 npx --yes leantoken@0.1.8 setup --refresh --yes --allow-outdated
 ```
 
+</details>
+
 ## Why LeanToken
 
-Repository exploration often starts with broad searches, whole-file reads, and
-the same source being loaded again after a handoff. LeanToken replaces that
-loop with progressive disclosure:
+Most agents start by searching widely and reading whole files. LeanToken narrows
+that work in stages:
 
 | Typical repository exploration | With LeanToken |
 | --- | --- |
@@ -130,9 +151,27 @@ loop with progressive disclosure:
 | Let source reads grow with file size | Apply an explicit token limit to every retrieval |
 | Guess which files matter | Rank task-specific evidence when scope is uncertain |
 
-The host agent still owns editing, commands, tests, conversation state, and
-model orchestration. LeanToken handles repository discovery and bounded source
-retrieval.
+Your coding agent still handles editing, commands, tests, and conversation.
+LeanToken finds and returns the code those tasks need.
+
+LeanToken does not create one giant prompt file. It answers focused searches and
+reads as the agent needs them.
+
+### Example
+
+For a task like *fix request cancellation during shutdown*, an illustrative
+bounded result might look like this:
+
+```text
+Budget: 1,200 source tokens
+
+Selected evidence:
+  src/services/executor.rs        lines 137-147, 251-259
+  src/services/reconciliation.rs lines 148-175, 257-272
+
+The response also includes the matching symbols, source excerpts, hashes, and
+any evidence left out by the budget.
+```
 
 ## Available tools
 
@@ -146,6 +185,9 @@ retrieval.
 | `leantoken.history` | Read, diff, or trace one parsed symbol across immutable Git revisions. |
 | `leantoken.json` | Query, summarize, or compare bounded live JSON with paged keys and typed diagnostics. |
 | `leantoken.savings` | Report source compression and cumulative full-response token accounting. |
+
+<details>
+<summary><strong>Advanced retrieval controls</strong></summary>
 
 Every index-backed retrieval tool accepts `consistency: "reconcile_working_tree"` when
 completed edits must be reconciled before the query. The default,
@@ -162,6 +204,8 @@ paths and coverage, then repeat the same request with `plan_only: false` to
 materialize the selected source. Context omission diagnostics are compact by
 default; set `verbose_diagnostics: true` only when full path, file-type, reason,
 score-band, focus, and changed-path facets are needed.
+
+</details>
 
 The catalog stays intentionally small because every tool description and
 schema also consumes model context.
