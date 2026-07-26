@@ -56,6 +56,17 @@ test("reads the npm package version from Cargo.toml", async () => {
   assert.match(await readCargoVersion(), /^\d+\.\d+\.\d+/);
 });
 
+test("keeps cargo-dist targets aligned with the canonical npm platform manifest", async () => {
+  const distWorkspace = await readFile(new URL("../dist-workspace.toml", import.meta.url), "utf8");
+  const targetLine = distWorkspace.match(/^targets = (\[[^\n]+\])$/m);
+  assert.ok(targetLine, "dist-workspace.toml must declare its release targets");
+
+  const distTargets = JSON.parse(targetLine[1]);
+  const npmTargets = PLATFORMS.map((platform) => platform.target);
+  assert.equal(new Set(npmTargets).size, npmTargets.length, "npm targets must be unique");
+  assert.deepEqual([...distTargets].sort(), [...npmTargets].sort());
+});
+
 test("builds one script-free package containing every native binary", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "leantoken-npm-test-"));
   const artifacts = join(workspace, "artifacts");

@@ -143,6 +143,12 @@ The included JavaScript launcher selects the binary for the current OS and CPU;
 npm installation does not run lifecycle scripts or download a binary from a
 postinstall hook.
 
+`npm/platforms.json` is the canonical platform manifest: it owns the target
+triple and npm launcher metadata. The `targets` projection in
+`dist-workspace.toml` is checked against it by the npm packaging test, so add or
+remove a platform in the npm manifest and let that check expose any release
+configuration drift.
+
 Verify release configuration changes before pushing them:
 
 ```bash
