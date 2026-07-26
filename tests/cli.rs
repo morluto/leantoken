@@ -1,4 +1,4 @@
-use clap::{Parser, error::ErrorKind};
+use clap::{CommandFactory, Parser, error::ErrorKind};
 use leantoken::cache::{CacheState, DEFAULT_CACHE_LIST_LIMIT};
 use leantoken::cli::{AppRequest, Cli};
 use leantoken::model::{
@@ -46,6 +46,44 @@ fn cli_setup_help_snapshot() {
 #[test]
 fn cli_cache_help_snapshot() {
     insta::assert_snapshot!("cache_help", help(&["cache"]));
+}
+
+#[test]
+fn usage_guide_tracks_runtime_cli_surface() {
+    let command = Cli::command();
+    let runtime_commands = command
+        .get_subcommands()
+        .filter(|subcommand| subcommand.get_name() != "help")
+        .map(|subcommand| subcommand.get_name().to_owned())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let usage = include_str!("../docs/usage.md");
+    let command_section = usage
+        .split_once("## CLI commands\n")
+        .expect("CLI command section")
+        .1
+        .split_once("\n\nUse `leantoken <command> --help`")
+        .expect("CLI command section end")
+        .0;
+    let documented_commands = command_section
+        .lines()
+        .filter_map(|line| line.strip_prefix("leantoken "))
+        .map(|line| line.split_once(' ').map_or(line, |(name, _)| name))
+        .map(str::to_owned)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(documented_commands, runtime_commands);
+
+    for argument in command.get_arguments() {
+        if matches!(argument.get_id().as_str(), "help" | "version") {
+            continue;
+        }
+        if let Some(long) = argument.get_long() {
+            assert!(
+                usage.contains(&format!("--{long}")),
+                "usage guide is missing runtime option --{long}"
+            );
+        }
+    }
 }
 
 #[test]
