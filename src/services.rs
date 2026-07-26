@@ -809,6 +809,7 @@ fn status_response(
         } else {
             IndexState::Ready
         },
+        working_tree_checked: false,
         freshness,
         file_count: counts.files,
         chunk_count: counts.chunks,

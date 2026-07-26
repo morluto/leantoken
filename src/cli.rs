@@ -14,8 +14,8 @@ use crate::config::DEFAULT_CONTEXT_TOKENS;
 use crate::mcp::McpResultMode;
 use crate::model::{
     ContextRequest, FileOperation, FilesRequest, HandoffManifestRequest, HistoryOperation,
-    HistoryRequest, JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest,
-    ReadRequest, SearchMode, SearchRequest,
+    HistoryRequest, IndexConsistency, JsonOperation, JsonProjection, JsonRequest, JsonSelector,
+    OutlineRequest, ReadRequest, SearchMode, SearchRequest,
 };
 use crate::setup::{SetupClient, SetupRequest};
 use crate::tokens::Tokenizer;
@@ -242,6 +242,20 @@ impl Cli {
         config.tokenizer = self.tokenizer;
         config.discovery_limits().validate()?;
         Ok(config)
+    }
+
+    /// Return the consistency boundary requested by an index-backed retrieval.
+    #[must_use]
+    pub fn retrieval_consistency(&self) -> Option<IndexConsistency> {
+        let consistency = match &self.command {
+            Commands::Files(args) => args.index_consistency.consistency,
+            Commands::Search(args) => args.index_consistency.consistency,
+            Commands::Outline(args) => args.index_consistency.consistency,
+            Commands::Read(args) => args.index_consistency.consistency,
+            Commands::Context(args) => args.index_consistency.consistency,
+            _ => return None,
+        };
+        Some(consistency.into())
     }
 
     /// Convert the parsed CLI into an application request.
@@ -564,10 +578,42 @@ impl From<SearchModeArg> for SearchMode {
     }
 }
 
+/// Clap value for the index consistency boundary.
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub enum IndexConsistencyArg {
+    /// Query the latest completed index generation without scanning live changes.
+    IndexedGeneration,
+    /// Reconcile the live working tree before retrieval.
+    #[default]
+    ReconcileWorkingTree,
+}
+
+impl From<IndexConsistencyArg> for IndexConsistency {
+    fn from(value: IndexConsistencyArg) -> Self {
+        match value {
+            IndexConsistencyArg::IndexedGeneration => Self::IndexedGeneration,
+            IndexConsistencyArg::ReconcileWorkingTree => Self::ReconcileWorkingTree,
+        }
+    }
+}
+
+/// Consistency options shared by index-backed CLI retrievals.
+#[derive(Debug, Clone, Args)]
+pub struct RetrievalConsistencyArgs {
+    /// Index consistency boundary applied before retrieval.
+    #[arg(long, value_enum, default_value_t = IndexConsistencyArg::ReconcileWorkingTree)]
+    pub consistency: IndexConsistencyArg,
+}
+
 #[derive(Debug, Clone, Parser)]
 pub struct FilesArgs {
     /// Files operation to perform.
     pub operation: FileOperationArg,
+
+    /// Consistency boundary for this retrieval.
+    #[command(flatten)]
+    pub index_consistency: RetrievalConsistencyArgs,
 
     /// Starting path or path filter.
     #[arg(short, long)]
@@ -612,6 +658,10 @@ impl From<FilesArgs> for FilesRequest {
 pub struct SearchArgs {
     /// Search query.
     pub query: String,
+
+    /// Consistency boundary for this retrieval.
+    #[command(flatten)]
+    pub index_consistency: RetrievalConsistencyArgs,
 
     /// Search mode.
     #[arg(short, long, value_enum, default_value_t = SearchModeArg::Auto)]
@@ -682,6 +732,10 @@ impl From<SearchArgs> for SearchRequest {
 pub struct OutlineArgs {
     /// Paths to outline.
     pub paths: Vec<String>,
+
+    /// Consistency boundary for this retrieval.
+    #[command(flatten)]
+    pub index_consistency: RetrievalConsistencyArgs,
 
     /// Filter by symbol name.
     #[arg(long)]
@@ -789,6 +843,10 @@ impl FromStr for LineRange {
 pub struct ReadArgs {
     /// File path to read.
     pub path: String,
+
+    /// Consistency boundary for this retrieval.
+    #[command(flatten)]
+    pub index_consistency: RetrievalConsistencyArgs,
 
     /// Line range as START:END.
     #[arg(short, long, value_name = "START:END")]
@@ -1084,6 +1142,10 @@ pub struct ContextArgs {
     /// Task description.
     #[arg(short, long)]
     pub task: String,
+
+    /// Consistency boundary for this retrieval.
+    #[command(flatten)]
+    pub index_consistency: RetrievalConsistencyArgs,
 
     /// Evidence workflow; auto selects only on high-confidence task language.
     #[arg(long, value_enum, default_value = "auto")]

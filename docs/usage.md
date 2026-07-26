@@ -29,11 +29,11 @@ leantoken index [--rebuild]
 leantoken status
 leantoken savings
 leantoken doctor
-leantoken files <tree|find|glob> [options]
-leantoken search <query> [options]
-leantoken outline <path>...
-leantoken read <path> [--lines START:END] [--symbol NAME]
-leantoken context --task <text> --budget <tokens> [--workflow <mode>] [--include <glob>]
+leantoken files <tree|find|glob> [options] [--consistency <mode>]
+leantoken search <query> [options] [--consistency <mode>]
+leantoken outline <path>... [--consistency <mode>]
+leantoken read <path> [--lines START:END] [--symbol NAME] [--consistency <mode>]
+leantoken context --task <text> --budget <tokens> [--consistency <mode>]
 leantoken mcp [--result-mode dual|text|structured]
 leantoken setup [CLIENT...] [--all] [--refresh] [--yes] [--dry-run] [--allow-outdated]
 leantoken remove [CLIENT...] [--all] [--yes] [--dry-run]
@@ -48,12 +48,22 @@ Use `leantoken <command> --help` for the complete argument list.
 `index_state` is `uninitialized` until the first generation commits and `ready`
 afterward. `freshness` is `current` while idle and `reconciling` while an index
 operation is active, so a cold idle repository reports
-`uninitialized`/`current`. Before the first generation, direct CLI retrieval
-exits with guidance to run `leantoken index`; use `leantoken doctor` to verify
-the complete MCP startup and first-retrieval flow. Status also reports SQLite
-main/WAL/SHM bytes, indexed source bytes, their amplification ratio, and current
-process RSS when the platform exposes it. RSS is per process, not a claim about
-all clients sharing the repository cache.
+`uninitialized`/`current`. Status is deliberately read-only and reports
+`working_tree_checked: false`; `current` describes reconciliation activity, not
+a filesystem scan. Before the first generation, direct CLI retrieval exits with
+guidance to run `leantoken index`; use `leantoken doctor` to verify the complete
+MCP startup and first-retrieval flow. Status also reports SQLite main/WAL/SHM
+bytes, indexed source bytes, their amplification ratio, and current process RSS
+when the platform exposes it. RSS is per process, not a claim about all clients
+sharing the repository cache.
+
+After the first generation, the one-shot `files`, `search`, `outline`, `read`,
+and `context` commands default to `--consistency reconcile_working_tree`. Each
+command completes a non-rebuild reconciliation before opening one committed
+snapshot, so edits completed before the command are visible atomically. Use
+`--consistency indexed_generation` when a lower-latency query of the latest
+completed snapshot is intentional. Changes written concurrently may require a
+later request.
 
 `leantoken savings` reports persistent repository-local source compression and
 full-response accounting. The backward-compatible source-only fields cover
