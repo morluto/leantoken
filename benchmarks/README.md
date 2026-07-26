@@ -120,6 +120,43 @@ cargo run --release --example benchmark_ablation -- \
 The command rejects different manifest hashes so an apparent improvement cannot
 come from changing tasks or labels.
 
+## Context concept coverage
+
+[`context_concept_coverage.json`](context_concept_coverage.json) is an
+independent label overlay for the prospective validation manifest. It leaves
+the frozen source manifest and archived report identity unchanged. Every
+concept partitions the source manifest's existing path and line anchors
+exactly once; the runner rejects an unknown task, path, anchor, duplicate
+assignment, omitted anchor, manifest hash mismatch, or changed dataset kind.
+
+Run the normal validation benchmark with the overlay:
+
+```bash
+cargo run --release --example representative_benchmark -- \
+  --manifest benchmarks/validation.json \
+  --concept-labels benchmarks/context_concept_coverage.json \
+  --require-concept-thresholds \
+  --repos-root target/validation-repos \
+  --output target/context-concept-coverage.json
+```
+
+The report separates:
+
+- concepts whose frozen anchors appeared in any generated candidate;
+- concepts whose anchors appeared in the selected token-bounded evidence;
+- selected-to-candidate concept retention;
+- per-task coverage, exact matched anchors, source tokens, complete response
+  tokens, and the existing relevance metrics.
+
+`--require-concept-thresholds` writes the complete report before exiting
+nonzero. The frozen thresholds are regression floors for this consumed
+development set, not a promotion gate or a claim that the context is sufficient
+to solve a task. One matched anchor credits a concept, so concept coverage must
+be read beside line-anchor recall and returned evidence.
+
+`benchmark_ablation` compares these metrics only when both reports use the same
+concept-label BLAKE3. It rejects a labeled/unlabeled pair or different overlays.
+
 ## Handoff manifest crossover
 
 `handoff_manifest_benchmark` validates the opt-in handoff contract on a
