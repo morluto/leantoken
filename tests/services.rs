@@ -3564,6 +3564,10 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
             "int c_target(int value) {\n    return value + 11;\n}\n",
         ),
         (
+            "CSharpTarget.cs",
+            "class CSharpTarget {\n    int CsharpTarget() {\n        return 66;\n    }\n}\n",
+        ),
+        (
             "target.cpp",
             "class CppTarget {\npublic:\n    int cpp_target() { return 22; }\n};\n",
         ),
@@ -3589,6 +3593,7 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
 
     for (path, symbol, marker) in [
         ("target.c", "c_target", "return value + 11"),
+        ("CSharpTarget.cs", "CsharpTarget", "return 66"),
         ("target.cpp", "cpp_target", "return 22"),
         ("JavaTarget.java", "javaTarget", "return 33"),
         ("target.php", "phpTarget", "return 44"),
@@ -3647,6 +3652,156 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
             context.fragments
         );
     }
+}
+
+#[tokio::test]
+async fn csharp_structure_supports_outline_search_reference_read_and_context() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(
+        root.path().join("Worker.cs"),
+        r#"using System.Text;
+
+namespace Clinic.Core;
+
+public sealed class Worker {
+    public string Run(int value) {
+        var builder = new StringBuilder();
+        return Normalize(builder.Append(value).ToString());
+    }
+
+    private string Normalize(string value) => value.Trim();
+}
+"#,
+    )
+    .expect("C# source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    let outline = services
+        .outline(OutlineRequest {
+            paths: vec!["Worker.cs".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(20),
+            max_tokens: Some(2_000),
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect("C# outline");
+    assert_eq!(outline.files[0].language.as_deref(), Some("csharp"));
+    assert!(
+        outline.files[0].symbols.iter().any(|symbol| {
+            symbol.name == "Run"
+                && symbol.kind == "method"
+                && symbol.parent.as_deref() == Some("Worker")
+        }),
+        "{:?}",
+        outline.files[0].symbols
+    );
+
+    let symbol_search = services
+        .search(SearchRequest {
+            query: "Run".into(),
+            mode: SearchMode::Symbol,
+            include_paths: vec!["Worker.cs".into()],
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(10),
+            max_tokens: Some(2_000),
+            context_lines: Some(0),
+            case_sensitive: true,
+            all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect("C# symbol search");
+    assert!(
+        symbol_search
+            .hits
+            .iter()
+            .any(|hit| hit.symbol.as_deref() == Some("Run"))
+    );
+
+    let reference_search = services
+        .search(SearchRequest {
+            query: "Normalize".into(),
+            mode: SearchMode::Reference,
+            include_paths: vec!["Worker.cs".into()],
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(10),
+            max_tokens: Some(2_000),
+            context_lines: Some(0),
+            case_sensitive: true,
+            all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect("C# reference search");
+    assert!(reference_search.hits.iter().any(|hit| {
+        hit.symbol.as_deref() == Some("Normalize")
+            && hit.enclosing_symbol.as_deref() == Some("Run")
+    }));
+
+    let read = services
+        .read(ReadRequest {
+            path: "Worker.cs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: Some("Worker.Run".into()),
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(2_000),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+        })
+        .await
+        .expect("qualified C# symbol read");
+    assert!(
+        read.content
+            .as_deref()
+            .is_some_and(|content| content.contains("return Normalize"))
+    );
+
+    let context = services
+        .context(ContextRequest {
+            task: "Fix the Run method".into(),
+            token_budget: 500,
+            include_paths: vec!["Worker.cs".into()],
+            must_include_paths: Vec::new(),
+            must_include_symbols: vec!["Run".into()],
+            max_fragments: None,
+            plan_only: false,
+            focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
+            focus_symbols: vec!["Run".into()],
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            receipt_id: None,
+            prior_repository_generation: None,
+            base_revision: None,
+            changed_paths: Vec::new(),
+            strict_changed_paths: false,
+        })
+        .await
+        .expect("C# context");
+    assert!(
+        context.fragments.iter().any(|fragment| {
+            fragment.path == "Worker.cs" && fragment.content.contains("return Normalize")
+        }),
+        "{:?}",
+        context.fragments
+    );
 }
 
 #[tokio::test]
@@ -6462,6 +6617,94 @@ fn init_git_repo(root: &std::path::Path) {
     run(&["config", "user.name", "Test"]);
     run(&["add", "-A"]);
     run(&["commit", "-m", "init"]);
+}
+
+#[tokio::test]
+async fn csharp_qualified_symbols_support_historical_reads_and_diffs() {
+    if !git_available() {
+        return;
+    }
+
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(
+        root.path().join("Worker.cs"),
+        "class Worker {\n    int Run() {\n        return 1;\n    }\n}\n",
+    )
+    .expect("base C# source");
+    init_git_repo(root.path());
+    let revision = |name: &str| {
+        String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", name])
+                .current_dir(root.path())
+                .output()
+                .expect("resolve revision")
+                .stdout,
+        )
+        .expect("UTF-8 revision")
+        .trim()
+        .to_owned()
+    };
+    let base = revision("HEAD");
+
+    std::fs::write(
+        root.path().join("Worker.cs"),
+        "class Worker {\n    int Run() {\n        return 2;\n    }\n}\n",
+    )
+    .expect("updated C# source");
+    for args in [
+        vec!["add", "Worker.cs"],
+        vec!["commit", "-m", "update C# method"],
+    ] {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root.path())
+            .output()
+            .expect("git commit command");
+        assert!(output.status.success());
+    }
+    let head = revision("HEAD");
+
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let read = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::ReadSymbol {
+                path: "Worker.cs".into(),
+                symbol: "Worker.Run".into(),
+                revision: base.clone(),
+            },
+            max_results: None,
+            max_tokens: Some(200),
+        })
+        .await
+        .expect("historical C# read");
+    assert!(
+        read.symbol
+            .as_ref()
+            .and_then(|symbol| symbol.content.as_deref())
+            .is_some_and(|content| content.contains("return 1"))
+    );
+
+    let diff = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::DiffSymbol {
+                path: "Worker.cs".into(),
+                symbol: "Worker.Run".into(),
+                base_revision: base,
+                head_revision: head,
+            },
+            max_results: None,
+            max_tokens: Some(200),
+        })
+        .await
+        .expect("historical C# diff");
+    let patch = diff.diff.as_deref().expect("C# method diff");
+    assert!(patch.contains("-        return 1;"));
+    assert!(patch.contains("+        return 2;"));
 }
 
 #[tokio::test]
