@@ -321,13 +321,15 @@ mod tests {
     }
 
     async fn wait_until(predicate: impl Fn() -> bool) {
-        for _ in 0..1_000 {
-            if predicate() {
-                return;
-            }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !predicate() {
+            assert!(
+                Instant::now() < deadline,
+                "condition was not reached before the test deadline"
+            );
+            std::thread::yield_now();
             tokio::task::yield_now().await;
         }
-        panic!("condition was not reached");
     }
 
     #[tokio::test]
