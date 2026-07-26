@@ -496,6 +496,14 @@ or `diff_truncated`. `max_results` defaults to 20 and is capped at 100 for
 complete line range, kind, parent, and full-content hash. This tool deliberately
 has no index consistency mode because Git objects are immutable.
 
+`diff_symbol` also returns `semantic_change` when the matched symbol content
+differs. The receipt classifies the change as `modified`, distinguishes
+`signature_changed` from `body_only`, and marks `public_contract_changed` only
+when an explicitly `pub`, `public`, or `export` signature changes. The unified
+diff remains the source of truth. Added, removed, and renamed definitions are
+classified by immutable review context, where both changed paths and symbol
+names can vary.
+
 For context restricted to immutable history, pass `BASE..HEAD` as
 `leantoken.context.base_revision` with `strict_changed_paths: true`. A single
 commit uses `COMMIT^..COMMIT`; the resolved diff scope and coverage receipt make
@@ -579,6 +587,23 @@ high-confidence task language; ordinary tasks retain implementation ranking.
 The resolved mode is returned as `workflow`. Specialized responses include a
 `workflow_receipt` with candidate counts and explicit missing evidence families;
 missing guidance or owner tests is not represented as proof that none exists.
+
+Materialized `review` requests over an immutable `BASE..HEAD` range also place
+a `semantic_change` receipt under `diff_scope.evidence`. It deterministically
+classifies parsed definitions as `added`, `removed`, `renamed`, or `modified`;
+splits matched modifications into signature and body-only changes; identifies
+explicit public-contract changes; reports recognized JSON configuration changes
+as RFC 6901 key paths without values; and labels likely owner tests as `found`,
+`missing`, or `unknown`. Rename requires one unique normalized body fingerprint
+on each side. Ambiguity, incomplete parsing, byte or result limits, unsupported
+Git entries, and truncated test scans are emitted as gaps rather than guessed.
+
+Semantic classification shares the diff-evidence cap of 64 changed paths and 64
+symbol or configuration changes, with an 8 MiB aggregate historical-content
+limit. It is absent from plan-only and non-review responses. Review requests
+against the working tree or a single base revision retain owner-test coverage
+but report `semantic_change_requires_immutable_range`; no risk score is
+produced.
 
 Diff-scoped requests spanning at least 32 changed paths across three or more
 deterministic path groups also return a bounded `routing` receipt. It reports

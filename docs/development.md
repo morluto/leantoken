@@ -272,6 +272,19 @@ exact MCP wire proxy are documented in [`measurement.md`](measurement.md).
 The same guide documents the synthetic indexing and file-read profile used to
 gate targeted reconciliation and any future hot-file cache.
 
+Run the deterministic semantic change receipt gate in release mode:
+
+```bash
+cargo run --release --example semantic_change_receipt_benchmark -- \
+  --iterations 21 \
+  --output benchmarks/reports/semantic-change-receipt-v1.json
+```
+
+The gate checks an exact symbol/configuration truth set, configuration-value
+non-disclosure, owner-test statuses, complete-response token overhead, and
+end-to-end latency. It is a protocol and classifier check, not a model task
+evaluation.
+
 For same-host regression checks, use the opt-in paired performance runner
 documented in the benchmark guide. It builds clean base/head worktrees with the
 pinned Rust toolchain, alternates AB/BA order, validates observable-response

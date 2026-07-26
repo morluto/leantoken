@@ -547,6 +547,11 @@ Avoid speculative "risk scores" until individual signals are validated.
 Existing `context` review workflow and `history` should own this behavior; no new
 MCP tool is needed.
 
+Implemented and adopted in `semantic-change-receipt-v1` as a bounded,
+model-free review receipt. See
+`benchmarks/reports/semantic-change-receipt-v1-2026-07-26.md` for the exact
+fixture gate, payload cost, latency, and limitations.
+
 ### P2: provenance-bearing handoff manifest
 
 Derive a compact manifest from existing query plans, receipts, diff receipts,

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "leantoken_version": "0.1.15",
+  "tokenizer": "cl100k_base",
+  "harness_revision": "116f3e2a60813ea07b69195286b8e8a445b80988",
+  "harness_tracked_worktree_dirty": false,
+  "decision": "adopt",
+  "gates": {
+    "exact_truth_set": true,
+    "no_configuration_values_exposed": true,
+    "owner_test_statuses_correct": true,
+    "bounded_payload_overhead": true,
+    "bounded_p95_latency": true
+  },
+  "classification": {
+    "expected_items": 10,
+    "returned_items": 10,
+    "true_positives": 10,
+    "false_positives": 0,
+    "false_negatives": 0,
+    "precision": 1.0,
+    "recall": 1.0
+  },
+  "payload": {
+    "response_tokens_with_receipt": 1174,
+    "response_tokens_without_receipt": 704,
+    "receipt_overhead_tokens": 470,
+    "receipt_overhead_fraction": 0.6676136363636364
+  },
+  "latency_ms": {
+    "iterations": 21,
+    "min": 66.457604,
+    "p50": 69.395202,
+    "p95": 79.882319,
+    "max": 80.23234
+  },
+  "limitations": [
+    "This deterministic fixture validates receipt classification, not downstream model task success.",
+    "Rename classification requires a unique normalized body fingerprint and intentionally under-classifies ambiguous cases.",
+    "Configuration classification is limited to recognized JSON configuration filenames and emits key paths without values.",
+    "Owner-test discovery remains a filename heuristic and reports unknown when its bounded scan truncates."
+  ]
+}
