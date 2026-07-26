@@ -192,20 +192,23 @@ pruning during a mixed-version rollout.
 `leantoken doctor` launches the current executable as a real MCP subprocess and
 verifies its initialization identity and agent instructions, exact eight-tool
 catalog, and first `leantoken.context` retrieval. On a cold repository it
-follows structured `retry_after_ms` guidance until the first index generation
-is ready. Use `--json` for a machine-readable readiness report. Failures use
-the `doctor_failure` category and identify the `launch`, `handshake`, `catalog`,
-or `first_retrieval` stage so repair tooling does not need to parse prose.
+allows the first retrieval's bounded internal wait, then follows structured
+`retry_after_ms` guidance if the index needs longer. Use `--json` for a
+machine-readable readiness report. Failures use the `doctor_failure` category
+and identify the `launch`, `handshake`, `catalog`, or `first_retrieval` stage so
+repair tooling does not need to parse prose.
 
 ## MCP server
 
 `leantoken mcp` starts the stdio protocol before opening the repository cache so
 the initialize handshake is never blocked by indexing. After the client's
 initialized notification, one process becomes indexing leader and followers
-reuse its committed SQLite generations. Retrieval calls made before the first
-generation commits return successful structured retry guidance with a reason
-and `retry_after_ms`. Later calls report whether they use a current or
-reconciling index generation.
+reuse its committed SQLite generations. A retrieval call made while the first
+generation is being built waits internally for up to 30 seconds so a short cold
+index does not require another model turn. If no generation commits within that
+bound, the call returns successful structured retry guidance with a reason and
+`retry_after_ms`. Later calls report whether they use a current or reconciling
+index generation.
 
 LeanToken refuses to index a filesystem root, the current user's home directory,
 or a parent of that home directory by default. This prevents an MCP host launched
@@ -463,12 +466,13 @@ is returned and added to the receipt rather than being hidden as unchanged.
 and symbol lookup; `meta.freshness` is `reconciling` while an index operation
 is active on this cache.
 
-When the index has never completed a generation, retrieval tools return a
-successful retry result such as `{"status":"retryable","reason":"index_building",
-"retry_after_ms":500}`. Retry the same call after that delay. After local edits,
-set `consistency` to `reconcile_working_tree` on the next MCP retrieval. An
-`indexed_generation` read may still use `index_stale` and `expected_hash` to
-detect or suppress live ranges.
+When the index has never completed a generation, retrieval tools wait for up to
+30 seconds before returning a successful retry result such as
+`{"status":"retryable","reason":"index_building","retry_after_ms":500}`. Retry
+the same call after that delay. Caller cancellation interrupts the internal
+wait. After local edits, set `consistency` to `reconcile_working_tree` on the
+next MCP retrieval. An `indexed_generation` read may still use `index_stale`
+and `expected_hash` to detect or suppress live ranges.
 
 ## `leantoken.json`
 

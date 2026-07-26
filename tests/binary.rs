@@ -682,7 +682,10 @@ fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
             "lib.rs",
             "{response}"
         );
-        assert!(saw_retryable, "cold first call never exposed retry guidance");
+        assert!(
+            !saw_retryable,
+            "short cold index escaped the bounded server-side wait"
+        );
         break;
     }
 }

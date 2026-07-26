@@ -199,10 +199,14 @@ closed without recreating the startup handshake timeout.
 
 MCP starts the stdio protocol before opening SQLite or indexing. It answers the
 mandatory initialize exchange first, then starts repository services after the
-client's initialized notification. A generation-zero tool call returns a
+client's initialized notification. A generation-zero retrieval waits up to 30
+seconds for the first publication and release of the repository operation lock,
+with caller cancellation, before running the retrieval once more. It does not
+poll by repeatedly executing the retrieval. If the bound expires, it returns a
 successful structured `status: "retryable"` result rather than a tool error or
-an empty retrieval result. An existing
-complete generation remains queryable while its replacement is prepared.
+an empty retrieval result. This keeps short cold-index waits inside one tool call
+instead of requiring another model turn. An existing complete generation remains
+queryable while its replacement is prepared.
 
 Cache initialization, schema migration, and managed-cache corruption recovery
 run under a separate repository-scoped initialization lock. SQLite busy and

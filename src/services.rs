@@ -35,6 +35,7 @@ const STARTUP_BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 const STARTUP_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(25);
 const STARTUP_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const INITIAL_INDEX_PROBE_INTERVAL: Duration = Duration::from_millis(100);
 pub(crate) const MAX_EXPECTED_REPOSITORY_ID_BYTES: usize = 128;
 const TOKEN_SAVINGS_ESTIMATE_BASIS: &str =
     "requested read ranges or whole source files represented in each response";
@@ -110,6 +111,7 @@ pub struct Services {
     coordination: IndexCoordination,
     _cache_lease: CacheLease,
     active_reconciliations: Arc<AtomicUsize>,
+    reconciliation_changed: Arc<tokio::sync::Notify>,
     receipts: Arc<receipts::ReceiptRegistry>,
     read_deltas: Arc<read_delta::ReadDeltaRegistry>,
     next_receipt_id: Arc<AtomicU64>,
@@ -222,6 +224,7 @@ impl Services {
             coordination,
             _cache_lease: cache_lease,
             active_reconciliations: Arc::new(AtomicUsize::new(0)),
+            reconciliation_changed: Arc::new(tokio::sync::Notify::new()),
             receipts: Arc::new(receipts::ReceiptRegistry::default()),
             read_deltas: Arc::new(read_delta::ReadDeltaRegistry::default()),
             next_receipt_id: Arc::new(AtomicU64::new(1)),
@@ -285,9 +288,13 @@ impl Services {
     ) -> Result<IndexReport> {
         let this = self.clone();
         let active_reconciliations = Arc::clone(&self.active_reconciliations);
+        let reconciliation_changed = Arc::clone(&self.reconciliation_changed);
         active_reconciliations.fetch_add(1, Ordering::AcqRel);
         tokio::task::spawn_blocking(move || {
-            let _active = ActiveReconciliation(active_reconciliations);
+            let _active = ActiveReconciliation {
+                count: active_reconciliations,
+                changed: reconciliation_changed,
+            };
             let operation = this.coordination.acquire_operation(&cancellation)?;
             let result = this
                 .indexer
@@ -331,9 +338,13 @@ impl Services {
     ) -> Result<IndexReport> {
         let this = self.clone();
         let active_reconciliations = Arc::clone(&self.active_reconciliations);
+        let reconciliation_changed = Arc::clone(&self.reconciliation_changed);
         active_reconciliations.fetch_add(1, Ordering::AcqRel);
         tokio::task::spawn_blocking(move || {
-            let _active = ActiveReconciliation(active_reconciliations);
+            let _active = ActiveReconciliation {
+                count: active_reconciliations,
+                changed: reconciliation_changed,
+            };
             let operation = this.coordination.acquire_operation(&cancellation)?;
             let result = this
                 .indexer
@@ -342,6 +353,51 @@ impl Services {
             result
         })
         .await?
+    }
+
+    /// Wait until the first committed generation is no longer being published.
+    pub(crate) async fn wait_for_initial_index_cancellable(
+        &self,
+        cancellation: CancellationToken,
+    ) -> Result<()> {
+        loop {
+            validation::check_cancelled(&cancellation)?;
+
+            let changed = self.reconciliation_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.active_reconciliations.load(Ordering::Acquire) > 0 {
+                tokio::select! {
+                    _ = cancellation.cancelled() => return Err(Error::Cancelled),
+                    _ = &mut changed => {}
+                }
+                continue;
+            }
+
+            let this = self.clone();
+            let probe = tokio::task::spawn_blocking(move || {
+                let Some(operation) = this.coordination.try_acquire_operation()? else {
+                    return Ok(None);
+                };
+                let generation = this.storage.repository_generation();
+                operation.release()?;
+                generation.map(Some)
+            });
+            let generation = tokio::select! {
+                _ = cancellation.cancelled() => return Err(Error::Cancelled),
+                _ = &mut changed => continue,
+                result = probe => result??,
+            };
+            if generation.is_some_and(|generation| generation > 0) {
+                return Ok(());
+            }
+
+            tokio::select! {
+                _ = cancellation.cancelled() => return Err(Error::Cancelled),
+                _ = &mut changed => {},
+                _ = tokio::time::sleep(INITIAL_INDEX_PROBE_INTERVAL) => {}
+            }
+        }
     }
 
     /// Attempt to own automatic indexing and watching for this cache.
@@ -810,11 +866,15 @@ fn remove_database_artifacts(database: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-struct ActiveReconciliation(Arc<AtomicUsize>);
+struct ActiveReconciliation {
+    count: Arc<AtomicUsize>,
+    changed: Arc<tokio::sync::Notify>,
+}
 
 impl Drop for ActiveReconciliation {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
+        self.count.fetch_sub(1, Ordering::AcqRel);
+        self.changed.notify_waiters();
     }
 }
 
@@ -842,6 +902,77 @@ mod tests {
         assert_eq!(signed_token_difference(3, 10), -7);
         assert_eq!(signed_token_difference(u64::MAX, 0), i64::MAX);
         assert_eq!(signed_token_difference(0, u64::MAX), i64::MIN);
+    }
+
+    #[tokio::test]
+    async fn initial_index_wait_returns_after_publication_lock_releases() {
+        let root = tempfile::tempdir().expect("root");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+        let services = Services::open(config).expect("services");
+        let operation = services
+            .coordination
+            .acquire_operation(&CancellationToken::new())
+            .expect("operation lock");
+        let publisher_services = services.clone();
+        let (published_tx, published_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let publisher = tokio::task::spawn_blocking(move || {
+            publisher_services
+                .storage
+                .full_reconcile("published", Vec::new())
+                .expect("publish generation");
+            published_tx.send(()).expect("announce publication");
+            release_rx.recv().expect("release permission");
+            operation.release().expect("release operation lock");
+        });
+        published_rx.await.expect("publication");
+
+        let waiting_services = services.clone();
+        let waiting = tokio::spawn(async move {
+            waiting_services
+                .wait_for_initial_index_cancellable(CancellationToken::new())
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert!(
+            !waiting.is_finished(),
+            "publication is not settled until the operation lock releases"
+        );
+
+        release_tx.send(()).expect("allow release");
+        publisher.await.expect("join publisher");
+        waiting
+            .await
+            .expect("join initial index wait")
+            .expect("settled generation");
+        let status = services.status().await.expect("status");
+        assert_eq!(status.repository_generation, 1);
+        assert_eq!(status.freshness, Freshness::Current);
+    }
+
+    #[tokio::test]
+    async fn initial_index_wait_honors_cancellation_before_publication() {
+        let root = tempfile::tempdir().expect("root");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+        let services = Services::open(config).expect("services");
+        let cancellation = CancellationToken::new();
+        let waiting_cancellation = cancellation.clone();
+        let waiting = tokio::spawn(async move {
+            services
+                .wait_for_initial_index_cancellable(waiting_cancellation)
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished());
+
+        cancellation.cancel();
+        let error = waiting
+            .await
+            .expect("join initial index wait")
+            .expect_err("generation-zero wait must cancel");
+        assert!(matches!(error, Error::Cancelled));
     }
 
     #[tokio::test]
