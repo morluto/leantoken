@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 mod facets;
 
+use super::change_receipt::{classify_revision_changes, owner_test_coverage};
 use super::read::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::search::{chunk_search_hit_for_range, compile_literal_regex, fts_quote};
@@ -1796,17 +1797,18 @@ impl Services {
         session: &ReadSession,
         request: &ContextRequest,
         scope: &DiffScopeReceipt,
+        workflow: ContextWorkflow,
         cancellation: &CancellationToken,
     ) -> Result<DiffEvidenceReceipt> {
         let mut changed_symbols = Vec::new();
         let mut relationships = BTreeSet::new();
         let mut gaps = Vec::new();
+        let immutable_range = request
+            .base_revision
+            .as_deref()
+            .and_then(|revision| parse_revision_range(revision).ok().flatten())
+            .is_some();
         let changed_hunks = if let Some(base_revision) = &scope.base_revision {
-            let immutable_range = request
-                .base_revision
-                .as_deref()
-                .and_then(|revision| parse_revision_range(revision).ok().flatten())
-                .is_some();
             let mut hunks = if immutable_range {
                 let head_revision = scope.head_revision.as_deref().ok_or_else(|| {
                     Error::InternalFailure("immutable diff scope has no head revision".into())
@@ -1946,6 +1948,54 @@ impl Services {
             gaps.push("owner_test_scan_truncated".into());
         }
 
+        let semantic_change = if workflow == ContextWorkflow::Review && !request.plan_only {
+            let semantic_paths = scoped_paths
+                .iter()
+                .map(|path| (*path).clone())
+                .collect::<Vec<_>>();
+            let mut semantic = if immutable_range {
+                let base_revision = scope.base_revision.as_deref().ok_or_else(|| {
+                    Error::InternalFailure("immutable diff scope has no base revision".into())
+                })?;
+                let head_revision = scope.head_revision.as_deref().ok_or_else(|| {
+                    Error::InternalFailure("immutable diff scope has no head revision".into())
+                })?;
+                classify_revision_changes(
+                    &self.config.root,
+                    base_revision,
+                    head_revision,
+                    &semantic_paths,
+                    usize::try_from(self.config.max_file_bytes).unwrap_or(usize::MAX),
+                    MAX_DIFF_EVIDENCE_SYMBOLS,
+                )
+            } else {
+                DiffSemanticChangeReceipt {
+                    symbol_changes: Vec::new(),
+                    configuration_changes: Vec::new(),
+                    owner_tests: Vec::new(),
+                    gaps: vec!["semantic_change_requires_immutable_range".into()],
+                }
+            };
+            if scope.changed_paths.len() > semantic_paths.len() {
+                semantic
+                    .gaps
+                    .push("semantic_changed_paths_truncated".into());
+            }
+            if owner_test_scan_truncated {
+                semantic.gaps.push("owner_test_scan_truncated".into());
+            }
+            semantic.owner_tests = owner_test_coverage(
+                &scoped_paths,
+                &relationships,
+                owner_test_scan_truncated,
+                &mut semantic.gaps,
+            );
+            semantic.gaps.sort();
+            semantic.gaps.dedup();
+            Some(semantic)
+        } else {
+            None
+        };
         let relationship_count = relationships.len();
         let related_paths = relationships
             .into_iter()
@@ -1966,6 +2016,7 @@ impl Services {
             changed_hunks,
             changed_symbols,
             related_paths,
+            semantic_change,
             gaps,
         })
     }
@@ -2569,6 +2620,7 @@ impl Services {
                     session,
                     &scoped_request,
                     &scope,
+                    resolved_workflow,
                     cancellation,
                 )?);
                 response.routing = build_context_routing(

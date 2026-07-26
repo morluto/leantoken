@@ -18,6 +18,7 @@ use crate::storage::{ReadSession, Storage, StorageCounts};
 use crate::tokens::response_token_accounting;
 use crate::{Config, Error, Result};
 
+mod change_receipt;
 mod context;
 mod files;
 mod history;

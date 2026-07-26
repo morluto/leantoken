@@ -7,6 +7,9 @@ use leantoken::{
     ReadRequest, ReadStatus, SearchMode, SearchRequest, TokenSavingsOperation,
     coordination::IndexCoordination, services::Services, tokens::Tokenizer,
 };
+use leantoken::{
+    DiffConfigurationChangeKind, DiffOwnerTestStatus, DiffSymbolChangeKind, DiffSymbolModification,
+};
 use tokio_util::sync::CancellationToken;
 
 macro_rules! assert_response_token_accounting {
@@ -7242,6 +7245,14 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
             && relationship.related_path == "tests/service_test.py"
             && relationship.signal == "test_name_match"
     }));
+    assert!(
+        evidence
+            .semantic_change
+            .as_ref()
+            .is_some_and(|semantic| semantic
+                .gaps
+                .contains(&"semantic_change_requires_immutable_range".to_owned()))
+    );
 
     let mut working_tree_request = context_limit_request(1_000);
     working_tree_request.task = "review compute and rust_changed".into();
@@ -7261,6 +7272,230 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
             .iter()
             .all(|fragment| working_tree_scope.changed_paths.contains(&fragment.path))
     );
+}
+
+#[tokio::test]
+async fn review_context_classifies_semantic_changes_without_exposing_configuration_values() {
+    if !git_available() {
+        return;
+    }
+
+    let root = tempfile::tempdir().expect("root");
+    let database = tempfile::tempdir().expect("database");
+    std::fs::create_dir_all(root.path().join("src")).expect("src");
+    std::fs::create_dir_all(root.path().join("tests")).expect("tests");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn contract(value: i32) -> i32 {\n    value + 1\n}\n\nfn body_only(value: i32) -> i32 {\n    value + 1\n}\n\npub fn old_name(value: i32) -> i32 {\n    value * 2\n}\n\nfn removed() -> bool {\n    true\n}\n",
+    )
+    .expect("base source");
+    std::fs::write(
+        root.path().join("tests/lib_test.rs"),
+        "#[test]\nfn contract_works() {\n    assert_eq!(crate::contract(1), 2);\n}\n",
+    )
+    .expect("owner test");
+    std::fs::write(
+        root.path().join("src/deleted.rs"),
+        "pub fn deleted_file_symbol() -> bool {\n    true\n}\n",
+    )
+    .expect("deleted source");
+    std::fs::write(
+        root.path().join("package.json"),
+        r#"{"secret":"base-secret-value","removed":true,"nested":{"stable":1}}"#,
+    )
+    .expect("base configuration");
+    init_git_repo(root.path());
+    let revision = |name: &str| {
+        String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", name])
+                .current_dir(root.path())
+                .output()
+                .expect("resolve revision")
+                .stdout,
+        )
+        .expect("UTF-8 revision")
+        .trim()
+        .to_owned()
+    };
+    let base = revision("HEAD");
+
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn contract(value: i64) -> i64 {\n    value + 1\n}\n\nfn body_only(value: i32) -> i32 {\n    value + 2\n}\n\npub fn new_name(value: i32) -> i32 {\n    value * 2\n}\n\npub fn added() -> bool {\n    false\n}\n",
+    )
+    .expect("head source");
+    std::fs::write(
+        root.path().join("package.json"),
+        r#"{"secret":"head-secret-value","added":false,"nested":{"stable":1}}"#,
+    )
+    .expect("head configuration");
+    std::fs::remove_file(root.path().join("src/deleted.rs")).expect("remove deleted source");
+    std::fs::write(
+        root.path().join("src/created.rs"),
+        "pub fn created_file_symbol() -> bool {\n    true\n}\n",
+    )
+    .expect("created source");
+    let commit = std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(root.path())
+        .output()
+        .expect("git add");
+    assert!(commit.status.success());
+    let commit = std::process::Command::new("git")
+        .args(["commit", "-m", "semantic changes"])
+        .current_dir(root.path())
+        .output()
+        .expect("git commit");
+    assert!(commit.status.success());
+    let head = revision("HEAD");
+
+    let config = Config::discover(
+        root.path(),
+        Some(database.path().join("index.sqlite")),
+    )
+    .expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index head");
+    let mut request = context_limit_request(2_000);
+    request.task = "review public contracts, configuration, and owner tests".into();
+    request.base_revision = Some(format!("{base}..{head}"));
+    request.strict_changed_paths = true;
+    let implementation_request = request.clone();
+    let response = services
+        .context_with_workflow_consistency_cancellable(
+            request,
+            ContextWorkflow::Review,
+            IndexConsistency::IndexedGeneration,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("review context");
+    assert_response_token_accounting!(response, Tokenizer::default());
+    let implementation = services
+        .context_with_workflow_consistency_cancellable(
+            implementation_request,
+            ContextWorkflow::Implementation,
+            IndexConsistency::IndexedGeneration,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("implementation context");
+    assert!(
+        implementation
+            .diff_scope
+            .as_ref()
+            .and_then(|scope| scope.evidence.as_ref())
+            .is_some_and(|evidence| evidence.semantic_change.is_none())
+    );
+
+    let evidence = response
+        .diff_scope
+        .as_ref()
+        .and_then(|scope| scope.evidence.as_ref())
+        .expect("diff evidence");
+    let semantic = evidence.semantic_change.as_ref().expect("semantic change");
+    let symbol_change = |name: &str| {
+        semantic
+            .symbol_changes
+            .iter()
+            .find(|change| {
+                change
+                    .after
+                    .as_ref()
+                    .or(change.before.as_ref())
+                    .is_some_and(|symbol| symbol.name == name)
+            })
+            .unwrap_or_else(|| panic!("missing symbol change {name}: {semantic:?}"))
+    };
+    let contract = symbol_change("contract");
+    assert_eq!(contract.kind, DiffSymbolChangeKind::Modified);
+    assert_eq!(
+        contract.modification,
+        Some(DiffSymbolModification::SignatureChanged)
+    );
+    assert!(contract.public_contract_changed);
+    let body_only = symbol_change("body_only");
+    assert_eq!(body_only.kind, DiffSymbolChangeKind::Modified);
+    assert_eq!(
+        body_only.modification,
+        Some(DiffSymbolModification::BodyOnly)
+    );
+    assert!(!body_only.public_contract_changed);
+    let renamed = symbol_change("new_name");
+    assert_eq!(renamed.kind, DiffSymbolChangeKind::Renamed);
+    assert_eq!(
+        renamed.before.as_ref().map(|symbol| symbol.name.as_str()),
+        Some("old_name")
+    );
+    assert!(renamed.public_contract_changed);
+    assert_eq!(
+        symbol_change("removed").kind,
+        DiffSymbolChangeKind::Removed
+    );
+    assert_eq!(symbol_change("added").kind, DiffSymbolChangeKind::Added);
+    assert_eq!(
+        symbol_change("deleted_file_symbol").kind,
+        DiffSymbolChangeKind::Removed
+    );
+    assert_eq!(
+        symbol_change("created_file_symbol").kind,
+        DiffSymbolChangeKind::Added
+    );
+
+    for (key_path, kind) in [
+        ("/added", DiffConfigurationChangeKind::Added),
+        ("/removed", DiffConfigurationChangeKind::Removed),
+        ("/secret", DiffConfigurationChangeKind::Modified),
+    ] {
+        assert!(
+            semantic
+                .configuration_changes
+                .iter()
+                .any(|change| change.key_path == key_path && change.kind == kind),
+            "missing configuration change {key_path}: {semantic:?}"
+        );
+    }
+    let serialized = serde_json::to_string(semantic).expect("serialize semantic receipt");
+    assert!(!serialized.contains("base-secret-value"));
+    assert!(!serialized.contains("head-secret-value"));
+    assert!(!serialized.contains("risk"));
+
+    let source_tests = semantic
+        .owner_tests
+        .iter()
+        .find(|coverage| coverage.changed_path == "src/lib.rs")
+        .expect("source owner-test coverage");
+    assert_eq!(source_tests.status, DiffOwnerTestStatus::Found);
+    assert_eq!(source_tests.paths, ["tests/lib_test.rs"]);
+    let config_tests = semantic
+        .owner_tests
+        .iter()
+        .find(|coverage| coverage.changed_path == "package.json")
+        .expect("configuration owner-test coverage");
+    assert_eq!(config_tests.status, DiffOwnerTestStatus::Missing);
+
+    let history = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::DiffSymbol {
+                path: "src/lib.rs".into(),
+                symbol: "contract".into(),
+                base_revision: base,
+                head_revision: head,
+            },
+            max_results: None,
+            max_tokens: Some(200),
+        })
+        .await
+        .expect("historical semantic change");
+    assert_response_token_accounting!(history, Tokenizer::default());
+    let history_change = history.semantic_change.expect("history semantic change");
+    assert_eq!(history_change.kind, DiffSymbolChangeKind::Modified);
+    assert_eq!(
+        history_change.modification,
+        Some(DiffSymbolModification::SignatureChanged)
+    );
+    assert!(history_change.public_contract_changed);
 }
 
 #[tokio::test]

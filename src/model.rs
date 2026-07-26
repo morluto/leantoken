@@ -664,6 +664,9 @@ pub struct HistoryResponse {
     /// Whether the unified diff was truncated by `max_tokens`.
     #[serde(default)]
     pub diff_truncated: bool,
+    /// Deterministic classification for `diff_symbol`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_change: Option<DiffSymbolChange>,
     /// Recent commits for `symbol_log`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commits: Vec<SymbolHistoryCommit>,
@@ -1256,6 +1259,9 @@ pub struct DiffEvidenceReceipt {
     pub changed_symbols: Vec<DiffSymbolEvidence>,
     /// Direct reference, import, and likely owner-test relationships.
     pub related_paths: Vec<DiffRelatedPath>,
+    /// Deterministic revision-to-revision change classification for review scopes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_change: Option<DiffSemanticChangeReceipt>,
     /// Coverage gaps or truncation reasons; absence never means no relationship.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gaps: Vec<String>,
@@ -1277,6 +1283,112 @@ pub struct DiffSymbolEvidence {
     pub kind: String,
     pub start_line: usize,
     pub end_line: usize,
+}
+
+/// Deterministic semantic classification for one bounded immutable diff.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DiffSemanticChangeReceipt {
+    /// Added, removed, renamed, or modified parsed definitions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub symbol_changes: Vec<DiffSymbolChange>,
+    /// Changed key paths in recognized JSON configuration files.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub configuration_changes: Vec<DiffConfigurationChange>,
+    /// Owner-test discovery status for each bounded changed path.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub owner_tests: Vec<DiffOwnerTestCoverage>,
+    /// Explicit reasons why semantic coverage is incomplete.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gaps: Vec<String>,
+}
+
+/// How one parsed definition changed across two revisions.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffSymbolChangeKind {
+    /// The definition exists only at the head revision.
+    Added,
+    /// The definition exists only at the base revision.
+    Removed,
+    /// A unique body fingerprint links differently named definitions.
+    Renamed,
+    /// The same definition exists at both revisions with changed content.
+    Modified,
+}
+
+/// Which part of a matched definition changed.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffSymbolModification {
+    /// The parser-provided signature changed.
+    SignatureChanged,
+    /// Content changed while the normalized parser signature stayed equal.
+    BodyOnly,
+}
+
+/// One deterministic parsed-definition change.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DiffSymbolChange {
+    /// Change classification.
+    pub kind: DiffSymbolChangeKind,
+    /// Base-side definition when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<DiffSymbolEvidence>,
+    /// Head-side definition when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<DiffSymbolEvidence>,
+    /// Signature or body-only detail for matched definitions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modification: Option<DiffSymbolModification>,
+    /// Whether this change deterministically alters an explicitly public contract.
+    pub public_contract_changed: bool,
+}
+
+/// How one JSON configuration key path changed.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffConfigurationChangeKind {
+    /// The key path exists only at the head revision.
+    Added,
+    /// The key path exists only at the base revision.
+    Removed,
+    /// The key path exists at both revisions with a different value fingerprint.
+    Modified,
+}
+
+/// One configuration key-path change without configuration values.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DiffConfigurationChange {
+    /// Repository-relative configuration file.
+    pub path: String,
+    /// RFC 6901 JSON Pointer identifying the changed key.
+    pub key_path: String,
+    /// Key-path change classification.
+    pub kind: DiffConfigurationChangeKind,
+}
+
+/// Owner-test discovery status for one changed path.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffOwnerTestStatus {
+    /// At least one likely owner test was found.
+    Found,
+    /// A complete bounded scan found no likely owner test.
+    Missing,
+    /// A truncated scan found no likely owner test.
+    Unknown,
+}
+
+/// Bounded likely owner-test coverage for one changed path.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DiffOwnerTestCoverage {
+    /// Repository-relative changed path.
+    pub changed_path: String,
+    /// Whether likely owner tests were found.
+    pub status: DiffOwnerTestStatus,
+    /// Bounded likely owner-test paths.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
 }
 
 /// One path related to diff scope by an observed or explicitly labeled heuristic signal.
