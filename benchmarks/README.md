@@ -486,6 +486,9 @@ reported and skipped because they have no file or line ground truth. External
 results are diagnostics for frozen experiments. They are not blind evidence
 and cannot by themselves promote a ranking change.
 
+The first clean, task-stratified run and adoption decision are recorded in
+[`reports/external-retrieval-corpora-v1-2026-07-26.md`](reports/external-retrieval-corpora-v1-2026-07-26.md).
+
 ## Measurements
 
 For each task, the runner reports:
