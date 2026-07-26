@@ -569,7 +569,7 @@
 <a href=#569 id=569 data-nosnippet>569</a>    </span>ReadSymbol {
 <a href=#570 id=570 data-nosnippet>570</a>        <span class="doccomment">/// Repository-relative source path.
 <a href=#571 id=571 data-nosnippet>571</a>        </span>path: String,
-<a href=#572 id=572 data-nosnippet>572</a>        <span class="doccomment">/// Exact parsed symbol name.
+<a href=#572 id=572 data-nosnippet>572</a>        <span class="doccomment">/// Exact parsed symbol name, optionally qualified as `parent.name`.
 <a href=#573 id=573 data-nosnippet>573</a>        </span>symbol: String,
 <a href=#574 id=574 data-nosnippet>574</a>        <span class="doccomment">/// Git revision containing the source blob.
 <a href=#575 id=575 data-nosnippet>575</a>        </span>revision: String,
@@ -578,7 +578,7 @@
 <a href=#578 id=578 data-nosnippet>578</a>    </span>DiffSymbol {
 <a href=#579 id=579 data-nosnippet>579</a>        <span class="doccomment">/// Repository-relative source path at both revisions.
 <a href=#580 id=580 data-nosnippet>580</a>        </span>path: String,
-<a href=#581 id=581 data-nosnippet>581</a>        <span class="doccomment">/// Exact parsed symbol name.
+<a href=#581 id=581 data-nosnippet>581</a>        <span class="doccomment">/// Exact parsed symbol name, optionally qualified as `parent.name`.
 <a href=#582 id=582 data-nosnippet>582</a>        </span>symbol: String,
 <a href=#583 id=583 data-nosnippet>583</a>        <span class="doccomment">/// Older Git revision.
 <a href=#584 id=584 data-nosnippet>584</a>        </span>base_revision: String,
@@ -589,7 +589,7 @@
 <a href=#589 id=589 data-nosnippet>589</a>    </span>SymbolLog {
 <a href=#590 id=590 data-nosnippet>590</a>        <span class="doccomment">/// Repository-relative source path.
 <a href=#591 id=591 data-nosnippet>591</a>        </span>path: String,
-<a href=#592 id=592 data-nosnippet>592</a>        <span class="doccomment">/// Exact parsed symbol name at `revision`.
+<a href=#592 id=592 data-nosnippet>592</a>        <span class="doccomment">/// Exact parsed symbol name at `revision`, optionally qualified as `parent.name`.
 <a href=#593 id=593 data-nosnippet>593</a>        </span>symbol: String,
 <a href=#594 id=594 data-nosnippet>594</a>        <span class="doccomment">/// Revision from which line history starts; defaults to `HEAD`.
 <a href=#595 id=595 data-nosnippet>595</a>        </span><span class="attr">#[serde(default)]

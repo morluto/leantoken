@@ -480,7 +480,7 @@
 <a href=#480 id=480 data-nosnippet>480</a><span class="attr">#[derive(Debug, Deserialize, JsonSchema)]
 <a href=#481 id=481 data-nosnippet>481</a>#[serde(tag = <span class="string">"kind"</span>, rename_all = <span class="string">"snake_case"</span>, deny_unknown_fields)]
 <a href=#482 id=482 data-nosnippet>482</a></span><span class="kw">enum </span>HistoryMcpOperation {
-<a href=#483 id=483 data-nosnippet>483</a>    <span class="doccomment">/// Read one parsed symbol from an immutable Git revision.
+<a href=#483 id=483 data-nosnippet>483</a>    <span class="doccomment">/// Read one parsed symbol, optionally qualified as `parent.name`, from an immutable revision.
 <a href=#484 id=484 data-nosnippet>484</a>    </span>ReadSymbol {
 <a href=#485 id=485 data-nosnippet>485</a>        <span class="attr">#[schemars(length(min = <span class="number">1</span>, max = <span class="number">4096</span>))]
 <a href=#486 id=486 data-nosnippet>486</a>        </span>path: String,
@@ -489,7 +489,7 @@
 <a href=#489 id=489 data-nosnippet>489</a>        <span class="attr">#[schemars(length(min = <span class="number">1</span>, max = <span class="number">4096</span>))]
 <a href=#490 id=490 data-nosnippet>490</a>        </span>revision: String,
 <a href=#491 id=491 data-nosnippet>491</a>    },
-<a href=#492 id=492 data-nosnippet>492</a>    <span class="doccomment">/// Compare one parsed symbol between two immutable Git revisions.
+<a href=#492 id=492 data-nosnippet>492</a>    <span class="doccomment">/// Compare one parsed symbol across revisions, including added or removed endpoints.
 <a href=#493 id=493 data-nosnippet>493</a>    </span>DiffSymbol {
 <a href=#494 id=494 data-nosnippet>494</a>        <span class="attr">#[schemars(length(min = <span class="number">1</span>, max = <span class="number">4096</span>))]
 <a href=#495 id=495 data-nosnippet>495</a>        </span>path: String,
@@ -1362,7 +1362,7 @@
 <a href=#1362 id=1362 data-nosnippet>1362</a>
 <a href=#1363 id=1363 data-nosnippet>1363</a>    <span class="attr">#[tool(
 <a href=#1364 id=1364 data-nosnippet>1364</a>        name = <span class="string">"history"</span>,
-<a href=#1365 id=1365 data-nosnippet>1365</a>        description = <span class="string">"Read, diff, or trace one parsed symbol across immutable Git revisions. Use read_symbol for historical source, diff_symbol for a bounded unified diff, and symbol_log for commits touching the symbol's tracked lines. For immutable range-scoped context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbol\",\"path\":\"src/services.rs\",\"symbol\":\"meta\",\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}."
+<a href=#1365 id=1365 data-nosnippet>1365</a>        description = <span class="string">"Read, diff, or trace one parsed symbol across immutable Git revisions. Symbols may use parent.name qualification. diff_symbol returns bounded add/delete diffs when the symbol or file exists at only one endpoint; symbol_log traces tracked lines. For immutable range-scoped context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbol\",\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\",\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}."
 <a href=#1366 id=1366 data-nosnippet>1366</a>    </span>)]
 <a href=#1367 id=1367 data-nosnippet>1367</a>    </span><span class="kw">async fn </span>leantoken_history(
 <a href=#1368 id=1368 data-nosnippet>1368</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
