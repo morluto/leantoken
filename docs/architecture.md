@@ -208,6 +208,12 @@ an empty retrieval result. This keeps short cold-index waits inside one tool cal
 instead of requiring another model turn. An existing complete generation remains
 queryable while its replacement is prepared.
 
+A generation-zero cache with neither a local reconciliation nor a held
+cross-process operation lock gets a one-second leadership grace rather than the
+full wait. If no owner appears, the call returns the same retry guidance so a
+terminally failed leader or delayed failover cannot consume 30 seconds on every
+follower request.
+
 Cache initialization, schema migration, and managed-cache corruption recovery
 run under a separate repository-scoped initialization lock. SQLite busy and
 locked results are retried with bounded backoff and caller-owned cancellation;

@@ -35,6 +35,7 @@ const STARTUP_BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 const STARTUP_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(25);
 const STARTUP_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const INITIAL_INDEX_IDLE_GRACE: Duration = Duration::from_secs(1);
 const INITIAL_INDEX_PROBE_INTERVAL: Duration = Duration::from_millis(100);
 pub(crate) const MAX_EXPECTED_REPOSITORY_ID_BYTES: usize = 128;
 const TOKEN_SAVINGS_ESTIMATE_BASIS: &str =
@@ -360,6 +361,7 @@ impl Services {
         &self,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        let mut idle_deadline = None;
         loop {
             validation::check_cancelled(&cancellation)?;
 
@@ -367,6 +369,7 @@ impl Services {
             tokio::pin!(changed);
             changed.as_mut().enable();
             if self.active_reconciliations.load(Ordering::Acquire) > 0 {
+                idle_deadline = None;
                 tokio::select! {
                     _ = cancellation.cancelled() => return Err(Error::Cancelled),
                     _ = &mut changed => {}
@@ -385,17 +388,34 @@ impl Services {
             });
             let generation = tokio::select! {
                 _ = cancellation.cancelled() => return Err(Error::Cancelled),
-                _ = &mut changed => continue,
+                _ = &mut changed => {
+                    idle_deadline = None;
+                    continue;
+                },
                 result = probe => result??,
             };
             if generation.is_some_and(|generation| generation > 0) {
                 return Ok(());
             }
+            let delay = if generation.is_none() {
+                idle_deadline = None;
+                INITIAL_INDEX_PROBE_INTERVAL
+            } else {
+                let deadline = idle_deadline
+                    .get_or_insert_with(|| tokio::time::Instant::now() + INITIAL_INDEX_IDLE_GRACE);
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(Error::IndexNotReady);
+                }
+                remaining.min(INITIAL_INDEX_PROBE_INTERVAL)
+            };
 
             tokio::select! {
                 _ = cancellation.cancelled() => return Err(Error::Cancelled),
-                _ = &mut changed => {},
-                _ = tokio::time::sleep(INITIAL_INDEX_PROBE_INTERVAL) => {}
+                _ = &mut changed => {
+                    idle_deadline = None;
+                },
+                _ = tokio::time::sleep(delay) => {}
             }
         }
     }
@@ -973,6 +993,23 @@ mod tests {
             .expect("join initial index wait")
             .expect_err("generation-zero wait must cancel");
         assert!(matches!(error, Error::Cancelled));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn initial_index_wait_bounds_generation_zero_without_an_owner() {
+        let root = tempfile::tempdir().expect("root");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+        let services = Services::open(config).expect("services");
+
+        let result = tokio::time::timeout(
+            INITIAL_INDEX_IDLE_GRACE + INITIAL_INDEX_PROBE_INTERVAL,
+            services.wait_for_initial_index_cancellable(CancellationToken::new()),
+        )
+        .await
+        .expect("idle generation-zero wait must be bounded")
+        .expect_err("idle generation zero remains unready");
+        assert!(matches!(result, Error::IndexNotReady));
     }
 
     #[tokio::test]
