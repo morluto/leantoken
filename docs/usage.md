@@ -386,6 +386,10 @@ JavaScript, TypeScript, and TSX outlines include top-level `const`, `let`, and
 `var` bindings, exported data bindings, class fields, and object/array default
 exports. Function-local variables remain lexical search evidence rather than
 outline symbols.
+C# outlines include namespace and type declarations plus methods, local
+functions, constructors, properties, fields, events, enum members, indexers,
+and operators. `using` directives are imports, method-like ranges include
+complete bodies, and type and call references report their enclosing member.
 CSS outlines include complete selector rules, custom properties, media/supports/
 container conditions, and keyframes. Selector atoms are available to reference
 search. HTML outlines include sectioning elements, IDs, forms and controls,

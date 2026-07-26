@@ -25,7 +25,7 @@ use crate::storage::{
 use crate::text::{PreparedText, TextKind, hash_bytes};
 use crate::{Config, Error, Result};
 
-const INDEX_CONTENT_VERSION: u32 = 11;
+const INDEX_CONTENT_VERSION: u32 = 12;
 #[cfg(test)]
 const PREVIOUS_INDEX_CONTENT_MARKER: &str = "leantoken-index-content-v10";
 
