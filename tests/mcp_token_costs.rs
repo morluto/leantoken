@@ -93,6 +93,7 @@ async fn mcp_handoff_token_costs() {
     base_revision: None,
     changed_paths: Vec::new(),
     strict_changed_paths: false,
+    verbose_diagnostics: false,
     };
     let context = services.context(context_request).await.expect("context");
     let context_value = serde_json::to_value(&context).expect("context JSON");

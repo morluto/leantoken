@@ -159,6 +159,7 @@ async fn compare_context_representations() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         };
         let context = services
             .context(context_request.clone())

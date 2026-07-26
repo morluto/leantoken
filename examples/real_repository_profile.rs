@@ -785,6 +785,7 @@ fn context_request(constrained: bool) -> ContextRequest {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
     }
 }
 

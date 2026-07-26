@@ -432,6 +432,7 @@ fn cli_context_request() {
         "--prior-generation",
         "7",
         "--strict-changed-paths",
+        "--verbose-diagnostics",
         "--workflow",
         "contribution",
     ]);
@@ -466,6 +467,7 @@ fn cli_context_request() {
     assert_eq!(request.known_hashes, vec!["abc".to_string()]);
     assert_eq!(request.prior_repository_generation, Some(7));
     assert!(request.strict_changed_paths);
+    assert!(request.verbose_diagnostics);
 }
 
 #[test]

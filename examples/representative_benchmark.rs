@@ -718,6 +718,7 @@ async fn run_task(
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
     };
     let started = Instant::now();
     let evaluation = services.context_evaluation(request.clone()).await?;

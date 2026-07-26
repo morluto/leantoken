@@ -596,9 +596,13 @@ unrelated evidence. Already-held matching hashes satisfy a must-cover
 requirement without resending source.
 
 `omission_summary` distinguishes path filtering, known hashes, and budget or
-result limits. It also groups omitted candidates by path, language or file type,
-reason, score band, focus membership, and changed-path membership. Facet lists
-are deterministic and bounded to 12 values; longer path or file-type tails are
+result limits with compact aggregate counts by default. Coverage, routing,
+truncation warnings, and the bounded individual omission detail remain present,
+so compact diagnostics do not weaken hard-scope or must-cover reporting. Set
+`verbose_diagnostics=true` (`--verbose-diagnostics` in the CLI) to additionally
+group omitted candidates by path, language or file type, reason, score band,
+focus membership, and changed-path membership. Verbose facet lists are
+deterministic and bounded to 12 values; longer path or file-type tails are
 combined into `[other]`. Candidates rejected before scoring use the `not scored`
 band. The selector merges overlapping candidates, suppresses duplicate or known
 content, preserves file diversity, and returns short reasons for each chosen

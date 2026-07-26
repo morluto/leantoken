@@ -276,6 +276,7 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
     };
     let mut response = services.context(request.clone()).await?;
     validate_context_semantics(&response)?;

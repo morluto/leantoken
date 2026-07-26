@@ -959,6 +959,9 @@ pub struct ContextRequest {
     /// Require every returned fragment to belong to the resolved changed paths.
     #[serde(default)]
     pub strict_changed_paths: bool,
+    /// Include full omission facets instead of compact aggregate diagnostics.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub verbose_diagnostics: bool,
 }
 
 /// Optional host-supplied state carried into a compact context handoff manifest.
@@ -1309,10 +1312,13 @@ pub struct OmittedCandidate {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ContextOmissionSummary {
     /// Candidates rejected by `include_paths` or `exclude_paths`.
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub path_excluded: usize,
     /// Candidates suppressed because the caller already holds their content hash.
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub known_hash: usize,
     /// Ranked candidates that did not fit the token or result limit.
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub budget_or_result_limit: usize,
     /// Highest-frequency omitted paths, bounded with an `[other]` bucket.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1327,16 +1333,16 @@ pub struct ContextOmissionSummary {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub by_score_band: Vec<ContextOmissionFacet>,
     /// Omitted candidates matching at least one requested focus path.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub focused: usize,
     /// Omitted candidates outside every requested focus path.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub not_focused: usize,
     /// Omitted candidates belonging to an explicitly resolved changed path.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub changed: usize,
     /// Omitted candidates outside the explicitly resolved changed paths.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub not_changed: usize,
 }
 

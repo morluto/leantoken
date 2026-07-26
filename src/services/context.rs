@@ -3086,6 +3086,7 @@ mod tests {
             base_revision: None,
             changed_paths: vec!["src/core.rs".into()],
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         };
 
         assert_eq!(
@@ -3192,6 +3193,7 @@ mod tests {
             base_revision: Some("origin/main".into()),
             changed_paths: Vec::new(),
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         };
         let changed_paths = (0..12)
             .flat_map(|index| {

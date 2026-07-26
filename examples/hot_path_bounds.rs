@@ -124,6 +124,7 @@ async fn main() -> leantoken::Result<()> {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
     };
     let tree_request = FilesRequest {
         operation: FileOperation::Tree,

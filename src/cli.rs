@@ -1153,6 +1153,10 @@ pub struct ContextArgs {
     #[arg(long)]
     pub strict_changed_paths: bool,
 
+    /// Include full omission facet diagnostics.
+    #[arg(long)]
+    pub verbose_diagnostics: bool,
+
     /// Attach compact provenance for a host-triggered executor handoff.
     #[arg(long)]
     pub handoff: bool,
@@ -1214,6 +1218,7 @@ impl From<ContextArgs> for ContextRequest {
             base_revision: args.base_revision,
             changed_paths: args.changed_paths,
             strict_changed_paths: args.strict_changed_paths,
+            verbose_diagnostics: args.verbose_diagnostics,
         }
     }
 }
