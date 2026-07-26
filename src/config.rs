@@ -20,10 +20,13 @@ pub(crate) const DEFAULT_CONTEXT_FRAGMENTS: usize = 8;
 pub(crate) const MAX_OUTPUT_TOKENS: usize = 32_000;
 pub(crate) const DEFAULT_CONTEXT_LINES: usize = 2;
 pub(crate) const MAX_CONTEXT_LINES: usize = 20;
+pub(crate) const INDEX_CONTENT_VERSION: u32 = 12;
 const REPOSITORY_CONFIG_FILE: &str = ".leantoken.toml";
 const MAX_REPOSITORY_CONFIG_BYTES: u64 = 64 * 1024;
 const MAX_CONTEXT_EXCLUDE_PATHS: usize = 256;
 const MAX_CONTEXT_PATH_PATTERN_BYTES: usize = 4 * 1024;
+const MANAGED_CACHE_HASH_BYTES: usize = 16;
+const FALLBACK_CACHE_DIRECTORY: &str = ".leantoken";
 pub(crate) const DEFAULT_CONTEXT_EXCLUDE_PATHS: &[&str] = &[
     "artifacts/runtime_reports/**",
     "artifacts/viability_audit/**",
@@ -322,6 +325,13 @@ impl Config {
 
     #[must_use]
     pub(crate) fn is_database_artifact_path(&self, candidate: &Path) -> bool {
+        let fallback_cache = self.root.join(FALLBACK_CACHE_DIRECTORY);
+        if self.database_is_managed_cache
+            && self.database_path.starts_with(&fallback_cache)
+            && candidate.starts_with(&fallback_cache)
+        {
+            return true;
+        }
         if candidate == self.database_path {
             return true;
         }
@@ -468,15 +478,65 @@ pub(crate) fn managed_cache_root() -> Option<PathBuf> {
         .map(|project_dirs| project_dirs.cache_dir().to_path_buf())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ManagedCacheIdentity {
+    Legacy,
+    Versioned(u32),
+}
+
 pub(crate) fn managed_cache_id(root: &Path) -> String {
-    blake3::hash(root.as_os_str().as_encoded_bytes()).to_hex()[..16].to_string()
+    managed_cache_id_for_version(root, INDEX_CONTENT_VERSION)
+}
+
+pub(crate) fn parse_managed_cache_id(value: &str) -> Option<ManagedCacheIdentity> {
+    if is_managed_cache_hash(value) {
+        return Some(ManagedCacheIdentity::Legacy);
+    }
+    let (version_text, hash) = value.strip_prefix('v')?.split_once('-')?;
+    let version = version_text
+        .parse::<u32>()
+        .ok()
+        .filter(|version| *version > 0)?;
+    if version.to_string() != version_text || !is_managed_cache_hash(hash) {
+        return None;
+    }
+    Some(ManagedCacheIdentity::Versioned(version))
+}
+
+pub(crate) fn managed_cache_id_matches_root(value: &str, root: &Path) -> bool {
+    let hash = managed_cache_root_hash(root);
+    match parse_managed_cache_id(value) {
+        Some(ManagedCacheIdentity::Legacy) => value == hash,
+        Some(ManagedCacheIdentity::Versioned(version)) => {
+            value == managed_cache_id_for_version(root, version)
+        }
+        None => false,
+    }
+}
+
+fn managed_cache_id_for_version(root: &Path, version: u32) -> String {
+    format!("v{version}-{}", managed_cache_root_hash(root))
+}
+
+fn managed_cache_root_hash(root: &Path) -> String {
+    blake3::hash(root.as_os_str().as_encoded_bytes()).to_hex()[..MANAGED_CACHE_HASH_BYTES]
+        .to_string()
+}
+
+fn is_managed_cache_hash(value: &str) -> bool {
+    value.len() == MANAGED_CACHE_HASH_BYTES
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn default_database_path(root: &Path) -> PathBuf {
     if let Some(cache_root) = managed_cache_root() {
         return cache_root.join(managed_cache_id(root)).join("index.sqlite");
     }
-    root.join(".leantoken").join("index.sqlite")
+    root.join(FALLBACK_CACHE_DIRECTORY)
+        .join(format!("v{INDEX_CONTENT_VERSION}"))
+        .join("index.sqlite")
 }
 
 #[cfg(test)]
@@ -493,6 +553,75 @@ mod tests {
         let second = PathBuf::from(OsString::from_vec(b"/tmp/repository-\x81".to_vec()));
 
         assert_ne!(managed_cache_id(&first), managed_cache_id(&second));
+    }
+
+    #[test]
+    fn managed_cache_identity_is_versioned_and_strictly_parsed() {
+        let root = Path::new("/tmp/repository");
+        let id = managed_cache_id(root);
+        let legacy_id = id
+            .split_once('-')
+            .expect("versioned managed cache identity")
+            .1;
+
+        assert!(id.starts_with(&format!("v{INDEX_CONTENT_VERSION}-")));
+        assert_ne!(id, legacy_id);
+        assert_eq!(
+            parse_managed_cache_id(&id),
+            Some(ManagedCacheIdentity::Versioned(INDEX_CONTENT_VERSION))
+        );
+        assert!(managed_cache_id_matches_root(&id, root));
+        assert!(managed_cache_id_matches_root(legacy_id, root));
+        assert_ne!(
+            managed_cache_id_for_version(root, INDEX_CONTENT_VERSION - 1),
+            id
+        );
+        assert_eq!(
+            parse_managed_cache_id("0000000000000001"),
+            Some(ManagedCacheIdentity::Legacy)
+        );
+        assert!(parse_managed_cache_id("v0-0000000000000001").is_none());
+        assert!(parse_managed_cache_id("v01-0000000000000001").is_none());
+        assert!(parse_managed_cache_id("v12-000000000000000g").is_none());
+    }
+
+    #[test]
+    fn default_database_path_uses_the_index_content_identity() {
+        let root = Path::new("/tmp/repository");
+        let database = default_database_path(root);
+
+        if managed_cache_root().is_some() {
+            assert_eq!(
+                database.parent().and_then(Path::file_name),
+                Some(managed_cache_id(root).as_ref())
+            );
+        } else {
+            assert_eq!(
+                database,
+                root.join(FALLBACK_CACHE_DIRECTORY)
+                    .join(format!("v{INDEX_CONTENT_VERSION}"))
+                    .join("index.sqlite")
+            );
+        }
+    }
+
+    #[test]
+    fn managed_fallback_excludes_current_and_legacy_cache_artifacts() {
+        let root = tempfile::tempdir().expect("repository");
+        let database = root
+            .path()
+            .join(FALLBACK_CACHE_DIRECTORY)
+            .join(format!("v{INDEX_CONTENT_VERSION}"))
+            .join("index.sqlite");
+        let mut config = Config::discover(root.path(), Some(database)).expect("config");
+        config.database_is_managed_cache = true;
+        let current_database =
+            format!("{FALLBACK_CACHE_DIRECTORY}/v{INDEX_CONTENT_VERSION}/index.sqlite");
+
+        assert!(config.is_database_artifact(&current_database));
+        assert!(config.is_database_artifact(".leantoken/index.sqlite"));
+        assert!(config.is_database_artifact(".leantoken/index.sqlite-wal"));
+        assert!(!config.is_database_artifact(".leantoken.toml"));
     }
 
     #[test]

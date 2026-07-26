@@ -11,6 +11,7 @@ use rayon::ThreadPool;
 use rayon::prelude::*;
 use tokio_util::sync::CancellationToken;
 
+use crate::config::INDEX_CONTENT_VERSION;
 use crate::error::RetryableOperation;
 use crate::model::{IndexReport, IndexResponse, IndexSkipReasonCounts};
 use crate::parser::{self, ParseOutput};
@@ -25,7 +26,6 @@ use crate::storage::{
 use crate::text::{PreparedText, TextKind, hash_bytes};
 use crate::{Config, Error, Result};
 
-const INDEX_CONTENT_VERSION: u32 = 12;
 #[cfg(test)]
 const PREVIOUS_INDEX_CONTENT_MARKER: &str = "leantoken-index-content-v10";
 

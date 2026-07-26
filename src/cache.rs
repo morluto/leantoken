@@ -12,7 +12,10 @@ use std::{
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 
-use crate::config::{managed_cache_id, managed_cache_root};
+use crate::config::{
+    INDEX_CONTENT_VERSION, ManagedCacheIdentity, managed_cache_id_matches_root, managed_cache_root,
+    parse_managed_cache_id,
+};
 use crate::coordination::IndexCoordination;
 use crate::storage::{CURRENT_MIGRATION_VERSION, CURRENT_SCHEMA_VERSION};
 use crate::{Error, Result};
@@ -77,10 +80,13 @@ pub enum AccessTimeSource {
 /// Auditable description of one managed cache.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CacheEntry {
-    /// Stable directory identifier derived from the canonical repository root.
+    /// Stable directory identifier derived from the content version and repository root.
     pub id: String,
     /// Managed cache directory.
     pub path: PathBuf,
+    /// Index-content compatibility version encoded by this cache identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index_content_version: Option<u32>,
     /// Recorded canonical repository root, when readable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_root: Option<PathBuf>,
@@ -443,6 +449,11 @@ impl CacheManager {
     fn inspect_cache(&self, id: &str, probe_active: bool) -> Result<InspectedCache> {
         let path = self.root.join(id);
         let database = path.join(DATABASE_NAME);
+        let identity = parse_managed_cache_id(id).expect("validated managed cache identity");
+        let index_content_version = match identity {
+            ManagedCacheIdentity::Legacy => None,
+            ManagedCacheIdentity::Versioned(version) => Some(version),
+        };
         let initial_scan = scan_artifacts(&path)?;
         let latest_access_mtime = initial_scan.latest_access_mtime;
         let mut unexpected = initial_scan.unexpected;
@@ -458,6 +469,7 @@ impl CacheManager {
         let mut entry = CacheEntry {
             id: id.into(),
             path,
+            index_content_version,
             repository_root: None,
             repository_available: None,
             last_access_unix_seconds: latest_access_mtime,
@@ -494,7 +506,7 @@ impl CacheManager {
                         CacheState::Legacy
                     };
                     if let Some(repository_root) = &entry.repository_root
-                        && managed_cache_id(repository_root) != id
+                        && !managed_cache_id_matches_root(id, repository_root)
                     {
                         metadata_safe = false;
                         entry.state = CacheState::Unsupported;
@@ -507,6 +519,11 @@ impl CacheManager {
                     entry.detail = Some(error.to_string());
                 }
             }
+        }
+        if index_content_version.is_some_and(|version| version > INDEX_CONTENT_VERSION) {
+            metadata_safe = false;
+            entry.state = CacheState::Unsupported;
+            entry.detail = Some("cache uses a newer index-content version".into());
         }
         let final_scan = scan_artifacts(&entry.path)?;
         entry.size_bytes = final_scan.size_bytes;
@@ -777,10 +794,7 @@ fn remove_managed_artifacts(directory: &Path) -> RemovalOutcome {
 }
 
 fn is_cache_id(value: &str) -> bool {
-    value.len() == 16
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    parse_managed_cache_id(value).is_some()
 }
 
 fn root_available(path: &Path) -> Option<bool> {
@@ -878,6 +892,7 @@ pub fn print_prune(report: &CachePruneReport, json_output: bool) -> Result<()> {
 mod tests {
     use super::*;
     use crate::Config;
+    use crate::config::managed_cache_id;
     use crate::services::Services;
     use crate::storage::Storage;
 
@@ -987,6 +1002,10 @@ mod tests {
         assert_eq!(report.ignored_entries, 1);
         assert_eq!(report.entries[0].state, CacheState::Current);
         assert_eq!(
+            report.entries[0].index_content_version,
+            Some(INDEX_CONTENT_VERSION)
+        );
+        assert_eq!(
             report.entries[0].repository_root.as_deref(),
             Some(repository.as_path())
         );
@@ -998,6 +1017,34 @@ mod tests {
             Some(AccessTimeSource::Database)
         );
         assert!(report.total_bytes > 0);
+    }
+
+    #[test]
+    fn legacy_repository_only_identity_remains_visible_and_prunable() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let root = temp.path().join("managed");
+        let repository = temp.path().join("repository");
+        fs::create_dir(&repository).expect("repository");
+        let repository = fs::canonicalize(repository).expect("canonical repository");
+        let current_id = managed_cache_id(&repository);
+        let legacy_id = current_id.split_once('-').expect("versioned identity").1;
+        let directory = root.join(legacy_id);
+        fs::create_dir_all(&directory).expect("legacy cache directory");
+        let database = directory.join(DATABASE_NAME);
+        drop(Storage::open_for_repository(&database, &repository).expect("legacy cache database"));
+        let manager = CacheManager::new(root, 10_000);
+
+        let listed = manager.list().expect("cache list");
+
+        assert_eq!(listed.entries.len(), 1);
+        assert_eq!(listed.entries[0].index_content_version, None);
+        assert_eq!(listed.entries[0].state, CacheState::Current);
+
+        let mut request = request();
+        request.max_total_bytes = Some(0);
+        let pruned = manager.prune(&request).expect("legacy prune plan");
+        assert_eq!(pruned.results[0].action, CachePruneAction::WouldDelete);
+        assert!(database.exists());
     }
 
     #[test]
@@ -1268,6 +1315,45 @@ mod tests {
         assert!(future_database.exists());
         assert!(mismatch_database.exists());
         assert!(future_migration_database.exists());
+    }
+
+    #[test]
+    fn future_index_content_cache_is_visible_but_never_removed() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let root = temp.path().join("managed");
+        let repository = temp.path().join("repository");
+        fs::create_dir(&repository).expect("repository");
+        let current_id = managed_cache_id(&repository);
+        let root_hash = current_id.split_once('-').expect("versioned identity").1;
+        let future_id = format!("v{}-{root_hash}", INDEX_CONTENT_VERSION + 1);
+        let directory = root.join(&future_id);
+        fs::create_dir_all(&directory).expect("future cache directory");
+        let database = directory.join(DATABASE_NAME);
+        drop(
+            Storage::open_for_repository(&database, &repository)
+                .expect("future cache database fixture"),
+        );
+        let manager = CacheManager::new(root, 10_000);
+
+        let listed = manager.list().expect("cache list");
+
+        assert_eq!(listed.entries.len(), 1);
+        assert_eq!(listed.entries[0].id, future_id);
+        assert_eq!(
+            listed.entries[0].index_content_version,
+            Some(INDEX_CONTENT_VERSION + 1)
+        );
+        assert_eq!(listed.entries[0].state, CacheState::Unsupported);
+        assert_eq!(
+            listed.entries[0].detail.as_deref(),
+            Some("cache uses a newer index-content version")
+        );
+
+        let mut request = request();
+        request.max_total_bytes = Some(0);
+        let pruned = manager.prune(&request).expect("future cache prune plan");
+        assert_eq!(pruned.results[0].action, CachePruneAction::Kept);
+        assert!(database.exists());
     }
 
     #[test]
