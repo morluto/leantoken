@@ -158,6 +158,19 @@ opens the resulting completed snapshot. This makes filesystem changes
 completed before reconciliation visible without exposing a partially prepared
 generation. Changes written concurrently may require a later request.
 
+Clones of one `Services` instance share a reconciliation coordinator. Requests
+may join the current wave until it acquires the repository operation lock and
+marks its scan started. Requests arriving after that boundary join one pending
+wave, which starts after the current wave finishes. This removes redundant
+serialized scans without allowing a later caller to inherit a scan that may
+have started before its edits. Cancelling or aborting one waiter detaches only
+that waiter. A started wave remains service-owned; an unused pending wave is
+cancelled before it starts. A failed wave shares its original typed error with
+every remaining waiter; it does not submit one retry scan per coalesced caller.
+Waiter admission is fail-fast and bounded to the
+same 16 active requests as the Services blocking executor, so direct library
+callers cannot create an unbounded pending-waiter collection.
+
 ## Indexing and freshness
 
 Status keeps committed-index readiness orthogonal to reconciliation activity.
@@ -189,6 +202,10 @@ directories before descending. The explicit include-generated setting disables
 only that built-in pruning and participates in the index configuration hash.
 Watcher callbacks apply the same built-in policy before enqueueing raw events,
 while ignore-control changes remain visible and trigger bounded full discovery.
+Recursive-watcher admission examines at most 100,000 total filesystem entries
+while proving the 50,000-directory registration bound. The admission walk runs
+as cancellable blocking work; entry overflow, cancellation, or traversal error
+selects periodic polling instead of delaying the async runtime.
 
 Canonical filesystem roots, the current user's home directory, and ancestors of
 that home directory are rejected before cache or watcher initialization unless
@@ -233,8 +250,10 @@ MCP processes sharing one cache compete for a repository-scoped leadership
 lock. The leader alone owns automatic indexing and one filesystem watcher;
 followers normally read the same committed SQLite generations without scanning
 or watching. An explicit `reconcile_working_tree` retrieval may reconcile from
-any process under the shared operation lock. Followers retry leadership
-periodically, so an operating-system lock release after process exit provides
+any process under the shared operation lock. Followers retry leadership with
+capped exponential polling from 500 milliseconds through eight seconds, so
+stable followers stop opening the lock file twice per second while an
+operating-system lock release after process exit still provides bounded
 failover without a PID lease or stale-lock cleanup.
 
 The leader registers its watcher before the initial reconciliation, preserving
@@ -345,6 +364,50 @@ cargo run --release --example real_repository_profile -- \
   --repository /path/to/repository --iterations 5
 ```
 
+## Retrieval admission and execution
+
+MCP dispatch, protocol admission, and blocking execution are separate
+ownership boundaries. The bounded stdio transport admits at most 16 decoded
+`tools/call` requests into rmcp. It retains each permit by JSON-RPC request ID
+until the corresponding response write finishes, covering both handler work
+and a response waiting on rmcp's bounded sink. A request-extension guard
+releases the permit if the handler unwinds before producing a response. Excess
+calls receive the same fail-fast retryable capacity response before rmcp can
+create another task. Initialization and `tools/list` bypass this dispatch gate.
+
+Inside the handler, each `LeanTokenMcp` server independently admits at most 16
+active `tools/call` requests after repository identity validation. Clones of
+that server share both process-local governors; a separately constructed server
+or another MCP process has independent capacity. Handler admission covers all
+eight tools, including `savings`, but does not cover initialization or
+`tools/list`. The transport gate bounds protocol task memory; handler admission
+keeps repository identity checking ahead of execution-facing capacity.
+
+`Services` owns a generic blocking executor for retrieval, status, savings, and
+evaluation calls. Its current safety defaults allow 16 active operations: at
+most eight blocking closures may run and at most eight more may wait for an
+execution permit. Further work fails immediately with
+`RetrievalOverloaded`; admitted work that waits 500 ms without obtaining an
+execution permit returns `RetrievalQueueTimeout`. These capacities are
+configured independently from MCP admission even though both active defaults
+are currently 16.
+
+Execution permits move into the blocking closure. Aborting the async caller
+therefore does not release capacity while its closure is still running.
+Cancellation or timeout while waiting drops the active permit without starting
+a closure, and normal completion, error, cancellation, or panic returns both
+permits. Indexing remains on its existing reconciliation path so retrieval
+backpressure cannot acquire or release indexing ownership.
+
+The execution default matches the eight-connection SQLite reader pool. This is
+a bounded safety choice, not a claim that eight is universally optimal.
+Release-mode measurements must justify changing either default. A read request
+checks out one pooled connection and holds one DEFERRED WAL transaction for its
+consistent generation. That snapshot is transaction state, not a copied
+database or per-request artifact. Its main storage effect is that SQLite may
+retain old WAL pages until the reader finishes; dropping the request session
+rolls back the read transaction and returns the connection.
+
 ## Live read vs index
 
 `leantoken.read` always reads the live filesystem for the returned body while
@@ -389,6 +452,17 @@ at generation zero.
 - Connection capacity remains per process/repository. The bounded established
   pool reuses read-only connections and prepared statements; it is not a global
   multi-repository coordination mechanism.
+- MCP request admission and Services blocking execution are instance-local
+  within one process. Another workspace or agent affects these limits only
+  when it shares that same server or `Services` instance; a separate MCP
+  process has separate limits.
+- Reconciliation waves are also instance-local. Cloned Services share wave
+  state, while independently opened Services and separate processes continue
+  to serialize through the repository operation lock. Explicit CLI indexing,
+  watcher path reconciliation, and rebuilds remain outside wave coalescing.
+- Stdio input frames are bounded at four MiB while bytes are read. Oversized
+  terminated or unterminated frames are discarded without retaining their
+  capacity, after which the next newline-delimited request can proceed.
 - Retrieval never exposes a partially built generation, and generation zero is
   never rendered as a successful empty repository.
 - Automatic work does not delay the MCP initialize response, and startup does
@@ -490,9 +564,22 @@ through the tool.
 
 LeanToken is read-only with respect to repository source. It does not execute
 project commands or make network requests. Context ranking may invoke a bounded
-`git status` process for an optional working-tree signal; timeout or failure
-removes that signal. SQL values are parameterized. Logs contain paths, counts,
-hashes, timings, and error summaries but not source bodies by default.
+`git status` process for an optional working-tree signal; timeout, producer-side
+byte overflow, or failure removes that signal. Revision, history, name-only,
+blob, and diff-hunk probes likewise read through bounded pipes. Git runs in a
+platform process group so timeout, output overflow, or an outliving helper
+terminates the whole descendant group before the reader is joined; partial
+output is never accepted. SQL values are parameterized. Logs contain
+paths, counts, hashes, timings, and error summaries but not source bodies by
+default; dependency events carrying complete MCP `request` or `result` fields
+are filtered even when debug tracing is enabled.
+
+Setup journals and configuration replacements sync file contents before atomic
+publication. On Unix, each publish or removal then syncs the containing
+directory, including journal creation and commit, so recovery ordering covers
+power loss as well as process interruption. Other platforms retain file-sync
+and atomic-replacement guarantees where `std::fs` exposes no directory-sync
+contract.
 
 The index contains local source text in SQLite. Users should place an explicit
 database path only where its filesystem permissions and retention policy are

@@ -3,6 +3,39 @@
 LeanToken separates retrieval quality, protocol cost, and model task success.
 No single fixture is allowed to stand in for all three.
 
+## Retrieval concurrency matrix
+
+The opt-in unit profile exercises the actual Services blocking executor and
+SQLite snapshots in release mode. It generates a 64-file fixture and requires a
+large checkout at an explicitly pinned revision:
+
+```bash
+LEANTOKEN_CONCURRENCY_PROFILE_LARGE_REPOSITORY=/path/to/large/repository \
+LEANTOKEN_CONCURRENCY_PROFILE_LARGE_REVISION="$(git -C /path/to/large/repository rev-parse HEAD)" \
+LEANTOKEN_CONCURRENCY_PROFILE_OUTPUT=target/concurrency-profile.json \
+cargo test --release --lib release_concurrency_matrix -- \
+  --ignored --nocapture --test-threads=1
+```
+
+The matrix runs mixed retrieval/status/savings traffic, cancellation storms,
+and retrieval concurrent with targeted indexing at concurrency 1, 2, 4, 8, 16,
+and 32. After those scenarios, it stages 16 simultaneous
+`reconcile_working_tree` requests behind the operation lock and records
+reconciliation requests, waves created and started, completed and failed waves,
+coalesced callers, active-wave high water, and pending-waiter high water. The
+remaining report records complete-request and executor-queue p50/p95, result
+counts, submitted and started blocking closures, SQLite reader checkout and
+active snapshot counts, CPU, sampled RSS, blocking threads, WAL size, passive
+checkpoint results, response parity, order, generation, and token-accounting
+differences.
+
+Run results are host-local. Keep the full JSON under ignored `target/` and
+publish a concise methodology and decision report when it informs a default.
+An unchanged targeted reconciliation can legitimately change response
+`freshness` from `current` to `reconciling`; compare content order and
+generation separately and treat the corresponding serialized token-accounting
+difference as protocol state, not retrieval drift.
+
 ## Frozen retrieval sets
 
 `benchmarks/representative.json` is the visible development set. Its eight
