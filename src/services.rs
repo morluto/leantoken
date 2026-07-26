@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::sync::{
     Arc,
@@ -14,7 +15,7 @@ use crate::coordination::{CacheLease, IndexCoordination, IndexLeadership};
 use crate::error::RetryableOperation;
 use crate::indexer::Indexer;
 use crate::model::*;
-use crate::storage::{ReadSession, Storage, StorageCounts};
+use crate::storage::{ReadSession, Storage, StorageCounts, TokenSavingsRecord};
 use crate::tokens::response_token_accounting;
 use crate::{Config, Error, Result};
 
@@ -37,6 +38,16 @@ const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
 pub(crate) const MAX_EXPECTED_REPOSITORY_ID_BYTES: usize = 128;
 const TOKEN_SAVINGS_ESTIMATE_BASIS: &str =
     "requested read ranges or whole source files represented in each response";
+const RESPONSE_ACCOUNTING_SCOPE: &str = "successful repository retrieval responses recorded after \
+    full-response accounting was enabled; includes successful retries as separate requests but \
+    excludes pre-response failures, tool discovery, task success, and native-tool costs";
+const RESPONSE_ACCOUNTING_ESTIMATE_BASIS: &str =
+    "represented-source baseline minus complete serialized response tokens";
+
+fn signed_token_difference(baseline: u64, response: u64) -> i64 {
+    let difference = i128::from(baseline) - i128::from(response);
+    difference.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
+}
 
 pub(crate) fn retrieval_primitive_key(
     generation: u64,
@@ -396,7 +407,96 @@ impl Services {
 
     fn token_savings_sync(&self) -> Result<TokenSavingsResponse> {
         let tokenizer = self.config.tokenizer.name();
-        let mut stored = self.storage.token_savings(tokenizer)?;
+        let stored = self.storage.token_savings(tokenizer)?;
+        Ok(self.source_savings_from_records(&stored))
+    }
+
+    /// Return source-only savings plus complete successful-response accounting.
+    pub async fn token_savings_report(&self) -> Result<TokenSavingsReport> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.token_savings_report_sync()).await?
+    }
+
+    fn token_savings_report_sync(&self) -> Result<TokenSavingsReport> {
+        let tokenizer = self.config.tokenizer.name();
+        let stored = self.storage.token_savings(tokenizer)?;
+        let source_savings = self.source_savings_from_records(&stored);
+        let mut tracked_requests = 0u64;
+        let mut baseline_requests = 0u64;
+        let mut baseline_source_tokens = 0u64;
+        let mut response_source_tokens = 0u64;
+        let mut path_and_metadata_tokens = 0u64;
+        let mut protocol_tokens = 0u64;
+        let mut total_response_tokens = 0u64;
+        let mut receipt_suppressed_exact = 0u64;
+        let mut receipt_suppressed_overlap = 0u64;
+        let by_operation = TokenAccountingOperation::ALL
+            .into_iter()
+            .map(|operation| {
+                let record = stored.get(operation.as_str()).cloned().unwrap_or_default();
+                tracked_requests =
+                    tracked_requests.saturating_add(record.response_tracked_requests);
+                baseline_requests =
+                    baseline_requests.saturating_add(record.response_baseline_requests);
+                baseline_source_tokens =
+                    baseline_source_tokens.saturating_add(record.response_baseline_source_tokens);
+                response_source_tokens =
+                    response_source_tokens.saturating_add(record.response_source_tokens);
+                path_and_metadata_tokens =
+                    path_and_metadata_tokens.saturating_add(record.path_and_metadata_tokens);
+                protocol_tokens = protocol_tokens.saturating_add(record.protocol_tokens);
+                total_response_tokens =
+                    total_response_tokens.saturating_add(record.total_response_tokens);
+                receipt_suppressed_exact =
+                    receipt_suppressed_exact.saturating_add(record.receipt_suppressed_exact);
+                receipt_suppressed_overlap =
+                    receipt_suppressed_overlap.saturating_add(record.receipt_suppressed_overlap);
+                ResponseTokenAccountingByOperation {
+                    operation,
+                    tracked_requests: record.response_tracked_requests,
+                    baseline_requests: record.response_baseline_requests,
+                    baseline_source_tokens: record.response_baseline_source_tokens,
+                    response_source_tokens: record.response_source_tokens,
+                    path_and_metadata_tokens: record.path_and_metadata_tokens,
+                    protocol_tokens: record.protocol_tokens,
+                    total_response_tokens: record.total_response_tokens,
+                    estimated_net_tokens_saved: signed_token_difference(
+                        record.response_baseline_source_tokens,
+                        record.total_response_tokens,
+                    ),
+                    receipt_suppressed_exact: record.receipt_suppressed_exact,
+                    receipt_suppressed_overlap: record.receipt_suppressed_overlap,
+                }
+            })
+            .collect();
+        Ok(TokenSavingsReport {
+            source_savings,
+            response_accounting: ResponseTokenAccounting {
+                accounting_scope: RESPONSE_ACCOUNTING_SCOPE.to_owned(),
+                estimate_basis: RESPONSE_ACCOUNTING_ESTIMATE_BASIS.to_owned(),
+                tracked_requests,
+                baseline_requests,
+                baseline_source_tokens,
+                response_source_tokens,
+                path_and_metadata_tokens,
+                protocol_tokens,
+                total_response_tokens,
+                estimated_net_tokens_saved: signed_token_difference(
+                    baseline_source_tokens,
+                    total_response_tokens,
+                ),
+                receipt_suppressed_exact,
+                receipt_suppressed_overlap,
+                by_operation,
+            },
+        })
+    }
+
+    fn source_savings_from_records(
+        &self,
+        stored: &HashMap<String, TokenSavingsRecord>,
+    ) -> TokenSavingsResponse {
+        let tokenizer = self.config.tokenizer.name();
         let mut tracked_requests = 0u64;
         let mut baseline_source_tokens = 0u64;
         let mut emitted_source_tokens = 0u64;
@@ -404,7 +504,7 @@ impl Services {
         let by_operation = TokenSavingsOperation::ALL
             .into_iter()
             .map(|operation| {
-                let record = stored.remove(operation.as_str()).unwrap_or_default();
+                let record = stored.get(operation.as_str()).cloned().unwrap_or_default();
                 tracked_requests = tracked_requests.saturating_add(record.tracked_requests);
                 baseline_source_tokens =
                     baseline_source_tokens.saturating_add(record.baseline_source_tokens);
@@ -421,7 +521,7 @@ impl Services {
                 }
             })
             .collect();
-        Ok(TokenSavingsResponse {
+        TokenSavingsResponse {
             tokenizer: tokenizer.to_owned(),
             token_count_exact: self.config.tokenizer.is_exact(),
             estimate_basis: TOKEN_SAVINGS_ESTIMATE_BASIS.to_owned(),
@@ -430,7 +530,7 @@ impl Services {
             emitted_source_tokens,
             estimated_source_tokens_saved,
             by_operation,
-        })
+        }
     }
 
     pub(super) fn consistent<T>(
@@ -584,15 +684,15 @@ impl Services {
 
     pub(super) fn record_token_savings(
         &self,
-        operation: TokenSavingsOperation,
-        baseline_source_tokens: usize,
-        emitted_source_tokens: usize,
+        operation: TokenAccountingOperation,
+        baseline_source_tokens: Option<usize>,
+        meta: &ResponseMeta,
     ) {
         match self.storage.record_token_savings(
             self.config.tokenizer.name(),
             operation,
             baseline_source_tokens,
-            emitted_source_tokens,
+            meta,
         ) {
             Ok(true) => {}
             Ok(false) => tracing::debug!(
@@ -735,6 +835,14 @@ mod tests {
     use super::*;
     use std::fs;
     use tokio_util::sync::CancellationToken;
+
+    #[test]
+    fn signed_token_difference_preserves_cost_and_saturates_public_range() {
+        assert_eq!(signed_token_difference(10, 3), 7);
+        assert_eq!(signed_token_difference(3, 10), -7);
+        assert_eq!(signed_token_difference(u64::MAX, 0), i64::MAX);
+        assert_eq!(signed_token_difference(0, u64::MAX), i64::MIN);
+    }
 
     #[tokio::test]
     async fn index_search_read_and_hash_delta() {

@@ -167,7 +167,7 @@ async fn run(cli: Cli) -> Result<()> {
     match request {
         AppRequest::Index { rebuild } => print(&services.index_report(rebuild).await?, json),
         AppRequest::Status => unreachable!("handled before service setup"),
-        AppRequest::Savings => savings::print_report(&services.token_savings().await?, json),
+        AppRequest::Savings => savings::print_report(&services.token_savings_report().await?, json),
         AppRequest::Files(request) => print(&services.files(request).await?, json),
         AppRequest::Search(request) => print(&services.search(request).await?, json),
         AppRequest::Outline(request) => print(&services.outline(request).await?, json),

@@ -9,7 +9,7 @@ use super::validation::{MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, vali
 use super::{Services, validate_positive_request_limit, validate_request_limit};
 use crate::model::{
     JsonFieldDiff, JsonNumericSummary, JsonOperation, JsonProjection, JsonRequest, JsonResponse,
-    JsonSelector, JsonSource,
+    JsonSelector, JsonSource, TokenAccountingOperation,
 };
 use crate::repository::normalize_relative;
 use crate::{Error, Result};
@@ -24,6 +24,7 @@ const MAX_JSON_SELECTORS: usize = 100;
 struct LoadedJson {
     source: JsonSource,
     value: Value,
+    source_tokens: usize,
 }
 
 struct SelectedJson {
@@ -133,6 +134,7 @@ impl Services {
             .unwrap_or(DEFAULT_ARRAY_SAMPLE_SIZE);
         let generation = self.storage.repository_generation()?;
         let mut projected_tokens = 0usize;
+        let baseline_source_tokens;
         let mut response = match request.operation {
             JsonOperation::Query {
                 path,
@@ -140,6 +142,7 @@ impl Services {
                 projection,
             } => {
                 let loaded = self.load_json(&path)?;
+                baseline_source_tokens = loaded.source_tokens;
                 let selected = select_json(&loaded.value, selector.as_ref())?;
                 let value = selected.value.ok_or(Error::InvalidInput {
                     field: "selector",
@@ -164,6 +167,7 @@ impl Services {
             }
             JsonOperation::NumericSummary { path, selector } => {
                 let loaded = self.load_json(&path)?;
+                baseline_source_tokens = loaded.source_tokens;
                 let selected = select_json(&loaded.value, selector.as_ref())?;
                 let value = selected.value.ok_or(Error::InvalidInput {
                     field: "selector",
@@ -188,6 +192,7 @@ impl Services {
                 let before = self.load_json(&base_path)?;
                 check_cancelled(cancellation)?;
                 let after = self.load_json(&head_path)?;
+                baseline_source_tokens = before.source_tokens.saturating_add(after.source_tokens);
                 let mut state = ProjectionState {
                     remaining: max_items,
                     array_sample_size,
@@ -248,6 +253,11 @@ impl Services {
         response.meta.source_tokens = projected_tokens;
         response.meta.emitted_tokens = projected_tokens;
         self.finalize_response(&mut response)?;
+        self.record_token_savings(
+            TokenAccountingOperation::Json,
+            Some(baseline_source_tokens),
+            &response.meta,
+        );
         Ok(response)
     }
 
@@ -293,6 +303,7 @@ impl Services {
                 bytes: bytes.len(),
             },
             value,
+            source_tokens: self.config.tokenizer.count(content),
         })
     }
 }

@@ -1063,14 +1063,12 @@ impl Services {
             Ok((response, baseline_source_tokens, phases, primitive_keys))
         });
         let (mut response, baseline_source_tokens, phases, primitive_keys) = search_result?;
-        if let Some(baseline_source_tokens) = baseline_source_tokens {
-            self.record_token_savings(
-                TokenSavingsOperation::Search,
-                baseline_source_tokens,
-                response.meta.emitted_tokens,
-            );
-        }
         self.finalize_response(&mut response)?;
+        self.record_token_savings(
+            TokenAccountingOperation::Search,
+            baseline_source_tokens,
+            &response.meta,
+        );
         Ok(SearchEvaluation {
             response,
             phases,

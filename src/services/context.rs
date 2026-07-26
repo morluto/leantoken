@@ -660,6 +660,12 @@ struct ContextSignals {
     caller: bool,
 }
 
+struct AccountedContextResponse {
+    response: ContextResponse,
+    baseline_source_tokens: Option<usize>,
+    operation: TokenAccountingOperation,
+}
+
 impl ContextSignals {
     const PRODUCTION: Self = Self {
         import_neighbor: true,
@@ -1568,12 +1574,14 @@ impl Services {
 
     /// Select ranked task evidence within an exact source-token budget.
     pub async fn context(&self, request: ContextRequest) -> Result<ContextResponse> {
-        self.context_cancellable_with_workflow(
-            request,
-            ContextWorkflow::Auto,
-            CancellationToken::new(),
-        )
-        .await
+        let accounted = self
+            .context_cancellable_with_workflow(
+                request,
+                ContextWorkflow::Auto,
+                CancellationToken::new(),
+            )
+            .await?;
+        Ok(self.record_context_response(accounted))
     }
 
     /// Select context and attach compact provenance for a host-triggered handoff.
@@ -1582,13 +1590,15 @@ impl Services {
         request: ContextRequest,
         handoff: HandoffManifestRequest,
     ) -> Result<ContextResponse> {
-        self.context_cancellable_with_workflow_and_handoff(
-            request,
-            ContextWorkflow::Auto,
-            Some(handoff),
-            CancellationToken::new(),
-        )
-        .await
+        let accounted = self
+            .context_cancellable_with_workflow_and_handoff(
+                request,
+                ContextWorkflow::Auto,
+                Some(handoff),
+                CancellationToken::new(),
+            )
+            .await?;
+        Ok(self.record_context_response(accounted))
     }
 
     /// Retrieve context after applying the requested index consistency boundary.
@@ -1601,11 +1611,17 @@ impl Services {
         self.validate_context_request(&request)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
-        let mut response = self
+        let accounted = self
             .context_cancellable_with_workflow(request, ContextWorkflow::Auto, cancellation)
             .await?;
+        let mut response = accounted.response;
         set_routing_consistency(&mut response, consistency);
         self.finalize_response(&mut response)?;
+        self.record_token_savings(
+            accounted.operation,
+            accounted.baseline_source_tokens,
+            &response.meta,
+        );
         Ok(response)
     }
 
@@ -1620,11 +1636,17 @@ impl Services {
         self.validate_context_request(&request)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
-        let mut response = self
+        let accounted = self
             .context_cancellable_with_workflow(request, workflow, cancellation)
             .await?;
+        let mut response = accounted.response;
         set_routing_consistency(&mut response, consistency);
         self.finalize_response(&mut response)?;
+        self.record_token_savings(
+            accounted.operation,
+            accounted.baseline_source_tokens,
+            &response.meta,
+        );
         Ok(response)
     }
 
@@ -1641,7 +1663,7 @@ impl Services {
         validate_handoff_context_request(&request, &handoff)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
-        let mut response = self
+        let accounted = self
             .context_cancellable_with_workflow_and_handoff(
                 request,
                 workflow,
@@ -1649,8 +1671,14 @@ impl Services {
                 cancellation,
             )
             .await?;
+        let mut response = accounted.response;
         set_routing_consistency(&mut response, consistency);
         self.finalize_response(&mut response)?;
+        self.record_token_savings(
+            accounted.operation,
+            accounted.baseline_source_tokens,
+            &response.meta,
+        );
         Ok(response)
     }
 
@@ -1659,8 +1687,10 @@ impl Services {
         request: ContextRequest,
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
-        self.context_cancellable_with_workflow(request, ContextWorkflow::Auto, cancellation)
-            .await
+        let accounted = self
+            .context_cancellable_with_workflow(request, ContextWorkflow::Auto, cancellation)
+            .await?;
+        Ok(self.record_context_response(accounted))
     }
 
     async fn context_cancellable_with_workflow(
@@ -1668,7 +1698,7 @@ impl Services {
         request: ContextRequest,
         workflow: ContextWorkflow,
         cancellation: CancellationToken,
-    ) -> Result<ContextResponse> {
+    ) -> Result<AccountedContextResponse> {
         self.context_cancellable_with_workflow_and_handoff(request, workflow, None, cancellation)
             .await
     }
@@ -1679,9 +1709,14 @@ impl Services {
         workflow: ContextWorkflow,
         handoff: Option<HandoffManifestRequest>,
         cancellation: CancellationToken,
-    ) -> Result<ContextResponse> {
+    ) -> Result<AccountedContextResponse> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || {
+            let operation = if request.plan_only {
+                TokenAccountingOperation::ContextPlan
+            } else {
+                TokenAccountingOperation::Context
+            };
             let (evaluation, baseline_source_tokens) = this.context_sync(
                 request,
                 workflow,
@@ -1690,16 +1725,22 @@ impl Services {
                 CandidateDiagnostics::Omit,
                 ContextSignals::PRODUCTION,
             )?;
-            if let Some(baseline_source_tokens) = baseline_source_tokens {
-                this.record_token_savings(
-                    TokenSavingsOperation::Context,
-                    baseline_source_tokens,
-                    evaluation.response.meta.emitted_tokens,
-                );
-            }
-            Ok(evaluation.response)
+            Ok(AccountedContextResponse {
+                response: evaluation.response,
+                baseline_source_tokens,
+                operation,
+            })
         })
         .await?
+    }
+
+    fn record_context_response(&self, accounted: AccountedContextResponse) -> ContextResponse {
+        self.record_token_savings(
+            accounted.operation,
+            accounted.baseline_source_tokens,
+            &accounted.response.meta,
+        );
+        accounted.response
     }
 
     /// Retrieve context and expose pre-selection candidate paths for evaluation.

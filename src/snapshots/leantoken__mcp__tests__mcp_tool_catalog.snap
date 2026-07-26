@@ -1214,7 +1214,7 @@ expression: tools
   },
   {
     "name": "savings",
-    "description": "Report cumulative repository-local estimated source-token savings. Use when asked how many tokens LeanToken saved. Example: {}.",
+    "description": "Report repository-local source compression and full successful-response token accounting. Use when asked how many tokens LeanToken saved. Example: {}.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,

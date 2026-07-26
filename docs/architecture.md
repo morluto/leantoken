@@ -45,7 +45,8 @@ the official Rust MCP SDK.
 
 SQLite stores repository metadata, files, text chunks, definitions, syntactic
 references, imports, reverse import candidates, an ordinary relational path
-projection, and cumulative source-token savings estimates. External-content
+projection, source-compression estimates, and cumulative successful-response
+token accounting. External-content
 FTS5 tables provide word and trigram indexes over chunks.
 
 Savings data uses additive tables and file columns without advancing the core

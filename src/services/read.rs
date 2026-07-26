@@ -675,14 +675,12 @@ impl Services {
         response.meta.source_tokens = symbol_tokens.saturating_add(import_tokens);
         response.meta.emitted_tokens = response.meta.source_tokens;
         receipt.apply_meta(&mut response.meta);
-        if let Some(baseline_source_tokens) = baseline_source_tokens {
-            self.record_token_savings(
-                TokenSavingsOperation::Outline,
-                baseline_source_tokens,
-                response.meta.emitted_tokens,
-            );
-        }
         self.finalize_response(&mut response)?;
+        self.record_token_savings(
+            TokenAccountingOperation::Outline,
+            baseline_source_tokens,
+            &response.meta,
+        );
         Ok(response)
     }
 
@@ -763,12 +761,12 @@ impl Services {
             }
         }
         receipt.apply_meta(&mut response.meta);
-        self.record_token_savings(
-            TokenSavingsOperation::Read,
-            materialized.baseline_source_tokens,
-            response.meta.emitted_tokens,
-        );
         self.finalize_response(&mut response)?;
+        self.record_token_savings(
+            TokenAccountingOperation::Read,
+            Some(materialized.baseline_source_tokens),
+            &response.meta,
+        );
         Ok(response)
     }
 

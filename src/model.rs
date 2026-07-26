@@ -1919,6 +1919,124 @@ pub struct TokenSavingsResponse {
     pub by_operation: Vec<TokenSavingsByOperation>,
 }
 
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
+)]
+#[serde(rename_all = "snake_case")]
+/// Retrieval operation included in full-response token accounting.
+pub enum TokenAccountingOperation {
+    /// Repository path discovery.
+    Files,
+    /// Indexed source search.
+    Search,
+    /// Structural file outline.
+    Outline,
+    /// Exact source read.
+    Read,
+    /// Ranked context planning without source materialization.
+    ContextPlan,
+    /// Ranked task context with source materialization.
+    Context,
+    /// Structural JSON query.
+    Json,
+    /// Immutable symbol history.
+    History,
+}
+
+impl TokenAccountingOperation {
+    pub(crate) const ALL: [Self; 8] = [
+        Self::Files,
+        Self::Search,
+        Self::Outline,
+        Self::Read,
+        Self::ContextPlan,
+        Self::Context,
+        Self::Json,
+        Self::History,
+    ];
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Files => "files",
+            Self::Search => "search",
+            Self::Outline => "outline",
+            Self::Read => "read",
+            Self::ContextPlan => "context_plan",
+            Self::Context => "context",
+            Self::Json => "json",
+            Self::History => "history",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Full-response token accounting for one retrieval operation.
+pub struct ResponseTokenAccountingByOperation {
+    /// Retrieval operation represented by this row.
+    pub operation: TokenAccountingOperation,
+    /// Number of successful structured responses included in the row.
+    pub tracked_requests: u64,
+    /// Responses with a represented-source baseline.
+    pub baseline_requests: u64,
+    /// Source tokens in represented direct-read baselines.
+    pub baseline_source_tokens: u64,
+    /// Source tokens selected into LeanToken responses.
+    pub response_source_tokens: u64,
+    /// Tokens attributed to response paths, metadata, and repeated result structure.
+    pub path_and_metadata_tokens: u64,
+    /// Tokens attributed to the compact response envelope.
+    pub protocol_tokens: u64,
+    /// Tokens in complete serialized responses, excluding accounting fields themselves.
+    pub total_response_tokens: u64,
+    /// Baseline tokens minus complete response tokens; negative values are net cost.
+    pub estimated_net_tokens_saved: i64,
+    /// Evidence items omitted by exact receipt suppression.
+    pub receipt_suppressed_exact: u64,
+    /// Evidence items omitted by overlapping-range receipt suppression.
+    pub receipt_suppressed_overlap: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Repository-local accounting for complete successful retrieval responses.
+pub struct ResponseTokenAccounting {
+    /// Stable description of which responses and costs are included.
+    pub accounting_scope: String,
+    /// Stable description of the net-savings calculation.
+    pub estimate_basis: String,
+    /// Number of successful structured responses included.
+    pub tracked_requests: u64,
+    /// Responses with a represented-source baseline.
+    pub baseline_requests: u64,
+    /// Source tokens in represented direct-read baselines.
+    pub baseline_source_tokens: u64,
+    /// Source tokens selected into LeanToken responses.
+    pub response_source_tokens: u64,
+    /// Tokens attributed to response paths, metadata, and repeated result structure.
+    pub path_and_metadata_tokens: u64,
+    /// Tokens attributed to compact response envelopes.
+    pub protocol_tokens: u64,
+    /// Tokens in complete serialized responses, excluding accounting fields themselves.
+    pub total_response_tokens: u64,
+    /// Baseline tokens minus complete response tokens; negative values are net cost.
+    pub estimated_net_tokens_saved: i64,
+    /// Evidence items omitted by exact receipt suppression.
+    pub receipt_suppressed_exact: u64,
+    /// Evidence items omitted by overlapping-range receipt suppression.
+    pub receipt_suppressed_overlap: u64,
+    /// Fixed-shape breakdown for every accounted retrieval operation.
+    pub by_operation: Vec<ResponseTokenAccountingByOperation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Source-only savings plus complete successful-response token accounting.
+pub struct TokenSavingsReport {
+    /// Backward-compatible source-only savings fields.
+    #[serde(flatten)]
+    pub source_savings: TokenSavingsResponse,
+    /// Full-response costs and net estimate for every retrieval operation.
+    pub response_accounting: ResponseTokenAccounting,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LanguageCount {
     pub language: String,

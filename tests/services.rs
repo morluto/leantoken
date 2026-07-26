@@ -5,8 +5,9 @@ use leantoken::{
     Freshness, HandoffManifestRequest, HandoffValidation, HandoffValidationStatus,
     HandoffWorkingTreeState, HistoryOperation, HistoryRequest, IndexConsistency, IndexState,
     JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadDeltaFallback,
-    ReadDeltaOutcome, ReadRequest, ReadStatus, SearchMode, SearchRequest, TokenSavingsOperation,
-    coordination::IndexCoordination, services::Services, tokens::Tokenizer,
+    ReadDeltaOutcome, ReadRequest, ReadStatus, SearchMode, SearchRequest,
+    TokenAccountingOperation, TokenSavingsOperation, coordination::IndexCoordination,
+    services::Services, tokens::Tokenizer,
 };
 use leantoken::{
     DiffConfigurationChangeKind, DiffOwnerTestStatus, DiffSymbolChangeKind, DiffSymbolModification,
@@ -1551,6 +1552,26 @@ async fn context_plan_previews_materialization_without_receipt_or_source() {
     assert_eq!(
         savings_after.estimated_source_tokens_saved,
         savings_before.estimated_source_tokens_saved
+    );
+    let accounting = services
+        .token_savings_report()
+        .await
+        .expect("response accounting");
+    let plan_accounting = accounting
+        .response_accounting
+        .by_operation
+        .iter()
+        .find(|row| row.operation == TokenAccountingOperation::ContextPlan)
+        .expect("context plan accounting");
+    assert_eq!(plan_accounting.tracked_requests, 1);
+    assert_eq!(plan_accounting.baseline_requests, 0);
+    assert_eq!(
+        plan_accounting.total_response_tokens,
+        preview.meta.total_response_tokens as u64
+    );
+    assert_eq!(
+        plan_accounting.estimated_net_tokens_saved,
+        -(preview.meta.total_response_tokens as i64)
     );
 
     request.plan_only = false;
@@ -3341,6 +3362,26 @@ async fn five_services_return_bounded_grounded_responses() {
             .iter()
             .all(|fragment| fragment.content_hash != known)
     );
+    let report = services
+        .token_savings_report()
+        .await
+        .expect("full response accounting");
+    let files_accounting = report
+        .response_accounting
+        .by_operation
+        .iter()
+        .find(|row| row.operation == TokenAccountingOperation::Files)
+        .expect("files accounting");
+    assert_eq!(files_accounting.tracked_requests, 1);
+    assert_eq!(files_accounting.baseline_requests, 0);
+    assert_eq!(
+        files_accounting.total_response_tokens,
+        files.meta.total_response_tokens as u64
+    );
+    assert_eq!(
+        files_accounting.estimated_net_tokens_saved,
+        -(files.meta.total_response_tokens as i64)
+    );
 }
 
 #[tokio::test]
@@ -3527,6 +3568,82 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     );
     assert!(report.baseline_source_tokens >= report.emitted_source_tokens);
     assert!(report.estimated_source_tokens_saved > 0);
+    let effective = services
+        .token_savings_report()
+        .await
+        .expect("effective savings");
+    assert_eq!(effective.source_savings, report);
+    let accounting = &effective.response_accounting;
+    assert_eq!(accounting.tracked_requests, 5);
+    assert_eq!(accounting.baseline_requests, 5);
+    assert_eq!(
+        accounting.total_response_tokens,
+        [
+            &search.meta,
+            &outline.meta,
+            &first_read.meta,
+            &repeated_read.meta,
+            &context.meta,
+        ]
+        .into_iter()
+        .map(|meta| meta.total_response_tokens as u64)
+        .sum::<u64>()
+    );
+    assert_eq!(
+        accounting.path_and_metadata_tokens,
+        [
+            &search.meta,
+            &outline.meta,
+            &first_read.meta,
+            &repeated_read.meta,
+            &context.meta,
+        ]
+        .into_iter()
+        .map(|meta| meta.path_and_metadata_tokens as u64)
+        .sum::<u64>()
+    );
+    assert_eq!(
+        accounting.protocol_tokens,
+        [
+            &search.meta,
+            &outline.meta,
+            &first_read.meta,
+            &repeated_read.meta,
+            &context.meta,
+        ]
+        .into_iter()
+        .map(|meta| meta.protocol_tokens as u64)
+        .sum::<u64>()
+    );
+    assert_eq!(
+        accounting.estimated_net_tokens_saved,
+        i64::try_from(accounting.baseline_source_tokens).expect("small baseline")
+            - i64::try_from(accounting.total_response_tokens).expect("small response")
+    );
+    assert_eq!(
+        accounting.response_source_tokens
+            + accounting.path_and_metadata_tokens
+            + accounting.protocol_tokens,
+        accounting.total_response_tokens
+    );
+    assert_eq!(accounting.by_operation.len(), 8);
+    assert_eq!(
+        accounting
+            .by_operation
+            .iter()
+            .map(|row| (row.operation, row.tracked_requests))
+            .collect::<Vec<_>>(),
+        vec![
+            (TokenAccountingOperation::Files, 0),
+            (TokenAccountingOperation::Search, 1),
+            (TokenAccountingOperation::Outline, 1),
+            (TokenAccountingOperation::Read, 2),
+            (TokenAccountingOperation::ContextPlan, 0),
+            (TokenAccountingOperation::Context, 1),
+            (TokenAccountingOperation::Json, 0),
+            (TokenAccountingOperation::History, 0),
+        ]
+    );
 
     let config = Config::discover(root.path(), Some(root.path().join("index.sqlite")))
         .expect("reopen config");
@@ -3534,6 +3651,13 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     assert_eq!(
         reopened.token_savings().await.expect("persisted savings"),
         report
+    );
+    assert_eq!(
+        reopened
+            .token_savings_report()
+            .await
+            .expect("persisted effective savings"),
+        effective
     );
 
     let mut alternate_config =
@@ -5367,6 +5491,18 @@ async fn read_receipt_distinguishes_exact_suppression_from_not_modified() {
     assert!(repeated.content.is_none());
     assert_eq!(repeated.meta.receipt_suppressed_exact, 1);
     assert_eq!(repeated.meta.emitted_tokens, 0);
+    let report = services
+        .token_savings_report()
+        .await
+        .expect("receipt accounting");
+    assert_eq!(report.response_accounting.receipt_suppressed_exact, 1);
+    let reads = report
+        .response_accounting
+        .by_operation
+        .iter()
+        .find(|row| row.operation == TokenAccountingOperation::Read)
+        .expect("read accounting");
+    assert_eq!(reads.receipt_suppressed_exact, 1);
 }
 
 #[tokio::test]
@@ -6705,6 +6841,22 @@ async fn csharp_qualified_symbols_support_historical_reads_and_diffs() {
     let patch = diff.diff.as_deref().expect("C# method diff");
     assert!(patch.contains("-        return 1;"));
     assert!(patch.contains("+        return 2;"));
+    let report = services
+        .token_savings_report()
+        .await
+        .expect("history response accounting");
+    let history = report
+        .response_accounting
+        .by_operation
+        .iter()
+        .find(|row| row.operation == TokenAccountingOperation::History)
+        .expect("history accounting");
+    assert_eq!(history.tracked_requests, 2);
+    assert_eq!(history.baseline_requests, 0);
+    assert_eq!(
+        history.total_response_tokens,
+        (read.meta.total_response_tokens + diff.meta.total_response_tokens) as u64
+    );
 }
 
 #[tokio::test]
@@ -7280,6 +7432,25 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
     assert!(!diff.differences[1].before_present);
     assert!(diff.differences[1].after_present);
     assert_response_token_accounting!(diff, Tokenizer::default());
+    let report = services
+        .token_savings_report()
+        .await
+        .expect("JSON response accounting");
+    let json = report
+        .response_accounting
+        .by_operation
+        .iter()
+        .find(|row| row.operation == TokenAccountingOperation::Json)
+        .expect("JSON accounting row");
+    assert_eq!(json.tracked_requests, 6);
+    assert_eq!(json.baseline_requests, 6);
+    assert!(json.baseline_source_tokens > json.response_source_tokens);
+    assert!(json.total_response_tokens >= json.response_source_tokens);
+    assert_eq!(
+        json.estimated_net_tokens_saved,
+        i64::try_from(json.baseline_source_tokens).expect("small JSON baseline")
+            - i64::try_from(json.total_response_tokens).expect("small JSON responses")
+    );
 }
 
 #[tokio::test]
@@ -7736,6 +7907,21 @@ async fn reconcile_working_tree_consistency_applies_to_each_retrieval_service() 
             .fragments
             .iter()
             .any(|fragment| fragment.path == "context_package.rs")
+    );
+    let report = services
+        .token_savings_report()
+        .await
+        .expect("consistent response accounting");
+    let context_accounting = report
+        .response_accounting
+        .by_operation
+        .iter()
+        .find(|row| row.operation == TokenAccountingOperation::Context)
+        .expect("context accounting");
+    assert_eq!(context_accounting.tracked_requests, 1);
+    assert_eq!(
+        context_accounting.total_response_tokens,
+        context.meta.total_response_tokens as u64
     );
 }
 
