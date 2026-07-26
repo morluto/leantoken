@@ -1153,68 +1153,73 @@
 <a href=#1153 id=1153 data-nosnippet>1153</a>    </span><span class="attr">#[arg(long)]
 <a href=#1154 id=1154 data-nosnippet>1154</a>    </span><span class="kw">pub </span>strict_changed_paths: bool,
 <a href=#1155 id=1155 data-nosnippet>1155</a>
-<a href=#1156 id=1156 data-nosnippet>1156</a>    <span class="doccomment">/// Attach compact provenance for a host-triggered executor handoff.
+<a href=#1156 id=1156 data-nosnippet>1156</a>    <span class="doccomment">/// Include full omission facet diagnostics.
 <a href=#1157 id=1157 data-nosnippet>1157</a>    </span><span class="attr">#[arg(long)]
-<a href=#1158 id=1158 data-nosnippet>1158</a>    </span><span class="kw">pub </span>handoff: bool,
+<a href=#1158 id=1158 data-nosnippet>1158</a>    </span><span class="kw">pub </span>verbose_diagnostics: bool,
 <a href=#1159 id=1159 data-nosnippet>1159</a>
-<a href=#1160 id=1160 data-nosnippet>1160</a>    <span class="doccomment">/// Override the compact handoff task summary.
-<a href=#1161 id=1161 data-nosnippet>1161</a>    </span><span class="attr">#[arg(long, value_name = <span class="string">"TEXT"</span>, requires = <span class="string">"handoff"</span>)]
-<a href=#1162 id=1162 data-nosnippet>1162</a>    </span><span class="kw">pub </span>handoff_summary: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#1163 id=1163 data-nosnippet>1163</a>}
-<a href=#1164 id=1164 data-nosnippet>1164</a>
-<a href=#1165 id=1165 data-nosnippet>1165</a><span class="kw">impl </span>ContextArgs {
-<a href=#1166 id=1166 data-nosnippet>1166</a>    <span class="kw">fn </span>handoff_request(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;HandoffManifestRequest&gt; {
-<a href=#1167 id=1167 data-nosnippet>1167</a>        <span class="self">self</span>.handoff.then(|| HandoffManifestRequest {
-<a href=#1168 id=1168 data-nosnippet>1168</a>            summary: <span class="self">self</span>.handoff_summary.clone(),
-<a href=#1169 id=1169 data-nosnippet>1169</a>            ..HandoffManifestRequest::default()
-<a href=#1170 id=1170 data-nosnippet>1170</a>        })
-<a href=#1171 id=1171 data-nosnippet>1171</a>    }
-<a href=#1172 id=1172 data-nosnippet>1172</a>}
-<a href=#1173 id=1173 data-nosnippet>1173</a>
-<a href=#1174 id=1174 data-nosnippet>1174</a><span class="attr">#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
-<a href=#1175 id=1175 data-nosnippet>1175</a></span><span class="kw">pub enum </span>ContextWorkflowArg {
-<a href=#1176 id=1176 data-nosnippet>1176</a>    <span class="attr">#[default]
-<a href=#1177 id=1177 data-nosnippet>1177</a>    </span>Auto,
-<a href=#1178 id=1178 data-nosnippet>1178</a>    Implementation,
-<a href=#1179 id=1179 data-nosnippet>1179</a>    Contribution,
-<a href=#1180 id=1180 data-nosnippet>1180</a>    Review,
-<a href=#1181 id=1181 data-nosnippet>1181</a>    Investigation,
-<a href=#1182 id=1182 data-nosnippet>1182</a>}
-<a href=#1183 id=1183 data-nosnippet>1183</a>
-<a href=#1184 id=1184 data-nosnippet>1184</a><span class="kw">impl </span>From&lt;ContextWorkflowArg&gt; <span class="kw">for </span><span class="kw">crate</span>::model::ContextWorkflow {
-<a href=#1185 id=1185 data-nosnippet>1185</a>    <span class="kw">fn </span>from(value: ContextWorkflowArg) -&gt; <span class="self">Self </span>{
-<a href=#1186 id=1186 data-nosnippet>1186</a>        <span class="kw">match </span>value {
-<a href=#1187 id=1187 data-nosnippet>1187</a>            ContextWorkflowArg::Auto =&gt; <span class="self">Self</span>::Auto,
-<a href=#1188 id=1188 data-nosnippet>1188</a>            ContextWorkflowArg::Implementation =&gt; <span class="self">Self</span>::Implementation,
-<a href=#1189 id=1189 data-nosnippet>1189</a>            ContextWorkflowArg::Contribution =&gt; <span class="self">Self</span>::Contribution,
-<a href=#1190 id=1190 data-nosnippet>1190</a>            ContextWorkflowArg::Review =&gt; <span class="self">Self</span>::Review,
-<a href=#1191 id=1191 data-nosnippet>1191</a>            ContextWorkflowArg::Investigation =&gt; <span class="self">Self</span>::Investigation,
-<a href=#1192 id=1192 data-nosnippet>1192</a>        }
-<a href=#1193 id=1193 data-nosnippet>1193</a>    }
-<a href=#1194 id=1194 data-nosnippet>1194</a>}
-<a href=#1195 id=1195 data-nosnippet>1195</a>
-<a href=#1196 id=1196 data-nosnippet>1196</a><span class="kw">impl </span>From&lt;ContextArgs&gt; <span class="kw">for </span>ContextRequest {
-<a href=#1197 id=1197 data-nosnippet>1197</a>    <span class="kw">fn </span>from(args: ContextArgs) -&gt; <span class="self">Self </span>{
-<a href=#1198 id=1198 data-nosnippet>1198</a>        <span class="self">Self </span>{
-<a href=#1199 id=1199 data-nosnippet>1199</a>            task: args.task,
-<a href=#1200 id=1200 data-nosnippet>1200</a>            token_budget: args.budget,
-<a href=#1201 id=1201 data-nosnippet>1201</a>            include_paths: args.include_paths,
-<a href=#1202 id=1202 data-nosnippet>1202</a>            must_include_paths: args.must_include_paths,
-<a href=#1203 id=1203 data-nosnippet>1203</a>            must_include_symbols: args.must_include_symbols,
-<a href=#1204 id=1204 data-nosnippet>1204</a>            max_fragments: args.max_fragments,
-<a href=#1205 id=1205 data-nosnippet>1205</a>            plan_only: args.plan_only,
-<a href=#1206 id=1206 data-nosnippet>1206</a>            focus_paths: args.focus_paths,
-<a href=#1207 id=1207 data-nosnippet>1207</a>            strict_focus_paths: args.strict_focus_paths,
-<a href=#1208 id=1208 data-nosnippet>1208</a>            minimum_fragments_per_focus_path: args.minimum_fragments_per_focus_path,
-<a href=#1209 id=1209 data-nosnippet>1209</a>            focus_symbols: args.focus_symbols,
-<a href=#1210 id=1210 data-nosnippet>1210</a>            exclude_paths: args.exclude_paths,
-<a href=#1211 id=1211 data-nosnippet>1211</a>            known_hashes: args.known_hashes,
-<a href=#1212 id=1212 data-nosnippet>1212</a>            receipt_id: <span class="prelude-val">None</span>,
-<a href=#1213 id=1213 data-nosnippet>1213</a>            prior_repository_generation: args.prior_repository_generation,
-<a href=#1214 id=1214 data-nosnippet>1214</a>            base_revision: args.base_revision,
-<a href=#1215 id=1215 data-nosnippet>1215</a>            changed_paths: args.changed_paths,
-<a href=#1216 id=1216 data-nosnippet>1216</a>            strict_changed_paths: args.strict_changed_paths,
-<a href=#1217 id=1217 data-nosnippet>1217</a>        }
-<a href=#1218 id=1218 data-nosnippet>1218</a>    }
-<a href=#1219 id=1219 data-nosnippet>1219</a>}
+<a href=#1160 id=1160 data-nosnippet>1160</a>    <span class="doccomment">/// Attach compact provenance for a host-triggered executor handoff.
+<a href=#1161 id=1161 data-nosnippet>1161</a>    </span><span class="attr">#[arg(long)]
+<a href=#1162 id=1162 data-nosnippet>1162</a>    </span><span class="kw">pub </span>handoff: bool,
+<a href=#1163 id=1163 data-nosnippet>1163</a>
+<a href=#1164 id=1164 data-nosnippet>1164</a>    <span class="doccomment">/// Override the compact handoff task summary.
+<a href=#1165 id=1165 data-nosnippet>1165</a>    </span><span class="attr">#[arg(long, value_name = <span class="string">"TEXT"</span>, requires = <span class="string">"handoff"</span>)]
+<a href=#1166 id=1166 data-nosnippet>1166</a>    </span><span class="kw">pub </span>handoff_summary: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#1167 id=1167 data-nosnippet>1167</a>}
+<a href=#1168 id=1168 data-nosnippet>1168</a>
+<a href=#1169 id=1169 data-nosnippet>1169</a><span class="kw">impl </span>ContextArgs {
+<a href=#1170 id=1170 data-nosnippet>1170</a>    <span class="kw">fn </span>handoff_request(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;HandoffManifestRequest&gt; {
+<a href=#1171 id=1171 data-nosnippet>1171</a>        <span class="self">self</span>.handoff.then(|| HandoffManifestRequest {
+<a href=#1172 id=1172 data-nosnippet>1172</a>            summary: <span class="self">self</span>.handoff_summary.clone(),
+<a href=#1173 id=1173 data-nosnippet>1173</a>            ..HandoffManifestRequest::default()
+<a href=#1174 id=1174 data-nosnippet>1174</a>        })
+<a href=#1175 id=1175 data-nosnippet>1175</a>    }
+<a href=#1176 id=1176 data-nosnippet>1176</a>}
+<a href=#1177 id=1177 data-nosnippet>1177</a>
+<a href=#1178 id=1178 data-nosnippet>1178</a><span class="attr">#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
+<a href=#1179 id=1179 data-nosnippet>1179</a></span><span class="kw">pub enum </span>ContextWorkflowArg {
+<a href=#1180 id=1180 data-nosnippet>1180</a>    <span class="attr">#[default]
+<a href=#1181 id=1181 data-nosnippet>1181</a>    </span>Auto,
+<a href=#1182 id=1182 data-nosnippet>1182</a>    Implementation,
+<a href=#1183 id=1183 data-nosnippet>1183</a>    Contribution,
+<a href=#1184 id=1184 data-nosnippet>1184</a>    Review,
+<a href=#1185 id=1185 data-nosnippet>1185</a>    Investigation,
+<a href=#1186 id=1186 data-nosnippet>1186</a>}
+<a href=#1187 id=1187 data-nosnippet>1187</a>
+<a href=#1188 id=1188 data-nosnippet>1188</a><span class="kw">impl </span>From&lt;ContextWorkflowArg&gt; <span class="kw">for </span><span class="kw">crate</span>::model::ContextWorkflow {
+<a href=#1189 id=1189 data-nosnippet>1189</a>    <span class="kw">fn </span>from(value: ContextWorkflowArg) -&gt; <span class="self">Self </span>{
+<a href=#1190 id=1190 data-nosnippet>1190</a>        <span class="kw">match </span>value {
+<a href=#1191 id=1191 data-nosnippet>1191</a>            ContextWorkflowArg::Auto =&gt; <span class="self">Self</span>::Auto,
+<a href=#1192 id=1192 data-nosnippet>1192</a>            ContextWorkflowArg::Implementation =&gt; <span class="self">Self</span>::Implementation,
+<a href=#1193 id=1193 data-nosnippet>1193</a>            ContextWorkflowArg::Contribution =&gt; <span class="self">Self</span>::Contribution,
+<a href=#1194 id=1194 data-nosnippet>1194</a>            ContextWorkflowArg::Review =&gt; <span class="self">Self</span>::Review,
+<a href=#1195 id=1195 data-nosnippet>1195</a>            ContextWorkflowArg::Investigation =&gt; <span class="self">Self</span>::Investigation,
+<a href=#1196 id=1196 data-nosnippet>1196</a>        }
+<a href=#1197 id=1197 data-nosnippet>1197</a>    }
+<a href=#1198 id=1198 data-nosnippet>1198</a>}
+<a href=#1199 id=1199 data-nosnippet>1199</a>
+<a href=#1200 id=1200 data-nosnippet>1200</a><span class="kw">impl </span>From&lt;ContextArgs&gt; <span class="kw">for </span>ContextRequest {
+<a href=#1201 id=1201 data-nosnippet>1201</a>    <span class="kw">fn </span>from(args: ContextArgs) -&gt; <span class="self">Self </span>{
+<a href=#1202 id=1202 data-nosnippet>1202</a>        <span class="self">Self </span>{
+<a href=#1203 id=1203 data-nosnippet>1203</a>            task: args.task,
+<a href=#1204 id=1204 data-nosnippet>1204</a>            token_budget: args.budget,
+<a href=#1205 id=1205 data-nosnippet>1205</a>            include_paths: args.include_paths,
+<a href=#1206 id=1206 data-nosnippet>1206</a>            must_include_paths: args.must_include_paths,
+<a href=#1207 id=1207 data-nosnippet>1207</a>            must_include_symbols: args.must_include_symbols,
+<a href=#1208 id=1208 data-nosnippet>1208</a>            max_fragments: args.max_fragments,
+<a href=#1209 id=1209 data-nosnippet>1209</a>            plan_only: args.plan_only,
+<a href=#1210 id=1210 data-nosnippet>1210</a>            focus_paths: args.focus_paths,
+<a href=#1211 id=1211 data-nosnippet>1211</a>            strict_focus_paths: args.strict_focus_paths,
+<a href=#1212 id=1212 data-nosnippet>1212</a>            minimum_fragments_per_focus_path: args.minimum_fragments_per_focus_path,
+<a href=#1213 id=1213 data-nosnippet>1213</a>            focus_symbols: args.focus_symbols,
+<a href=#1214 id=1214 data-nosnippet>1214</a>            exclude_paths: args.exclude_paths,
+<a href=#1215 id=1215 data-nosnippet>1215</a>            known_hashes: args.known_hashes,
+<a href=#1216 id=1216 data-nosnippet>1216</a>            receipt_id: <span class="prelude-val">None</span>,
+<a href=#1217 id=1217 data-nosnippet>1217</a>            prior_repository_generation: args.prior_repository_generation,
+<a href=#1218 id=1218 data-nosnippet>1218</a>            base_revision: args.base_revision,
+<a href=#1219 id=1219 data-nosnippet>1219</a>            changed_paths: args.changed_paths,
+<a href=#1220 id=1220 data-nosnippet>1220</a>            strict_changed_paths: args.strict_changed_paths,
+<a href=#1221 id=1221 data-nosnippet>1221</a>            verbose_diagnostics: args.verbose_diagnostics,
+<a href=#1222 id=1222 data-nosnippet>1222</a>        }
+<a href=#1223 id=1223 data-nosnippet>1223</a>    }
+<a href=#1224 id=1224 data-nosnippet>1224</a>}
 </code></pre></div></section></main></body></html>
