@@ -43,7 +43,7 @@ jobs:
       - name: Install git-cliff
         uses: taiki-e/install-action@v2
         with:
-          tool: git-cliff
+          tool: git-cliff@2.13.1
 
       - name: Determine next version
         id: version
@@ -121,9 +121,12 @@ jobs:
         if: steps.version.outputs.skip != 'true'
         run: |
           git cliff --config cliff.toml \
+            --github-repo "morluto/leantoken" \
             --tag "${{ steps.version.outputs.new_tag }}" \
             --output CHANGELOG.md \
             ${{ steps.version.outputs.latest_tag }}..HEAD
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Commit and push release branch
         if: steps.version.outputs.skip != 'true'
@@ -140,7 +143,11 @@ jobs:
           BRANCH="${{ steps.branch.outputs.branch }}"
           VERSION="${{ steps.version.outputs.new_version }}"
           TAG="${{ steps.version.outputs.new_tag }}"
-          BODY=$(git cliff --config cliff.toml --tag "$TAG" ${{ steps.version.outputs.latest_tag }}..HEAD)
+          BODY=$(git cliff \
+            --config cliff.toml \
+            --github-repo "morluto/leantoken" \
+            --tag "$TAG" \
+            ${{ steps.version.outputs.latest_tag }}..HEAD)
 
           EXISTING_NUMBER="${{ steps.existing-pr.outputs.number }}"
           if [ -n "$EXISTING_NUMBER" ] && [ "$EXISTING_NUMBER" != "null" ]; then
@@ -158,6 +165,7 @@ jobs:
             echo "Created release PR"
           fi
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   create-tag:
