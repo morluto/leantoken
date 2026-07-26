@@ -291,12 +291,9 @@ mod tests {
             ..RegistryState::default()
         };
         state.insertion_order.push_back(key.clone());
-        state.entries.insert(
-            key,
-            entry("base", now - READ_DELTA_TTL - Duration::from_secs(1)),
-        );
+        state.entries.insert(key, entry("base", now));
 
-        prune_expired(&mut state, now);
+        prune_expired(&mut state, now + READ_DELTA_TTL + Duration::from_secs(1));
 
         assert!(state.entries.is_empty());
         assert!(state.insertion_order.is_empty());
