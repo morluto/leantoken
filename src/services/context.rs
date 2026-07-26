@@ -2874,7 +2874,7 @@ impl Services {
                         response
                             .warnings
                             .push("all selected evidence was already covered by the receipt".into());
-                    } else {
+                    } else if response.omission_summary.budget_or_result_limit == 0 {
                         response
                             .warnings
                             .push("no relevant indexed evidence found".into());
@@ -3150,6 +3150,27 @@ mod tests {
         assert!(terms.iter().any(|term| term.value == "ending"));
         assert!(terms.iter().any(|term| term.value == "dot"));
         assert!(!terms.iter().any(|term| term.value == "callback"));
+    }
+
+    #[test]
+    fn context_queries_cover_early_domain_tail_intent_and_natural_phrases() {
+        let terms = context_queries(
+            "Trace how index generations are published atomically and how request snapshot consistency is preserved for concurrent readers",
+            12,
+        );
+
+        assert!(terms.len() <= 8);
+        assert!(terms.iter().any(|term| term.value == "index"));
+        assert!(terms.iter().any(|term| term.value == "snapshot"));
+        assert!(terms.iter().any(|term| term.value == "concurrent"));
+        assert!(
+            terms
+                .iter()
+                .any(|term| term.value == "snapshot consistency")
+        );
+        assert!(terms.iter().any(|term| term.value == "concurrent readers"));
+        assert!(!terms.iter().any(|term| term.value == "Trace"));
+        assert!(!terms.iter().any(|term| term.value == "how"));
     }
 
     #[test]

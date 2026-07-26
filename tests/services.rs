@@ -2503,6 +2503,25 @@ async fn context_enforces_token_budget_contract() {
 }
 
 #[tokio::test]
+async fn context_tiny_budget_does_not_claim_candidates_are_missing() {
+    let (_root, services) = fixture().await;
+
+    let response = services
+        .context(context_limit_request(1))
+        .await
+        .expect("tiny valid token budget");
+
+    assert!(response.fragments.is_empty());
+    assert!(response.omission_summary.budget_or_result_limit > 0);
+    assert!(
+        !response
+            .warnings
+            .iter()
+            .any(|warning| warning == "no relevant indexed evidence found")
+    );
+}
+
+#[tokio::test]
 async fn reconcile_working_tree_limit_errors_do_not_reconcile_the_index() {
     let (root, services) = fixture().await;
     let generation = services

@@ -6,6 +6,7 @@ const MAX_ATOMS: usize = 16;
 const MAX_FACET_VARIANTS: usize = 4;
 const MAX_QUOTED_PHRASES: usize = 4;
 const MAX_BEHAVIOR_TERMS: usize = 4;
+const MAX_NATURAL_PHRASES: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum FacetKind {
@@ -123,17 +124,7 @@ pub(super) fn plan(task: &str, limit: usize) -> FacetPlan {
         );
     }
 
-    for phrase in quoted_phrases(task).into_iter().take(MAX_QUOTED_PHRASES) {
-        push_facet(
-            &mut facets,
-            FacetKind::Behavior,
-            &phrase,
-            phrase_variants(&phrase),
-            0.85,
-        );
-    }
-
-    for term in terms
+    let behavior_terms = terms
         .iter()
         .filter(|term| {
             !is_test_term(term)
@@ -141,7 +132,31 @@ pub(super) fn plan(task: &str, limit: usize) -> FacetPlan {
                 && !atom_parts.contains(&term.to_ascii_lowercase())
         })
         .take(MAX_BEHAVIOR_TERMS)
-    {
+        .cloned()
+        .collect::<Vec<_>>();
+    let quoted_phrases = quoted_phrases(task)
+        .into_iter()
+        .take(MAX_QUOTED_PHRASES)
+        .collect::<Vec<_>>();
+    // Technical tasks already have a bounded exact/expansion lane. Keep the
+    // natural-language tail lane from displacing those stronger queries.
+    let natural_phrases = if atoms.is_empty() {
+        natural_phrases(task, &atom_parts, &behavior_terms, MAX_NATURAL_PHRASES)
+    } else {
+        Vec::new()
+    };
+
+    for phrase in quoted_phrases.iter().chain(&natural_phrases) {
+        push_facet(
+            &mut facets,
+            FacetKind::Behavior,
+            phrase,
+            phrase_variants(phrase),
+            0.85,
+        );
+    }
+
+    for term in &behavior_terms {
         let kind = if is_configuration_term(term) {
             FacetKind::Configuration
         } else {
@@ -168,7 +183,7 @@ pub(super) fn plan(task: &str, limit: usize) -> FacetPlan {
         );
     }
 
-    let queries = build_queries(task, &facets, limit, wants_tests);
+    let queries = build_queries(task, &facets, &natural_phrases, limit, wants_tests);
     FacetPlan {
         #[cfg(test)]
         facets,
@@ -179,6 +194,7 @@ pub(super) fn plan(task: &str, limit: usize) -> FacetPlan {
 fn build_queries(
     task: &str,
     facets: &[TaskFacet],
+    natural_phrases: &[String],
     limit: usize,
     wants_tests: bool,
 ) -> Vec<ContextQuery> {
@@ -200,7 +216,11 @@ fn build_queries(
         })
         .collect::<Vec<_>>();
     let prose_reserve = prose.len().min(MAX_BEHAVIOR_TERMS).min(available);
-    let exact_limit = available.saturating_sub(prose_reserve);
+    let phrase_reserve = natural_phrases
+        .len()
+        .saturating_mul(2)
+        .min(available.saturating_sub(prose_reserve));
+    let exact_limit = available.saturating_sub(prose_reserve + phrase_reserve);
 
     for value in code_terms.iter().take(exact_limit) {
         push_fusion_query(
@@ -230,6 +250,44 @@ fn build_queries(
                 fuse: false,
                 weight: context_query_weight(value, false),
                 concept_weight: context_query_weight(value, false),
+            },
+            available,
+        );
+    }
+
+    for phrase in natural_phrases.iter().take(phrase_reserve) {
+        push_fusion_query(
+            facets,
+            &mut queries,
+            &mut positions,
+            QuerySpec {
+                value: phrase,
+                fusion_key: &phrase.to_ascii_lowercase(),
+                exact_variant: false,
+                fuse: true,
+                weight: context_query_weight(phrase, false),
+                concept_weight: context_query_weight(phrase, false),
+            },
+            available,
+        );
+    }
+    // One component per phrase finds code-style occurrences without expanding
+    // every phrase into a second unbounded prose lane.
+    for phrase in natural_phrases {
+        let Some(component) = task_terms(phrase).into_iter().next() else {
+            continue;
+        };
+        push_fusion_query(
+            facets,
+            &mut queries,
+            &mut positions,
+            QuerySpec {
+                value: &component,
+                fusion_key: &phrase.to_ascii_lowercase(),
+                exact_variant: false,
+                fuse: true,
+                weight: context_query_weight(&component, false),
+                concept_weight: context_query_weight(&component, false),
             },
             available,
         );
@@ -559,6 +617,48 @@ fn phrase_variants(phrase: &str) -> Vec<String> {
         .collect()
 }
 
+fn natural_phrases(
+    task: &str,
+    excluded_terms: &HashSet<String>,
+    covered_terms: &[String],
+    limit: usize,
+) -> Vec<String> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let covered_terms = covered_terms
+        .iter()
+        .map(|term| term.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    let terms = task_terms(task);
+    let mut seen = HashSet::new();
+    let mut candidates = terms
+        .windows(2)
+        .enumerate()
+        .filter_map(|(position, pair)| {
+            let lower = pair
+                .iter()
+                .map(|term| term.to_ascii_lowercase())
+                .collect::<Vec<_>>();
+            if pair.iter().any(|term| {
+                is_test_term(term)
+                    || is_stop_word(term)
+                    || excluded_terms.contains(&term.to_ascii_lowercase())
+            }) || lower.iter().all(|term| covered_terms.contains(term))
+            {
+                return None;
+            }
+            let phrase = pair.join(" ");
+            let normalized = phrase.to_ascii_lowercase();
+            seen.insert(normalized).then_some((position, phrase))
+        })
+        .collect::<Vec<_>>();
+    candidates.reverse();
+    candidates.truncate(limit);
+    candidates.sort_by_key(|candidate| candidate.0);
+    candidates.into_iter().map(|(_, phrase)| phrase).collect()
+}
+
 fn task_terms(task: &str) -> Vec<String> {
     task.split(|character: char| !character.is_alphanumeric() && character != '_')
         .filter(|value| value.chars().count() >= 2)
@@ -615,6 +715,7 @@ fn is_stop_word(term: &str) -> bool {
             | "fix"
             | "for"
             | "from"
+            | "how"
             | "if"
             | "in"
             | "into"
@@ -623,6 +724,7 @@ fn is_stop_word(term: &str) -> bool {
             | "its"
             | "locate"
             | "make"
+            | "must"
             | "not"
             | "of"
             | "on"
@@ -636,6 +738,7 @@ fn is_stop_word(term: &str) -> bool {
             | "the"
             | "this"
             | "to"
+            | "trace"
             | "update"
             | "when"
             | "while"
@@ -748,6 +851,26 @@ mod tests {
         assert_eq!(
             first.queries.last().map(|query| query.value.as_str()),
             Some("test")
+        );
+    }
+
+    #[test]
+    fn natural_phrases_do_not_displace_the_technical_query_lane() {
+        let plan = plan(
+            "Trace render.AsciiJSON while snapshot consistency protects concurrent readers",
+            8,
+        );
+
+        assert!(
+            plan.queries
+                .iter()
+                .any(|query| query.value == "render.AsciiJSON" && query.exact_variant)
+        );
+        assert!(
+            plan.queries
+                .iter()
+                .all(|query| query.value != "snapshot consistency"
+                    && query.value != "concurrent readers")
         );
     }
 
