@@ -41,6 +41,17 @@ preserve exact technical atoms and classify symbol, path, behavior, test-intent,
 and configuration evidence. This metadata is omitted from production fragment
 reasons and does not by itself enable role reservations or portfolio selection;
 use it to diagnose a frozen candidate before proposing a scoring change.
+
+`benchmarks/context_concept_coverage.json` adds evaluator-owned task concepts
+without treating internal query terms as relevance labels. The overlay is
+BLAKE3-bound to `validation.json` and must partition every existing labeled
+anchor exactly once. The representative runner then reports candidate concept
+recall, selected concept recall, and selected-to-candidate retention at the
+unchanged source-token budget. This locates whether a missing concept was never
+generated or was lost during ranking/allocation. It does not change production
+ranking, and one anchor hit is not evidence that a complete concept or task was
+solved.
+
 Do not alter prompts, labels, budgets, or pinned revisions after inspecting a
 candidate. Freeze a new dataset version instead.
 
