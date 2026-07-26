@@ -1,4 +1,7 @@
-default_install_hook_types: [pre-commit, pre-push]
+# Keep the local commit path deterministic and non-compiling. GitHub Actions
+# owns the full lint and test gates before merge.
+default_install_hook_types: [pre-commit]
+default_stages: [pre-commit]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -23,11 +26,3 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
-
-      - id: cargo-check
-        name: cargo check product
-        entry: cargo check-product
-        language: system
-        files: '(^|/).*\.rs$|^Cargo\.(toml|lock)$'
-        pass_filenames: false
-        stages: [pre-push]

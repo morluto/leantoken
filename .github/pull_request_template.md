@@ -4,11 +4,7 @@
 
 ## Testing
 
-<!-- How did you test these changes? Include commands, platforms, and any manual verification steps. -->
-
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings`
-- [ ] `cargo test --all-features --lib --bins --test integration`
+<!-- List the focused local commands and results that prove this change. GitHub Actions supplies the full lint, cross-platform product, example, and documentation gates. -->
 
 ## Impact
 

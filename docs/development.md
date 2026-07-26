@@ -13,11 +13,17 @@ python -m pip install pre-commit
 pre-commit install --install-hooks
 ```
 
-This installs both commit and push hooks. Commit-time checks are deliberately
-limited to formatting and inexpensive file validation. The push hook runs a
-product compile check when pushed commits change Rust sources or the Cargo
-manifests. Full Clippy remains a CI quality gate, so it need not block every
-local push.
+This installs a commit hook for formatting and inexpensive file validation.
+Local hooks deliberately do not compile the project or run tests. The full
+lint and test gates run in GitHub Actions, where they do not block commits or
+the first push.
+
+An older checkout may still have the retired push-hook wrapper installed. It
+can be removed once with:
+
+```bash
+pre-commit uninstall --hook-type pre-push
+```
 
 ## Development checks
 
@@ -28,23 +34,17 @@ suite. The installed commit hook runs:
 cargo fmt --all -- --check
 ```
 
-Before pushing Rust or dependency changes, the push hook runs:
+Run a focused product-test module while developing:
 
 ```bash
-cargo check-product
+cargo test-focused services::
 ```
 
-CI runs the full Clippy command on every relevant Rust change:
-
-```bash
-cargo clippy --all-targets --all-features -- -D warnings
-```
-
-Run a focused test while developing by passing its module or test name:
-
-```bash
-cargo test --test integration services::
-```
+The argument is an ordinary Rust test-name filter applied to the library,
+binary, and integration test targets, so it can also select one exact test. Use
+the owning module listed under [Test responsibilities](#test-responsibilities).
+When a change crosses ownership boundaries, run each affected filter; when
+ownership is unclear, let the full CI suite supply the conservative fallback.
 
 Run the complete product-behavior suite without compiling or executing the
 benchmark contract or examples:
@@ -59,6 +59,10 @@ its fixture. CI runs it on every supported OS for every Rust change:
 ```bash
 cargo test-contract
 ```
+
+This full local command uses two test workers so process-heavy MCP tests do not
+multiply child-process load on smaller machines. Focused tests retain Cargo's
+normal host parallelism.
 
 Benchmark and example tests are a separate target group because Cargo executes
 test binaries serially. Run them when changing `examples/`, benchmark fixtures,
@@ -79,8 +83,11 @@ for LeanToken code. When debugging a dependency too, pass
 
 ## Pull request readiness
 
-Before opening a pull request, run the behavioral suite appropriate to the
-change:
+Before the first push, format the tree and run the smallest relevant check or
+behavioral test that proves the change. Open the pull request once that focused
+proof passes so the broad checks can run in parallel with review.
+
+GitHub Actions is the merge gate for:
 
 ```bash
 cargo fmt --all -- --check
@@ -89,12 +96,25 @@ cargo test-product
 cargo test-contract
 ```
 
-CI runs example and documentation tests once on Linux, and runs product
-behavior plus the token-economy contract on Linux, macOS, and Windows. It is
-also authoritative for rustdoc warnings. Run rustdoc locally when changing
-public APIs or
-documentation:
+CI also runs benchmark, example, and documentation tests once on Linux. On
+Linux, macOS, and Windows it runs library and binary unit tests, ordinary
+integration behavior, and executable/MCP process behavior as separately timed
+phases. The process-heavy phase uses two test workers because each test can
+start several child processes; ordinary tests retain the runner's default
+parallelism. Rust changes also run the instrumented coverage gate in parallel.
+The token-economy contract runs separately on all three operating systems.
+A pull request is not ready to merge until its required CI checks pass.
 
+Repository rules for `main` should require the CI workflow's `Required checks`
+job. That stable aggregate check fails when any job relevant to the changed
+paths fails, while allowing intentionally skipped jobs to remain conditional.
+Requiring the aggregate avoids coupling branch rules to every matrix entry and
+path-filtered job name.
+
+Run a complete gate locally when reproducing a CI failure, working without CI,
+or changing the gate itself. Otherwise, do not routinely duplicate the full CI
+suite before and after the first push. Run rustdoc locally when changing public
+APIs or documentation:
 ```bash
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 ```
