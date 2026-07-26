@@ -46,6 +46,52 @@ Its 36% labeled-file recall and 9% line-anchor recall are negative evidence, not
 a savings claim; do not tune against it while continuing to describe it as
 unseen.
 
+## Agent wall-time A/B
+
+[`agent_walltime_ab.json`](agent_walltime_ab.json) freezes a local retrieval
+latency diagnostic on the four prospective validation repositories. It compares
+a persistent structured-result MCP process with the native commands an agent
+would otherwise launch:
+
+- exhaustive case-sensitive text search versus sorted fixed-string `rg`;
+- exact line reads versus `sed`;
+- one ranked `context` request versus the task's frozen sequence of exact `rg`
+  discovery queries.
+
+Search compares every occurrence coordinate and read compares exact content and
+line coordinates. A mismatch aborts the run. Discovery and context have
+different semantics, so their ratio is diagnostic only. The report retains raw
+alternating native-first and LeanToken-first samples, warm p50/p95, cold index
+time, MCP startup, database size, payload size, and frozen relevance proxies.
+It does not run a model or establish end-to-end agent latency.
+
+Prepare the pinned `validation.json` repositories, commit the harness, then run
+the release-only clean-worktree wrapper:
+
+```bash
+benchmarks/run_agent_walltime_ab.sh \
+  target/validation-repos \
+  target/agent-walltime-ab
+```
+
+The wrapper builds a detached clean `HEAD`, so unrelated files in the caller's
+working tree cannot enter the executable or provenance. The output path must
+not already exist. Run the harness tests separately with:
+
+```bash
+python3 -m unittest scripts/test_agent_walltime_ab.py
+```
+
+The first clean-tree baseline is published as
+[`reports/agent-walltime-ab-v1-2026-07-26.json`](reports/agent-walltime-ab-v1-2026-07-26.json)
+with a
+[`Markdown summary`](reports/agent-walltime-ab-v1-2026-07-26.md). All exact
+parity and determinism gates passed. Across the four corpus medians, exhaustive
+search added 103 ms, exact reads added 14 ms, and context added 214 ms over the
+four frozen `rg` discovery sequences. Native discovery reached all 11 labeled
+files; context reached 7. This is a negative local baseline, not evidence that
+the MCP calls explain model-scale end-to-end latency.
+
 ## Prepare pinned repositories
 
 Run from the LeanToken repository root. The commands fetch both the benchmarked base and the future fix used to audit the labels, then leave each worktree detached at the base revision.
