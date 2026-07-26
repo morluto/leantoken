@@ -904,7 +904,7 @@ fn prefer_full_if_delta_payload_not_smaller(
     if response.status != ReadStatus::Delta {
         return Ok(());
     }
-    let delta_tokens = serialized_read_tokens(response, tokenizer)?;
+    let delta_tokens = finalized_serialized_read_tokens(response, tokenizer)?;
     let mut full = response.clone();
     full.status = ReadStatus::Content;
     full.content = Some(current_content.to_owned());
@@ -917,22 +917,31 @@ fn prefer_full_if_delta_payload_not_smaller(
         receipt.avoided_tokens = 0;
         receipt.fallback_reason = Some(ReadDeltaFallback::DeltaNotSmaller);
     }
-    if delta_tokens >= serialized_read_tokens(&full, tokenizer)? {
+    if delta_tokens >= finalized_serialized_read_tokens(&full, tokenizer)? {
         *response = full;
     }
     Ok(())
 }
 
-fn serialized_read_tokens(
+fn finalized_serialized_read_tokens(
     response: &ReadResponse,
     tokenizer: crate::tokens::Tokenizer,
 ) -> Result<usize> {
-    let mut countable = response.clone();
-    countable.meta.protocol_tokens = 0;
-    countable.meta.path_and_metadata_tokens = 0;
-    countable.meta.total_response_tokens = 0;
-    countable.meta.payload_tokens = 0;
-    Ok(tokenizer.count(&serde_json::to_string(&countable)?))
+    let mut finalized = response.clone();
+    finalized.meta.protocol_tokens = 0;
+    finalized.meta.path_and_metadata_tokens = 0;
+    finalized.meta.total_response_tokens = 0;
+    finalized.meta.payload_tokens = 0;
+    let accounting = crate::tokens::response_token_accounting(
+        &finalized,
+        finalized.meta.source_tokens,
+        &tokenizer,
+    )?;
+    finalized.meta.protocol_tokens = accounting.protocol_tokens;
+    finalized.meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
+    finalized.meta.total_response_tokens = accounting.total_response_tokens;
+    finalized.meta.payload_tokens = accounting.total_response_tokens;
+    Ok(tokenizer.count(&serde_json::to_string(&finalized)?))
 }
 
 fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {

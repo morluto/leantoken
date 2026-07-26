@@ -172,7 +172,7 @@ async fn run_case(case: Case) -> Result<CaseReport, Box<dyn Error>> {
         return Err(format!("{} full-response control was not content", case.name).into());
     }
     if changed.status == ReadStatus::Delta
-        && changed.meta.total_response_tokens >= full.meta.total_response_tokens
+        && serialized_tokens(&changed)? >= serialized_tokens(&full)?
     {
         return Err(format!(
             "{} delta response was not strictly cheaper than full JSON",
@@ -192,14 +192,18 @@ async fn run_case(case: Case) -> Result<CaseReport, Box<dyn Error>> {
         full_tokens: receipt.full_tokens,
         returned_source_tokens: changed.meta.emitted_tokens,
         avoided_source_tokens: receipt.avoided_tokens,
-        full_response_tokens: full.meta.total_response_tokens,
-        returned_response_tokens: changed.meta.total_response_tokens,
-        response_token_delta: i64::try_from(changed.meta.total_response_tokens)
+        full_response_tokens: serialized_tokens(&full)?,
+        returned_response_tokens: serialized_tokens(&changed)?,
+        response_token_delta: i64::try_from(serialized_tokens(&changed)?)
             .unwrap_or(i64::MAX)
-            .saturating_sub(i64::try_from(full.meta.total_response_tokens).unwrap_or(i64::MAX)),
+            .saturating_sub(i64::try_from(serialized_tokens(&full)?).unwrap_or(i64::MAX)),
         base_generation: receipt.base_generation,
         head_generation: receipt.head_generation,
     })
+}
+
+fn serialized_tokens(response: &ReadResponse) -> Result<usize, serde_json::Error> {
+    Ok(leantoken::tokens::Tokenizer::default().count(&serde_json::to_string(response)?))
 }
 
 fn validate_case(case: &Case, response: &ReadResponse) -> Result<(), Box<dyn Error>> {

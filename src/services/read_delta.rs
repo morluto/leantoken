@@ -167,6 +167,9 @@ impl ReadDeltaRegistry {
     }
 
     fn insert(&self, key: CacheKey, entry: CacheEntry) -> Result<()> {
+        if entry.content.len() > MAX_READ_DELTA_ENTRY_BYTES {
+            return Ok(());
+        }
         let mut state = self
             .state
             .lock()
@@ -387,5 +390,25 @@ mod tests {
         assert_eq!(stored.generation, 2);
         assert_eq!(stored.target_start_line, 10);
         assert_eq!(stored.target_end_line, 12);
+    }
+
+    #[test]
+    fn registry_rejects_an_entry_above_the_per_entry_byte_bound() {
+        let registry = ReadDeltaRegistry::default();
+        let content = "x".repeat(MAX_READ_DELTA_ENTRY_BYTES + 1);
+        registry
+            .insert(
+                CacheKey {
+                    target_key: "target".into(),
+                    content_hash: "hash".into(),
+                },
+                entry(&content, Instant::now()),
+            )
+            .expect("reject oversized delta base");
+
+        let state = registry.state.lock().expect("delta registry");
+        assert!(state.entries.is_empty());
+        assert!(state.insertion_order.is_empty());
+        assert_eq!(state.total_bytes, 0);
     }
 }
