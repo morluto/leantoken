@@ -11,7 +11,8 @@ use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
     handler::server::wrapper::Parameters,
     model::{
-        CallToolResult, ClientRequest, ContentBlock, GetExtensions, JsonRpcMessage, ServerResult,
+        CallToolResult, ClientNotification, ClientRequest, ContentBlock, GetExtensions,
+        JsonRpcMessage, ServerResult,
     },
     service::{NotificationContext, RequestContext, RxJsonRpcMessage, TxJsonRpcMessage},
     tool, tool_handler, tool_router,
@@ -105,8 +106,18 @@ impl BoundedStdioTransport {
         &self,
         message: &mut RxJsonRpcMessage<RoleServer>,
     ) -> Result<(), rmcp::model::RequestId> {
-        let JsonRpcMessage::Request(request) = message else {
-            return Ok(());
+        let request = match message {
+            JsonRpcMessage::Notification(notification) => {
+                if let ClientNotification::CancelledNotification(cancelled) =
+                    &notification.notification
+                    && let Some(id) = &cancelled.params.request_id
+                {
+                    Self::finish_dispatch(&self.dispatched_calls, id);
+                }
+                return Ok(());
+            }
+            JsonRpcMessage::Request(request) => request,
+            JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => return Ok(()),
         };
         if !matches!(&request.request, ClientRequest::CallToolRequest(_)) {
             return Ok(());
@@ -2578,6 +2589,35 @@ mod tests {
         }));
 
         assert!(unwind.is_err());
+        assert_eq!(dispatch.available_permits(), 1);
+    }
+
+    #[test]
+    fn transport_dispatch_permit_returns_when_a_request_is_cancelled() {
+        let dispatch = RequestAdmission::new(1);
+        let transport = BoundedStdioTransport::new(dispatch.clone(), McpResultMode::Dual);
+        let mut request = incoming_request(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "files", "arguments": {}}
+        }));
+        transport
+            .admit_message(&mut request)
+            .expect("admit tool call");
+        assert_eq!(dispatch.available_permits(), 0);
+
+        let mut cancellation = incoming_request(serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/cancelled",
+            "params": {"requestId": 1, "reason": "no longer needed"}
+        }));
+        transport
+            .admit_message(&mut cancellation)
+            .expect("admit cancellation");
+        assert_eq!(dispatch.available_permits(), 1);
+
+        drop(request);
         assert_eq!(dispatch.available_permits(), 1);
     }
 
