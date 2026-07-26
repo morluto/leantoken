@@ -348,7 +348,7 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
     server.close().await.expect("close server");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn customized_mcp_limits_apply_while_starting_and_after_failure() {
     let root = tempfile::tempdir().expect("temporary repository");
     let mut config =
@@ -914,6 +914,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     base_revision: None,
     changed_paths: Vec::new(),
     strict_changed_paths: false,
+    verbose_diagnostics: false,
     };
     let context_arguments = serde_json::to_value(context)
         .expect("serialize context request")
@@ -1018,7 +1019,7 @@ async fn mcp_path_errors_redact_external_and_absolute_paths() {
     server.close().await.expect("close server");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn pending_and_empty_indexes_return_successful_retry_guidance() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
@@ -1142,11 +1143,21 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
         Some("index_building")
     );
 
+    let peer = client.peer().clone();
+    let waiting = tokio::spawn(async move {
+        let arguments = serde_json::json!({ "operation": {"kind": "tree"} })
+            .as_object()
+            .expect("arguments")
+            .clone();
+        peer.call_tool(CallToolRequestParams::new("files").with_arguments(arguments))
+            .await
+    });
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished());
     services.index(false).await.expect("index");
-    let ready = client
-        .peer()
-        .call_tool(request())
+    let ready = waiting
         .await
+        .expect("join waiting request")
         .expect("ready result");
     assert_ne!(ready.is_error, Some(true));
 

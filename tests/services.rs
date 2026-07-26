@@ -4,9 +4,10 @@ use leantoken::{
     Config, ContextRequest, ContextSignalPolicy, ContextWorkflow, Error, FileOperation, FilesRequest,
     Freshness, HandoffManifestRequest, HandoffValidation, HandoffValidationStatus,
     HandoffWorkingTreeState, HistoryOperation, HistoryRequest, IndexConsistency, IndexState,
-    JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadDeltaFallback,
-    ReadDeltaOutcome, ReadRequest, ReadStatus, SearchMode, SearchRequest, TokenSavingsOperation,
-    coordination::IndexCoordination, services::Services, tokens::Tokenizer,
+    JsonIncompleteReason, JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest,
+    ReadDeltaFallback, ReadDeltaOutcome, ReadRequest, ReadStatus, SearchMode, SearchRequest,
+    TokenAccountingOperation, TokenSavingsOperation, coordination::IndexCoordination,
+    services::Services, tokens::Tokenizer,
 };
 use leantoken::{
     DiffConfigurationChangeKind, DiffOwnerTestStatus, DiffSymbolChangeKind, DiffSymbolModification,
@@ -1348,6 +1349,7 @@ async fn contribution_context_routes_to_guidance_validation_and_owner_tests() {
                 base_revision: None,
                 changed_paths: vec!["src/parser.rs".into()],
                 strict_changed_paths: false,
+                verbose_diagnostics: false,
             },
             ContextWorkflow::Contribution,
             IndexConsistency::IndexedGeneration,
@@ -1510,6 +1512,7 @@ fn context_limit_request(token_budget: usize) -> ContextRequest {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
     }
 }
 
@@ -1551,6 +1554,26 @@ async fn context_plan_previews_materialization_without_receipt_or_source() {
     assert_eq!(
         savings_after.estimated_source_tokens_saved,
         savings_before.estimated_source_tokens_saved
+    );
+    let accounting = services
+        .token_savings_report()
+        .await
+        .expect("response accounting");
+    let plan_accounting = accounting
+        .response_accounting
+        .by_operation
+        .iter()
+        .find(|row| row.operation == TokenAccountingOperation::ContextPlan)
+        .expect("context plan accounting");
+    assert_eq!(plan_accounting.tracked_requests, 1);
+    assert_eq!(plan_accounting.baseline_requests, 0);
+    assert_eq!(
+        plan_accounting.total_response_tokens,
+        preview.meta.total_response_tokens as u64
+    );
+    assert_eq!(
+        plan_accounting.estimated_net_tokens_saved,
+        -(preview.meta.total_response_tokens as i64)
     );
 
     request.plan_only = false;
@@ -1637,6 +1660,7 @@ async fn context_include_paths_constrain_fragments_and_report_path_omissions() {
     let mut request = context_limit_request(200);
     request.task = "find shared_capture_target".into();
     request.include_paths = vec!["src/browser/**".into()];
+    request.verbose_diagnostics = true;
 
     let response = services.context(request).await.expect("constrained context");
 
@@ -3268,6 +3292,7 @@ async fn five_services_return_bounded_grounded_responses() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         })
         .await
         .expect("context");
@@ -3298,6 +3323,7 @@ async fn five_services_return_bounded_grounded_responses() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         })
         .await
         .expect("repeated context");
@@ -3332,6 +3358,7 @@ async fn five_services_return_bounded_grounded_responses() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         })
         .await
         .expect("context delta");
@@ -3340,6 +3367,26 @@ async fn five_services_return_bounded_grounded_responses() {
             .fragments
             .iter()
             .all(|fragment| fragment.content_hash != known)
+    );
+    let report = services
+        .token_savings_report()
+        .await
+        .expect("full response accounting");
+    let files_accounting = report
+        .response_accounting
+        .by_operation
+        .iter()
+        .find(|row| row.operation == TokenAccountingOperation::Files)
+        .expect("files accounting");
+    assert_eq!(files_accounting.tracked_requests, 1);
+    assert_eq!(files_accounting.baseline_requests, 0);
+    assert_eq!(
+        files_accounting.total_response_tokens,
+        files.meta.total_response_tokens as u64
+    );
+    assert_eq!(
+        files_accounting.estimated_net_tokens_saved,
+        -(files.meta.total_response_tokens as i64)
     );
 }
 
@@ -3439,6 +3486,7 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             base_revision: None,
             changed_paths: vec![r".\src\lib.rs".into()],
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         })
         .await
         .expect("normalized context path");
@@ -3527,6 +3575,82 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     );
     assert!(report.baseline_source_tokens >= report.emitted_source_tokens);
     assert!(report.estimated_source_tokens_saved > 0);
+    let effective = services
+        .token_savings_report()
+        .await
+        .expect("effective savings");
+    assert_eq!(effective.source_savings, report);
+    let accounting = &effective.response_accounting;
+    assert_eq!(accounting.tracked_requests, 5);
+    assert_eq!(accounting.baseline_requests, 5);
+    assert_eq!(
+        accounting.total_response_tokens,
+        [
+            &search.meta,
+            &outline.meta,
+            &first_read.meta,
+            &repeated_read.meta,
+            &context.meta,
+        ]
+        .into_iter()
+        .map(|meta| meta.total_response_tokens as u64)
+        .sum::<u64>()
+    );
+    assert_eq!(
+        accounting.path_and_metadata_tokens,
+        [
+            &search.meta,
+            &outline.meta,
+            &first_read.meta,
+            &repeated_read.meta,
+            &context.meta,
+        ]
+        .into_iter()
+        .map(|meta| meta.path_and_metadata_tokens as u64)
+        .sum::<u64>()
+    );
+    assert_eq!(
+        accounting.protocol_tokens,
+        [
+            &search.meta,
+            &outline.meta,
+            &first_read.meta,
+            &repeated_read.meta,
+            &context.meta,
+        ]
+        .into_iter()
+        .map(|meta| meta.protocol_tokens as u64)
+        .sum::<u64>()
+    );
+    assert_eq!(
+        accounting.estimated_net_tokens_saved,
+        i64::try_from(accounting.baseline_source_tokens).expect("small baseline")
+            - i64::try_from(accounting.total_response_tokens).expect("small response")
+    );
+    assert_eq!(
+        accounting.response_source_tokens
+            + accounting.path_and_metadata_tokens
+            + accounting.protocol_tokens,
+        accounting.total_response_tokens
+    );
+    assert_eq!(accounting.by_operation.len(), 8);
+    assert_eq!(
+        accounting
+            .by_operation
+            .iter()
+            .map(|row| (row.operation, row.tracked_requests))
+            .collect::<Vec<_>>(),
+        vec![
+            (TokenAccountingOperation::Files, 0),
+            (TokenAccountingOperation::Search, 1),
+            (TokenAccountingOperation::Outline, 1),
+            (TokenAccountingOperation::Read, 2),
+            (TokenAccountingOperation::ContextPlan, 0),
+            (TokenAccountingOperation::Context, 1),
+            (TokenAccountingOperation::Json, 0),
+            (TokenAccountingOperation::History, 0),
+        ]
+    );
 
     let config = Config::discover(root.path(), Some(root.path().join("index.sqlite")))
         .expect("reopen config");
@@ -3534,6 +3658,13 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     assert_eq!(
         reopened.token_savings().await.expect("persisted savings"),
         report
+    );
+    assert_eq!(
+        reopened
+            .token_savings_report()
+            .await
+            .expect("persisted effective savings"),
+        effective
     );
 
     let mut alternate_config =
@@ -3640,6 +3771,7 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
+            verbose_diagnostics: false,
             })
             .await
             .expect("context");
@@ -3792,6 +3924,7 @@ public sealed class Worker {
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         })
         .await
         .expect("C# context");
@@ -4286,6 +4419,7 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         })
         .await
         .expect("exact evaluation");
@@ -4316,6 +4450,7 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         })
         .await
         .expect("multi-concept evaluation");
@@ -4383,6 +4518,7 @@ async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
     base_revision: None,
     changed_paths: Vec::new(),
     strict_changed_paths: false,
+    verbose_diagnostics: false,
     };
 
     let baseline = services
@@ -5367,6 +5503,18 @@ async fn read_receipt_distinguishes_exact_suppression_from_not_modified() {
     assert!(repeated.content.is_none());
     assert_eq!(repeated.meta.receipt_suppressed_exact, 1);
     assert_eq!(repeated.meta.emitted_tokens, 0);
+    let report = services
+        .token_savings_report()
+        .await
+        .expect("receipt accounting");
+    assert_eq!(report.response_accounting.receipt_suppressed_exact, 1);
+    let reads = report
+        .response_accounting
+        .by_operation
+        .iter()
+        .find(|row| row.operation == TokenAccountingOperation::Read)
+        .expect("read accounting");
+    assert_eq!(reads.receipt_suppressed_exact, 1);
 }
 
 #[tokio::test]
@@ -6437,6 +6585,7 @@ async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_service
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
+            verbose_diagnostics: false,
             },
             cancellation,
         )
@@ -6708,6 +6857,22 @@ async fn csharp_qualified_symbols_support_historical_reads_and_diffs() {
     let patch = diff.diff.as_deref().expect("C# method diff");
     assert!(patch.contains("-        return 1;"));
     assert!(patch.contains("+        return 2;"));
+    let report = services
+        .token_savings_report()
+        .await
+        .expect("history response accounting");
+    let history = report
+        .response_accounting
+        .by_operation
+        .iter()
+        .find(|row| row.operation == TokenAccountingOperation::History)
+        .expect("history accounting");
+    assert_eq!(history.tracked_requests, 2);
+    assert_eq!(history.baseline_requests, 0);
+    assert_eq!(
+        history.total_response_tokens,
+        (read.meta.total_response_tokens + diff.meta.total_response_tokens) as u64
+    );
 }
 
 #[tokio::test]
@@ -6866,6 +7031,7 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
             base_revision: Some(format!("{base}..{changed}")),
             changed_paths: Vec::new(),
             strict_changed_paths: true,
+            verbose_diagnostics: false,
         })
         .await
         .expect("immutable range context");
@@ -7182,6 +7348,7 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
             max_tokens: Some(100),
             max_items: None,
             array_sample_size: None,
+            cursor: None,
         })
         .await
         .expect("pointer query");
@@ -7201,6 +7368,7 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
             max_tokens: Some(500),
             max_items: Some(100),
             array_sample_size: Some(1),
+            cursor: None,
         })
         .await
         .expect("collapsed JMESPath query");
@@ -7224,6 +7392,7 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
                 max_tokens: Some(1_000),
                 max_items: Some(100),
                 array_sample_size: None,
+                cursor: None,
             })
             .await
             .expect("structural projection");
@@ -7242,6 +7411,7 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
             max_tokens: None,
             max_items: None,
             array_sample_size: None,
+            cursor: None,
         })
         .await
         .expect("numeric summary");
@@ -7273,6 +7443,7 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
             max_tokens: Some(1_000),
             max_items: Some(100),
             array_sample_size: Some(2),
+            cursor: None,
         })
         .await
         .expect("selected-field diff");
@@ -7283,6 +7454,328 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
     assert!(!diff.differences[1].before_present);
     assert!(diff.differences[1].after_present);
     assert_response_token_accounting!(diff, Tokenizer::default());
+    let report = services
+        .token_savings_report()
+        .await
+        .expect("JSON response accounting");
+    let json = report
+        .response_accounting
+        .by_operation
+        .iter()
+        .find(|row| row.operation == TokenAccountingOperation::Json)
+        .expect("JSON accounting row");
+    assert_eq!(json.tracked_requests, 6);
+    assert_eq!(json.baseline_requests, 6);
+    assert!(json.baseline_source_tokens > json.response_source_tokens);
+    assert!(json.total_response_tokens >= json.response_source_tokens);
+    assert_eq!(
+        json.estimated_net_tokens_saved,
+        i64::try_from(json.baseline_source_tokens).expect("small JSON baseline")
+            - i64::try_from(json.total_response_tokens).expect("small JSON responses")
+    );
+}
+
+#[tokio::test]
+async fn json_keys_paginate_by_item_and_token_limits_with_exact_diagnostics() {
+    let root = tempfile::tempdir().expect("root");
+    let path = root.path().join("report.json");
+    std::fs::write(
+        &path,
+        r#"{"alpha":1,"beta":2,"nested":{"first":3,"second":4},"rows":[{"left":5},{"right":6}]}"#,
+    )
+    .expect("JSON fixture");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    let operation = JsonOperation::Query {
+        path: "report.json".into(),
+        selector: None,
+        projection: JsonProjection::Keys,
+    };
+
+    let complete = services
+        .json(JsonRequest {
+            operation: operation.clone(),
+            max_tokens: Some(1_000),
+            max_items: Some(100),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("complete keys");
+    let expected = complete
+        .value
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("key array")
+        .clone();
+    assert!(complete.result_complete);
+    assert_eq!(complete.total_items, Some(expected.len()));
+    assert_eq!(complete.returned_items, Some(expected.len()));
+    assert_eq!(complete.remaining_items, Some(0));
+    assert_eq!(complete.incomplete_reason, None);
+    assert!(complete.meta.next_cursor.is_none());
+
+    let mut cursor = None;
+    let mut observed = Vec::new();
+    let mut previous_remaining = expected.len();
+    loop {
+        let page = services
+            .json(JsonRequest {
+                operation: operation.clone(),
+                max_tokens: Some(1_000),
+                max_items: Some(2),
+                array_sample_size: None,
+                cursor,
+            })
+            .await
+            .expect("keys page");
+        let page_values = page
+            .value
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .expect("page values");
+        assert_eq!(page.total_items, Some(expected.len()));
+        assert_eq!(page.returned_items, Some(page_values.len()));
+        assert!(page_values.len() <= 2);
+        observed.extend(page_values.iter().cloned());
+        let remaining = page.remaining_items.expect("remaining count");
+        assert_eq!(remaining, expected.len().saturating_sub(observed.len()));
+        assert!(remaining <= previous_remaining);
+        previous_remaining = remaining;
+        if page.result_complete {
+            assert_eq!(page.incomplete_reason, None);
+            assert!(page.meta.next_cursor.is_none());
+            break;
+        }
+        assert_eq!(
+            page.incomplete_reason,
+            Some(JsonIncompleteReason::MaxItems)
+        );
+        cursor = page.meta.next_cursor;
+        assert!(cursor.is_some());
+    }
+    assert_eq!(observed, expected);
+
+    let one_item = services
+        .json(JsonRequest {
+            operation: operation.clone(),
+            max_tokens: Some(1_000),
+            max_items: Some(1),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("one key");
+    let token_limited = services
+        .json(JsonRequest {
+            operation,
+            max_tokens: Some(one_item.meta.source_tokens),
+            max_items: Some(100),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("token-limited key page");
+    assert_eq!(token_limited.returned_items, Some(1));
+    assert_eq!(
+        token_limited.incomplete_reason,
+        Some(JsonIncompleteReason::MaxTokens)
+    );
+    assert!(token_limited.meta.source_tokens <= one_item.meta.source_tokens);
+    assert!(token_limited.meta.next_cursor.is_some());
+    assert_response_token_accounting!(token_limited, Tokenizer::default());
+}
+
+#[tokio::test]
+async fn json_cursors_and_incomplete_results_fail_loud_with_typed_diagnostics() {
+    let root = tempfile::tempdir().expect("root");
+    let path = root.path().join("report.json");
+    std::fs::write(&path, r#"{"version":1,"nested":{"answer":42},"tail":true}"#)
+        .expect("JSON fixture");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    let operation = JsonOperation::Query {
+        path: "report.json".into(),
+        selector: None,
+        projection: JsonProjection::Keys,
+    };
+    let first = services
+        .json(JsonRequest {
+            operation: operation.clone(),
+            max_tokens: Some(1_000),
+            max_items: Some(1),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("first page");
+    let cursor = first.meta.next_cursor.expect("continuation cursor");
+
+    let mismatched_query = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "report.json".into(),
+                selector: Some(JsonSelector::Pointer {
+                    pointer: "/nested".into(),
+                }),
+                projection: JsonProjection::Keys,
+            },
+            max_tokens: Some(1_000),
+            max_items: Some(1),
+            array_sample_size: None,
+            cursor: Some(cursor.clone()),
+        })
+        .await
+        .expect_err("cursor query binding");
+    assert!(matches!(mismatched_query, Error::StaleCursor));
+
+    let unsupported_projection = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "report.json".into(),
+                selector: None,
+                projection: JsonProjection::Schema,
+            },
+            max_tokens: Some(1_000),
+            max_items: Some(1),
+            array_sample_size: None,
+            cursor: Some(cursor.clone()),
+        })
+        .await
+        .expect_err("cursor projection boundary");
+    assert!(matches!(
+        unsupported_projection,
+        Error::InvalidInput {
+            field: "cursor",
+            ..
+        }
+    ));
+
+    std::fs::write(
+        &path,
+        r#"{"version":2,"nested":{"answer":42},"tail":true}"#,
+    )
+    .expect("mutated JSON fixture");
+    let stale_source = services
+        .json(JsonRequest {
+            operation: operation.clone(),
+            max_tokens: Some(1_000),
+            max_items: Some(1),
+            array_sample_size: None,
+            cursor: Some(cursor),
+        })
+        .await
+        .expect_err("cursor source binding");
+    assert!(matches!(stale_source, Error::StaleCursor));
+
+    let incomplete_schema = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "report.json".into(),
+                selector: None,
+                projection: JsonProjection::Schema,
+            },
+            max_tokens: Some(1_000),
+            max_items: Some(2),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("bounded schema");
+    assert!(!incomplete_schema.result_complete);
+    assert_eq!(incomplete_schema.returned_items, Some(2));
+    assert!(
+        incomplete_schema.total_items.expect("total") > incomplete_schema.returned_items.unwrap()
+    );
+    assert_eq!(
+        incomplete_schema.remaining_items,
+        Some(
+            incomplete_schema.total_items.unwrap()
+                - incomplete_schema.returned_items.unwrap()
+        )
+    );
+    assert_eq!(
+        incomplete_schema.incomplete_reason,
+        Some(JsonIncompleteReason::MaxItems)
+    );
+    assert!(incomplete_schema.meta.next_cursor.is_none());
+
+    let typed_selector = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "report.json".into(),
+                selector: Some(JsonSelector::Jmespath {
+                    expression: "length(version)".into(),
+                }),
+                projection: JsonProjection::Value,
+            },
+            max_tokens: Some(100),
+            max_items: Some(100),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect_err("typed JMESPath error");
+    assert!(matches!(
+        &typed_selector,
+        Error::InvalidJsonSelector {
+            stage: "evaluate",
+            offset: 6,
+            line: 1,
+            column: 7,
+            reason,
+            ..
+        } if reason.contains("expects type") && reason.contains("given number")
+    ), "{typed_selector:?}");
+
+    let invalid_expression = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "report.json".into(),
+                selector: Some(JsonSelector::Jmespath {
+                    expression: "length(".into(),
+                }),
+                projection: JsonProjection::Value,
+            },
+            max_tokens: Some(100),
+            max_items: Some(100),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect_err("JMESPath compile error");
+    assert!(matches!(
+        invalid_expression,
+        Error::InvalidJsonSelector {
+            stage: "compile",
+            line: 1,
+            ..
+        }
+    ));
+
+    std::fs::write(&path, r#"{"outer":[1,]}"#).expect("invalid JSON fixture");
+    let syntax = services
+        .json(JsonRequest {
+            operation,
+            max_tokens: Some(100),
+            max_items: Some(100),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect_err("JSON syntax error");
+    assert!(matches!(
+        syntax,
+        Error::InvalidJson {
+            syntax_category: "syntax",
+            byte_offset: 12,
+            line: 1,
+            column: 13,
+            ..
+        }
+    ));
 }
 
 #[tokio::test]
@@ -7324,6 +7817,7 @@ async fn working_tree_diff_boosts_changed_files() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         })
         .await
         .unwrap();
@@ -7375,6 +7869,7 @@ async fn tokenizer_configuration_is_scoped_to_each_service() {
     base_revision: None,
     changed_paths: Vec::new(),
     strict_changed_paths: false,
+    verbose_diagnostics: false,
     };
 
     let (exact_response, estimate_response) =
@@ -7423,6 +7918,7 @@ async fn context_declaration_excerpt_retains_long_body_across_chunks() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         })
         .await
         .expect("context");
@@ -7474,6 +7970,7 @@ async fn context_text_hits_use_bounded_declaration_excerpts() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
         })
         .await
         .expect("context");
@@ -7728,6 +8225,7 @@ async fn reconcile_working_tree_consistency_applies_to_each_retrieval_service() 
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
+            verbose_diagnostics: false,
             },
             IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
@@ -7739,6 +8237,21 @@ async fn reconcile_working_tree_consistency_applies_to_each_retrieval_service() 
             .fragments
             .iter()
             .any(|fragment| fragment.path == "context_package.rs")
+    );
+    let report = services
+        .token_savings_report()
+        .await
+        .expect("consistent response accounting");
+    let context_accounting = report
+        .response_accounting
+        .by_operation
+        .iter()
+        .find(|row| row.operation == TokenAccountingOperation::Context)
+        .expect("context accounting");
+    assert_eq!(context_accounting.tracked_requests, 1);
+    assert_eq!(
+        context_accounting.total_response_tokens,
+        context.meta.total_response_tokens as u64
     );
 }
 
@@ -7915,6 +8428,7 @@ async fn diff_scoped_context_with_explicit_changed_paths_reports_receipt() {
             base_revision: None,
             changed_paths: vec!["src/lib.rs".into()],
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         })
         .await
         .expect("diff-scoped context");
@@ -8140,6 +8654,7 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
                 base_revision: Some(base_revision),
                 changed_paths: Vec::new(),
                 strict_changed_paths: true,
+                verbose_diagnostics: false,
             },
             HandoffManifestRequest::default(),
             ContextWorkflow::Review,
@@ -8506,6 +9021,7 @@ async fn diff_scoped_context_preserves_task_only_behavior_without_scope() {
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         })
         .await
         .expect("task-only context");
@@ -8541,6 +9057,7 @@ async fn diff_scoped_context_rejects_path_outside_repository() {
             base_revision: None,
             changed_paths: vec!["../escape.rs".into()],
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         })
         .await
         .expect_err("path traversal rejected");
@@ -8576,6 +9093,7 @@ async fn diff_scoped_context_rejects_excessive_changed_path_count() {
             base_revision: None,
             changed_paths: too_many,
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         })
         .await
         .expect_err("too many changed paths rejected");
@@ -8607,6 +9125,7 @@ async fn diff_scoped_context_counts_zero_for_nonexistent_changed_path() {
             base_revision: None,
             changed_paths: vec!["src/nonexistent.rs".into()],
             strict_changed_paths: false,
+            verbose_diagnostics: false,
         })
         .await
         .expect("context with unindexed changed path");

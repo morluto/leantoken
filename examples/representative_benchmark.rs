@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::error::Error;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -7,7 +7,10 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
-use leantoken::{Config, ContextRequest, ContextResponse, services::Services, tokens};
+use leantoken::{
+    Config, ContextCandidateEvaluation, ContextFragment, ContextRequest, ContextResponse,
+    services::Services, tokens,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Parser)]
@@ -19,6 +22,12 @@ struct Args {
     repos_root: PathBuf,
     #[arg(long, default_value = "target/representative_benchmark_report.json")]
     output: PathBuf,
+    /// Optional task-concept labels bound to this manifest and its line anchors.
+    #[arg(long)]
+    concept_labels: Option<PathBuf>,
+    /// Exit nonzero after writing the report when frozen concept thresholds fail.
+    #[arg(long, requires = "concept_labels")]
+    require_concept_thresholds: bool,
     /// Validate the manifest, candidate runtime tree, and pinned checkouts without evaluating.
     #[arg(long)]
     preflight_only: bool,
@@ -91,6 +100,58 @@ struct RelevantFile {
     line_anchors: Vec<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ConceptLabelManifest {
+    schema_version: u32,
+    source_manifest: String,
+    source_manifest_blake3: String,
+    dataset_kind: String,
+    frozen_at: String,
+    methodology: String,
+    thresholds: ConceptThresholds,
+    tasks: Vec<ConceptTaskLabels>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+struct ConceptThresholds {
+    minimum_candidate_concept_recall: f64,
+    minimum_selected_concept_recall: f64,
+    minimum_selection_retention: f64,
+    minimum_task_selected_concept_recall: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConceptTaskLabels {
+    id: String,
+    concepts: Vec<ConceptLabel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConceptLabel {
+    id: String,
+    description: String,
+    evidence: Vec<ConceptEvidence>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConceptEvidence {
+    path: String,
+    line_anchors: Vec<usize>,
+}
+
+#[derive(Debug)]
+struct LoadedConceptLabels {
+    schema_version: u32,
+    blake3: String,
+    source_manifest: String,
+    source_manifest_blake3: String,
+    dataset_kind: String,
+    frozen_at: String,
+    methodology: String,
+    thresholds: ConceptThresholds,
+    tasks: BTreeMap<String, ConceptTaskLabels>,
+}
+
 #[derive(Debug, Serialize)]
 struct Report {
     schema_version: u32,
@@ -114,6 +175,8 @@ struct Report {
     tokenizer: &'static str,
     token_count_exact: bool,
     methodology: Methodology,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    concept_coverage: Option<ConceptCoverageDecision>,
     aggregate: AggregateReport,
     corpora: Vec<CorpusReport>,
     limitations: Vec<&'static str>,
@@ -157,6 +220,12 @@ struct AggregateReport {
     repeat_request_json_tokens: usize,
     repeat_total_json_tokens: usize,
     two_turn_context_json_tokens: usize,
+    concepts: usize,
+    candidate_concepts_found: usize,
+    candidate_concept_recall: Option<f64>,
+    selected_concepts_found: usize,
+    selected_concept_recall: Option<f64>,
+    concept_selection_retention: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -224,6 +293,49 @@ struct TaskReport {
     known_hash_omission_visible: bool,
     dead_end_fragments: usize,
     dead_end_source_tokens: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    concept_coverage: Option<TaskConceptCoverage>,
+}
+
+#[derive(Debug, Serialize)]
+struct ConceptCoverageDecision {
+    labels_schema_version: u32,
+    labels_blake3: String,
+    source_manifest: String,
+    source_manifest_blake3: String,
+    dataset_kind: String,
+    frozen_at: String,
+    methodology: String,
+    thresholds: ConceptThresholds,
+    passed: bool,
+    failures: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct TaskConceptCoverage {
+    concepts: usize,
+    candidate_concepts_found: usize,
+    candidate_concept_recall: f64,
+    selected_concepts_found: usize,
+    selected_concept_recall: f64,
+    selection_retention: Option<f64>,
+    evidence: Vec<ConceptEvidenceCoverage>,
+}
+
+#[derive(Debug, Serialize)]
+struct ConceptEvidenceCoverage {
+    id: String,
+    description: String,
+    candidate_covered: bool,
+    selected_covered: bool,
+    candidate_anchors_found: Vec<MatchedAnchor>,
+    selected_anchors_found: Vec<MatchedAnchor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+struct MatchedAnchor {
+    path: String,
+    line: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -290,6 +402,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .into());
     }
     validate_manifest(&manifest)?;
+    let mut concept_labels = args
+        .concept_labels
+        .as_deref()
+        .map(|path| load_concept_labels(path, &args.manifest, &manifest, &manifest_blake3))
+        .transpose()?;
     if args.consumed_diagnostic && manifest.dataset_kind != "blind_holdout" {
         return Err("--consumed-diagnostic requires a blind_holdout manifest".into());
     }
@@ -321,6 +438,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 "harness_worktree_dirty": harness_worktree_dirty,
                 "candidate_runtime_tree_verified": candidate_runtime_tree_verified,
                 "diagnostic_only": args.consumed_diagnostic,
+                "concept_labels_blake3": concept_labels.as_ref().map(|labels| &labels.blake3),
+                "concept_count": concept_labels.as_ref().map(|labels| {
+                    labels.tasks.values().map(|task| task.concepts.len()).sum::<usize>()
+                }),
                 "corpus_count": manifest.corpora.len(),
                 "task_count": manifest.corpora.iter().map(|corpus| corpus.tasks.len()).sum::<usize>(),
                 "status": "ready"
@@ -345,7 +466,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let status = services.status().await?;
         let mut tasks = Vec::new();
         for task in corpus.tasks {
-            let report = run_task(&root, &services, task, manifest.rg_max_lines_per_query).await?;
+            let labels = concept_labels
+                .as_mut()
+                .and_then(|loaded| loaded.tasks.remove(&task.id));
+            let report = run_task(
+                &root,
+                &services,
+                task,
+                manifest.rg_max_lines_per_query,
+                labels.as_ref(),
+            )
+            .await?;
             accumulate(&mut aggregate, &report);
             tasks.push(report);
         }
@@ -380,6 +511,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         ratio(aggregate.relevant_files_found, aggregate.returned_files);
     aggregate.line_anchor_recall =
         optional_ratio(aggregate.line_anchors_found, aggregate.line_anchors);
+    aggregate.candidate_concept_recall =
+        optional_ratio(aggregate.candidate_concepts_found, aggregate.concepts);
+    aggregate.selected_concept_recall =
+        optional_ratio(aggregate.selected_concepts_found, aggregate.concepts);
+    aggregate.concept_selection_retention = optional_ratio(
+        aggregate.selected_concepts_found,
+        aggregate.candidate_concepts_found,
+    );
     aggregate.source_savings_against_oracle_fraction = savings(
         aggregate.oracle_source_tokens,
         aggregate.leantoken_source_tokens,
@@ -388,6 +527,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
         aggregate.scripted_baseline_total_json_tokens,
         aggregate.leantoken_total_json_tokens,
     );
+    if let Some(labels) = &concept_labels
+        && !labels.tasks.is_empty()
+    {
+        return Err(format!(
+            "concept labels contain tasks absent from the source manifest: {}",
+            labels.tasks.keys().cloned().collect::<Vec<_>>().join(", ")
+        )
+        .into());
+    }
+    let concept_coverage = concept_labels
+        .as_ref()
+        .map(|labels| concept_coverage_decision(labels, &aggregate, &corpora));
+    let concept_thresholds_passed = concept_coverage
+        .as_ref()
+        .is_none_or(|coverage| coverage.passed);
 
     let report = Report {
         schema_version: manifest.schema_version,
@@ -417,9 +571,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             source_tokens: "Tokens in source content only; excludes paths, scores, reasons, receipts, and JSON syntax.",
             serialized_tokens: "Tokens in the complete serialized JSON payload, including metadata and syntax.",
         },
+        concept_coverage,
         aggregate,
         corpora,
-        limitations: benchmark_limitations(&manifest.dataset_kind, args.consumed_diagnostic),
+        limitations: benchmark_limitations(
+            &manifest.dataset_kind,
+            args.consumed_diagnostic,
+            args.concept_labels.is_some(),
+        ),
     };
     let json = serde_json::to_string_pretty(&report)?;
     if let Some(parent) = args
@@ -431,6 +590,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     fs::write(&args.output, &json)?;
     println!("{json}");
+    if args.require_concept_thresholds && !concept_thresholds_passed {
+        return Err("frozen context concept-coverage thresholds failed".into());
+    }
     Ok(())
 }
 
@@ -609,7 +771,317 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn benchmark_limitations(dataset_kind: &str, consumed_diagnostic: bool) -> Vec<&'static str> {
+fn load_concept_labels(
+    path: &Path,
+    source_manifest_path: &Path,
+    manifest: &Manifest,
+    manifest_blake3: &str,
+) -> Result<LoadedConceptLabels, Box<dyn Error>> {
+    let json = fs::read_to_string(path)?;
+    let blake3 = blake3::hash(json.as_bytes()).to_hex().to_string();
+    let labels: ConceptLabelManifest = serde_json::from_str(&json)?;
+    if labels.schema_version != 1 {
+        return Err(format!(
+            "unsupported concept-label schema version {}",
+            labels.schema_version
+        )
+        .into());
+    }
+    if labels.source_manifest.trim().is_empty()
+        || labels
+            .source_manifest
+            .rsplit('/')
+            .next()
+            .is_none_or(|name| {
+                Some(name) != source_manifest_path.file_name().and_then(|v| v.to_str())
+            })
+    {
+        return Err("concept labels name a different source manifest".into());
+    }
+    if labels.source_manifest_blake3 != manifest_blake3 {
+        return Err("concept labels do not match the source manifest BLAKE3".into());
+    }
+    if labels.dataset_kind != manifest.dataset_kind {
+        return Err("concept labels do not match the source dataset kind".into());
+    }
+    if labels.frozen_at.trim().is_empty() || labels.methodology.trim().is_empty() {
+        return Err("concept labels require frozen_at and methodology".into());
+    }
+    for (name, value) in [
+        (
+            "minimum_candidate_concept_recall",
+            labels.thresholds.minimum_candidate_concept_recall,
+        ),
+        (
+            "minimum_selected_concept_recall",
+            labels.thresholds.minimum_selected_concept_recall,
+        ),
+        (
+            "minimum_selection_retention",
+            labels.thresholds.minimum_selection_retention,
+        ),
+        (
+            "minimum_task_selected_concept_recall",
+            labels.thresholds.minimum_task_selected_concept_recall,
+        ),
+    ] {
+        if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+            return Err(format!("concept threshold {name} must be between zero and one").into());
+        }
+    }
+
+    let mut source_tasks = BTreeMap::new();
+    for task in manifest.corpora.iter().flat_map(|corpus| &corpus.tasks) {
+        if source_tasks.insert(task.id.as_str(), task).is_some() {
+            return Err(format!("source manifest repeats task id {}", task.id).into());
+        }
+    }
+    let mut tasks = BTreeMap::new();
+    for task_labels in labels.tasks {
+        let Some(source_task) = source_tasks.get(task_labels.id.as_str()) else {
+            return Err(format!("concept labels contain unknown task {}", task_labels.id).into());
+        };
+        if task_labels.concepts.is_empty() {
+            return Err(format!("concept task {} has no concepts", task_labels.id).into());
+        }
+
+        let source_anchors = source_task
+            .relevant_files
+            .iter()
+            .flat_map(|file| {
+                file.line_anchors
+                    .iter()
+                    .map(|line| (file.path.clone(), *line))
+            })
+            .collect::<BTreeSet<_>>();
+        if source_anchors.is_empty() {
+            return Err(format!(
+                "concept task {} requires source line-anchor labels",
+                task_labels.id
+            )
+            .into());
+        }
+        let mut concept_ids = BTreeSet::new();
+        let mut labeled_anchors = BTreeSet::new();
+        for concept in &task_labels.concepts {
+            if concept.id.trim().is_empty()
+                || concept.description.trim().is_empty()
+                || concept.evidence.is_empty()
+            {
+                return Err(format!(
+                    "concepts for task {} require an id, description, and evidence",
+                    task_labels.id
+                )
+                .into());
+            }
+            if !concept_ids.insert(concept.id.as_str()) {
+                return Err(
+                    format!("task {} repeats concept id {}", task_labels.id, concept.id).into(),
+                );
+            }
+            for evidence in &concept.evidence {
+                validate_benchmark_path(&evidence.path)?;
+                if evidence.line_anchors.is_empty() {
+                    return Err(format!(
+                        "concept {} in task {} has no line anchors",
+                        concept.id, task_labels.id
+                    )
+                    .into());
+                }
+                for &line in &evidence.line_anchors {
+                    let anchor = (evidence.path.clone(), line);
+                    if line == 0 || !source_anchors.contains(&anchor) {
+                        return Err(format!(
+                            "concept {} in task {} uses an anchor absent from the source manifest",
+                            concept.id, task_labels.id
+                        )
+                        .into());
+                    }
+                    if !labeled_anchors.insert(anchor) {
+                        return Err(format!(
+                            "task {} assigns one source anchor to multiple concepts",
+                            task_labels.id
+                        )
+                        .into());
+                    }
+                }
+            }
+        }
+        if labeled_anchors != source_anchors {
+            return Err(format!(
+                "task {} concept labels must partition every source-manifest anchor exactly once",
+                task_labels.id
+            )
+            .into());
+        }
+        let task_id = task_labels.id.clone();
+        if tasks.insert(task_id.clone(), task_labels).is_some() {
+            return Err(format!("concept labels repeat task {task_id}").into());
+        }
+    }
+    if tasks.len() != source_tasks.len()
+        || source_tasks
+            .keys()
+            .any(|task_id| !tasks.contains_key(*task_id))
+    {
+        return Err("concept labels must cover every source-manifest task exactly once".into());
+    }
+
+    Ok(LoadedConceptLabels {
+        schema_version: labels.schema_version,
+        blake3,
+        source_manifest: labels.source_manifest,
+        source_manifest_blake3: labels.source_manifest_blake3,
+        dataset_kind: labels.dataset_kind,
+        frozen_at: labels.frozen_at,
+        methodology: labels.methodology,
+        thresholds: labels.thresholds,
+        tasks,
+    })
+}
+
+fn evaluate_concept_coverage(
+    labels: &ConceptTaskLabels,
+    candidates: &[ContextCandidateEvaluation],
+    selected: &[ContextFragment],
+) -> Result<TaskConceptCoverage, Box<dyn Error>> {
+    let mut evidence = Vec::with_capacity(labels.concepts.len());
+    for concept in &labels.concepts {
+        let anchors = concept
+            .evidence
+            .iter()
+            .flat_map(|item| {
+                item.line_anchors.iter().map(|line| MatchedAnchor {
+                    path: item.path.clone(),
+                    line: *line,
+                })
+            })
+            .collect::<BTreeSet<_>>();
+        let candidate_anchors_found = anchors
+            .iter()
+            .filter(|anchor| {
+                candidates.iter().any(|candidate| {
+                    candidate.path == anchor.path
+                        && candidate.start_line <= anchor.line
+                        && candidate.end_line >= anchor.line
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let selected_anchors_found = anchors
+            .iter()
+            .filter(|anchor| {
+                selected.iter().any(|fragment| {
+                    fragment.path == anchor.path
+                        && fragment.start_line <= anchor.line
+                        && fragment.end_line >= anchor.line
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let candidate_covered = !candidate_anchors_found.is_empty();
+        let selected_covered = !selected_anchors_found.is_empty();
+        if selected_covered && !candidate_covered {
+            return Err(format!(
+                "selected concept {} for task {} was absent from candidate diagnostics",
+                concept.id, labels.id
+            )
+            .into());
+        }
+        evidence.push(ConceptEvidenceCoverage {
+            id: concept.id.clone(),
+            description: concept.description.clone(),
+            candidate_covered,
+            selected_covered,
+            candidate_anchors_found,
+            selected_anchors_found,
+        });
+    }
+    evidence.sort_by(|left, right| left.id.cmp(&right.id));
+    let candidate_concepts_found = evidence
+        .iter()
+        .filter(|concept| concept.candidate_covered)
+        .count();
+    let selected_concepts_found = evidence
+        .iter()
+        .filter(|concept| concept.selected_covered)
+        .count();
+    let concepts = evidence.len();
+    Ok(TaskConceptCoverage {
+        concepts,
+        candidate_concepts_found,
+        candidate_concept_recall: ratio(candidate_concepts_found, concepts),
+        selected_concepts_found,
+        selected_concept_recall: ratio(selected_concepts_found, concepts),
+        selection_retention: optional_ratio(selected_concepts_found, candidate_concepts_found),
+        evidence,
+    })
+}
+
+fn concept_coverage_decision(
+    labels: &LoadedConceptLabels,
+    aggregate: &AggregateReport,
+    corpora: &[CorpusReport],
+) -> ConceptCoverageDecision {
+    let mut failures = Vec::new();
+    let candidate_recall = aggregate.candidate_concept_recall.unwrap_or(0.0);
+    let selected_recall = aggregate.selected_concept_recall.unwrap_or(0.0);
+    let selection_retention = aggregate.concept_selection_retention.unwrap_or(0.0);
+    for (name, actual, minimum) in [
+        (
+            "candidate concept recall",
+            candidate_recall,
+            labels.thresholds.minimum_candidate_concept_recall,
+        ),
+        (
+            "selected concept recall",
+            selected_recall,
+            labels.thresholds.minimum_selected_concept_recall,
+        ),
+        (
+            "concept selection retention",
+            selection_retention,
+            labels.thresholds.minimum_selection_retention,
+        ),
+    ] {
+        if actual < minimum {
+            failures.push(format!("{name} {actual:.4} is below minimum {minimum:.4}"));
+        }
+    }
+    for task in corpora.iter().flat_map(|corpus| &corpus.tasks) {
+        let Some(coverage) = &task.concept_coverage else {
+            failures.push(format!("task {} has no concept coverage", task.id));
+            continue;
+        };
+        if coverage.selected_concept_recall < labels.thresholds.minimum_task_selected_concept_recall
+        {
+            failures.push(format!(
+                "task {} selected concept recall {:.4} is below minimum {:.4}",
+                task.id,
+                coverage.selected_concept_recall,
+                labels.thresholds.minimum_task_selected_concept_recall
+            ));
+        }
+    }
+    ConceptCoverageDecision {
+        labels_schema_version: labels.schema_version,
+        labels_blake3: labels.blake3.clone(),
+        source_manifest: labels.source_manifest.clone(),
+        source_manifest_blake3: labels.source_manifest_blake3.clone(),
+        dataset_kind: labels.dataset_kind.clone(),
+        frozen_at: labels.frozen_at.clone(),
+        methodology: labels.methodology.clone(),
+        thresholds: labels.thresholds,
+        passed: failures.is_empty(),
+        failures,
+    }
+}
+
+fn benchmark_limitations(
+    dataset_kind: &str,
+    consumed_diagnostic: bool,
+    concept_labels: bool,
+) -> Vec<&'static str> {
     let mut limitations = vec![
         "The oracle baseline assumes perfect file selection and reads whole files rather than exact decisive ranges.",
         "The scripted ripgrep baseline uses fixed queries supplied by the manifest and is not an autonomous agent trajectory.",
@@ -653,6 +1125,14 @@ fn benchmark_limitations(dataset_kind: &str, consumed_diagnostic: bool) -> Vec<&
             "Eight development tasks are retrieval smoke evidence, not a statistically powered product claim.",
         );
     }
+    if concept_labels {
+        limitations.push(
+            "Concept coverage credits a frozen concept when one labeled anchor is present; it does not prove that the complete implementation, test, or explanation was retrieved.",
+        );
+        limitations.push(
+            "The concept overlay partitions labels from a consumed development set. Its thresholds are regression floors, not promotion or generalization evidence.",
+        );
+    }
     limitations
 }
 
@@ -665,6 +1145,7 @@ async fn run_task(
     services: &Services,
     task: TaskSpec,
     rg_max_lines_per_query: usize,
+    concept_labels: Option<&ConceptTaskLabels>,
 ) -> Result<TaskReport, Box<dyn Error>> {
     let relevant_paths = task
         .relevant_files
@@ -718,9 +1199,19 @@ async fn run_task(
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
     };
     let started = Instant::now();
     let evaluation = services.context_evaluation(request.clone()).await?;
+    let concept_coverage = concept_labels
+        .map(|labels| {
+            evaluate_concept_coverage(
+                labels,
+                &evaluation.generated_candidates,
+                &evaluation.response.fragments,
+            )
+        })
+        .transpose()?;
     let response = evaluation.response;
     let first_context_ms = elapsed_ms(started);
     verify_token_accounting(&response)?;
@@ -925,6 +1416,7 @@ async fn run_task(
         known_hash_omission_visible,
         dead_end_fragments,
         dead_end_source_tokens,
+        concept_coverage,
     })
 }
 
@@ -1347,6 +1839,11 @@ fn accumulate(aggregate: &mut AggregateReport, task: &TaskReport) {
     aggregate.repeat_request_json_tokens += task.repeat_request_json_tokens;
     aggregate.repeat_total_json_tokens += task.repeat_total_json_tokens;
     aggregate.two_turn_context_json_tokens += task.two_turn_context_json_tokens;
+    if let Some(coverage) = &task.concept_coverage {
+        aggregate.concepts += coverage.concepts;
+        aggregate.candidate_concepts_found += coverage.candidate_concepts_found;
+        aggregate.selected_concepts_found += coverage.selected_concepts_found;
+    }
 }
 
 #[cfg(test)]
@@ -1425,6 +1922,61 @@ mod tests {
                 receipt_near_duplicates: 0,
                 next_cursor: None,
             },
+        }
+    }
+
+    fn candidate(path: &str, start_line: usize, end_line: usize) -> ContextCandidateEvaluation {
+        ContextCandidateEvaluation {
+            path: path.into(),
+            start_line,
+            end_line,
+            representation: "source".into(),
+            match_kinds: vec!["text".into()],
+            concepts: vec!["query".into()],
+            concept_weight: 1.0,
+            score: 1.0,
+            token_count: 10,
+        }
+    }
+
+    fn fragment(path: &str, start_line: usize, end_line: usize) -> ContextFragment {
+        ContextFragment {
+            path: path.into(),
+            start_line,
+            end_line,
+            target_start_line: Some(start_line),
+            target_end_line: Some(end_line),
+            truncated: false,
+            representation: "source".into(),
+            content: "evidence".into(),
+            content_hash: "hash".into(),
+            score: 1.0,
+            reason: "text".into(),
+            token_count: 10,
+        }
+    }
+
+    fn concept_task_labels() -> ConceptTaskLabels {
+        ConceptTaskLabels {
+            id: "task".into(),
+            concepts: vec![
+                ConceptLabel {
+                    id: "implementation".into(),
+                    description: "implementation evidence".into(),
+                    evidence: vec![ConceptEvidence {
+                        path: "src/lib.rs".into(),
+                        line_anchors: vec![10],
+                    }],
+                },
+                ConceptLabel {
+                    id: "regression".into(),
+                    description: "regression evidence".into(),
+                    evidence: vec![ConceptEvidence {
+                        path: "tests/lib.rs".into(),
+                        line_anchors: vec![20],
+                    }],
+                },
+            ],
         }
     }
 
@@ -1537,6 +2089,113 @@ mod tests {
         assert_ne!(
             deterministic_context_json(&first).expect("serialize first response"),
             deterministic_context_json(&second).expect("serialize changed response")
+        );
+    }
+
+    #[test]
+    fn context_concept_labels_bind_and_partition_the_validation_manifest() {
+        let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("benchmarks/validation.json");
+        let source_json = fs::read_to_string(&source_path).expect("read source manifest");
+        let source: Manifest = serde_json::from_str(&source_json).expect("parse source manifest");
+        let labels = load_concept_labels(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("benchmarks/context_concept_coverage.json"),
+            &source_path,
+            &source,
+            &blake3::hash(source_json.as_bytes()).to_hex().to_string(),
+        )
+        .expect("load concept labels");
+
+        assert_eq!(labels.tasks.len(), 4);
+        assert_eq!(
+            labels
+                .tasks
+                .values()
+                .map(|task| task.concepts.len())
+                .sum::<usize>(),
+            12
+        );
+    }
+
+    #[test]
+    fn context_concept_labels_reject_an_incomplete_anchor_partition() {
+        let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("benchmarks/validation.json");
+        let source_json = fs::read_to_string(&source_path).expect("read source manifest");
+        let source: Manifest = serde_json::from_str(&source_json).expect("parse source manifest");
+        let mut labels: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("benchmarks/context_concept_coverage.json"),
+            )
+            .expect("read labels"),
+        )
+        .expect("parse labels");
+        labels["tasks"][0]["concepts"][0]["evidence"][0]["line_anchors"]
+            .as_array_mut()
+            .expect("anchor array")
+            .pop();
+        let temporary = tempfile::NamedTempFile::new().expect("temporary labels");
+        fs::write(
+            temporary.path(),
+            serde_json::to_vec(&labels).expect("serialize labels"),
+        )
+        .expect("write labels");
+
+        assert!(
+            load_concept_labels(
+                temporary.path(),
+                &source_path,
+                &source,
+                &blake3::hash(source_json.as_bytes()).to_hex().to_string(),
+            )
+            .expect_err("reject incomplete partition")
+            .to_string()
+            .contains("partition every source-manifest anchor")
+        );
+    }
+
+    #[test]
+    fn concept_coverage_distinguishes_generation_from_selection() {
+        let coverage = evaluate_concept_coverage(
+            &concept_task_labels(),
+            &[
+                candidate("src/lib.rs", 8, 12),
+                candidate("tests/lib.rs", 18, 22),
+            ],
+            &[fragment("src/lib.rs", 8, 12)],
+        )
+        .expect("evaluate coverage");
+
+        assert_eq!(coverage.concepts, 2);
+        assert_eq!(coverage.candidate_concepts_found, 2);
+        assert_eq!(coverage.selected_concepts_found, 1);
+        assert_eq!(coverage.candidate_concept_recall, 1.0);
+        assert_eq!(coverage.selected_concept_recall, 0.5);
+        assert_eq!(coverage.selection_retention, Some(0.5));
+        assert_eq!(
+            coverage
+                .evidence
+                .iter()
+                .find(|concept| concept.id == "regression")
+                .expect("regression concept")
+                .candidate_anchors_found,
+            vec![MatchedAnchor {
+                path: "tests/lib.rs".into(),
+                line: 20
+            }]
+        );
+    }
+
+    #[test]
+    fn concept_coverage_rejects_selected_evidence_missing_from_diagnostics() {
+        assert!(
+            evaluate_concept_coverage(
+                &concept_task_labels(),
+                &[candidate("tests/lib.rs", 18, 22)],
+                &[fragment("src/lib.rs", 8, 12)],
+            )
+            .expect_err("selected evidence must have a candidate")
+            .to_string()
+            .contains("absent from candidate diagnostics")
         );
     }
 }

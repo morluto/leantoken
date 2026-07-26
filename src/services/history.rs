@@ -9,6 +9,7 @@ use super::validation::{MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, vali
 use super::{Services, validate_positive_request_limit};
 use crate::model::{
     HistoricalSymbol, HistoryOperation, HistoryRequest, HistoryResponse, SymbolHistoryCommit,
+    TokenAccountingOperation,
 };
 use crate::repository::{
     GitBlob, git_blob_at_revision, git_diff_identity, git_line_history, normalize_relative,
@@ -292,6 +293,7 @@ impl Services {
             }
         };
         self.finalize_response(&mut response)?;
+        self.record_token_savings(TokenAccountingOperation::History, None, &response.meta);
         Ok(response)
     }
 

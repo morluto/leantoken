@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::sync::{
     Arc,
@@ -14,7 +15,7 @@ use crate::coordination::{CacheLease, IndexCoordination, IndexLeadership};
 use crate::error::RetryableOperation;
 use crate::indexer::Indexer;
 use crate::model::*;
-use crate::storage::{ReadSession, Storage, StorageCounts};
+use crate::storage::{ReadSession, Storage, StorageCounts, TokenSavingsRecord};
 use crate::tokens::response_token_accounting;
 use crate::{Config, Error, Result};
 
@@ -38,9 +39,21 @@ const STARTUP_BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 const STARTUP_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(25);
 const STARTUP_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const INITIAL_INDEX_IDLE_GRACE: Duration = Duration::from_secs(1);
+const INITIAL_INDEX_PROBE_INTERVAL: Duration = Duration::from_millis(100);
 pub(crate) const MAX_EXPECTED_REPOSITORY_ID_BYTES: usize = 128;
 const TOKEN_SAVINGS_ESTIMATE_BASIS: &str =
     "requested read ranges or whole source files represented in each response";
+const RESPONSE_ACCOUNTING_SCOPE: &str = "successful repository retrieval responses recorded after \
+    full-response accounting was enabled; includes successful retries as separate requests but \
+    excludes pre-response failures, tool discovery, task success, and native-tool costs";
+const RESPONSE_ACCOUNTING_ESTIMATE_BASIS: &str =
+    "represented-source baseline minus complete serialized response tokens";
+
+fn signed_token_difference(baseline: u64, response: u64) -> i64 {
+    let difference = i128::from(baseline) - i128::from(response);
+    difference.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
+}
 
 pub(crate) fn retrieval_primitive_key(
     generation: u64,
@@ -103,6 +116,7 @@ pub struct Services {
     coordination: IndexCoordination,
     _cache_lease: CacheLease,
     active_reconciliations: Arc<AtomicUsize>,
+    reconciliation_changed: Arc<tokio::sync::Notify>,
     receipts: Arc<receipts::ReceiptRegistry>,
     read_deltas: Arc<read_delta::ReadDeltaRegistry>,
     next_receipt_id: Arc<AtomicU64>,
@@ -210,10 +224,12 @@ impl Services {
         let repository_root = indexer.repository_root();
         let coordination = IndexCoordination::for_database(&config.database_path);
         let active_reconciliations = Arc::new(AtomicUsize::new(0));
+        let reconciliation_changed = Arc::new(tokio::sync::Notify::new());
         let reconciliation = reconciliation::ReconciliationCoordinator::new(
             indexer.clone(),
             coordination.clone(),
             Arc::clone(&active_reconciliations),
+            Arc::clone(&reconciliation_changed),
         );
         Ok(Self {
             config,
@@ -223,6 +239,7 @@ impl Services {
             coordination,
             _cache_lease: cache_lease,
             active_reconciliations,
+            reconciliation_changed,
             receipts: Arc::new(receipts::ReceiptRegistry::default()),
             read_deltas: Arc::new(read_delta::ReadDeltaRegistry::default()),
             next_receipt_id: Arc::new(AtomicU64::new(1)),
@@ -288,9 +305,13 @@ impl Services {
     ) -> Result<IndexReport> {
         let this = self.clone();
         let active_reconciliations = Arc::clone(&self.active_reconciliations);
+        let reconciliation_changed = Arc::clone(&self.reconciliation_changed);
         active_reconciliations.fetch_add(1, Ordering::AcqRel);
         tokio::task::spawn_blocking(move || {
-            let _active = ActiveReconciliation(active_reconciliations);
+            let _active = ActiveReconciliation {
+                count: active_reconciliations,
+                changed: reconciliation_changed,
+            };
             let operation = this.coordination.acquire_operation(&cancellation)?;
             let result = this
                 .indexer
@@ -334,9 +355,13 @@ impl Services {
     ) -> Result<IndexReport> {
         let this = self.clone();
         let active_reconciliations = Arc::clone(&self.active_reconciliations);
+        let reconciliation_changed = Arc::clone(&self.reconciliation_changed);
         active_reconciliations.fetch_add(1, Ordering::AcqRel);
         tokio::task::spawn_blocking(move || {
-            let _active = ActiveReconciliation(active_reconciliations);
+            let _active = ActiveReconciliation {
+                count: active_reconciliations,
+                changed: reconciliation_changed,
+            };
             let operation = this.coordination.acquire_operation(&cancellation)?;
             let result = this
                 .indexer
@@ -345,6 +370,70 @@ impl Services {
             result
         })
         .await?
+    }
+
+    /// Wait until the first committed generation is no longer being published.
+    pub(crate) async fn wait_for_initial_index_cancellable(
+        &self,
+        cancellation: CancellationToken,
+    ) -> Result<()> {
+        let mut idle_deadline = None;
+        loop {
+            validation::check_cancelled(&cancellation)?;
+
+            let changed = self.reconciliation_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.active_reconciliations.load(Ordering::Acquire) > 0 {
+                idle_deadline = None;
+                tokio::select! {
+                    _ = cancellation.cancelled() => return Err(Error::Cancelled),
+                    _ = &mut changed => {}
+                }
+                continue;
+            }
+
+            let this = self.clone();
+            let probe = tokio::task::spawn_blocking(move || {
+                let Some(operation) = this.coordination.try_acquire_operation()? else {
+                    return Ok(None);
+                };
+                let generation = this.storage.repository_generation();
+                operation.release()?;
+                generation.map(Some)
+            });
+            let generation = tokio::select! {
+                _ = cancellation.cancelled() => return Err(Error::Cancelled),
+                _ = &mut changed => {
+                    idle_deadline = None;
+                    continue;
+                },
+                result = probe => result??,
+            };
+            if generation.is_some_and(|generation| generation > 0) {
+                return Ok(());
+            }
+            let delay = if generation.is_none() {
+                idle_deadline = None;
+                INITIAL_INDEX_PROBE_INTERVAL
+            } else {
+                let deadline = idle_deadline
+                    .get_or_insert_with(|| tokio::time::Instant::now() + INITIAL_INDEX_IDLE_GRACE);
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(Error::IndexNotReady);
+                }
+                remaining.min(INITIAL_INDEX_PROBE_INTERVAL)
+            };
+
+            tokio::select! {
+                _ = cancellation.cancelled() => return Err(Error::Cancelled),
+                _ = &mut changed => {
+                    idle_deadline = None;
+                },
+                _ = tokio::time::sleep(delay) => {}
+            }
+        }
     }
 
     /// Attempt to own automatic indexing and watching for this cache.
@@ -414,7 +503,96 @@ impl Services {
 
     fn token_savings_sync(&self) -> Result<TokenSavingsResponse> {
         let tokenizer = self.config.tokenizer.name();
-        let mut stored = self.storage.token_savings(tokenizer)?;
+        let stored = self.storage.token_savings(tokenizer)?;
+        Ok(self.source_savings_from_records(&stored))
+    }
+
+    /// Return source-only savings plus complete successful-response accounting.
+    pub async fn token_savings_report(&self) -> Result<TokenSavingsReport> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.token_savings_report_sync()).await?
+    }
+
+    fn token_savings_report_sync(&self) -> Result<TokenSavingsReport> {
+        let tokenizer = self.config.tokenizer.name();
+        let stored = self.storage.token_savings(tokenizer)?;
+        let source_savings = self.source_savings_from_records(&stored);
+        let mut tracked_requests = 0u64;
+        let mut baseline_requests = 0u64;
+        let mut baseline_source_tokens = 0u64;
+        let mut response_source_tokens = 0u64;
+        let mut path_and_metadata_tokens = 0u64;
+        let mut protocol_tokens = 0u64;
+        let mut total_response_tokens = 0u64;
+        let mut receipt_suppressed_exact = 0u64;
+        let mut receipt_suppressed_overlap = 0u64;
+        let by_operation = TokenAccountingOperation::ALL
+            .into_iter()
+            .map(|operation| {
+                let record = stored.get(operation.as_str()).cloned().unwrap_or_default();
+                tracked_requests =
+                    tracked_requests.saturating_add(record.response_tracked_requests);
+                baseline_requests =
+                    baseline_requests.saturating_add(record.response_baseline_requests);
+                baseline_source_tokens =
+                    baseline_source_tokens.saturating_add(record.response_baseline_source_tokens);
+                response_source_tokens =
+                    response_source_tokens.saturating_add(record.response_source_tokens);
+                path_and_metadata_tokens =
+                    path_and_metadata_tokens.saturating_add(record.path_and_metadata_tokens);
+                protocol_tokens = protocol_tokens.saturating_add(record.protocol_tokens);
+                total_response_tokens =
+                    total_response_tokens.saturating_add(record.total_response_tokens);
+                receipt_suppressed_exact =
+                    receipt_suppressed_exact.saturating_add(record.receipt_suppressed_exact);
+                receipt_suppressed_overlap =
+                    receipt_suppressed_overlap.saturating_add(record.receipt_suppressed_overlap);
+                ResponseTokenAccountingByOperation {
+                    operation,
+                    tracked_requests: record.response_tracked_requests,
+                    baseline_requests: record.response_baseline_requests,
+                    baseline_source_tokens: record.response_baseline_source_tokens,
+                    response_source_tokens: record.response_source_tokens,
+                    path_and_metadata_tokens: record.path_and_metadata_tokens,
+                    protocol_tokens: record.protocol_tokens,
+                    total_response_tokens: record.total_response_tokens,
+                    estimated_net_tokens_saved: signed_token_difference(
+                        record.response_baseline_source_tokens,
+                        record.total_response_tokens,
+                    ),
+                    receipt_suppressed_exact: record.receipt_suppressed_exact,
+                    receipt_suppressed_overlap: record.receipt_suppressed_overlap,
+                }
+            })
+            .collect();
+        Ok(TokenSavingsReport {
+            source_savings,
+            response_accounting: ResponseTokenAccounting {
+                accounting_scope: RESPONSE_ACCOUNTING_SCOPE.to_owned(),
+                estimate_basis: RESPONSE_ACCOUNTING_ESTIMATE_BASIS.to_owned(),
+                tracked_requests,
+                baseline_requests,
+                baseline_source_tokens,
+                response_source_tokens,
+                path_and_metadata_tokens,
+                protocol_tokens,
+                total_response_tokens,
+                estimated_net_tokens_saved: signed_token_difference(
+                    baseline_source_tokens,
+                    total_response_tokens,
+                ),
+                receipt_suppressed_exact,
+                receipt_suppressed_overlap,
+                by_operation,
+            },
+        })
+    }
+
+    fn source_savings_from_records(
+        &self,
+        stored: &HashMap<String, TokenSavingsRecord>,
+    ) -> TokenSavingsResponse {
+        let tokenizer = self.config.tokenizer.name();
         let mut tracked_requests = 0u64;
         let mut baseline_source_tokens = 0u64;
         let mut emitted_source_tokens = 0u64;
@@ -422,7 +600,7 @@ impl Services {
         let by_operation = TokenSavingsOperation::ALL
             .into_iter()
             .map(|operation| {
-                let record = stored.remove(operation.as_str()).unwrap_or_default();
+                let record = stored.get(operation.as_str()).cloned().unwrap_or_default();
                 tracked_requests = tracked_requests.saturating_add(record.tracked_requests);
                 baseline_source_tokens =
                     baseline_source_tokens.saturating_add(record.baseline_source_tokens);
@@ -439,7 +617,7 @@ impl Services {
                 }
             })
             .collect();
-        Ok(TokenSavingsResponse {
+        TokenSavingsResponse {
             tokenizer: tokenizer.to_owned(),
             token_count_exact: self.config.tokenizer.is_exact(),
             estimate_basis: TOKEN_SAVINGS_ESTIMATE_BASIS.to_owned(),
@@ -448,7 +626,7 @@ impl Services {
             emitted_source_tokens,
             estimated_source_tokens_saved,
             by_operation,
-        })
+        }
     }
 
     pub(super) fn consistent<T>(
@@ -602,15 +780,15 @@ impl Services {
 
     pub(super) fn record_token_savings(
         &self,
-        operation: TokenSavingsOperation,
-        baseline_source_tokens: usize,
-        emitted_source_tokens: usize,
+        operation: TokenAccountingOperation,
+        baseline_source_tokens: Option<usize>,
+        meta: &ResponseMeta,
     ) {
         match self.storage.record_token_savings(
             self.config.tokenizer.name(),
             operation,
             baseline_source_tokens,
-            emitted_source_tokens,
+            meta,
         ) {
             Ok(true) => {}
             Ok(false) => tracing::debug!(
@@ -728,18 +906,25 @@ fn remove_database_artifacts(database: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-struct ActiveReconciliation(Arc<AtomicUsize>);
+struct ActiveReconciliation {
+    count: Arc<AtomicUsize>,
+    changed: Arc<tokio::sync::Notify>,
+}
 
 impl ActiveReconciliation {
-    fn new(counter: Arc<AtomicUsize>) -> Self {
+    fn new(counter: Arc<AtomicUsize>, changed: Arc<tokio::sync::Notify>) -> Self {
         counter.fetch_add(1, Ordering::AcqRel);
-        Self(counter)
+        Self {
+            count: counter,
+            changed,
+        }
     }
 }
 
 impl Drop for ActiveReconciliation {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
+        self.count.fetch_sub(1, Ordering::AcqRel);
+        self.changed.notify_waiters();
     }
 }
 
@@ -1179,6 +1364,102 @@ mod tests {
         assert_eq!(recovered.waves_started, 2);
         assert_eq!(recovered.waves_completed, 1);
         assert_eq!(recovered.active_waves, 0);
+    }
+
+    #[test]
+    fn signed_token_difference_preserves_cost_and_saturates_public_range() {
+        assert_eq!(signed_token_difference(10, 3), 7);
+        assert_eq!(signed_token_difference(3, 10), -7);
+        assert_eq!(signed_token_difference(u64::MAX, 0), i64::MAX);
+        assert_eq!(signed_token_difference(0, u64::MAX), i64::MIN);
+    }
+
+    #[tokio::test]
+    async fn initial_index_wait_returns_after_publication_lock_releases() {
+        let root = tempfile::tempdir().expect("root");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+        let services = Services::open(config).expect("services");
+        let operation = services
+            .coordination
+            .acquire_operation(&CancellationToken::new())
+            .expect("operation lock");
+        let publisher_services = services.clone();
+        let (published_tx, published_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let publisher = tokio::task::spawn_blocking(move || {
+            publisher_services
+                .storage
+                .full_reconcile("published", Vec::new())
+                .expect("publish generation");
+            published_tx.send(()).expect("announce publication");
+            release_rx.recv().expect("release permission");
+            operation.release().expect("release operation lock");
+        });
+        published_rx.await.expect("publication");
+
+        let waiting_services = services.clone();
+        let waiting = tokio::spawn(async move {
+            waiting_services
+                .wait_for_initial_index_cancellable(CancellationToken::new())
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert!(
+            !waiting.is_finished(),
+            "publication is not settled until the operation lock releases"
+        );
+
+        release_tx.send(()).expect("allow release");
+        publisher.await.expect("join publisher");
+        waiting
+            .await
+            .expect("join initial index wait")
+            .expect("settled generation");
+        let status = services.status().await.expect("status");
+        assert_eq!(status.repository_generation, 1);
+        assert_eq!(status.freshness, Freshness::Current);
+    }
+
+    #[tokio::test]
+    async fn initial_index_wait_honors_cancellation_before_publication() {
+        let root = tempfile::tempdir().expect("root");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+        let services = Services::open(config).expect("services");
+        let cancellation = CancellationToken::new();
+        let waiting_cancellation = cancellation.clone();
+        let waiting = tokio::spawn(async move {
+            services
+                .wait_for_initial_index_cancellable(waiting_cancellation)
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished());
+
+        cancellation.cancel();
+        let error = waiting
+            .await
+            .expect("join initial index wait")
+            .expect_err("generation-zero wait must cancel");
+        assert!(matches!(error, Error::Cancelled));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn initial_index_wait_bounds_generation_zero_without_an_owner() {
+        let root = tempfile::tempdir().expect("root");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+        let services = Services::open(config).expect("services");
+
+        let result = tokio::time::timeout(
+            INITIAL_INDEX_IDLE_GRACE + INITIAL_INDEX_PROBE_INTERVAL,
+            services.wait_for_initial_index_cancellable(CancellationToken::new()),
+        )
+        .await
+        .expect("idle generation-zero wait must be bounded")
+        .expect_err("idle generation zero remains unready");
+        assert!(matches!(result, Error::IndexNotReady));
     }
 
     #[tokio::test]

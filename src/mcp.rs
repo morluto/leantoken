@@ -1,3 +1,4 @@
+use std::time::{Duration, Instant};
 use std::{
     collections::HashMap,
     sync::{
@@ -37,6 +38,7 @@ const DEFAULT_ACTIVE_TOOL_CALL_CAPACITY: usize = 16;
 const DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY: usize = DEFAULT_ACTIVE_TOOL_CALL_CAPACITY;
 const MAX_MCP_STDIO_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const RETAINED_MCP_FRAME_CAPACITY: usize = 64 * 1024;
+const INITIAL_INDEX_WAIT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 struct DispatchedToolCall {
@@ -270,7 +272,6 @@ impl Transport<RoleServer> for BoundedStdioTransport {
         self.writer.lock().await.shutdown().await
     }
 }
-
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SavingsMcpRequest {}
@@ -826,6 +827,10 @@ struct JsonMcpRequest {
     #[serde(default)]
     #[schemars(range(min = 0, max = 20))]
     array_sample_size: Option<usize>,
+    /// Opaque cursor returned by an incomplete keys projection.
+    #[serde(default)]
+    #[schemars(length(max = 256))]
+    cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -931,6 +936,7 @@ impl JsonMcpRequest {
                 max_tokens: self.max_tokens,
                 max_items: self.max_items,
                 array_sample_size: self.array_sample_size,
+                cursor: self.cursor,
             },
             self.expected_repository_id,
         )
@@ -1020,6 +1026,9 @@ struct ContextMcpRequest {
     /// Require every returned fragment to belong to the resolved changed paths.
     #[serde(default)]
     strict_changed_paths: bool,
+    /// Include full path, file-type, reason, score-band, focus, and change omission facets.
+    #[serde(default)]
+    verbose_diagnostics: bool,
     /// Attach a compact provenance manifest for a host-triggered executor handoff.
     #[serde(default)]
     handoff: Option<HandoffManifestRequest>,
@@ -1074,6 +1083,7 @@ impl ContextMcpRequest {
                 base_revision: self.base_revision,
                 changed_paths: self.changed_paths,
                 strict_changed_paths: self.strict_changed_paths,
+                verbose_diagnostics: self.verbose_diagnostics,
             },
             self.workflow,
             self.consistency,
@@ -1381,6 +1391,7 @@ impl StartupFailure {
 #[derive(Debug, Clone)]
 pub struct McpServices {
     state: Arc<RwLock<McpServiceState>>,
+    state_changed: Arc<tokio::sync::Notify>,
     protocol_initialized: Arc<AtomicBool>,
     initialized: Arc<tokio::sync::Notify>,
 }
@@ -1504,6 +1515,10 @@ impl LeanTokenMcp {
                     500,
                 )))
             }
+            Err(crate::Error::McpRuntimeStopped) => Ok(tool_unavailable(
+                "index_runtime_stopped",
+                "repository index is unavailable; check server logs and retry",
+            )),
             Err(error) => Err(into_mcp_error(error)),
         }
     }
@@ -1530,10 +1545,124 @@ impl LeanTokenMcp {
     }
 }
 
+async fn retry_after_initial_index<T, F, Fut>(
+    tool: &'static str,
+    mcp_services: &McpServices,
+    services: &Services,
+    cancellation: CancellationToken,
+    deadline: tokio::time::Instant,
+    operation: F,
+) -> crate::Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = crate::Result<T>>,
+{
+    retry_after_initial_index_with_policy(
+        tool,
+        mcp_services,
+        cancellation,
+        deadline.saturating_duration_since(tokio::time::Instant::now()),
+        |wait_cancellation| services.wait_for_initial_index_cancellable(wait_cancellation),
+        operation,
+    )
+    .await
+}
+
+async fn retry_after_initial_index_with_policy<T, F, Fut, W, WaitFut>(
+    tool: &'static str,
+    mcp_services: &McpServices,
+    cancellation: CancellationToken,
+    wait: Duration,
+    wait_until_ready: W,
+    mut operation: F,
+) -> crate::Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = crate::Result<T>>,
+    W: FnOnce(CancellationToken) -> WaitFut,
+    WaitFut: Future<Output = crate::Result<()>>,
+{
+    let result = operation().await;
+    if !matches!(result, Err(crate::Error::IndexNotReady)) {
+        return result;
+    }
+
+    let started = Instant::now();
+    let deadline = tokio::time::Instant::now() + wait;
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    if remaining.is_zero() {
+        tracing::debug!(
+            tool,
+            waited_ms = started.elapsed().as_millis(),
+            ready = false,
+            "MCP retrieval waited for the first index generation"
+        );
+        return result;
+    }
+
+    let wait_cancellation = cancellation.child_token();
+    let readiness = wait_until_ready(wait_cancellation.clone());
+    tokio::pin!(readiness);
+    loop {
+        let state_changed = mcp_services.state_changed.notified();
+        tokio::pin!(state_changed);
+        state_changed.as_mut().enable();
+        if matches!(mcp_services.get(), McpServiceState::Failed { .. }) {
+            wait_cancellation.cancel();
+            return Err(crate::Error::McpRuntimeStopped);
+        }
+        tokio::select! {
+            ready = &mut readiness => {
+                if matches!(mcp_services.get(), McpServiceState::Failed { .. }) {
+                    wait_cancellation.cancel();
+                    return Err(crate::Error::McpRuntimeStopped);
+                }
+                ready?;
+                if matches!(mcp_services.get(), McpServiceState::Failed { .. }) {
+                    wait_cancellation.cancel();
+                    return Err(crate::Error::McpRuntimeStopped);
+                }
+                let result = operation().await;
+                if matches!(mcp_services.get(), McpServiceState::Failed { .. }) {
+                    wait_cancellation.cancel();
+                    return Err(crate::Error::McpRuntimeStopped);
+                }
+                tracing::debug!(
+                    tool,
+                    waited_ms = started.elapsed().as_millis(),
+                    ready = !matches!(result, Err(crate::Error::IndexNotReady)),
+                    "MCP retrieval waited for the first index generation"
+                );
+                return result;
+            }
+            _ = cancellation.cancelled() => {
+                wait_cancellation.cancel();
+                return Err(crate::Error::Cancelled);
+            }
+            _ = tokio::time::sleep_until(deadline) => {
+                wait_cancellation.cancel();
+                tracing::debug!(
+                    tool,
+                    waited_ms = started.elapsed().as_millis(),
+                    ready = false,
+                    "MCP retrieval waited for the first index generation"
+                );
+                return result;
+            }
+            _ = &mut state_changed => {}
+        }
+        if matches!(mcp_services.get(), McpServiceState::Failed { .. }) {
+            wait_cancellation.cancel();
+            return Err(crate::Error::McpRuntimeStopped);
+        }
+    }
+}
+
 impl McpServices {
     fn starting(limits: McpLimitPolicy) -> Self {
         Self {
             state: Arc::new(RwLock::new(McpServiceState::Starting(limits))),
+            state_changed: Arc::new(tokio::sync::Notify::new()),
             protocol_initialized: Arc::new(AtomicBool::new(false)),
             initialized: Arc::new(tokio::sync::Notify::new()),
         }
@@ -1544,6 +1673,7 @@ impl McpServices {
             .expect("Services always contains a validated configuration");
         Self {
             state: Arc::new(RwLock::new(McpServiceState::Ready { services, limits })),
+            state_changed: Arc::new(tokio::sync::Notify::new()),
             protocol_initialized: Arc::new(AtomicBool::new(false)),
             initialized: Arc::new(tokio::sync::Notify::new()),
         }
@@ -1556,6 +1686,46 @@ impl McpServices {
             .clone()
     }
 
+    async fn wait_for_services(
+        &self,
+        initial_state: McpServiceState,
+        cancellation: CancellationToken,
+        deadline: tokio::time::Instant,
+    ) -> crate::Result<McpServiceState> {
+        if !matches!(initial_state, McpServiceState::Starting(_)) {
+            return Ok(initial_state);
+        }
+        let started = Instant::now();
+        loop {
+            let state_changed = self.state_changed.notified();
+            tokio::pin!(state_changed);
+            state_changed.as_mut().enable();
+            let state = self.get();
+            if !matches!(state, McpServiceState::Starting(_)) {
+                tracing::debug!(
+                    waited_ms = started.elapsed().as_millis(),
+                    ready = matches!(state, McpServiceState::Ready { .. }),
+                    "MCP retrieval waited for repository services"
+                );
+                return Ok(state);
+            }
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                tracing::debug!(
+                    waited_ms = started.elapsed().as_millis(),
+                    ready = false,
+                    "MCP retrieval waited for repository services"
+                );
+                return Ok(state);
+            }
+            tokio::select! {
+                _ = cancellation.cancelled() => return Err(crate::Error::Cancelled),
+                _ = tokio::time::sleep(remaining) => {},
+                _ = &mut state_changed => {}
+            }
+        }
+    }
+
     /// Make initialized retrieval services visible to MCP tool handlers.
     pub fn set_ready(&self, services: Arc<Services>) {
         let limits = McpLimitPolicy::from_config(services.config())
@@ -1565,6 +1735,7 @@ impl McpServices {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) =
             McpServiceState::Ready { services, limits };
+        self.state_changed.notify_waiters();
     }
 
     /// Apply validated configured request limits before retrieval services are ready.
@@ -1600,6 +1771,8 @@ impl McpServices {
             limits: state.limits(),
             failure: StartupFailure::from_error(error),
         };
+        drop(state);
+        self.state_changed.notify_waiters();
     }
 
     fn mark_protocol_initialized(&self) {
@@ -1611,6 +1784,8 @@ impl McpServices {
     pub async fn wait_initialized(&self) {
         loop {
             let notified = self.initialized.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             if self.protocol_initialized.load(Ordering::Acquire) {
                 return;
             }
@@ -1630,7 +1805,15 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<FilesMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
         let state = self.services.get();
+        req.validate_limits(state.limits())
+            .map_err(into_mcp_error)?;
+        let state = self
+            .services
+            .wait_for_services(state, context.ct.clone(), deadline)
+            .await
+            .map_err(into_mcp_error)?;
         req.validate_limits(state.limits())
             .map_err(into_mcp_error)?;
         let services = match self.services(&state) {
@@ -1639,13 +1822,26 @@ impl LeanTokenMcp {
         };
         let (request, consistency, expected_repository_id) = req.into_parts();
         let cancellation = context.ct.clone();
+        let mcp_services = self.services.clone();
         self.run_admitted(
             services,
             expected_repository_id,
             move |services| async move {
-                services
-                    .files_with_consistency_cancellable(request, consistency, cancellation)
-                    .await
+                retry_after_initial_index(
+                    "files",
+                    &mcp_services,
+                    &services,
+                    cancellation.clone(),
+                    deadline,
+                    || {
+                        services.files_with_consistency_cancellable(
+                            request.clone(),
+                            consistency,
+                            cancellation.clone(),
+                        )
+                    },
+                )
+                .await
             },
         )
         .await
@@ -1660,7 +1856,15 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<SearchMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
         let state = self.services.get();
+        req.validate_limits(state.limits())
+            .map_err(into_mcp_error)?;
+        let state = self
+            .services
+            .wait_for_services(state, context.ct.clone(), deadline)
+            .await
+            .map_err(into_mcp_error)?;
         req.validate_limits(state.limits())
             .map_err(into_mcp_error)?;
         let services = match self.services(&state) {
@@ -1669,13 +1873,26 @@ impl LeanTokenMcp {
         };
         let (request, consistency, expected_repository_id) = req.into_parts();
         let cancellation = context.ct.clone();
+        let mcp_services = self.services.clone();
         self.run_admitted(
             services,
             expected_repository_id,
             move |services| async move {
-                services
-                    .search_with_consistency_cancellable(request, consistency, cancellation)
-                    .await
+                retry_after_initial_index(
+                    "search",
+                    &mcp_services,
+                    &services,
+                    cancellation.clone(),
+                    deadline,
+                    || {
+                        services.search_with_consistency_cancellable(
+                            request.clone(),
+                            consistency,
+                            cancellation.clone(),
+                        )
+                    },
+                )
+                .await
             },
         )
         .await
@@ -1690,7 +1907,15 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<OutlineMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
         let state = self.services.get();
+        req.validate_limits(state.limits())
+            .map_err(into_mcp_error)?;
+        let state = self
+            .services
+            .wait_for_services(state, context.ct.clone(), deadline)
+            .await
+            .map_err(into_mcp_error)?;
         req.validate_limits(state.limits())
             .map_err(into_mcp_error)?;
         let services = match self.services(&state) {
@@ -1699,13 +1924,26 @@ impl LeanTokenMcp {
         };
         let (request, consistency, expected_repository_id) = req.into_parts();
         let cancellation = context.ct.clone();
+        let mcp_services = self.services.clone();
         self.run_admitted(
             services,
             expected_repository_id,
             move |services| async move {
-                services
-                    .outline_with_consistency_cancellable(request, consistency, cancellation)
-                    .await
+                retry_after_initial_index(
+                    "outline",
+                    &mcp_services,
+                    &services,
+                    cancellation.clone(),
+                    deadline,
+                    || {
+                        services.outline_with_consistency_cancellable(
+                            request.clone(),
+                            consistency,
+                            cancellation.clone(),
+                        )
+                    },
+                )
+                .await
             },
         )
         .await
@@ -1720,7 +1958,15 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<ReadMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
         let state = self.services.get();
+        req.validate_limits(state.limits())
+            .map_err(into_mcp_error)?;
+        let state = self
+            .services
+            .wait_for_services(state, context.ct.clone(), deadline)
+            .await
+            .map_err(into_mcp_error)?;
         req.validate_limits(state.limits())
             .map_err(into_mcp_error)?;
         let services = match self.services(&state) {
@@ -1729,13 +1975,26 @@ impl LeanTokenMcp {
         };
         let (request, consistency, expected_repository_id) = req.into_parts();
         let cancellation = context.ct.clone();
+        let mcp_services = self.services.clone();
         self.run_admitted(
             services,
             expected_repository_id,
             move |services| async move {
-                services
-                    .read_with_consistency_cancellable(request, consistency, cancellation)
-                    .await
+                retry_after_initial_index(
+                    "read",
+                    &mcp_services,
+                    &services,
+                    cancellation.clone(),
+                    deadline,
+                    || {
+                        services.read_with_consistency_cancellable(
+                            request.clone(),
+                            consistency,
+                            cancellation.clone(),
+                        )
+                    },
+                )
+                .await
             },
         )
         .await
@@ -1750,7 +2009,15 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<HistoryMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
         let state = self.services.get();
+        req.validate_limits(state.limits())
+            .map_err(into_mcp_error)?;
+        let state = self
+            .services
+            .wait_for_services(state, context.ct.clone(), deadline)
+            .await
+            .map_err(into_mcp_error)?;
         req.validate_limits(state.limits())
             .map_err(into_mcp_error)?;
         let services = match self.services(&state) {
@@ -1759,11 +2026,20 @@ impl LeanTokenMcp {
         };
         let (request, expected_repository_id) = req.into_parts();
         let cancellation = context.ct.clone();
+        let mcp_services = self.services.clone();
         self.run_admitted(
             services,
             expected_repository_id,
             move |services| async move {
-                services.history_cancellable(request, cancellation).await
+                retry_after_initial_index(
+                    "history",
+                    &mcp_services,
+                    &services,
+                    cancellation.clone(),
+                    deadline,
+                    || services.history_cancellable(request.clone(), cancellation.clone()),
+                )
+                .await
             },
         )
         .await
@@ -1771,14 +2047,22 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "json",
-        description = "Query, summarize, or compare bounded live JSON without indexing raw artifacts. Select with RFC 6901 JSON Pointer or standard JMESPath; use collapsed, keys, or schema projections for large arrays and objects, numeric_summary for count/min/median/p95/max, and diff_fields for selected values across two files. Example: {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"artifacts/results.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"runs[].score\"}}}."
+        description = "Query, summarize, or compare bounded live JSON without indexing raw artifacts. Select with RFC 6901 JSON Pointer or standard JMESPath; use collapsed, keys, or schema projections for large arrays and objects, numeric_summary for count/min/median/p95/max, and diff_fields for selected values across two files. Incomplete keys projections return exact item counts and meta.next_cursor; repeat the same query with cursor to continue. Example: {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"artifacts/results.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"runs[].score\"}}}."
     )]
     async fn leantoken_json(
         &self,
         Parameters(req): Parameters<JsonMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
         let state = self.services.get();
+        req.validate_limits(state.limits())
+            .map_err(into_mcp_error)?;
+        let state = self
+            .services
+            .wait_for_services(state, context.ct.clone(), deadline)
+            .await
+            .map_err(into_mcp_error)?;
         req.validate_limits(state.limits())
             .map_err(into_mcp_error)?;
         let services = match self.services(&state) {
@@ -1787,24 +2071,43 @@ impl LeanTokenMcp {
         };
         let (request, expected_repository_id) = req.into_parts();
         let cancellation = context.ct.clone();
+        let mcp_services = self.services.clone();
         self.run_admitted(
             services,
             expected_repository_id,
-            move |services| async move { services.json_cancellable(request, cancellation).await },
+            move |services| async move {
+                retry_after_initial_index(
+                    "json",
+                    &mcp_services,
+                    &services,
+                    cancellation.clone(),
+                    deadline,
+                    || services.json_cancellable(request.clone(), cancellation.clone()),
+                )
+                .await
+            },
         )
         .await
     }
 
     #[tool(
         name = "context",
-        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. For uncertain broad tasks, set plan_only=true to preview bounded ranked paths, ranges, reasons, token estimates, focus coverage, and generated-artifact warnings without source or receipt mutation; then repeat the same request with plan_only=false to materialize. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required evidence. Coverage diagnostics fail loud when strict scopes are empty or underfilled. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Set handoff for a compact provenance manifest without copied source. Example: {\"task\":\"Audit MCP tool discovery\"}."
+        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. For uncertain broad tasks, set plan_only=true to preview bounded ranked paths, ranges, reasons, token estimates, focus coverage, and generated-artifact warnings without source or receipt mutation; then repeat the same request with plan_only=false to materialize. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required evidence. Compact omission counts preserve fail-loud coverage by default; set verbose_diagnostics=true only for full omission facets. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Set handoff for a compact provenance manifest without copied source. Example: {\"task\":\"Audit MCP tool discovery\"}."
     )]
     async fn leantoken_context(
         &self,
         Parameters(req): Parameters<ContextMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
         let state = self.services.get();
+        let limits = state.limits();
+        req.validate_limits(limits).map_err(into_mcp_error)?;
+        let state = self
+            .services
+            .wait_for_services(state, context.ct.clone(), deadline)
+            .await
+            .map_err(into_mcp_error)?;
         let limits = state.limits();
         req.validate_limits(limits).map_err(into_mcp_error)?;
         let services = match self.services(&state) {
@@ -1814,29 +2117,46 @@ impl LeanTokenMcp {
         let (request, workflow, consistency, expected_repository_id, handoff) =
             req.into_parts(limits.default_context_tokens);
         let cancellation = context.ct.clone();
+        let mcp_services = self.services.clone();
         self.run_admitted(
             services,
             expected_repository_id,
             move |services| async move {
-                if let Some(handoff) = handoff {
-                    services
-                        .context_with_handoff_workflow_consistency_cancellable(
-                            request,
-                            handoff,
-                            workflow,
-                            consistency,
-                            cancellation,
-                        )
-                        .await
+                if let Some(handoff) = &handoff {
+                    retry_after_initial_index(
+                        "context",
+                        &mcp_services,
+                        &services,
+                        cancellation.clone(),
+                        deadline,
+                        || {
+                            services.context_with_handoff_workflow_consistency_cancellable(
+                                request.clone(),
+                                handoff.clone(),
+                                workflow,
+                                consistency,
+                                cancellation.clone(),
+                            )
+                        },
+                    )
+                    .await
                 } else {
-                    services
-                        .context_with_workflow_consistency_cancellable(
-                            request,
-                            workflow,
-                            consistency,
-                            cancellation,
-                        )
-                        .await
+                    retry_after_initial_index(
+                        "context",
+                        &mcp_services,
+                        &services,
+                        cancellation.clone(),
+                        deadline,
+                        || {
+                            services.context_with_workflow_consistency_cancellable(
+                                request.clone(),
+                                workflow,
+                                consistency,
+                                cancellation.clone(),
+                            )
+                        },
+                    )
+                    .await
                 }
             },
         )
@@ -1845,7 +2165,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "savings",
-        description = "Report cumulative repository-local estimated source-token savings. Use when asked how many tokens LeanToken saved. Example: {}.",
+        description = "Report repository-local source compression and full successful-response token accounting. Use when asked how many tokens LeanToken saved. Example: {}.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn leantoken_savings(
@@ -1858,7 +2178,7 @@ impl LeanTokenMcp {
             Err(result) => return Ok(result),
         };
         self.run_admitted(services, None, |services| async move {
-            services.token_savings().await
+            services.token_savings_report().await
         })
         .await
     }
@@ -1972,6 +2292,42 @@ fn into_mcp_error(error: crate::Error) -> ErrorData {
         crate::Error::UnsupportedLanguage(_) => ErrorData::invalid_params(
             "requested structured language is unsupported",
             mcp_error_data("unsupported_language"),
+        ),
+        crate::Error::InvalidJson {
+            syntax_category,
+            byte_offset,
+            line,
+            column,
+            reason,
+        } => ErrorData::invalid_params(
+            format!("file is not valid JSON at line {line}, column {column}"),
+            Some(serde_json::json!({
+                "category": "invalid_json",
+                "field": "path",
+                "syntax_category": syntax_category,
+                "byte_offset": byte_offset,
+                "line": line,
+                "column": column,
+                "reason": reason,
+            })),
+        ),
+        crate::Error::InvalidJsonSelector {
+            stage,
+            offset,
+            line,
+            column,
+            reason,
+        } => ErrorData::invalid_params(
+            format!("JMESPath {stage} failed at line {line}, column {column}"),
+            Some(serde_json::json!({
+                "category": "invalid_json_selector",
+                "field": "JMESPath expression",
+                "stage": stage,
+                "offset": offset,
+                "line": line,
+                "column": column,
+                "reason": reason,
+            })),
         ),
         crate::Error::InvalidInput { field, reason } => ErrorData::invalid_params(
             format!("invalid {field}: {reason}"),
@@ -2535,6 +2891,256 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn ready_operation_is_not_retried() {
+        let (_server, mcp_services) = LeanTokenMcp::pending();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let waits = std::sync::atomic::AtomicUsize::new(0);
+
+        let result = retry_after_initial_index_with_policy(
+            "files",
+            &mcp_services,
+            CancellationToken::new(),
+            Duration::from_secs(30),
+            |_| {
+                waits.fetch_add(1, Ordering::AcqRel);
+                std::future::ready(Ok::<(), crate::Error>(()))
+            },
+            || {
+                calls.fetch_add(1, Ordering::AcqRel);
+                std::future::ready(Ok::<_, crate::Error>(42))
+            },
+        )
+        .await
+        .expect("ready operation");
+
+        assert_eq!(result, 42);
+        assert_eq!(calls.load(Ordering::Acquire), 1);
+        assert_eq!(waits.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn initial_index_retry_is_bounded() {
+        let (_server, mcp_services) = LeanTokenMcp::pending();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let waits = std::sync::atomic::AtomicUsize::new(0);
+
+        let error = retry_after_initial_index_with_policy(
+            "files",
+            &mcp_services,
+            CancellationToken::new(),
+            Duration::from_millis(250),
+            |cancellation| {
+                waits.fetch_add(1, Ordering::AcqRel);
+                async move {
+                    cancellation.cancelled().await;
+                    Err(crate::Error::Cancelled)
+                }
+            },
+            || {
+                calls.fetch_add(1, Ordering::AcqRel);
+                std::future::ready(Err::<(), _>(crate::Error::IndexNotReady))
+            },
+        )
+        .await
+        .expect_err("generation-zero operation must time out");
+
+        assert!(matches!(error, crate::Error::IndexNotReady));
+        assert_eq!(calls.load(Ordering::Acquire), 1);
+        assert_eq!(waits.load(Ordering::Acquire), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn initial_index_retry_returns_first_published_result() {
+        let (_server, mcp_services) = LeanTokenMcp::pending();
+        let ready = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let operation_ready = Arc::clone(&ready);
+        let operation_calls = Arc::clone(&calls);
+        let waiting = tokio::spawn(async move {
+            retry_after_initial_index_with_policy(
+                "files",
+                &mcp_services,
+                CancellationToken::new(),
+                Duration::from_secs(1),
+                |_| async {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    Ok(())
+                },
+                move || {
+                    operation_calls.fetch_add(1, Ordering::AcqRel);
+                    let result = if operation_ready.load(Ordering::Acquire) {
+                        Ok(42)
+                    } else {
+                        Err(crate::Error::IndexNotReady)
+                    };
+                    std::future::ready(result)
+                },
+            )
+            .await
+        });
+        tokio::task::yield_now().await;
+        assert_eq!(calls.load(Ordering::Acquire), 1);
+
+        ready.store(true, Ordering::Release);
+        tokio::time::advance(Duration::from_millis(100)).await;
+
+        assert_eq!(
+            waiting
+                .await
+                .expect("join readiness retry")
+                .expect("published result"),
+            42
+        );
+        assert_eq!(calls.load(Ordering::Acquire), 2);
+    }
+
+    #[tokio::test]
+    async fn initial_index_retry_honors_cancellation() {
+        let (_server, mcp_services) = LeanTokenMcp::pending();
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        let error = retry_after_initial_index_with_policy(
+            "files",
+            &mcp_services,
+            cancellation,
+            Duration::from_secs(30),
+            |_| std::future::pending::<crate::Result<()>>(),
+            || std::future::ready(Err::<(), _>(crate::Error::IndexNotReady)),
+        )
+        .await
+        .expect_err("cancelled retry must stop");
+
+        assert!(matches!(error, crate::Error::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn initial_index_retry_stops_when_runtime_fails() {
+        let (_server, mcp_services) = LeanTokenMcp::pending();
+        let waiting_services = mcp_services.clone();
+        let waiting = tokio::spawn(async move {
+            retry_after_initial_index_with_policy(
+                "files",
+                &waiting_services,
+                CancellationToken::new(),
+                Duration::from_secs(30),
+                |_| std::future::pending::<crate::Result<()>>(),
+                || std::future::ready(Err::<(), _>(crate::Error::IndexNotReady)),
+            )
+            .await
+        });
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished());
+
+        mcp_services.set_failed(&crate::Error::McpRuntimeStopped);
+
+        let error = waiting
+            .await
+            .expect("join initial-index retry")
+            .expect_err("runtime failure must interrupt readiness retry");
+        assert!(matches!(error, crate::Error::McpRuntimeStopped));
+    }
+
+    #[tokio::test]
+    async fn initial_index_retry_prefers_runtime_failure_over_readiness_error() {
+        let (_server, mcp_services) = LeanTokenMcp::pending();
+        let failed_services = mcp_services.clone();
+
+        let error = retry_after_initial_index_with_policy(
+            "files",
+            &mcp_services,
+            CancellationToken::new(),
+            Duration::from_secs(30),
+            move |_| async move {
+                failed_services.set_failed(&crate::Error::McpRuntimeStopped);
+                Err(crate::Error::IndexNotReady)
+            },
+            || std::future::ready(Err::<(), _>(crate::Error::IndexNotReady)),
+        )
+        .await
+        .expect_err("terminal runtime failure must supersede readiness error");
+
+        assert!(matches!(error, crate::Error::McpRuntimeStopped));
+    }
+
+    #[tokio::test]
+    async fn protocol_initialization_wait_observes_transition() {
+        let (_server, services) = LeanTokenMcp::pending();
+        let waiting_services = services.clone();
+        let waiting = tokio::spawn(async move {
+            waiting_services.wait_initialized().await;
+        });
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished());
+
+        services.mark_protocol_initialized();
+
+        tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .expect("initialization wait must wake")
+            .expect("join initialization wait");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn starting_service_wait_is_bounded() {
+        let (_server, services) = LeanTokenMcp::pending();
+
+        let state = services
+            .wait_for_services(
+                services.get(),
+                CancellationToken::new(),
+                tokio::time::Instant::now() + Duration::from_millis(250),
+            )
+            .await
+            .expect("bounded wait");
+
+        assert!(matches!(state, McpServiceState::Starting(_)));
+    }
+
+    #[tokio::test]
+    async fn starting_service_wait_observes_terminal_transition() {
+        let (_server, services) = LeanTokenMcp::pending();
+        let waiting_services = services.clone();
+        let waiting = tokio::spawn(async move {
+            waiting_services
+                .wait_for_services(
+                    waiting_services.get(),
+                    CancellationToken::new(),
+                    tokio::time::Instant::now() + Duration::from_secs(1),
+                )
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished());
+
+        services.set_failed(&crate::Error::McpRuntimeStopped);
+
+        let state = waiting
+            .await
+            .expect("join service wait")
+            .expect("terminal service state");
+        assert!(matches!(state, McpServiceState::Failed { .. }));
+    }
+
+    #[tokio::test]
+    async fn starting_service_wait_honors_cancellation() {
+        let (_server, services) = LeanTokenMcp::pending();
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        let error = services
+            .wait_for_services(
+                services.get(),
+                cancellation,
+                tokio::time::Instant::now() + Duration::from_secs(30),
+            )
+            .await
+            .expect_err("cancelled startup wait must stop");
+
+        assert!(matches!(error, crate::Error::Cancelled));
+    }
+
     #[test]
     fn mcp_error_mapping_separates_invalid_input_from_internal_failures() {
         let invalid = into_mcp_error(crate::Error::InputTooLong {
@@ -2568,6 +3174,43 @@ mod tests {
                 "requested": 32_001,
                 "limit": 32_000,
             }))
+        );
+
+        let selector = into_mcp_error(crate::Error::InvalidJsonSelector {
+            stage: "evaluate",
+            offset: 6,
+            line: 1,
+            column: 7,
+            reason: "Runtime error: Argument 0 expects type array, given number".into(),
+        });
+        assert_eq!(selector.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert_eq!(
+            selector.data,
+            Some(serde_json::json!({
+                "category": "invalid_json_selector",
+                "field": "JMESPath expression",
+                "stage": "evaluate",
+                "offset": 6,
+                "line": 1,
+                "column": 7,
+                "reason": "Runtime error: Argument 0 expects type array, given number",
+            }))
+        );
+
+        let syntax = into_mcp_error(crate::Error::InvalidJson {
+            syntax_category: "syntax",
+            byte_offset: 12,
+            line: 1,
+            column: 13,
+            reason: "trailing comma at line 1 column 13".into(),
+        });
+        assert_eq!(syntax.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert_eq!(
+            syntax
+                .data
+                .as_ref()
+                .and_then(|data| data["byte_offset"].as_u64()),
+            Some(12)
         );
 
         let stale_receipt = into_mcp_error(crate::Error::StaleReceipt {
@@ -2737,6 +3380,7 @@ mod tests {
         .expect("context request without a budget");
         let (request, _, _, _, _) = request.into_parts(37);
         assert_eq!(request.token_budget, 37);
+        assert!(!request.verbose_diagnostics);
 
         let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
             "task": "find answer",
@@ -2745,7 +3389,8 @@ mod tests {
             "strict_focus_paths": true,
             "minimum_fragments_per_focus_path": 2,
             "changed_paths": ["src/lib.rs"],
-            "strict_changed_paths": true
+            "strict_changed_paths": true,
+            "verbose_diagnostics": true
         }))
         .expect("context request with a budget");
         let (request, _, _, _, _) = request.into_parts(37);
@@ -2755,6 +3400,7 @@ mod tests {
         assert_eq!(request.minimum_fragments_per_focus_path, Some(2));
         assert_eq!(request.changed_paths, ["src/lib.rs"]);
         assert!(request.strict_changed_paths);
+        assert!(request.verbose_diagnostics);
     }
 
     #[test]
@@ -3083,12 +3729,32 @@ mod tests {
             .expect("JSON limits");
         let (request, _) = request.into_parts();
         assert_eq!(request.max_items, Some(500));
+        assert!(request.cursor.is_none());
         assert!(matches!(
             request.operation,
             JsonOperation::NumericSummary {
                 path,
                 selector: Some(JsonSelector::Jmespath { expression }),
             } if path == "artifacts/results.json" && expression == "runs[].score"
+        ));
+
+        let request = serde_json::from_value::<JsonMcpRequest>(serde_json::json!({
+            "operation": {
+                "kind": "query",
+                "path": "artifacts/results.json",
+                "projection": "keys"
+            },
+            "cursor": "j1:source:query:2"
+        }))
+        .expect("paged JSON request");
+        let (request, _) = request.into_parts();
+        assert_eq!(request.cursor.as_deref(), Some("j1:source:query:2"));
+        assert!(matches!(
+            request.operation,
+            JsonOperation::Query {
+                projection: JsonProjection::Keys,
+                ..
+            }
         ));
     }
 

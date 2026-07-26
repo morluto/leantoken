@@ -168,7 +168,7 @@ async fn run(cli: Cli) -> Result<()> {
     match request {
         AppRequest::Index { rebuild } => print(&services.index_report(rebuild).await?, json),
         AppRequest::Status => unreachable!("handled before service setup"),
-        AppRequest::Savings => savings::print_report(&services.token_savings().await?, json),
+        AppRequest::Savings => savings::print_report(&services.token_savings_report().await?, json),
         AppRequest::Files(request) => print(&services.files(request).await?, json),
         AppRequest::Search(request) => print(&services.search(request).await?, json),
         AppRequest::Outline(request) => print(&services.outline(request).await?, json),
@@ -572,6 +572,18 @@ struct CliErrorResponse {
     requested: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     limit: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    syntax_category: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    offset: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    byte_offset: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    column: Option<usize>,
 }
 
 fn cli_parse_error_response(error: &clap::Error) -> CliErrorResponse {
@@ -601,6 +613,12 @@ fn cli_parse_error_response(error: &clap::Error) -> CliErrorResponse {
         field: None,
         requested: None,
         limit: None,
+        reason: None,
+        syntax_category: None,
+        offset: None,
+        byte_offset: None,
+        line: None,
+        column: None,
     }
 }
 
@@ -613,6 +631,14 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         leantoken::Error::InvalidInput { field, .. } => {
             ("invalid_input", None, Some(*field), None, None)
         }
+        leantoken::Error::InvalidJson { .. } => ("invalid_json", None, Some("path"), None, None),
+        leantoken::Error::InvalidJsonSelector { stage, .. } => (
+            "invalid_json_selector",
+            Some(*stage),
+            Some("JMESPath expression"),
+            None,
+            None,
+        ),
         leantoken::Error::InputTooLong { field, max_bytes } => {
             ("input_too_long", None, Some(*field), None, Some(*max_bytes))
         }
@@ -666,6 +692,38 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         }
         _ => ("internal_error", None, None, None, None),
     };
+    let (reason, syntax_category, offset, byte_offset, line, column) = match error {
+        leantoken::Error::InvalidJson {
+            syntax_category,
+            reason,
+            byte_offset,
+            line,
+            column,
+            ..
+        } => (
+            Some(reason.clone()),
+            Some(*syntax_category),
+            None,
+            Some(*byte_offset),
+            Some(*line),
+            Some(*column),
+        ),
+        leantoken::Error::InvalidJsonSelector {
+            reason,
+            offset,
+            line,
+            column,
+            ..
+        } => (
+            Some(reason.clone()),
+            None,
+            Some(*offset),
+            None,
+            Some(*line),
+            Some(*column),
+        ),
+        _ => (None, None, None, None, None, None),
+    };
 
     CliErrorResponse {
         error: cli_error_message(error),
@@ -674,6 +732,12 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         field,
         requested,
         limit,
+        reason,
+        syntax_category,
+        offset,
+        byte_offset,
+        line,
+        column,
     }
 }
 
@@ -798,6 +862,44 @@ mod tests {
                 serde_json::json!({
                     "error": "requested content exceeds the configured limit",
                     "category": "request_limit_exceeded"
+                }),
+            ),
+            (
+                leantoken::Error::InvalidJson {
+                    syntax_category: "syntax",
+                    byte_offset: 12,
+                    line: 1,
+                    column: 13,
+                    reason: "trailing comma at line 1 column 13".into(),
+                },
+                serde_json::json!({
+                    "error": "file is not valid JSON (syntax at byte 12, line 1, column 13): trailing comma at line 1 column 13",
+                    "category": "invalid_json",
+                    "field": "path",
+                    "reason": "trailing comma at line 1 column 13",
+                    "syntax_category": "syntax",
+                    "byte_offset": 12,
+                    "line": 1,
+                    "column": 13
+                }),
+            ),
+            (
+                leantoken::Error::InvalidJsonSelector {
+                    stage: "evaluate",
+                    offset: 6,
+                    line: 1,
+                    column: 7,
+                    reason: "Runtime error: Argument 0 expects type array, given number".into(),
+                },
+                serde_json::json!({
+                    "error": "JMESPath evaluate failed at offset 6, line 1, column 7: Runtime error: Argument 0 expects type array, given number",
+                    "category": "invalid_json_selector",
+                    "stage": "evaluate",
+                    "field": "JMESPath expression",
+                    "reason": "Runtime error: Argument 0 expects type array, given number",
+                    "offset": 6,
+                    "line": 1,
+                    "column": 7
                 }),
             ),
             (

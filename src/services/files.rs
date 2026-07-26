@@ -476,6 +476,7 @@ impl Services {
             })
         })?;
         self.finalize_response(&mut response)?;
+        self.record_token_savings(TokenAccountingOperation::Files, None, &response.meta);
         Ok(response)
     }
 }

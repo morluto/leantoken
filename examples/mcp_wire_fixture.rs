@@ -55,6 +55,7 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
+        verbose_diagnostics: false,
     };
     let response = ContextResponse {
         workflow: ContextWorkflow::Implementation,

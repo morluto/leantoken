@@ -118,6 +118,36 @@ pub enum Error {
         /// Safe public validation rule.
         reason: &'static str,
     },
+    /// A JSON document failed strict parsing at a bounded source coordinate.
+    #[error(
+        "file is not valid JSON ({syntax_category} at byte {byte_offset}, line {line}, column {column}): {reason}"
+    )]
+    InvalidJson {
+        /// Stable serde_json error category.
+        syntax_category: &'static str,
+        /// Zero-based byte offset in the UTF-8 document.
+        byte_offset: usize,
+        /// One-based source line.
+        line: usize,
+        /// One-based source column.
+        column: usize,
+        /// Bounded parser diagnostic without file contents.
+        reason: String,
+    },
+    /// A JMESPath expression failed compilation or typed evaluation.
+    #[error("JMESPath {stage} failed at offset {offset}, line {line}, column {column}: {reason}")]
+    InvalidJsonSelector {
+        /// Stable failure boundary: `compile` or `evaluate`.
+        stage: &'static str,
+        /// Zero-based character offset in the caller-provided expression.
+        offset: usize,
+        /// One-based expression line.
+        line: usize,
+        /// One-based expression column.
+        column: usize,
+        /// Parser or runtime type diagnostic.
+        reason: String,
+    },
     /// Request input crossed its configured byte bound.
     #[error("{field} exceeds {max_bytes} bytes")]
     InputTooLong {

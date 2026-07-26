@@ -74,6 +74,17 @@ preserve exact technical atoms and classify symbol, path, behavior, test-intent,
 and configuration evidence. This metadata is omitted from production fragment
 reasons and does not by itself enable role reservations or portfolio selection;
 use it to diagnose a frozen candidate before proposing a scoring change.
+
+`benchmarks/context_concept_coverage.json` adds evaluator-owned task concepts
+without treating internal query terms as relevance labels. The overlay is
+BLAKE3-bound to `validation.json` and must partition every existing labeled
+anchor exactly once. The representative runner then reports candidate concept
+recall, selected concept recall, and selected-to-candidate retention at the
+unchanged source-token budget. This locates whether a missing concept was never
+generated or was lost during ranking/allocation. It does not change production
+ranking, and one anchor hit is not evidence that a complete concept or task was
+solved.
+
 Do not alter prompts, labels, budgets, or pinned revisions after inspecting a
 candidate. Freeze a new dataset version instead.
 
@@ -591,6 +602,42 @@ target/release/examples/graph_signal_ablation \
   --repos-root target/representative-repos \
   --output target/graph-signal-ablation-v1.json
 ```
+
+## Agent wall-time microbenchmark
+
+The agent wall-time A/B isolates local repository-tool latency from model and
+trajectory latency. Its frozen workload manifest is
+[`../benchmarks/agent_walltime_ab.json`](../benchmarks/agent_walltime_ab.json),
+and the clean-worktree runner is
+[`../benchmarks/run_agent_walltime_ab.sh`](../benchmarks/run_agent_walltime_ab.sh).
+It uses the four prospective validation repositories and alternates
+native-first with LeanToken-first samples after warmup.
+
+Two comparisons have observable parity gates. Exhaustive fixed-string search
+must return the same occurrence coordinates as sorted `rg`, and exact line
+reads must return the same content and coordinates as `sed`. The third
+comparison times all frozen task discovery queries against one ranked
+`context` call. That comparison also reports payload and relevance diagnostics,
+but its latency ratio is not a speedup or regression claim because the
+operations have different semantics.
+
+The report separates cold indexing, MCP initialization/readiness, warm p50/p95,
+payload bytes, database bytes, and raw alternating samples. It does not include
+provider latency, model turns, editing, validation, or task success and
+therefore cannot explain an end-to-end agent duration by itself.
+
+The first clean-tree report is
+[`../benchmarks/reports/agent-walltime-ab-v1-2026-07-26.json`](../benchmarks/reports/agent-walltime-ab-v1-2026-07-26.json),
+with a
+[`Markdown summary`](../benchmarks/reports/agent-walltime-ab-v1-2026-07-26.md).
+Every parity and determinism gate passed. Sums of the four corpus medians were
+60.86 ms native versus 163.87 ms MCP for exhaustive search, 9.83 ms versus
+23.65 ms for exact reads, and 249.43 ms for the frozen `rg` discovery sequences
+versus 462.94 ms for context. The last pair is not semantically equivalent.
+Native discovery reached 11/11 labeled files while context reached 7/11, so the
+report is a negative local baseline: direct tool latency is far too small to
+explain model-scale task delays, while incomplete retrieval can still cause
+expensive downstream refinement.
 
 ## Multi-agent context pilot
 

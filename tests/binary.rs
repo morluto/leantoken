@@ -685,7 +685,10 @@ fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
             "lib.rs",
             "{response}"
         );
-        assert!(saw_retryable, "cold first call never exposed retry guidance");
+        assert!(
+            !saw_retryable,
+            "short cold index escaped the bounded server-side wait"
+        );
         break;
     }
 }
@@ -989,6 +992,56 @@ fn mcp_follower_takes_over_after_leader_exit() {
             generation == 2 && files == 1 && changed
         })
     });
+}
+
+#[test]
+fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("a.rs"), "fn first() {}\n").expect("first fixture");
+    std::fs::write(root.path().join("b.rs"), "fn exceeds_limit() {}\n")
+        .expect("second fixture");
+    let database = root.path().join("index.sqlite");
+    let coordination = leantoken::coordination::IndexCoordination::for_database(&database);
+    let operation_blocker = coordination
+        .acquire_operation(&tokio_util::sync::CancellationToken::new())
+        .expect("block leader reconciliation");
+
+    let mut leader =
+        McpProcess::spawn_with_args(root.path(), &database, &["--max-files", "1"]);
+    leader.initialize();
+    leader.send_initialized();
+    wait_until(Duration::from_secs(5), || {
+        coordination
+            .try_acquire_leadership()
+            .expect("probe leadership")
+            .is_none()
+    });
+
+    let mut follower =
+        McpProcess::spawn_with_args(root.path(), &database, &["--max-files", "1"]);
+    follower.initialize();
+    follower.send_initialized();
+    follower.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "files",
+            "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
+        }
+    }));
+
+    drop(operation_blocker);
+    let first = follower.response(Duration::from_secs(3));
+    if first["result"]["isError"] != true {
+        assert_eq!(
+            first["result"]["structuredContent"]["reason"],
+            "index_building",
+            "{first}"
+        );
+    }
+    follower.wait_until_unavailable(Duration::from_secs(5));
+    assert_eq!(database_state(&database).map(|state| state.0), Some(0));
 }
 
 #[test]

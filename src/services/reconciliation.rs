@@ -47,6 +47,7 @@ struct CoordinatorInner {
     indexer: Indexer,
     coordination: IndexCoordination,
     active_reconciliations: Arc<AtomicUsize>,
+    reconciliation_changed: Arc<tokio::sync::Notify>,
     active_requests: Arc<Semaphore>,
     state: Mutex<CoordinatorState>,
     #[cfg(test)]
@@ -124,12 +125,14 @@ impl ReconciliationCoordinator {
         indexer: Indexer,
         coordination: IndexCoordination,
         active_reconciliations: Arc<AtomicUsize>,
+        reconciliation_changed: Arc<tokio::sync::Notify>,
     ) -> Self {
         Self {
             inner: Arc::new(CoordinatorInner {
                 indexer,
                 coordination,
                 active_reconciliations,
+                reconciliation_changed,
                 active_requests: Arc::new(Semaphore::new(DEFAULT_RECONCILIATION_ACTIVE_CAPACITY)),
                 state: Mutex::new(CoordinatorState {
                     next_wave_id: 1,
@@ -244,7 +247,10 @@ impl ReconciliationCoordinator {
             phase: WavePhase::WaitingForOperation,
             cancellation: CancellationToken::new(),
             waiters: vec![waiter],
-            _active: ActiveReconciliation::new(Arc::clone(&self.inner.active_reconciliations)),
+            _active: ActiveReconciliation::new(
+                Arc::clone(&self.inner.active_reconciliations),
+                Arc::clone(&self.inner.reconciliation_changed),
+            ),
         }
     }
 

@@ -328,7 +328,7 @@ pub enum Commands {
     /// Show index status.
     Status,
 
-    /// Show cumulative estimated source tokens saved.
+    /// Show source compression and full-response token accounting.
     Savings,
 
     /// List, find, or glob repository paths.
@@ -949,6 +949,10 @@ pub struct JsonArgs {
     /// Array elements sampled by collapsed projections.
     #[arg(long)]
     pub array_sample_size: Option<usize>,
+
+    /// Continue an incomplete keys projection.
+    #[arg(long)]
+    pub cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1070,6 +1074,7 @@ impl From<JsonArgs> for JsonRequest {
             max_tokens: args.max_tokens,
             max_items: args.max_items,
             array_sample_size: args.array_sample_size,
+            cursor: args.cursor,
         }
     }
 }
@@ -1153,6 +1158,10 @@ pub struct ContextArgs {
     #[arg(long)]
     pub strict_changed_paths: bool,
 
+    /// Include full omission facet diagnostics.
+    #[arg(long)]
+    pub verbose_diagnostics: bool,
+
     /// Attach compact provenance for a host-triggered executor handoff.
     #[arg(long)]
     pub handoff: bool,
@@ -1214,6 +1223,7 @@ impl From<ContextArgs> for ContextRequest {
             base_revision: args.base_revision,
             changed_paths: args.changed_paths,
             strict_changed_paths: args.strict_changed_paths,
+            verbose_diagnostics: args.verbose_diagnostics,
         }
     }
 }

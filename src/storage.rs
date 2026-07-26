@@ -18,7 +18,7 @@ use rusqlite::{
 };
 use rusqlite_migration::{M, Migrations};
 
-use crate::model::{ReferenceRole, TokenSavingsOperation};
+use crate::model::{ReferenceRole, ResponseMeta, TokenAccountingOperation};
 use crate::{Error, Result};
 
 pub(crate) const MAX_READ_CONNECTIONS: u32 = 8;
@@ -485,9 +485,18 @@ CREATE TABLE IF NOT EXISTS token_savings (
     tokenizer TEXT NOT NULL,
     operation TEXT NOT NULL,
     tracked_requests INTEGER NOT NULL DEFAULT 0,
+    response_tracked_requests INTEGER NOT NULL DEFAULT 0,
+    response_baseline_requests INTEGER NOT NULL DEFAULT 0,
     baseline_source_tokens INTEGER NOT NULL DEFAULT 0,
+    response_baseline_source_tokens INTEGER NOT NULL DEFAULT 0,
     emitted_source_tokens INTEGER NOT NULL DEFAULT 0,
     estimated_source_tokens_saved INTEGER NOT NULL DEFAULT 0,
+    response_source_tokens INTEGER NOT NULL DEFAULT 0,
+    path_and_metadata_tokens INTEGER NOT NULL DEFAULT 0,
+    protocol_tokens INTEGER NOT NULL DEFAULT 0,
+    total_response_tokens INTEGER NOT NULL DEFAULT 0,
+    receipt_suppressed_exact INTEGER NOT NULL DEFAULT 0,
+    receipt_suppressed_overlap INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(tokenizer, operation)
 );
 "#;
@@ -725,9 +734,18 @@ pub(crate) struct ReadOnlyStatusSnapshot {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct TokenSavingsRecord {
     pub tracked_requests: u64,
+    pub response_tracked_requests: u64,
+    pub response_baseline_requests: u64,
     pub baseline_source_tokens: u64,
+    pub response_baseline_source_tokens: u64,
     pub emitted_source_tokens: u64,
     pub estimated_source_tokens_saved: u64,
+    pub response_source_tokens: u64,
+    pub path_and_metadata_tokens: u64,
+    pub protocol_tokens: u64,
+    pub total_response_tokens: u64,
+    pub receipt_suppressed_exact: u64,
+    pub receipt_suppressed_overlap: u64,
 }
 
 /// SQLite-backed repository index with one serialized writer and pooled readers.
@@ -1249,6 +1267,53 @@ impl Storage {
             )?;
         }
         tx.execute_batch(TOKEN_SAVINGS_TABLE_SQL)?;
+        let savings_columns = {
+            let mut stmt = tx.prepare("PRAGMA table_info(token_savings)")?;
+            stmt.query_map([], |row| row.get::<_, String>(1))?
+                .collect::<std::result::Result<HashSet<_>, _>>()?
+        };
+        for (column, statement) in [
+            (
+                "response_tracked_requests",
+                "ALTER TABLE token_savings ADD COLUMN response_tracked_requests INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "response_baseline_requests",
+                "ALTER TABLE token_savings ADD COLUMN response_baseline_requests INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "response_baseline_source_tokens",
+                "ALTER TABLE token_savings ADD COLUMN response_baseline_source_tokens INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "response_source_tokens",
+                "ALTER TABLE token_savings ADD COLUMN response_source_tokens INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "path_and_metadata_tokens",
+                "ALTER TABLE token_savings ADD COLUMN path_and_metadata_tokens INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "protocol_tokens",
+                "ALTER TABLE token_savings ADD COLUMN protocol_tokens INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "total_response_tokens",
+                "ALTER TABLE token_savings ADD COLUMN total_response_tokens INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "receipt_suppressed_exact",
+                "ALTER TABLE token_savings ADD COLUMN receipt_suppressed_exact INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "receipt_suppressed_overlap",
+                "ALTER TABLE token_savings ADD COLUMN receipt_suppressed_overlap INTEGER NOT NULL DEFAULT 0;",
+            ),
+        ] {
+            if !savings_columns.contains(column) {
+                tx.execute_batch(statement)?;
+            }
+        }
         tx.commit()?;
         Ok(())
     }
@@ -1716,15 +1781,32 @@ impl Storage {
     pub(crate) fn record_token_savings(
         &self,
         tokenizer: &str,
-        operation: TokenSavingsOperation,
-        baseline_source_tokens: usize,
-        emitted_source_tokens: usize,
+        operation: TokenAccountingOperation,
+        baseline_source_tokens: Option<usize>,
+        meta: &ResponseMeta,
     ) -> Result<bool> {
-        let baseline_source_tokens = usize_to_i64(baseline_source_tokens)?;
-        let emitted_source_tokens = usize_to_i64(emitted_source_tokens)?;
-        let estimated_source_tokens_saved = baseline_source_tokens
-            .saturating_sub(emitted_source_tokens)
-            .max(0);
+        let tracked_requests = i64::from(baseline_source_tokens.is_some());
+        let response_baseline_requests = tracked_requests;
+        let baseline_source_tokens = usize_to_i64(baseline_source_tokens.unwrap_or(0))?;
+        let response_baseline_source_tokens = baseline_source_tokens;
+        let response_source_tokens = usize_to_i64(meta.source_tokens)?;
+        let emitted_source_tokens = if tracked_requests == 0 {
+            0
+        } else {
+            response_source_tokens
+        };
+        let estimated_source_tokens_saved = if tracked_requests == 0 {
+            0
+        } else {
+            baseline_source_tokens
+                .saturating_sub(emitted_source_tokens)
+                .max(0)
+        };
+        let path_and_metadata_tokens = usize_to_i64(meta.path_and_metadata_tokens)?;
+        let protocol_tokens = usize_to_i64(meta.protocol_tokens)?;
+        let total_response_tokens = usize_to_i64(meta.total_response_tokens)?;
+        let receipt_suppressed_exact = usize_to_i64(meta.receipt_suppressed_exact)?;
+        let receipt_suppressed_overlap = usize_to_i64(meta.receipt_suppressed_overlap)?;
         let conn = match self.writer.try_lock() {
             Ok(conn) => conn,
             Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
@@ -1733,18 +1815,40 @@ impl Storage {
         conn.busy_timeout(Duration::ZERO)?;
         let result = conn.execute(
             "INSERT INTO token_savings(
-                 tokenizer, operation, tracked_requests, baseline_source_tokens,
-                 emitted_source_tokens, estimated_source_tokens_saved
-             ) VALUES (?1, ?2, 1, ?3, ?4, ?5)
+                 tokenizer, operation, tracked_requests,
+                 response_tracked_requests, response_baseline_requests,
+                 baseline_source_tokens, response_baseline_source_tokens,
+                 emitted_source_tokens,
+                 estimated_source_tokens_saved, response_source_tokens,
+                 path_and_metadata_tokens,
+                 protocol_tokens, total_response_tokens,
+                 receipt_suppressed_exact, receipt_suppressed_overlap
+             ) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT(tokenizer, operation) DO UPDATE SET
                  tracked_requests = CASE
-                     WHEN tracked_requests = 9223372036854775807 THEN tracked_requests
-                     ELSE tracked_requests + 1
+                     WHEN tracked_requests > 9223372036854775807 - excluded.tracked_requests
+                         THEN 9223372036854775807
+                     ELSE tracked_requests + excluded.tracked_requests
+                 END,
+                 response_tracked_requests = CASE
+                     WHEN response_tracked_requests = 9223372036854775807
+                         THEN response_tracked_requests
+                     ELSE response_tracked_requests + 1
+                 END,
+                 response_baseline_requests = CASE
+                     WHEN response_baseline_requests > 9223372036854775807 - excluded.response_baseline_requests
+                         THEN 9223372036854775807
+                     ELSE response_baseline_requests + excluded.response_baseline_requests
                  END,
                  baseline_source_tokens = CASE
                      WHEN baseline_source_tokens > 9223372036854775807 - excluded.baseline_source_tokens
                          THEN 9223372036854775807
                      ELSE baseline_source_tokens + excluded.baseline_source_tokens
+                 END,
+                 response_baseline_source_tokens = CASE
+                     WHEN response_baseline_source_tokens > 9223372036854775807 - excluded.response_baseline_source_tokens
+                         THEN 9223372036854775807
+                     ELSE response_baseline_source_tokens + excluded.response_baseline_source_tokens
                  END,
                  emitted_source_tokens = CASE
                      WHEN emitted_source_tokens > 9223372036854775807 - excluded.emitted_source_tokens
@@ -1755,13 +1859,52 @@ impl Storage {
                      WHEN estimated_source_tokens_saved > 9223372036854775807 - excluded.estimated_source_tokens_saved
                          THEN 9223372036854775807
                      ELSE estimated_source_tokens_saved + excluded.estimated_source_tokens_saved
+                 END,
+                 response_source_tokens = CASE
+                     WHEN response_source_tokens > 9223372036854775807 - excluded.response_source_tokens
+                         THEN 9223372036854775807
+                     ELSE response_source_tokens + excluded.response_source_tokens
+                 END,
+                 path_and_metadata_tokens = CASE
+                     WHEN path_and_metadata_tokens > 9223372036854775807 - excluded.path_and_metadata_tokens
+                         THEN 9223372036854775807
+                     ELSE path_and_metadata_tokens + excluded.path_and_metadata_tokens
+                 END,
+                 protocol_tokens = CASE
+                     WHEN protocol_tokens > 9223372036854775807 - excluded.protocol_tokens
+                         THEN 9223372036854775807
+                     ELSE protocol_tokens + excluded.protocol_tokens
+                 END,
+                 total_response_tokens = CASE
+                     WHEN total_response_tokens > 9223372036854775807 - excluded.total_response_tokens
+                         THEN 9223372036854775807
+                     ELSE total_response_tokens + excluded.total_response_tokens
+                 END,
+                 receipt_suppressed_exact = CASE
+                     WHEN receipt_suppressed_exact > 9223372036854775807 - excluded.receipt_suppressed_exact
+                         THEN 9223372036854775807
+                     ELSE receipt_suppressed_exact + excluded.receipt_suppressed_exact
+                 END,
+                 receipt_suppressed_overlap = CASE
+                     WHEN receipt_suppressed_overlap > 9223372036854775807 - excluded.receipt_suppressed_overlap
+                         THEN 9223372036854775807
+                     ELSE receipt_suppressed_overlap + excluded.receipt_suppressed_overlap
                  END",
             params![
                 tokenizer,
                 operation.as_str(),
+                tracked_requests,
+                response_baseline_requests,
                 baseline_source_tokens,
+                response_baseline_source_tokens,
                 emitted_source_tokens,
                 estimated_source_tokens_saved,
+                response_source_tokens,
+                path_and_metadata_tokens,
+                protocol_tokens,
+                total_response_tokens,
+                receipt_suppressed_exact,
+                receipt_suppressed_overlap,
             ],
         );
         let restore_timeout = conn.busy_timeout(DEFAULT_BUSY_TIMEOUT);
@@ -2064,8 +2207,13 @@ impl ReadSession {
         tokenizer: &str,
     ) -> Result<HashMap<String, TokenSavingsRecord>> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT operation, tracked_requests, baseline_source_tokens,
-                    emitted_source_tokens, estimated_source_tokens_saved
+            "SELECT operation, tracked_requests, response_tracked_requests,
+                    response_baseline_requests, baseline_source_tokens,
+                    response_baseline_source_tokens, emitted_source_tokens,
+                    estimated_source_tokens_saved, response_source_tokens,
+                    path_and_metadata_tokens, protocol_tokens,
+                    total_response_tokens, receipt_suppressed_exact,
+                    receipt_suppressed_overlap
              FROM token_savings
              WHERE tokenizer = ?1
              ORDER BY operation",
@@ -2075,9 +2223,18 @@ impl ReadSession {
                 row.get::<_, String>(0)?,
                 TokenSavingsRecord {
                     tracked_requests: i64_to_u64(row.get(1)?),
-                    baseline_source_tokens: i64_to_u64(row.get(2)?),
-                    emitted_source_tokens: i64_to_u64(row.get(3)?),
-                    estimated_source_tokens_saved: i64_to_u64(row.get(4)?),
+                    response_tracked_requests: i64_to_u64(row.get(2)?),
+                    response_baseline_requests: i64_to_u64(row.get(3)?),
+                    baseline_source_tokens: i64_to_u64(row.get(4)?),
+                    response_baseline_source_tokens: i64_to_u64(row.get(5)?),
+                    emitted_source_tokens: i64_to_u64(row.get(6)?),
+                    estimated_source_tokens_saved: i64_to_u64(row.get(7)?),
+                    response_source_tokens: i64_to_u64(row.get(8)?),
+                    path_and_metadata_tokens: i64_to_u64(row.get(9)?),
+                    protocol_tokens: i64_to_u64(row.get(10)?),
+                    total_response_tokens: i64_to_u64(row.get(11)?),
+                    receipt_suppressed_exact: i64_to_u64(row.get(12)?),
+                    receipt_suppressed_overlap: i64_to_u64(row.get(13)?),
                 },
             ))
         })?;
@@ -3483,6 +3640,24 @@ mod tests {
     fn token_savings_accounting_skips_a_busy_local_writer() {
         let directory = tempfile::tempdir().expect("directory");
         let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+        let meta = ResponseMeta {
+            repository_id: "repository".into(),
+            repository_generation: 1,
+            freshness: crate::model::Freshness::Current,
+            source_tokens: 2,
+            protocol_tokens: 3,
+            path_and_metadata_tokens: 5,
+            total_response_tokens: 10,
+            payload_tokens: 10,
+            tokenizer: "cl100k_base".into(),
+            emitted_tokens: 2,
+            token_count_exact: true,
+            receipt_id: None,
+            receipt_suppressed_exact: 0,
+            receipt_suppressed_overlap: 0,
+            receipt_near_duplicates: 0,
+            next_cursor: None,
+        };
         let writer = storage
             .writer
             .lock()
@@ -3490,15 +3665,39 @@ mod tests {
 
         assert!(
             !storage
-                .record_token_savings("cl100k_base", TokenSavingsOperation::Search, 10, 2)
+                .record_token_savings(
+                    "cl100k_base",
+                    TokenAccountingOperation::Search,
+                    Some(10),
+                    &meta,
+                )
                 .expect("best-effort accounting")
         );
         drop(writer);
         assert!(
             storage
-                .record_token_savings("cl100k_base", TokenSavingsOperation::Search, 10, 2)
+                .record_token_savings(
+                    "cl100k_base",
+                    TokenAccountingOperation::Search,
+                    Some(10),
+                    &meta,
+                )
                 .expect("available accounting")
         );
+        let records = storage
+            .token_savings("cl100k_base")
+            .expect("stored accounting");
+        let record = records.get("search").expect("search accounting");
+        assert_eq!(record.tracked_requests, 1);
+        assert_eq!(record.response_tracked_requests, 1);
+        assert_eq!(record.response_baseline_requests, 1);
+        assert_eq!(record.baseline_source_tokens, 10);
+        assert_eq!(record.response_baseline_source_tokens, 10);
+        assert_eq!(record.emitted_source_tokens, 2);
+        assert_eq!(record.response_source_tokens, 2);
+        assert_eq!(record.path_and_metadata_tokens, 5);
+        assert_eq!(record.protocol_tokens, 3);
+        assert_eq!(record.total_response_tokens, 10);
     }
 
     #[test]

@@ -55,28 +55,36 @@ main/WAL/SHM bytes, indexed source bytes, their amplification ratio, and current
 process RSS when the platform exposes it. RSS is per process, not a claim about
 all clients sharing the repository cache.
 
-`leantoken savings` reports a persistent, repository-local estimate for
-successful `search`, `outline`, `read`, and `context` responses. Search,
-outline, and context compare emitted source tokens with whole-file reads of the
-unique files represented in that response. Read compares the emitted range
-with the requested live range before token truncation or known-hash
-suppression. The fixed `by_operation` rows expose both sides of the comparison
-and the tracked request count. Counts are stored separately per configured
-tokenizer.
+`leantoken savings` reports persistent repository-local source compression and
+full-response accounting. The backward-compatible source-only fields cover
+successful `search`, `outline`, `read`, and materialized `context` responses.
+Search, outline, and context compare emitted source with whole-file reads of
+the unique represented files. Read compares the emitted range with the
+requested live range before truncation or suppression.
+
+The nested `response_accounting` object additionally covers `files`,
+`context_plan`, `json`, and `history`. It separates source,
+path/metadata, protocol, and total compact-response tokens. JSON uses the
+complete input file or files as its represented-source baseline. Operations
+without a defensible source baseline still contribute their full response cost,
+so their signed `estimated_net_tokens_saved` value is negative rather than
+silently disappearing. Counts are stored separately per configured tokenizer.
 
 The default terminal view presents an aligned summary and per-operation table,
 using color when stdout is a terminal. `NO_COLOR` or `CLICOLOR=0` disables
 color, while `CLICOLOR_FORCE=1` enables it for compatible redirected output.
 Pass `--json` for the stable compact JSON representation used by scripts.
 
-This is a source-token estimate, not provider input, billing, cache, or complete
-MCP wire savings. JSON keys, tool schemas, envelopes, model behavior, and
-evidence sufficiency are outside the estimate. A response with no represented
-source can legitimately add a tracked request and zero saved tokens. Accounting
-is best effort: a busy repository writer skips telemetry rather than delaying
-or failing retrieval. Whole-file telemetry is also skipped when the selected
-tokenizer does not match the indexed tokenizer until reconciliation completes,
-so this is not an audit ledger.
+Full-response counts include the compact structured response but not tool
+discovery, JSON-RPC transport envelopes, provider billing/cache behavior,
+pre-response failures, native-tool costs, or task/evidence success. Successful
+retries are counted as separate requests but are not grouped into tasks.
+Accounting is best effort: a busy repository writer skips telemetry rather
+than delaying or failing retrieval. Whole-file baselines are also unavailable
+when the selected tokenizer does not match the indexed tokenizer until
+reconciliation completes. Source-only counters from older caches remain
+visible, but cannot be reconstructed as historical full-response costs and are
+therefore excluded from `response_accounting`. This is not an audit ledger.
 
 Current index responses retain the aggregate `files_skipped` count and explain
 it with the bounded `skip_reasons` object: `binary`,
@@ -184,20 +192,23 @@ pruning during a mixed-version rollout.
 `leantoken doctor` launches the current executable as a real MCP subprocess and
 verifies its initialization identity and agent instructions, exact eight-tool
 catalog, and first `leantoken.context` retrieval. On a cold repository it
-follows structured `retry_after_ms` guidance until the first index generation
-is ready. Use `--json` for a machine-readable readiness report. Failures use
-the `doctor_failure` category and identify the `launch`, `handshake`, `catalog`,
-or `first_retrieval` stage so repair tooling does not need to parse prose.
+allows the first retrieval's bounded internal wait, then follows structured
+`retry_after_ms` guidance if the index needs longer. Use `--json` for a
+machine-readable readiness report. Failures use the `doctor_failure` category
+and identify the `launch`, `handshake`, `catalog`, or `first_retrieval` stage so
+repair tooling does not need to parse prose.
 
 ## MCP server
 
 `leantoken mcp` starts the stdio protocol before opening the repository cache so
 the initialize handshake is never blocked by indexing. After the client's
 initialized notification, one process becomes indexing leader and followers
-reuse its committed SQLite generations. Retrieval calls made before the first
-generation commits return successful structured retry guidance with a reason
-and `retry_after_ms`. Later calls report whether they use a current or
-reconciling index generation.
+reuse its committed SQLite generations. A retrieval call made while the first
+generation is being built waits internally for up to 30 seconds so a short cold
+index does not require another model turn. If no generation commits within that
+bound, the call returns successful structured retry guidance with a reason and
+`retry_after_ms`. Later calls report whether they use a current or reconciling
+index generation.
 
 One MCP server accepts at most 16 active tool calls. Its cloned request
 handlers share that bound, while a separately started MCP process—including an
@@ -332,10 +343,12 @@ independent capacity.
 
 ## `leantoken.savings`
 
-Returns cumulative repository-local source-token savings estimates with no
-input fields. The response includes the tokenizer, whether local counts are
-exact, tracked request count, baseline and emitted source tokens, the estimated
-source tokens saved, and a fixed breakdown by retrieval operation.
+Returns cumulative repository-local token accounting with no input fields.
+Existing top-level fields retain the source-only estimate and its four
+operation rows. `response_accounting` reports successful response counts,
+comparable baseline counts, source/path-metadata/protocol/total response tokens,
+signed net tokens saved, receipt-suppression counts, and fixed rows for all
+eight retrieval operations.
 
 This is a read-only observation: calling `leantoken.savings` does not update
 the tracker. Ask the host agent how many tokens LeanToken saved or request
@@ -490,12 +503,13 @@ is returned and added to the receipt rather than being hidden as unchanged.
 and symbol lookup; `meta.freshness` is `reconciling` while an index operation
 is active on this cache.
 
-When the index has never completed a generation, retrieval tools return a
-successful retry result such as `{"status":"retryable","reason":"index_building",
-"retry_after_ms":500}`. Retry the same call after that delay. After local edits,
-set `consistency` to `reconcile_working_tree` on the next MCP retrieval. An
-`indexed_generation` read may still use `index_stale` and `expected_hash` to
-detect or suppress live ranges.
+When the index has never completed a generation, retrieval tools wait for up to
+30 seconds before returning a successful retry result such as
+`{"status":"retryable","reason":"index_building","retry_after_ms":500}`. Retry
+the same call after that delay. Caller cancellation interrupts the internal
+wait. After local edits, set `consistency` to `reconcile_working_tree` on the
+next MCP retrieval. An `indexed_generation` read may still use `index_stale`
+and `expected_hash` to detect or suppress live ranges.
 
 ## `leantoken.json`
 
@@ -512,9 +526,24 @@ including ignored artifact paths. Operations are:
 `collapsed` replaces arrays with their total count and a bounded sample.
 `max_items` defaults to 1,000 (maximum 10,000), `array_sample_size` defaults to
 3 (maximum 20), and `max_tokens` defaults to 8,000. Exact source hashes bind
-responses to the complete live files. Raw values that exceed a cap fail loud;
-structural projections report `result_complete: false` when the item cap omits
-structure.
+responses to the complete live files. Raw values that exceed a cap fail loud.
+
+`keys` is a deterministic flat projection and supports pagination under both
+item and token limits. Every keys response reports exact `total_items`,
+`returned_items`, and `remaining_items`. An incomplete page identifies
+`max_items` or `max_tokens` in `incomplete_reason` and returns
+`meta.next_cursor`; repeat the identical path, selector, and projection with
+`cursor` to continue. The cursor is bound to those query inputs and the live
+source hash, so a changed file or selector fails with `stale_cursor` instead of
+mixing pages from different results.
+
+Incomplete `schema`, `collapsed`, and projected diff results report the same
+exact counts and `incomplete_reason`. Their nested shapes are not split into
+ambiguous pages, so they do not return a cursor; increase `max_items` or use a
+narrower selector. Strict JSON parse failures include the syntax category,
+one-based line and column, and zero-based byte offset. JMESPath compile and
+runtime failures include their stage, typed reason, expression offset, line,
+and column.
 
 ## `leantoken.history`
 
@@ -623,9 +652,13 @@ unrelated evidence. Already-held matching hashes satisfy a must-cover
 requirement without resending source.
 
 `omission_summary` distinguishes path filtering, known hashes, and budget or
-result limits. It also groups omitted candidates by path, language or file type,
-reason, score band, focus membership, and changed-path membership. Facet lists
-are deterministic and bounded to 12 values; longer path or file-type tails are
+result limits with compact aggregate counts by default. Coverage, routing,
+truncation warnings, and the bounded individual omission detail remain present,
+so compact diagnostics do not weaken hard-scope or must-cover reporting. Set
+`verbose_diagnostics=true` (`--verbose-diagnostics` in the CLI) to additionally
+group omitted candidates by path, language or file type, reason, score band,
+focus membership, and changed-path membership. Verbose facet lists are
+deterministic and bounded to 12 values; longer path or file-type tails are
 combined into `[other]`. Candidates rejected before scoring use the `not scored`
 band. The selector merges overlapping candidates, suppresses duplicate or known
 content, preserves file diversity, and returns short reasons for each chosen
@@ -754,9 +787,11 @@ available locally. It does not guarantee that a provider will accept a payload
 at the reported budget; responses mark this with `token_count_exact: false`.
 
 `savings` uses the same tokenizer and marks whether its local counts are exact.
-Its `estimated_source_tokens_saved` total sums a saturating per-request
-difference, so one response whose estimate has no savings cannot reduce savings
-recorded for another response.
+The backward-compatible `estimated_source_tokens_saved` total still sums a
+saturating per-request source-only difference. The signed
+`response_accounting.estimated_net_tokens_saved` instead subtracts every
+recorded complete response from the represented-source baseline, so metadata,
+protocol, plan-only, discovery, and history costs can reduce the net result.
 
 Source limits do not include JSON keys, paths, scores, hashes, receipts, tool
 schemas, or JSON-RPC envelopes. `payload_tokens` captures the compact response

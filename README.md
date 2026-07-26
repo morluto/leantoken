@@ -72,7 +72,7 @@ out the task.
 <td width="33%" valign="top">
 <strong>Built for agent workflows</strong><br><br>
 Browse paths, search identifiers, inspect outlines, read exact ranges, trace
-symbol history, query structured JSON, and inspect cumulative savings through
+symbol history, query structured JSON, and inspect cumulative token accounting through
 eight focused MCP tools.
 </td>
 </tr>
@@ -144,8 +144,8 @@ retrieval.
 | `leantoken.outline` | Inspect definitions, signatures, imports, and ranges without whole-file reads. |
 | `leantoken.read` | Prefer over cat/head/sed for one exact symbol or inclusive line range. |
 | `leantoken.history` | Read, diff, or trace one parsed symbol across immutable Git revisions. |
-| `leantoken.json` | Query, summarize, or compare bounded live JSON structures. |
-| `leantoken.savings` | Report cumulative repository-local estimated source-token savings. |
+| `leantoken.json` | Query, summarize, or compare bounded live JSON with paged keys and typed diagnostics. |
+| `leantoken.savings` | Report source compression and cumulative full-response token accounting. |
 
 Every index-backed retrieval tool accepts `consistency: "reconcile_working_tree"` when
 completed edits must be reconciled before the query. The default,
@@ -159,7 +159,9 @@ with `strict_changed_paths: true`.
 For an uncertain broad task, set `plan_only: true` to receive bounded ranked
 candidate metadata without source fragments or receipt mutation. Confirm the
 paths and coverage, then repeat the same request with `plan_only: false` to
-materialize the selected source.
+materialize the selected source. Context omission diagnostics are compact by
+default; set `verbose_diagnostics: true` only when full path, file-type, reason,
+score-band, focus, and changed-path facets are needed.
 
 The catalog stays intentionally small because every tool description and
 schema also consumes model context.

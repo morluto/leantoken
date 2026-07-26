@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "source_manifest": "benchmarks/validation.json",
+  "source_manifest_blake3": "5991d8a643a873ef61d5a4122f52abd7f589a5403d13ab609ebc6b9428e73d9a",
+  "dataset_kind": "prospective_validation",
+  "frozen_at": "2026-07-26",
+  "methodology": "Each independent task concept partitions the source manifest's existing path and line-anchor labels. A concept is covered when at least one of its frozen anchors appears in a generated candidate or selected fragment. Candidate and selected coverage are reported separately at the source manifest's fixed token budget; labels do not use runtime retrieval output.",
+  "thresholds": {
+    "minimum_candidate_concept_recall": 0.75,
+    "minimum_selected_concept_recall": 0.4,
+    "minimum_selection_retention": 0.5,
+    "minimum_task_selected_concept_recall": 0.3333333333333333
+  },
+  "tasks": [
+    {
+      "id": "express-trailing-dot-view",
+      "concepts": [
+        {
+          "id": "empty-extension-resolution",
+          "description": "View resolution must handle an empty extension without passing an empty module name to require.",
+          "evidence": [
+            {
+              "path": "lib/view.js",
+              "line_anchors": [56, 66, 77, 81]
+            }
+          ]
+        },
+        {
+          "id": "render-error-propagation",
+          "description": "Application rendering must route failed lookup errors through the callback.",
+          "evidence": [
+            {
+              "path": "lib/application.js",
+              "line_anchors": [522, 552, 562, 564]
+            }
+          ]
+        },
+        {
+          "id": "trailing-dot-regression",
+          "description": "Regression coverage must exercise a view name ending in a dot.",
+          "evidence": [
+            {
+              "path": "test/app.render.js",
+              "line_anchors": [82, 87, 89]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flask-ipv6-address-partition",
+      "concepts": [
+        {
+          "id": "run-ipv6-regression",
+          "description": "Regression coverage must preserve IPv6 SERVER_NAME parsing in Flask.run.",
+          "evidence": [
+            {
+              "path": "tests/test_basic.py",
+              "line_anchors": [1905, 1915, 1924]
+            }
+          ]
+        },
+        {
+          "id": "run-server-name-ipv6",
+          "description": "Flask.run must partition a bracketed IPv6 SERVER_NAME without losing the host.",
+          "evidence": [
+            {
+              "path": "src/flask/app.py",
+              "line_anchors": [720, 724, 726]
+            }
+          ]
+        },
+        {
+          "id": "session-cookie-ipv6",
+          "description": "session_transaction must preserve the IPv6 host while saving cookies.",
+          "evidence": [
+            {
+              "path": "src/flask/testing.py",
+              "line_anchors": [176, 180, 182]
+            }
+          ]
+        },
+        {
+          "id": "session-ipv6-regression",
+          "description": "Regression coverage must exercise session cookies with an IPv6 host.",
+          "evidence": [
+            {
+              "path": "tests/test_testing.py",
+              "line_anchors": [157, 163, 167]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gin-ascii-json-non-bmp",
+      "concepts": [
+        {
+          "id": "non-bmp-regression",
+          "description": "Regression coverage must round-trip a non-BMP character through AsciiJSON.",
+          "evidence": [
+            {
+              "path": "render/render_test.go",
+              "line_anchors": [243, 250, 253]
+            }
+          ]
+        },
+        {
+          "id": "non-bmp-surrogate-encoding",
+          "description": "AsciiJSON must encode non-BMP Unicode with a UTF-16 surrogate pair.",
+          "evidence": [
+            {
+              "path": "render/json.go",
+              "line_anchors": [160, 167, 174]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tokio-file-write-after-spawn-failure",
+      "concepts": [
+        {
+          "id": "blocking-pool-shutdown-regression",
+          "description": "Regression coverage must exercise writes after the mandatory blocking pool shuts down.",
+          "evidence": [
+            {
+              "path": "tokio/tests/fs_file.rs",
+              "line_anchors": [28, 32, 34]
+            }
+          ]
+        },
+        {
+          "id": "poll-write-state-recovery",
+          "description": "poll_write must retain a valid buffer state after spawn_mandatory_blocking fails.",
+          "evidence": [
+            {
+              "path": "tokio/src/fs/file.rs",
+              "line_anchors": [743, 755, 764]
+            }
+          ]
+        },
+        {
+          "id": "poll-write-vectored-state-recovery",
+          "description": "poll_write_vectored must retain a valid buffer state after spawn_mandatory_blocking fails.",
+          "evidence": [
+            {
+              "path": "tokio/src/fs/file.rs",
+              "line_anchors": [814, 826, 835]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
