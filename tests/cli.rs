@@ -1,4 +1,5 @@
 use clap::{Parser, error::ErrorKind};
+use leantoken::cache::{CacheState, DEFAULT_CACHE_LIST_LIMIT};
 use leantoken::cli::{AppRequest, Cli};
 use leantoken::model::{
     ContextWorkflow, FileOperation, HistoryOperation, IndexConsistency, JsonOperation,
@@ -870,10 +871,65 @@ fn cli_update_and_upgrade_are_aliases() {
 
 #[test]
 fn cli_cache_commands_resolve_without_repository_configuration() {
-    assert!(matches!(
-        parse(&["cache", "list"]).app_request(),
-        AppRequest::CacheList
-    ));
+    let AppRequest::CacheList(default_list) = parse(&["cache", "list"]).app_request() else {
+        panic!("expected cache list request");
+    };
+    assert!(!default_list.summary);
+    assert!(default_list.states.is_empty());
+    assert!(default_list.repository_root.is_none());
+    assert_eq!(default_list.limit, DEFAULT_CACHE_LIST_LIMIT);
+    assert!(default_list.cursor.is_none());
+
+    let AppRequest::CacheList(filtered_list) = parse(&[
+        "cache",
+        "list",
+        "--state",
+        "corrupt",
+        "--state",
+        "legacy",
+        "--repository-root",
+        "repository",
+        "--limit",
+        "7",
+        "--cursor",
+        "opaque",
+    ])
+    .app_request()
+    else {
+        panic!("expected filtered cache list request");
+    };
+    assert_eq!(
+        filtered_list.states,
+        vec![CacheState::Corrupt, CacheState::Legacy]
+    );
+    assert_eq!(
+        filtered_list.repository_root.as_deref(),
+        Some(std::path::Path::new("repository"))
+    );
+    assert_eq!(filtered_list.limit, 7);
+    assert_eq!(filtered_list.cursor.as_deref(), Some("opaque"));
+
+    let AppRequest::CacheList(summary) =
+        parse(&["cache", "list", "--summary", "--state", "current"]).app_request()
+    else {
+        panic!("expected summary cache list request");
+    };
+    assert!(summary.summary);
+    assert_eq!(summary.states, vec![CacheState::Current]);
+    assert!(
+        Cli::try_parse_from([
+            "leantoken",
+            "cache",
+            "list",
+            "--summary",
+            "--cursor",
+            "opaque",
+        ])
+        .is_err()
+    );
+    assert!(
+        Cli::try_parse_from(["leantoken", "cache", "list", "--limit", "101"]).is_err()
+    );
 
     let request = parse(&[
         "cache",

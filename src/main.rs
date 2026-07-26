@@ -106,8 +106,8 @@ async fn run(cli: Cli) -> Result<()> {
 
     if matches!(&cli.command, leantoken::cli::Commands::Cache(_)) {
         match cli.app_request() {
-            AppRequest::CacheList => {
-                let report = cache::list()?;
+            AppRequest::CacheList(request) => {
+                let report = cache::list_with(&request)?;
                 cache::print_list(&report, json)?;
             }
             AppRequest::CachePrune(request) => {
@@ -243,7 +243,7 @@ async fn run(cli: Cli) -> Result<()> {
         AppRequest::Setup(_) | AppRequest::Remove(_) => {
             unreachable!("handled before service setup")
         }
-        AppRequest::CacheList | AppRequest::CachePrune(_) => {
+        AppRequest::CacheList(_) | AppRequest::CachePrune(_) => {
             unreachable!("handled before repository setup")
         }
         AppRequest::Upgrade { .. } => unreachable!("handled before repository setup"),

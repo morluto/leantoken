@@ -9,7 +9,9 @@ use clap::{Args, Command, Parser, Subcommand, ValueEnum};
 
 use crate::Config;
 use crate::Result;
-use crate::cache::CachePruneRequest;
+use crate::cache::{
+    CacheListRequest, CachePruneRequest, CacheState, DEFAULT_CACHE_LIST_LIMIT, MAX_CACHE_LIST_LIMIT,
+};
 use crate::config::DEFAULT_CONTEXT_TOKENS;
 use crate::mcp::McpResultMode;
 use crate::model::{
@@ -26,6 +28,14 @@ fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
         .map_err(|_| "value must be a positive integer".to_owned())?;
     if value == 0 {
         return Err("value must be a positive integer".to_owned());
+    }
+    Ok(value)
+}
+
+fn parse_cache_list_limit(value: &str) -> std::result::Result<usize, String> {
+    let value = parse_positive_usize(value)?;
+    if value > MAX_CACHE_LIST_LIMIT {
+        return Err(format!("must not exceed {MAX_CACHE_LIST_LIMIT}"));
     }
     Ok(value)
 }
@@ -316,7 +326,7 @@ impl Cli {
             Commands::Setup(args) => AppRequest::Setup(args.into()),
             Commands::Remove(args) => AppRequest::Remove(args.into()),
             Commands::Cache(args) => match args.command {
-                CacheCommand::List => AppRequest::CacheList,
+                CacheCommand::List(args) => AppRequest::CacheList(args.into()),
                 CacheCommand::Prune(args) => AppRequest::CachePrune(args.into()),
             },
             Commands::Update(args) | Commands::Upgrade(args) => AppRequest::Upgrade {
@@ -352,7 +362,7 @@ pub enum AppRequest {
     },
     Setup(SetupRequest),
     Remove(SetupRequest),
-    CacheList,
+    CacheList(CacheListRequest),
     CachePrune(CachePruneRequest),
     Upgrade {
         check: bool,
@@ -493,9 +503,75 @@ pub struct CacheArgs {
 #[derive(Debug, Clone, Subcommand)]
 pub enum CacheCommand {
     /// List managed caches, sizes, roots, access times, and active leases.
-    List,
+    List(CacheListArgs),
     /// Remove inactive managed caches selected by explicit criteria.
     Prune(CachePruneArgs),
+}
+
+/// Filters and response bounds for `cache list`.
+#[derive(Debug, Clone, Args)]
+pub struct CacheListArgs {
+    /// Return aggregate diagnostics without per-cache entries.
+    #[arg(long, conflicts_with = "cursor")]
+    pub summary: bool,
+    /// Keep caches in this metadata state (repeatable).
+    #[arg(long, value_enum, value_name = "STATE")]
+    pub state: Vec<CacheStateArg>,
+    /// Keep the exact recorded repository root.
+    #[arg(long, value_name = "PATH")]
+    pub repository_root: Option<PathBuf>,
+    /// Maximum entries returned by one page (1-100).
+    #[arg(
+        long,
+        default_value_t = DEFAULT_CACHE_LIST_LIMIT,
+        value_parser = parse_cache_list_limit
+    )]
+    pub limit: usize,
+    /// Continue from an opaque cursor returned by the same filters.
+    #[arg(long, value_name = "CURSOR")]
+    pub cursor: Option<String>,
+}
+
+/// Cache metadata state accepted by `cache list --state`.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CacheStateArg {
+    /// Current schema and access metadata.
+    Current,
+    /// Readable older schema without current access metadata.
+    Legacy,
+    /// Known artifacts without a readable database.
+    Incomplete,
+    /// SQLite metadata inspection failed.
+    Corrupt,
+    /// Newer or mismatched metadata unsafe for this binary.
+    Unsupported,
+    /// Unexpected directory content.
+    Unrecognized,
+}
+
+impl From<CacheStateArg> for CacheState {
+    fn from(value: CacheStateArg) -> Self {
+        match value {
+            CacheStateArg::Current => Self::Current,
+            CacheStateArg::Legacy => Self::Legacy,
+            CacheStateArg::Incomplete => Self::Incomplete,
+            CacheStateArg::Corrupt => Self::Corrupt,
+            CacheStateArg::Unsupported => Self::Unsupported,
+            CacheStateArg::Unrecognized => Self::Unrecognized,
+        }
+    }
+}
+
+impl From<CacheListArgs> for CacheListRequest {
+    fn from(args: CacheListArgs) -> Self {
+        Self {
+            summary: args.summary,
+            states: args.state.into_iter().map(Into::into).collect(),
+            repository_root: args.repository_root,
+            limit: args.limit,
+            cursor: args.cursor,
+        }
+    }
 }
 
 /// Selection and consent for `cache prune`.
