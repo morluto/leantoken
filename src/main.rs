@@ -251,7 +251,7 @@ async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result<()> {
                 Ok(Err(error)) => error,
                 Err(error) => error.into(),
             };
-            failure_state.set_failed();
+            failure_state.set_failed(&error);
             tracing::error!(%error, "MCP indexing runtime failed");
 
             match server_task.await {
@@ -536,6 +536,7 @@ fn print<T: Serialize>(value: &T, compact: bool) -> Result<()> {
 }
 
 fn cli_error_message(error: &leantoken::Error) -> String {
+    let error = error.reconciliation_cause();
     match error {
         leantoken::Error::IndexNotReady => "repository index is not ready; run `leantoken index` \
             for direct CLI use or `leantoken doctor` to verify MCP readiness"
@@ -597,6 +598,7 @@ fn cli_parse_error_response(error: &clap::Error) -> CliErrorResponse {
 }
 
 fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
+    let error = error.reconciliation_cause();
     let (category, stage, field, requested, limit) = match error {
         leantoken::Error::DoctorFailure { stage, .. } => {
             ("doctor_failure", Some(*stage), None, None, None)
@@ -692,7 +694,16 @@ fn init_tracing(json: bool) {
             "body",
             "token_text",
         ];
-        !meta.fields().iter().any(|f| forbidden.contains(&f.name()))
+        let contains_source = meta
+            .fields()
+            .iter()
+            .any(|field| forbidden.contains(&field.name()));
+        let contains_rmcp_payload = meta.target().starts_with("rmcp")
+            && meta
+                .fields()
+                .iter()
+                .any(|field| matches!(field.name(), "request" | "result"));
+        !contains_source && !contains_rmcp_payload
     });
 
     tracing_subscriber::registry()
@@ -824,6 +835,13 @@ mod tests {
             ),
             (
                 leantoken::Error::IndexNotReady,
+                serde_json::json!({
+                    "error": "repository index is not ready; run `leantoken index` for direct CLI use or `leantoken doctor` to verify MCP readiness",
+                    "category": "index_not_ready"
+                }),
+            ),
+            (
+                leantoken::Error::ReconciliationFailed(Arc::new(leantoken::Error::IndexNotReady)),
                 serde_json::json!({
                     "error": "repository index is not ready; run `leantoken index` for direct CLI use or `leantoken doctor` to verify MCP readiness",
                     "category": "index_not_ready"

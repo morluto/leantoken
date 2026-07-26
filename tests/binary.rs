@@ -531,9 +531,12 @@ fn mcp_survives_malformed_and_invalid_messages() {
     process.initialize();
     process.send_initialized();
 
-    // rmcp intentionally ignores unparsable input, but a well-formed value
+    // Oversized terminated and initially unterminated frames are discarded
+    // without closing the transport. rmcp intentionally ignores unparsable input, but a well-formed value
     // with the wrong JSON-RPC shape receives Invalid Request. Neither may
     // close the stdio transport or poison the next tool call.
+    process.send_raw(&vec![b'x'; 4 * 1024 * 1024 + 1]);
+    process.send_raw_line("");
     process.send_raw_line("{not json");
     process.send_raw_line(r#"{"foo":"bar"}"#);
     // Keep this independent from host load: the process may still be finishing
@@ -820,6 +823,14 @@ fn mcp_rejects_home_root_after_initialize_without_opening_storage() {
             .unwrap_or_default();
         if message.contains("unavailable") {
             assert_eq!(response["result"]["isError"], true);
+            assert_eq!(
+                response["result"]["structuredContent"]["reason"],
+                "unsafe_repository_root"
+            );
+            assert!(
+                !response.to_string().contains(home.to_str().expect("UTF-8 home")),
+                "unsafe path leaked in tool response: {response}"
+            );
             assert!(!database.exists(), "unsafe root opened its SQLite cache");
             assert!(process.child.try_wait().expect("poll process").is_none());
             break;
@@ -1769,6 +1780,12 @@ impl McpProcess {
         stdin.write_all(line.as_bytes()).expect("write raw MCP line");
         stdin.write_all(b"\n").expect("terminate raw MCP line");
         stdin.flush().expect("flush raw MCP line");
+    }
+
+    fn send_raw(&mut self, bytes: &[u8]) {
+        let stdin = self.stdin.as_mut().expect("live MCP stdin");
+        stdin.write_all(bytes).expect("write raw MCP bytes");
+        stdin.flush().expect("flush raw MCP bytes");
     }
 
     fn message(&self, timeout: Duration) -> serde_json::Value {
