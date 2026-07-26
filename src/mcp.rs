@@ -360,6 +360,9 @@ struct ReadMcpRequest {
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
     expected_hash: Option<String>,
+    /// Record this target and prefer a cheaper complete delta on changed follow-ups.
+    #[serde(default)]
+    delta: bool,
     /// Suppress evidence already returned under this server-managed receipt.
     #[serde(default)]
     #[schemars(length(max = 128))]
@@ -446,6 +449,7 @@ impl ReadMcpRequest {
                 continuation_cursor,
                 max_tokens: self.max_tokens,
                 expected_hash: self.expected_hash,
+                delta: self.delta,
                 receipt_id: self.receipt_id,
             },
             self.consistency,

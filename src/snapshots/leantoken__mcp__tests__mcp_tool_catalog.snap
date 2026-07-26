@@ -1027,6 +1027,11 @@ expression: tools
           ],
           "type": "string"
         },
+        "delta": {
+          "default": false,
+          "description": "Record this target and prefer a cheaper complete delta on changed follow-ups.",
+          "type": "boolean"
+        },
         "expected_hash": {
           "default": null,
           "description": "Hash from the same prior target; matching content returns `not_modified`.",

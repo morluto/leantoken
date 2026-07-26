@@ -906,6 +906,7 @@ async fn profile_reads(
                     continuation_cursor: Some(cursor),
                     max_tokens: Some(128),
                     expected_hash: None,
+                    delta: false,
                     receipt_id: None,
                 })
                 .await?,
@@ -981,6 +982,7 @@ fn read_request(
         continuation_cursor: None,
         max_tokens: Some(max_tokens),
         expected_hash: None,
+        delta: false,
         receipt_id: None,
     }
 }

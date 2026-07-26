@@ -438,6 +438,7 @@ fn read_request(target: &ReadTarget, max_tokens: usize) -> ReadRequest {
         continuation_cursor: None,
         max_tokens: Some(max_tokens),
         expected_hash: None,
+        delta: false,
         receipt_id: None,
     }
 }

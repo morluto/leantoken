@@ -506,6 +506,9 @@ pub struct ReadRequest {
     /// Hash from the same prior range; matching content returns `not_modified`.
     #[serde(default)]
     pub expected_hash: Option<String>,
+    /// Record a bounded base and prefer a cheaper unified diff on a changed follow-up.
+    #[serde(default)]
+    pub delta: bool,
     /// Server-managed receipt whose previously returned evidence should be suppressed.
     #[serde(default)]
     pub receipt_id: Option<String>,
@@ -545,6 +548,12 @@ pub struct ReadResponse {
     pub not_modified: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    /// Unified diff from the requested base hash to `content_hash`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta: Option<String>,
+    /// Bounded delta decision and accounting metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta_receipt: Option<ReadDeltaReceipt>,
     pub content_hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub indexed_hash: Option<String>,
@@ -827,6 +836,69 @@ pub enum ReadStatus {
     /// The response contains only part of the resolved target.
     Truncated,
     NotModified,
+    /// A complete unified diff is returned instead of full current content.
+    Delta,
+    /// A server-managed evidence receipt already contained the exact current content.
+    ReceiptSuppressed,
+}
+
+/// Result selected by an opt-in read delta request.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadDeltaOutcome {
+    /// Full current content was returned.
+    Full,
+    /// A complete unified diff was returned.
+    Delta,
+    /// The requested base hash already identifies the current content.
+    NotModified,
+    /// A general evidence receipt already contained the exact current content.
+    ReceiptSuppressed,
+}
+
+/// Why an opt-in read delta attempt returned full content.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadDeltaFallback {
+    /// No bounded base matched the target and requested hash.
+    BaseUnavailable,
+    /// The resolved target or returned coordinates changed.
+    TargetChanged,
+    /// The current response is truncated and cannot be a complete delta target.
+    CurrentTruncated,
+    /// The current page exceeds the per-entry delta-state bound.
+    ContentTooLarge,
+    /// The complete delta response was not smaller than a full-content response.
+    DeltaNotSmaller,
+}
+
+/// Provenance and token accounting for one opt-in read delta decision.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ReadDeltaReceipt {
+    /// Stable hash of the repository and caller-selected target.
+    pub target_key: String,
+    /// Requested prior content hash, when supplied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_hash: Option<String>,
+    /// Hash of the complete current response page.
+    pub head_hash: String,
+    /// Repository generation observed when the bounded base was captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_generation: Option<u64>,
+    /// Repository generation used to resolve the current target.
+    pub head_generation: u64,
+    /// Selected response form.
+    pub outcome: ReadDeltaOutcome,
+    /// Tokens required by full current content.
+    pub full_tokens: usize,
+    /// Tokens in the returned delta, or zero for `not_modified`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta_tokens: Option<usize>,
+    /// Full-content tokens avoided by the selected response.
+    pub avoided_tokens: usize,
+    /// Explicit reason full content was retained after a delta attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<ReadDeltaFallback>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

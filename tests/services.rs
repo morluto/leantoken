@@ -3,8 +3,8 @@ use std::time::Instant;
 use leantoken::{
     Config, ContextRequest, ContextSignalPolicy, ContextWorkflow, Error, FileOperation, FilesRequest,
     Freshness, HistoryOperation, HistoryRequest, IndexConsistency, IndexState, JsonOperation,
-    JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadRequest, ReadStatus, SearchMode,
-    SearchRequest, TokenSavingsOperation,
+    JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadDeltaFallback, ReadDeltaOutcome,
+    ReadRequest, ReadStatus, SearchMode, SearchRequest, TokenSavingsOperation,
     coordination::IndexCoordination, services::Services, tokens::Tokenizer,
 };
 use tokio_util::sync::CancellationToken;
@@ -914,6 +914,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
+                delta: false,
                 receipt_id: None,
             })
             .await
@@ -968,6 +969,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
+                delta: false,
                 receipt_id: None,
             })
             .await
@@ -1243,6 +1245,7 @@ fn read_limit_request(max_tokens: Option<usize>) -> ReadRequest {
         continuation_cursor: None,
         max_tokens,
         expected_hash: None,
+        delta: false,
         receipt_id: None,
     }
 }
@@ -1508,6 +1511,7 @@ async fn repository_context_exclusions_preserve_exact_artifact_access() {
             continuation_cursor: None,
             max_tokens: Some(200),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -2879,6 +2883,7 @@ async fn five_services_return_bounded_grounded_responses() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -2895,6 +2900,7 @@ async fn five_services_return_bounded_grounded_responses() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first.content_hash.clone()),
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -3014,6 +3020,7 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -3129,6 +3136,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -3144,6 +3152,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first_read.content_hash),
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -3400,6 +3409,7 @@ function helper() {
                 continuation_cursor: None,
                 max_tokens: Some(2_000),
                 expected_hash: None,
+                delta: false,
                 receipt_id: None,
             })
             .await
@@ -3568,6 +3578,7 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
                 continuation_cursor: None,
                 max_tokens: Some(2_000),
                 expected_hash: None,
+                delta: false,
                 receipt_id: None,
             })
             .await
@@ -3676,6 +3687,7 @@ Setext
                 continuation_cursor: None,
                 max_tokens: Some(2_000),
                 expected_hash: None,
+                delta: false,
                 receipt_id: None,
             })
             .await
@@ -3698,6 +3710,7 @@ Setext
             continuation_cursor: None,
             max_tokens: Some(2_000),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -3722,6 +3735,7 @@ Setext
             continuation_cursor: None,
             max_tokens: Some(2_000),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4494,6 +4508,7 @@ async fn read_reports_live_content_that_differs_from_the_index() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4516,6 +4531,7 @@ async fn read_reports_live_content_that_differs_from_the_index() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first.content_hash.clone()),
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4528,6 +4544,336 @@ async fn read_reports_live_content_that_differs_from_the_index() {
         changed.content.as_deref(),
         Some("pub fn changed() -> bool { true }\n")
     );
+}
+
+#[tokio::test]
+async fn read_delta_returns_a_complete_strictly_cheaper_edit() {
+    let source = (1..=80)
+        .map(|line| format!("let value_{line} = compute_value({line});\n"))
+        .collect::<String>();
+    let (root, services) = indexed_source("delta.rs", source.as_bytes()).await;
+    let first = services
+        .read(ReadRequest {
+            path: "delta.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(32_000),
+            expected_hash: None,
+            delta: true,
+            receipt_id: None,
+        })
+        .await
+        .expect("capture delta base");
+    let first_receipt = first.delta_receipt.as_ref().expect("base receipt");
+    assert_eq!(first_receipt.outcome, ReadDeltaOutcome::Full);
+    assert_eq!(first_receipt.head_hash, first.content_hash);
+    assert!(first_receipt.base_hash.is_none());
+    let base_hash = first.content_hash.clone();
+
+    let unchanged = services
+        .read(ReadRequest {
+            path: "delta.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(32_000),
+            expected_hash: Some(base_hash.clone()),
+            delta: true,
+            receipt_id: None,
+        })
+        .await
+        .expect("read unchanged delta target");
+    assert_eq!(unchanged.status, ReadStatus::NotModified);
+    assert!(unchanged.content.is_none());
+    assert!(unchanged.delta.is_none());
+    let unchanged_receipt = unchanged.delta_receipt.expect("not-modified receipt");
+    assert_eq!(unchanged_receipt.outcome, ReadDeltaOutcome::NotModified);
+    assert_eq!(unchanged_receipt.delta_tokens, Some(0));
+    assert_eq!(
+        unchanged_receipt.avoided_tokens,
+        unchanged_receipt.full_tokens
+    );
+
+    let changed_source = source.replace(
+        "let value_40 = compute_value(40);",
+        "let value_40 = compute_updated_value(40);",
+    );
+    std::fs::write(root.path().join("delta.rs"), changed_source).expect("edit source");
+    let changed = services
+        .read(ReadRequest {
+            path: "delta.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(32_000),
+            expected_hash: Some(base_hash),
+            delta: true,
+            receipt_id: None,
+        })
+        .await
+        .expect("read changed delta");
+
+    assert_eq!(changed.status, ReadStatus::Delta);
+    assert!(changed.content.is_none());
+    assert!(changed.index_stale);
+    let delta = changed.delta.as_deref().expect("unified diff");
+    assert!(delta.contains("-let value_40 = compute_value(40);"));
+    assert!(delta.contains("+let value_40 = compute_updated_value(40);"));
+    let receipt = changed.delta_receipt.as_ref().expect("delta receipt");
+    assert_eq!(receipt.outcome, ReadDeltaOutcome::Delta);
+    assert_eq!(receipt.base_generation, Some(first_receipt.head_generation));
+    assert_eq!(receipt.head_hash, changed.content_hash);
+    assert_eq!(receipt.delta_tokens, Some(changed.meta.emitted_tokens));
+    assert!(receipt.full_tokens > changed.meta.emitted_tokens);
+    assert_eq!(
+        receipt.avoided_tokens,
+        receipt.full_tokens - changed.meta.emitted_tokens
+    );
+    assert!(receipt.fallback_reason.is_none());
+    assert_response_token_accounting!(changed, Tokenizer::Cl100kBase);
+}
+
+#[tokio::test]
+async fn read_delta_does_not_capture_or_diff_a_truncated_page() {
+    let source = (1..=80)
+        .map(|line| format!("let value_{line} = compute_value({line});\n"))
+        .collect::<String>();
+    let (_root, services) = indexed_source("truncated.rs", source.as_bytes()).await;
+
+    let response = services
+        .read(ReadRequest {
+            path: "truncated.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(20),
+            expected_hash: None,
+            delta: true,
+            receipt_id: None,
+        })
+        .await
+        .expect("read truncated delta target");
+
+    assert_eq!(response.status, ReadStatus::Truncated);
+    assert!(response.truncated);
+    assert!(response.content.is_some());
+    assert!(response.delta.is_none());
+    let receipt = response.delta_receipt.expect("truncation receipt");
+    assert_eq!(receipt.outcome, ReadDeltaOutcome::Full);
+    assert_eq!(
+        receipt.fallback_reason,
+        Some(ReadDeltaFallback::CurrentTruncated)
+    );
+    assert_eq!(receipt.avoided_tokens, 0);
+}
+
+#[tokio::test]
+async fn read_delta_falls_back_when_the_diff_is_not_smaller() {
+    let (root, services) = indexed_source("small.txt", b"alpha\n").await;
+    let first = services
+        .read(ReadRequest {
+            path: "small.txt".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+            delta: true,
+            receipt_id: None,
+        })
+        .await
+        .expect("capture small base");
+    std::fs::write(root.path().join("small.txt"), "beta\n").expect("edit small source");
+
+    let changed = services
+        .read(ReadRequest {
+            path: "small.txt".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: Some(first.content_hash),
+            delta: true,
+            receipt_id: None,
+        })
+        .await
+        .expect("fall back to full content");
+
+    assert_eq!(changed.status, ReadStatus::Content);
+    assert_eq!(changed.content.as_deref(), Some("beta\n"));
+    assert!(changed.delta.is_none());
+    let receipt = changed.delta_receipt.expect("fallback receipt");
+    assert_eq!(receipt.outcome, ReadDeltaOutcome::Full);
+    assert_eq!(
+        receipt.fallback_reason,
+        Some(ReadDeltaFallback::DeltaNotSmaller)
+    );
+    assert_eq!(receipt.avoided_tokens, 0);
+}
+
+#[tokio::test]
+async fn read_delta_falls_back_when_symbol_coordinates_change() {
+    let source = b"fn target() {\n    old_behavior();\n}\n";
+    let (root, services) = indexed_source("symbol.rs", source).await;
+    let first = services
+        .read(ReadRequest {
+            path: "symbol.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: Some("target".into()),
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(1_000),
+            expected_hash: None,
+            delta: true,
+            receipt_id: None,
+        })
+        .await
+        .expect("capture symbol base");
+    std::fs::write(
+        root.path().join("symbol.rs"),
+        "\nfn target() {\n    new_behavior();\n}\n",
+    )
+    .expect("move and edit symbol");
+    services.index(false).await.expect("reindex moved symbol");
+
+    let changed = services
+        .read(ReadRequest {
+            path: "symbol.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: Some("target".into()),
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(1_000),
+            expected_hash: Some(first.content_hash),
+            delta: true,
+            receipt_id: None,
+        })
+        .await
+        .expect("fall back after target movement");
+
+    assert_eq!(changed.status, ReadStatus::Content);
+    assert!(changed.content.as_deref().is_some_and(|content| {
+        content.contains("new_behavior") && !content.contains("old_behavior")
+    }));
+    let receipt = changed.delta_receipt.expect("coordinate fallback");
+    assert_eq!(
+        receipt.fallback_reason,
+        Some(ReadDeltaFallback::TargetChanged)
+    );
+    assert!(
+        receipt
+            .base_generation
+            .is_some_and(|base| base < receipt.head_generation)
+    );
+}
+
+#[tokio::test]
+async fn read_receipt_does_not_suppress_changed_overlapping_content() {
+    let (root, services) = indexed_source("receipt.rs", b"fn before() {}\n").await;
+    let first = services
+        .read(ReadRequest {
+            path: "receipt.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+        })
+        .await
+        .expect("first receipt read");
+    std::fs::write(root.path().join("receipt.rs"), "fn after() {}\n").expect("edit receipt");
+
+    let changed = services
+        .read(ReadRequest {
+            path: "receipt.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+            delta: false,
+            receipt_id: first.meta.receipt_id,
+        })
+        .await
+        .expect("changed overlapping read");
+
+    assert_eq!(changed.status, ReadStatus::Content);
+    assert_eq!(changed.content.as_deref(), Some("fn after() {}\n"));
+    assert_eq!(changed.meta.receipt_suppressed_overlap, 0);
+}
+
+#[tokio::test]
+async fn read_receipt_distinguishes_exact_suppression_from_not_modified() {
+    let (_root, services) = indexed_source("receipt.rs", b"fn unchanged() {}\n").await;
+    let first = services
+        .read(ReadRequest {
+            path: "receipt.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+        })
+        .await
+        .expect("first receipt read");
+    let repeated = services
+        .read(ReadRequest {
+            path: "receipt.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+            delta: false,
+            receipt_id: first.meta.receipt_id,
+        })
+        .await
+        .expect("receipt-suppressed read");
+
+    assert_eq!(repeated.status, ReadStatus::ReceiptSuppressed);
+    assert!(!repeated.not_modified);
+    assert!(repeated.content.is_none());
+    assert_eq!(repeated.meta.receipt_suppressed_exact, 1);
+    assert_eq!(repeated.meta.emitted_tokens, 0);
 }
 
 #[tokio::test]
@@ -4546,6 +4892,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4564,6 +4911,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(exact.content_hash.clone()),
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4583,6 +4931,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4601,6 +4950,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4619,6 +4969,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4634,6 +4985,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4653,6 +5005,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4676,6 +5029,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(exact.content_hash.clone()),
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4702,6 +5056,7 @@ async fn symbol_read_after_first_line_returns_the_complete_definition() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4734,6 +5089,7 @@ async fn open_ended_read_bounds_live_suffix_before_returning_content() {
             continuation_cursor: None,
             max_tokens: Some(12),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4762,6 +5118,7 @@ async fn live_read_rejects_malformed_utf8_at_eof() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4791,6 +5148,7 @@ async fn live_read_rejects_line_after_terminal_newline() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4820,6 +5178,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4835,6 +5194,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4856,6 +5216,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4878,6 +5239,7 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4897,6 +5259,7 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
+                delta: false,
                 receipt_id: None,
             })
             .await
@@ -4915,6 +5278,7 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             continuation_cursor: Some("not-a-read-cursor".into()),
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4934,6 +5298,7 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             ),
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -4963,6 +5328,7 @@ async fn token_truncated_read_reports_the_returned_line_range() {
             continuation_cursor: None,
             max_tokens: Some(3),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -5005,6 +5371,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
                 continuation_cursor: cursor.take(),
                 max_tokens: Some(12),
                 expected_hash: None,
+                delta: false,
                 receipt_id: None,
             })
             .await
@@ -5044,6 +5411,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             continuation_cursor: None,
             max_tokens: Some(12),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -5059,6 +5427,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             continuation_cursor: None,
             max_tokens: Some(12),
             expected_hash: Some(first.content_hash.clone()),
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -5082,6 +5451,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             continuation_cursor: first.continuation_cursor,
             max_tokens: Some(12),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -5099,6 +5469,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             continuation_cursor: None,
             max_tokens: Some(12),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -5116,6 +5487,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             continuation_cursor: current.continuation_cursor,
             max_tokens: Some(12),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -5147,6 +5519,7 @@ async fn read_rejects_ignored_files() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -5191,6 +5564,7 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -5214,6 +5588,7 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -5249,6 +5624,7 @@ async fn symbol_reads_and_outline_filters_search_beyond_result_caps() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -6469,6 +6845,7 @@ async fn reconcile_working_tree_consistency_applies_to_each_retrieval_service() 
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
+                delta: false,
                 receipt_id: None,
             },
             IndexConsistency::ReconcileWorkingTree,
@@ -6540,6 +6917,7 @@ async fn read_reports_index_stale_when_live_file_diverges() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -6576,6 +6954,7 @@ async fn read_not_modified_still_reports_index_stale_against_live_file() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
             receipt_id: None,
         })
         .await
@@ -6596,6 +6975,7 @@ async fn read_not_modified_still_reports_index_stale_against_live_file() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first.content_hash.clone()),
+            delta: false,
             receipt_id: None,
         })
         .await

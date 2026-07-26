@@ -362,8 +362,12 @@ issuing a continuation cursor. Responses include:
 
 When `index_stale` is true, agents should re-outline or re-search with
 `consistency=reconcile_working_tree` if the next retrieval must include those
-edits. Pass `expected_hash` on rereads to suppress unchanged ranges. Search and outline
-never invent empty successful results at generation zero.
+edits. Pass `expected_hash` on rereads to suppress unchanged ranges. Exact
+line, symbol, and heading reads can opt into a repository-local bounded delta
+registry. It retains only complete targets and returns a unified diff only when
+the target coordinates still match and the complete delta is strictly cheaper
+than current content. Search and outline never invent empty successful results
+at generation zero.
 
 ## Concurrency design constraints
 

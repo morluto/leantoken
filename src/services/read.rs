@@ -110,6 +110,13 @@ struct LiveReadObservation {
     range: LiveReadRange,
 }
 
+struct MaterializedRead {
+    response: ReadResponse,
+    baseline_source_tokens: usize,
+    current_content: String,
+    current_tokens: usize,
+}
+
 #[derive(Debug)]
 struct ReadCursor {
     generation: u64,
@@ -322,6 +329,12 @@ fn validate_read_input(request: &ReadRequest) -> Result<()> {
         return Err(Error::InvalidInput {
             field: "read target",
             reason: "must use either a continuation cursor or a new target, not both",
+        });
+    }
+    if request.delta && request.continuation_cursor.is_some() {
+        return Err(Error::InvalidInput {
+            field: "delta",
+            reason: "is supported only for a new line, symbol, or heading target",
         });
     }
     if request.symbol.is_none()
@@ -682,44 +695,77 @@ impl Services {
         validate_read_input(&request)?;
         request.path = normalize_relative(&request.path)?;
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
-        let (mut response, baseline_source_tokens) = self.consistent(|session, generation| {
+        let materialized = self.consistent(|session, generation| {
             check_cancelled(cancellation)?;
             self.read_at_generation(session, &request, generation, max_tokens)
         })?;
-        let receipt_candidates = response
-            .content
-            .as_deref()
-            .map(|content| {
-                vec![ReceiptEvidence::new(
-                    response.path.clone(),
-                    response.returned_start_line,
-                    response.returned_end_line,
-                    response.content_hash.clone(),
-                    Some(content),
-                )]
-            })
-            .unwrap_or_default();
-        let receipt = self.evaluate_receipt(
+        let mut response = materialized.response;
+        if request.delta {
+            let evaluation = self.read_deltas.evaluate(
+                &response.meta.repository_id,
+                &request,
+                &response,
+                &materialized.current_content,
+                materialized.current_tokens,
+                self.config.tokenizer,
+            )?;
+            if let Some(delta) = evaluation.delta {
+                let emitted_tokens = evaluation
+                    .receipt
+                    .delta_tokens
+                    .expect("delta evaluation reports its token count");
+                response.status = ReadStatus::Delta;
+                response.content = None;
+                response.delta = Some(delta);
+                response.meta.source_tokens = emitted_tokens;
+                response.meta.emitted_tokens = emitted_tokens;
+            }
+            response.delta_receipt = Some(evaluation.receipt);
+            prefer_full_if_delta_payload_not_smaller(
+                &mut response,
+                &materialized.current_content,
+                materialized.current_tokens,
+                self.config.tokenizer,
+            )?;
+        }
+        let receipt_candidates = if response.not_modified {
+            Vec::new()
+        } else {
+            vec![ReceiptEvidence::new(
+                response.path.clone(),
+                response.returned_start_line,
+                response.returned_end_line,
+                response.content_hash.clone(),
+                Some(&materialized.current_content),
+            )]
+        };
+        let receipt = self.evaluate_read_receipt(
             request.receipt_id.as_deref(),
             response.meta.repository_generation,
             &receipt_candidates,
         )?;
-        if receipt.decisions.first().is_some_and(|decision| {
-            matches!(
-                decision,
-                ReceiptDecision::SuppressExact | ReceiptDecision::SuppressOverlap
-            )
-        }) {
+        if receipt
+            .decisions
+            .first()
+            .is_some_and(|decision| *decision == ReceiptDecision::SuppressExact)
+        {
             response.content = None;
-            response.status = ReadStatus::NotModified;
-            response.not_modified = true;
+            response.delta = None;
+            response.status = ReadStatus::ReceiptSuppressed;
+            response.not_modified = false;
             response.meta.source_tokens = 0;
             response.meta.emitted_tokens = 0;
+            if let Some(delta_receipt) = response.delta_receipt.as_mut() {
+                delta_receipt.outcome = ReadDeltaOutcome::ReceiptSuppressed;
+                delta_receipt.delta_tokens = Some(0);
+                delta_receipt.avoided_tokens = delta_receipt.full_tokens;
+                delta_receipt.fallback_reason = None;
+            }
         }
         receipt.apply_meta(&mut response.meta);
         self.record_token_savings(
             TokenSavingsOperation::Read,
-            baseline_source_tokens,
+            materialized.baseline_source_tokens,
             response.meta.emitted_tokens,
         );
         self.finalize_response(&mut response)?;
@@ -732,7 +778,7 @@ impl Services {
         request: &ReadRequest,
         generation: u64,
         max_tokens: usize,
-    ) -> Result<(ReadResponse, usize)> {
+    ) -> Result<MaterializedRead> {
         let indexed = session
             .find_file(&request.path)?
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
@@ -816,8 +862,8 @@ impl Services {
             ReadStatus::Content
         };
 
-        Ok((
-            ReadResponse {
+        Ok(MaterializedRead {
+            response: ReadResponse {
                 path: request.path.clone(),
                 status,
                 target_start_line: target.target_start_line,
@@ -831,6 +877,8 @@ impl Services {
                 continuation_cursor,
                 not_modified,
                 content: (!not_modified).then(|| content.to_string()),
+                delta: None,
+                delta_receipt: None,
                 content_hash,
                 indexed_hash,
                 index_stale,
@@ -841,8 +889,59 @@ impl Services {
                 ),
             },
             baseline_source_tokens,
-        ))
+            current_content: content.to_owned(),
+            current_tokens: emitted_tokens,
+        })
     }
+}
+
+fn prefer_full_if_delta_payload_not_smaller(
+    response: &mut ReadResponse,
+    current_content: &str,
+    current_tokens: usize,
+    tokenizer: crate::tokens::Tokenizer,
+) -> Result<()> {
+    if response.status != ReadStatus::Delta {
+        return Ok(());
+    }
+    let delta_tokens = finalized_serialized_read_tokens(response, tokenizer)?;
+    let mut full = response.clone();
+    full.status = ReadStatus::Content;
+    full.content = Some(current_content.to_owned());
+    full.delta = None;
+    full.meta.source_tokens = current_tokens;
+    full.meta.emitted_tokens = current_tokens;
+    if let Some(receipt) = full.delta_receipt.as_mut() {
+        receipt.outcome = ReadDeltaOutcome::Full;
+        receipt.delta_tokens = None;
+        receipt.avoided_tokens = 0;
+        receipt.fallback_reason = Some(ReadDeltaFallback::DeltaNotSmaller);
+    }
+    if delta_tokens >= finalized_serialized_read_tokens(&full, tokenizer)? {
+        *response = full;
+    }
+    Ok(())
+}
+
+fn finalized_serialized_read_tokens(
+    response: &ReadResponse,
+    tokenizer: crate::tokens::Tokenizer,
+) -> Result<usize> {
+    let mut finalized = response.clone();
+    finalized.meta.protocol_tokens = 0;
+    finalized.meta.path_and_metadata_tokens = 0;
+    finalized.meta.total_response_tokens = 0;
+    finalized.meta.payload_tokens = 0;
+    let accounting = crate::tokens::response_token_accounting(
+        &finalized,
+        finalized.meta.source_tokens,
+        &tokenizer,
+    )?;
+    finalized.meta.protocol_tokens = accounting.protocol_tokens;
+    finalized.meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
+    finalized.meta.total_response_tokens = accounting.total_response_tokens;
+    finalized.meta.payload_tokens = accounting.total_response_tokens;
+    Ok(tokenizer.count(&serde_json::to_string(&finalized)?))
 }
 
 fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
