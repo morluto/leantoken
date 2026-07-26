@@ -92,6 +92,23 @@ impl Services {
             candidates,
         )
     }
+
+    pub(super) fn evaluate_read_receipt(
+        &self,
+        requested_id: Option<&str>,
+        generation: u64,
+        candidates: &[ReceiptEvidence],
+    ) -> Result<ReceiptEvaluation> {
+        self.receipts.evaluate_exact_only(
+            requested_id,
+            generation,
+            || {
+                let id = self.next_receipt_id.fetch_add(1, Ordering::Relaxed);
+                format!("r{id:016x}")
+            },
+            candidates,
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -118,6 +135,27 @@ impl ReceiptRegistry {
         generation: u64,
         generated_id: impl FnOnce() -> String,
         candidates: &[ReceiptEvidence],
+    ) -> Result<ReceiptEvaluation> {
+        self.evaluate_with_overlap_policy(requested_id, generation, generated_id, candidates, true)
+    }
+
+    pub(super) fn evaluate_exact_only(
+        &self,
+        requested_id: Option<&str>,
+        generation: u64,
+        generated_id: impl FnOnce() -> String,
+        candidates: &[ReceiptEvidence],
+    ) -> Result<ReceiptEvaluation> {
+        self.evaluate_with_overlap_policy(requested_id, generation, generated_id, candidates, false)
+    }
+
+    fn evaluate_with_overlap_policy(
+        &self,
+        requested_id: Option<&str>,
+        generation: u64,
+        generated_id: impl FnOnce() -> String,
+        candidates: &[ReceiptEvidence],
+        suppress_overlap: bool,
     ) -> Result<ReceiptEvaluation> {
         if requested_id.is_some_and(|id| id.len() > MAX_RECEIPT_ID_BYTES) {
             return Err(Error::InputTooLong {
@@ -149,7 +187,14 @@ impl ReceiptRegistry {
             .map(|receipt| {
                 candidates
                     .iter()
-                    .map(|candidate| decide(&receipt.evidence, candidate))
+                    .map(|candidate| {
+                        let decision = decide(&receipt.evidence, candidate);
+                        if !suppress_overlap && decision == ReceiptDecision::SuppressOverlap {
+                            ReceiptDecision::Return
+                        } else {
+                            decision
+                        }
+                    })
                     .collect::<Vec<_>>()
             })
             .unwrap_or_else(|| vec![ReceiptDecision::Return; candidates.len()]);

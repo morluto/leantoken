@@ -1017,3 +1017,30 @@ Codex CLI 0.144.1 host/task; no global mode changes. Provider-native values are
 null because no captured provider request frame supports attribution. See the
 [decision report](../benchmarks/reports/mcp-response-ablation-v1-2026-07-21.md)
 for the full candidate table and snapshot review.
+
+## Exact-read delta protocol
+
+`read_delta_benchmark` exercises the opt-in repeated-read contract with one
+small edit to the real `src/services/read.rs`, an uneconomic small-file diff, a
+symbol whose coordinates move across an index generation, and a follow-up whose
+base was never captured:
+
+```bash
+cargo run --release --example read_delta_benchmark -- \
+  --output target/read_delta_benchmark_report.json
+```
+
+The promotion gate requires every `status: "delta"` response to contain a
+complete unified diff, cost fewer source tokens and fewer complete serialized
+response tokens than the full-content control, preserve the current content
+hash and token accounting, and report positive avoided tokens. Missing,
+expired, oversized, moved, or truncated bases and uneconomic diffs must retain
+full current content with an explicit fallback reason. Unit tests separately
+enforce TTL, entry-count, and retained-byte bounds. Ranked context is outside
+this experiment.
+
+This is a protocol-efficiency gate, not model task-success evidence. The
+feature remains opt-in even when the gate passes; an agent-policy change would
+need a repeated edit-fix-test model evaluation. The first clean run and
+adoption decision are recorded in
+[`../benchmarks/reports/read-receipt-delta-v1-2026-07-26.md`](../benchmarks/reports/read-receipt-delta-v1-2026-07-26.md).

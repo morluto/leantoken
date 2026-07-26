@@ -23,6 +23,7 @@ mod files;
 mod history;
 mod json;
 mod read;
+mod read_delta;
 mod receipts;
 mod search;
 pub(crate) mod validation;
@@ -97,6 +98,7 @@ pub struct Services {
     _cache_lease: CacheLease,
     active_reconciliations: Arc<AtomicUsize>,
     receipts: Arc<receipts::ReceiptRegistry>,
+    read_deltas: Arc<read_delta::ReadDeltaRegistry>,
     next_receipt_id: Arc<AtomicU64>,
 }
 
@@ -208,6 +210,7 @@ impl Services {
             _cache_lease: cache_lease,
             active_reconciliations: Arc::new(AtomicUsize::new(0)),
             receipts: Arc::new(receipts::ReceiptRegistry::default()),
+            read_deltas: Arc::new(read_delta::ReadDeltaRegistry::default()),
             next_receipt_id: Arc::new(AtomicU64::new(1)),
         })
     }
@@ -776,6 +779,7 @@ mod tests {
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
+                delta: false,
                 receipt_id: None,
             })
             .await
@@ -791,6 +795,7 @@ mod tests {
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: Some(first.content_hash),
+                delta: false,
                 receipt_id: None,
             })
             .await

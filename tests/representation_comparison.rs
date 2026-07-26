@@ -199,6 +199,7 @@ async fn compare_context_representations() {
                     continuation_cursor: None,
                     max_tokens: Some(TOKEN_BUDGET),
                     expected_hash: None,
+                    delta: false,
                     receipt_id: None,
                 })
                 .await
@@ -262,6 +263,7 @@ async fn compare_context_representations() {
                     continuation_cursor: None,
                     max_tokens: Some(TOKEN_BUDGET),
                     expected_hash: None,
+                    delta: false,
                     receipt_id: None,
                 })
                 .await

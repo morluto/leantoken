@@ -418,6 +418,11 @@ Reads an exact source range.
 - `max_tokens` defaults to 8,000 and accepts values through 32,000.
 - `expected_hash` returns `not_modified` without source when it matches the
   hash from the same prior target.
+- `delta: true` records a complete, non-truncated target as a bounded future
+  base. On a changed follow-up, pass the prior `content_hash` as
+  `expected_hash` and keep `delta: true`. The response uses `status: "delta"`
+  and the `delta` field only when the complete unified diff costs fewer source
+  tokens than full current content.
 
 `content_hash` identifies the returned range. `indexed_hash` identifies the
 whole indexed file. `index_stale` is true when the live file differs from the
@@ -428,6 +433,18 @@ indexed version (for example after an edit that has not been reindexed yet).
 `continuation_cursor` fail loudly whenever source remains. Continuation cursors
 are bound to the repository generation, path, and live full-file hash, so a
 stale cursor cannot combine pages from different file versions.
+`delta_receipt` reports the stable target key, base and head hashes and
+generations, full and delta token counts, avoided tokens, and any explicit
+fallback reason. Missing bases, changed target coordinates, truncated or
+oversized content, and uneconomic diffs return full content. Delta state is
+in-memory and repository-local, expires after 30 minutes, and is bounded to
+128 entries, 512 KiB per entry, and 8 MiB of retained content. It never applies
+to ranked context fragments or continuation cursors.
+
+`status: "not_modified"` means `expected_hash` matched. The distinct
+`status: "receipt_suppressed"` means a server-managed evidence receipt already
+contained the exact current content. Changed content in an overlapping range
+is returned and added to the receipt rather than being hidden as unchanged.
 `meta.repository_generation` is the committed index generation used for path
 and symbol lookup; `meta.freshness` is `reconciling` while an index operation
 is active on this cache.
