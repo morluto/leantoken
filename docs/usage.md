@@ -485,9 +485,24 @@ including ignored artifact paths. Operations are:
 `collapsed` replaces arrays with their total count and a bounded sample.
 `max_items` defaults to 1,000 (maximum 10,000), `array_sample_size` defaults to
 3 (maximum 20), and `max_tokens` defaults to 8,000. Exact source hashes bind
-responses to the complete live files. Raw values that exceed a cap fail loud;
-structural projections report `result_complete: false` when the item cap omits
-structure.
+responses to the complete live files. Raw values that exceed a cap fail loud.
+
+`keys` is a deterministic flat projection and supports pagination under both
+item and token limits. Every keys response reports exact `total_items`,
+`returned_items`, and `remaining_items`. An incomplete page identifies
+`max_items` or `max_tokens` in `incomplete_reason` and returns
+`meta.next_cursor`; repeat the identical path, selector, and projection with
+`cursor` to continue. The cursor is bound to those query inputs and the live
+source hash, so a changed file or selector fails with `stale_cursor` instead of
+mixing pages from different results.
+
+Incomplete `schema`, `collapsed`, and projected diff results report the same
+exact counts and `incomplete_reason`. Their nested shapes are not split into
+ambiguous pages, so they do not return a cursor; increase `max_items` or use a
+narrower selector. Strict JSON parse failures include the syntax category,
+one-based line and column, and zero-based byte offset. JMESPath compile and
+runtime failures include their stage, typed reason, expression offset, line,
+and column.
 
 ## `leantoken.history`
 

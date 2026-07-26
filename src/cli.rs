@@ -949,6 +949,10 @@ pub struct JsonArgs {
     /// Array elements sampled by collapsed projections.
     #[arg(long)]
     pub array_sample_size: Option<usize>,
+
+    /// Continue an incomplete keys projection.
+    #[arg(long)]
+    pub cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1070,6 +1074,7 @@ impl From<JsonArgs> for JsonRequest {
             max_tokens: args.max_tokens,
             max_items: args.max_items,
             array_sample_size: args.array_sample_size,
+            cursor: args.cursor,
         }
     }
 }

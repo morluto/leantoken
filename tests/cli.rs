@@ -245,6 +245,7 @@ fn cli_json_request() {
     };
     assert_eq!(request.max_items, Some(50));
     assert_eq!(request.array_sample_size, Some(2));
+    assert!(request.cursor.is_none());
     assert!(matches!(
         request.operation,
         JsonOperation::DiffFields {
@@ -262,6 +263,28 @@ fn cli_json_request() {
                     expression: "runs[].score".into()
                 }
             ]
+    ));
+
+    let cli = parse(&[
+        "json",
+        "--cursor",
+        "j1:source:query:2",
+        "query",
+        "report.json",
+        "--projection",
+        "keys",
+    ]);
+    let AppRequest::Json(request) = cli.app_request() else {
+        panic!("expected paged JSON request");
+    };
+    assert_eq!(request.cursor.as_deref(), Some("j1:source:query:2"));
+    assert!(matches!(
+        request.operation,
+        JsonOperation::Query {
+            path,
+            selector: None,
+            projection: JsonProjection::Keys,
+        } if path == "report.json"
     ));
 }
 
