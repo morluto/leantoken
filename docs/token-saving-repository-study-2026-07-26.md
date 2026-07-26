@@ -598,8 +598,8 @@ If the experiments are approved, use separate branches and evidence-bearing
 pull requests:
 
 1. `bench/external-retrieval-corpora`
-2. `feat/semantic-lane-experiment`
-3. `feat/read-receipt-delta`
+2. `feat/read-receipt-delta`
+3. `feat/semantic-lane-experiment`
 4. `feat/semantic-change-receipt`
 5. `feat/handoff-manifest`
 

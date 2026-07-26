@@ -446,6 +446,20 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Box<dyn Error>> {
         if manifest.frozen_at.as_deref().is_none_or(str::is_empty) {
             return Err("external retrieval corpora require frozen_at".into());
         }
+        for (field, value) in [
+            (
+                "evaluation_protocol",
+                manifest.evaluation_protocol.as_deref(),
+            ),
+            (
+                "reclassification_rule",
+                manifest.reclassification_rule.as_deref(),
+            ),
+        ] {
+            if value.is_none_or(str::is_empty) {
+                return Err(format!("external retrieval corpora require {field}").into());
+            }
+        }
         for corpus in &manifest.corpora {
             if corpus.fix_commit.is_some() {
                 return Err(
@@ -476,6 +490,34 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Box<dyn Error>> {
             }
             if corpus.tasks.is_empty() {
                 return Err(format!("external corpus {} has no tasks", corpus.name).into());
+            }
+            if corpus.external_limitations.is_empty()
+                || corpus
+                    .external_limitations
+                    .iter()
+                    .any(|limitation| limitation.trim().is_empty())
+            {
+                return Err(format!(
+                    "external corpus {} requires explicit limitations",
+                    corpus.name
+                )
+                .into());
+            }
+            for task in &corpus.tasks {
+                if task.languages.is_empty()
+                    || task
+                        .languages
+                        .iter()
+                        .any(|language| language.trim().is_empty())
+                    || task.task_shapes.is_empty()
+                    || task.task_shapes.iter().any(|shape| shape.trim().is_empty())
+                {
+                    return Err(format!(
+                        "external task {} requires language and task-shape strata",
+                        task.id
+                    )
+                    .into());
+                }
             }
         }
     }
@@ -1320,6 +1362,8 @@ mod tests {
             "schema_version": 4,
             "dataset_kind": "external_retrieval_corpus",
             "frozen_at": "2026-07-26",
+            "evaluation_protocol": "frozen external evaluation",
+            "reclassification_rule": "freeze a new lock",
             "description": "external fixture",
             "corpora": [{
                 "name": "fixture",
@@ -1331,9 +1375,11 @@ mod tests {
                 "dataset_url": "https://example.com/dataset",
                 "dataset_revision": "2222222222222222222222222222222222222222",
                 "dataset_license": "MIT",
+                "external_limitations": ["fixture labels are illustrative"],
                 "tasks": [{
                     "id": "fixture:001",
                     "prompt": "Find the fixture.",
+                    "languages": ["rust"],
                     "task_shapes": ["fixture"],
                     "rg_queries": ["fixture"],
                     "relevant_files": [{"path": "src/lib.rs"}],
@@ -1456,6 +1502,24 @@ mod tests {
                 .expect_err("reject future fix")
                 .to_string()
                 .contains("must not name a future fix")
+        );
+
+        let mut manifest = external_manifest();
+        manifest.evaluation_protocol = None;
+        assert!(
+            validate_manifest(&manifest)
+                .expect_err("reject missing protocol")
+                .to_string()
+                .contains("evaluation_protocol")
+        );
+
+        let mut manifest = external_manifest();
+        manifest.corpora[0].tasks[0].task_shapes.clear();
+        assert!(
+            validate_manifest(&manifest)
+                .expect_err("reject missing task stratum")
+                .to_string()
+                .contains("language and task-shape strata")
         );
     }
 
