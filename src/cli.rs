@@ -5,7 +5,7 @@ use std::{
     str::FromStr,
 };
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Command, Parser, Subcommand, ValueEnum};
 
 use crate::Config;
 use crate::Result;
@@ -30,12 +30,42 @@ fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
     Ok(value)
 }
 
+const ADVANCED_REPOSITORY_OPTION_IDS: [&str; 10] = [
+    "allow_broad_root",
+    "include_generated",
+    "max_walk_entries",
+    "max_files",
+    "max_total_source_bytes",
+    "max_depth",
+    "max_file_bytes",
+    "max_prepare_batch_files",
+    "max_prepare_batch_bytes",
+    "max_index_workers",
+];
+
+fn hide_advanced_repository_options(command: Command) -> Command {
+    command
+        .mut_args(|argument| {
+            if ADVANCED_REPOSITORY_OPTION_IDS.contains(&argument.get_id().as_str()) {
+                argument.hide(true)
+            } else {
+                argument
+            }
+        })
+        .mut_subcommands(|subcommand| subcommand.defer(hide_advanced_repository_options))
+}
+
+fn keep_advanced_repository_options_in_root_help(command: Command) -> Command {
+    command.mut_subcommands(|subcommand| subcommand.defer(hide_advanced_repository_options))
+}
+
 /// LeanToken CLI and MCP server entry point.
 #[derive(Debug, Clone, Parser)]
 #[command(
     name = "leantoken",
     version,
-    about = "Token-budgeted repository context"
+    about = "Token-budgeted repository context",
+    defer = keep_advanced_repository_options_in_root_help
 )]
 pub struct Cli {
     /// Repository root path.
@@ -919,11 +949,11 @@ pub struct HistoryArgs {
     pub operation: HistoryCommand,
 
     /// Maximum commits returned by symbol-log.
-    #[arg(long, value_parser = parse_positive_usize)]
+    #[arg(long, global = true, value_parser = parse_positive_usize)]
     pub max_results: Option<usize>,
 
     /// Maximum source or diff tokens to return.
-    #[arg(long, value_parser = parse_positive_usize)]
+    #[arg(long, global = true, value_parser = parse_positive_usize)]
     pub max_tokens: Option<usize>,
 }
 
@@ -931,20 +961,29 @@ pub struct HistoryArgs {
 pub enum HistoryCommand {
     /// Read one parsed symbol from a Git revision.
     ReadSymbol {
+        /// Repository-relative source file path.
         path: String,
+        /// Exact parsed symbol name.
         symbol: String,
+        /// Immutable Git revision.
         revision: String,
     },
     /// Diff one parsed symbol between two Git revisions.
     DiffSymbol {
+        /// Repository-relative source file path.
         path: String,
+        /// Exact parsed symbol name.
         symbol: String,
+        /// Base Git revision.
         base_revision: String,
+        /// Head Git revision.
         head_revision: String,
     },
     /// List recent commits that touched a symbol's tracked lines.
     SymbolLog {
+        /// Repository-relative source file path.
         path: String,
+        /// Exact parsed symbol name.
         symbol: String,
         /// Revision from which history starts.
         #[arg(long)]
@@ -999,19 +1038,19 @@ pub struct JsonArgs {
     pub operation: JsonCommand,
 
     /// Maximum tokens across selected/projected JSON.
-    #[arg(long, value_parser = parse_positive_usize)]
+    #[arg(long, global = true, value_parser = parse_positive_usize)]
     pub max_tokens: Option<usize>,
 
     /// Maximum structural items returned.
-    #[arg(long, value_parser = parse_positive_usize)]
+    #[arg(long, global = true, value_parser = parse_positive_usize)]
     pub max_items: Option<usize>,
 
     /// Array elements sampled by collapsed projections.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub array_sample_size: Option<usize>,
 
     /// Continue an incomplete keys projection.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub cursor: Option<String>,
 }
 
@@ -1038,6 +1077,7 @@ impl From<JsonProjectionArg> for JsonProjection {
 pub enum JsonCommand {
     /// Select and project one JSON value.
     Query {
+        /// Repository-relative JSON file path.
         path: String,
         /// RFC 6901 JSON Pointer.
         #[arg(long, conflicts_with = "jmespath")]
@@ -1051,6 +1091,7 @@ pub enum JsonCommand {
     },
     /// Summarize numeric leaves below one JSON selection.
     NumericSummary {
+        /// Repository-relative JSON file path.
         path: String,
         /// RFC 6901 JSON Pointer.
         #[arg(long, conflicts_with = "jmespath")]
@@ -1067,7 +1108,9 @@ pub enum JsonCommand {
             .args(["pointer", "jmespath"])
     ))]
     DiffFields {
+        /// Base JSON file path.
         base_path: String,
+        /// Head JSON file path.
         head_path: String,
         /// RFC 6901 JSON Pointer (repeatable).
         #[arg(long)]
@@ -1153,7 +1196,7 @@ pub struct ContextArgs {
     #[arg(long, value_enum, default_value = "auto")]
     pub workflow: ContextWorkflowArg,
 
-    /// Token budget for the response.
+    /// Maximum source tokens across returned fragments.
     #[arg(
         short,
         long,
