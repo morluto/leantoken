@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Repository indexing resource whose configured hard limit was exceeded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,12 +204,24 @@ pub enum Error {
     },
     #[error("request cancelled")]
     Cancelled,
+    /// Process-local retrieval admission is full; no blocking work was queued.
+    #[error("retrieval capacity is exhausted; retry")]
+    RetrievalOverloaded,
+    /// Retrieval did not obtain blocking execution capacity before its queue deadline.
+    #[error("retrieval waited too long for execution capacity; retry")]
+    RetrievalQueueTimeout,
     #[error("repository index is not ready")]
     IndexNotReady,
     #[error(
         "reconciliation plan is stale: expected generation {expected}, found generation {actual}"
     )]
     StaleReconciliation { expected: u64, actual: u64 },
+    /// A shared request-triggered reconciliation wave failed.
+    ///
+    /// The shared source keeps the original typed error available to every
+    /// coalesced caller without rerunning a failed scan for each waiter.
+    #[error("reconciliation failed: {0}")]
+    ReconciliationFailed(#[source] Arc<Error>),
     #[error("repository {0} could not stabilize because the index changed repeatedly; retry")]
     RetryableConflict(RetryableOperation),
     #[error("MCP indexing runtime stopped unexpectedly")]
@@ -241,6 +254,22 @@ pub enum Error {
     Join(#[from] tokio::task::JoinError),
     #[error("index worker pool failed: {0}")]
     ThreadPoolBuild(#[from] rayon::ThreadPoolBuildError),
+}
+
+impl Error {
+    /// Return the original typed failure for a shared reconciliation wave.
+    ///
+    /// Adapters can use this to preserve their existing retry and error
+    /// classification while [`Error::ReconciliationFailed`] retains shared
+    /// ownership for coalesced callers.
+    #[must_use]
+    pub fn reconciliation_cause(&self) -> &Self {
+        let mut error = self;
+        while let Self::ReconciliationFailed(source) = error {
+            error = source;
+        }
+        error
+    }
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

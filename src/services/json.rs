@@ -202,7 +202,11 @@ impl Services {
     ) -> Result<JsonResponse> {
         validate_json_request(&request)?;
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.json_sync(request, &cancellation)).await?
+        self.blocking_executor
+            .run(cancellation, move |cancellation| {
+                this.json_sync(request, cancellation)
+            })
+            .await
     }
 
     fn json_sync(

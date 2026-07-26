@@ -651,16 +651,17 @@ impl Services {
         cancellation: CancellationToken,
     ) -> Result<SearchResponse> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || {
-            this.search_sync(
-                request,
-                &cancellation,
-                RegexPlanning::Enabled,
-                SearchDiagnostics::Omit,
-            )
-            .map(|evaluation| evaluation.response)
-        })
-        .await?
+        self.blocking_executor
+            .run(cancellation, move |cancellation| {
+                this.search_sync(
+                    request,
+                    cancellation,
+                    RegexPlanning::Enabled,
+                    SearchDiagnostics::Omit,
+                )
+                .map(|evaluation| evaluation.response)
+            })
+            .await
     }
 
     /// Search and expose deterministic candidate-phase counts for evaluation.
@@ -669,15 +670,16 @@ impl Services {
     /// alter the normal response or MCP schemas.
     pub async fn search_evaluation(&self, request: SearchRequest) -> Result<SearchEvaluation> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || {
-            this.search_sync(
-                request,
-                &CancellationToken::new(),
-                RegexPlanning::Enabled,
-                SearchDiagnostics::Collect,
-            )
-        })
-        .await?
+        self.blocking_executor
+            .run(CancellationToken::new(), move |cancellation| {
+                this.search_sync(
+                    request,
+                    cancellation,
+                    RegexPlanning::Enabled,
+                    SearchDiagnostics::Collect,
+                )
+            })
+            .await
     }
 
     /// Search with regex candidate planning disabled for differential evaluation.
@@ -689,15 +691,16 @@ impl Services {
         request: SearchRequest,
     ) -> Result<SearchEvaluation> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || {
-            this.search_sync(
-                request,
-                &CancellationToken::new(),
-                RegexPlanning::Disabled,
-                SearchDiagnostics::Collect,
-            )
-        })
-        .await?
+        self.blocking_executor
+            .run(CancellationToken::new(), move |cancellation| {
+                this.search_sync(
+                    request,
+                    cancellation,
+                    RegexPlanning::Disabled,
+                    SearchDiagnostics::Collect,
+                )
+            })
+            .await
     }
 
     fn search_sync(

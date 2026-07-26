@@ -25,7 +25,8 @@ mod savings;
 const WATCHER_QUEUE_CAPACITY: usize = 1;
 const INDEX_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(500);
 const INDEX_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
-const LEADERSHIP_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const LEADERSHIP_POLL_INITIAL_DELAY: Duration = Duration::from_millis(500);
+const LEADERSHIP_POLL_MAX_DELAY: Duration = Duration::from_secs(8);
 
 fn mcp_index_worker_limit(configured: usize, explicitly_configured: bool) -> usize {
     if explicitly_configured { configured } else { 1 }
@@ -285,7 +286,7 @@ async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result<()> {
                 Ok(Err(error)) => error,
                 Err(error) => error.into(),
             };
-            failure_state.set_failed();
+            failure_state.set_failed(&error);
             tracing::error!(%error, "MCP indexing runtime failed");
 
             match server_task.await {
@@ -329,6 +330,8 @@ async fn run_mcp_runtime(
     service_state.set_ready(Arc::clone(&services));
     let mut leadership_backoff =
         RetryBackoff::new(INDEX_RETRY_INITIAL_DELAY, INDEX_RETRY_MAX_DELAY);
+    let mut follower_backoff =
+        RetryBackoff::new(LEADERSHIP_POLL_INITIAL_DELAY, LEADERSHIP_POLL_MAX_DELAY);
 
     loop {
         if cancellation.is_cancelled() {
@@ -340,8 +343,9 @@ async fn run_mcp_runtime(
         })
         .await??;
 
-        let mut retry_delay = LEADERSHIP_POLL_INTERVAL;
+        let retry_delay;
         if let Some(leader) = leader {
+            follower_backoff.reset();
             let result = run_index_leader(Arc::clone(&services), cancellation.clone()).await;
             drop(leader);
             if cancellation.is_cancelled() {
@@ -359,7 +363,10 @@ async fn run_mcp_runtime(
                 );
             } else {
                 leadership_backoff.reset();
+                retry_delay = LEADERSHIP_POLL_INITIAL_DELAY;
             }
+        } else {
+            retry_delay = follower_backoff.failure_delay();
         }
 
         tokio::select! {
@@ -570,6 +577,7 @@ fn print<T: Serialize>(value: &T, compact: bool) -> Result<()> {
 }
 
 fn cli_error_message(error: &leantoken::Error) -> String {
+    let error = error.reconciliation_cause();
     match error {
         leantoken::Error::IndexNotReady => "repository index is not ready; run `leantoken index` \
             for direct CLI use or `leantoken doctor` to verify MCP readiness"
@@ -649,6 +657,7 @@ fn cli_parse_error_response(error: &clap::Error) -> CliErrorResponse {
 }
 
 fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
+    let error = error.reconciliation_cause();
     let (category, stage, field, requested, limit) = match error {
         leantoken::Error::DoctorFailure { stage, .. } => {
             ("doctor_failure", Some(*stage), None, None, None)
@@ -790,7 +799,16 @@ fn init_tracing(json: bool) {
             "body",
             "token_text",
         ];
-        !meta.fields().iter().any(|f| forbidden.contains(&f.name()))
+        let contains_source = meta
+            .fields()
+            .iter()
+            .any(|field| forbidden.contains(&field.name()));
+        let contains_rmcp_payload = meta.target().starts_with("rmcp")
+            && meta
+                .fields()
+                .iter()
+                .any(|field| matches!(field.name(), "request" | "result"));
+        !contains_source && !contains_rmcp_payload
     });
 
     tracing_subscriber::registry()
@@ -960,6 +978,13 @@ mod tests {
             ),
             (
                 leantoken::Error::IndexNotReady,
+                serde_json::json!({
+                    "error": "repository index is not ready; run `leantoken index` for direct CLI use or `leantoken doctor` to verify MCP readiness",
+                    "category": "index_not_ready"
+                }),
+            ),
+            (
+                leantoken::Error::ReconciliationFailed(Arc::new(leantoken::Error::IndexNotReady)),
                 serde_json::json!({
                     "error": "repository index is not ready; run `leantoken index` for direct CLI use or `leantoken doctor` to verify MCP readiness",
                     "category": "index_not_ready"

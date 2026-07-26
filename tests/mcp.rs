@@ -451,7 +451,7 @@ async fn customized_mcp_limits_apply_while_starting_and_after_failure() {
         Some("index_starting")
     );
 
-    state.set_failed();
+    state.set_failed(&leantoken::Error::McpRuntimeStopped);
     for (tool, arguments, field, requested, limit) in cases {
         assert_mcp_limit_exceeded(
             client.peer(),
@@ -1161,7 +1161,7 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
         .expect("ready result");
     assert_ne!(ready.is_error, Some(true));
 
-    state.set_failed();
+    state.set_failed(&leantoken::Error::McpRuntimeStopped);
     let failed = client
         .peer()
         .call_tool(request())

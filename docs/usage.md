@@ -225,6 +225,30 @@ bound, the call returns successful structured retry guidance with a reason and
 `retry_after_ms`. Later calls report whether they use a current or reconciling
 index generation.
 
+One MCP server accepts at most 16 active tool calls. Its cloned request
+handlers share that bound, while a separately started MCP process—including an
+agent attached to another workspace—has independent capacity. Initialization
+and `tools/list` remain available when tool calls are saturated. All tools,
+including `savings`, use admission; a request for the wrong repository is
+rejected before it consumes a slot.
+
+Admitted retrieval work uses a separate Services executor with eight running
+blocking closures and room for eight queued operations. A seventeenth active
+operation returns retryable reason `retrieval_capacity_exhausted` immediately.
+Queued work that cannot start within 500 ms returns
+`retrieval_queue_timeout`. Cancelling queued work prevents its closure from
+starting. Cancelling or aborting a caller whose closure is already running does
+not make that capacity available early; it returns only when the closure exits.
+These are per-server safety bounds, not a shared machine-wide quota.
+
+Each retrieval snapshot holds one pooled SQLite connection and a DEFERRED WAL
+read transaction. It does not copy the database or leave a snapshot file.
+Snapshot memory is bounded by the eight running readers; up to eight additional
+admitted requests may retain their bounded inputs while queued.
+Long-running readers can temporarily delay WAL page reuse, so concurrency
+changes should be evaluated with WAL and RSS measurements rather than by
+raising the connection count alone.
+
 LeanToken refuses to index a filesystem root, the current user's home directory,
 or a parent of that home directory by default. This prevents an MCP host launched
 from a broad working directory from recursively watching and indexing unrelated
@@ -305,10 +329,15 @@ All five MCP retrieval tools accept an optional `consistency` input:
 Use `reconcile_working_tree` when edits, generated files, branch changes, or
 external commits must be visible to the current call. Reconciliation uses the
 same ignore rules and cross-process operation lock as automatic indexing, and
-the request remains cancellable. Writes that begin concurrently with the call
-may require another `reconcile_working_tree` request. CLI users can run
-`leantoken index` immediately before retrieval when they need to reconcile
-first.
+the request remains cancellable. Concurrent requests on one server share a
+reconciliation wave when no scan has started yet. Requests arriving after a
+scan starts wait for the next wave so they cannot inherit an older freshness
+boundary. Cancelling one caller does not cancel shared work already running.
+If that work fails, every coalesced caller receives the shared typed cause;
+LeanToken does not automatically rerun the same failed scan for each caller.
+Writes that begin concurrently with the call may require another
+`reconcile_working_tree` request. CLI users can run `leantoken index`
+immediately before retrieval when they need to reconcile first.
 
 Numeric retrieval limits are inclusive and validated uniformly by the CLI,
 MCP, and direct service APIs. `max_results` must be in `1..=100`;
@@ -318,6 +347,14 @@ defaults. Values outside these ranges are rejected rather than silently
 clamped. Disallowed zero values are invalid input; values above a maximum
 produce an MCP error with the public field name, requested value, and active
 maximum.
+
+LeanToken's stdio transport admits at most 16 decoded tool calls into the MCP
+SDK at once and holds that capacity through response delivery; each server also
+admits at most 16 active tool handlers. Excess calls fail fast with
+`status: "retryable"` rather than creating unbounded SDK tasks. Initialization
+and `tools/list` remain available while tool capacity is saturated. These
+bounds are process-local: another MCP process serving another workspace has
+independent capacity.
 
 ## `leantoken.savings`
 

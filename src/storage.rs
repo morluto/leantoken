@@ -5,6 +5,11 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+#[cfg(test)]
+use std::{
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Instant,
+};
 
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{
@@ -15,6 +20,8 @@ use rusqlite_migration::{M, Migrations};
 
 use crate::model::{ReferenceRole, ResponseMeta, TokenAccountingOperation};
 use crate::{Error, Result};
+
+pub(crate) const MAX_READ_CONNECTIONS: u32 = 8;
 
 // SQLite normally recycles a completed WAL without shrinking it. Retain four
 // default auto-checkpoint windows for reuse while bounding the steady-state
@@ -752,6 +759,24 @@ pub struct Storage {
     writer: Arc<Mutex<Connection>>,
     readers: r2d2::Pool<SqliteConnectionManager>,
     path: PathBuf,
+    #[cfg(test)]
+    diagnostics: Arc<StorageDiagnostics>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct StorageDiagnostics {
+    active_snapshots: AtomicUsize,
+    peak_active_snapshots: AtomicUsize,
+    reader_checkout_wait_micros: Mutex<Vec<u64>>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct StorageDiagnosticsSnapshot {
+    pub active_snapshots: usize,
+    pub peak_active_snapshots: usize,
+    pub reader_checkout_wait_micros: Vec<u64>,
 }
 
 /// Restricted writer for one uncommitted repository generation.
@@ -902,6 +927,8 @@ impl Clone for Storage {
             writer: Arc::clone(&self.writer),
             readers: self.readers.clone(),
             path: self.path.clone(),
+            #[cfg(test)]
+            diagnostics: Arc::clone(&self.diagnostics),
         }
     }
 }
@@ -918,11 +945,17 @@ impl fmt::Debug for Storage {
 /// on this session observe a single SQLite WAL snapshot.
 pub struct ReadSession {
     conn: r2d2::PooledConnection<SqliteConnectionManager>,
+    #[cfg(test)]
+    diagnostics: Arc<StorageDiagnostics>,
 }
 
 impl Drop for ReadSession {
     fn drop(&mut self) {
         let _ = self.conn.execute_batch("ROLLBACK");
+        #[cfg(test)]
+        self.diagnostics
+            .active_snapshots
+            .fetch_sub(1, Ordering::AcqRel);
     }
 }
 
@@ -1078,7 +1111,7 @@ impl Storage {
                 connection.pragma_update(None, "foreign_keys", "ON")
             });
         let readers = r2d2::Pool::builder()
-            .max_size(8)
+            .max_size(MAX_READ_CONNECTIONS)
             .connection_timeout(DEFAULT_BUSY_TIMEOUT)
             .test_on_check_out(false)
             .build(manager)?;
@@ -1087,6 +1120,8 @@ impl Storage {
             writer: Arc::new(Mutex::new(conn)),
             readers,
             path,
+            #[cfg(test)]
+            diagnostics: Arc::new(StorageDiagnostics::default()),
         })
     }
 
@@ -1907,11 +1942,71 @@ impl Storage {
     /// Keep one session for every multi-query response. Dropping it rolls back
     /// the read transaction and returns the connection to the bounded pool.
     pub fn begin_read(&self) -> Result<ReadSession> {
+        #[cfg(test)]
+        let checkout_started = Instant::now();
         let conn = self.readers.get()?;
+        #[cfg(test)]
+        self.diagnostics
+            .reader_checkout_wait_micros
+            .lock()
+            .expect("storage diagnostics")
+            .push(
+                checkout_started
+                    .elapsed()
+                    .as_micros()
+                    .min(u128::from(u64::MAX)) as u64,
+            );
         // Under WAL, the first read in a DEFERRED transaction pins the snapshot
         // for the rest of the connection's transaction lifetime.
         conn.execute_batch("BEGIN DEFERRED")?;
-        Ok(ReadSession { conn })
+        #[cfg(test)]
+        {
+            let active = self
+                .diagnostics
+                .active_snapshots
+                .fetch_add(1, Ordering::AcqRel)
+                .saturating_add(1);
+            self.diagnostics
+                .peak_active_snapshots
+                .fetch_max(active, Ordering::AcqRel);
+        }
+        Ok(ReadSession {
+            conn,
+            #[cfg(test)]
+            diagnostics: Arc::clone(&self.diagnostics),
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reset_diagnostics(&self) {
+        self.diagnostics
+            .active_snapshots
+            .store(0, Ordering::Release);
+        self.diagnostics
+            .peak_active_snapshots
+            .store(0, Ordering::Release);
+        self.diagnostics
+            .reader_checkout_wait_micros
+            .lock()
+            .expect("storage diagnostics")
+            .clear();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn diagnostics(&self) -> StorageDiagnosticsSnapshot {
+        StorageDiagnosticsSnapshot {
+            active_snapshots: self.diagnostics.active_snapshots.load(Ordering::Acquire),
+            peak_active_snapshots: self
+                .diagnostics
+                .peak_active_snapshots
+                .load(Ordering::Acquire),
+            reader_checkout_wait_micros: self
+                .diagnostics
+                .reader_checkout_wait_micros
+                .lock()
+                .expect("storage diagnostics")
+                .clone(),
+        }
     }
 
     fn map_file(row: &Row) -> std::result::Result<FileRecord, rusqlite::Error> {

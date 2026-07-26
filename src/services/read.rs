@@ -381,7 +381,11 @@ impl Services {
         cancellation: CancellationToken,
     ) -> Result<OutlineResponse> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.outline_sync(request, &cancellation)).await?
+        self.blocking_executor
+            .run(cancellation, move |cancellation| {
+                this.outline_sync(request, cancellation)
+            })
+            .await
     }
 
     /// Read a bounded live source range and report index staleness.
@@ -410,7 +414,11 @@ impl Services {
         cancellation: CancellationToken,
     ) -> Result<ReadResponse> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.read_sync(request, &cancellation)).await?
+        self.blocking_executor
+            .run(cancellation, move |cancellation| {
+                this.read_sync(request, cancellation)
+            })
+            .await
     }
 
     fn outline_sync(

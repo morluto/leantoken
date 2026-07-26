@@ -1711,27 +1711,28 @@ impl Services {
         cancellation: CancellationToken,
     ) -> Result<AccountedContextResponse> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let operation = if request.plan_only {
-                TokenAccountingOperation::ContextPlan
-            } else {
-                TokenAccountingOperation::Context
-            };
-            let (evaluation, baseline_source_tokens) = this.context_sync(
-                request,
-                workflow,
-                handoff,
-                &cancellation,
-                CandidateDiagnostics::Omit,
-                ContextSignals::PRODUCTION,
-            )?;
-            Ok(AccountedContextResponse {
-                response: evaluation.response,
-                baseline_source_tokens,
-                operation,
+        self.blocking_executor
+            .run(cancellation, move |cancellation| {
+                let operation = if request.plan_only {
+                    TokenAccountingOperation::ContextPlan
+                } else {
+                    TokenAccountingOperation::Context
+                };
+                let (evaluation, baseline_source_tokens) = this.context_sync(
+                    request,
+                    workflow,
+                    handoff,
+                    cancellation,
+                    CandidateDiagnostics::Omit,
+                    ContextSignals::PRODUCTION,
+                )?;
+                Ok(AccountedContextResponse {
+                    response: evaluation.response,
+                    baseline_source_tokens,
+                    operation,
+                })
             })
-        })
-        .await?
+            .await
     }
 
     fn record_context_response(&self, accounted: AccountedContextResponse) -> ContextResponse {
@@ -1749,19 +1750,19 @@ impl Services {
     /// frozen retrieval benchmarks and does not alter the MCP response schema.
     pub async fn context_evaluation(&self, request: ContextRequest) -> Result<ContextEvaluation> {
         let this = self.clone();
-        let cancellation = CancellationToken::new();
-        tokio::task::spawn_blocking(move || {
-            this.context_sync(
-                request,
-                ContextWorkflow::Implementation,
-                None,
-                &cancellation,
-                CandidateDiagnostics::Collect,
-                ContextSignals::PRODUCTION,
-            )
-            .map(|(evaluation, _)| evaluation)
-        })
-        .await?
+        self.blocking_executor
+            .run(CancellationToken::new(), move |cancellation| {
+                this.context_sync(
+                    request,
+                    ContextWorkflow::Implementation,
+                    None,
+                    cancellation,
+                    CandidateDiagnostics::Collect,
+                    ContextSignals::PRODUCTION,
+                )
+                .map(|(evaluation, _)| evaluation)
+            })
+            .await
     }
 
     /// Retrieve context under one evaluation-only dependency or caller policy.
@@ -1774,19 +1775,19 @@ impl Services {
         policy: ContextSignalPolicy,
     ) -> Result<ContextEvaluation> {
         let this = self.clone();
-        let cancellation = CancellationToken::new();
-        tokio::task::spawn_blocking(move || {
-            this.context_sync(
-                request,
-                ContextWorkflow::Implementation,
-                None,
-                &cancellation,
-                CandidateDiagnostics::Collect,
-                ContextSignals::evaluation(policy),
-            )
-            .map(|(evaluation, _)| evaluation)
-        })
-        .await?
+        self.blocking_executor
+            .run(CancellationToken::new(), move |cancellation| {
+                this.context_sync(
+                    request,
+                    ContextWorkflow::Implementation,
+                    None,
+                    cancellation,
+                    CandidateDiagnostics::Collect,
+                    ContextSignals::evaluation(policy),
+                )
+                .map(|(evaluation, _)| evaluation)
+            })
+            .await
     }
 
     fn append_workflow_candidates(
