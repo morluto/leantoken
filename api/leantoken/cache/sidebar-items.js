@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AccessTimeSource","CachePruneAction","CacheState"],"fn":["list","print_list","print_prune","prune"],"struct":["CacheEntry","CacheListReport","CachePruneReport","CachePruneRequest","CachePruneResult"]};
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_CACHE_LIST_LIMIT","MAX_CACHE_LIST_LIMIT"],"enum":["AccessTimeSource","CachePruneAction","CacheState"],"fn":["list","list_with","print_list","print_prune","prune"],"struct":["CacheEntry","CacheListReport","CacheListRequest","CachePruneReport","CachePruneRequest","CachePruneResult"]};
