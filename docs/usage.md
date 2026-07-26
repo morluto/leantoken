@@ -37,7 +37,8 @@ leantoken context --task <text> --budget <tokens> [--consistency <mode>]
 leantoken mcp [--result-mode dual|text|structured]
 leantoken setup [CLIENT...] [--all] [--refresh] [--yes] [--dry-run] [--allow-outdated]
 leantoken remove [CLIENT...] [--all] [--yes] [--dry-run]
-leantoken cache list
+leantoken cache list [--summary] [--state STATE] [--repository-root PATH]
+                     [--limit COUNT] [--cursor CURSOR]
 leantoken cache prune [--older-than DAYS] [--max-total-bytes BYTES]
                       [--remove-missing-roots] [--dry-run] [--yes]
 ```
@@ -166,12 +167,17 @@ for deliberate manual or project-scoped configurations.
 
 ## Managed cache lifecycle
 
-`cache list` reports every recognized per-repository, per-index-content-version
-cache in the platform `ProjectDirs` cache directory, including its compatibility
-version, recorded root, schema, last access, direct SQLite/sidecar bytes,
-metadata state, and active lease status. Legacy repository-only cache identities
-remain visible and prunable. It does not open repository services and therefore
-works from any directory. JSON output contains Unix timestamps for automation.
+`cache list` inspects every recognized per-repository, per-index-content-version
+cache in the platform `ProjectDirs` cache directory and reports exact aggregate
+counts and bytes. Per-cache entries are returned in stable identifier order,
+20 at a time by default and at most 100 at a time. Pass `--cursor` with the same
+filters to continue. `--summary` omits entries, repeatable `--state` values are
+OR filters, and `--repository-root` matches one exact recorded root. Entry pages
+include compatibility version, recorded root, schema, last access, direct
+SQLite/sidecar bytes, metadata state, and active lease status. Legacy
+repository-only cache identities remain visible and prunable. Listing does not
+open repository services and therefore works from any directory. JSON output
+contains Unix timestamps and returned/matched/total counts for automation.
 
 The versioned identity applies to automatically managed caches. An explicit
 `--database` path remains unchanged and must not be shared concurrently by

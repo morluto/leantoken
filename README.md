@@ -270,9 +270,15 @@ it:
 
 ```bash
 leantoken cache list
+leantoken cache list --summary
+leantoken cache list --state legacy --state corrupt --limit 20
 leantoken cache prune --older-than 30 --dry-run
 leantoken cache prune --max-total-bytes 1073741824 --yes
 ```
+
+List output is paginated by stable cache identifier; pass the returned opaque
+`--cursor` with the same filters for the next page. Use
+`--repository-root PATH` for one exact recorded root.
 
 Active MCP leaders and followers hold a lifetime lease and are skipped. A
 missing repository is retained unless it also meets another criterion or

@@ -1275,6 +1275,26 @@ fn cache_list_and_prune_do_not_require_a_repository() {
     assert!(human_list.contains("last_access="));
     assert!(human_list.contains("root_available="));
 
+    let summary = command()
+        .args([
+            "--json",
+            "cache",
+            "list",
+            "--summary",
+            "--state",
+            "corrupt",
+        ])
+        .output()
+        .expect("cache summary");
+    assert!(summary.status.success());
+    let summary: serde_json::Value =
+        serde_json::from_slice(&summary.stdout).expect("cache summary JSON");
+    assert_eq!(summary["total_entries"], 1);
+    assert_eq!(summary["matched_entries"], 1);
+    assert_eq!(summary["returned_entries"], 0);
+    assert_eq!(summary["state_counts"]["corrupt"], 1);
+    assert_eq!(summary["entries"].as_array().map(Vec::len), Some(0));
+
     let dry_run = command()
         .args([
             "--json",

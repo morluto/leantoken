@@ -33,6 +33,41 @@ const PRUNABLE_ARTIFACTS: &[&str] = &[
     "index.sqlite.index.lock",
 ];
 const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
+const CACHE_LIST_CURSOR_PREFIX: &str = "cl1";
+const CACHE_LIST_CURSOR_HASH_CHARS: usize = 16;
+const MAX_CACHE_LIST_CURSOR_BYTES: usize = 128;
+
+/// Default number of cache entries returned by one list page.
+pub const DEFAULT_CACHE_LIST_LIMIT: usize = 20;
+/// Maximum number of cache entries returned by one list page.
+pub const MAX_CACHE_LIST_LIMIT: usize = 100;
+
+/// Filters and bounds for one managed-cache list operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheListRequest {
+    /// Return aggregate diagnostics without per-cache entries.
+    pub summary: bool,
+    /// Keep entries in any of these states; an empty list keeps every state.
+    pub states: Vec<CacheState>,
+    /// Keep the exact recorded repository root, when present.
+    pub repository_root: Option<PathBuf>,
+    /// Maximum entries returned by one page.
+    pub limit: usize,
+    /// Opaque continuation cursor returned by the same filters.
+    pub cursor: Option<String>,
+}
+
+impl Default for CacheListRequest {
+    fn default() -> Self {
+        Self {
+            summary: false,
+            states: Vec::new(),
+            repository_root: None,
+            limit: DEFAULT_CACHE_LIST_LIMIT,
+            cursor: None,
+        }
+    }
+}
 
 /// Criteria and consent for one managed-cache prune operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,11 +156,30 @@ pub struct CacheEntry {
 pub struct CacheListReport {
     /// Platform-managed cache root inspected by the command.
     pub cache_root: PathBuf,
-    /// Sum of reported managed artifact bytes.
+    /// Number of recognized caches before filters.
+    pub total_entries: usize,
+    /// Number of recognized caches after filters.
+    pub matched_entries: usize,
+    /// Number of entries included in this response page.
+    pub returned_entries: usize,
+    /// Sum of managed artifact bytes before filters.
     pub total_bytes: u64,
+    /// Sum of managed artifact bytes after filters.
+    pub matched_bytes: u64,
+    /// Active leases among caches after filters.
+    pub active_entries: usize,
+    /// Recorded missing repository roots among caches after filters.
+    pub missing_root_entries: usize,
+    /// Counts by metadata state after filters.
+    pub state_counts: BTreeMap<String, usize>,
     /// Entries ignored because their names are not managed cache identities.
     pub ignored_entries: usize,
-    /// Stable cache entries sorted by identifier.
+    /// Whether the request omitted per-cache entries.
+    pub summary_only: bool,
+    /// Cursor for the next stable identifier page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Stable cache entries sorted by identifier and bounded to one page.
     pub entries: Vec<CacheEntry>,
 }
 
@@ -196,6 +250,15 @@ impl CachePruneReport {
 }
 
 impl CacheState {
+    const ALL: [Self; 6] = [
+        Self::Current,
+        Self::Legacy,
+        Self::Incomplete,
+        Self::Corrupt,
+        Self::Unsupported,
+        Self::Unrecognized,
+    ];
+
     fn label(self) -> &'static str {
         match self {
             Self::Current => "current",
@@ -241,9 +304,14 @@ struct ArtifactScan {
     unexpected: bool,
 }
 
-/// List every centrally managed repository cache for the current user.
+/// List the first bounded page of centrally managed caches for the current user.
 pub fn list() -> Result<CacheListReport> {
-    CacheManager::for_current_user()?.list()
+    list_with(&CacheListRequest::default())
+}
+
+/// List centrally managed caches using explicit filters and response bounds.
+pub fn list_with(request: &CacheListRequest) -> Result<CacheListReport> {
+    CacheManager::for_current_user()?.list_with(request)
 }
 
 /// Prune centrally managed repository caches using explicit criteria.
@@ -265,16 +333,87 @@ impl CacheManager {
         Self { root, now }
     }
 
+    #[cfg(test)]
     fn list(&self) -> Result<CacheListReport> {
+        self.list_with(&CacheListRequest::default())
+    }
+
+    fn list_with(&self, request: &CacheListRequest) -> Result<CacheListReport> {
+        validate_list_request(request)?;
+        let repository_root = request
+            .repository_root
+            .as_deref()
+            .map(normalize_repository_root_filter);
+        let filter_hash = cache_list_filter_hash(request, repository_root.as_deref());
+        let after_id = request
+            .cursor
+            .as_deref()
+            .map(|cursor| decode_cache_list_cursor(cursor, &filter_hash))
+            .transpose()?;
+
         let (entries, ignored_entries) = self.inspect_all()?;
         let total_bytes = entries.iter().fold(0u64, |total, cache| {
             total.saturating_add(cache.entry.size_bytes)
         });
+        let matching = entries
+            .iter()
+            .filter(|cache| {
+                (request.states.is_empty() || request.states.contains(&cache.entry.state))
+                    && repository_root
+                        .as_ref()
+                        .is_none_or(|root| cache.entry.repository_root.as_ref() == Some(root))
+            })
+            .collect::<Vec<_>>();
+        let matched_bytes = matching.iter().fold(0u64, |total, cache| {
+            total.saturating_add(cache.entry.size_bytes)
+        });
+        let active_entries = matching.iter().filter(|cache| cache.entry.active).count();
+        let missing_root_entries = matching
+            .iter()
+            .filter(|cache| cache.entry.repository_available == Some(false))
+            .count();
+        let mut state_counts = CacheState::ALL
+            .into_iter()
+            .map(|state| (state.label().to_owned(), 0usize))
+            .collect::<BTreeMap<_, _>>();
+        for cache in &matching {
+            *state_counts
+                .get_mut(cache.entry.state.label())
+                .expect("every cache state has a summary bucket") += 1;
+        }
+
+        let start = after_id.as_deref().map_or(0, |after_id| {
+            matching.partition_point(|cache| cache.entry.id.as_str() <= after_id)
+        });
+        let end = if request.summary {
+            start
+        } else {
+            start.saturating_add(request.limit).min(matching.len())
+        };
+        let page = matching[start..end]
+            .iter()
+            .map(|cache| cache.entry.clone())
+            .collect::<Vec<_>>();
+        let next_cursor = if !request.summary && end < matching.len() {
+            page.last()
+                .map(|entry| encode_cache_list_cursor(&filter_hash, &entry.id))
+        } else {
+            None
+        };
         Ok(CacheListReport {
             cache_root: self.root.clone(),
+            total_entries: entries.len(),
+            matched_entries: matching.len(),
+            returned_entries: page.len(),
             total_bytes,
+            matched_bytes,
+            active_entries,
+            missing_root_entries,
+            state_counts,
             ignored_entries,
-            entries: entries.into_iter().map(|cache| cache.entry).collect(),
+            summary_only: request.summary,
+            next_cursor,
+            entries: page,
         })
     }
 
@@ -655,6 +794,89 @@ fn inspect_database(path: &Path) -> Result<DatabaseMetadata> {
     })
 }
 
+fn validate_list_request(request: &CacheListRequest) -> Result<()> {
+    if request.limit == 0 {
+        return Err(Error::InvalidInput {
+            field: "cache list limit",
+            reason: "must be greater than zero",
+        });
+    }
+    if request.limit > MAX_CACHE_LIST_LIMIT {
+        return Err(Error::RequestLimitExceeded {
+            field: "cache list limit",
+            requested: request.limit,
+            limit: MAX_CACHE_LIST_LIMIT,
+        });
+    }
+    if request.summary && request.cursor.is_some() {
+        return Err(Error::InvalidInput {
+            field: "cache list cursor",
+            reason: "cannot be combined with summary mode",
+        });
+    }
+    Ok(())
+}
+
+fn normalize_repository_root_filter(path: &Path) -> PathBuf {
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    absolute.canonicalize().unwrap_or(absolute)
+}
+
+fn cache_list_filter_hash(request: &CacheListRequest, repository_root: Option<&Path>) -> String {
+    let mut hasher = blake3::Hasher::new();
+    if request.states.is_empty() {
+        hasher.update(b"all-states");
+    } else {
+        for state in CacheState::ALL {
+            if request.states.contains(&state) {
+                hasher.update(state.label().as_bytes());
+                hasher.update(b"\0");
+            }
+        }
+    }
+    hasher.update(b"\xff");
+    if let Some(root) = repository_root {
+        hasher.update(root.as_os_str().as_encoded_bytes());
+    }
+    hasher.finalize().to_hex()[..CACHE_LIST_CURSOR_HASH_CHARS].to_owned()
+}
+
+fn encode_cache_list_cursor(filter_hash: &str, after_id: &str) -> String {
+    format!("{CACHE_LIST_CURSOR_PREFIX}:{filter_hash}:{after_id}")
+}
+
+fn decode_cache_list_cursor(cursor: &str, expected_filter_hash: &str) -> Result<String> {
+    if cursor.len() > MAX_CACHE_LIST_CURSOR_BYTES {
+        return Err(Error::InputTooLong {
+            field: "cache list cursor",
+            max_bytes: MAX_CACHE_LIST_CURSOR_BYTES,
+        });
+    }
+    let mut parts = cursor.splitn(3, ':');
+    let prefix = parts.next();
+    let filter_hash = parts.next();
+    let after_id = parts.next();
+    if prefix != Some(CACHE_LIST_CURSOR_PREFIX)
+        || filter_hash.is_none_or(|hash| {
+            hash.len() != CACHE_LIST_CURSOR_HASH_CHARS
+                || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+        || after_id.is_none_or(|id| !is_cache_id(id))
+    {
+        return Err(Error::InvalidInput {
+            field: "cache list cursor",
+            reason: "must be an opaque cursor returned by cache list",
+        });
+    }
+    if filter_hash != Some(expected_filter_hash) {
+        return Err(Error::InvalidInput {
+            field: "cache list cursor",
+            reason: "does not match the active cache filters",
+        });
+    }
+    Ok(after_id.expect("validated cache cursor id").to_owned())
+}
+
 fn validate_prune_request(request: &CachePruneRequest) -> Result<()> {
     if request.older_than_days.is_none()
         && request.max_total_bytes.is_none()
@@ -826,9 +1048,23 @@ pub fn print_list(report: &CacheListReport, json_output: bool) -> Result<()> {
     )?;
     writeln!(
         output,
-        "{} cache(s), {} bytes",
-        report.entries.len(),
-        report.total_bytes
+        "{} total cache(s), {} bytes; {} matched, {} bytes; {} returned",
+        report.total_entries,
+        report.total_bytes,
+        report.matched_entries,
+        report.matched_bytes,
+        report.returned_entries
+    )?;
+    let state_counts = report
+        .state_counts
+        .iter()
+        .map(|(state, count)| format!("{state}={count}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    writeln!(
+        output,
+        "states: {state_counts}; active={}; missing_roots={}; ignored={}",
+        report.active_entries, report.missing_root_entries, report.ignored_entries
     )?;
     for entry in &report.entries {
         writeln!(
@@ -849,6 +1085,9 @@ pub fn print_list(report: &CacheListReport, json_output: bool) -> Result<()> {
                 .as_deref()
                 .map_or_else(|| "unknown root".into(), |root| root.display().to_string())
         )?;
+    }
+    if let Some(cursor) = &report.next_cursor {
+        writeln!(output, "next_cursor={cursor}")?;
     }
     Ok(())
 }
@@ -999,7 +1238,15 @@ mod tests {
         let report = manager.list().expect("cache list");
 
         assert_eq!(report.entries.len(), 1);
+        assert_eq!(report.total_entries, 1);
+        assert_eq!(report.matched_entries, 1);
+        assert_eq!(report.returned_entries, 1);
         assert_eq!(report.ignored_entries, 1);
+        assert_eq!(report.active_entries, 0);
+        assert_eq!(report.missing_root_entries, 0);
+        assert_eq!(report.state_counts["current"], 1);
+        assert!(!report.summary_only);
+        assert!(report.next_cursor.is_none());
         assert_eq!(report.entries[0].state, CacheState::Current);
         assert_eq!(
             report.entries[0].index_content_version,
@@ -1017,6 +1264,162 @@ mod tests {
             Some(AccessTimeSource::Database)
         );
         assert!(report.total_bytes > 0);
+        assert_eq!(report.matched_bytes, report.total_bytes);
+    }
+
+    #[test]
+    fn list_filters_summarizes_and_pages_with_filter_bound_cursors() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let root = temp.path().join("managed");
+        let repository = temp.path().join("repository");
+        fs::create_dir(&repository).expect("repository");
+        let manager = CacheManager::new(root.clone(), 10_000);
+        for id in [FIRST_ID, SECOND_ID] {
+            let directory = root.join(id);
+            fs::create_dir_all(&directory).expect("corrupt cache directory");
+            fs::write(directory.join(DATABASE_NAME), id.as_bytes()).expect("corrupt cache");
+        }
+        create_current_cache(&manager, &repository, 9_000);
+
+        let first = manager
+            .list_with(&CacheListRequest {
+                limit: 2,
+                ..CacheListRequest::default()
+            })
+            .expect("first cache page");
+        assert_eq!(first.total_entries, 3);
+        assert_eq!(first.matched_entries, 3);
+        assert_eq!(first.returned_entries, 2);
+        assert_eq!(
+            first
+                .entries
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![FIRST_ID, SECOND_ID]
+        );
+        let cursor = first.next_cursor.clone().expect("next cache cursor");
+
+        let second = manager
+            .list_with(&CacheListRequest {
+                limit: 2,
+                cursor: Some(cursor.clone()),
+                ..CacheListRequest::default()
+            })
+            .expect("second cache page");
+        assert_eq!(second.returned_entries, 1);
+        assert_eq!(second.entries[0].state, CacheState::Current);
+        assert!(second.next_cursor.is_none());
+
+        let summary = manager
+            .list_with(&CacheListRequest {
+                summary: true,
+                states: vec![CacheState::Corrupt],
+                ..CacheListRequest::default()
+            })
+            .expect("corrupt cache summary");
+        assert!(summary.summary_only);
+        assert_eq!(summary.total_entries, 3);
+        assert_eq!(summary.matched_entries, 2);
+        assert_eq!(summary.returned_entries, 0);
+        assert_eq!(summary.state_counts["corrupt"], 2);
+        assert_eq!(summary.state_counts["current"], 0);
+        assert!(summary.matched_bytes > 0);
+        assert!(summary.entries.is_empty());
+        assert!(summary.next_cursor.is_none());
+
+        let by_root = manager
+            .list_with(&CacheListRequest {
+                repository_root: Some(repository.clone()),
+                ..CacheListRequest::default()
+            })
+            .expect("repository cache filter");
+        assert_eq!(by_root.matched_entries, 1);
+        assert_eq!(by_root.entries[0].state, CacheState::Current);
+        assert_eq!(
+            by_root.entries[0].repository_root.as_deref(),
+            Some(repository.as_path())
+        );
+
+        let error = manager
+            .list_with(&CacheListRequest {
+                states: vec![CacheState::Current],
+                cursor: Some(cursor),
+                ..CacheListRequest::default()
+            })
+            .expect_err("cursor must be bound to filters");
+        assert!(matches!(
+            error,
+            Error::InvalidInput {
+                field: "cache list cursor",
+                reason: "does not match the active cache filters"
+            }
+        ));
+    }
+
+    #[test]
+    fn list_rejects_invalid_response_bounds_and_cursors() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let invalid_root = temp.path().join("not-a-directory");
+        fs::write(&invalid_root, b"must not be inspected").expect("invalid cache root fixture");
+        let manager = CacheManager::new(invalid_root, 10_000);
+        let zero = manager
+            .list_with(&CacheListRequest {
+                limit: 0,
+                ..CacheListRequest::default()
+            })
+            .expect_err("zero cache list limit");
+        assert!(matches!(
+            zero,
+            Error::InvalidInput {
+                field: "cache list limit",
+                ..
+            }
+        ));
+
+        let excessive = manager
+            .list_with(&CacheListRequest {
+                limit: MAX_CACHE_LIST_LIMIT + 1,
+                ..CacheListRequest::default()
+            })
+            .expect_err("excessive cache list limit");
+        assert!(matches!(
+            excessive,
+            Error::RequestLimitExceeded {
+                field: "cache list limit",
+                requested,
+                limit: MAX_CACHE_LIST_LIMIT,
+            } if requested == MAX_CACHE_LIST_LIMIT + 1
+        ));
+
+        let malformed = manager
+            .list_with(&CacheListRequest {
+                cursor: Some("not-a-cache-cursor".into()),
+                ..CacheListRequest::default()
+            })
+            .expect_err("malformed cache list cursor");
+        assert!(matches!(
+            malformed,
+            Error::InvalidInput {
+                field: "cache list cursor",
+                ..
+            }
+        ));
+
+        let summary_cursor = manager
+            .list_with(&CacheListRequest {
+                summary: true,
+                cursor: Some("not-used".into()),
+                ..CacheListRequest::default()
+            })
+            .expect_err("summary cursor conflict");
+        assert!(matches!(
+            summary_cursor,
+            Error::InvalidInput {
+                field: "cache list cursor",
+                reason: "cannot be combined with summary mode"
+            }
+        ));
     }
 
     #[test]
