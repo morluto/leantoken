@@ -22,6 +22,7 @@ jobs:
   changes:
     name: Detect relevant changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -80,6 +81,7 @@ jobs:
     needs: changes
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
@@ -139,6 +141,7 @@ jobs:
     name: Secret scan
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: read
@@ -158,6 +161,7 @@ jobs:
     needs: changes
     if: github.event_name == 'schedule' || needs.changes.outputs.manifests == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       RUSTUP_TOOLCHAIN: stable
     steps:
@@ -185,6 +189,7 @@ jobs:
     needs: changes
     if: github.event_name == 'schedule' || needs.changes.outputs.manifests == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
@@ -210,6 +215,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.release == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -226,6 +232,7 @@ jobs:
     needs: changes
     if: github.event_name != 'schedule' && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.npm == 'true')
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -259,17 +266,30 @@ jobs:
 
       - name: Test npm installation
         if: needs.changes.outputs.npm == 'true'
+        timeout-minutes: 5
         run: node --test npm/npm-install-e2e.mjs
 
-      - name: Test library, binary, and integration behavior
+      - name: Test library and binary units
         if: needs.changes.outputs.rust == 'true'
-        run: cargo test --all-features --lib --bins --test integration
+        timeout-minutes: 10
+        run: cargo test --all-features --lib --bins
+
+      - name: Test integration behavior
+        if: needs.changes.outputs.rust == 'true'
+        timeout-minutes: 10
+        run: "cargo test --all-features --test integration -- --skip binary::"
+
+      - name: Test executable and MCP process behavior
+        if: needs.changes.outputs.rust == 'true'
+        timeout-minutes: 10
+        run: "cargo test --all-features --test integration binary:: -- --test-threads=2"
 
   example-tests:
     name: Benchmark and example tests
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
@@ -292,10 +312,84 @@ jobs:
       - name: Test paired performance comparator
         run: python3 -m unittest scripts/test_paired_performance.py
 
+  required:
+    name: Required checks
+    if: always() && github.event_name == 'pull_request'
+    needs:
+      - changes
+      - quality
+      - secret-scan
+      - dependency-audit
+      - unused-deps
+      - release-plan
+      - ci
+      - example-tests
+      - coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CHANGES_RESULT: ${{ needs.changes.result }}
+      QUALITY_RESULT: ${{ needs.quality.result }}
+      SECRET_SCAN_RESULT: ${{ needs.secret-scan.result }}
+      DEPENDENCY_AUDIT_RESULT: ${{ needs.dependency-audit.result }}
+      UNUSED_DEPS_RESULT: ${{ needs.unused-deps.result }}
+      RELEASE_PLAN_RESULT: ${{ needs.release-plan.result }}
+      PRODUCT_RESULT: ${{ needs.ci.result }}
+      EXAMPLE_TESTS_RESULT: ${{ needs.example-tests.result }}
+      COVERAGE_RESULT: ${{ needs.coverage.result }}
+      MANIFESTS_CHANGED: ${{ needs.changes.outputs.manifests }}
+      RELEASE_CHANGED: ${{ needs.changes.outputs.release }}
+      RUST_CHANGED: ${{ needs.changes.outputs.rust }}
+      NPM_CHANGED: ${{ needs.changes.outputs.npm }}
+    steps:
+      - name: Verify relevant jobs passed
+        run: |
+          failed=0
+
+          require_success() {
+            local name="$1"
+            local result="$2"
+            if [[ "$result" != "success" ]]; then
+              echo "::error::$name finished with result '$result'"
+              failed=1
+            fi
+          }
+
+          require_when() {
+            local condition="$1"
+            local name="$2"
+            local result="$3"
+            if [[ "$condition" == "true" ]]; then
+              require_success "$name" "$result"
+            elif [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              echo "::error::$name unexpectedly finished with result '$result'"
+              failed=1
+            fi
+          }
+
+          require_success "change classification" "$CHANGES_RESULT"
+          require_success "code quality" "$QUALITY_RESULT"
+          require_success "secret scan" "$SECRET_SCAN_RESULT"
+          require_when "$MANIFESTS_CHANGED" "dependency audit" "$DEPENDENCY_AUDIT_RESULT"
+          require_when "$MANIFESTS_CHANGED" "unused dependencies" "$UNUSED_DEPS_RESULT"
+          require_when "$RELEASE_CHANGED" "release plan" "$RELEASE_PLAN_RESULT"
+
+          product_changed=false
+          if [[ "$RUST_CHANGED" == "true" || "$NPM_CHANGED" == "true" ]]; then
+            product_changed=true
+          fi
+          require_when "$product_changed" "cross-platform product tests" "$PRODUCT_RESULT"
+          require_when "$RUST_CHANGED" "benchmark and example tests" "$EXAMPLE_TESTS_RESULT"
+          require_when "$RUST_CHANGED" "test coverage" "$COVERAGE_RESULT"
+
+          exit "$failed"
+
   coverage:
     name: Test coverage
-    if: github.event_name == 'push' || github.event_name == 'schedule'
+    needs: changes
+    if: github.event_name == 'schedule' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       RUSTUP_TOOLCHAIN: stable
     steps:
@@ -316,8 +410,12 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Run coverage
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info --fail-under-lines 60
+      - name: Run instrumented tests
+        run: cargo llvm-cov --all-features --workspace --no-report -- --test-threads=2
+
+      - name: Enforce line coverage and write LCOV
+        if: success() || failure()
+        run: cargo llvm-cov report --lcov --output-path lcov.info --fail-under-lines 60
 
       - name: Print coverage summary
         if: success() || failure()
@@ -336,6 +434,7 @@ jobs:
     needs: [changes, quality]
     if: needs.changes.outputs.rust == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
