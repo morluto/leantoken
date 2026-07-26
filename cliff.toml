@@ -16,7 +16,7 @@ body = """
           {{ commit.message | upper_first }}\
           {% if commit.remote.pr_number %} ([#{{ commit.remote.pr_number }}](https://github.com/morluto/leantoken/pull/{{ commit.remote.pr_number }})){% endif %}\
     {%- endfor -%}
-{% endfor %}\n
+{% endfor %}
 """
 trim = true
 footer = ""
