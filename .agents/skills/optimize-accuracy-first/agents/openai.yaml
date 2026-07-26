@@ -1,0 +1,4 @@
+interface:
+  display_name: "Optimize Accuracy First"
+  short_description: "Optimize systems without trading away accuracy"
+  default_prompt: "Use $optimize-accuracy-first to find and validate the highest-value optimization in this repository."
