@@ -64,6 +64,9 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
             path: "src/mcp.rs".into(),
             start_line: 298,
             end_line: 322,
+            target_start_line: None,
+            target_end_line: None,
+            truncated: false,
             representation: "source".into(),
             content:
                 "fn into_mcp_error(error: crate::Error) -> ErrorData {\n    // fixture excerpt\n}\n"

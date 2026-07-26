@@ -208,6 +208,8 @@ pub struct Candidate {
     pub concept_weight: f64,
     pub representation: String,
     pub symbol_name: Option<String>,
+    pub target_start_line: Option<usize>,
+    pub target_end_line: Option<usize>,
     pub exact: f64,
     pub symbol: f64,
     pub reference: f64,
@@ -239,6 +241,8 @@ impl Candidate {
             concept_weight: 0.0,
             representation: "source".into(),
             symbol_name: None,
+            target_start_line: None,
+            target_end_line: None,
             exact: 0.0,
             symbol: 0.0,
             reference: 0.0,
@@ -291,6 +295,18 @@ impl Candidate {
     pub fn symbol_name(mut self, name: impl Into<String>) -> Self {
         self.symbol_name = Some(name.into());
         self
+    }
+
+    pub fn target_range(mut self, start_line: usize, end_line: usize) -> Self {
+        self.target_start_line = Some(start_line);
+        self.target_end_line = Some(end_line);
+        self
+    }
+
+    fn target_truncated(&self) -> bool {
+        self.target_start_line
+            .zip(self.target_end_line)
+            .is_some_and(|(start, end)| self.start_line > start || self.end_line < end)
     }
 
     pub fn exact(mut self, value: f64) -> Self {
@@ -624,7 +640,14 @@ fn merge_candidate_signals(existing: &mut Candidate, duplicate: &Candidate) {
         }
     }
     existing.concept_weight = existing.concept_weight.max(duplicate.concept_weight);
-    if existing.symbol_name.is_none() {
+    if existing.target_start_line.is_none() && duplicate.target_start_line.is_some() {
+        existing.symbol_name.clone_from(&duplicate.symbol_name);
+        existing.target_start_line = duplicate.target_start_line;
+        existing.target_end_line = duplicate.target_end_line;
+        existing
+            .representation
+            .clone_from(&duplicate.representation);
+    } else if existing.symbol_name.is_none() {
         existing.symbol_name.clone_from(&duplicate.symbol_name);
     }
     existing.exact = existing.exact.max(duplicate.exact);
@@ -830,9 +853,14 @@ fn select_with_options(
     for symbol in &request.must_include_symbols {
         if covered_candidates
             .clone()
-            .any(|candidate| required_symbol_matches(&candidate.candidate, symbol))
+            .any(|candidate| required_symbol_satisfied(&candidate.candidate, symbol))
         {
             coverage.covered_must_include_symbols.push(symbol.clone());
+        } else if covered_candidates
+            .clone()
+            .any(|candidate| required_symbol_matches(&candidate.candidate, symbol))
+        {
+            coverage.partial_must_include_symbols.push(symbol.clone());
         } else {
             coverage.uncovered_must_include_symbols.push(symbol.clone());
         }
@@ -864,6 +892,9 @@ fn select_with_options(
                 path: scored.candidate.path.clone(),
                 start_line: scored.candidate.start_line,
                 end_line: scored.candidate.end_line,
+                target_start_line: scored.candidate.target_start_line,
+                target_end_line: scored.candidate.target_end_line,
+                truncated: scored.candidate.target_truncated(),
                 representation: scored.candidate.representation.clone(),
                 score: (scored.score * 10_000.0).round() / 10_000.0,
                 reasons: scored
@@ -894,6 +925,9 @@ fn select_with_options(
                 path: scored.candidate.path.clone(),
                 start_line: scored.candidate.start_line,
                 end_line: scored.candidate.end_line,
+                target_start_line: scored.candidate.target_start_line,
+                target_end_line: scored.candidate.target_end_line,
+                truncated: scored.candidate.target_truncated(),
                 representation: scored.candidate.representation.clone(),
                 content: scored.candidate.content.clone(),
                 content_hash: scored.content_hash.clone(),
@@ -1101,6 +1135,12 @@ fn required_symbol_matches(candidate: &Candidate, symbol: &str) -> bool {
         .symbol_name
         .as_deref()
         .is_some_and(|name| name == symbol)
+        && candidate.target_start_line.is_some()
+        && candidate.target_end_line.is_some()
+}
+
+fn required_symbol_satisfied(candidate: &Candidate, symbol: &str) -> bool {
+    required_symbol_matches(candidate, symbol) && !candidate.target_truncated()
 }
 
 fn apply_request_signals(
@@ -1705,6 +1745,7 @@ mod tests {
     fn must_cover_candidate_precedes_higher_scored_general_evidence() {
         let required = Candidate::new("src/required.rs", 1, 1, "required")
             .symbol_name("required_symbol")
+            .target_range(1, 1)
             .exact(0.1);
         let general = Candidate::new("src/general.rs", 1, 1, "general").exact(10.0);
         let mut request = request_with_budget(100);
@@ -1753,6 +1794,7 @@ mod tests {
     fn known_hash_satisfies_must_cover_without_resending_source() {
         let required = Candidate::new("src/required.rs", 1, 1, "required")
             .symbol_name("required_symbol")
+            .target_range(1, 1)
             .exact(1.0);
         let known_hash = required.content_hash();
         let mut request = request_with_budget(100);
@@ -1774,6 +1816,55 @@ mod tests {
         );
         assert!(response.coverage.uncovered_must_include_paths.is_empty());
         assert!(response.coverage.uncovered_must_include_symbols.is_empty());
+    }
+
+    #[test]
+    fn partial_required_symbol_is_selected_but_not_reported_as_complete() {
+        let required = Candidate::new("src/required.rs", 10, 20, "partial definition")
+            .symbol_name("required_symbol")
+            .target_range(10, 40)
+            .exact(1.0);
+        let mut request = request_with_budget(100);
+        request.must_include_symbols = vec!["required_symbol".into()];
+
+        let response = select(vec![required], &request, 1);
+
+        assert_eq!(response.fragments.len(), 1);
+        assert_eq!(response.fragments[0].target_start_line, Some(10));
+        assert_eq!(response.fragments[0].target_end_line, Some(40));
+        assert!(response.fragments[0].truncated);
+        assert!(response.coverage.covered_must_include_symbols.is_empty());
+        assert_eq!(
+            response.coverage.partial_must_include_symbols,
+            vec!["required_symbol"]
+        );
+        assert!(response.coverage.uncovered_must_include_symbols.is_empty());
+    }
+
+    #[test]
+    fn dedup_preserves_required_symbol_target_metadata() {
+        let general = Candidate::new("src/required.rs", 10, 20, "same excerpt")
+            .symbol_name("other_symbol")
+            .exact(10.0);
+        let required = Candidate::new("src/required.rs", 10, 20, "same excerpt")
+            .representation("required_symbol")
+            .symbol_name("required_symbol")
+            .target_range(10, 40)
+            .exact(1.0);
+        let mut request = request_with_budget(100);
+        request.must_include_symbols = vec!["required_symbol".into()];
+
+        let response = select(vec![general, required], &request, 1);
+
+        assert_eq!(response.fragments.len(), 1);
+        assert_eq!(response.fragments[0].representation, "required_symbol");
+        assert_eq!(response.fragments[0].target_start_line, Some(10));
+        assert_eq!(response.fragments[0].target_end_line, Some(40));
+        assert!(response.fragments[0].truncated);
+        assert_eq!(
+            response.coverage.partial_must_include_symbols,
+            vec!["required_symbol"]
+        );
     }
 
     #[test]

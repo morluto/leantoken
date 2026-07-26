@@ -1203,6 +1203,10 @@ impl Services {
                 required_symbol_hits.push((symbol.clone(), hit));
             }
         }
+        let required_symbol_budget = request
+            .token_budget
+            .saturating_div(required_symbol_hits.len().max(1))
+            .max(1);
         let symbol_excerpt_requests = required_symbol_hits
             .iter()
             .map(|(_, hit)| AdaptiveExcerptRequest {
@@ -1210,7 +1214,7 @@ impl Services {
                 declaration_start: hit.symbol.start_line,
                 declaration_end: hit.symbol.end_line,
                 matched_line: hit.symbol.start_line,
-                token_budget: excerpt_budget(request.token_budget, ContextExcerptKind::Symbol),
+                token_budget: required_symbol_budget,
             })
             .collect::<Vec<_>>();
         phases.record_adaptive_excerpts(&symbol_excerpt_requests);
@@ -1234,6 +1238,7 @@ impl Services {
                 .concept(format!("must:symbol:{symbol}"), 2.0)
                 .representation("required_symbol")
                 .symbol_name(hit.symbol.name)
+                .target_range(hit.symbol.start_line, hit.symbol.end_line)
                 .exact(2.0)
                 .symbol(2.0)
                 .focus_boost(2.0)
@@ -2623,6 +2628,8 @@ impl Services {
                 std::mem::take(&mut response.coverage.covered_must_include_paths);
             coverage.covered_must_include_symbols =
                 std::mem::take(&mut response.coverage.covered_must_include_symbols);
+            coverage.partial_must_include_symbols =
+                std::mem::take(&mut response.coverage.partial_must_include_symbols);
             coverage.uncovered_must_include_paths =
                 std::mem::take(&mut response.coverage.uncovered_must_include_paths);
             coverage.uncovered_must_include_symbols =
@@ -2663,6 +2670,17 @@ impl Services {
             if uncovered > 0 {
                 response.warnings.push(format!(
                     "{uncovered} indexed must-cover requirements were not selected"
+                ));
+            }
+            let partial = response.coverage.partial_must_include_symbols.len();
+            if partial > 0 {
+                let subject = if partial == 1 {
+                    "1 required symbol was".to_owned()
+                } else {
+                    format!("{partial} required symbols were")
+                };
+                response.warnings.push(format!(
+                    "{subject} returned only partially; inspect target ranges and truncated fragments"
                 ));
             }
             let unmatched = response
@@ -3155,6 +3173,9 @@ mod tests {
                 path: "src/browser/file_0.rs".into(),
                 start_line: 1,
                 end_line: 1,
+                target_start_line: None,
+                target_end_line: None,
+                truncated: false,
                 representation: "source".into(),
                 content: "browser".into(),
                 content_hash: "browser-hash".into(),
@@ -3166,6 +3187,9 @@ mod tests {
                 path: "src/runtime/file_0.rs".into(),
                 start_line: 1,
                 end_line: 1,
+                target_start_line: None,
+                target_end_line: None,
+                truncated: false,
                 representation: "source".into(),
                 content: "runtime".into(),
                 content_hash: "runtime-hash".into(),
