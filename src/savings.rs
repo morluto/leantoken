@@ -5,7 +5,7 @@ use std::{
 
 use leantoken::{
     ObservedTokenSavingsReport, ResponseTokenAccountingByOperation, Result,
-    TokenAccountingOperation,
+    TokenAccountingOperation, TokenSavingsSnapshotReport, TokenSavingsWindow,
 };
 
 const RESET: &str = "\x1b[0m";
@@ -44,7 +44,7 @@ impl Palette {
     }
 }
 
-pub(crate) fn print_report(report: &ObservedTokenSavingsReport, json_output: bool) -> Result<()> {
+pub(crate) fn print_report(report: &TokenSavingsSnapshotReport, json_output: bool) -> Result<()> {
     let stdout = std::io::stdout();
     let color = color_enabled(stdout.is_terminal());
     let mut output = stdout.lock();
@@ -53,7 +53,17 @@ pub(crate) fn print_report(report: &ObservedTokenSavingsReport, json_output: boo
         output.write_all(b"\n")?;
         return Ok(());
     }
-    write_human_report(&mut output, report, color)
+    write_human_report(&mut output, &report.observed, color)?;
+    writeln!(
+        output,
+        "Window: {}",
+        match report.window {
+            TokenSavingsWindow::Lifetime => "lifetime",
+            TokenSavingsWindow::Delta => "snapshot delta",
+        }
+    )?;
+    writeln!(output, "Snapshot: {}", report.snapshot)?;
+    Ok(())
 }
 
 fn write_human_report(
@@ -149,6 +159,17 @@ fn write_human_report(
         "Expected-hash suppression: {} represented-source tokens",
         format_count(observations.expected_hash_suppressed_source_tokens)
     )?;
+    let classification = &observations.request_classification;
+    writeln!(
+        output,
+        "Request classes: {} useful  |  {} incomplete  |  {} unsupported  |  {} hash-suppressed  |  {} failed  |  {} legacy-unclassified",
+        format_count(classification.useful),
+        format_count(classification.incomplete),
+        format_count(classification.unsupported),
+        format_count(classification.hash_suppressed),
+        format_count(classification.failed),
+        format_count(classification.legacy_unclassified)
+    )?;
     for failure in &observations.failed_by_operation_and_category {
         writeln!(
             output,
@@ -229,6 +250,14 @@ fn write_human_report(
     }
 
     writeln!(output)?;
+    writeln!(
+        output,
+        "{}",
+        palette.paint(
+            DIM,
+            &format!("Source-compression basis: {}", source.estimate_basis)
+        )
+    )?;
     writeln!(
         output,
         "{}",
@@ -358,7 +387,8 @@ mod tests {
     use super::*;
     use leantoken::{
         ResponseTokenAccounting, ServiceFailureObservation, TokenSavingsByOperation,
-        TokenSavingsObservations, TokenSavingsOperation, TokenSavingsReport, TokenSavingsResponse,
+        TokenSavingsObservations, TokenSavingsOperation, TokenSavingsReport,
+        TokenSavingsRequestClassification, TokenSavingsResponse,
     };
 
     fn report() -> ObservedTokenSavingsReport {
@@ -436,6 +466,14 @@ mod tests {
                 failed_service_requests: 3,
                 expected_hash_not_modified_responses: 2,
                 expected_hash_suppressed_source_tokens: 8_192,
+                request_classification: TokenSavingsRequestClassification {
+                    useful: 20,
+                    incomplete: 3,
+                    unsupported: 1,
+                    hash_suppressed: 2,
+                    legacy_unclassified: 1,
+                    failed: 3,
+                },
                 failed_by_operation_and_category: vec![ServiceFailureObservation {
                     operation: TokenAccountingOperation::Search,
                     error_category: "invalid_input".into(),

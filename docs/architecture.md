@@ -58,7 +58,11 @@ Successful retrieval accounting has one row per tokenizer and each of the
 eight fixed retrieval operations. A finalized response performs at most one
 best-effort saturating upsert. Exact read `expected_hash` matches add their
 not-modified count and represented-source tokens omitted to that same row;
-receipt suppression remains a separate counter.
+receipt suppression remains a separate counter. Four additive counters classify
+new successful responses as useful, incomplete, unsupported, or
+hash-suppressed; failures remain in the failure table. Only useful responses
+with a represented-source baseline update the effective source-compression
+columns. Full-response accounting still includes every successful class.
 
 Observed service failures use `service_failures`, keyed by tokenizer, operation,
 and a finite, non-sensitive error-variant category. No request source, path,
@@ -75,8 +79,17 @@ combined savings report reads success and failure tables through one pinned
 `ReadSession`, preserving request snapshot consistency. Failure reporting is a
 primary-key range query on tokenizer, ordered by operation and category; a
 checked query-plan test prevents a table scan or temporary sort from entering
-this path. These properties make the counters persisted lower bounds rather
-than an audit ledger.
+this path. The successful-accounting read has matching query-plan evidence for
+the `(tokenizer, operation)` primary key.
+
+Savings deltas do not add stored events. A response serializes the pinned
+aggregate counters into a compact, checksummed, caller-carried opaque snapshot
+bound to repository identity and tokenizer. A later request subtracts that
+snapshot with checked arithmetic and fails closed on malformed, cross-repository,
+cross-tokenizer, reset, or future counters. Snapshot input and output are each
+bounded to 32 KiB; current rows remain bounded by eight operations and failures
+by the finite category matrix. These properties make the counters persisted
+lower bounds rather than an audit ledger.
 
 LeanToken does not serialize a separate in-memory index snapshot. In this
 document, a request snapshot means a SQLite read transaction pinned to one

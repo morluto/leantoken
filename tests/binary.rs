@@ -69,6 +69,27 @@ fn cli_indexes_statuses_and_searches_as_json() {
             .as_u64()
             .is_some()
     );
+    assert_eq!(savings["window"], "lifetime");
+    let snapshot = savings["snapshot"]
+        .as_str()
+        .expect("opaque savings snapshot")
+        .to_owned();
+    run(
+        root.path(),
+        &database,
+        &["search", "answer", "--mode", "identifier"],
+    );
+    let delta = run(
+        root.path(),
+        &database,
+        &["savings", "--snapshot", &snapshot],
+    );
+    assert_eq!(delta["window"], "delta");
+    assert_eq!(delta["tracked_requests"], 1);
+    assert_eq!(
+        delta["observations"]["request_classification"]["useful"],
+        1
+    );
 }
 
 #[test]
@@ -155,10 +176,13 @@ fn cli_savings_renders_a_color_aware_human_table() {
     ));
     assert!(plain.contains("fewer source tokens"));
     assert!(plain.contains("Persisted observations"));
+    assert!(plain.contains("Request classes:"));
     assert!(plain.contains("Unobserved task outcomes"));
     assert!(plain.contains("Operation"));
     assert!(plain.contains("Search"));
     assert!(plain.contains("reduction"));
+    assert!(plain.contains("Window: lifetime"));
+    assert!(plain.contains("Snapshot: lts1."));
     assert!(!plain.contains("\x1b["));
 
     let colored = command()

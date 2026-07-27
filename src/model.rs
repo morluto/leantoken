@@ -2516,6 +2516,8 @@ pub struct TokenSavingsObservations {
     pub expected_hash_not_modified_responses: u64,
     /// Requested source tokens omitted by exact `expected_hash` matches.
     pub expected_hash_suppressed_source_tokens: u64,
+    /// Mutually exclusive observed request outcome classes.
+    pub request_classification: TokenSavingsRequestClassification,
     /// Fixed-order breakdown of observed failures by operation and category.
     pub failed_by_operation_and_category: Vec<ServiceFailureObservation>,
     /// Outcomes that cannot be inferred without a host task/outcome identity.
@@ -2530,6 +2532,60 @@ pub struct ObservedTokenSavingsReport {
     pub report: TokenSavingsReport,
     /// Additive counters whose observation boundaries are explicitly documented.
     pub observations: TokenSavingsObservations,
+}
+
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
+)]
+#[serde(rename_all = "snake_case")]
+/// Outcome assigned to one successful retrieval for aggregate savings accounting.
+pub enum TokenSavingsRequestClass {
+    /// Returned supported evidence or useful negative evidence.
+    Useful,
+    /// Returned a bounded or explicitly partial result.
+    Incomplete,
+    /// Could not provide the requested structural retrieval contract.
+    Unsupported,
+    /// Suppressed unchanged source because `expected_hash` matched.
+    HashSuppressed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Aggregate mutually exclusive retrieval outcome counts.
+pub struct TokenSavingsRequestClassification {
+    /// Successful complete supported retrievals.
+    pub useful: u64,
+    /// Successful bounded or explicitly partial retrievals.
+    pub incomplete: u64,
+    /// Successful unsupported results plus typed unsupported-language errors.
+    pub unsupported: u64,
+    /// Successful exact `expected_hash` suppression.
+    pub hash_suppressed: u64,
+    /// Successful records created before outcome classification was available.
+    pub legacy_unclassified: u64,
+    /// Observed errors other than typed unsupported-language outcomes.
+    pub failed: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+/// Time window represented by a savings snapshot response.
+pub enum TokenSavingsWindow {
+    /// All persisted aggregate records.
+    Lifetime,
+    /// Aggregate counters added after the supplied opaque snapshot.
+    Delta,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Observed accounting plus a caller-carried opaque aggregate snapshot.
+pub struct TokenSavingsSnapshotReport {
+    #[serde(flatten)]
+    pub observed: ObservedTokenSavingsReport,
+    /// Opaque state that can be supplied to a later savings request.
+    pub snapshot: String,
+    /// Whether the report covers lifetime totals or a snapshot delta.
+    pub window: TokenSavingsWindow,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

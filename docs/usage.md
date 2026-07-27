@@ -401,12 +401,22 @@ independent capacity.
 
 ## `leantoken.savings`
 
-Returns cumulative repository-local token accounting with no input fields.
-Existing top-level fields retain the source-only estimate and its four
-operation rows. `response_accounting` reports successful response counts,
-comparable baseline counts, source/path-metadata/protocol/total response tokens,
-signed response deltas, receipt-suppression counts, and fixed rows for all
-eight retrieval operations.
+Returns repository-local token accounting and an opaque `snapshot`. With no
+input, `window` is `lifetime`. Supply a prior
+`{"snapshot":"lts1..."}` to receive only aggregate counter changes since that
+snapshot; the response returns a replacement snapshot. Snapshots are
+caller-carried, repository- and tokenizer-bound, checksummed, and limited to
+32 KiB. They do not create a per-request event table.
+
+Existing top-level fields are the effective source-compression comparison and
+its four operation rows. Only successful requests classified as `useful` enter
+that comparison for newly written records. An upgraded lifetime report can
+retain earlier unclassified source comparisons; take a snapshot and use its
+subsequent delta when a strictly post-classification measurement is required.
+`response_accounting` separately retains every successful
+response and reports comparable baseline counts,
+source/path-metadata/protocol/total response tokens, signed response deltas,
+receipt-suppression counts, and fixed rows for all eight retrieval operations.
 
 The additive `observations` object reports best-effort persisted successes,
 failures by operation and stable error category, and exact `expected_hash`
@@ -414,7 +424,14 @@ matches. `expected_hash_suppressed_source_tokens` measures the requested source
 omitted by those matches. This is distinct from
 `response_accounting.receipt_suppressed_exact` and
 `receipt_suppressed_overlap`, which describe receipt-based duplicate
-suppression.
+suppression. `request_classification` divides new requests into `useful`,
+`incomplete`, `unsupported`, `hash_suppressed`, and `failed`.
+Typed `unsupported_language` failures belong to `unsupported`; the broader
+`failed_service_requests` observation still reports every returned error.
+`legacy_unclassified` makes pre-classification successful records explicit.
+Incomplete or unsupported retrievals—including a zero-symbol LaTeX
+outline—remain visible as full response cost but do not inflate effective
+source compression.
 
 The report is a represented-source comparison over successful recorded
 responses plus separately observed failure counts. It does not infer retry
@@ -422,6 +439,10 @@ chains, whether returned evidence was used, superseded calls, provider framing,
 or task success. Those limits are returned in `observations.unobserved`. Treat
 the signed response delta as local response accounting, not as a
 correctness-adjusted claim about an agent's full workflow.
+In particular, a source-compression percentage such as 82.15% describes only
+represented source in useful retrieval responses; it is not an estimate of
+the complete agent session. Use `response_accounting` for the full serialized
+response net cost within the same represented-source baseline.
 
 This is a read-only observation: calling `leantoken.savings` does not update
 the tracker. Accounting writes never delay retrieval: local writer contention

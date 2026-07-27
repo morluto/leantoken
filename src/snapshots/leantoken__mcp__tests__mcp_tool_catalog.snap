@@ -1517,10 +1517,21 @@ expression: tools
   },
   {
     "name": "savings",
-    "description": "Report repository-local observed response accounting, expected-hash suppression, service failures, and explicitly unobserved task outcomes. Source and response deltas are comparisons against represented source, not claims about task success. Example: {}.",
+    "description": "Report repository-local observed response accounting, request classifications, expected-hash suppression, service failures, and explicitly unobserved task outcomes. Returns an opaque snapshot; supply it later for a bounded aggregate delta. Source compression and full-response net cost are separate comparisons against represented source, not claims about task success or complete session savings. Example: {}.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
+      "properties": {
+        "snapshot": {
+          "default": null,
+          "description": "Opaque snapshot from an earlier savings response; returns aggregate deltas.",
+          "maxLength": 32768,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     },
     "annotations": {

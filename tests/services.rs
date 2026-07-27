@@ -8,7 +8,7 @@ use leantoken::{
     IndexConsistency, IndexState, JsonIncompleteReason, JsonOperation, JsonProjection, JsonRequest,
     JsonSelector, OutlineRequest, ReadDeltaFallback, ReadDeltaOutcome, ReadRequest, ReadStatus,
     ReferenceRole, SearchMode, SearchRequest, TokenAccountingOperation, TokenSavingsOperation,
-    WorkflowEvidence,
+    TokenSavingsWindow, WorkflowEvidence,
     coordination::IndexCoordination,
     services::{ServiceCallOptions, Services},
     tokens::Tokenizer,
@@ -4701,6 +4701,11 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     assert_eq!(initial.tracked_requests, 0);
     assert_eq!(initial.estimated_source_tokens_saved, 0);
     assert_eq!(initial.by_operation.len(), 4);
+    let initial_snapshot = services
+        .observed_token_savings_snapshot(None)
+        .await
+        .expect("initial snapshot");
+    assert_eq!(initial_snapshot.window, TokenSavingsWindow::Lifetime);
 
     let search = services
         .search(search_limit_request(Some(5), Some(100), Some(1)))
@@ -4754,7 +4759,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     assert_eq!(repeated_read.status, ReadStatus::NotModified);
     let report = services.token_savings().await.expect("tracked savings");
     assert_eq!(report.tokenizer, services.config().tokenizer.name());
-    assert_eq!(report.tracked_requests, 5);
+    assert_eq!(report.tracked_requests, 4);
     assert_eq!(report.by_operation.len(), 4);
     assert_eq!(
         report
@@ -4765,7 +4770,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
         vec![
             (TokenSavingsOperation::Search, 1),
             (TokenSavingsOperation::Outline, 1),
-            (TokenSavingsOperation::Read, 2),
+            (TokenSavingsOperation::Read, 1),
             (TokenSavingsOperation::Context, 1),
         ]
     );
@@ -4861,7 +4866,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     assert_eq!(observed.report, effective);
     assert_eq!(observed.observations.successful_response_records, 5);
     assert_eq!(observed.observations.responses_with_baseline, 5);
-    assert_eq!(observed.observations.source_compression_requests, 5);
+    assert_eq!(observed.observations.source_compression_requests, 4);
     assert_eq!(observed.observations.failed_service_requests, 1);
     assert_eq!(
         observed.observations.expected_hash_not_modified_responses,
@@ -4889,6 +4894,60 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     assert!(observed.observations.unobserved.iter().any(|outcome| {
         outcome.contains("retry chains") && outcome.contains("task/outcome identifier")
     }));
+    assert_eq!(observed.observations.request_classification.useful, 4);
+    assert_eq!(
+        observed
+            .observations
+            .request_classification
+            .hash_suppressed,
+        1
+    );
+    assert_eq!(observed.observations.request_classification.failed, 1);
+    assert_eq!(
+        observed
+            .observations
+            .request_classification
+            .legacy_unclassified,
+        0
+    );
+    let delta = services
+        .observed_token_savings_snapshot(Some(initial_snapshot.snapshot))
+        .await
+        .expect("snapshot delta");
+    assert_eq!(delta.window, TokenSavingsWindow::Delta);
+    assert_eq!(delta.observed, observed);
+    assert!(delta.snapshot.len() < 4_096);
+    let zero_delta = services
+        .observed_token_savings_snapshot(Some(delta.snapshot.clone()))
+        .await
+        .expect("empty snapshot delta");
+    assert_eq!(zero_delta.observed.observations.successful_response_records, 0);
+    assert_eq!(zero_delta.observed.observations.failed_service_requests, 0);
+    assert_eq!(
+        zero_delta.observed.report.response_accounting.total_response_tokens,
+        0
+    );
+    let (_other_root, other_services) = fixture().await;
+    assert!(matches!(
+        other_services
+            .observed_token_savings_snapshot(Some(delta.snapshot.clone()))
+            .await,
+        Err(Error::InvalidInput {
+            field: "snapshot",
+            ..
+        })
+    ));
+    let mut invalid_snapshot = delta.snapshot;
+    invalid_snapshot.push('x');
+    assert!(matches!(
+        services
+            .observed_token_savings_snapshot(Some(invalid_snapshot))
+            .await,
+        Err(Error::InvalidInput {
+            field: "snapshot",
+            ..
+        })
+    ));
     let serialized = serde_json::to_value(&observed).expect("serialize observed accounting");
     assert!(serialized.get("tokenizer").is_some());
     assert!(serialized.get("estimated_source_tokens_saved").is_some());
@@ -4935,6 +4994,85 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             .tracked_requests,
         0
     );
+}
+
+#[tokio::test]
+async fn savings_excludes_incomplete_and_zero_symbol_latex_outlines_from_source_compression() {
+    let (root, services) = fixture().await;
+    std::fs::write(
+        root.path().join("empty.tex"),
+        "Plain prose without structural LaTeX commands.\n",
+    )
+    .expect("write empty LaTeX fixture");
+    services.index(false).await.expect("index LaTeX fixture");
+    let base = services
+        .observed_token_savings_snapshot(None)
+        .await
+        .expect("baseline snapshot");
+
+    let unsupported = services
+        .outline(OutlineRequest {
+            paths: vec!["empty.tex".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(10),
+            max_tokens: Some(100),
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect("zero-symbol LaTeX outline");
+    assert_eq!(unsupported.total_symbols, 0);
+    assert_eq!(unsupported.files[0].language.as_deref(), Some("latex"));
+
+    let incomplete = services
+        .outline(OutlineRequest {
+            paths: vec!["src/lib.rs".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(1),
+            max_tokens: Some(100),
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect("bounded outline");
+    assert!(!incomplete.result_complete);
+    let delta = services
+        .observed_token_savings_snapshot(Some(base.snapshot))
+        .await
+        .expect("classified delta");
+    assert_eq!(delta.window, TokenSavingsWindow::Delta);
+    assert_eq!(delta.observed.report.source_savings.tracked_requests, 0);
+    assert_eq!(
+        delta
+            .observed
+            .report
+            .response_accounting
+            .tracked_requests,
+        2
+    );
+    assert_eq!(
+        delta
+            .observed
+            .observations
+            .request_classification
+            .unsupported,
+        1
+    );
+    assert_eq!(
+        delta
+            .observed
+            .observations
+            .request_classification
+            .incomplete,
+        1
+    );
+    assert_eq!(
+        delta.observed.observations.request_classification.failed,
+        0
+    );
+    assert_eq!(delta.observed.observations.failed_service_requests, 0);
 }
 
 #[tokio::test]
