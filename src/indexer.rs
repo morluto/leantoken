@@ -827,6 +827,10 @@ impl Indexer {
                 )?;
                 let absolute_path = self.config.root.join(&relative);
                 if self.config.is_database_artifact_path(&absolute_path) {
+                    if existing.contains_key(&relative_path) {
+                        directly_observed_deletions.insert(relative_path.clone());
+                        deletions.insert(relative_path);
+                    }
                     continue;
                 }
                 let metadata = match fs::symlink_metadata(&absolute_path) {

@@ -16,21 +16,20 @@ use crate::config::{
     INDEX_CONTENT_VERSION, ManagedCacheIdentity, managed_cache_id_matches_root, managed_cache_root,
     parse_managed_cache_id,
 };
-use crate::coordination::IndexCoordination;
+use crate::coordination::{
+    COORDINATION_LOCK_SUFFIXES, DEFAULT_INDEX_DATABASE_NAME, IndexCoordination, LEASE_LOCK_SUFFIX,
+    coordination_sidecar_path, is_coordination_sidecar_for_database,
+};
 use crate::storage::{CURRENT_MIGRATION_VERSION, CURRENT_SCHEMA_VERSION};
 use crate::{Error, Result};
 
-const DATABASE_NAME: &str = "index.sqlite";
+const DATABASE_NAME: &str = DEFAULT_INDEX_DATABASE_NAME;
 const WAL_NAME: &str = "index.sqlite-wal";
-const LEASE_NAME: &str = "index.sqlite.lease.lock";
 const PRUNABLE_ARTIFACTS: &[&str] = &[
     DATABASE_NAME,
     WAL_NAME,
     "index.sqlite-shm",
     "index.sqlite-journal",
-    "index.sqlite.init.lock",
-    "index.sqlite.leader.lock",
-    "index.sqlite.index.lock",
 ];
 const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
 const CACHE_LIST_CURSOR_PREFIX: &str = "cl1";
@@ -940,7 +939,8 @@ impl CacheManager {
         let mut unexpected = initial_scan.unexpected;
         let mut metadata_safe = true;
 
-        let active = if probe_active && path.join(LEASE_NAME).exists() {
+        let lease_path = coordination_sidecar_path(&database, LEASE_LOCK_SUFFIX);
+        let active = if probe_active && lease_path.exists() {
             IndexCoordination::for_database(&database)
                 .try_acquire_prune_lease()?
                 .is_none()
@@ -1031,18 +1031,22 @@ fn scan_artifacts(path: &Path) -> Result<ArtifactScan> {
         has_artifacts: false,
         unexpected: false,
     };
+    let database = path.join(DATABASE_NAME);
+    let lease_path = coordination_sidecar_path(&database, LEASE_LOCK_SUFFIX);
     for child in fs::read_dir(path)? {
         let child = child?;
         let metadata = fs::symlink_metadata(child.path())?;
+        let child_path = child.path();
         let known = child
             .file_name()
             .to_str()
-            .is_some_and(|name| PRUNABLE_ARTIFACTS.contains(&name) || name == LEASE_NAME);
+            .is_some_and(|name| PRUNABLE_ARTIFACTS.contains(&name))
+            || is_coordination_sidecar_for_database(&child_path, &database);
         if !known || !metadata.file_type().is_file() {
             scan.unexpected = true;
             continue;
         }
-        if child.file_name() == OsStr::new(LEASE_NAME) {
+        if child_path == lease_path {
             continue;
         }
         scan.has_artifacts = true;
@@ -1398,8 +1402,17 @@ struct RemovalOutcome {
 
 fn remove_managed_artifacts(directory: &Path) -> RemovalOutcome {
     let mut reclaimed_bytes = 0u64;
-    for artifact in PRUNABLE_ARTIFACTS {
-        let path = directory.join(artifact);
+    let database = directory.join(DATABASE_NAME);
+    let paths = PRUNABLE_ARTIFACTS
+        .iter()
+        .map(|artifact| directory.join(artifact))
+        .chain(
+            COORDINATION_LOCK_SUFFIXES
+                .into_iter()
+                .filter(|suffix| *suffix != LEASE_LOCK_SUFFIX)
+                .map(|suffix| coordination_sidecar_path(&database, suffix)),
+        );
+    for path in paths {
         let size = fs::symlink_metadata(&path)
             .map(|metadata| metadata.len())
             .unwrap_or(0);
@@ -2231,7 +2244,7 @@ mod tests {
             "unexpected prune report: {deleted:#?}"
         );
         assert!(!database.exists());
-        assert!(directory.join(LEASE_NAME).exists());
+        assert!(coordination_sidecar_path(&database, LEASE_LOCK_SUFFIX).exists());
         assert!(manager.list().expect("empty list").entries.is_empty());
     }
 

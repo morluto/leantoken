@@ -15,6 +15,15 @@ fn indexer_initial_reconcile_indexes_files_and_advances_generation() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     );
     let storage = Storage::open(&config.database_path).expect("storage");
+    for suffix in [
+        ".lease.lock",
+        ".init.lock",
+        ".leader.lock",
+        ".index.lock",
+    ] {
+        std::fs::write(root.path().join(format!("index.sqlite{suffix}")), "configured lock")
+            .expect("configured sidecar");
+    }
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
 
     let response = indexer.reconcile(false).expect("first reconcile");
@@ -26,6 +35,122 @@ fn indexer_initial_reconcile_indexes_files_and_advances_generation() {
     let hits = storage.search_word("first", 10).expect("search");
     assert_eq!(hits.len(), 1);
     assert!(hits[0].content.contains("first"));
+}
+
+#[test]
+fn full_reconcile_excludes_only_recognized_zero_byte_stale_sidecars() {
+    let root = tempfile::tempdir().expect("root");
+    let database = tempfile::tempdir().expect("database");
+    let stale = root.path().join("old-cache");
+    std::fs::create_dir(&stale).expect("stale cache directory");
+    for suffix in [
+        ".lease.lock",
+        ".init.lock",
+        ".leader.lock",
+        ".index.lock",
+    ] {
+        std::fs::write(stale.join(format!("index.sqlite{suffix}")), [])
+            .expect("zero-byte stale sidecar");
+    }
+    let nonzero = root.path().join("user/index.sqlite.lease.lock");
+    std::fs::create_dir_all(nonzero.parent().expect("user directory")).expect("user directory");
+    std::fs::write(&nonzero, "user-owned lock content").expect("non-zero same-name file");
+    let arbitrary = root.path().join("project.lock");
+    std::fs::write(&arbitrary, "arbitrary lock content").expect("arbitrary lock");
+    let config = Arc::new(
+        Config::discover(root.path(), Some(database.path().join("index.sqlite"))).expect("config"),
+    );
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+
+    let first = indexer.reconcile(false).expect("initial reconcile");
+
+    assert_eq!(first.files_indexed, 2);
+    assert!(storage.find_file("project.lock").expect("arbitrary lookup").is_some());
+    assert!(
+        storage
+            .find_file("user/index.sqlite.lease.lock")
+            .expect("non-zero lookup")
+            .is_some()
+    );
+    for suffix in [
+        ".lease.lock",
+        ".init.lock",
+        ".leader.lock",
+        ".index.lock",
+    ] {
+        assert!(
+            storage
+                .find_file(&format!("old-cache/index.sqlite{suffix}"))
+                .expect("stale lookup")
+                .is_none()
+        );
+    }
+
+    std::fs::write(&nonzero, []).expect("turn indexed file into a recognized sidecar");
+    let second = indexer.reconcile(false).expect("full sidecar cleanup");
+    assert_eq!(second.files_removed, 1);
+    assert!(
+        storage
+            .find_file("user/index.sqlite.lease.lock")
+            .expect("cleaned lookup")
+            .is_none()
+    );
+    assert!(storage.find_file("project.lock").expect("arbitrary lookup").is_some());
+}
+
+#[test]
+fn watcher_targeted_reconcile_adds_user_locks_and_removes_recognized_sidecars() {
+    let root = tempfile::tempdir().expect("root");
+    let database = tempfile::tempdir().expect("database");
+    std::fs::write(root.path().join("lib.rs"), "fn owner() {}\n").expect("source");
+    let config = Arc::new(
+        Config::discover(root.path(), Some(database.path().join("index.sqlite"))).expect("config"),
+    );
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+    indexer.reconcile(false).expect("initial reconcile");
+
+    let reported = "old/index.sqlite.index.lock";
+    let sidecar = root.path().join(reported);
+    std::fs::create_dir_all(sidecar.parent().expect("old directory")).expect("old directory");
+    std::fs::write(&sidecar, "user data").expect("non-zero watcher add");
+    let added = indexer
+        .reconcile_paths(&[reported.into()])
+        .expect("watcher add");
+    assert_eq!(added.files_indexed, 1);
+    assert!(storage.find_file(reported).expect("added lookup").is_some());
+
+    std::fs::write(&sidecar, []).expect("coordination sidecar transition");
+    let removed = indexer
+        .reconcile_paths(&[reported.into()])
+        .expect("watcher sidecar transition");
+    assert_eq!(removed.files_removed, 1);
+    assert!(storage.find_file(reported).expect("removed lookup").is_none());
+
+    let zero_add = "other/index.sqlite.init.lock";
+    let zero_path = root.path().join(zero_add);
+    std::fs::create_dir_all(zero_path.parent().expect("other directory"))
+        .expect("other directory");
+    std::fs::write(&zero_path, []).expect("zero-byte watcher add");
+    let ignored = indexer
+        .reconcile_paths(&[zero_add.into()])
+        .expect("ignore watcher sidecar");
+    assert_eq!(ignored.files_indexed, 0);
+    assert!(storage.find_file(zero_add).expect("ignored lookup").is_none());
+
+    let arbitrary = "other/build.lock";
+    std::fs::write(root.path().join(arbitrary), "owner lock").expect("arbitrary watcher add");
+    indexer
+        .reconcile_paths(&[arbitrary.into()])
+        .expect("index arbitrary watcher file");
+    assert!(storage.find_file(arbitrary).expect("arbitrary lookup").is_some());
+    std::fs::remove_file(root.path().join(arbitrary)).expect("delete arbitrary watcher file");
+    let deleted = indexer
+        .reconcile_paths(&[arbitrary.into()])
+        .expect("watcher delete");
+    assert_eq!(deleted.files_removed, 1);
+    assert!(storage.find_file(arbitrary).expect("deleted lookup").is_none());
 }
 
 #[test]

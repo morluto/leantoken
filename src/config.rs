@@ -8,6 +8,9 @@ use std::{
 use globset::Glob;
 use toml_edit::DocumentMut;
 
+use crate::coordination::{
+    is_coordination_sidecar_for_database, is_recognized_stale_coordination_sidecar,
+};
 use crate::repository::DiscoveryPolicy;
 use crate::tokens::Tokenizer;
 use crate::{Error, Result};
@@ -335,20 +338,12 @@ impl Config {
         if candidate == self.database_path {
             return true;
         }
-        [
-            "-wal",
-            "-shm",
-            ".lease.lock",
-            ".leader.lock",
-            ".index.lock",
-            ".init.lock",
-        ]
-        .into_iter()
-        .any(|suffix| {
+        ["-wal", "-shm"].into_iter().any(|suffix| {
             let mut sidecar = self.database_path.as_os_str().to_os_string();
             sidecar.push(suffix);
             candidate.as_os_str() == sidecar
-        })
+        }) || is_coordination_sidecar_for_database(candidate, &self.database_path)
+            || is_recognized_stale_coordination_sidecar(candidate)
     }
 }
 
