@@ -1,87 +1,66 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-## [0.1.16] - 2026-07-26
+## [0.1.17] - 2026-07-27
 ### Benchmarks
 
-- Record agent wall-time baseline
-- Add agent wall-time A/B harness
-- Record context concept coverage baseline
-- Measure context concept coverage
-- Record handoff manifest crossover
-- Tighten exact-read delta accounting
-- Record exact-read delta results
-- Tighten external corpus contracts
-- Record external corpus baseline
-- Add pinned external retrieval corpora
-- Add repository-scale performance diagnostics
+- **arb:** Correct structural v2 accounting
+- **arb:** Record orientation capsule trajectories
+- **retrieval:** Freeze orientation capsule result
+- **retrieval:** Refresh AST lane provenance
+- **retrieval:** Freeze AST structural lane result
+- **retrieval:** Freeze Git history lane result
+- **retrieval:** Freeze workflow evidence A/B
+- **retrieval:** Freeze ARB smoke evidence
+- **retrieval:** Add ARB trace smoke baseline
+- **mcp:** Measure multi-process resource costs (#306) ([#306](https://github.com/morluto/leantoken/pull/306))
+- **protocol:** Record compact projection ablation
 ### Bug Fixes
 
-- Normalize release changelog ending ([#292](https://github.com/morluto/leantoken/pull/292))
-- Restore release changelog generation ([#291](https://github.com/morluto/leantoken/pull/291))
-- Make nested CLI help actionable
-- Remove unusable CLI read delta flag
-- Preserve tail intent in context queries
-- **mcp:** Release dispatch capacity on cancellation
-- **mcp:** Bound protocol lifecycle and redact payloads
-- **setup:** Sync published directory entries
-- **indexing:** Bound watcher and Git subprocess work
-- Reconcile live CLI retrievals
-- Isolate incompatible managed indexes
-- Keep legacy cache age stable
-- Register MCP initialization waiters
-- Close MCP readiness races
-- Bound idle initial-index waits
-- Keep initial index retries inside MCP
-- Drain benchmark MCP diagnostics
-- Report MCP refresh after upgrades
-- Support history symbol endpoints
-- Report required symbol completeness
-- Keep explicit changed paths authoritative
-- Enforce read delta economy bounds
-### Chores
-
-- **dev:** Streamline local validation
-- Add repository code owner
-- Normalize changelog ending
-### Continuous Integration
-
-- Bound and isolate required checks
-- Separate benchmark contract from product tests
+- **release:** Restore product gate (#328) ([#328](https://github.com/morluto/leantoken/pull/328))
+- **mcp:** Validate savings input schema (#327) ([#327](https://github.com/morluto/leantoken/pull/327))
+- **savings:** Add classified snapshot deltas
+- **context:** Distinguish evidence coverage
+- **benchmark:** Enforce composite owner evidence bounds
+- **bench:** Fail closed on partial trajectories
+- **bench:** Bound compound prewalk preflight
+- **bench:** Distinguish skill reads from retrieval
+- **bench:** Report the AST path bound accurately
+- Validate ARB trace2code selection filters
+- **savings:** Report observed outcomes honestly
+- **history:** Omit absent ranges and normalize symbol diffs
+- **index:** Exclude recognized stale coordination sidecars
+- **context:** Generate bounded candidates for required focus coverage
+- **cache:** Canonicalize repository filter fixture
 ### Documentation
 
-- Clarify token savings methodology
-- Update README hero asset path
-- Refresh README hero image
-- Improve README onboarding
-- Record bounded runtime concurrency decisions
-- Record lightweight semantic boundary
-- Record semantic receipt decision
-- Streamline repository agent guidance
+- Use compact editorial README hero
+- Clarify README value and workflows
 ### Features
 
-- Expose index compatibility diagnostics ([#290](https://github.com/morluto/leantoken/pull/290))
-- Bound and filter cache list output
-- Add JSON diagnostics pagination
-- Compact context diagnostics
-- Add effective savings accounting
-- **parser:** Add C# structural indexing
-- Add provenance-bearing handoff manifests
-- Add semantic change receipts
-- Add accuracy-first optimization skill
-- Add bounded exact-read deltas
-- **search:** Prefilter regex candidates with trigram FTS
-### Performance
-
-- **mcp:** Back off follower leadership probes
-- **read:** Fuse live hashing and range extraction
-- **context:** Eliminate repeated retrieval scans
+- **read:** Reuse latest delta base (#326) ([#326](https://github.com/morluto/leantoken/pull/326))
+- **search:** Group exhaustive occurrences
+- **latex:** Index document structure
+- **benchmark:** Validate bounded AST owner evidence
+- **bench:** Measure bounded orientation handoffs
+- **bench:** Add bounded orientation capsules
+- **bench:** Add bounded AST structural lane
+- **bench:** Add bounded Git history lane
+- **bench:** Add context utilization telemetry
+- **context:** Add typed workflow evidence
+- **history:** Consolidate bounded multi-symbol revision queries
+- **protocol:** Add measured compact response projections
+- **json:** Add shallow traversal and bounded schema degradation
+- **cache:** Separate metadata state from content compatibility
+- **protocol:** Extend response budgets across retrieval operations
+- **context:** Enforce bounded serialized response budgets
 ### Refactoring
 
-- **services:** Bound blocking work and reconcile waves
+- **bench:** Label classified capsule runs
+- **cli:** Centralize command scope policy
 ### Testing
 
-- Make executor waits scheduler-independent
-- Stabilize MCP failover timing
-- Prevent blocking executor teardown hangs
-- Avoid Windows instant underflow
+- **history:** Lock batched diff resource caps
+- **docs:** Freeze feedback regression contracts
+- **manifests:** Verify release projections
+- **docs:** Guard runtime limit projections
