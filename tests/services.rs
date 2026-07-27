@@ -1,7 +1,8 @@
 use std::time::Instant;
 
 use leantoken::{
-    Config, ContextRequest, ContextSignalPolicy, ContextWorkflow, Error, FileOperation, FilesRequest,
+    Config, ContextRequest, ContextSignalPolicy, ContextWorkflow, DiffSymbolsIncompleteReason,
+    DiffSymbolsRequest, DiffSymbolsStatus, DiffSymbolsTarget, Error, FileOperation, FilesRequest,
     Freshness, HandoffManifestRequest, HandoffValidation, HandoffValidationStatus,
     HandoffWorkingTreeState, HistoryOperation, HistoryRequest, IndexConsistency, IndexState,
     JsonIncompleteReason, JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest,
@@ -7920,6 +7921,153 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
     assert!(diff.result_complete);
     assert_response_token_accounting!(diff, Tokenizer::default());
 
+    let batch_request = DiffSymbolsRequest {
+        targets: vec![
+            DiffSymbolsTarget {
+                path: "src/lib.rs".into(),
+                symbol: "tracked".into(),
+                head_path: None,
+                head_symbol: None,
+            },
+            DiffSymbolsTarget {
+                path: "src/lib.rs".into(),
+                symbol: "unrelated".into(),
+                head_path: None,
+                head_symbol: None,
+            },
+        ],
+        base_revision: base.clone(),
+        head_revision: changed.clone(),
+        max_results: Some(2),
+        max_tokens: Some(1_000),
+        cursor: None,
+    };
+    let batch = services
+        .history_diff_symbols(batch_request.clone())
+        .await
+        .expect("batched historical diff");
+    assert_eq!(batch.kind, "diff_symbols");
+    assert_eq!(batch.base.revision, base[..12]);
+    assert_eq!(batch.head.revision, changed[..12]);
+    assert!(!batch.base.authored_at.is_empty());
+    assert_eq!(batch.head.subject, "update tracked");
+    assert_eq!(batch.results.len(), 2);
+    assert_eq!(batch.results[0].status, DiffSymbolsStatus::Modified);
+    assert_eq!(batch.results[0].before, diff.before);
+    assert_eq!(batch.results[0].after, diff.after);
+    assert_eq!(batch.results[0].diff, diff.diff);
+    assert_eq!(batch.results[0].semantic_change, diff.semantic_change);
+    assert_eq!(batch.results[1].status, DiffSymbolsStatus::Unchanged);
+    assert!(batch.results[1].diff.is_none());
+    assert!(batch.result_complete);
+    assert_eq!(batch.diagnostics.git_subprocesses, 7);
+    assert_eq!(batch.diagnostics.base_paths_requested, 1);
+    assert_eq!(batch.diagnostics.head_paths_requested, 1);
+    assert!(batch.diagnostics.parsed_symbols >= 4);
+    assert_response_token_accounting!(batch, Tokenizer::default());
+
+    let response_limit = batch.meta.total_response_tokens.saturating_sub(1);
+    let response_limited = services
+        .history_diff_symbols_with_options(
+            batch_request.clone(),
+            ServiceCallOptions::new().with_max_response_tokens(response_limit),
+        )
+        .await
+        .expect("response-limited batched history");
+    assert_eq!(
+        response_limited.results.len(),
+        2,
+        "response fitting must preserve symbol status coverage before diff text"
+    );
+    assert_eq!(
+        response_limited.results[0].incomplete_reason,
+        Some(DiffSymbolsIncompleteReason::MaxResponseTokens)
+    );
+    assert!(response_limited.results[0].diff_truncated);
+    assert_eq!(
+        response_limited.results[1].status,
+        DiffSymbolsStatus::Unchanged
+    );
+    assert_eq!(
+        response_limited.diagnostics.retained_diff_bytes,
+        response_limited.results[0]
+            .diff
+            .as_ref()
+            .map_or(0, String::len)
+    );
+    assert!(response_limited.meta.total_response_tokens <= response_limit);
+    assert_response_token_accounting!(response_limited, Tokenizer::default());
+
+    let mut first_page_request = batch_request.clone();
+    first_page_request.max_results = Some(1);
+    let first_page = services
+        .history_diff_symbols(first_page_request.clone())
+        .await
+        .expect("first batched history page");
+    assert_eq!(first_page.results.len(), 1);
+    assert!(!first_page.result_complete);
+
+    let fitted_page_limit = first_page.meta.total_response_tokens;
+    let fitted_page = services
+        .history_diff_symbols_with_options(
+            batch_request.clone(),
+            ServiceCallOptions::new().with_max_response_tokens(fitted_page_limit),
+        )
+        .await
+        .expect("response fitting should page complete status records");
+    assert_eq!(fitted_page.results.len(), 1);
+    assert_eq!(fitted_page.results[0].request_index, 0);
+    assert!(fitted_page.meta.total_response_tokens <= fitted_page_limit);
+    let mut fitted_continuation_request = batch_request.clone();
+    fitted_continuation_request.cursor = fitted_page.meta.next_cursor.clone();
+    let fitted_continuation = services
+        .history_diff_symbols(fitted_continuation_request)
+        .await
+        .expect("continue response-fitted history page");
+    assert_eq!(fitted_continuation.results[0].request_index, 1);
+    assert!(fitted_continuation.meta.next_cursor.is_none());
+
+    let cursor = first_page.meta.next_cursor.clone().expect("history cursor");
+    first_page_request.cursor = Some(cursor);
+    let second_page = services
+        .history_diff_symbols(first_page_request.clone())
+        .await
+        .expect("second batched history page");
+    assert_eq!(second_page.results.len(), 1);
+    assert_eq!(second_page.results[0].request_index, 1);
+    assert_eq!(second_page.results[0].status, DiffSymbolsStatus::Unchanged);
+    assert!(second_page.meta.next_cursor.is_none());
+    assert!(second_page.result_complete);
+    first_page_request.targets.swap(0, 1);
+    let stale = services
+        .history_diff_symbols(first_page_request)
+        .await
+        .expect_err("cursor must bind ordered targets");
+    assert!(matches!(stale, Error::StaleCursor));
+
+    let mut token_limited_request = batch_request;
+    token_limited_request.max_tokens = Some(1);
+    let token_limited = services
+        .history_diff_symbols(token_limited_request)
+        .await
+        .expect("token-limited batched history");
+    assert!(!token_limited.result_complete);
+    assert!(token_limited.results[0].diff_truncated);
+    assert_eq!(
+        token_limited.results[0].incomplete_reason,
+        Some(DiffSymbolsIncompleteReason::MaxTokens)
+    );
+    assert_eq!(
+        token_limited.diagnostics.retained_diff_bytes,
+        token_limited
+            .results
+            .iter()
+            .filter_map(|result| result.diff.as_ref())
+            .map(String::len)
+            .sum::<usize>()
+    );
+    assert_response_token_accounting!(token_limited, Tokenizer::default());
+
     let log = services
         .history(HistoryRequest {
             operation: HistoryOperation::SymbolLog {
@@ -7997,6 +8145,231 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
             .iter()
             .all(|hunk| hunk.path == "src/lib.rs")
     );
+}
+
+#[tokio::test]
+async fn batched_symbol_history_classifies_endpoints_renames_and_request_bounds() {
+    if !git_available() {
+        return;
+    }
+
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("src")).expect("source directory");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn modified() -> u32 { 1 }\n\npub fn removed() -> u32 { 2 }\n\npub fn old_name() -> u32 { 3 }\n\npub fn stable() -> u32 { 4 }\n\npub struct Worker;\n\nimpl Worker {\n    pub fn same() -> u32 { 10 }\n}\n\npub struct Other;\n\nimpl Other {\n    pub fn same() -> u32 { 20 }\n}\n",
+    )
+    .expect("base source");
+    init_git_repo(root.path());
+    let revision = |name: &str| {
+        String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", name])
+                .current_dir(root.path())
+                .output()
+                .expect("resolve revision")
+                .stdout,
+        )
+        .expect("UTF-8 revision")
+        .trim()
+        .to_owned()
+    };
+    let base = revision("HEAD");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn modified() -> u32 { 10 }\n\npub fn added() -> u32 { 5 }\n\npub fn stable() -> u32 { 4 }\n\npub struct Worker;\n\nimpl Worker {\n    pub fn same() -> u32 { 11 }\n}\n\npub struct Other;\n\nimpl Other {\n    pub fn same() -> u32 { 20 }\n}\n",
+    )
+    .expect("head source");
+    std::fs::write(
+        root.path().join("src/moved.rs"),
+        "pub fn new_name() -> u32 { 30 }\n",
+    )
+    .expect("renamed source");
+    for args in [
+        &["add", "-A"][..],
+        &["commit", "-m", "change batched symbols"][..],
+    ] {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root.path())
+            .output()
+            .expect("git commit command");
+        assert!(output.status.success());
+    }
+    let head = revision("HEAD");
+
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+    let ordinary_target = |symbol: &str| DiffSymbolsTarget {
+        path: "src/lib.rs".into(),
+        symbol: symbol.into(),
+        head_path: None,
+        head_symbol: None,
+    };
+    let request = DiffSymbolsRequest {
+        targets: vec![
+            ordinary_target("modified"),
+            ordinary_target("removed"),
+            ordinary_target("added"),
+            DiffSymbolsTarget {
+                path: "src/lib.rs".into(),
+                symbol: "old_name".into(),
+                head_path: Some("src/moved.rs".into()),
+                head_symbol: Some("new_name".into()),
+            },
+            ordinary_target("stable"),
+            ordinary_target("never_existed"),
+            ordinary_target("Worker.same"),
+            ordinary_target("Other.same"),
+        ],
+        base_revision: base.clone(),
+        head_revision: head.clone(),
+        max_results: Some(8),
+        max_tokens: Some(4_000),
+        cursor: None,
+    };
+    let response = services
+        .history_diff_symbols(request.clone())
+        .await
+        .expect("classify batched symbols");
+    assert_eq!(
+        response
+            .results
+            .iter()
+            .map(|result| result.status)
+            .collect::<Vec<_>>(),
+        vec![
+            DiffSymbolsStatus::Modified,
+            DiffSymbolsStatus::Removed,
+            DiffSymbolsStatus::Added,
+            DiffSymbolsStatus::Renamed,
+            DiffSymbolsStatus::Unchanged,
+            DiffSymbolsStatus::NotFound,
+            DiffSymbolsStatus::Modified,
+            DiffSymbolsStatus::Unchanged,
+        ]
+    );
+    assert_eq!(
+        response.results[6]
+            .before
+            .as_ref()
+            .and_then(|symbol| symbol.parent.as_deref()),
+        Some("Worker")
+    );
+    assert_eq!(
+        response.results[7]
+            .before
+            .as_ref()
+            .and_then(|symbol| symbol.parent.as_deref()),
+        Some("Other")
+    );
+    let renamed = &response.results[3];
+    let semantic_rename = renamed
+        .semantic_change
+        .as_ref()
+        .expect("semantic rename");
+    assert_eq!(semantic_rename.kind, DiffSymbolChangeKind::Renamed);
+    assert_eq!(
+        semantic_rename
+            .before
+            .as_ref()
+            .map(|symbol| (symbol.path.as_str(), symbol.name.as_str())),
+        Some(("src/lib.rs", "old_name"))
+    );
+    assert_eq!(
+        semantic_rename
+            .after
+            .as_ref()
+            .map(|symbol| (symbol.path.as_str(), symbol.name.as_str())),
+        Some(("src/moved.rs", "new_name"))
+    );
+    assert_eq!(response.base.revision, base[..12]);
+    assert_eq!(response.head.revision, head[..12]);
+    assert_eq!(response.head.subject, "change batched symbols");
+    assert_eq!(response.diagnostics.git_subprocesses, 7);
+    assert_eq!(response.diagnostics.base_paths_requested, 1);
+    assert_eq!(response.diagnostics.head_paths_requested, 2);
+    assert!(response.diagnostics.retained_diff_bytes <= 1024 * 1024);
+    assert!(response.result_complete);
+    assert_response_token_accounting!(response, Tokenizer::default());
+
+    let too_many_targets = DiffSymbolsRequest {
+        targets: (0..65)
+            .map(|index| ordinary_target(&format!("symbol_{index}")))
+            .collect(),
+        ..request.clone()
+    };
+    assert!(matches!(
+        services
+            .history_diff_symbols(too_many_targets)
+            .await
+            .expect_err("target bound"),
+        Error::RequestLimitExceeded {
+            field: "targets",
+            requested: 65,
+            limit: 64
+        }
+    ));
+
+    let too_many_paths = DiffSymbolsRequest {
+        targets: (0..33)
+            .map(|index| DiffSymbolsTarget {
+                path: format!("src/file_{index}.rs"),
+                symbol: "item".into(),
+                head_path: None,
+                head_symbol: None,
+            })
+            .collect(),
+        ..request.clone()
+    };
+    assert!(matches!(
+        services
+            .history_diff_symbols(too_many_paths)
+            .await
+            .expect_err("endpoint path bound"),
+        Error::RequestLimitExceeded {
+            field: "base paths",
+            requested: 33,
+            limit: 32
+        }
+    ));
+
+    let duplicate = DiffSymbolsRequest {
+        targets: vec![ordinary_target("stable"), ordinary_target("stable")],
+        ..request.clone()
+    };
+    assert!(matches!(
+        services
+            .history_diff_symbols(duplicate)
+            .await
+            .expect_err("duplicate pairing"),
+        Error::InvalidInput {
+            field: "targets",
+            reason: "must not contain duplicate symbol pairings"
+        }
+    ));
+
+    let incomplete_pair = DiffSymbolsRequest {
+        targets: vec![DiffSymbolsTarget {
+            path: "src/lib.rs".into(),
+            symbol: "stable".into(),
+            head_path: Some("src/moved.rs".into()),
+            head_symbol: None,
+        }],
+        ..request
+    };
+    assert!(matches!(
+        services
+            .history_diff_symbols(incomplete_pair)
+            .await
+            .expect_err("incomplete endpoint pairing"),
+        Error::InvalidInput {
+            field: "targets",
+            reason: "head_path and head_symbol must be supplied together"
+        }
+    ));
 }
 
 #[tokio::test]

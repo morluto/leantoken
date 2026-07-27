@@ -1,20 +1,27 @@
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
+};
 
 use similar::TextDiff;
 use tokio_util::sync::CancellationToken;
 
 use super::change_receipt::{
-    classify_historical_symbol_added, classify_historical_symbol_change,
-    classify_historical_symbol_removed,
+    HistoricalSymbolChangeEndpoint, classify_historical_symbol_added,
+    classify_historical_symbol_change, classify_historical_symbol_removed,
+    classify_historical_symbol_rename,
 };
 use super::validation::{MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input};
 use super::{ServiceCallOptions, Services, validate_positive_request_limit};
 use crate::model::{
-    HistoricalSymbol, HistoryOperation, HistoryRequest, HistoryResponse, SymbolHistoryCommit,
+    DiffSymbolsDiagnostics, DiffSymbolsIncompleteReason, DiffSymbolsRequest, DiffSymbolsResponse,
+    DiffSymbolsResult, DiffSymbolsStatus, HistoricalSymbol, HistoryOperation, HistoryRequest,
+    HistoryResponse, HistoryRevisionMetadata, Symbol, SymbolHistoryCommit,
     TokenAccountingOperation,
 };
 use crate::repository::{
-    GitBlob, git_blob_at_revision, git_diff_identity, git_line_history, normalize_relative,
+    GitBlob, GitBlobBatch, GitCommitMetadata, git_blob_at_revision, git_blobs_at_resolved_revision,
+    git_commit_metadata, git_diff_identity, git_line_history, normalize_relative,
 };
 use crate::tokens::ResponseBudget;
 use crate::{Error, Result, parser};
@@ -22,11 +29,32 @@ use crate::{Error, Result, parser};
 const DEFAULT_HISTORY_RESULTS: usize = 20;
 const MAX_HISTORY_RESULTS: usize = 100;
 const DEFAULT_HISTORY_TOKENS: usize = 8_000;
+pub(crate) const MAX_DIFF_SYMBOL_TARGETS: usize = 64;
+pub(crate) const MAX_DIFF_SYMBOL_RESULTS: usize = 32;
+const MAX_DIFF_SYMBOL_PATHS_PER_ENDPOINT: usize = 32;
+const MAX_DIFF_SYMBOL_FILE_BYTES: usize = 1024 * 1024;
+const MAX_DIFF_SYMBOL_TOTAL_BYTES: usize = 8 * 1024 * 1024;
+const MAX_DIFF_SYMBOL_PARSED_SYMBOLS_PER_ENDPOINT: usize = 1_024;
+const MAX_DIFF_SYMBOL_BYTES: usize = 1024 * 1024;
+const MAX_DIFF_SYMBOL_CURSOR_BYTES: usize = 128;
 
 struct ResolvedHistoricalSymbol {
     symbol: HistoricalSymbol,
     signature: Option<String>,
     content: String,
+}
+
+struct ParsedHistoricalFile {
+    content: String,
+    symbols: Vec<Symbol>,
+}
+
+struct ParsedHistoricalBatch {
+    revision: String,
+    files: BTreeMap<String, ParsedHistoricalFile>,
+    unavailable: BTreeMap<String, String>,
+    blob_bytes: usize,
+    parsed_symbols: usize,
 }
 
 fn char_boundaries(value: &str) -> Vec<usize> {
@@ -122,6 +150,323 @@ fn normalize_operation(operation: HistoryOperation) -> Result<HistoryOperation> 
     })
 }
 
+fn validate_diff_symbols_request(request: &DiffSymbolsRequest) -> Result<()> {
+    validate_positive_request_limit("targets", request.targets.len(), MAX_DIFF_SYMBOL_TARGETS)?;
+    validate_input(&request.base_revision, "base revision", MAX_PATTERN_BYTES)?;
+    validate_input(&request.head_revision, "head revision", MAX_PATTERN_BYTES)?;
+    if let Some(max_results) = request.max_results {
+        validate_positive_request_limit("max_results", max_results, MAX_DIFF_SYMBOL_RESULTS)?;
+    }
+    if request
+        .cursor
+        .as_ref()
+        .is_some_and(|cursor| cursor.is_empty() || cursor.len() > MAX_DIFF_SYMBOL_CURSOR_BYTES)
+    {
+        return Err(Error::StaleCursor);
+    }
+    let mut base_paths = BTreeSet::new();
+    let mut head_paths = BTreeSet::new();
+    for target in &request.targets {
+        validate_input(&target.path, "path", MAX_PATH_BYTES)?;
+        validate_input(&target.symbol, "symbol", MAX_PATTERN_BYTES)?;
+        match (&target.head_path, &target.head_symbol) {
+            (Some(path), Some(symbol)) => {
+                validate_input(path, "head path", MAX_PATH_BYTES)?;
+                validate_input(symbol, "head symbol", MAX_PATTERN_BYTES)?;
+                head_paths.insert(path.as_str());
+            }
+            (None, None) => {
+                head_paths.insert(target.path.as_str());
+            }
+            _ => {
+                return Err(Error::InvalidInput {
+                    field: "targets",
+                    reason: "head_path and head_symbol must be supplied together",
+                });
+            }
+        }
+        base_paths.insert(target.path.as_str());
+    }
+    for (field, requested) in [
+        ("base paths", base_paths.len()),
+        ("head paths", head_paths.len()),
+    ] {
+        if requested > MAX_DIFF_SYMBOL_PATHS_PER_ENDPOINT {
+            return Err(Error::RequestLimitExceeded {
+                field,
+                requested,
+                limit: MAX_DIFF_SYMBOL_PATHS_PER_ENDPOINT,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn normalize_diff_symbols_request(mut request: DiffSymbolsRequest) -> Result<DiffSymbolsRequest> {
+    let mut seen = BTreeSet::new();
+    for target in &mut request.targets {
+        target.path = normalize_relative(&target.path)?;
+        if let Some(path) = &mut target.head_path {
+            *path = normalize_relative(path)?;
+        }
+        let key = (
+            target.path.clone(),
+            target.symbol.clone(),
+            target.head_path.clone(),
+            target.head_symbol.clone(),
+        );
+        if !seen.insert(key) {
+            return Err(Error::InvalidInput {
+                field: "targets",
+                reason: "must not contain duplicate symbol pairings",
+            });
+        }
+    }
+    Ok(request)
+}
+
+fn diff_symbols_query_hash(
+    request: &DiffSymbolsRequest,
+    base_revision: &str,
+    head_revision: &str,
+) -> String {
+    fn update(hasher: &mut blake3::Hasher, value: &str) {
+        hasher.update(&(value.len() as u64).to_le_bytes());
+        hasher.update(value.as_bytes());
+    }
+
+    let mut hasher = blake3::Hasher::new();
+    update(&mut hasher, base_revision);
+    update(&mut hasher, head_revision);
+    hasher.update(&(request.targets.len() as u64).to_le_bytes());
+    for target in &request.targets {
+        update(&mut hasher, &target.path);
+        update(&mut hasher, &target.symbol);
+        for value in [&target.head_path, &target.head_symbol] {
+            match value {
+                Some(value) => {
+                    hasher.update(&[1]);
+                    update(&mut hasher, value);
+                }
+                None => {
+                    hasher.update(&[0]);
+                }
+            }
+        }
+    }
+    hasher.finalize().to_hex()[..16].to_string()
+}
+
+fn make_diff_symbols_cursor(
+    request: &DiffSymbolsRequest,
+    base_revision: &str,
+    head_revision: &str,
+    offset: usize,
+) -> String {
+    format!(
+        "history-multi:{offset}:{base_revision}:{head_revision}:{}",
+        diff_symbols_query_hash(request, base_revision, head_revision)
+    )
+}
+
+fn parse_diff_symbols_cursor(
+    request: &DiffSymbolsRequest,
+    base_revision: &str,
+    head_revision: &str,
+) -> Result<usize> {
+    let Some(cursor) = request.cursor.as_deref() else {
+        return Ok(0);
+    };
+    let fields = cursor.split(':').collect::<Vec<_>>();
+    let [kind, offset, cursor_base, cursor_head, query_hash] = fields.as_slice() else {
+        return Err(Error::StaleCursor);
+    };
+    if *kind != "history-multi"
+        || *cursor_base != base_revision
+        || *cursor_head != head_revision
+        || query_hash.len() != 16
+        || !query_hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || *query_hash != diff_symbols_query_hash(request, base_revision, head_revision)
+    {
+        return Err(Error::StaleCursor);
+    }
+    let offset = offset.parse::<usize>().map_err(|_| Error::StaleCursor)?;
+    if offset >= request.targets.len() {
+        return Err(Error::StaleCursor);
+    }
+    Ok(offset)
+}
+
+fn history_revision_metadata(metadata: GitCommitMetadata) -> HistoryRevisionMetadata {
+    HistoryRevisionMetadata {
+        revision: metadata.revision,
+        authored_at: metadata.authored_at,
+        subject: metadata.subject,
+    }
+}
+
+fn append_batch_unavailable(
+    unavailable: &mut BTreeMap<String, String>,
+    paths: &[String],
+    reason: &str,
+) {
+    for path in paths {
+        unavailable
+            .entry(path.clone())
+            .or_insert_with(|| reason.to_owned());
+    }
+}
+
+fn parse_historical_batch(
+    batch: GitBlobBatch,
+    side: &str,
+    cancellation: &CancellationToken,
+) -> Result<ParsedHistoricalBatch> {
+    let mut unavailable = BTreeMap::new();
+    append_batch_unavailable(
+        &mut unavailable,
+        &batch.oversized_paths,
+        &format!("{side}_file_exceeds_byte_limit"),
+    );
+    append_batch_unavailable(
+        &mut unavailable,
+        &batch.total_limit_paths,
+        &format!("{side}_total_blob_bytes_limit"),
+    );
+    append_batch_unavailable(
+        &mut unavailable,
+        &batch.invalid_utf8_paths,
+        &format!("{side}_file_not_utf8"),
+    );
+    append_batch_unavailable(
+        &mut unavailable,
+        &batch.unsupported_paths,
+        &format!("{side}_git_entry_unsupported"),
+    );
+    let blob_bytes = batch
+        .blobs
+        .values()
+        .map(String::len)
+        .fold(0usize, usize::saturating_add);
+    let mut files = BTreeMap::new();
+    let mut parsed_symbols = 0usize;
+    for (path, content) in batch.blobs {
+        check_cancelled(cancellation)?;
+        let parsed = match parser::parse_with_cancellation(&path, &content, cancellation) {
+            Ok(parsed) => parsed,
+            Err(Error::Cancelled) => return Err(Error::Cancelled),
+            Err(_) => {
+                unavailable.insert(path, format!("{side}_parse_failed"));
+                continue;
+            }
+        };
+        if parsed_symbols.saturating_add(parsed.symbols.len())
+            > MAX_DIFF_SYMBOL_PARSED_SYMBOLS_PER_ENDPOINT
+        {
+            unavailable.insert(path, format!("{side}_parsed_symbol_limit"));
+            continue;
+        }
+        parsed_symbols = parsed_symbols.saturating_add(parsed.symbols.len());
+        files.insert(
+            path,
+            ParsedHistoricalFile {
+                content,
+                symbols: parsed.symbols,
+            },
+        );
+    }
+    Ok(ParsedHistoricalBatch {
+        revision: batch.revision,
+        files,
+        unavailable,
+        blob_bytes,
+        parsed_symbols,
+    })
+}
+
+fn resolve_parsed_historical_symbol(
+    batch: &ParsedHistoricalBatch,
+    path: &str,
+    symbol_name: &str,
+) -> Result<Option<ResolvedHistoricalSymbol>> {
+    let Some(file) = batch.files.get(path) else {
+        return Ok(None);
+    };
+    let symbol = file
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == symbol_name)
+        .or_else(|| {
+            file.symbols.iter().find(|symbol| {
+                symbol.parent.as_deref().is_some_and(|parent| {
+                    symbol_name
+                        .strip_prefix(parent)
+                        .and_then(|suffix| suffix.strip_prefix('.'))
+                        == Some(symbol.name.as_str())
+                })
+            })
+        });
+    let Some(symbol) = symbol else {
+        return Ok(None);
+    };
+    let content = file
+        .content
+        .get(symbol.start_byte..symbol.end_byte)
+        .ok_or_else(|| Error::InternalFailure("invalid historical symbol range".into()))?
+        .to_owned();
+    Ok(Some(ResolvedHistoricalSymbol {
+        symbol: HistoricalSymbol {
+            revision: batch.revision.clone(),
+            path: path.to_owned(),
+            name: symbol.name.clone(),
+            kind: symbol.kind.clone(),
+            parent: symbol.parent.clone(),
+            target_start_line: symbol.start_line,
+            target_end_line: symbol.end_line,
+            returned_end_line: symbol.end_line,
+            truncated: false,
+            content: None,
+            content_hash: crate::text::hash(&content),
+        },
+        signature: symbol.signature.clone(),
+        content,
+    }))
+}
+
+fn historical_metadata(mut resolved: ResolvedHistoricalSymbol) -> HistoricalSymbol {
+    resolved.symbol.content = None;
+    resolved.symbol.returned_end_line = 0;
+    resolved.symbol
+}
+
+fn utf8_prefix(value: &str, max_bytes: usize) -> &str {
+    let mut end = value.len().min(max_bytes);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
+fn refresh_diff_symbols_accounting(
+    tokenizer: &crate::tokens::Tokenizer,
+    response: &mut DiffSymbolsResponse,
+) {
+    let source_tokens = response
+        .results
+        .iter()
+        .filter_map(|result| result.diff.as_deref())
+        .map(|diff| tokenizer.count(diff))
+        .fold(0usize, usize::saturating_add);
+    response.meta.source_tokens = source_tokens;
+    response.meta.emitted_tokens = source_tokens;
+    response.diagnostics.retained_diff_bytes = response
+        .results
+        .iter()
+        .filter_map(|result| result.diff.as_ref())
+        .map(String::len)
+        .fold(0usize, usize::saturating_add);
+}
+
 impl Services {
     /// Retrieve symbol-aware evidence from immutable Git revisions.
     pub async fn history(&self, request: HistoryRequest) -> Result<HistoryResponse> {
@@ -167,6 +512,348 @@ impl Services {
             })
             .await;
         self.observe_service_result(operation, result)
+    }
+
+    /// Diff an ordered, bounded set of parsed symbols across one immutable range.
+    pub async fn history_diff_symbols(
+        &self,
+        request: DiffSymbolsRequest,
+    ) -> Result<DiffSymbolsResponse> {
+        self.history_diff_symbols_cancellable_with_options(
+            request,
+            ServiceCallOptions::default(),
+            CancellationToken::new(),
+        )
+        .await
+    }
+
+    /// Diff multiple symbols with a hard final serialized-response boundary.
+    pub async fn history_diff_symbols_with_options(
+        &self,
+        request: DiffSymbolsRequest,
+        options: ServiceCallOptions,
+    ) -> Result<DiffSymbolsResponse> {
+        self.history_diff_symbols_cancellable_with_options(
+            request,
+            options,
+            CancellationToken::new(),
+        )
+        .await
+    }
+
+    /// Cancellable bounded multi-symbol revision diff.
+    pub async fn history_diff_symbols_cancellable(
+        &self,
+        request: DiffSymbolsRequest,
+        cancellation: CancellationToken,
+    ) -> Result<DiffSymbolsResponse> {
+        self.history_diff_symbols_cancellable_with_options(
+            request,
+            ServiceCallOptions::default(),
+            cancellation,
+        )
+        .await
+    }
+
+    /// Cancellable multi-symbol revision diff with final response options.
+    pub async fn history_diff_symbols_cancellable_with_options(
+        &self,
+        request: DiffSymbolsRequest,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<DiffSymbolsResponse> {
+        let operation = TokenAccountingOperation::History;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, validate_diff_symbols_request(&request))?;
+        let this = self.clone();
+        let result = self
+            .blocking_executor
+            .run(cancellation, move |cancellation| {
+                this.history_diff_symbols_sync(request, options, cancellation)
+            })
+            .await;
+        self.observe_service_result(operation, result)
+    }
+
+    fn history_diff_symbols_sync(
+        &self,
+        request: DiffSymbolsRequest,
+        options: ServiceCallOptions,
+        cancellation: &CancellationToken,
+    ) -> Result<DiffSymbolsResponse> {
+        check_cancelled(cancellation)?;
+        validate_diff_symbols_request(&request)?;
+        let max_results = request
+            .max_results
+            .unwrap_or(DEFAULT_HISTORY_RESULTS)
+            .min(MAX_DIFF_SYMBOL_RESULTS);
+        let max_tokens = self.token_limit(request.max_tokens, DEFAULT_HISTORY_TOKENS)?;
+        let request = normalize_diff_symbols_request(request)?;
+        let generation = self.consistent(|_, generation| Ok(generation))?;
+        let revisions = git_diff_identity(
+            &self.config.root,
+            &request.base_revision,
+            Some(&request.head_revision),
+        )?;
+        let page_start = parse_diff_symbols_cursor(
+            &request,
+            &revisions.base_revision,
+            &revisions.head_revision,
+        )?;
+        let page_end = page_start
+            .saturating_add(max_results)
+            .min(request.targets.len());
+        let page_targets = &request.targets[page_start..page_end];
+        let base_paths = page_targets
+            .iter()
+            .map(|target| target.path.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let head_paths = page_targets
+            .iter()
+            .map(|target| {
+                target
+                    .head_path
+                    .clone()
+                    .unwrap_or_else(|| target.path.clone())
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        check_cancelled(cancellation)?;
+        let mut commit_metadata = git_commit_metadata(
+            &self.config.root,
+            &[
+                revisions.base_revision.clone(),
+                revisions.head_revision.clone(),
+            ],
+        )?;
+        let base_metadata = commit_metadata
+            .remove(&revisions.base_revision)
+            .ok_or_else(|| Error::InternalFailure("missing base commit metadata".into()))?;
+        let head_metadata = commit_metadata
+            .remove(&revisions.head_revision)
+            .or_else(|| {
+                (revisions.base_revision == revisions.head_revision).then(|| base_metadata.clone())
+            })
+            .ok_or_else(|| Error::InternalFailure("missing head commit metadata".into()))?;
+        check_cancelled(cancellation)?;
+        let base_blobs = git_blobs_at_resolved_revision(
+            &self.config.root,
+            &revisions.base_revision,
+            &base_paths,
+            MAX_DIFF_SYMBOL_FILE_BYTES,
+            MAX_DIFF_SYMBOL_TOTAL_BYTES,
+        )?;
+        let base_cat_file = usize::from(!base_blobs.blobs.is_empty());
+        check_cancelled(cancellation)?;
+        let head_blobs = git_blobs_at_resolved_revision(
+            &self.config.root,
+            &revisions.head_revision,
+            &head_paths,
+            MAX_DIFF_SYMBOL_FILE_BYTES,
+            MAX_DIFF_SYMBOL_TOTAL_BYTES,
+        )?;
+        let head_cat_file = usize::from(!head_blobs.blobs.is_empty());
+        let base = parse_historical_batch(base_blobs, "base", cancellation)?;
+        let head = parse_historical_batch(head_blobs, "head", cancellation)?;
+
+        let mut remaining_tokens = max_tokens;
+        let mut remaining_diff_bytes = MAX_DIFF_SYMBOL_BYTES;
+        let mut retained_diff_bytes = 0usize;
+        let mut emitted_tokens = 0usize;
+        let mut results = Vec::with_capacity(page_targets.len());
+        for (page_index, target) in page_targets.iter().enumerate() {
+            check_cancelled(cancellation)?;
+            let request_index = page_start + page_index;
+            let head_path = target.head_path.as_deref().unwrap_or(&target.path);
+            let head_symbol = target.head_symbol.as_deref().unwrap_or(&target.symbol);
+            let unavailable_reason = base
+                .unavailable
+                .get(&target.path)
+                .or_else(|| head.unavailable.get(head_path))
+                .cloned();
+            if let Some(reason) = unavailable_reason {
+                results.push(DiffSymbolsResult {
+                    request_index,
+                    target: target.clone(),
+                    status: DiffSymbolsStatus::Unavailable,
+                    before: None,
+                    after: None,
+                    diff: None,
+                    diff_truncated: false,
+                    semantic_change: None,
+                    reason: Some(reason),
+                    incomplete_reason: None,
+                });
+                continue;
+            }
+            let before = resolve_parsed_historical_symbol(&base, &target.path, &target.symbol)?;
+            let after = resolve_parsed_historical_symbol(&head, head_path, head_symbol)?;
+            let identity_changed = target.path != head_path || target.symbol != head_symbol;
+            let (status, semantic_change) = match (&before, &after) {
+                (Some(before), Some(after)) if identity_changed => (
+                    DiffSymbolsStatus::Renamed,
+                    Some(classify_historical_symbol_rename(
+                        HistoricalSymbolChangeEndpoint {
+                            path: &target.path,
+                            symbol: &before.symbol,
+                            signature: before.signature.as_deref(),
+                            content: &before.content,
+                        },
+                        HistoricalSymbolChangeEndpoint {
+                            path: head_path,
+                            symbol: &after.symbol,
+                            signature: after.signature.as_deref(),
+                            content: &after.content,
+                        },
+                    )),
+                ),
+                (Some(before), Some(after)) => {
+                    let change = classify_historical_symbol_change(
+                        &target.path,
+                        &before.symbol,
+                        before.signature.as_deref(),
+                        &before.content,
+                        &after.symbol,
+                        after.signature.as_deref(),
+                        &after.content,
+                    );
+                    (
+                        if change.is_some() {
+                            DiffSymbolsStatus::Modified
+                        } else {
+                            DiffSymbolsStatus::Unchanged
+                        },
+                        change,
+                    )
+                }
+                (None, Some(after)) => (
+                    DiffSymbolsStatus::Added,
+                    Some(classify_historical_symbol_added(
+                        head_path,
+                        &after.symbol,
+                        after.signature.as_deref(),
+                    )),
+                ),
+                (Some(before), None) => (
+                    DiffSymbolsStatus::Removed,
+                    Some(classify_historical_symbol_removed(
+                        &target.path,
+                        &before.symbol,
+                        before.signature.as_deref(),
+                    )),
+                ),
+                (None, None) => (DiffSymbolsStatus::NotFound, None),
+            };
+            let mut diff = None;
+            let mut diff_truncated = false;
+            let mut incomplete_reason = None;
+            if !matches!(
+                status,
+                DiffSymbolsStatus::Unchanged | DiffSymbolsStatus::NotFound
+            ) {
+                let before_content = before
+                    .as_ref()
+                    .map_or("", |resolved| resolved.content.as_str());
+                let after_content = after
+                    .as_ref()
+                    .map_or("", |resolved| resolved.content.as_str());
+                if remaining_diff_bytes == 0 {
+                    diff_truncated = true;
+                    incomplete_reason = Some(DiffSymbolsIncompleteReason::MaxDiffBytes);
+                } else if remaining_tokens == 0 {
+                    diff_truncated = true;
+                    incomplete_reason = Some(DiffSymbolsIncompleteReason::MaxTokens);
+                } else {
+                    let before_diff = symbol_diff_buffer(before_content);
+                    let after_diff = symbol_diff_buffer(after_content);
+                    let full_diff = TextDiff::from_lines(&before_diff, &after_diff)
+                        .unified_diff()
+                        .context_radius(3)
+                        .header(
+                            &format!("{}:{}", base.revision, target.path),
+                            &format!("{}:{head_path}", head.revision),
+                        )
+                        .to_string();
+                    let admitted = utf8_prefix(&full_diff, remaining_diff_bytes);
+                    let byte_truncated = admitted.len() < full_diff.len();
+                    remaining_diff_bytes = remaining_diff_bytes.saturating_sub(admitted.len());
+                    let (emitted, tokens) =
+                        self.config.tokenizer.truncate(admitted, remaining_tokens);
+                    let token_truncated = emitted.len() < admitted.len();
+                    retained_diff_bytes = retained_diff_bytes.saturating_add(emitted.len());
+                    remaining_tokens = remaining_tokens.saturating_sub(tokens);
+                    emitted_tokens = emitted_tokens.saturating_add(tokens);
+                    diff = (!emitted.is_empty()).then(|| emitted.to_owned());
+                    diff_truncated = byte_truncated || token_truncated;
+                    incomplete_reason = if byte_truncated {
+                        Some(DiffSymbolsIncompleteReason::MaxDiffBytes)
+                    } else if token_truncated {
+                        Some(DiffSymbolsIncompleteReason::MaxTokens)
+                    } else {
+                        None
+                    };
+                }
+            }
+            let reason = if status == DiffSymbolsStatus::NotFound {
+                Some("symbol_not_found_at_both_revisions".into())
+            } else if diff_truncated {
+                Some("diff_truncated".into())
+            } else {
+                None
+            };
+            results.push(DiffSymbolsResult {
+                request_index,
+                target: target.clone(),
+                status,
+                before: before.map(historical_metadata),
+                after: after.map(historical_metadata),
+                diff,
+                diff_truncated,
+                semantic_change,
+                reason,
+                incomplete_reason,
+            });
+        }
+        let page_complete = page_end == request.targets.len();
+        let content_complete = results.iter().all(|result| {
+            !result.diff_truncated && result.status != DiffSymbolsStatus::Unavailable
+        });
+        let mut meta = self.meta(generation, emitted_tokens, None);
+        if !page_complete {
+            meta.next_cursor = Some(make_diff_symbols_cursor(
+                &request,
+                &revisions.base_revision,
+                &revisions.head_revision,
+                page_end,
+            ));
+        }
+        let parsed_symbols = base.parsed_symbols.saturating_add(head.parsed_symbols);
+        let mut response = DiffSymbolsResponse {
+            kind: "diff_symbols".into(),
+            base: history_revision_metadata(base_metadata),
+            head: history_revision_metadata(head_metadata),
+            results,
+            result_complete: page_complete && content_complete,
+            diagnostics: DiffSymbolsDiagnostics {
+                // Two revision resolutions, one commit-metadata command, one
+                // tree command per endpoint, and optional batched blob reads.
+                git_subprocesses: 5 + base_cat_file + head_cat_file,
+                base_paths_requested: base_paths.len(),
+                head_paths_requested: head_paths.len(),
+                base_blob_bytes: base.blob_bytes,
+                head_blob_bytes: head.blob_bytes,
+                parsed_symbols,
+                retained_diff_bytes,
+            },
+            meta,
+        };
+        self.fit_diff_symbols_response(&mut response, &request, page_start, options)?;
+        self.finalize_bounded_response(&mut response, options)?;
+        self.record_token_savings(TokenAccountingOperation::History, None, &response.meta);
+        Ok(response)
     }
 
     fn history_sync(
@@ -403,6 +1090,128 @@ impl Services {
                 .max_response_tokens()
                 .expect("fitting only runs with a response limit"),
         })
+    }
+
+    fn fit_diff_symbols_response(
+        &self,
+        response: &mut DiffSymbolsResponse,
+        request: &DiffSymbolsRequest,
+        page_start: usize,
+        options: ServiceCallOptions,
+    ) -> Result<()> {
+        if self.response_fits(response, options)? {
+            return Ok(());
+        }
+        let original = response.clone();
+        let max_response_tokens = options
+            .max_response_tokens()
+            .expect("fitting only runs with a response limit");
+        let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+        let mut skeleton = original.clone();
+        for result in &mut skeleton.results {
+            if result.diff.take().is_some() {
+                result.diff_truncated = true;
+                result.reason = Some("diff_truncated".into());
+                result.incomplete_reason = Some(DiffSymbolsIncompleteReason::MaxResponseTokens);
+            }
+        }
+        let keep = budget.largest_fitting_prefix(skeleton.results.len(), |keep| {
+            let mut candidate = skeleton.clone();
+            candidate.results.truncate(keep);
+            candidate.result_complete = false;
+            let next_offset = page_start.saturating_add(keep);
+            candidate.meta.next_cursor = (next_offset < request.targets.len()).then(|| {
+                make_diff_symbols_cursor(
+                    request,
+                    &candidate.base.revision,
+                    &candidate.head.revision,
+                    next_offset,
+                )
+            });
+            refresh_diff_symbols_accounting(&self.config.tokenizer, &mut candidate);
+            self.finalized_response_tokens(&candidate)
+        })?;
+        let Some(keep) = keep.filter(|keep| *keep > 0) else {
+            let mut minimum = skeleton.clone();
+            minimum.results.truncate(1);
+            minimum.result_complete = false;
+            let next_offset = page_start.saturating_add(1);
+            minimum.meta.next_cursor = (next_offset < request.targets.len()).then(|| {
+                make_diff_symbols_cursor(
+                    request,
+                    &minimum.base.revision,
+                    &minimum.head.revision,
+                    next_offset,
+                )
+            });
+            refresh_diff_symbols_accounting(&self.config.tokenizer, &mut minimum);
+            let requested = self.finalized_response_tokens(&minimum)?;
+            return Err(Error::RequestLimitExceeded {
+                field: "max_response_tokens",
+                requested,
+                limit: max_response_tokens,
+            });
+        };
+
+        let mut fitted = skeleton;
+        fitted.results.truncate(keep);
+        fitted.result_complete = false;
+        let next_offset = page_start.saturating_add(keep);
+        fitted.meta.next_cursor = (next_offset < request.targets.len()).then(|| {
+            make_diff_symbols_cursor(
+                request,
+                &fitted.base.revision,
+                &fitted.head.revision,
+                next_offset,
+            )
+        });
+        refresh_diff_symbols_accounting(&self.config.tokenizer, &mut fitted);
+
+        for result_index in 0..keep {
+            let original_result = &original.results[result_index];
+            let Some(diff) = original_result.diff.as_ref() else {
+                continue;
+            };
+            let boundaries = char_boundaries(diff);
+            let full_length = boundaries.len().saturating_sub(1);
+            let prefix_length = budget.largest_fitting_prefix(full_length, |prefix_length| {
+                let mut candidate = fitted.clone();
+                let result = &mut candidate.results[result_index];
+                let prefix = &diff[..boundaries[prefix_length]];
+                result.diff = (!prefix.is_empty()).then(|| prefix.to_owned());
+                if prefix_length == full_length {
+                    result.diff_truncated = original_result.diff_truncated;
+                    result.reason.clone_from(&original_result.reason);
+                    result
+                        .incomplete_reason
+                        .clone_from(&original_result.incomplete_reason);
+                }
+                refresh_diff_symbols_accounting(&self.config.tokenizer, &mut candidate);
+                self.finalized_response_tokens(&candidate)
+            })?;
+            let Some(prefix_length) = prefix_length else {
+                continue;
+            };
+            let result = &mut fitted.results[result_index];
+            let prefix = &diff[..boundaries[prefix_length]];
+            result.diff = (!prefix.is_empty()).then(|| prefix.to_owned());
+            if prefix_length == full_length {
+                result.diff_truncated = original_result.diff_truncated;
+                result.reason.clone_from(&original_result.reason);
+                result
+                    .incomplete_reason
+                    .clone_from(&original_result.incomplete_reason);
+            }
+            refresh_diff_symbols_accounting(&self.config.tokenizer, &mut fitted);
+        }
+
+        fitted.result_complete = fitted.meta.next_cursor.is_none()
+            && fitted.results.iter().all(|result| {
+                !result.diff_truncated && result.status != DiffSymbolsStatus::Unavailable
+            });
+        refresh_diff_symbols_accounting(&self.config.tokenizer, &mut fitted);
+        *response = fitted;
+        Ok(())
     }
 
     fn fit_history_text_prefix(

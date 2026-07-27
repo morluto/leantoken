@@ -572,7 +572,8 @@ expression: tools
         },
         "projection": {
           "$ref": "#/$defs/FilesMcpProjection",
-          "default": "full"
+          "default": "full",
+          "description": "Response shape: `full` entries (default) or ordered `paths` only."
         },
         "query": {
           "default": null,
@@ -593,7 +594,7 @@ expression: tools
   },
   {
     "name": "history",
-    "description": "Read, diff, or trace one parsed symbol across immutable Git revisions. Symbols may use parent.name qualification. diff_symbol returns bounded add/delete diffs when the symbol or file exists at only one endpoint; symbol_log traces tracked lines. For immutable range-scoped context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbol\",\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\",\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}.",
+    "description": "Read, diff, batch-diff, or trace parsed symbols across immutable Git revisions. Symbols may use parent.name qualification. diff_symbols resolves one shared range, loads each bounded path once per endpoint, and returns cursor-paged per-symbol outcomes without N Git subprocess chains. diff_symbol returns bounded add/delete diffs when one endpoint is absent; symbol_log traces tracked lines. For immutable range-scoped context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbols\",\"targets\":[{\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\"}],\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}.",
     "inputSchema": {
       "$defs": {
         "HistoryMcpOperation": {
@@ -670,6 +671,41 @@ expression: tools
             },
             {
               "additionalProperties": false,
+              "description": "Diff an ordered symbol set with shared revisions, metadata, and bounded Git work.",
+              "properties": {
+                "base_revision": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "head_revision": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "diff_symbols",
+                  "type": "string"
+                },
+                "targets": {
+                  "items": {
+                    "$ref": "#/$defs/HistoryMcpTarget"
+                  },
+                  "maxItems": 64,
+                  "minItems": 1,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "kind",
+                "targets",
+                "base_revision",
+                "head_revision"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
               "description": "List commits that touched the symbol's tracked historical lines.",
               "properties": {
                 "kind": {
@@ -704,11 +740,59 @@ expression: tools
               "type": "object"
             }
           ]
+        },
+        "HistoryMcpTarget": {
+          "additionalProperties": false,
+          "properties": {
+            "head_path": {
+              "default": null,
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "head_symbol": {
+              "default": null,
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "path": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            "symbol": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "symbol"
+          ],
+          "type": "object"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
+        "cursor": {
+          "default": null,
+          "description": "Opaque cursor returned by `diff_symbols`; reuse the exact operation.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "expected_repository_id": {
           "default": null,
           "description": "Expected opaque repository identity from an earlier response.",
@@ -728,7 +812,7 @@ expression: tools
         },
         "max_results": {
           "default": 20,
-          "description": "Maximum commits returned by `symbol_log` (default 20, maximum 100).",
+          "description": "Maximum results (default 20): 32 for `diff_symbols`, 100 for `symbol_log`.",
           "format": "uint",
           "maximum": 100,
           "minimum": 1,
@@ -1102,7 +1186,8 @@ expression: tools
         },
         "projection": {
           "$ref": "#/$defs/OutlineMcpProjection",
-          "default": "full"
+          "default": "full",
+          "description": "Response shape: `full` definitions (default) or compact `signatures`."
         },
         "receipt_id": {
           "default": null,
@@ -1507,7 +1592,8 @@ expression: tools
         },
         "projection": {
           "$ref": "#/$defs/SearchMcpProjection",
-          "default": "full"
+          "default": "full",
+          "description": "Response shape: `full` hits (default) or compact `grouped` matches."
         },
         "query": {
           "description": "Non-empty text, identifier, symbol, or Rust regular expression to find.",
