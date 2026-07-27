@@ -353,6 +353,88 @@ fn search_coverage(all: &[CandidateSearchHit], returned: &[CandidateSearchHit]) 
     }
 }
 
+fn grouped_search_key(hit: &SearchHit) -> String {
+    if let Some(symbol) = hit.symbol.as_deref() {
+        return format!("symbol:{symbol}");
+    }
+    if let Some(symbol) = hit.enclosing_symbol.as_deref() {
+        return format!("scope:{}:{symbol}", hit.path);
+    }
+    format!("range:{}:{}:{}", hit.path, hit.start_line, hit.end_line)
+}
+
+fn grouped_search_evidence(hit: &SearchHit) -> SearchGroupEvidence {
+    SearchGroupEvidence {
+        path: hit.path.clone(),
+        start_line: hit.start_line,
+        end_line: hit.end_line,
+        excerpt: Some(hit.excerpt.clone()),
+        content_hash: hit.content_hash.clone(),
+        match_kinds: hit.match_kinds.clone(),
+        role: hit.role,
+    }
+}
+
+fn group_search_hits(hits: &[SearchHit]) -> Vec<SearchGroup> {
+    let mut groups = Vec::<SearchGroup>::new();
+    let mut positions = HashMap::<String, usize>::new();
+    for hit in hits {
+        let key = grouped_search_key(hit);
+        let index = *positions.entry(key).or_insert_with(|| {
+            let index = groups.len();
+            groups.push(SearchGroup {
+                symbol: hit.symbol.clone().or_else(|| hit.enclosing_symbol.clone()),
+                definition: None,
+                representative: None,
+                references: Vec::new(),
+                text_matches: 0,
+                total_hits: 0,
+            });
+            index
+        });
+        let group = &mut groups[index];
+        group.total_hits = group.total_hits.saturating_add(1);
+        if hit_has_kind(hit, "text") || hit_has_kind(hit, "regex") {
+            group.text_matches = group.text_matches.saturating_add(1);
+        }
+
+        if hit.role == Some(ReferenceRole::Definition) {
+            if group.definition.is_none() {
+                group.definition = Some(grouped_search_evidence(hit));
+                group.representative = None;
+            }
+        } else if group.definition.is_none() && group.representative.is_none() {
+            group.representative = Some(grouped_search_evidence(hit));
+        }
+
+        if hit.role == Some(ReferenceRole::Reference) || hit_has_kind(hit, "reference") {
+            if let Some(reference) = group
+                .references
+                .iter_mut()
+                .find(|reference| reference.path == hit.path)
+            {
+                reference.count = reference.count.saturating_add(1);
+                reference.start_line = reference.start_line.min(hit.start_line);
+                reference.end_line = reference.end_line.max(hit.end_line);
+                if let Some(role) = hit.role
+                    && !reference.roles.contains(&role)
+                {
+                    reference.roles.push(role);
+                }
+            } else {
+                group.references.push(SearchReferenceGroup {
+                    path: hit.path.clone(),
+                    count: 1,
+                    start_line: hit.start_line,
+                    end_line: hit.end_line,
+                    roles: hit.role.into_iter().collect(),
+                });
+            }
+        }
+    }
+    groups
+}
+
 fn collect_filtered_hits<T>(
     request: &SearchRequest,
     max_candidates: usize,
@@ -757,8 +839,90 @@ impl Services {
                     RegexPlanning::Enabled,
                     SearchDiagnostics::Omit,
                     options,
+                    true,
                 )
                 .map(|evaluation| evaluation.response)
+            })
+            .await
+    }
+
+    /// Search with hits grouped by matched symbol or enclosing scope.
+    pub async fn search_grouped(&self, request: SearchRequest) -> Result<SearchGroupedResponse> {
+        self.search_grouped_with_options(request, ServiceCallOptions::new())
+            .await
+    }
+
+    /// Search with grouped output under an exact serialized-response bound.
+    pub async fn search_grouped_with_options(
+        &self,
+        request: SearchRequest,
+        options: ServiceCallOptions,
+    ) -> Result<SearchGroupedResponse> {
+        self.search_grouped_cancellable_with_options(request, options, CancellationToken::new())
+            .await
+    }
+
+    /// Search with grouped output after applying the requested consistency boundary.
+    pub async fn search_grouped_with_options_consistency_cancellable(
+        &self,
+        request: SearchRequest,
+        consistency: IndexConsistency,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<SearchGroupedResponse> {
+        self.validate_call_options(options)?;
+        validate_search_input(&request)?;
+        self.result_limit(request.max_results)?;
+        self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
+        self.context_line_limit(request.context_lines)?;
+        self.apply_consistency(consistency, cancellation.clone())
+            .await?;
+        self.search_grouped_cancellable_with_options(request, options, cancellation)
+            .await
+    }
+
+    async fn search_grouped_cancellable_with_options(
+        &self,
+        request: SearchRequest,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<SearchGroupedResponse> {
+        self.validate_call_options(options)?;
+        let this = self.clone();
+        self.blocking_executor
+            .run(cancellation, move |cancellation| {
+                let response = this
+                    .search_sync(
+                        request,
+                        cancellation,
+                        RegexPlanning::Enabled,
+                        SearchDiagnostics::Omit,
+                        ServiceCallOptions::new(),
+                        false,
+                    )?
+                    .response;
+                let hits_returned = response.hits.len();
+                let groups = group_search_hits(&response.hits);
+                let source_tokens = groups
+                    .iter()
+                    .filter_map(|group| group.definition.as_ref().or(group.representative.as_ref()))
+                    .filter_map(|evidence| evidence.excerpt.as_deref())
+                    .map(|excerpt| this.config.tokenizer.count(excerpt))
+                    .sum();
+                let mut meta = response.meta;
+                meta.source_tokens = source_tokens;
+                meta.emitted_tokens = source_tokens;
+                let mut compact = SearchGroupedResponse {
+                    groups_returned: groups.len(),
+                    groups,
+                    coverage: response.coverage,
+                    hits_returned,
+                    occurrences_total: response.occurrences_total,
+                    meta,
+                };
+                this.finalize_bounded_response(&mut compact, options)?;
+                this.record_token_savings(TokenAccountingOperation::Search, None, &compact.meta);
+                Ok(compact)
             })
             .await
     }
@@ -777,6 +941,7 @@ impl Services {
                     RegexPlanning::Enabled,
                     SearchDiagnostics::Collect,
                     ServiceCallOptions::new(),
+                    true,
                 )
             })
             .await
@@ -799,6 +964,7 @@ impl Services {
                     RegexPlanning::Disabled,
                     SearchDiagnostics::Collect,
                     ServiceCallOptions::new(),
+                    true,
                 )
             })
             .await
@@ -811,6 +977,7 @@ impl Services {
         regex_planning: RegexPlanning,
         diagnostics: SearchDiagnostics,
         options: ServiceCallOptions,
+        record_savings: bool,
     ) -> Result<SearchEvaluation> {
         check_cancelled(cancellation)?;
         validate_search_input(&request)?;
@@ -1182,11 +1349,13 @@ impl Services {
         });
         let (mut response, baseline_source_tokens, phases, primitive_keys) = search_result?;
         self.finalize_bounded_response(&mut response, options)?;
-        self.record_token_savings(
-            TokenAccountingOperation::Search,
-            baseline_source_tokens,
-            &response.meta,
-        );
+        if record_savings {
+            self.record_token_savings(
+                TokenAccountingOperation::Search,
+                baseline_source_tokens,
+                &response.meta,
+            );
+        }
         Ok(SearchEvaluation {
             response,
             phases,

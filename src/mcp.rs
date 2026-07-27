@@ -44,6 +44,10 @@ const MAX_MCP_STDIO_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const RETAINED_MCP_FRAME_CAPACITY: usize = 64 * 1024;
 const INITIAL_INDEX_WAIT: Duration = Duration::from_secs(30);
 
+fn serialized_response<T: Serialize>(response: T) -> crate::Result<serde_json::Value> {
+    serde_json::to_value(response).map_err(|error| crate::Error::InternalFailure(error.to_string()))
+}
+
 #[derive(Clone)]
 struct DispatchedToolCall {
     id: rmcp::model::RequestId,
@@ -290,6 +294,17 @@ impl Transport<RoleServer> for BoundedStdioTransport {
 #[serde(deny_unknown_fields)]
 struct SavingsMcpRequest {}
 
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+/// Response projection for repository path discovery.
+enum FilesMcpProjection {
+    /// Preserve the complete files response.
+    #[default]
+    Full,
+    /// Return paths without per-entry kind, language, size, or score metadata.
+    Paths,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = add_files_operation_constraints)]
@@ -332,6 +347,8 @@ struct FilesMcpRequest {
     /// Maximum hierarchy depth below `path` for `tree`.
     #[serde(default)]
     depth: Option<usize>,
+    #[serde(default)]
+    projection: FilesMcpProjection,
 }
 
 #[derive(Debug, Deserialize)]
@@ -356,6 +373,17 @@ enum LegacyFilesMcpOperation {
     Glob {
         pattern: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+/// Response projection for indexed search.
+enum SearchMcpProjection {
+    /// Preserve the complete ranked-hit response.
+    #[default]
+    Full,
+    /// Group the selected page into symbol or file summaries.
+    Grouped,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -423,6 +451,8 @@ struct SearchMcpRequest {
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
+    #[serde(default)]
+    projection: SearchMcpProjection,
 }
 
 impl SearchMcpRequest {
@@ -445,6 +475,7 @@ impl SearchMcpRequest {
         self,
     ) -> (
         SearchRequest,
+        SearchMcpProjection,
         IndexConsistency,
         ServiceCallOptions,
         Option<String>,
@@ -465,11 +496,23 @@ impl SearchMcpRequest {
                 receipt_id: self.receipt_id,
                 cursor: self.cursor,
             },
+            self.projection,
             self.consistency,
             service_call_options(self.max_response_tokens),
             self.expected_repository_id,
         )
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+/// Response projection for structural outlines.
+enum OutlineMcpProjection {
+    /// Preserve symbols, imports, and byte offsets.
+    #[default]
+    Full,
+    /// Return symbol signatures and line ranges without imports or byte offsets.
+    Signatures,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -514,6 +557,8 @@ struct OutlineMcpRequest {
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
+    #[serde(default)]
+    projection: OutlineMcpProjection,
 }
 
 impl OutlineMcpRequest {
@@ -531,6 +576,7 @@ impl OutlineMcpRequest {
         self,
     ) -> (
         OutlineRequest,
+        OutlineMcpProjection,
         IndexConsistency,
         ServiceCallOptions,
         Option<String>,
@@ -545,6 +591,7 @@ impl OutlineMcpRequest {
                 receipt_id: self.receipt_id,
                 cursor: self.cursor,
             },
+            self.projection,
             self.consistency,
             service_call_options(self.max_response_tokens),
             self.expected_repository_id,
@@ -615,6 +662,7 @@ impl FilesMcpRequest {
         self,
     ) -> (
         FilesRequest,
+        FilesMcpProjection,
         IndexConsistency,
         ServiceCallOptions,
         Option<String>,
@@ -643,6 +691,7 @@ impl FilesMcpRequest {
                 cursor: self.cursor,
                 depth,
             },
+            self.projection,
             self.consistency,
             service_call_options(self.max_response_tokens),
             self.expected_repository_id,
@@ -1961,7 +2010,7 @@ impl McpServices {
 impl LeanTokenMcp {
     #[tool(
         name = "files",
-        description = "Preferred repository path discovery instead of find, ls, or glob. Use tree for hierarchy, find for fuzzy filenames, and glob for path patterns; returns paths, not source. Example: {\"operation\":\"find\",\"query\":\"mcp\"}."
+        description = "Preferred repository path discovery instead of find, ls, or glob. Use tree for hierarchy, find for fuzzy filenames, and glob for path patterns; returns paths, not source. Set projection=paths for opt-in path-only results without kind, language, size, or score metadata. Example: {\"operation\":\"find\",\"query\":\"mcp\"}."
     )]
     async fn leantoken_files(
         &self,
@@ -1983,7 +2032,7 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, consistency, options, expected_repository_id) = req.into_parts();
+        let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
         let cancellation = context.ct.clone();
         let mcp_services = self.services.clone();
         self.run_admitted(
@@ -1997,12 +2046,30 @@ impl LeanTokenMcp {
                     cancellation.clone(),
                     deadline,
                     || {
-                        services.files_with_options_consistency_cancellable(
-                            request.clone(),
-                            consistency,
-                            options,
-                            cancellation.clone(),
-                        )
+                        let request = request.clone();
+                        let cancellation = cancellation.clone();
+                        async {
+                            match projection {
+                                FilesMcpProjection::Full => services
+                                    .files_with_options_consistency_cancellable(
+                                        request,
+                                        consistency,
+                                        options,
+                                        cancellation,
+                                    )
+                                    .await
+                                    .and_then(serialized_response),
+                                FilesMcpProjection::Paths => services
+                                    .files_paths_with_options_consistency_cancellable(
+                                        request,
+                                        consistency,
+                                        options,
+                                        cancellation,
+                                    )
+                                    .await
+                                    .and_then(serialized_response),
+                            }
+                        }
                     },
                 )
                 .await
@@ -2013,7 +2080,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "search",
-        description = "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Set all_occurrences in text or regex mode for exact occurrence coordinates and returned/total counts; exhaustive scans fail instead of silently truncating at internal scan limits. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
+        description = "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Set projection=grouped for opt-in symbol/file summaries that retain one verifiable excerpt, reference counts, coverage, freshness, and continuation without repeated scores or excerpts. Set all_occurrences in text or regex mode for exact occurrence coordinates and returned/total counts; exhaustive scans fail instead of silently truncating at internal scan limits. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
     )]
     async fn leantoken_search(
         &self,
@@ -2035,7 +2102,7 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, consistency, options, expected_repository_id) = req.into_parts();
+        let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
         let cancellation = context.ct.clone();
         let mcp_services = self.services.clone();
         self.run_admitted(
@@ -2049,12 +2116,30 @@ impl LeanTokenMcp {
                     cancellation.clone(),
                     deadline,
                     || {
-                        services.search_with_options_consistency_cancellable(
-                            request.clone(),
-                            consistency,
-                            options,
-                            cancellation.clone(),
-                        )
+                        let request = request.clone();
+                        let cancellation = cancellation.clone();
+                        async {
+                            match projection {
+                                SearchMcpProjection::Full => services
+                                    .search_with_options_consistency_cancellable(
+                                        request,
+                                        consistency,
+                                        options,
+                                        cancellation,
+                                    )
+                                    .await
+                                    .and_then(serialized_response),
+                                SearchMcpProjection::Grouped => services
+                                    .search_grouped_with_options_consistency_cancellable(
+                                        request,
+                                        consistency,
+                                        options,
+                                        cancellation,
+                                    )
+                                    .await
+                                    .and_then(serialized_response),
+                            }
+                        }
                     },
                 )
                 .await
@@ -2065,7 +2150,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "outline",
-        description = "Inspect file structure without reading whole source files. Prefer this when the file is known but the relevant symbol or range is not; then use leantoken.read. Example: {\"paths\":[\"src/mcp.rs\"]}."
+        description = "Inspect file structure without reading whole source files. Prefer this when the file is known but the relevant symbol or range is not; then use leantoken.read. Set projection=signatures to omit imports and byte offsets while retaining path, line range, signature-set hash, parse coverage, freshness, and continuation. Example: {\"paths\":[\"src/mcp.rs\"]}."
     )]
     async fn leantoken_outline(
         &self,
@@ -2087,7 +2172,7 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, consistency, options, expected_repository_id) = req.into_parts();
+        let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
         let cancellation = context.ct.clone();
         let mcp_services = self.services.clone();
         self.run_admitted(
@@ -2101,12 +2186,30 @@ impl LeanTokenMcp {
                     cancellation.clone(),
                     deadline,
                     || {
-                        services.outline_with_options_consistency_cancellable(
-                            request.clone(),
-                            consistency,
-                            options,
-                            cancellation.clone(),
-                        )
+                        let request = request.clone();
+                        let cancellation = cancellation.clone();
+                        async {
+                            match projection {
+                                OutlineMcpProjection::Full => services
+                                    .outline_with_options_consistency_cancellable(
+                                        request,
+                                        consistency,
+                                        options,
+                                        cancellation,
+                                    )
+                                    .await
+                                    .and_then(serialized_response),
+                                OutlineMcpProjection::Signatures => services
+                                    .outline_signatures_with_options_consistency_cancellable(
+                                        request,
+                                        consistency,
+                                        options,
+                                        cancellation,
+                                    )
+                                    .await
+                                    .and_then(serialized_response),
+                            }
+                        }
                     },
                 )
                 .await
@@ -4087,11 +4190,60 @@ mod tests {
             "cursor": "12:outline:34:0000000000000000"
         }))
         .expect("outline request");
-        let (request, _, _, _) = request.into_parts();
+        let (request, _, _, _, _) = request.into_parts();
 
         assert_eq!(
             request.cursor.as_deref(),
             Some("12:outline:34:0000000000000000")
         );
+    }
+
+    #[test]
+    fn compact_projections_map_to_service_requests() {
+        let files = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
+            "operation": "tree"
+        }))
+        .expect("default files projection");
+        let (_, projection, _, _, _) = files.into_parts();
+        assert_eq!(projection, FilesMcpProjection::Full);
+
+        let files = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
+            "operation": "find",
+            "query": "service",
+            "projection": "paths"
+        }))
+        .expect("path projection");
+        let (_, projection, _, _, _) = files.into_parts();
+        assert_eq!(projection, FilesMcpProjection::Paths);
+
+        let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+            "query": "Services"
+        }))
+        .expect("default search projection");
+        let (_, projection, _, _, _) = search.into_parts();
+        assert_eq!(projection, SearchMcpProjection::Full);
+
+        let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+            "query": "Services",
+            "projection": "grouped"
+        }))
+        .expect("grouped projection");
+        let (_, projection, _, _, _) = search.into_parts();
+        assert_eq!(projection, SearchMcpProjection::Grouped);
+
+        let outline = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
+            "paths": ["src/services.rs"]
+        }))
+        .expect("default outline projection");
+        let (_, projection, _, _, _) = outline.into_parts();
+        assert_eq!(projection, OutlineMcpProjection::Full);
+
+        let outline = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
+            "paths": ["src/services.rs"],
+            "projection": "signatures"
+        }))
+        .expect("signature projection");
+        let (_, projection, _, _, _) = outline.into_parts();
+        assert_eq!(projection, OutlineMcpProjection::Signatures);
     }
 }

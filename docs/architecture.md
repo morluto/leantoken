@@ -377,6 +377,7 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | Full-scan fallback files | 10000 |
 | Full-scan fallback chunks per file | 256 |
 | File scan page size | 1000 for find/glob; tree queries `max_results + 1` projected paths |
+| Opt-in compact projection materialization | At most the 100 selected files, symbols, groups, or hits already admitted by `max_results`; no additional repository scan |
 | Opt-in response-bounded read materializations | At most 18 within one pinned generation |
 
 Focus quotas do not depend on global per-query top-N channels. During the
@@ -450,6 +451,17 @@ committing receipt evidence. If their already source-bounded page does not fit,
 they return a typed limit error instead of manufacturing a cursor that could
 skip omitted evidence. Fixed-shape JSON projections use the same fail-loud
 rule; shallow schema degradation remains owned by the JSON projection stage.
+
+Compact response projections are explicit and never replace the default DTO.
+`files=paths` maps the already selected entry page to ordered strings and keeps
+the same keyset cursor. `search=grouped` groups at most the selected search page,
+retains only one source excerpt per group, and summarizes reference hits without
+another index lookup. `outline=signatures` excludes imports during the existing
+bounded outline walk, drops byte offsets, and hashes each file's ordered compact
+signature array once. Its cursor query hash includes the projection so full and
+signature-only offsets cannot be mixed. All three projections are finalized and
+checked against `max_response_tokens` inside `Services`; a compact correctness
+skeleton that cannot fit returns typed `RequestLimitExceeded`.
 
 MCP JSON keys use depth-then-pointer order and an optional maximum depth of 64;
 root depth is zero and array elements share one wildcard path. Version-two keys

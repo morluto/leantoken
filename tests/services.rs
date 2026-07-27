@@ -8655,6 +8655,397 @@ async fn json_schema_degrades_breadth_first_under_token_limits() {
 }
 
 #[tokio::test]
+async fn compact_response_projections_preserve_verifiable_coverage_and_reduce_tokens() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("src")).expect("create src");
+    let callers = (0..24)
+        .map(|index| {
+            format!(
+                "pub fn caller_{index:02}() -> usize {{\n    target()\n}}\n\n"
+            )
+        })
+        .collect::<String>();
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        format!(
+            "pub fn target() -> usize {{\n    42\n}}\n\n{callers}"
+        ),
+    )
+    .expect("write primary source");
+    std::fs::write(
+        root.path().join("src/other.rs"),
+        "use crate::target;\n\npub fn indirect() -> usize {\n    target()\n}\n",
+    )
+    .expect("write secondary source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let files_request = FilesRequest {
+        operation: FileOperation::Find,
+        path: None,
+        query: Some("src".into()),
+        pattern: None,
+        max_results: Some(100),
+        cursor: None,
+        depth: None,
+    };
+    let full_files = services
+        .files(files_request.clone())
+        .await
+        .expect("full files");
+    let compact_files = services
+        .files_paths(files_request)
+        .await
+        .expect("path-only files");
+    assert_eq!(
+        compact_files.paths,
+        full_files
+            .entries
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        compact_files.meta.total_response_tokens < full_files.meta.total_response_tokens,
+        "path-only projection must reduce the complete serialized response"
+    );
+    assert_response_token_accounting!(compact_files, Tokenizer::default());
+
+    let outline_request = OutlineRequest {
+        paths: vec!["src/lib.rs".into(), "src/other.rs".into()],
+        symbol_name: None,
+        symbol_kind: None,
+        max_results: Some(100),
+        max_tokens: Some(32_000),
+        receipt_id: None,
+        cursor: None,
+    };
+    let full_outline = services
+        .outline(outline_request.clone())
+        .await
+        .expect("full outline");
+    let compact_outline = services
+        .outline_signatures(outline_request)
+        .await
+        .expect("signature-only outline");
+    let full_symbols = full_outline
+        .files
+        .iter()
+        .flat_map(|file| {
+            file.symbols.iter().map(|symbol| {
+                (
+                    file.path.clone(),
+                    symbol.name.clone(),
+                    symbol.kind.clone(),
+                    symbol.parent.clone(),
+                    symbol.signature.clone(),
+                    symbol.start_line,
+                    symbol.end_line,
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    let compact_symbols = compact_outline
+        .files
+        .iter()
+        .flat_map(|file| {
+            assert_eq!(
+                file.content_hash,
+                leantoken::text::hash(
+                    &serde_json::to_string(&file.signatures)
+                        .expect("serialize compact signatures")
+                )
+            );
+            file.signatures.iter().map(|symbol| {
+                (
+                    file.path.clone(),
+                    symbol.name.clone(),
+                    symbol.kind.clone(),
+                    symbol.parent.clone(),
+                    symbol.signature.clone(),
+                    symbol.start_line,
+                    symbol.end_line,
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(compact_symbols, full_symbols);
+    assert_eq!(compact_outline.total_symbols, full_outline.total_symbols);
+    assert_eq!(
+        compact_outline.returned_symbols,
+        full_outline.returned_symbols
+    );
+    assert_eq!(compact_outline.parse_complete, full_outline.parse_complete);
+    assert!(
+        compact_outline.meta.total_response_tokens < full_outline.meta.total_response_tokens,
+        "signature projection must reduce the complete serialized response"
+    );
+    let compact_outline_json =
+        serde_json::to_string(&compact_outline).expect("serialize compact outline");
+    assert!(!compact_outline_json.contains("start_byte"));
+    assert!(!compact_outline_json.contains("\"imports\""));
+    assert_response_token_accounting!(compact_outline, Tokenizer::default());
+
+    let search_request = SearchRequest {
+        query: "target".into(),
+        mode: SearchMode::Auto,
+        include_paths: Vec::new(),
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(100),
+        max_tokens: Some(32_000),
+        context_lines: Some(0),
+        case_sensitive: false,
+        all_occurrences: false,
+        prefer_structural: true,
+        receipt_id: None,
+        cursor: None,
+    };
+    let full_search = services
+        .search(search_request.clone())
+        .await
+        .expect("full search");
+    let compact_search = services
+        .search_grouped(search_request)
+        .await
+        .expect("grouped search");
+    assert_eq!(
+        compact_search
+            .groups
+            .iter()
+            .map(|group| group.total_hits)
+            .sum::<usize>(),
+        full_search.hits.len()
+    );
+    assert!(
+        compact_search
+            .groups
+            .iter()
+            .any(|group| group.definition.is_some()),
+        "grouped search must retain the exact definition"
+    );
+    let expected_references = full_search
+        .hits
+        .iter()
+        .filter(|hit| {
+            hit.role == Some(leantoken::ReferenceRole::Reference)
+                || hit.match_kinds.iter().any(|kind| kind == "reference")
+        })
+        .count();
+    assert_eq!(
+        compact_search
+            .groups
+            .iter()
+            .flat_map(|group| &group.references)
+            .map(|references| references.count)
+            .sum::<usize>(),
+        expected_references
+    );
+    assert_eq!(compact_search.coverage, full_search.coverage);
+    assert!(
+        compact_search.meta.total_response_tokens < full_search.meta.total_response_tokens,
+        "grouped search must reduce the complete serialized response"
+    );
+    let compact_search_json =
+        serde_json::to_string(&compact_search).expect("serialize grouped search");
+    assert!(!compact_search_json.contains("\"score\""));
+    assert!(!compact_search_json.contains("score_reasons"));
+    assert_response_token_accounting!(compact_search, Tokenizer::default());
+
+    let mut files_page_request = FilesRequest {
+        operation: FileOperation::Find,
+        path: None,
+        query: Some("src".into()),
+        pattern: None,
+        max_results: Some(1),
+        cursor: None,
+        depth: None,
+    };
+    let mut paged_paths = Vec::new();
+    loop {
+        let page = services
+            .files_paths(files_page_request.clone())
+            .await
+            .expect("path-only page");
+        paged_paths.extend(page.paths);
+        let Some(cursor) = page.meta.next_cursor else {
+            break;
+        };
+        files_page_request.cursor = Some(cursor);
+    }
+    assert_eq!(paged_paths, compact_files.paths);
+
+    let outline_page_request = OutlineRequest {
+        paths: vec!["src/lib.rs".into(), "src/other.rs".into()],
+        symbol_name: None,
+        symbol_kind: None,
+        max_results: Some(5),
+        max_tokens: Some(32_000),
+        receipt_id: None,
+        cursor: None,
+    };
+    let full_outline_cursor = services
+        .outline(outline_page_request.clone())
+        .await
+        .expect("full outline page")
+        .meta
+        .next_cursor
+        .expect("full outline continuation");
+    let stale_projection = services
+        .outline_signatures(OutlineRequest {
+            cursor: Some(full_outline_cursor),
+            ..outline_page_request.clone()
+        })
+        .await
+        .expect_err("projection-bound outline cursor");
+    assert!(matches!(stale_projection, Error::StaleCursor));
+
+    let mut outline_page_request = outline_page_request;
+    let mut paged_signatures = Vec::new();
+    loop {
+        let page = services
+            .outline_signatures(outline_page_request.clone())
+            .await
+            .expect("signature outline page");
+        paged_signatures.extend(page.files.iter().flat_map(|file| {
+            file.signatures.iter().map(|symbol| {
+                (
+                    file.path.clone(),
+                    symbol.name.clone(),
+                    symbol.kind.clone(),
+                    symbol.parent.clone(),
+                    symbol.signature.clone(),
+                    symbol.start_line,
+                    symbol.end_line,
+                )
+            })
+        }));
+        let Some(cursor) = page.meta.next_cursor else {
+            break;
+        };
+        outline_page_request.cursor = Some(cursor);
+    }
+    assert_eq!(paged_signatures, compact_symbols);
+
+    let paged_search_request = SearchRequest {
+        query: "target".into(),
+        mode: SearchMode::Auto,
+        include_paths: Vec::new(),
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(4),
+        max_tokens: Some(32_000),
+        context_lines: Some(0),
+        case_sensitive: false,
+        all_occurrences: false,
+        prefer_structural: true,
+        receipt_id: None,
+        cursor: None,
+    };
+    let mut full_page_request = paged_search_request.clone();
+    let mut full_paged_hits = 0usize;
+    loop {
+        let page = services
+            .search(full_page_request.clone())
+            .await
+            .expect("full search page");
+        full_paged_hits = full_paged_hits.saturating_add(page.hits.len());
+        let Some(cursor) = page.meta.next_cursor else {
+            break;
+        };
+        full_page_request.cursor = Some(cursor);
+    }
+    let mut grouped_page_request = paged_search_request;
+    let mut grouped_paged_hits = 0usize;
+    loop {
+        let page = services
+            .search_grouped(grouped_page_request.clone())
+            .await
+            .expect("grouped search page");
+        grouped_paged_hits = grouped_paged_hits.saturating_add(
+            page.groups
+                .iter()
+                .map(|group| group.total_hits)
+                .sum::<usize>(),
+        );
+        let Some(cursor) = page.meta.next_cursor else {
+            break;
+        };
+        grouped_page_request.cursor = Some(cursor);
+    }
+    assert_eq!(grouped_paged_hits, full_paged_hits);
+
+    let bounded_files = services
+        .files_paths_with_options(
+            FilesRequest {
+                operation: FileOperation::Find,
+                path: None,
+                query: Some("src".into()),
+                pattern: None,
+                max_results: Some(100),
+                cursor: None,
+                depth: None,
+            },
+            ServiceCallOptions::new()
+                .with_max_response_tokens(compact_files.meta.total_response_tokens),
+        )
+        .await
+        .expect("exact path-only response bound");
+    assert!(
+        bounded_files.meta.total_response_tokens
+            <= compact_files.meta.total_response_tokens
+    );
+    let bounded_outline = services
+        .outline_signatures_with_options(
+            OutlineRequest {
+                paths: vec!["src/lib.rs".into(), "src/other.rs".into()],
+                symbol_name: None,
+                symbol_kind: None,
+                max_results: Some(100),
+                max_tokens: Some(32_000),
+                receipt_id: None,
+                cursor: None,
+            },
+            ServiceCallOptions::new()
+                .with_max_response_tokens(compact_outline.meta.total_response_tokens),
+        )
+        .await
+        .expect("exact signature response bound");
+    assert!(
+        bounded_outline.meta.total_response_tokens
+            <= compact_outline.meta.total_response_tokens
+    );
+    let bounded_search = services
+        .search_grouped_with_options(
+            SearchRequest {
+                query: "target".into(),
+                mode: SearchMode::Auto,
+                include_paths: Vec::new(),
+                exclude_paths: Vec::new(),
+                focus_paths: Vec::new(),
+                max_results: Some(100),
+                max_tokens: Some(32_000),
+                context_lines: Some(0),
+                case_sensitive: false,
+                all_occurrences: false,
+                prefer_structural: true,
+                receipt_id: None,
+                cursor: None,
+            },
+            ServiceCallOptions::new()
+                .with_max_response_tokens(compact_search.meta.total_response_tokens),
+        )
+        .await
+        .expect("exact grouped response bound");
+    assert!(
+        bounded_search.meta.total_response_tokens
+            <= compact_search.meta.total_response_tokens
+    );
+}
+
+#[tokio::test]
 async fn json_cursors_and_incomplete_results_fail_loud_with_typed_diagnostics() {
     let root = tempfile::tempdir().expect("root");
     let path = root.path().join("report.json");

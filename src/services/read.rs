@@ -191,7 +191,7 @@ fn decode_outline_cursor(cursor: &str) -> Result<(u64, usize, String)> {
     ))
 }
 
-fn outline_query_hash(request: &OutlineRequest) -> String {
+fn outline_query_hash(request: &OutlineRequest, projection: Option<&str>) -> String {
     fn update_field(hasher: &mut blake3::Hasher, value: &str) {
         hasher.update(&(value.len() as u64).to_le_bytes());
         hasher.update(value.as_bytes());
@@ -213,6 +213,10 @@ fn outline_query_hash(request: &OutlineRequest) -> String {
             }
         }
     }
+    if let Some(projection) = projection {
+        hasher.update(&[2]);
+        update_field(&mut hasher, projection);
+    }
     hasher.finalize().to_hex()[..16].to_string()
 }
 
@@ -220,21 +224,27 @@ fn parse_outline_cursor(
     cursor: Option<&str>,
     generation: u64,
     request: &OutlineRequest,
+    projection: Option<&str>,
 ) -> Result<usize> {
     let Some(cursor) = cursor else {
         return Ok(0);
     };
     let (cursor_generation, offset, query_hash) = decode_outline_cursor(cursor)?;
-    if cursor_generation != generation || query_hash != outline_query_hash(request) {
+    if cursor_generation != generation || query_hash != outline_query_hash(request, projection) {
         return Err(Error::StaleCursor);
     }
     Ok(offset)
 }
 
-fn make_outline_cursor(generation: u64, offset: usize, request: &OutlineRequest) -> String {
+fn make_outline_cursor(
+    generation: u64,
+    offset: usize,
+    request: &OutlineRequest,
+    projection: Option<&str>,
+) -> String {
     format!(
         "{generation}:outline:{offset}:{}",
-        outline_query_hash(request)
+        outline_query_hash(request, projection)
     )
 }
 
@@ -424,7 +434,104 @@ impl Services {
         let this = self.clone();
         self.blocking_executor
             .run(cancellation, move |cancellation| {
-                this.outline_sync(request, options, cancellation)
+                this.outline_sync(request, options, true, true, cancellation)
+            })
+            .await
+    }
+
+    /// Outline only symbol signatures, line ranges, and verifiable content hashes.
+    pub async fn outline_signatures(
+        &self,
+        request: OutlineRequest,
+    ) -> Result<OutlineSignaturesResponse> {
+        self.outline_signatures_with_options(request, ServiceCallOptions::new())
+            .await
+    }
+
+    /// Outline signatures under an exact serialized-response bound.
+    pub async fn outline_signatures_with_options(
+        &self,
+        request: OutlineRequest,
+        options: ServiceCallOptions,
+    ) -> Result<OutlineSignaturesResponse> {
+        self.outline_signatures_cancellable_with_options(request, options, CancellationToken::new())
+            .await
+    }
+
+    /// Outline signatures after applying the requested consistency boundary.
+    pub async fn outline_signatures_with_options_consistency_cancellable(
+        &self,
+        request: OutlineRequest,
+        consistency: IndexConsistency,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<OutlineSignaturesResponse> {
+        self.validate_call_options(options)?;
+        validate_outline_input(&request)?;
+        self.result_limit(request.max_results)?;
+        self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
+        self.apply_consistency(consistency, cancellation.clone())
+            .await?;
+        self.outline_signatures_cancellable_with_options(request, options, cancellation)
+            .await
+    }
+
+    async fn outline_signatures_cancellable_with_options(
+        &self,
+        request: OutlineRequest,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<OutlineSignaturesResponse> {
+        self.validate_call_options(options)?;
+        let this = self.clone();
+        self.blocking_executor
+            .run(cancellation, move |cancellation| {
+                let response = this.outline_sync(
+                    request,
+                    ServiceCallOptions::new(),
+                    false,
+                    false,
+                    cancellation,
+                )?;
+                let mut files = Vec::with_capacity(response.files.len());
+                for file in response.files {
+                    let signatures = file
+                        .symbols
+                        .into_iter()
+                        .map(|symbol| OutlineSignature {
+                            name: symbol.name,
+                            kind: symbol.kind,
+                            parent: symbol.parent,
+                            signature: symbol.signature,
+                            start_line: symbol.start_line,
+                            end_line: symbol.end_line,
+                        })
+                        .collect::<Vec<_>>();
+                    let serialized = serde_json::to_string(&signatures)
+                        .map_err(|error| Error::InternalFailure(error.to_string()))?;
+                    files.push(OutlineSignaturesFile {
+                        path: file.path,
+                        content_hash: hash(&serialized),
+                        language: file.language,
+                        parse_complete: file.parse_complete,
+                        structurally_complete: file.structurally_complete,
+                        signatures,
+                    });
+                }
+                let mut compact = OutlineSignaturesResponse {
+                    files,
+                    parse_complete: response.parse_complete,
+                    result_complete: response.result_complete,
+                    total_symbols: response.total_symbols,
+                    returned_symbols: response.returned_symbols,
+                    truncated_by_max_results: response.truncated_by_max_results,
+                    truncated_by_max_tokens: response.truncated_by_max_tokens,
+                    symbol_counts_by_kind: response.symbol_counts_by_kind,
+                    meta: response.meta,
+                };
+                this.finalize_bounded_response(&mut compact, options)?;
+                this.record_token_savings(TokenAccountingOperation::Outline, None, &compact.meta);
+                Ok(compact)
             })
             .await
     }
@@ -506,6 +613,8 @@ impl Services {
         &self,
         mut request: OutlineRequest,
         options: ServiceCallOptions,
+        include_imports: bool,
+        record_savings: bool,
         cancellation: &CancellationToken,
     ) -> Result<OutlineResponse> {
         check_cancelled(cancellation)?;
@@ -518,7 +627,13 @@ impl Services {
         let limit = self.result_limit(request.max_results)?;
         let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         let (mut response, baseline_source_tokens) = self.consistent(|session, generation| {
-            let offset = parse_outline_cursor(request.cursor.as_deref(), generation, &request)?;
+            let cursor_projection = (!include_imports).then_some("signatures");
+            let offset = parse_outline_cursor(
+                request.cursor.as_deref(),
+                generation,
+                &request,
+                cursor_projection,
+            )?;
             let mut total_symbols = 0usize;
             let mut total_imports = 0usize;
             let mut symbol_counts_by_kind = BTreeMap::new();
@@ -539,7 +654,11 @@ impl Services {
                 for (kind, count) in kind_counts {
                     *symbol_counts_by_kind.entry(kind).or_insert(0usize) += count;
                 }
-                let file_import_total = session.count_imports_for_file(file.id)?;
+                let file_import_total = if include_imports {
+                    session.count_imports_for_file(file.id)?
+                } else {
+                    0
+                };
                 total_symbols = total_symbols.saturating_add(file_symbol_total);
                 total_imports = total_imports.saturating_add(file_import_total);
                 parse_complete &= file.structurally_complete;
@@ -657,7 +776,7 @@ impl Services {
 
             let truncated_by_max_results = remaining == 0 && consumed < total_entries;
             let next_cursor = truncated_by_max_results
-                .then(|| make_outline_cursor(generation, consumed, &request));
+                .then(|| make_outline_cursor(generation, consumed, &request, cursor_projection));
             let result_complete = offset == 0
                 && returned_symbols == total_symbols
                 && returned_imports == total_imports;
@@ -778,11 +897,13 @@ impl Services {
         response.meta.emitted_tokens = response.meta.source_tokens;
         receipt.apply_meta(&mut response.meta);
         self.finalize_bounded_response(&mut response, options)?;
-        self.record_token_savings(
-            TokenAccountingOperation::Outline,
-            baseline_source_tokens,
-            &response.meta,
-        );
+        if record_savings {
+            self.record_token_savings(
+                TokenAccountingOperation::Outline,
+                baseline_source_tokens,
+                &response.meta,
+            );
+        }
         Ok(response)
     }
 
@@ -1640,5 +1761,38 @@ mod tests {
 
         assert_eq!(snapshot.content_hash, hash("first\nsecond\n"));
         assert_eq!(snapshot.end_line, 2);
+    }
+
+    #[test]
+    fn outline_cursors_bind_signature_projection_offsets() {
+        let request = OutlineRequest {
+            paths: vec!["src/lib.rs".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(10),
+            max_tokens: Some(1_000),
+            receipt_id: None,
+            cursor: None,
+        };
+        let full = make_outline_cursor(7, 3, &request, None);
+        let signatures = make_outline_cursor(7, 3, &request, Some("signatures"));
+        assert_ne!(full, signatures);
+        assert_eq!(
+            parse_outline_cursor(Some(&full), 7, &request, None).expect("full cursor"),
+            3
+        );
+        assert_eq!(
+            parse_outline_cursor(Some(&signatures), 7, &request, Some("signatures"))
+                .expect("signature cursor"),
+            3
+        );
+        assert!(matches!(
+            parse_outline_cursor(Some(&full), 7, &request, Some("signatures")),
+            Err(Error::StaleCursor)
+        ));
+        assert!(matches!(
+            parse_outline_cursor(Some(&signatures), 7, &request, None),
+            Err(Error::StaleCursor)
+        ));
     }
 }
