@@ -2776,7 +2776,7 @@ impl ReadSession {
             .optional()?)
     }
 
-    pub(crate) fn find_markdown_heading(
+    pub(crate) fn find_document_heading(
         &self,
         file_id: i64,
         name: &str,
@@ -2789,7 +2789,13 @@ impl ReadSession {
                 "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
                      FROM symbols
                      WHERE file_id = ?1
-                       AND kind = 'markdown_heading'
+                       AND kind IN (
+                           'markdown_heading',
+                           'latex_section',
+                           'latex_subsection',
+                           'latex_subsubsection',
+                           'latex_paragraph'
+                       )
                        AND (name = ?2 OR signature = ?2)
                      ORDER BY start_byte, id
                      LIMIT 1 OFFSET ?3",

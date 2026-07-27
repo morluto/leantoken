@@ -1372,7 +1372,7 @@ fn resolve_read_target(
     } else if let Some(heading_name) = &request.heading {
         let occurrence = request.heading_occurrence.unwrap_or(1);
         let heading = session
-            .find_markdown_heading(file_id, heading_name, occurrence)?
+            .find_document_heading(file_id, heading_name, occurrence)?
             .ok_or_else(|| Error::HeadingNotFound {
                 path: request.path.clone(),
                 heading: heading_name.clone(),

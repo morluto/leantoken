@@ -713,7 +713,7 @@ struct ReadMcpRequest {
     /// Repository-relative UTF-8 source file.
     #[schemars(length(min = 1, max = 4096))]
     path: String,
-    /// Exact symbol, Markdown heading, line range, or continuation to read.
+    /// Exact symbol, document heading, line range, or continuation to read.
     target: ReadMcpTarget,
     /// Maximum source tokens to return (default 8000, maximum 32000).
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
@@ -749,9 +749,9 @@ enum ReadMcpTarget {
         #[schemars(length(min = 1, max = 4096))]
         name: String,
     },
-    /// Read one indexed Markdown section by exact heading title or outline signature.
+    /// Read one indexed Markdown or LaTeX section by exact title or outline signature.
     Heading {
-        /// Exact rendered heading title or outline signature such as `## Performance`.
+        /// Exact title or outline signature such as `## Performance` or `\section{Method}`.
         #[schemars(length(min = 1, max = 4096))]
         name: String,
         /// One-based occurrence when the heading text is duplicated.
@@ -2636,7 +2636,7 @@ fn into_mcp_error(error: crate::Error) -> ErrorData {
             mcp_error_data("symbol_not_found"),
         ),
         crate::Error::HeadingNotFound { .. } => ErrorData::invalid_params(
-            "requested Markdown heading occurrence is not indexed",
+            "requested document heading occurrence is not indexed",
             mcp_error_data("heading_not_found"),
         ),
         crate::Error::RepositoryIdentityMismatch { expected, actual } => ErrorData::invalid_params(
