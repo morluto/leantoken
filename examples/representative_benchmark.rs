@@ -9,7 +9,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use clap::Parser;
 use leantoken::{
     Config, ContextCandidateEvaluation, ContextFragment, ContextRequest, ContextResponse,
-    SearchMode, SearchRequest, WorkflowEvidence, parser, services::Services, tokens,
+    SearchHit, SearchMode, SearchRequest, WorkflowEvidence, parser, services::Services, tokens,
 };
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +23,10 @@ const AST_LANE_MAX_TERMS: usize = 8;
 const AST_LANE_MAX_RESULTS_PER_TERM: usize = 16;
 const AST_LANE_MAX_TOKENS_PER_TERM: usize = 1_024;
 const AST_LANE_MAX_PATHS: usize = 2;
+const AST_LANE_V2_MAX_OWNER_TERMS: usize = 4;
+const AST_LANE_V2_MAX_NAMED_ARGUMENT_TERMS: usize = 4;
+const AST_LANE_V2_MAX_OWNER_HITS_PER_PATH: usize = 16;
+const AST_LANE_V2_MAX_OWNER_EVIDENCE_TOKENS: usize = 128;
 const ORIENTATION_CAPSULE_MAX_PATHS: usize = 1;
 const ORIENTATION_CAPSULE_MAX_TERMS: usize = 4;
 const ORIENTATION_CAPSULE_MAX_DEFINITIONS: usize = 4;
@@ -56,14 +60,29 @@ struct Args {
     #[arg(
         long,
         requires = "workflow_evidence",
-        conflicts_with = "ast_structural_lane"
+        conflicts_with_all = ["ast_structural_lane", "ast_structural_lane_v2"]
     )]
     history_lane: bool,
     /// Add bounded AST-derived structural path candidates from failure traces.
-    #[arg(long, requires = "workflow_evidence", conflicts_with = "history_lane")]
+    #[arg(
+        long,
+        requires = "workflow_evidence",
+        conflicts_with_all = ["history_lane", "ast_structural_lane_v2"]
+    )]
     ast_structural_lane: bool,
+    /// Experiment with corroborated AST owner ranking and one bounded owner excerpt.
+    #[arg(
+        long,
+        requires = "workflow_evidence",
+        conflicts_with_all = ["history_lane", "ast_structural_lane"]
+    )]
+    ast_structural_lane_v2: bool,
     /// Emit a bounded structural owner-routing capsule without changing context selection.
-    #[arg(long, requires = "ast_structural_lane")]
+    #[arg(
+        long,
+        requires = "ast_structural_lane",
+        conflicts_with = "ast_structural_lane_v2"
+    )]
     orientation_capsule: bool,
 }
 
@@ -201,6 +220,7 @@ struct Report {
     workflow_evidence_enabled: bool,
     history_lane_enabled: bool,
     ast_structural_lane_enabled: bool,
+    ast_structural_lane_v2_enabled: bool,
     orientation_capsule_enabled: bool,
     host_os: &'static str,
     host_arch: &'static str,
@@ -250,6 +270,10 @@ struct AggregateReport {
     known_fragments_resent: usize,
     dead_end_fragments: usize,
     dead_end_source_tokens: usize,
+    ast_owner_reservations: usize,
+    ast_owner_relevant_reservations: usize,
+    ast_owner_reservation_source_tokens: usize,
+    ast_owner_reservation_serialized_tokens: usize,
     orientation_capsule_paths: usize,
     orientation_capsule_relevant_paths: usize,
     orientation_capsule_path_recall: Option<f64>,
@@ -369,14 +393,35 @@ struct HistoryLaneReport {
 #[derive(Debug, Default, Serialize)]
 struct AstStructuralLaneReport {
     enabled: bool,
+    version: u8,
     trace_bytes_examined: usize,
     languages_attempted: Vec<String>,
     structurally_complete_languages: usize,
     terms: Vec<String>,
+    owner_terms: Vec<String>,
+    named_argument_terms: Vec<String>,
     searches: usize,
+    auxiliary_searches: usize,
     structural_hits: usize,
+    corroborating_hits: usize,
     candidate_paths: Vec<String>,
     relevant_candidate_paths: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner_reservation: Option<AstOwnerReservationReport>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct AstOwnerReservationReport {
+    path: String,
+    start_line: usize,
+    end_line: usize,
+    symbol: String,
+    matched_term: String,
+    excerpt: String,
+    source_tokens: usize,
+    serialized_tokens: usize,
+    content_hash: String,
+    relevant: bool,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -493,6 +538,7 @@ struct RunTaskOptions<'a> {
     workflow_evidence_enabled: bool,
     history_lane_enabled: bool,
     ast_structural_lane_enabled: bool,
+    ast_structural_lane_v2_enabled: bool,
     orientation_capsule_enabled: bool,
     base_revision: &'a str,
 }
@@ -550,6 +596,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 "workflow_evidence_enabled": args.workflow_evidence,
                 "history_lane_enabled": args.history_lane,
                 "ast_structural_lane_enabled": args.ast_structural_lane,
+                "ast_structural_lane_v2_enabled": args.ast_structural_lane_v2,
                 "orientation_capsule_enabled": args.orientation_capsule,
                 "concept_labels_blake3": concept_labels.as_ref().map(|labels| &labels.blake3),
                 "concept_count": concept_labels.as_ref().map(|labels| {
@@ -592,6 +639,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     workflow_evidence_enabled: args.workflow_evidence,
                     history_lane_enabled: args.history_lane,
                     ast_structural_lane_enabled: args.ast_structural_lane,
+                    ast_structural_lane_v2_enabled: args.ast_structural_lane_v2,
                     orientation_capsule_enabled: args.orientation_capsule,
                     base_revision: &corpus.base_revision,
                 },
@@ -684,6 +732,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         workflow_evidence_enabled: args.workflow_evidence,
         history_lane_enabled: args.history_lane,
         ast_structural_lane_enabled: args.ast_structural_lane,
+        ast_structural_lane_v2_enabled: args.ast_structural_lane_v2,
         orientation_capsule_enabled: args.orientation_capsule,
         host_os: std::env::consts::OS,
         host_arch: std::env::consts::ARCH,
@@ -708,6 +757,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             args.concept_labels.is_some(),
             args.history_lane,
             args.ast_structural_lane,
+            args.ast_structural_lane_v2,
             args.orientation_capsule,
         ),
     };
@@ -1075,6 +1125,7 @@ fn evaluate_concept_coverage(
     labels: &ConceptTaskLabels,
     candidates: &[ContextCandidateEvaluation],
     selected: &[ContextFragment],
+    owner_evidence: Option<&AstOwnerEvidence>,
 ) -> Result<TaskConceptCoverage, Box<dyn Error>> {
     let mut evidence = Vec::with_capacity(labels.concepts.len());
     for concept in &labels.concepts {
@@ -1095,7 +1146,7 @@ fn evaluate_concept_coverage(
                     candidate.path == anchor.path
                         && candidate.start_line <= anchor.line
                         && candidate.end_line >= anchor.line
-                })
+                }) || ast_owner_evidence_covers(owner_evidence, &anchor.path, anchor.line)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -1106,7 +1157,7 @@ fn evaluate_concept_coverage(
                     fragment.path == anchor.path
                         && fragment.start_line <= anchor.line
                         && fragment.end_line >= anchor.line
-                })
+                }) || ast_owner_evidence_covers(owner_evidence, &anchor.path, anchor.line)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -1146,6 +1197,18 @@ fn evaluate_concept_coverage(
         selected_concept_recall: ratio(selected_concepts_found, concepts),
         selection_retention: optional_ratio(selected_concepts_found, candidate_concepts_found),
         evidence,
+    })
+}
+
+fn ast_owner_evidence_covers(
+    owner_evidence: Option<&AstOwnerEvidence>,
+    path: &str,
+    line: usize,
+) -> bool {
+    owner_evidence.is_some_and(|evidence| {
+        evidence.report.path == path
+            && evidence.report.start_line <= line
+            && evidence.report.end_line >= line
     })
 }
 
@@ -1214,6 +1277,7 @@ fn benchmark_limitations(
     concept_labels: bool,
     history_lane: bool,
     ast_structural_lane: bool,
+    ast_structural_lane_v2: bool,
     orientation_capsule: bool,
 ) -> Vec<&'static str> {
     let mut limitations = vec![
@@ -1281,6 +1345,14 @@ fn benchmark_limitations(
         );
         limitations.push(
             "Tolerant parsing of terminal output can recover incomplete code fragments; a structural hit is a path-discovery proxy, not proof that the file owns the failure.",
+        );
+    }
+    if ast_structural_lane_v2 {
+        limitations.push(
+            "The AST structural v2 experiment parses at most 16 KiB of failure traces, searches eight structural terms plus four owner and four named-argument terms, and retains one owner excerpt of at most 128 exact source tokens.",
+        );
+        limitations.push(
+            "Owner corroboration and the reserved excerpt are retrieval proxies scored after discovery; two local tasks and synthetic fixtures do not establish generalization or end-to-end task success.",
         );
     }
     if orientation_capsule {
@@ -1453,8 +1525,69 @@ struct BoundedGitLines {
 struct AstPathStats {
     terms: BTreeSet<String>,
     definitions: BTreeSet<String>,
+    owner_terms: BTreeSet<String>,
+    named_argument_terms: BTreeSet<String>,
     structural_hits: usize,
+    corroborating_hits: usize,
     best_score: f64,
+    owner_hits: Vec<AstOwnerHit>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AstStructuralLaneVersion {
+    V1,
+    V2,
+}
+
+impl AstStructuralLaneVersion {
+    const fn number(self) -> u8 {
+        match self {
+            Self::V1 => 1,
+            Self::V2 => 2,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct AstOwnerHit {
+    start_line: usize,
+    end_line: usize,
+    excerpt: String,
+    symbol: String,
+    matched_term: String,
+    normalized_score: f64,
+    corroborating_owner_terms: BTreeSet<String>,
+    corroborating_named_argument_terms: BTreeSet<String>,
+}
+
+#[derive(Debug)]
+struct AstOwnerEvidence {
+    report: AstOwnerReservationReport,
+}
+
+#[derive(Serialize)]
+struct AstOwnerEvidenceWire<'a> {
+    path: &'a str,
+    start_line: usize,
+    end_line: usize,
+    symbol: &'a str,
+    matched_term: &'a str,
+    excerpt: &'a str,
+    content_hash: &'a str,
+}
+
+#[derive(Debug, Default)]
+struct AstTraceSignals {
+    member_terms: Vec<String>,
+    owner_terms: Vec<String>,
+    named_argument_terms: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct AstQueryTerms {
+    structural: Vec<String>,
+    owners: Vec<String>,
+    named_arguments: Vec<String>,
 }
 
 async fn discover_ast_structural_lane(
@@ -1462,10 +1595,19 @@ async fn discover_ast_structural_lane(
     languages: &[String],
     failure_traces: &[String],
     orientation_capsule_enabled: bool,
-) -> Result<(AstStructuralLaneReport, OrientationCapsuleReport), Box<dyn Error>> {
+    version: AstStructuralLaneVersion,
+) -> Result<
+    (
+        AstStructuralLaneReport,
+        OrientationCapsuleReport,
+        Option<AstOwnerEvidence>,
+    ),
+    Box<dyn Error>,
+> {
     let trace = utf8_tail(&failure_traces.join("\n"), AST_LANE_MAX_TRACE_BYTES);
     let mut report = AstStructuralLaneReport {
         enabled: true,
+        version: version.number(),
         trace_bytes_examined: trace.len(),
         ..AstStructuralLaneReport::default()
     };
@@ -1479,85 +1621,28 @@ async fn discover_ast_structural_lane(
         } else {
             OrientationCapsuleReport::default()
         };
-        return Ok((report, capsule));
+        return Ok((report, capsule, None));
     }
 
-    let mut terms = Vec::new();
-    let mut seen_terms = HashSet::new();
-    for language in languages
-        .iter()
-        .map(|language| language.to_ascii_lowercase())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .take(AST_LANE_MAX_LANGUAGES)
-    {
-        let parsed = parser::parse_language(&language, &trace)?;
-        report.languages_attempted.push(language);
-        report.structurally_complete_languages += usize::from(parsed.structurally_complete);
-        for reference in parsed.references {
-            let Some(term) = normalize_ast_search_term(&reference.name) else {
-                continue;
-            };
-            if seen_terms.insert(term.clone()) {
-                terms.push(term);
-                if terms.len() == AST_LANE_MAX_TERMS {
-                    break;
-                }
-            }
-        }
-        if terms.len() == AST_LANE_MAX_TERMS {
-            break;
-        }
-    }
-    report.terms = terms.clone();
+    let terms = collect_ast_structural_terms(languages, &trace, version, &mut report)?;
+    report.terms = terms.structural.clone();
+    report.owner_terms = terms.owners.clone();
+    report.named_argument_terms = terms.named_arguments.clone();
 
-    let mut paths = BTreeMap::<String, AstPathStats>::new();
-    for term in &terms {
-        let response = services
-            .search(SearchRequest {
-                query: term.clone(),
-                mode: SearchMode::Symbol,
-                include_paths: Vec::new(),
-                exclude_paths: Vec::new(),
-                focus_paths: Vec::new(),
-                max_results: Some(AST_LANE_MAX_RESULTS_PER_TERM),
-                max_tokens: Some(AST_LANE_MAX_TOKENS_PER_TERM),
-                context_lines: Some(0),
-                case_sensitive: false,
-                all_occurrences: false,
-                prefer_structural: false,
-                receipt_id: None,
-                cursor: None,
-            })
-            .await?;
-        report.searches += 1;
-        for hit in response.hits {
-            let definition =
-                hit.match_kind == "symbol" || hit.match_kinds.iter().any(|kind| kind == "symbol");
-            if !definition {
-                continue;
-            }
-            report.structural_hits += 1;
-            let stats = paths.entry(hit.path).or_default();
-            stats.terms.insert(term.clone());
-            if let Some(symbol) = hit.symbol {
-                stats.definitions.insert(symbol);
-            }
-            stats.structural_hits += 1;
-            stats.best_score = stats.best_score.max(hit.normalized_score);
-        }
+    let mut paths =
+        search_ast_structural_definitions(services, &terms.structural, &mut report).await?;
+    if version == AstStructuralLaneVersion::V2 {
+        corroborate_ast_paths(
+            services,
+            &mut paths,
+            &terms.owners,
+            &terms.named_arguments,
+            &mut report,
+        )
+        .await?;
     }
 
-    let mut ranked = paths.into_iter().collect::<Vec<_>>();
-    ranked.sort_by(|(left_path, left), (right_path, right)| {
-        right
-            .terms
-            .len()
-            .cmp(&left.terms.len())
-            .then_with(|| right.structural_hits.cmp(&left.structural_hits))
-            .then_with(|| right.best_score.total_cmp(&left.best_score))
-            .then_with(|| left_path.cmp(right_path))
-    });
+    let ranked = rank_ast_structural_paths(paths, &report.languages_attempted, version);
     let capsule = build_orientation_capsule(&ranked, orientation_capsule_enabled)?;
     report.candidate_paths = ranked
         .iter()
@@ -1565,7 +1650,697 @@ async fn discover_ast_structural_lane(
         .take(AST_LANE_MAX_PATHS)
         .cloned()
         .collect();
-    Ok((report, capsule))
+    let owner_evidence = if version == AstStructuralLaneVersion::V2 {
+        build_ast_owner_evidence(&ranked)?
+    } else {
+        None
+    };
+    report.owner_reservation = owner_evidence
+        .as_ref()
+        .map(|evidence| evidence.report.clone());
+    Ok((report, capsule, owner_evidence))
+}
+
+fn collect_ast_structural_terms(
+    languages: &[String],
+    trace: &str,
+    version: AstStructuralLaneVersion,
+    report: &mut AstStructuralLaneReport,
+) -> Result<AstQueryTerms, Box<dyn Error>> {
+    let mut terms = Vec::new();
+    let mut seen_terms = HashSet::new();
+    let mut owner_terms = Vec::new();
+    let mut seen_owner_terms = HashSet::new();
+    let mut named_argument_terms = Vec::new();
+    let mut seen_named_argument_terms = HashSet::new();
+    for language in languages
+        .iter()
+        .map(|language| language.to_ascii_lowercase())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .take(AST_LANE_MAX_LANGUAGES)
+    {
+        let parsed = parser::parse_language(&language, trace)?;
+        report.languages_attempted.push(language.clone());
+        report.structurally_complete_languages += usize::from(parsed.structurally_complete);
+        for reference in parsed.references {
+            if let Some(term) = normalize_ast_search_term(&reference.name) {
+                retain_bounded_term(&mut terms, &mut seen_terms, term, AST_LANE_MAX_TERMS);
+                if terms.len() == AST_LANE_MAX_TERMS {
+                    break;
+                }
+            }
+        }
+        if version == AstStructuralLaneVersion::V2 {
+            retain_ast_v2_trace_signals(
+                extract_ast_v2_trace_signals(&language, trace),
+                &mut terms,
+                &mut seen_terms,
+                &mut owner_terms,
+                &mut seen_owner_terms,
+                &mut named_argument_terms,
+                &mut seen_named_argument_terms,
+            );
+        }
+        terms.truncate(AST_LANE_MAX_TERMS);
+        if version == AstStructuralLaneVersion::V1 && terms.len() == AST_LANE_MAX_TERMS {
+            break;
+        }
+    }
+    Ok(AstQueryTerms {
+        structural: terms,
+        owners: owner_terms,
+        named_arguments: named_argument_terms,
+    })
+}
+
+fn retain_ast_v2_trace_signals(
+    signals: AstTraceSignals,
+    terms: &mut Vec<String>,
+    seen_terms: &mut HashSet<String>,
+    owner_terms: &mut Vec<String>,
+    seen_owner_terms: &mut HashSet<String>,
+    named_argument_terms: &mut Vec<String>,
+    seen_named_argument_terms: &mut HashSet<String>,
+) {
+    for term in signals.member_terms {
+        retain_bounded_term(terms, seen_terms, term, AST_LANE_MAX_TERMS);
+    }
+    for term in signals.owner_terms {
+        retain_bounded_term(
+            owner_terms,
+            seen_owner_terms,
+            term,
+            AST_LANE_V2_MAX_OWNER_TERMS,
+        );
+    }
+    for term in signals.named_argument_terms {
+        retain_bounded_term(
+            named_argument_terms,
+            seen_named_argument_terms,
+            term,
+            AST_LANE_V2_MAX_NAMED_ARGUMENT_TERMS,
+        );
+    }
+}
+
+async fn search_ast_structural_definitions(
+    services: &Services,
+    terms: &[String],
+    report: &mut AstStructuralLaneReport,
+) -> Result<BTreeMap<String, AstPathStats>, Box<dyn Error>> {
+    let mut paths = BTreeMap::<String, AstPathStats>::new();
+    for term in terms {
+        let response = services
+            .search(ast_search_request(
+                term,
+                SearchMode::Symbol,
+                Vec::new(),
+                false,
+            ))
+            .await?;
+        report.searches += 1;
+        for hit in response.hits {
+            if hit.match_kind != "symbol" && !hit.match_kinds.iter().any(|kind| kind == "symbol") {
+                continue;
+            }
+            report.structural_hits += 1;
+            record_ast_structural_hit(&mut paths, term, hit);
+        }
+    }
+    Ok(paths)
+}
+
+fn record_ast_structural_hit(
+    paths: &mut BTreeMap<String, AstPathStats>,
+    term: &str,
+    hit: SearchHit,
+) {
+    let stats = paths.entry(hit.path).or_default();
+    stats.terms.insert(term.to_owned());
+    let symbol = hit.symbol.unwrap_or_else(|| term.to_owned());
+    stats.definitions.insert(symbol.clone());
+    let owner_hit = AstOwnerHit {
+        start_line: hit.start_line,
+        end_line: hit.end_line,
+        excerpt: hit.excerpt,
+        symbol,
+        matched_term: term.to_owned(),
+        normalized_score: hit.normalized_score,
+        corroborating_owner_terms: BTreeSet::new(),
+        corroborating_named_argument_terms: BTreeSet::new(),
+    };
+    if ast_owner_hit_exact(&owner_hit) {
+        retain_best_ast_owner_hit(stats, owner_hit);
+    }
+    stats.structural_hits += 1;
+    stats.best_score = stats.best_score.max(hit.normalized_score);
+}
+
+fn retain_best_ast_owner_hit(stats: &mut AstPathStats, owner_hit: AstOwnerHit) {
+    if let Some(current) = stats
+        .owner_hits
+        .iter_mut()
+        .find(|current| current.matched_term == owner_hit.matched_term)
+    {
+        if ast_owner_hit_precedes(&owner_hit, current) {
+            *current = owner_hit;
+        }
+    } else if stats.owner_hits.len() < AST_LANE_V2_MAX_OWNER_HITS_PER_PATH {
+        stats.owner_hits.push(owner_hit);
+    }
+}
+
+async fn corroborate_ast_paths(
+    services: &Services,
+    paths: &mut BTreeMap<String, AstPathStats>,
+    owner_terms: &[String],
+    named_argument_terms: &[String],
+    report: &mut AstStructuralLaneReport,
+) -> Result<(), Box<dyn Error>> {
+    for (term, role) in owner_terms
+        .iter()
+        .map(|term| (term, AstAuxiliaryTermRole::Owner))
+        .chain(
+            named_argument_terms
+                .iter()
+                .map(|term| (term, AstAuxiliaryTermRole::NamedArgument)),
+        )
+    {
+        let response = services
+            .search(ast_search_request(
+                term,
+                SearchMode::Auto,
+                paths.keys().cloned().collect(),
+                true,
+            ))
+            .await?;
+        report.searches += 1;
+        report.auxiliary_searches += 1;
+        for hit in response.hits {
+            let Some(stats) = paths.get_mut(&hit.path) else {
+                continue;
+            };
+            if record_ast_corroborating_hit(stats, term, role, &hit) {
+                report.corroborating_hits += 1;
+            }
+        }
+    }
+    corroborate_ast_owner_excerpts(paths, named_argument_terms);
+    Ok(())
+}
+
+fn record_ast_corroborating_hit(
+    stats: &mut AstPathStats,
+    term: &str,
+    role: AstAuxiliaryTermRole,
+    hit: &SearchHit,
+) -> bool {
+    if hit.symbol.is_none()
+        && hit.enclosing_symbol.is_none()
+        && hit.match_kind != "symbol"
+        && !hit.match_kinds.iter().any(|kind| kind == "symbol")
+    {
+        return false;
+    }
+    match role {
+        AstAuxiliaryTermRole::Owner => {
+            stats.owner_terms.insert(term.to_owned());
+        }
+        AstAuxiliaryTermRole::NamedArgument => {
+            stats.named_argument_terms.insert(term.to_owned());
+        }
+    }
+    if let Some(corroborating_symbol) = hit.enclosing_symbol.as_deref().or(hit.symbol.as_deref()) {
+        for owner_hit in &mut stats.owner_hits {
+            let range_cooccurs =
+                owner_hit.start_line <= hit.start_line && owner_hit.end_line >= hit.end_line;
+            if range_cooccurs || ast_symbols_cooccur(&owner_hit.symbol, corroborating_symbol) {
+                record_ast_owner_corroboration(owner_hit, term, role);
+            }
+        }
+    }
+    stats.corroborating_hits += 1;
+    true
+}
+
+fn record_ast_owner_corroboration(
+    owner_hit: &mut AstOwnerHit,
+    term: &str,
+    role: AstAuxiliaryTermRole,
+) {
+    match role {
+        AstAuxiliaryTermRole::Owner => {
+            owner_hit.corroborating_owner_terms.insert(term.to_owned());
+        }
+        AstAuxiliaryTermRole::NamedArgument => {
+            owner_hit
+                .corroborating_named_argument_terms
+                .insert(term.to_owned());
+        }
+    }
+}
+
+fn corroborate_ast_owner_excerpts(
+    paths: &mut BTreeMap<String, AstPathStats>,
+    named_argument_terms: &[String],
+) {
+    for stats in paths.values_mut() {
+        for owner_hit in &mut stats.owner_hits {
+            for term in named_argument_terms {
+                if ast_excerpt_contains_term(&owner_hit.excerpt, term) {
+                    owner_hit
+                        .corroborating_named_argument_terms
+                        .insert(term.clone());
+                }
+            }
+        }
+    }
+}
+
+fn ast_search_request(
+    term: &str,
+    mode: SearchMode,
+    focus_paths: Vec<String>,
+    prefer_structural: bool,
+) -> SearchRequest {
+    SearchRequest {
+        query: term.to_owned(),
+        mode,
+        include_paths: Vec::new(),
+        exclude_paths: Vec::new(),
+        focus_paths,
+        max_results: Some(AST_LANE_MAX_RESULTS_PER_TERM),
+        max_tokens: Some(AST_LANE_MAX_TOKENS_PER_TERM),
+        context_lines: Some(0),
+        case_sensitive: false,
+        all_occurrences: false,
+        prefer_structural,
+        receipt_id: None,
+        cursor: None,
+    }
+}
+
+fn rank_ast_structural_paths(
+    paths: BTreeMap<String, AstPathStats>,
+    languages: &[String],
+    version: AstStructuralLaneVersion,
+) -> Vec<(String, AstPathStats)> {
+    let mut ranked = paths.into_iter().collect::<Vec<_>>();
+    let source_extensions = ast_source_extensions(languages);
+    ranked.sort_by(|(left_path, left), (right_path, right)| {
+        let v2_order = || {
+            ast_path_matches_source_extensions(right_path, &source_extensions)
+                .cmp(&ast_path_matches_source_extensions(
+                    left_path,
+                    &source_extensions,
+                ))
+                .then_with(|| {
+                    right
+                        .named_argument_terms
+                        .len()
+                        .cmp(&left.named_argument_terms.len())
+                })
+                .then_with(|| right.owner_terms.len().cmp(&left.owner_terms.len()))
+        };
+        let order = if version == AstStructuralLaneVersion::V2 {
+            v2_order()
+        } else {
+            std::cmp::Ordering::Equal
+        };
+        order
+            .then_with(|| right.terms.len().cmp(&left.terms.len()))
+            .then_with(|| right.structural_hits.cmp(&left.structural_hits))
+            .then_with(|| right.best_score.total_cmp(&left.best_score))
+            .then_with(|| left_path.cmp(right_path))
+    });
+    ranked
+}
+
+#[derive(Clone, Copy)]
+enum AstAuxiliaryTermRole {
+    Owner,
+    NamedArgument,
+}
+
+fn ast_owner_hit_precedes(candidate: &AstOwnerHit, current: &AstOwnerHit) -> bool {
+    candidate
+        .corroborating_named_argument_terms
+        .len()
+        .cmp(&current.corroborating_named_argument_terms.len())
+        .then_with(|| {
+            ast_term_specificity(&candidate.matched_term)
+                .cmp(&ast_term_specificity(&current.matched_term))
+        })
+        .then_with(|| {
+            candidate
+                .corroborating_owner_terms
+                .len()
+                .cmp(&current.corroborating_owner_terms.len())
+        })
+        .then_with(|| {
+            candidate
+                .normalized_score
+                .total_cmp(&current.normalized_score)
+        })
+        .then_with(|| current.start_line.cmp(&candidate.start_line))
+        .then_with(|| current.symbol.cmp(&candidate.symbol))
+        .is_gt()
+}
+
+fn ast_owner_hit_exact(hit: &AstOwnerHit) -> bool {
+    hit.symbol
+        .rsplit(['.', ':'])
+        .find(|component| !component.is_empty())
+        .is_some_and(|symbol| symbol.eq_ignore_ascii_case(&hit.matched_term))
+}
+
+fn ast_term_specificity(term: &str) -> (usize, usize) {
+    (term.matches('_').count(), term.len())
+}
+
+fn ast_symbols_cooccur(owner: &str, enclosing: &str) -> bool {
+    let owner = owner
+        .rsplit(['.', ':'])
+        .find(|component| !component.is_empty())
+        .unwrap_or(owner);
+    enclosing
+        .split(['.', ':'])
+        .filter(|component| !component.is_empty())
+        .any(|component| component.eq_ignore_ascii_case(owner))
+}
+
+fn ast_excerpt_contains_term(excerpt: &str, term: &str) -> bool {
+    excerpt
+        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .any(|component| component.eq_ignore_ascii_case(term))
+}
+
+fn ast_source_extensions(languages: &[String]) -> BTreeSet<&'static str> {
+    languages
+        .iter()
+        .filter_map(|language| match language.as_str() {
+            "javascript" | "jsx" => Some("js"),
+            "python" => Some("py"),
+            "ruby" => Some("rb"),
+            "rust" => Some("rs"),
+            "tsx" => Some("tsx"),
+            "typescript" => Some("ts"),
+            _ => None,
+        })
+        .collect()
+}
+
+fn ast_path_matches_source_extensions(path: &str, extensions: &BTreeSet<&str>) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extensions.contains(extension))
+}
+
+fn build_ast_owner_evidence(
+    ranked: &[(String, AstPathStats)],
+) -> Result<Option<AstOwnerEvidence>, serde_json::Error> {
+    let Some((path, stats)) = ranked.first() else {
+        return Ok(None);
+    };
+    let Some(hit) = stats.owner_hits.iter().reduce(|current, candidate| {
+        if ast_owner_hit_precedes(candidate, current) {
+            candidate
+        } else {
+            current
+        }
+    }) else {
+        return Ok(None);
+    };
+    let (excerpt, source_tokens) =
+        tokens::truncate(&hit.excerpt, AST_LANE_V2_MAX_OWNER_EVIDENCE_TOKENS);
+    if excerpt.is_empty() {
+        return Ok(None);
+    }
+    let end_line = hit
+        .start_line
+        .saturating_add(excerpt.lines().count().saturating_sub(1))
+        .min(hit.end_line);
+    let content_hash = blake3::hash(excerpt.as_bytes()).to_hex().to_string();
+    let mut report = AstOwnerReservationReport {
+        path: path.clone(),
+        start_line: hit.start_line,
+        end_line,
+        symbol: hit.symbol.clone(),
+        matched_term: hit.matched_term.clone(),
+        excerpt: excerpt.to_owned(),
+        source_tokens,
+        serialized_tokens: 0,
+        content_hash,
+        relevant: false,
+    };
+    let wire = AstOwnerEvidenceWire {
+        path: &report.path,
+        start_line: report.start_line,
+        end_line: report.end_line,
+        symbol: &report.symbol,
+        matched_term: &report.matched_term,
+        excerpt,
+        content_hash: &report.content_hash,
+    };
+    report.serialized_tokens = tokens::count(&serde_json::to_string(&wire)?);
+    Ok(Some(AstOwnerEvidence { report }))
+}
+
+fn retain_bounded_term(
+    terms: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+    term: String,
+    limit: usize,
+) {
+    if terms.len() < limit && seen.insert(term.clone()) {
+        terms.push(term);
+    }
+}
+
+fn extract_ast_v2_trace_signals(language: &str, trace: &str) -> AstTraceSignals {
+    let mut signals = AstTraceSignals::default();
+    let mut seen_members = HashSet::new();
+    let mut seen_owners = HashSet::new();
+    let mut seen_named = HashSet::new();
+    let supports_named_equals = matches!(
+        language,
+        "python" | "javascript" | "typescript" | "tsx" | "ruby"
+    );
+    let supports_named_fields = matches!(
+        language,
+        "python" | "javascript" | "typescript" | "tsx" | "rust"
+    );
+    for line in trace.lines() {
+        scan_ast_v2_trace_line(
+            line,
+            supports_named_equals,
+            supports_named_fields,
+            &mut signals,
+            &mut seen_members,
+            &mut seen_owners,
+            &mut seen_named,
+        );
+    }
+    signals
+}
+
+fn scan_ast_v2_trace_line(
+    line: &str,
+    supports_named_equals: bool,
+    supports_named_fields: bool,
+    signals: &mut AstTraceSignals,
+    seen_members: &mut HashSet<String>,
+    seen_owners: &mut HashSet<String>,
+    seen_named: &mut HashSet<String>,
+) {
+    let bytes = line.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if matches!(bytes[index], b'\'' | b'"') {
+            let quote = bytes[index];
+            let start = index + 1;
+            index = start;
+            while index < bytes.len() {
+                if bytes[index] == b'\\' {
+                    index = (index + 2).min(bytes.len());
+                    continue;
+                }
+                if bytes[index] == quote {
+                    break;
+                }
+                index += 1;
+            }
+            if supports_named_fields
+                && index < bytes.len()
+                && is_ascii_identifier(&line[start..index])
+                && next_significant_byte(bytes, index + 1).is_some_and(|(byte, _)| byte == b':')
+                && let Some(term) = normalize_ast_named_argument_term(&line[start..index])
+            {
+                retain_bounded_term(
+                    &mut signals.named_argument_terms,
+                    seen_named,
+                    term,
+                    AST_LANE_V2_MAX_NAMED_ARGUMENT_TERMS,
+                );
+            }
+            index = index.saturating_add(1);
+            continue;
+        }
+        if !is_ascii_identifier_start(bytes[index]) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        index += 1;
+        while index < bytes.len() && is_ascii_identifier_continue(bytes[index]) {
+            index += 1;
+        }
+        let identifier = &line[start..index];
+        let previous = previous_significant_byte(bytes, start);
+        let next = next_significant_byte(bytes, index);
+        if let Some((delimiter, delimiter_index)) = next
+            && delimiter_index == index
+            && (delimiter == b'.'
+                || (delimiter == b':' && bytes.get(delimiter_index + 1).copied() == Some(b':')))
+        {
+            let member_start =
+                next_significant_byte(bytes, delimiter_index + usize::from(delimiter == b':') + 1)
+                    .map(|(_, offset)| offset);
+            if let Some(member_start) = member_start
+                && bytes
+                    .get(member_start)
+                    .copied()
+                    .is_some_and(is_ascii_identifier_start)
+            {
+                let mut member_end = member_start + 1;
+                while member_end < bytes.len() && is_ascii_identifier_continue(bytes[member_end]) {
+                    member_end += 1;
+                }
+                if let Some(member) = normalize_ast_v2_member_term(&line[member_start..member_end])
+                {
+                    if let Some(owner) = normalize_ast_auxiliary_term(identifier) {
+                        retain_bounded_term(
+                            &mut signals.owner_terms,
+                            seen_owners,
+                            owner,
+                            AST_LANE_V2_MAX_OWNER_TERMS,
+                        );
+                    }
+                    retain_bounded_term(
+                        &mut signals.member_terms,
+                        seen_members,
+                        member,
+                        AST_LANE_MAX_TERMS,
+                    );
+                }
+            }
+        }
+        let is_named_equals = supports_named_equals
+            && previous.is_some_and(|byte| matches!(byte, b'(' | b','))
+            && next.is_some_and(|(byte, offset)| {
+                byte == b'=' && bytes.get(offset + 1).copied() != Some(b'=')
+            });
+        let is_named_field = supports_named_fields
+            && previous.is_some_and(|byte| matches!(byte, b'{' | b','))
+            && next.is_some_and(|(byte, offset)| {
+                byte == b':' && bytes.get(offset + 1).copied() != Some(b':')
+            });
+        if (is_named_equals || is_named_field)
+            && let Some(term) = normalize_ast_named_argument_term(identifier)
+        {
+            retain_bounded_term(
+                &mut signals.named_argument_terms,
+                seen_named,
+                term,
+                AST_LANE_V2_MAX_NAMED_ARGUMENT_TERMS,
+            );
+        }
+    }
+}
+
+fn previous_significant_byte(bytes: &[u8], index: usize) -> Option<u8> {
+    bytes[..index]
+        .iter()
+        .rev()
+        .copied()
+        .find(|byte| !byte.is_ascii_whitespace())
+}
+
+fn next_significant_byte(bytes: &[u8], mut index: usize) -> Option<(u8, usize)> {
+    while let Some(byte) = bytes.get(index).copied() {
+        if !byte.is_ascii_whitespace() {
+            return Some((byte, index));
+        }
+        index += 1;
+    }
+    None
+}
+
+fn is_ascii_identifier(value: &str) -> bool {
+    value
+        .as_bytes()
+        .first()
+        .copied()
+        .is_some_and(is_ascii_identifier_start)
+        && value
+            .as_bytes()
+            .iter()
+            .copied()
+            .all(is_ascii_identifier_continue)
+}
+
+const fn is_ascii_identifier_start(byte: u8) -> bool {
+    byte == b'_' || byte.is_ascii_alphabetic()
+}
+
+const fn is_ascii_identifier_continue(byte: u8) -> bool {
+    byte == b'_' || byte.is_ascii_alphanumeric()
+}
+
+fn normalize_ast_auxiliary_term(value: &str) -> Option<String> {
+    normalize_ast_term_with_common_filter(value, false)
+}
+
+fn normalize_ast_v2_member_term(value: &str) -> Option<String> {
+    let term = normalize_ast_search_term(value)?;
+    (!term.starts_with("test_")
+        && !matches!(
+            term.as_str(),
+            "bool" | "json" | "jsx" | "md" | "output" | "py" | "rs" | "str" | "toml" | "tsx"
+        ))
+    .then_some(term)
+}
+
+fn normalize_ast_named_argument_term(value: &str) -> Option<String> {
+    normalize_ast_term_with_common_filter(value, true)
+}
+
+fn normalize_ast_term_with_common_filter(value: &str, allow_type: bool) -> Option<String> {
+    let normalized = value
+        .trim_matches(|character: char| !character.is_alphanumeric() && character != '_')
+        .to_ascii_lowercase();
+    if !(3..=128).contains(&normalized.len())
+        || !normalized.chars().any(char::is_alphabetic)
+        || matches!(
+            normalized.as_str(),
+            "assert"
+                | "false"
+                | "none"
+                | "print"
+                | "self"
+                | "true"
+                | "value"
+                | "expected"
+                | "output"
+                | "result"
+        )
+        || (!allow_type && normalized == "type")
+    {
+        return None;
+    }
+    Some(normalized)
 }
 
 fn build_orientation_capsule(
@@ -1896,21 +2671,28 @@ async fn run_task(
     } else {
         HistoryLaneReport::default()
     };
-    let (mut ast_structural_lane, mut orientation_capsule) = if options.ast_structural_lane_enabled
-    {
-        discover_ast_structural_lane(
-            services,
-            &task.languages,
-            &workflow_evidence.failure_traces,
-            options.orientation_capsule_enabled,
-        )
-        .await?
-    } else {
-        (
-            AstStructuralLaneReport::default(),
-            OrientationCapsuleReport::default(),
-        )
-    };
+    let (mut ast_structural_lane, mut orientation_capsule, mut owner_evidence) =
+        if options.ast_structural_lane_enabled || options.ast_structural_lane_v2_enabled {
+            let version = if options.ast_structural_lane_v2_enabled {
+                AstStructuralLaneVersion::V2
+            } else {
+                AstStructuralLaneVersion::V1
+            };
+            discover_ast_structural_lane(
+                services,
+                &task.languages,
+                &workflow_evidence.failure_traces,
+                options.orientation_capsule_enabled,
+                version,
+            )
+            .await?
+        } else {
+            (
+                AstStructuralLaneReport::default(),
+                OrientationCapsuleReport::default(),
+                None,
+            )
+        };
     history_lane.relevant_candidate_paths = history_lane
         .candidate_paths
         .iter()
@@ -1926,10 +2708,17 @@ async fn run_task(
         .iter()
         .filter(|entry| relevant_paths.contains(&entry.path))
         .count();
+    if let Some(evidence) = owner_evidence.as_mut() {
+        evidence.report.relevant = relevant_paths.contains(&evidence.report.path);
+        if let Some(reservation) = ast_structural_lane.owner_reservation.as_mut() {
+            reservation.relevant = evidence.report.relevant;
+        }
+    }
     if !history_lane.candidate_paths.is_empty() {
         request.focus_paths = history_lane.candidate_paths.clone();
         request.minimum_fragments_per_focus_path = Some(1);
-    } else if !ast_structural_lane.candidate_paths.is_empty() {
+    } else if options.ast_structural_lane_enabled && !ast_structural_lane.candidate_paths.is_empty()
+    {
         request.focus_paths = ast_structural_lane.candidate_paths.clone();
     }
     let started = Instant::now();
@@ -1943,6 +2732,7 @@ async fn run_task(
                 labels,
                 &evaluation.generated_candidates,
                 &evaluation.response.fragments,
+                owner_evidence.as_ref(),
             )
         })
         .transpose()?;
@@ -1962,9 +2752,25 @@ async fn run_task(
             return Err(format!("{} returned nondeterministic context", task.id).into());
         }
     }
-    let returned_files = sorted_unique(response.fragments.iter().map(|item| item.path.clone()));
-    let candidate_files = evaluation.generated_candidate_paths;
-    let relevant_candidate_evidence = evaluation
+    let returned_files = sorted_unique(
+        response
+            .fragments
+            .iter()
+            .map(|item| item.path.clone())
+            .chain(
+                owner_evidence
+                    .iter()
+                    .map(|evidence| evidence.report.path.clone()),
+            ),
+    );
+    let candidate_files = sorted_unique(
+        evaluation.generated_candidate_paths.into_iter().chain(
+            owner_evidence
+                .iter()
+                .map(|evidence| evidence.report.path.clone()),
+        ),
+    );
+    let mut relevant_candidate_evidence = evaluation
         .generated_candidates
         .into_iter()
         .filter(|candidate| relevant_paths.contains(&candidate.path))
@@ -1979,8 +2785,24 @@ async fn run_task(
             score: candidate.score,
             token_count: candidate.token_count,
         })
-        .collect();
-    let returned_evidence = response
+        .collect::<Vec<_>>();
+    if let Some(evidence) = owner_evidence
+        .as_ref()
+        .filter(|evidence| evidence.report.relevant)
+    {
+        relevant_candidate_evidence.push(CandidateEvidenceSummary {
+            path: evidence.report.path.clone(),
+            start_line: evidence.report.start_line,
+            end_line: evidence.report.end_line,
+            representation: "ast_owner_reservation".into(),
+            match_kinds: vec!["symbol".into()],
+            concepts: Vec::new(),
+            concept_weight: 0.0,
+            score: 0.0,
+            token_count: evidence.report.source_tokens,
+        });
+    }
+    let mut returned_evidence = response
         .fragments
         .iter()
         .map(|fragment| EvidenceSummary {
@@ -1993,7 +2815,22 @@ async fn run_task(
             token_count: fragment.token_count,
             content_hash: fragment.content_hash.clone(),
         })
-        .collect();
+        .collect::<Vec<_>>();
+    if let Some(evidence) = &owner_evidence {
+        returned_evidence.push(EvidenceSummary {
+            path: evidence.report.path.clone(),
+            start_line: evidence.report.start_line,
+            end_line: evidence.report.end_line,
+            representation: "ast_owner_reservation".into(),
+            reason: format!(
+                "bounded structural owner for {}",
+                evidence.report.matched_term
+            ),
+            score: 0.0,
+            token_count: evidence.report.source_tokens,
+            content_hash: evidence.report.content_hash.clone(),
+        });
+    }
     let relevant_files_found = returned_files
         .iter()
         .filter(|path| relevant_paths.contains(*path))
@@ -2028,20 +2865,41 @@ async fn run_task(
         .fragments
         .iter()
         .filter(|fragment| !relevant_paths.contains(&fragment.path))
-        .count();
+        .count()
+        + usize::from(
+            owner_evidence
+                .as_ref()
+                .is_some_and(|evidence| !evidence.report.relevant),
+        );
     let dead_end_source_tokens = response
         .fragments
         .iter()
         .filter(|fragment| !relevant_paths.contains(&fragment.path))
         .map(|fragment| fragment.token_count)
-        .sum();
+        .sum::<usize>()
+        + owner_evidence
+            .as_ref()
+            .filter(|evidence| !evidence.report.relevant)
+            .map_or(0, |evidence| evidence.report.source_tokens);
     let line_anchors = task
         .relevant_files
         .iter()
         .map(|file| file.line_anchors.len())
         .sum();
-    let line_anchors_found = count_line_anchors(&response, &task.relevant_files);
-    let leantoken_total_json_tokens = tokens::count(&serde_json::to_string(&response)?);
+    let line_anchors_found =
+        count_line_anchors(&response, owner_evidence.as_ref(), &task.relevant_files);
+    let owner_source_tokens = owner_evidence
+        .as_ref()
+        .map_or(0, |evidence| evidence.report.source_tokens);
+    let owner_serialized_tokens = owner_evidence
+        .as_ref()
+        .map_or(0, |evidence| evidence.report.serialized_tokens);
+    let leantoken_source_tokens = response
+        .meta
+        .emitted_tokens
+        .saturating_add(owner_source_tokens);
+    let leantoken_total_json_tokens =
+        tokens::count(&serde_json::to_string(&response)?).saturating_add(owner_serialized_tokens);
 
     let known = response
         .fragments
@@ -2081,6 +2939,12 @@ async fn run_task(
                 .iter()
                 .filter(|prior| prior.path == fragment.path)
                 .map(|prior| (prior.start_line, prior.end_line))
+                .chain(
+                    owner_evidence
+                        .iter()
+                        .filter(|evidence| evidence.report.path == fragment.path)
+                        .map(|evidence| (evidence.report.start_line, evidence.report.end_line)),
+                )
                 .collect::<Vec<_>>();
             repeated_range_token_estimate(
                 fragment.start_line,
@@ -2132,11 +2996,11 @@ async fn run_task(
         rg_discovery_tokens,
         rg_discovery_json_tokens: tokens::count(&rg_json),
         scripted_baseline_total_json_tokens: tokens::count(&scripted_json),
-        leantoken_source_tokens: response.meta.emitted_tokens,
+        leantoken_source_tokens,
         leantoken_total_json_tokens,
         source_savings_against_oracle_fraction: savings(
             oracle_source_tokens,
-            response.meta.emitted_tokens,
+            leantoken_source_tokens,
         ),
         total_json_savings_against_scripted_fraction: savings(
             tokens::count(&scripted_json),
@@ -2415,7 +3279,11 @@ fn validate_benchmark_path(path: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn count_line_anchors(response: &ContextResponse, relevant: &[RelevantFile]) -> usize {
+fn count_line_anchors(
+    response: &ContextResponse,
+    owner_evidence: Option<&AstOwnerEvidence>,
+    relevant: &[RelevantFile],
+) -> usize {
     relevant
         .iter()
         .map(|file| {
@@ -2426,6 +3294,10 @@ fn count_line_anchors(response: &ContextResponse, relevant: &[RelevantFile]) -> 
                         fragment.path == file.path
                             && fragment.start_line <= **line
                             && fragment.end_line >= **line
+                    }) || owner_evidence.is_some_and(|evidence| {
+                        evidence.report.path == file.path
+                            && evidence.report.start_line <= **line
+                            && evidence.report.end_line >= **line
                     })
                 })
                 .count()
@@ -2581,6 +3453,12 @@ fn accumulate(aggregate: &mut AggregateReport, task: &TaskReport) {
     aggregate.known_fragments_resent += task.known_fragments_resent;
     aggregate.dead_end_fragments += task.dead_end_fragments;
     aggregate.dead_end_source_tokens += task.dead_end_source_tokens;
+    if let Some(reservation) = &task.ast_structural_lane.owner_reservation {
+        aggregate.ast_owner_reservations += 1;
+        aggregate.ast_owner_relevant_reservations += usize::from(reservation.relevant);
+        aggregate.ast_owner_reservation_source_tokens += reservation.source_tokens;
+        aggregate.ast_owner_reservation_serialized_tokens += reservation.serialized_tokens;
+    }
     aggregate.orientation_capsule_paths += task.orientation_capsule.entries.len();
     aggregate.orientation_capsule_relevant_paths += task.orientation_capsule.relevant_paths;
     aggregate.orientation_capsule_tokens += task.orientation_capsule.capsule_tokens;
@@ -2709,11 +3587,12 @@ mod tests {
             "result = runner.invoke(cmd, [\"--foo\"])\n",
         );
 
-        let (report, capsule) = discover_ast_structural_lane(
+        let (report, capsule, owner_evidence) = discover_ast_structural_lane(
             &services,
             &[String::from("python")],
             &[trace.into()],
             true,
+            AstStructuralLaneVersion::V1,
         )
         .await
         .expect("AST structural lane");
@@ -2727,6 +3606,7 @@ mod tests {
             Some("src/click/core.py")
         );
         assert!(capsule.enabled);
+        assert!(owner_evidence.is_none());
         assert!(capsule.capsule_tokens <= ORIENTATION_CAPSULE_MAX_TOKENS);
         assert_eq!(capsule.entries.len(), 1);
         assert_eq!(capsule.entries[0].path, "src/click/core.py");
@@ -2741,6 +3621,171 @@ mod tests {
                 .definitions
                 .iter()
                 .any(|definition| definition.eq_ignore_ascii_case("Option"))
+        );
+    }
+
+    #[test]
+    fn ast_structural_v2_extracts_bounded_multilingual_trace_signals() {
+        let python = extract_ast_v2_trace_signals(
+            "python",
+            concat!(
+                "python -m venv .arb-venv\n",
+                "pytest.param({\"type\": click.BOOL, \"default\": True}, True)\n",
+                "@click.option(\"--foo\", is_flag=True, **opts)\n",
+                "result = runner.invoke(cmd, [])\n",
+            ),
+        );
+        assert!(python.member_terms.iter().any(|term| term == "option"));
+        assert!(python.member_terms.iter().any(|term| term == "invoke"));
+        assert!(!python.member_terms.iter().any(|term| term == "bool"));
+        assert!(python.owner_terms.iter().any(|term| term == "click"));
+        assert!(python.owner_terms.iter().any(|term| term == "runner"));
+        assert!(!python.owner_terms.iter().any(|term| term == "venv"));
+        assert!(["type", "default", "is_flag"].iter().all(|expected| {
+            python
+                .named_argument_terms
+                .iter()
+                .any(|term| term == expected)
+        }));
+        assert!(python.member_terms.len() <= AST_LANE_MAX_TERMS);
+        assert!(python.owner_terms.len() <= AST_LANE_V2_MAX_OWNER_TERMS);
+        assert!(python.named_argument_terms.len() <= AST_LANE_V2_MAX_NAMED_ARGUMENT_TERMS);
+        let python_extensions = ast_source_extensions(&[String::from("python")]);
+        assert!(ast_path_matches_source_extensions(
+            "src/click/core.py",
+            &python_extensions
+        ));
+        assert!(!ast_path_matches_source_extensions(
+            "docs/options.md",
+            &python_extensions
+        ));
+
+        let rust = extract_ast_v2_trace_signals(
+            "rust",
+            concat!(
+                "error: no method named `default_values_if` for `clap::Arg`\n",
+                "Arg::new(\"args\").default_value_if(\"opt\", \"value\", \"fallback\")\n",
+                "let config = Config { default_value: None };\n",
+            ),
+        );
+        assert!(rust.owner_terms.iter().any(|term| term == "arg"));
+        assert!(rust.member_terms.iter().any(|term| term == "new"));
+        assert!(
+            rust.named_argument_terms
+                .iter()
+                .any(|term| term == "default_value")
+        );
+    }
+
+    #[tokio::test]
+    async fn ast_structural_v2_uses_named_arguments_to_reserve_one_small_owner() {
+        let root = tempfile::tempdir().expect("repository");
+        fs::create_dir_all(root.path().join("src/click")).expect("source directory");
+        fs::write(
+            root.path().join("src/click/core.py"),
+            concat!(
+                "class Option:\n",
+                "    def __init__(self, param_decls, type=None, default=None, is_flag=False):\n",
+                "        self.type = type\n",
+                "        self.default = default\n",
+                "        self.is_flag = is_flag\n",
+            ),
+        )
+        .expect("owner");
+        fs::write(
+            root.path().join("src/click/decorators.py"),
+            concat!(
+                "def command():\n",
+                "    return None\n\n",
+                "def option(*param_decls, **attrs):\n",
+                "    return None\n\n",
+                "def echo(value):\n",
+                "    return value\n\n",
+                "def invoke(command, args):\n",
+                "    return command\n",
+            ),
+        )
+        .expect("decoy");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        let services = Services::open(config).expect("services");
+        services.index(true).await.expect("index");
+        let trace = concat!(
+            "pytest.param({\"type\": click.BOOL, \"default\": True}, True)\n",
+            "@click.command()\n",
+            "@click.option(\"--foo\", is_flag=True, **opts)\n",
+            "click.echo(foo)\n",
+            "result = runner.invoke(cmd, [])\n",
+        );
+
+        let (report, capsule, owner_evidence) = discover_ast_structural_lane(
+            &services,
+            &[String::from("python")],
+            &[trace.into()],
+            false,
+            AstStructuralLaneVersion::V2,
+        )
+        .await
+        .expect("AST structural v2 lane");
+
+        assert_eq!(report.version, 2);
+        assert!(!capsule.enabled);
+        assert!(["type", "default", "is_flag"].iter().all(|expected| {
+            report
+                .named_argument_terms
+                .iter()
+                .any(|term| term == expected)
+        }));
+        assert!(report.auxiliary_searches <= 8);
+        assert!(report.searches <= AST_LANE_MAX_TERMS + 8);
+        assert_eq!(
+            report.candidate_paths.first().map(String::as_str),
+            Some("src/click/core.py")
+        );
+        let owner = owner_evidence.expect("one owner reservation");
+        assert_eq!(owner.report.path, "src/click/core.py");
+        assert!(owner.report.symbol.eq_ignore_ascii_case("Option"));
+        assert!(owner.report.source_tokens <= AST_LANE_V2_MAX_OWNER_EVIDENCE_TOKENS);
+        assert!(!owner.report.excerpt.is_empty());
+        assert_eq!(
+            report
+                .owner_reservation
+                .as_ref()
+                .map(|reservation| reservation.path.as_str()),
+            Some("src/click/core.py")
+        );
+    }
+
+    #[test]
+    fn ast_structural_v2_cli_contract_is_explicit_and_exclusive() {
+        assert!(
+            Args::try_parse_from(["representative_benchmark", "--ast-structural-lane-v2"]).is_err()
+        );
+        assert!(
+            Args::try_parse_from([
+                "representative_benchmark",
+                "--workflow-evidence",
+                "--ast-structural-lane",
+                "--ast-structural-lane-v2",
+            ])
+            .is_err()
+        );
+        assert!(
+            Args::try_parse_from([
+                "representative_benchmark",
+                "--workflow-evidence",
+                "--ast-structural-lane-v2",
+                "--orientation-capsule",
+            ])
+            .is_err()
+        );
+        assert!(
+            Args::try_parse_from([
+                "representative_benchmark",
+                "--workflow-evidence",
+                "--ast-structural-lane-v2",
+            ])
+            .is_ok()
         );
     }
 
@@ -3186,6 +4231,7 @@ mod tests {
                 candidate("tests/lib.rs", 18, 22),
             ],
             &[fragment("src/lib.rs", 8, 12)],
+            None,
         )
         .expect("evaluate coverage");
 
@@ -3210,12 +4256,37 @@ mod tests {
     }
 
     #[test]
+    fn concept_coverage_counts_reserved_owner_as_candidate_and_selected_evidence() {
+        let owner = AstOwnerEvidence {
+            report: AstOwnerReservationReport {
+                path: "src/lib.rs".into(),
+                start_line: 8,
+                end_line: 12,
+                symbol: "Owner".into(),
+                matched_term: "owner".into(),
+                excerpt: "struct Owner;".into(),
+                source_tokens: 3,
+                serialized_tokens: 12,
+                content_hash: "owner-hash".into(),
+                relevant: true,
+            },
+        };
+        let coverage = evaluate_concept_coverage(&concept_task_labels(), &[], &[], Some(&owner))
+            .expect("evaluate owner reservation");
+
+        assert_eq!(coverage.candidate_concepts_found, 1);
+        assert_eq!(coverage.selected_concepts_found, 1);
+        assert_eq!(coverage.selection_retention, Some(1.0));
+    }
+
+    #[test]
     fn concept_coverage_rejects_selected_evidence_missing_from_diagnostics() {
         assert!(
             evaluate_concept_coverage(
                 &concept_task_labels(),
                 &[candidate("tests/lib.rs", 18, 22)],
                 &[fragment("src/lib.rs", 8, 12)],
+                None,
             )
             .expect_err("selected evidence must have a candidate")
             .to_string()
