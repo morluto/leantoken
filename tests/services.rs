@@ -7775,6 +7775,7 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
         historical.content.as_deref(),
         Some("pub fn tracked() -> u32 { 1 }")
     );
+    let historical_hash = historical.content_hash.clone();
     assert!(!historical.truncated);
     assert_response_token_accounting!(read, Tokenizer::default());
     let bounded_limit = read.meta.total_response_tokens.saturating_sub(10);
@@ -7828,6 +7829,21 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
     let patch = diff.diff.as_deref().expect("symbol diff");
     assert!(patch.contains("-pub fn tracked() -> u32 { 1 }"));
     assert!(patch.contains("+pub fn tracked() -> u32 { 2 }"));
+    assert!(!patch.contains("\\ No newline at end of file"));
+    let before = diff.before.as_ref().expect("base endpoint");
+    assert_eq!(before.returned_end_line, 0);
+    assert_eq!(before.content_hash, historical_hash);
+    let serialized_diff = serde_json::to_value(&diff).expect("serialize symbol diff");
+    assert!(
+        serialized_diff
+            .pointer("/before/returned_end_line")
+            .is_none()
+    );
+    assert!(
+        serialized_diff
+            .pointer("/after/returned_end_line")
+            .is_none()
+    );
     assert!(diff.result_complete);
     assert_response_token_accounting!(diff, Tokenizer::default());
 
@@ -7850,6 +7866,19 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
         log.commits
             .iter()
             .all(|commit| commit.subject != "update unrelated")
+    );
+    assert_eq!(
+        log.symbol
+            .as_ref()
+            .expect("symbol log endpoint")
+            .returned_end_line,
+        0
+    );
+    assert!(
+        serde_json::to_value(&log)
+            .expect("serialize symbol log")
+            .pointer("/symbol/returned_end_line")
+            .is_none()
     );
     assert_response_token_accounting!(log, Tokenizer::default());
 
@@ -7938,7 +7967,7 @@ async fn symbol_history_resolves_qualified_names_and_absent_diff_endpoints() {
     .expect("head service");
     std::fs::write(
         root.path().join("src/added.rs"),
-        "pub fn introduced_endpoint() -> bool { true }\n",
+        "pub fn introduced_endpoint() -> bool { true }",
     )
     .expect("added source");
     std::fs::remove_file(root.path().join("src/deleted.rs")).expect("delete source");
@@ -7995,6 +8024,31 @@ async fn symbol_history_resolves_qualified_names_and_absent_diff_endpoints() {
             .any(|commit| commit.subject == "change symbol endpoints")
     );
 
+    let added_read = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::ReadSymbol {
+                path: "src/added.rs".into(),
+                symbol: "introduced_endpoint".into(),
+                revision: head.clone(),
+            },
+            max_results: None,
+            max_tokens: Some(500),
+        })
+        .await
+        .expect("read symbol from file without final newline");
+    let added_raw = added_read.symbol.as_ref().expect("added raw symbol");
+    assert_eq!(
+        added_raw.content.as_deref(),
+        Some("pub fn introduced_endpoint() -> bool { true }")
+    );
+    let added_raw_hash = added_raw.content_hash.clone();
+    assert!(
+        serde_json::to_value(&added_read)
+            .expect("serialize raw historical read")
+            .pointer("/symbol/returned_end_line")
+            .is_some()
+    );
+
     let added_symbol = services
         .history(HistoryRequest {
             operation: HistoryOperation::DiffSymbol {
@@ -8037,6 +8091,19 @@ async fn symbol_history_resolves_qualified_names_and_absent_diff_endpoints() {
             .expect("added symbol patch")
             .contains("+pub fn evaluate_read_receipt() -> bool { true }")
     );
+    assert!(
+        !added_symbol
+            .diff
+            .as_deref()
+            .expect("added symbol patch")
+            .contains("\\ No newline at end of file")
+    );
+    assert!(
+        serde_json::to_value(&added_symbol)
+            .expect("serialize added nested symbol")
+            .pointer("/after/returned_end_line")
+            .is_none()
+    );
 
     let added_file = services
         .history(HistoryRequest {
@@ -8059,6 +8126,22 @@ async fn symbol_history_resolves_qualified_names_and_absent_diff_endpoints() {
             .map(|change| change.kind),
         Some(DiffSymbolChangeKind::Added)
     );
+    let added_endpoint = added_file.after.as_ref().expect("added endpoint");
+    assert_eq!(added_endpoint.returned_end_line, 0);
+    assert_eq!(added_endpoint.content_hash, added_raw_hash);
+    assert!(
+        !added_file
+            .diff
+            .as_deref()
+            .expect("added file patch")
+            .contains("\\ No newline at end of file")
+    );
+    assert!(
+        serde_json::to_value(&added_file)
+            .expect("serialize added file diff")
+            .pointer("/after/returned_end_line")
+            .is_none()
+    );
     assert!(added_file.result_complete);
 
     let truncated_added_file = services
@@ -8078,6 +8161,12 @@ async fn symbol_history_resolves_qualified_names_and_absent_diff_endpoints() {
     assert!(!truncated_added_file.result_complete);
     assert!(truncated_added_file.before.is_none());
     assert!(truncated_added_file.after.is_some());
+    assert!(
+        serde_json::to_value(&truncated_added_file)
+            .expect("serialize truncated added file diff")
+            .pointer("/after/returned_end_line")
+            .is_none()
+    );
     assert_eq!(
         truncated_added_file
             .semantic_change
@@ -8120,6 +8209,19 @@ async fn symbol_history_resolves_qualified_names_and_absent_diff_endpoints() {
             .as_deref()
             .expect("deleted symbol patch")
             .contains("-pub fn deleted_endpoint() -> bool { true }")
+    );
+    assert!(
+        !deleted_file
+            .diff
+            .as_deref()
+            .expect("deleted symbol patch")
+            .contains("\\ No newline at end of file")
+    );
+    assert!(
+        serde_json::to_value(&deleted_file)
+            .expect("serialize deleted file diff")
+            .pointer("/before/returned_end_line")
+            .is_none()
     );
     assert_response_token_accounting!(deleted_file, Tokenizer::default());
 

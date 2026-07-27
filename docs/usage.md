@@ -622,8 +622,13 @@ symbol absent at both endpoints remains a typed `symbol_not_found` error.
 truncation is explicit through `result_complete`, `HistoricalSymbol.truncated`,
 or `diff_truncated`. `max_results` defaults to 20 and is capped at 100 for
 `symbol_log`. Symbol metadata includes the resolved 12-character revision,
-complete line range, kind, parent, and full-content hash. This tool deliberately
-has no index consistency mode because Git objects are immutable.
+complete line range, kind, parent, and full-content hash. `returned_end_line`
+exists only when `content` is returned; metadata-only diff endpoints and symbol
+logs omit that range instead of reporting line zero. Symbol diffs normalize only
+their private comparison buffers, so parser slices do not manufacture a
+whole-file no-newline marker and the returned content and hash remain unchanged.
+This tool deliberately has no index consistency mode because Git objects are
+immutable.
 
 `diff_symbol` also returns `semantic_change` when the matched symbol content
 differs. The receipt classifies the change as `modified`, distinguishes
