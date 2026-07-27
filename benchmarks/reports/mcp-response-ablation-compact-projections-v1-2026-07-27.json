@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "experiment": "compact-projections-v1",
+  "source_revision": "da2da4d16b63cb9abd6efaf8b92fe5d65a9d05da",
+  "source_dirty": false,
+  "build_profile": "release",
+  "operating_system": "linux",
+  "architecture": "x86_64",
+  "manifest_blake3": "810ab7e6ae1bfdb408411da5f568adfb9826059f44eb0e699f91016d635a6ee0",
+  "fixture_tree_blake3": "ca7d364bbeed76efdc34ac8646d44da96580322e351f531b22106b25ff310131",
+  "tokenizer": "cl100k_base",
+  "token_count_exact": true,
+  "visible_entries": 19,
+  "generated_reference_callers": 64,
+  "files": {
+    "baseline_total_response_tokens": 404,
+    "compact_total_response_tokens": 175,
+    "complete_response_token_delta": -229,
+    "baseline_source_tokens": 0,
+    "compact_source_tokens": 0,
+    "membership_or_concept_parity": true,
+    "verifiable": true,
+    "baseline_retry_proxy": 0,
+    "compact_retry_proxy": 0
+  },
+  "outline": {
+    "baseline_total_response_tokens": 3536,
+    "compact_total_response_tokens": 2770,
+    "complete_response_token_delta": -766,
+    "baseline_source_tokens": 698,
+    "compact_source_tokens": 696,
+    "membership_or_concept_parity": true,
+    "verifiable": true,
+    "baseline_retry_proxy": 0,
+    "compact_retry_proxy": 0
+  },
+  "search": {
+    "baseline_total_response_tokens": 7011,
+    "compact_total_response_tokens": 278,
+    "complete_response_token_delta": -6733,
+    "baseline_source_tokens": 269,
+    "compact_source_tokens": 13,
+    "membership_or_concept_parity": true,
+    "verifiable": true,
+    "baseline_retry_proxy": 0,
+    "compact_retry_proxy": 0
+  },
+  "aggregate_baseline_tokens": 10951,
+  "aggregate_compact_tokens": 3223,
+  "aggregate_token_delta": -7728,
+  "retry_proxy_delta": 0,
+  "acceptance": {
+    "require_default_membership_parity": true,
+    "require_verifiable_path_range_hash": true,
+    "require_zero_retry_proxy_delta": true,
+    "require_each_complete_response_token_delta_negative": true
+  },
+  "passed": true,
+  "limitations": [
+    "Frozen multilingual fixture plus one generated broad-reference file; this is not a population estimate.",
+    "Retry proxy is zero only when labeled path/symbol coverage and verification coordinates remain available.",
+    "No model executes a maintenance task, so task success outside the declared proxy is unobserved.",
+    "The experiment measures exact service DTO tokens, not provider billing or host UI framing."
+  ]
+}
