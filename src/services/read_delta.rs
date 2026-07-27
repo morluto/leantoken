@@ -60,7 +60,7 @@ impl ReadDeltaRegistry {
         tokenizer: Tokenizer,
     ) -> Result<ReadDeltaEvaluation> {
         let target_key = target_key(repository_id, request);
-        let base_hash = request.expected_hash.clone();
+        let mut base_hash = request.expected_hash.clone();
         let mut base_generation = None;
         let mut delta = None;
         let mut outcome = ReadDeltaOutcome::Full;
@@ -76,11 +76,21 @@ impl ReadDeltaRegistry {
             fallback_reason = Some(ReadDeltaFallback::CurrentTruncated);
         } else if current_content.len() > MAX_READ_DELTA_ENTRY_BYTES {
             fallback_reason = Some(ReadDeltaFallback::ContentTooLarge);
-        } else if let Some(expected_hash) = request.expected_hash.as_deref() {
-            let base = self.lookup(&target_key, expected_hash)?;
-            if let Some(base) = base {
+        } else {
+            let base = if let Some(expected_hash) = request.expected_hash.as_deref() {
+                self.lookup(&target_key, expected_hash)?
+                    .map(|entry| (expected_hash.to_owned(), entry))
+            } else {
+                self.lookup_latest(&target_key)?
+            };
+            if let Some((selected_hash, base)) = base {
+                base_hash = Some(selected_hash);
                 base_generation = Some(base.generation);
-                if target_coordinates_changed(&base, response) {
+                if base_hash.as_deref() == Some(response.content_hash.as_str()) {
+                    outcome = ReadDeltaOutcome::NotModified;
+                    delta_tokens = Some(0);
+                    avoided_tokens = full_tokens;
+                } else if target_coordinates_changed(&base, response) {
                     fallback_reason = Some(ReadDeltaFallback::TargetChanged);
                 } else {
                     let full_delta = TextDiff::from_lines(base.content.as_str(), current_content)
@@ -164,6 +174,24 @@ impl ReadDeltaRegistry {
                 content_hash: content_hash.to_owned(),
             })
             .cloned())
+    }
+
+    fn lookup_latest(&self, target_key: &str) -> Result<Option<(String, CacheEntry)>> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InternalFailure("read delta registry poisoned".into()))?;
+        prune_expired(&mut state, Instant::now());
+        Ok(state.insertion_order.iter().rev().find_map(|key| {
+            if key.target_key != target_key {
+                return None;
+            }
+            state
+                .entries
+                .get(key)
+                .cloned()
+                .map(|entry| (key.content_hash.clone(), entry))
+        }))
     }
 
     fn insert(&self, key: CacheKey, entry: CacheEntry) -> Result<()> {
@@ -387,6 +415,42 @@ mod tests {
         assert_eq!(stored.generation, 2);
         assert_eq!(stored.target_start_line, 10);
         assert_eq!(stored.target_end_line, 12);
+    }
+
+    #[test]
+    fn registry_selects_the_latest_base_for_one_exact_target() {
+        let registry = ReadDeltaRegistry::default();
+        for (target, hash, generation) in [
+            ("target", "old", 1),
+            ("other", "unrelated", 9),
+            ("target", "latest", 2),
+        ] {
+            let mut candidate = entry(hash, Instant::now());
+            candidate.generation = generation;
+            registry
+                .insert(
+                    CacheKey {
+                        target_key: target.into(),
+                        content_hash: hash.into(),
+                    },
+                    candidate,
+                )
+                .expect("insert delta base");
+        }
+
+        let (hash, latest) = registry
+            .lookup_latest("target")
+            .expect("latest lookup")
+            .expect("matching target");
+        assert_eq!(hash, "latest");
+        assert_eq!(latest.generation, 2);
+        assert_eq!(latest.content, "latest");
+        assert!(
+            registry
+                .lookup_latest("missing")
+                .expect("missing lookup")
+                .is_none()
+        );
     }
 
     #[test]

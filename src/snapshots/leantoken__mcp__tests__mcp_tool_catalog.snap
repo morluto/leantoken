@@ -1331,7 +1331,7 @@ expression: tools
   },
   {
     "name": "read",
-    "description": "Preferred exact source and Markdown section reader instead of cat, head, or sed. Keep path as a file path; put the owner separately in target. Exact target shapes include {\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}, {\"kind\":\"heading\",\"name\":\"## Performance\",\"occurrence\":2}, and {\"kind\":\"lines\",\"start\":120,\"end\":160}. Heading targets accept an exact rendered title or outline signature. Reuse content_hash as expected_hash to suppress unchanged source. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}.",
+    "description": "Preferred exact source and Markdown section reader instead of cat, head, or sed. Keep path as a file path; put the owner separately in target. Exact target shapes include {\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}, {\"kind\":\"heading\",\"name\":\"## Performance\",\"occurrence\":2}, and {\"kind\":\"lines\",\"start\":120,\"end\":160}. Heading targets accept an exact rendered title or outline signature. Set delta=true to reuse the latest compatible base for the exact target; unchanged content returns not_modified. Pass expected_hash to require one explicit base. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}.",
     "inputSchema": {
       "$defs": {
         "ReadMcpTarget": {
@@ -1451,7 +1451,7 @@ expression: tools
         },
         "delta": {
           "default": false,
-          "description": "Record this target and prefer a cheaper complete delta on changed follow-ups.",
+          "description": "Record this target and prefer a cheaper follow-up. Without `expected_hash`,\nselect the latest compatible base for this exact target.",
           "type": "boolean"
         },
         "expected_hash": {

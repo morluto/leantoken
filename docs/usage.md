@@ -608,10 +608,12 @@ Reads an exact source range.
 - `expected_hash` returns `not_modified` without source when it matches the
   hash from the same prior target.
 - `delta: true` records a complete, non-truncated target as a bounded future
-  base. On a changed follow-up, pass the prior `content_hash` as
-  `expected_hash` and keep `delta: true`. The response uses `status: "delta"`
-  and the `delta` field only when the complete unified diff costs fewer source
-  tokens than full current content.
+  base. When `expected_hash` is absent, a follow-up automatically selects the
+  newest base for the same repository and exact target. Unchanged content
+  returns `status: "not_modified"`; changed content uses `status: "delta"` and
+  the `delta` field only when the complete unified diff costs fewer source
+  tokens than full current content. Pass `expected_hash` to require one
+  explicit prior hash instead.
 
 `content_hash` identifies the returned range. `indexed_hash` identifies the
 whole indexed file. `index_stale` is true when the live file differs from the
@@ -622,18 +624,21 @@ indexed version (for example after an edit that has not been reindexed yet).
 `continuation_cursor` fail loudly whenever source remains. Continuation cursors
 are bound to the repository generation, path, and live full-file hash, so a
 stale cursor cannot combine pages from different file versions.
-`delta_receipt` reports the stable target key, base and head hashes and
+`delta_receipt` reports the stable target key, selected base and head hashes and
 generations, full and delta token counts, avoided tokens, and any explicit
 fallback reason. Missing bases, changed target coordinates, truncated or
 oversized content, and uneconomic diffs return full content. Delta state is
 in-memory and repository-local, expires after 30 minutes, and is bounded to
-128 entries, 512 KiB per entry, and 8 MiB of retained content. It never applies
+128 entries, 512 KiB per entry, and 8 MiB of retained content. Latest-base
+selection scans only those 128 insertion-order keys in reverse and never
+creates an additional unbounded index. It never applies
 to ranked context fragments or continuation cursors.
 
-`status: "not_modified"` means `expected_hash` matched. The distinct
-`status: "receipt_suppressed"` means a server-managed evidence receipt already
-contained the exact current content. Changed content in an overlapping range
-is returned and added to the receipt rather than being hidden as unchanged.
+`status: "not_modified"` means either `expected_hash` or the automatically
+selected delta base matched. The distinct `status: "receipt_suppressed"` means
+a server-managed evidence receipt already contained the exact current content.
+Changed content in an overlapping range is returned and added to the receipt
+rather than being hidden as unchanged.
 `meta.repository_generation` is the committed index generation used for path
 and symbol lookup; `meta.freshness` is `reconciling` while an index operation
 is active on this cache.

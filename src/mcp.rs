@@ -785,7 +785,8 @@ struct ReadMcpRequest {
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
     expected_hash: Option<String>,
-    /// Record this target and prefer a cheaper complete delta on changed follow-ups.
+    /// Record this target and prefer a cheaper follow-up. Without `expected_hash`,
+    /// select the latest compatible base for this exact target.
     #[serde(default)]
     delta: bool,
     /// Suppress evidence already returned under this server-managed receipt.
@@ -2376,7 +2377,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "read",
-        description = "Preferred exact source and Markdown section reader instead of cat, head, or sed. Keep path as a file path; put the owner separately in target. Exact target shapes include {\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}, {\"kind\":\"heading\",\"name\":\"## Performance\",\"occurrence\":2}, and {\"kind\":\"lines\",\"start\":120,\"end\":160}. Heading targets accept an exact rendered title or outline signature. Reuse content_hash as expected_hash to suppress unchanged source. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}."
+        description = "Preferred exact source and Markdown section reader instead of cat, head, or sed. Keep path as a file path; put the owner separately in target. Exact target shapes include {\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}, {\"kind\":\"heading\",\"name\":\"## Performance\",\"occurrence\":2}, and {\"kind\":\"lines\",\"start\":120,\"end\":160}. Heading targets accept an exact rendered title or outline signature. Set delta=true to reuse the latest compatible base for the exact target; unchanged content returns not_modified. Pass expected_hash to require one explicit base. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}."
     )]
     async fn leantoken_read(
         &self,

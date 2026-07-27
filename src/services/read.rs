@@ -997,7 +997,14 @@ impl Services {
                 materialized.current_tokens,
                 self.config.tokenizer,
             )?;
-            if let Some(delta) = evaluation.delta {
+            if evaluation.receipt.outcome == ReadDeltaOutcome::NotModified {
+                response.status = ReadStatus::NotModified;
+                response.not_modified = true;
+                response.content = None;
+                response.delta = None;
+                response.meta.source_tokens = 0;
+                response.meta.emitted_tokens = 0;
+            } else if let Some(delta) = evaluation.delta {
                 let emitted_tokens = evaluation
                     .receipt
                     .delta_tokens
@@ -1073,7 +1080,7 @@ impl Services {
             TokenAccountingOperation::Read,
             Some(materialized.baseline_source_tokens),
             &response.meta,
-            if expected_hash_not_modified {
+            if response.not_modified {
                 TokenSavingsRequestClass::HashSuppressed
             } else if matches!(
                 &response.status,
@@ -1083,6 +1090,7 @@ impl Services {
             } else {
                 TokenSavingsRequestClass::Useful
             },
+            expected_hash_not_modified,
             if expected_hash_not_modified {
                 materialized.baseline_source_tokens
             } else {

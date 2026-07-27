@@ -6801,6 +6801,153 @@ async fn read_delta_returns_a_complete_strictly_cheaper_edit() {
 }
 
 #[tokio::test]
+async fn read_delta_automatically_uses_the_latest_exact_target_base() {
+    let source = (1..=80)
+        .map(|line| format!("let value_{line} = compute_value({line});\n"))
+        .collect::<String>();
+    let (root, services) = indexed_source("latest.rs", source.as_bytes()).await;
+    let savings_base = services
+        .observed_token_savings_snapshot(None)
+        .await
+        .expect("savings base");
+    let request = || ReadRequest {
+        path: "latest.rs".into(),
+        start_line: None,
+        end_line: None,
+        symbol: None,
+        heading: None,
+        heading_occurrence: None,
+        continuation_cursor: None,
+        max_tokens: Some(32_000),
+        expected_hash: None,
+        delta: true,
+        receipt_id: None,
+    };
+
+    let first = services.read(request()).await.expect("capture latest base");
+    let first_receipt = first.delta_receipt.as_ref().expect("first receipt");
+    let first_generation = first_receipt.head_generation;
+    assert_eq!(first_receipt.outcome, ReadDeltaOutcome::Full);
+    assert_eq!(
+        first_receipt.fallback_reason,
+        Some(ReadDeltaFallback::BaseUnavailable)
+    );
+
+    let unchanged = services
+        .read(request())
+        .await
+        .expect("automatic unchanged read");
+    assert_eq!(unchanged.status, ReadStatus::NotModified);
+    assert!(unchanged.not_modified);
+    assert!(unchanged.content.is_none());
+    assert_eq!(unchanged.meta.source_tokens, 0);
+    let unchanged_receipt = unchanged.delta_receipt.as_ref().expect("unchanged receipt");
+    assert_eq!(unchanged_receipt.outcome, ReadDeltaOutcome::NotModified);
+    assert_eq!(
+        unchanged_receipt.base_hash.as_deref(),
+        Some(first.content_hash.as_str())
+    );
+    assert_eq!(
+        unchanged_receipt.base_generation,
+        Some(first_generation)
+    );
+
+    let changed_source = source.replace(
+        "let value_40 = compute_value(40);",
+        "let value_40 = compute_updated_value(40);",
+    );
+    std::fs::write(root.path().join("latest.rs"), &changed_source).expect("first edit");
+    let changed = services
+        .read(request())
+        .await
+        .expect("automatic changed read");
+    assert_eq!(changed.status, ReadStatus::Delta);
+    assert_eq!(
+        changed
+            .delta_receipt
+            .as_ref()
+            .and_then(|receipt| receipt.base_hash.as_deref()),
+        Some(first.content_hash.as_str())
+    );
+    assert!(
+        changed
+            .delta
+            .as_deref()
+            .is_some_and(|delta| delta.contains("compute_updated_value"))
+    );
+
+    let latest_hash = changed.content_hash.clone();
+    let changed_again_source = changed_source.replace(
+        "let value_60 = compute_value(60);",
+        "let value_60 = compute_updated_value(60);",
+    );
+    std::fs::write(root.path().join("latest.rs"), &changed_again_source).expect("second edit");
+    let changed_again = services
+        .read(request())
+        .await
+        .expect("latest changed read");
+    assert_eq!(changed_again.status, ReadStatus::Delta);
+    assert_eq!(
+        changed_again
+            .delta_receipt
+            .as_ref()
+            .and_then(|receipt| receipt.base_hash.as_deref()),
+        Some(latest_hash.as_str()),
+        "the second edit must use the most recently captured head"
+    );
+
+    let ordinary_source = changed_again_source.replace(
+        "let value_70 = compute_value(70);",
+        "let value_70 = compute_updated_value(70);",
+    );
+    std::fs::write(root.path().join("latest.rs"), ordinary_source).expect("ordinary edit");
+    let mut ordinary_request = request();
+    ordinary_request.delta = false;
+    let ordinary = services
+        .read(ordinary_request)
+        .await
+        .expect("ordinary read");
+    assert_eq!(ordinary.status, ReadStatus::Content);
+    assert!(ordinary.content.is_some());
+    assert!(ordinary.delta_receipt.is_none());
+
+    let after_ordinary = services
+        .read(request())
+        .await
+        .expect("delta read after ordinary read");
+    assert_eq!(after_ordinary.status, ReadStatus::Delta);
+    assert_eq!(
+        after_ordinary
+            .delta_receipt
+            .as_ref()
+            .and_then(|receipt| receipt.base_hash.as_deref()),
+        Some(changed_again.content_hash.as_str()),
+        "an ordinary read must not replace the latest opt-in delta base"
+    );
+
+    let savings = services
+        .observed_token_savings_snapshot(Some(savings_base.snapshot))
+        .await
+        .expect("read delta savings");
+    assert_eq!(
+        savings
+            .observed
+            .observations
+            .expected_hash_not_modified_responses,
+        0,
+        "automatic base selection is not an expected_hash match"
+    );
+    assert_eq!(
+        savings
+            .observed
+            .observations
+            .request_classification
+            .hash_suppressed,
+        1
+    );
+}
+
+#[tokio::test]
 async fn read_delta_does_not_capture_or_diff_a_truncated_page() {
     let source = (1..=80)
         .map(|line| format!("let value_{line} = compute_value({line});\n"))
@@ -6840,7 +6987,7 @@ async fn read_delta_does_not_capture_or_diff_a_truncated_page() {
 #[tokio::test]
 async fn read_delta_falls_back_when_the_diff_is_not_smaller() {
     let (root, services) = indexed_source("small.txt", b"alpha\n").await;
-    let first = services
+    let _first = services
         .read(ReadRequest {
             path: "small.txt".into(),
             start_line: Some(1),
@@ -6868,7 +7015,7 @@ async fn read_delta_falls_back_when_the_diff_is_not_smaller() {
             heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(100),
-            expected_hash: Some(first.content_hash),
+            expected_hash: None,
             delta: true,
             receipt_id: None,
         })
@@ -6924,7 +7071,7 @@ async fn read_delta_falls_back_when_symbol_coordinates_change() {
             heading_occurrence: None,
             continuation_cursor: None,
             max_tokens: Some(1_000),
-            expected_hash: Some(first.content_hash),
+            expected_hash: None,
             delta: true,
             receipt_id: None,
         })
@@ -6936,6 +7083,10 @@ async fn read_delta_falls_back_when_symbol_coordinates_change() {
         content.contains("new_behavior") && !content.contains("old_behavior")
     }));
     let receipt = changed.delta_receipt.expect("coordinate fallback");
+    assert_eq!(
+        receipt.base_hash.as_deref(),
+        Some(first.content_hash.as_str())
+    );
     assert_eq!(
         receipt.fallback_reason,
         Some(ReadDeltaFallback::TargetChanged)
