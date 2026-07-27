@@ -2612,103 +2612,104 @@
 <a href=#2612 id=2612 data-nosnippet>2612</a>        <span class="kw">let </span>temp = tempfile::tempdir().expect(<span class="string">"temporary directory"</span>);
 <a href=#2613 id=2613 data-nosnippet>2613</a>        <span class="kw">let </span>repository = temp.path().join(<span class="string">"repository"</span>);
 <a href=#2614 id=2614 data-nosnippet>2614</a>        fs::create_dir(<span class="kw-2">&amp;</span>repository).expect(<span class="string">"repository"</span>);
-<a href=#2615 id=2615 data-nosnippet>2615</a>        <span class="kw">let </span>manager = CacheManager::new(temp.path().join(<span class="string">"managed"</span>), <span class="number">10_000</span>);
-<a href=#2616 id=2616 data-nosnippet>2616</a>        <span class="kw">let </span>(<span class="kw">_</span>, database) = create_cache_with_content_identity(
-<a href=#2617 id=2617 data-nosnippet>2617</a>            <span class="kw-2">&amp;</span>manager,
-<a href=#2618 id=2618 data-nosnippet>2618</a>            <span class="kw-2">&amp;</span>repository,
-<a href=#2619 id=2619 data-nosnippet>2619</a>            <span class="number">9_000</span>,
-<a href=#2620 id=2620 data-nosnippet>2620</a>            <span class="prelude-val">Some</span>(INDEX_CONTENT_VERSION - <span class="number">1</span>),
-<a href=#2621 id=2621 data-nosnippet>2621</a>        );
-<a href=#2622 id=2622 data-nosnippet>2622</a>        <span class="kw">let </span>config =
-<a href=#2623 id=2623 data-nosnippet>2623</a>            Config::discover(<span class="kw-2">&amp;</span>repository, <span class="prelude-val">Some</span>(database.clone())).expect(<span class="string">"active cache config"</span>);
-<a href=#2624 id=2624 data-nosnippet>2624</a>        <span class="kw">let </span>services = Services::open(config).expect(<span class="string">"active cache service"</span>);
-<a href=#2625 id=2625 data-nosnippet>2625</a>        <span class="kw">let </span>request = CachePruneV2Request {
-<a href=#2626 id=2626 data-nosnippet>2626</a>            request: request(),
-<a href=#2627 id=2627 data-nosnippet>2627</a>            incompatible_with_current: <span class="bool-val">true</span>,
-<a href=#2628 id=2628 data-nosnippet>2628</a>        };
-<a href=#2629 id=2629 data-nosnippet>2629</a>
-<a href=#2630 id=2630 data-nosnippet>2630</a>        <span class="kw">let </span>listed = manager
-<a href=#2631 id=2631 data-nosnippet>2631</a>            .list_v2_with(<span class="kw-2">&amp;</span>CacheListV2Request::default())
-<a href=#2632 id=2632 data-nosnippet>2632</a>            .expect(<span class="string">"active compatibility summary"</span>);
-<a href=#2633 id=2633 data-nosnippet>2633</a>        <span class="macro">assert_eq!</span>(listed.compatibility_counts[<span class="string">"obsolete_older"</span>].entries, <span class="number">1</span>);
-<a href=#2634 id=2634 data-nosnippet>2634</a>        <span class="macro">assert_eq!</span>(listed.safely_reclaimable_incompatible_entries, <span class="number">0</span>);
-<a href=#2635 id=2635 data-nosnippet>2635</a>        <span class="macro">assert_eq!</span>(listed.safely_reclaimable_incompatible_bytes, <span class="number">0</span>);
-<a href=#2636 id=2636 data-nosnippet>2636</a>
-<a href=#2637 id=2637 data-nosnippet>2637</a>        <span class="kw">let </span>active = manager.prune_v2(<span class="kw-2">&amp;</span>request).expect(<span class="string">"active prune plan"</span>);
-<a href=#2638 id=2638 data-nosnippet>2638</a>        <span class="macro">assert_eq!</span>(active.results[<span class="number">0</span>].action, CachePruneAction::SkippedActive);
-<a href=#2639 id=2639 data-nosnippet>2639</a>        <span class="macro">assert!</span>(database.exists());
-<a href=#2640 id=2640 data-nosnippet>2640</a>
-<a href=#2641 id=2641 data-nosnippet>2641</a>        drop(services);
-<a href=#2642 id=2642 data-nosnippet>2642</a>        <span class="kw">let </span>inactive = manager.prune_v2(<span class="kw-2">&amp;</span>request).expect(<span class="string">"inactive prune plan"</span>);
-<a href=#2643 id=2643 data-nosnippet>2643</a>        <span class="macro">assert_eq!</span>(inactive.results[<span class="number">0</span>].action, CachePruneAction::WouldDelete);
-<a href=#2644 id=2644 data-nosnippet>2644</a>        <span class="macro">assert!</span>(database.exists());
-<a href=#2645 id=2645 data-nosnippet>2645</a>    }
-<a href=#2646 id=2646 data-nosnippet>2646</a>
-<a href=#2647 id=2647 data-nosnippet>2647</a>    <span class="attr">#[test]
-<a href=#2648 id=2648 data-nosnippet>2648</a>    </span><span class="kw">fn </span>stale_cache_is_deleted_after_age_and_confirmation() {
-<a href=#2649 id=2649 data-nosnippet>2649</a>        <span class="kw">let </span>temp = tempfile::tempdir().expect(<span class="string">"temporary directory"</span>);
-<a href=#2650 id=2650 data-nosnippet>2650</a>        <span class="kw">let </span>repository = temp.path().join(<span class="string">"repository"</span>);
-<a href=#2651 id=2651 data-nosnippet>2651</a>        fs::create_dir(<span class="kw-2">&amp;</span>repository).expect(<span class="string">"repository"</span>);
-<a href=#2652 id=2652 data-nosnippet>2652</a>        <span class="kw">let </span>manager = CacheManager::new(temp.path().join(<span class="string">"managed"</span>), <span class="number">40 </span>* SECONDS_PER_DAY);
-<a href=#2653 id=2653 data-nosnippet>2653</a>        <span class="kw">let </span>(id, database) = create_current_cache(<span class="kw-2">&amp;</span>manager, <span class="kw-2">&amp;</span>repository, SECONDS_PER_DAY);
-<a href=#2654 id=2654 data-nosnippet>2654</a>        <span class="kw">let </span><span class="kw-2">mut </span>prune = request();
-<a href=#2655 id=2655 data-nosnippet>2655</a>        prune.older_than_days = <span class="prelude-val">Some</span>(<span class="number">30</span>);
-<a href=#2656 id=2656 data-nosnippet>2656</a>        prune.dry_run = <span class="bool-val">false</span>;
-<a href=#2657 id=2657 data-nosnippet>2657</a>        prune.yes = <span class="bool-val">true</span>;
-<a href=#2658 id=2658 data-nosnippet>2658</a>
-<a href=#2659 id=2659 data-nosnippet>2659</a>        <span class="kw">let </span>report = manager.prune(<span class="kw-2">&amp;</span>prune).expect(<span class="string">"prune stale cache"</span>);
-<a href=#2660 id=2660 data-nosnippet>2660</a>
-<a href=#2661 id=2661 data-nosnippet>2661</a>        <span class="kw">let </span>result = report
-<a href=#2662 id=2662 data-nosnippet>2662</a>            .results
-<a href=#2663 id=2663 data-nosnippet>2663</a>            .iter()
-<a href=#2664 id=2664 data-nosnippet>2664</a>            .find(|result| result.id == id)
-<a href=#2665 id=2665 data-nosnippet>2665</a>            .expect(<span class="string">"stale result"</span>);
-<a href=#2666 id=2666 data-nosnippet>2666</a>        <span class="macro">assert_eq!</span>(result.action, CachePruneAction::Deleted);
-<a href=#2667 id=2667 data-nosnippet>2667</a>        <span class="macro">assert_eq!</span>(result.reasons, [<span class="string">"older_than"</span>]);
-<a href=#2668 id=2668 data-nosnippet>2668</a>        <span class="macro">assert!</span>(!database.exists());
-<a href=#2669 id=2669 data-nosnippet>2669</a>        <span class="macro">assert!</span>(database.with_extension(<span class="string">"sqlite.lease.lock"</span>).exists());
-<a href=#2670 id=2670 data-nosnippet>2670</a>    }
-<a href=#2671 id=2671 data-nosnippet>2671</a>
-<a href=#2672 id=2672 data-nosnippet>2672</a>    <span class="attr">#[test]
-<a href=#2673 id=2673 data-nosnippet>2673</a>    </span><span class="kw">fn </span>explicit_database_outside_managed_root_is_never_considered() {
-<a href=#2674 id=2674 data-nosnippet>2674</a>        <span class="kw">let </span>temp = tempfile::tempdir().expect(<span class="string">"temporary directory"</span>);
-<a href=#2675 id=2675 data-nosnippet>2675</a>        <span class="kw">let </span>repository = temp.path().join(<span class="string">"repository"</span>);
-<a href=#2676 id=2676 data-nosnippet>2676</a>        fs::create_dir(<span class="kw-2">&amp;</span>repository).expect(<span class="string">"repository"</span>);
-<a href=#2677 id=2677 data-nosnippet>2677</a>        <span class="kw">let </span>explicit = temp.path().join(<span class="string">"explicit.sqlite"</span>);
-<a href=#2678 id=2678 data-nosnippet>2678</a>        <span class="kw">let </span>config = Config::discover(<span class="kw-2">&amp;</span>repository, <span class="prelude-val">Some</span>(explicit.clone())).expect(<span class="string">"config"</span>);
-<a href=#2679 id=2679 data-nosnippet>2679</a>        drop(Services::open(config).expect(<span class="string">"services"</span>));
-<a href=#2680 id=2680 data-nosnippet>2680</a>        <span class="kw">let </span>manager = CacheManager::new(temp.path().join(<span class="string">"managed"</span>), <span class="number">10_000</span>);
-<a href=#2681 id=2681 data-nosnippet>2681</a>
-<a href=#2682 id=2682 data-nosnippet>2682</a>        <span class="macro">assert!</span>(manager.list().expect(<span class="string">"cache list"</span>).entries.is_empty());
-<a href=#2683 id=2683 data-nosnippet>2683</a>        <span class="kw">let </span><span class="kw-2">mut </span>prune = request();
-<a href=#2684 id=2684 data-nosnippet>2684</a>        prune.max_total_bytes = <span class="prelude-val">Some</span>(<span class="number">1</span>);
-<a href=#2685 id=2685 data-nosnippet>2685</a>        <span class="macro">assert!</span>(manager.prune(<span class="kw-2">&amp;</span>prune).expect(<span class="string">"prune"</span>).results.is_empty());
-<a href=#2686 id=2686 data-nosnippet>2686</a>        <span class="macro">assert!</span>(explicit.exists());
-<a href=#2687 id=2687 data-nosnippet>2687</a>    }
-<a href=#2688 id=2688 data-nosnippet>2688</a>
-<a href=#2689 id=2689 data-nosnippet>2689</a>    <span class="attr">#[test]
-<a href=#2690 id=2690 data-nosnippet>2690</a>    </span><span class="kw">fn </span>prune_requires_an_explicit_policy_and_mutation_consent() {
-<a href=#2691 id=2691 data-nosnippet>2691</a>        <span class="kw">let </span>temp = tempfile::tempdir().expect(<span class="string">"temporary directory"</span>);
-<a href=#2692 id=2692 data-nosnippet>2692</a>        <span class="kw">let </span>manager = CacheManager::new(temp.path().join(<span class="string">"managed"</span>), <span class="number">10_000</span>);
-<a href=#2693 id=2693 data-nosnippet>2693</a>        <span class="kw">let </span>empty = request();
-<a href=#2694 id=2694 data-nosnippet>2694</a>        <span class="macro">assert!</span>(
-<a href=#2695 id=2695 data-nosnippet>2695</a>            manager
-<a href=#2696 id=2696 data-nosnippet>2696</a>                .prune(<span class="kw-2">&amp;</span>empty)
-<a href=#2697 id=2697 data-nosnippet>2697</a>                .unwrap_err()
-<a href=#2698 id=2698 data-nosnippet>2698</a>                .to_string()
-<a href=#2699 id=2699 data-nosnippet>2699</a>                .contains(<span class="string">"requires --older-than"</span>)
-<a href=#2700 id=2700 data-nosnippet>2700</a>        );
-<a href=#2701 id=2701 data-nosnippet>2701</a>
-<a href=#2702 id=2702 data-nosnippet>2702</a>        <span class="kw">let </span><span class="kw-2">mut </span>mutation = request();
-<a href=#2703 id=2703 data-nosnippet>2703</a>        mutation.max_total_bytes = <span class="prelude-val">Some</span>(<span class="number">1</span>);
-<a href=#2704 id=2704 data-nosnippet>2704</a>        mutation.dry_run = <span class="bool-val">false</span>;
-<a href=#2705 id=2705 data-nosnippet>2705</a>        <span class="macro">assert!</span>(
-<a href=#2706 id=2706 data-nosnippet>2706</a>            manager
-<a href=#2707 id=2707 data-nosnippet>2707</a>                .prune(<span class="kw-2">&amp;</span>mutation)
-<a href=#2708 id=2708 data-nosnippet>2708</a>                .unwrap_err()
-<a href=#2709 id=2709 data-nosnippet>2709</a>                .to_string()
-<a href=#2710 id=2710 data-nosnippet>2710</a>                .contains(<span class="string">"requires --yes"</span>)
-<a href=#2711 id=2711 data-nosnippet>2711</a>        );
-<a href=#2712 id=2712 data-nosnippet>2712</a>    }
-<a href=#2713 id=2713 data-nosnippet>2713</a>}
+<a href=#2615 id=2615 data-nosnippet>2615</a>        <span class="kw">let </span>repository = repository.canonicalize().expect(<span class="string">"canonical repository"</span>);
+<a href=#2616 id=2616 data-nosnippet>2616</a>        <span class="kw">let </span>manager = CacheManager::new(temp.path().join(<span class="string">"managed"</span>), <span class="number">10_000</span>);
+<a href=#2617 id=2617 data-nosnippet>2617</a>        <span class="kw">let </span>(<span class="kw">_</span>, database) = create_cache_with_content_identity(
+<a href=#2618 id=2618 data-nosnippet>2618</a>            <span class="kw-2">&amp;</span>manager,
+<a href=#2619 id=2619 data-nosnippet>2619</a>            <span class="kw-2">&amp;</span>repository,
+<a href=#2620 id=2620 data-nosnippet>2620</a>            <span class="number">9_000</span>,
+<a href=#2621 id=2621 data-nosnippet>2621</a>            <span class="prelude-val">Some</span>(INDEX_CONTENT_VERSION - <span class="number">1</span>),
+<a href=#2622 id=2622 data-nosnippet>2622</a>        );
+<a href=#2623 id=2623 data-nosnippet>2623</a>        <span class="kw">let </span>config =
+<a href=#2624 id=2624 data-nosnippet>2624</a>            Config::discover(<span class="kw-2">&amp;</span>repository, <span class="prelude-val">Some</span>(database.clone())).expect(<span class="string">"active cache config"</span>);
+<a href=#2625 id=2625 data-nosnippet>2625</a>        <span class="kw">let </span>services = Services::open(config).expect(<span class="string">"active cache service"</span>);
+<a href=#2626 id=2626 data-nosnippet>2626</a>        <span class="kw">let </span>request = CachePruneV2Request {
+<a href=#2627 id=2627 data-nosnippet>2627</a>            request: request(),
+<a href=#2628 id=2628 data-nosnippet>2628</a>            incompatible_with_current: <span class="bool-val">true</span>,
+<a href=#2629 id=2629 data-nosnippet>2629</a>        };
+<a href=#2630 id=2630 data-nosnippet>2630</a>
+<a href=#2631 id=2631 data-nosnippet>2631</a>        <span class="kw">let </span>listed = manager
+<a href=#2632 id=2632 data-nosnippet>2632</a>            .list_v2_with(<span class="kw-2">&amp;</span>CacheListV2Request::default())
+<a href=#2633 id=2633 data-nosnippet>2633</a>            .expect(<span class="string">"active compatibility summary"</span>);
+<a href=#2634 id=2634 data-nosnippet>2634</a>        <span class="macro">assert_eq!</span>(listed.compatibility_counts[<span class="string">"obsolete_older"</span>].entries, <span class="number">1</span>);
+<a href=#2635 id=2635 data-nosnippet>2635</a>        <span class="macro">assert_eq!</span>(listed.safely_reclaimable_incompatible_entries, <span class="number">0</span>);
+<a href=#2636 id=2636 data-nosnippet>2636</a>        <span class="macro">assert_eq!</span>(listed.safely_reclaimable_incompatible_bytes, <span class="number">0</span>);
+<a href=#2637 id=2637 data-nosnippet>2637</a>
+<a href=#2638 id=2638 data-nosnippet>2638</a>        <span class="kw">let </span>active = manager.prune_v2(<span class="kw-2">&amp;</span>request).expect(<span class="string">"active prune plan"</span>);
+<a href=#2639 id=2639 data-nosnippet>2639</a>        <span class="macro">assert_eq!</span>(active.results[<span class="number">0</span>].action, CachePruneAction::SkippedActive);
+<a href=#2640 id=2640 data-nosnippet>2640</a>        <span class="macro">assert!</span>(database.exists());
+<a href=#2641 id=2641 data-nosnippet>2641</a>
+<a href=#2642 id=2642 data-nosnippet>2642</a>        drop(services);
+<a href=#2643 id=2643 data-nosnippet>2643</a>        <span class="kw">let </span>inactive = manager.prune_v2(<span class="kw-2">&amp;</span>request).expect(<span class="string">"inactive prune plan"</span>);
+<a href=#2644 id=2644 data-nosnippet>2644</a>        <span class="macro">assert_eq!</span>(inactive.results[<span class="number">0</span>].action, CachePruneAction::WouldDelete);
+<a href=#2645 id=2645 data-nosnippet>2645</a>        <span class="macro">assert!</span>(database.exists());
+<a href=#2646 id=2646 data-nosnippet>2646</a>    }
+<a href=#2647 id=2647 data-nosnippet>2647</a>
+<a href=#2648 id=2648 data-nosnippet>2648</a>    <span class="attr">#[test]
+<a href=#2649 id=2649 data-nosnippet>2649</a>    </span><span class="kw">fn </span>stale_cache_is_deleted_after_age_and_confirmation() {
+<a href=#2650 id=2650 data-nosnippet>2650</a>        <span class="kw">let </span>temp = tempfile::tempdir().expect(<span class="string">"temporary directory"</span>);
+<a href=#2651 id=2651 data-nosnippet>2651</a>        <span class="kw">let </span>repository = temp.path().join(<span class="string">"repository"</span>);
+<a href=#2652 id=2652 data-nosnippet>2652</a>        fs::create_dir(<span class="kw-2">&amp;</span>repository).expect(<span class="string">"repository"</span>);
+<a href=#2653 id=2653 data-nosnippet>2653</a>        <span class="kw">let </span>manager = CacheManager::new(temp.path().join(<span class="string">"managed"</span>), <span class="number">40 </span>* SECONDS_PER_DAY);
+<a href=#2654 id=2654 data-nosnippet>2654</a>        <span class="kw">let </span>(id, database) = create_current_cache(<span class="kw-2">&amp;</span>manager, <span class="kw-2">&amp;</span>repository, SECONDS_PER_DAY);
+<a href=#2655 id=2655 data-nosnippet>2655</a>        <span class="kw">let </span><span class="kw-2">mut </span>prune = request();
+<a href=#2656 id=2656 data-nosnippet>2656</a>        prune.older_than_days = <span class="prelude-val">Some</span>(<span class="number">30</span>);
+<a href=#2657 id=2657 data-nosnippet>2657</a>        prune.dry_run = <span class="bool-val">false</span>;
+<a href=#2658 id=2658 data-nosnippet>2658</a>        prune.yes = <span class="bool-val">true</span>;
+<a href=#2659 id=2659 data-nosnippet>2659</a>
+<a href=#2660 id=2660 data-nosnippet>2660</a>        <span class="kw">let </span>report = manager.prune(<span class="kw-2">&amp;</span>prune).expect(<span class="string">"prune stale cache"</span>);
+<a href=#2661 id=2661 data-nosnippet>2661</a>
+<a href=#2662 id=2662 data-nosnippet>2662</a>        <span class="kw">let </span>result = report
+<a href=#2663 id=2663 data-nosnippet>2663</a>            .results
+<a href=#2664 id=2664 data-nosnippet>2664</a>            .iter()
+<a href=#2665 id=2665 data-nosnippet>2665</a>            .find(|result| result.id == id)
+<a href=#2666 id=2666 data-nosnippet>2666</a>            .expect(<span class="string">"stale result"</span>);
+<a href=#2667 id=2667 data-nosnippet>2667</a>        <span class="macro">assert_eq!</span>(result.action, CachePruneAction::Deleted);
+<a href=#2668 id=2668 data-nosnippet>2668</a>        <span class="macro">assert_eq!</span>(result.reasons, [<span class="string">"older_than"</span>]);
+<a href=#2669 id=2669 data-nosnippet>2669</a>        <span class="macro">assert!</span>(!database.exists());
+<a href=#2670 id=2670 data-nosnippet>2670</a>        <span class="macro">assert!</span>(database.with_extension(<span class="string">"sqlite.lease.lock"</span>).exists());
+<a href=#2671 id=2671 data-nosnippet>2671</a>    }
+<a href=#2672 id=2672 data-nosnippet>2672</a>
+<a href=#2673 id=2673 data-nosnippet>2673</a>    <span class="attr">#[test]
+<a href=#2674 id=2674 data-nosnippet>2674</a>    </span><span class="kw">fn </span>explicit_database_outside_managed_root_is_never_considered() {
+<a href=#2675 id=2675 data-nosnippet>2675</a>        <span class="kw">let </span>temp = tempfile::tempdir().expect(<span class="string">"temporary directory"</span>);
+<a href=#2676 id=2676 data-nosnippet>2676</a>        <span class="kw">let </span>repository = temp.path().join(<span class="string">"repository"</span>);
+<a href=#2677 id=2677 data-nosnippet>2677</a>        fs::create_dir(<span class="kw-2">&amp;</span>repository).expect(<span class="string">"repository"</span>);
+<a href=#2678 id=2678 data-nosnippet>2678</a>        <span class="kw">let </span>explicit = temp.path().join(<span class="string">"explicit.sqlite"</span>);
+<a href=#2679 id=2679 data-nosnippet>2679</a>        <span class="kw">let </span>config = Config::discover(<span class="kw-2">&amp;</span>repository, <span class="prelude-val">Some</span>(explicit.clone())).expect(<span class="string">"config"</span>);
+<a href=#2680 id=2680 data-nosnippet>2680</a>        drop(Services::open(config).expect(<span class="string">"services"</span>));
+<a href=#2681 id=2681 data-nosnippet>2681</a>        <span class="kw">let </span>manager = CacheManager::new(temp.path().join(<span class="string">"managed"</span>), <span class="number">10_000</span>);
+<a href=#2682 id=2682 data-nosnippet>2682</a>
+<a href=#2683 id=2683 data-nosnippet>2683</a>        <span class="macro">assert!</span>(manager.list().expect(<span class="string">"cache list"</span>).entries.is_empty());
+<a href=#2684 id=2684 data-nosnippet>2684</a>        <span class="kw">let </span><span class="kw-2">mut </span>prune = request();
+<a href=#2685 id=2685 data-nosnippet>2685</a>        prune.max_total_bytes = <span class="prelude-val">Some</span>(<span class="number">1</span>);
+<a href=#2686 id=2686 data-nosnippet>2686</a>        <span class="macro">assert!</span>(manager.prune(<span class="kw-2">&amp;</span>prune).expect(<span class="string">"prune"</span>).results.is_empty());
+<a href=#2687 id=2687 data-nosnippet>2687</a>        <span class="macro">assert!</span>(explicit.exists());
+<a href=#2688 id=2688 data-nosnippet>2688</a>    }
+<a href=#2689 id=2689 data-nosnippet>2689</a>
+<a href=#2690 id=2690 data-nosnippet>2690</a>    <span class="attr">#[test]
+<a href=#2691 id=2691 data-nosnippet>2691</a>    </span><span class="kw">fn </span>prune_requires_an_explicit_policy_and_mutation_consent() {
+<a href=#2692 id=2692 data-nosnippet>2692</a>        <span class="kw">let </span>temp = tempfile::tempdir().expect(<span class="string">"temporary directory"</span>);
+<a href=#2693 id=2693 data-nosnippet>2693</a>        <span class="kw">let </span>manager = CacheManager::new(temp.path().join(<span class="string">"managed"</span>), <span class="number">10_000</span>);
+<a href=#2694 id=2694 data-nosnippet>2694</a>        <span class="kw">let </span>empty = request();
+<a href=#2695 id=2695 data-nosnippet>2695</a>        <span class="macro">assert!</span>(
+<a href=#2696 id=2696 data-nosnippet>2696</a>            manager
+<a href=#2697 id=2697 data-nosnippet>2697</a>                .prune(<span class="kw-2">&amp;</span>empty)
+<a href=#2698 id=2698 data-nosnippet>2698</a>                .unwrap_err()
+<a href=#2699 id=2699 data-nosnippet>2699</a>                .to_string()
+<a href=#2700 id=2700 data-nosnippet>2700</a>                .contains(<span class="string">"requires --older-than"</span>)
+<a href=#2701 id=2701 data-nosnippet>2701</a>        );
+<a href=#2702 id=2702 data-nosnippet>2702</a>
+<a href=#2703 id=2703 data-nosnippet>2703</a>        <span class="kw">let </span><span class="kw-2">mut </span>mutation = request();
+<a href=#2704 id=2704 data-nosnippet>2704</a>        mutation.max_total_bytes = <span class="prelude-val">Some</span>(<span class="number">1</span>);
+<a href=#2705 id=2705 data-nosnippet>2705</a>        mutation.dry_run = <span class="bool-val">false</span>;
+<a href=#2706 id=2706 data-nosnippet>2706</a>        <span class="macro">assert!</span>(
+<a href=#2707 id=2707 data-nosnippet>2707</a>            manager
+<a href=#2708 id=2708 data-nosnippet>2708</a>                .prune(<span class="kw-2">&amp;</span>mutation)
+<a href=#2709 id=2709 data-nosnippet>2709</a>                .unwrap_err()
+<a href=#2710 id=2710 data-nosnippet>2710</a>                .to_string()
+<a href=#2711 id=2711 data-nosnippet>2711</a>                .contains(<span class="string">"requires --yes"</span>)
+<a href=#2712 id=2712 data-nosnippet>2712</a>        );
+<a href=#2713 id=2713 data-nosnippet>2713</a>    }
+<a href=#2714 id=2714 data-nosnippet>2714</a>}
 </code></pre></div></section></main></body></html>
