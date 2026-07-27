@@ -18,7 +18,7 @@ use crate::mcp::McpResultMode;
 use crate::model::{
     ContextRequest, FileOperation, FilesRequest, HandoffManifestRequest, HistoryOperation,
     HistoryRequest, IndexConsistency, JsonOperation, JsonProjection, JsonRequest, JsonSelector,
-    OutlineRequest, ReadRequest, SearchMode, SearchRequest,
+    OutlineRequest, ReadRequest, SearchMode, SearchRequest, WorkflowEvidence,
 };
 use crate::setup::{SetupClient, SetupRequest};
 use crate::tokens::Tokenizer;
@@ -417,10 +417,12 @@ impl Cli {
             Commands::Context(args) => {
                 let workflow = args.workflow.into();
                 let handoff = args.handoff_request();
+                let workflow_evidence = args.workflow_evidence();
                 let max_response_tokens = args.max_response_tokens;
                 AppRequest::Context {
                     request: args.into(),
                     workflow,
+                    workflow_evidence,
                     handoff: handoff.map(Box::new),
                     max_response_tokens,
                 }
@@ -504,6 +506,7 @@ pub enum AppRequest {
     Context {
         request: ContextRequest,
         workflow: crate::model::ContextWorkflow,
+        workflow_evidence: WorkflowEvidence,
         handoff: Option<Box<HandoffManifestRequest>>,
         max_response_tokens: Option<usize>,
     },
@@ -1498,6 +1501,22 @@ pub struct ContextArgs {
     #[arg(long, value_enum, default_value = "auto")]
     pub workflow: ContextWorkflowArg,
 
+    /// Caller-observed compiler, test, runtime, or log excerpt (repeatable).
+    #[arg(long = "failure-trace")]
+    pub failure_traces: Vec<String>,
+
+    /// Caller-observed exact or qualified identifier (repeatable).
+    #[arg(long = "evidence-symbol")]
+    pub evidence_symbols: Vec<String>,
+
+    /// Caller-observed repository-relative path (repeatable).
+    #[arg(long = "evidence-path")]
+    pub evidence_paths: Vec<String>,
+
+    /// Caller-observed test name, command, or behavioral check (repeatable).
+    #[arg(long = "test-intent")]
+    pub test_intents: Vec<String>,
+
     /// Maximum source tokens across returned fragments.
     #[arg(
         short,
@@ -1590,6 +1609,14 @@ impl ContextArgs {
             summary: self.handoff_summary.clone(),
             ..HandoffManifestRequest::default()
         })
+    }
+
+    fn workflow_evidence(&self) -> WorkflowEvidence {
+        WorkflowEvidence::new()
+            .with_failure_traces(self.failure_traces.clone())
+            .with_symbols(self.evidence_symbols.clone())
+            .with_paths(self.evidence_paths.clone())
+            .with_test_intents(self.test_intents.clone())
     }
 }
 

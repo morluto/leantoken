@@ -311,16 +311,18 @@ async fn run(cli: Cli) -> Result<()> {
         AppRequest::Context {
             request,
             workflow,
+            workflow_evidence,
             handoff,
             max_response_tokens,
         } => {
             let cancellation = tokio_util::sync::CancellationToken::new();
             let options = service_call_options(max_response_tokens);
             let response = services
-                .context_with_options_workflow_consistency_cancellable(
+                .context_with_workflow_evidence_options_consistency_cancellable(
                     request,
                     handoff.map(|handoff| *handoff),
                     workflow,
+                    workflow_evidence,
                     consistency,
                     options,
                     cancellation,

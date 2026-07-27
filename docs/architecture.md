@@ -389,6 +389,7 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | Path | Bound |
 | --- | --- |
 | Context query terms | 12 (`MAX_CONTEXT_QUERIES`) |
+| Workflow-evidence items | 8 per class, 8 KiB per item, 32 KiB total |
 | Context hits per term/source | 20 symbols/refs, 30 FTS |
 | Focus patterns with local candidate generation | 32 |
 | Focused indexed files inspected per pattern | First 4 policy-eligible paths in lexical order |
@@ -431,6 +432,18 @@ Natural-language tasks retain at most two deterministic bigrams; tasks with
 technical atoms retain one bigram while reserving up to four exact-atom slots.
 This reduces sentence-order sensitivity without making query fan-out depend on
 task length.
+
+Opt-in workflow evidence shares that same 12-query ceiling and the existing
+per-query symbol, reference, and FTS hit caps. The caller may supply at most
+eight directly observed failure traces, symbols, repository-relative paths,
+and test intents per class. Each item is capped at 8 KiB and all four classes
+at 32 KiB combined. Evidence order is preserved; deterministic class quotas
+reserve lanes before the ordinary task planner fills the remaining query
+slots. Test intent contributes bounded path-prior scoring but does not trigger
+an additional executable search lane. Empty evidence delegates to the original
+planner unchanged. This contract adds no storage, filesystem scan, concurrency,
+or memory fan-out beyond the validated request payload and existing query
+bounds.
 
 Regex mode first parses a bounded HIR candidate plan. Mandatory case-sensitive
 ASCII word literals of at least three bytes become trigram `AND`/`OR`

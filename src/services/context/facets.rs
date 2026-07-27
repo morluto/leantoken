@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use crate::WorkflowEvidence;
 use crate::text::{expand_identifier, expand_terms, identifier_words};
 
 const MAX_ATOMS: usize = 16;
@@ -11,6 +12,7 @@ const MAX_NATURAL_PHRASES: usize = 2;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum FacetKind {
     ExactAtom,
+    FailureTrace,
     Symbol,
     Path,
     Behavior,
@@ -22,6 +24,7 @@ impl FacetKind {
     pub(super) const fn as_str(self) -> &'static str {
         match self {
             Self::ExactAtom => "exact_atom",
+            Self::FailureTrace => "failure_trace",
             Self::Symbol => "symbol",
             Self::Path => "path",
             Self::Behavior => "behavior",
@@ -58,6 +61,10 @@ impl ContextQuery {
 
     pub(super) fn facet_names(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.facets.iter().copied().map(FacetKind::as_str)
+    }
+
+    pub(super) fn is_generic_test_path_prior(&self) -> bool {
+        self.has_facet(FacetKind::TestIntent)
     }
 }
 
@@ -196,6 +203,99 @@ pub(super) fn plan(task: &str, limit: usize) -> FacetPlan {
         #[cfg(test)]
         facets,
         queries,
+    }
+}
+
+pub(super) fn plan_with_workflow_evidence(
+    task: &str,
+    evidence: &WorkflowEvidence,
+    limit: usize,
+) -> FacetPlan {
+    if evidence.is_empty() {
+        return plan(task, limit);
+    }
+    let mut queries = Vec::new();
+    let mut seen = HashSet::new();
+
+    for symbol in evidence.symbols.iter().take(4) {
+        let Some(value) = normalize_atom(symbol) else {
+            continue;
+        };
+        push_workflow_query(
+            &mut queries,
+            &mut seen,
+            ContextQuery {
+                fusion_key: format!("workflow:symbol:{}", value.to_ascii_lowercase()),
+                value,
+                weight: 1.25,
+                concept_weight: 1.0,
+                fuse: false,
+                facets: [FacetKind::ExactAtom, FacetKind::Symbol]
+                    .into_iter()
+                    .collect(),
+                exact_variant: true,
+            },
+            limit,
+        );
+    }
+    for path in evidence.paths.iter().take(2) {
+        push_workflow_query(
+            &mut queries,
+            &mut seen,
+            ContextQuery {
+                fusion_key: format!("workflow:path:{}", path.to_ascii_lowercase()),
+                value: path.clone(),
+                weight: 1.1,
+                concept_weight: 0.95,
+                fuse: false,
+                facets: [FacetKind::ExactAtom, FacetKind::Path]
+                    .into_iter()
+                    .collect(),
+                exact_variant: true,
+            },
+            limit,
+        );
+    }
+    for trace in evidence.failure_traces.iter().take(1) {
+        for mut query in plan(trace, 2).queries {
+            query.facets.insert(FacetKind::FailureTrace);
+            query.weight += 0.2;
+            query.concept_weight = query.concept_weight.max(0.9);
+            query.fusion_key = format!("workflow:failure_trace:{}", query.fusion_key);
+            push_workflow_query(&mut queries, &mut seen, query, limit);
+        }
+    }
+    for intent in evidence.test_intents.iter().take(1) {
+        for mut query in plan(intent, 2).queries {
+            query.facets.insert(FacetKind::TestIntent);
+            query.weight += 0.1;
+            query.concept_weight = query.concept_weight.max(0.75);
+            query.fusion_key = format!("workflow:test_intent:{}", query.fusion_key);
+            push_workflow_query(&mut queries, &mut seen, query, limit);
+        }
+    }
+    for query in plan(task, limit).queries {
+        push_workflow_query(&mut queries, &mut seen, query, limit);
+    }
+    FacetPlan {
+        #[cfg(test)]
+        facets: Vec::new(),
+        queries,
+    }
+}
+
+fn push_workflow_query(
+    queries: &mut Vec<ContextQuery>,
+    seen: &mut HashSet<String>,
+    query: ContextQuery,
+    limit: usize,
+) {
+    if queries.len() >= limit {
+        return;
+    }
+    let key = query.value.to_ascii_lowercase();
+    if seen.insert(key) {
+        queries.push(query);
     }
 }
 
@@ -982,5 +1082,46 @@ mod tests {
         );
         assert!(facet.variants.len() <= MAX_FACET_VARIANTS);
         assert!(plan.queries.len() <= 8);
+    }
+
+    #[test]
+    fn workflow_evidence_reserves_deterministic_typed_query_lanes() {
+        let evidence = WorkflowEvidence::new()
+            .with_failure_traces(["error: default_values_if is missing".to_owned()])
+            .with_symbols(["default_values_if".to_owned()])
+            .with_paths(["tests/builder/default_vals.rs".to_owned()])
+            .with_test_intents(["default values regression".to_owned()]);
+
+        let first = plan_with_workflow_evidence("cargo test failed", &evidence, 12);
+        let second = plan_with_workflow_evidence("cargo test failed", &evidence, 12);
+
+        assert_eq!(first.queries, second.queries);
+        assert!(first.queries.len() <= 12);
+        for kind in [
+            FacetKind::FailureTrace,
+            FacetKind::Symbol,
+            FacetKind::Path,
+            FacetKind::TestIntent,
+        ] {
+            assert!(
+                first.queries.iter().any(|query| query.has_facet(kind)),
+                "missing {kind:?}: {:?}",
+                first.queries
+            );
+        }
+        assert_eq!(
+            first.queries.first().map(|query| query.value.as_str()),
+            Some("default_values_if")
+        );
+    }
+
+    #[test]
+    fn empty_workflow_evidence_preserves_the_existing_plan() {
+        let task = "fix Parser::parse for src/parser.rs";
+
+        assert_eq!(
+            plan(task, 12).queries,
+            plan_with_workflow_evidence(task, &WorkflowEvidence::default(), 12).queries
+        );
     }
 }

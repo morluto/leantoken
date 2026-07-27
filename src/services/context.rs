@@ -44,6 +44,12 @@ pub(super) const MAX_CONTEXT_QUERIES: usize = 12;
 pub(super) const MAX_CONTEXT_HITS_PER_SOURCE: usize = 20;
 /// Per-term FTS candidate cap for context assembly.
 pub(super) const MAX_CONTEXT_LEXICAL_HITS: usize = 30;
+/// Maximum values accepted in each workflow-evidence class.
+const MAX_WORKFLOW_EVIDENCE_ITEMS_PER_CLASS: usize = 8;
+/// Maximum UTF-8 bytes accepted in one workflow-evidence value.
+const MAX_WORKFLOW_EVIDENCE_ITEM_BYTES: usize = 8 * 1024;
+/// Maximum UTF-8 bytes accepted across all workflow-evidence classes.
+const MAX_WORKFLOW_EVIDENCE_TOTAL_BYTES: usize = 32 * 1024;
 /// Maximum focus patterns eligible for per-scope candidate generation.
 pub(crate) const MAX_CONTEXT_FOCUS_PATTERNS: usize = 32;
 /// Indexed files inspected for task-relevant candidates per focus pattern.
@@ -982,6 +988,46 @@ fn task_mentions_language(task: &str, language: &str) -> bool {
 }
 
 impl Services {
+    fn validate_workflow_evidence(&self, evidence: &WorkflowEvidence) -> Result<()> {
+        let classes = [
+            ("failure_traces", &evidence.failure_traces),
+            ("symbols", &evidence.symbols),
+            ("paths", &evidence.paths),
+            ("test_intents", &evidence.test_intents),
+        ];
+        let mut total_bytes = 0usize;
+        for (field, values) in classes {
+            if values.len() > MAX_WORKFLOW_EVIDENCE_ITEMS_PER_CLASS {
+                return Err(Error::RequestLimitExceeded {
+                    field: "workflow_evidence items per class",
+                    requested: values.len(),
+                    limit: MAX_WORKFLOW_EVIDENCE_ITEMS_PER_CLASS,
+                });
+            }
+            for value in values {
+                validate_input(value, field, MAX_WORKFLOW_EVIDENCE_ITEM_BYTES)?;
+                if value.trim().is_empty() {
+                    return Err(Error::InvalidInput {
+                        field: "workflow_evidence",
+                        reason: "must not contain empty values",
+                    });
+                }
+                total_bytes = total_bytes.saturating_add(value.len());
+            }
+        }
+        if total_bytes > MAX_WORKFLOW_EVIDENCE_TOTAL_BYTES {
+            return Err(Error::RequestLimitExceeded {
+                field: "workflow_evidence total bytes",
+                requested: total_bytes,
+                limit: MAX_WORKFLOW_EVIDENCE_TOTAL_BYTES,
+            });
+        }
+        for path in &evidence.paths {
+            validate_relative(path)?;
+        }
+        Ok(())
+    }
+
     fn validate_context_request(&self, request: &ContextRequest) -> Result<()> {
         if request.task.trim().is_empty() {
             return Err(Error::InvalidInput {
@@ -1936,6 +1982,25 @@ impl Services {
         Ok(self.record_context_response(accounted))
     }
 
+    /// Select ranked task evidence using typed caller-observed workflow signals.
+    pub async fn context_with_workflow_evidence(
+        &self,
+        request: ContextRequest,
+        workflow_evidence: WorkflowEvidence,
+    ) -> Result<ContextResponse> {
+        let accounted = self
+            .context_cancellable_with_workflow_evidence_and_handoff(
+                request,
+                ContextWorkflow::Auto,
+                None,
+                ServiceCallOptions::default(),
+                workflow_evidence,
+                CancellationToken::new(),
+            )
+            .await?;
+        Ok(self.record_context_response(accounted))
+    }
+
     /// Select context and attach compact provenance for a host-triggered handoff.
     pub async fn context_with_handoff(
         &self,
@@ -2088,9 +2153,37 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
+        self.context_with_workflow_evidence_options_consistency_cancellable(
+            request,
+            handoff,
+            workflow,
+            WorkflowEvidence::default(),
+            consistency,
+            options,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Retrieve context with typed caller-observed workflow evidence.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn context_with_workflow_evidence_options_consistency_cancellable(
+        &self,
+        request: ContextRequest,
+        handoff: Option<HandoffManifestRequest>,
+        workflow: ContextWorkflow,
+        workflow_evidence: WorkflowEvidence,
+        consistency: IndexConsistency,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<ContextResponse> {
         let operation = context_accounting_operation(&request);
         self.observe_service_result(operation, self.validate_call_options(options))?;
         self.observe_service_result(operation, self.validate_context_request(&request))?;
+        self.observe_service_result(
+            operation,
+            self.validate_workflow_evidence(&workflow_evidence),
+        )?;
         if let Some(handoff) = &handoff {
             self.observe_service_result(
                 operation,
@@ -2102,11 +2195,12 @@ impl Services {
             .await;
         self.observe_service_result(operation, consistency_result)?;
         let accounted = self
-            .context_cancellable_with_workflow_and_handoff(
+            .context_cancellable_with_workflow_evidence_and_handoff(
                 request,
                 workflow,
                 handoff,
                 options,
+                workflow_evidence,
                 cancellation,
             )
             .await?;
@@ -2159,6 +2253,26 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<AccountedContextResponse> {
+        self.context_cancellable_with_workflow_evidence_and_handoff(
+            request,
+            workflow,
+            handoff,
+            options,
+            WorkflowEvidence::default(),
+            cancellation,
+        )
+        .await
+    }
+
+    async fn context_cancellable_with_workflow_evidence_and_handoff(
+        &self,
+        request: ContextRequest,
+        workflow: ContextWorkflow,
+        handoff: Option<HandoffManifestRequest>,
+        options: ServiceCallOptions,
+        workflow_evidence: WorkflowEvidence,
+        cancellation: CancellationToken,
+    ) -> Result<AccountedContextResponse> {
         let operation = if request.plan_only {
             TokenAccountingOperation::ContextPlan
         } else {
@@ -2173,6 +2287,7 @@ impl Services {
                     workflow,
                     handoff,
                     options,
+                    workflow_evidence,
                     cancellation,
                     CandidateDiagnostics::Omit,
                     ContextSignals::PRODUCTION,
@@ -2209,6 +2324,31 @@ impl Services {
                     ContextWorkflow::Implementation,
                     None,
                     ServiceCallOptions::default(),
+                    WorkflowEvidence::default(),
+                    cancellation,
+                    CandidateDiagnostics::Collect,
+                    ContextSignals::PRODUCTION,
+                )
+                .map(|(evaluation, _)| evaluation)
+            })
+            .await
+    }
+
+    /// Evaluate typed workflow evidence while exposing pre-selection candidates.
+    pub async fn context_evaluation_with_workflow_evidence(
+        &self,
+        request: ContextRequest,
+        workflow_evidence: WorkflowEvidence,
+    ) -> Result<ContextEvaluation> {
+        let this = self.clone();
+        self.blocking_executor
+            .run(CancellationToken::new(), move |cancellation| {
+                this.context_sync(
+                    request,
+                    ContextWorkflow::Implementation,
+                    None,
+                    ServiceCallOptions::default(),
+                    workflow_evidence,
                     cancellation,
                     CandidateDiagnostics::Collect,
                     ContextSignals::PRODUCTION,
@@ -2235,6 +2375,7 @@ impl Services {
                     ContextWorkflow::Implementation,
                     None,
                     ServiceCallOptions::default(),
+                    WorkflowEvidence::default(),
                     cancellation,
                     CandidateDiagnostics::Collect,
                     ContextSignals::evaluation(policy),
@@ -2799,6 +2940,7 @@ impl Services {
         workflow: ContextWorkflow,
         handoff: Option<HandoffManifestRequest>,
         options: ServiceCallOptions,
+        workflow_evidence: WorkflowEvidence,
         cancellation: &CancellationToken,
         diagnostics: CandidateDiagnostics,
         signals: ContextSignals,
@@ -2806,6 +2948,7 @@ impl Services {
         check_cancelled(cancellation)?;
         self.validate_call_options(options)?;
         self.validate_context_request(&request)?;
+        self.validate_workflow_evidence(&workflow_evidence)?;
         if let Some(handoff) = &handoff {
             validate_handoff_context_request(&request, handoff)?;
         }
@@ -2840,14 +2983,18 @@ impl Services {
                 .collect::<HashSet<_>>()
         });
         self.consistent(|session, generation| {
-            let facet_plan = facets::plan(&request.task, MAX_CONTEXT_QUERIES);
+            let facet_plan = facets::plan_with_workflow_evidence(
+                &request.task,
+                &workflow_evidence,
+                MAX_CONTEXT_QUERIES,
+            );
             let queries = facet_plan.queries;
             let mut phases = ContextPhaseTracker::new(diagnostics, generation);
             let candidate_generation_started = phases.timer();
             phases.counters.queries_planned = queries.len();
             phases.counters.queries_executed = queries
                 .iter()
-                .filter(|query| !query.has_facet(FacetKind::TestIntent))
+                .filter(|query| !query.is_generic_test_path_prior())
                 .count();
             let terms = queries
                 .iter()
@@ -2883,7 +3030,7 @@ impl Services {
             // scoring symbol candidate. Keep them out of candidate generation.
             for query in queries
                 .iter()
-                .filter(|query| !query.has_facet(FacetKind::TestIntent))
+                .filter(|query| !query.is_generic_test_path_prior())
             {
                 let term = &query.value;
                 let concept = query.fusion_key.as_str();
