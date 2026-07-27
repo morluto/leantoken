@@ -36,11 +36,15 @@ The candidate:
 4. issues at most one bounded indexed search per retained term, with at most
    16 hits and 1,024 response tokens per search;
 5. only lets auxiliary hits corroborate paths already found by structural
-   definition search;
+   definition search when the auxiliary symbol co-occurs with an owner range;
 6. prefers paths whose extension matches the declared source language before
    deterministic co-occurrence, hit, score, and lexical tie-breaks;
-7. emits at most two diagnostic owner paths and one owner definition excerpt
-   capped at 128 exact source tokens.
+7. emits at most two diagnostic owner paths, skips inexact owners, and reserves
+   the first eligible definition excerpt at no more than 128 exact source
+   tokens;
+8. subtracts the owner excerpt from the same task source budget, keeps native
+   candidate metrics separate, and suppresses the sidecar by exact content hash
+   after the first turn.
 
 Gold paths and spans are only applied after retrieval to score the result. The
 experiment changes no production parser, index, storage schema, or ranking.
@@ -55,7 +59,7 @@ experiment changes no production parser, index, storage schema, or ranking.
 | Source tokens | 1,255 | 1,461 | +206 |
 | Complete response JSON tokens | 2,698 | 2,922 | +224 |
 | Dead-end source tokens | 1,054 | 1,054 | 0 |
-| Two-turn JSON tokens | 7,729 | 7,747 | +18 |
+| Two-turn JSON tokens | 7,729 | 7,821 | +92 |
 | Exact-hash resends | 0 | 0 | 0 |
 
 The two reserved owner excerpts were both relevant:
@@ -64,18 +68,21 @@ The two reserved owner excerpts were both relevant:
   tokens.
 - Click: `src/click/core.py`, `Option`, 128 source tokens.
 
-The candidate made six bounded searches for Clap and twelve for Click. A second
-complete candidate run produced identical terms, owner paths, excerpts, hashes,
-recall, source-token counts, serialized-token counts, dead-end cost, and
-two-turn cost.
+The candidate made six bounded searches for Clap and twelve for Click. Both
+owner reservations stayed inside their 2,000-token task budgets, were included
+in the progressive known-hash request, and were not serialized or charged on
+the second turn. A second complete candidate run produced identical terms,
+owner paths, excerpts, hashes, recall, source-token counts, serialized-token
+counts, dead-end cost, and two-turn cost.
 
 ## Interpretation
 
 The AST lane is useful, but the useful contract is not “add more search
 results.” Its value is routing one small, source-backed owner excerpt into
 context. Compared with v1, this recovered Click's previously omitted owner
-without adding dead-end source and almost completely amortized its serialized
-cost over two turns by removing soft-focus request overhead.
+without adding dead-end source. The stricter progressive accounting records a
+92-token two-turn premium: the owner payload is sent once, while its two exact
+hashes remain visible in the follow-up request.
 
 The next promotion experiment should freeze a broader multilingual task set and
 test this exact reservation contract end to end with an editing agent. The

@@ -758,6 +758,34 @@ partial failure, emits `null` paired deltas, and records `no_measured_win` in th
 and
 [decision record](reports/arb-orientation-capsule-trajectory-v1-2026-07-27.md).
 
+The AST structural v2 experiment keeps v1 as its control, but changes the
+candidate from soft path focus to one exact owner reservation. Auxiliary terms
+only count when they co-occur with a structural owner, the first exact eligible
+owner among the two diagnostic paths is capped at 128 source tokens, and that
+reservation is charged inside the task budget:
+
+```bash
+cargo run --release --example representative_benchmark -- \
+  --manifest target/external-corpora/arb-trace2code-smoke.json \
+  --repos-root target/arb-repos \
+  --output target/arb-ast-structural-v2-control.json \
+  --workflow-evidence --ast-structural-lane
+cargo run --release --example representative_benchmark -- \
+  --manifest target/external-corpora/arb-trace2code-smoke.json \
+  --repos-root target/arb-repos \
+  --output target/arb-ast-structural-v2-candidate.json \
+  --workflow-evidence --ast-structural-lane-v2
+cargo run --release --example benchmark_ablation -- \
+  --baseline target/arb-ast-structural-v2-control.json \
+  --candidate target/arb-ast-structural-v2-candidate.json
+```
+
+Native generated-candidate metrics remain separate from the benchmark-side
+owner reservation. On a repeated turn, the owner content hash joins the
+progressive request and the composite layer suppresses the sidecar. The bounded
+local result is recorded in
+[`reports/arb-ast-structural-v2-2026-07-27.md`](reports/arb-ast-structural-v2-2026-07-27.md).
+
 Each repository directory under `target/arb-repos` must match the generated
 manifest's `directory` and exact `base_revision`. The adapter preserves the
 public ARB query object verbatim as JSON, promotes only `root_cause_files` to

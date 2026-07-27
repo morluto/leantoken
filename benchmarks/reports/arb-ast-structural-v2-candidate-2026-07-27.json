@@ -8,7 +8,7 @@
   "reclassification_rule": "Do not edit converted labels after observing LeanToken output; update the pinned dataset revision and record a new corpus lock instead.",
   "manifest_description": "Agent Retrieval Bench trace2code smoke: 2 deterministically selected task(s) from pinned release v2_trace2code (archive SHA-256 19b252e8cfff42107fedc74005dbb6972f2970af33651ce0c1571546819e41c4). This is a bounded smoke baseline, not a complete ARB leaderboard run.",
   "leantoken_version": "0.1.16",
-  "harness_revision": "ed215182c47b40a53db6751b9144bc961e6fe97e",
+  "harness_revision": "ebf16839b06f65d05e687cead372bf988e5b7127",
   "harness_worktree_dirty": true,
   "candidate_runtime_tree_verified": null,
   "diagnostic_only": false,
@@ -21,7 +21,7 @@
   "host_arch": "x86_64",
   "rustc_version": "rustc 1.95.0 (59807616e 2026-04-14)",
   "ripgrep_version": "ripgrep 15.1.0 (rev af60c2de9d)",
-  "generated_at_unix_seconds": 1785157894,
+  "generated_at_unix_seconds": 1785158730,
   "tokenizer": "cl100k_base",
   "token_count_exact": true,
   "methodology": {
@@ -64,9 +64,9 @@
     "orientation_capsule_tokens": 0,
     "second_response_source_tokens": 983,
     "estimated_repeated_range_source_tokens": 0,
-    "repeat_request_json_tokens": 2648,
+    "repeat_request_json_tokens": 2722,
     "repeat_total_json_tokens": 2177,
-    "two_turn_context_json_tokens": 7747,
+    "two_turn_context_json_tokens": 7821,
     "concepts": 0,
     "candidate_concepts_found": 0,
     "candidate_concept_recall": null,
@@ -95,7 +95,7 @@
       "indexed_files": 588,
       "indexed_chunks": 1696,
       "index_warnings": [],
-      "cold_index_ms": 1974.6659640000003,
+      "cold_index_ms": 1731.061505,
       "database_bytes": 37400576,
       "tasks": [
         {
@@ -150,7 +150,7 @@
             "searches": 6,
             "auxiliary_searches": 2,
             "structural_hits": 50,
-            "corroborating_hits": 26,
+            "corroborating_hits": 5,
             "candidate_paths": [
               "clap_builder/src/builder/arg.rs",
               "clap_builder/src/builder/command.rs"
@@ -574,19 +574,6 @@
               "concept_weight": 1.0,
               "score": 10.754166561151424,
               "token_count": 66
-            },
-            {
-              "path": "clap_builder/src/builder/arg.rs",
-              "start_line": 3055,
-              "end_line": 3067,
-              "representation": "ast_owner_reservation",
-              "match_kinds": [
-                "symbol"
-              ],
-              "concepts": [],
-              "concept_weight": 0.0,
-              "score": 0.0,
-              "token_count": 78
             }
           ],
           "omitted_relevant_files": [],
@@ -614,21 +601,23 @@
           "leantoken_total_json_tokens": 1800,
           "source_savings_against_oracle_fraction": 0.9821667329165613,
           "total_json_savings_against_scripted_fraction": 0.9722385021129585,
-          "first_context_ms": 122.31111999999999,
+          "first_context_ms": 123.914389,
           "warm_context_ms_samples": [
-            111.188141,
-            109.46875200000001,
-            109.13764099999999
+            106.235811,
+            109.62539100000001,
+            110.166161
           ],
-          "warm_context_median_ms": 109.46875200000001,
-          "warm_context_p95_ms": 111.188141,
+          "warm_context_median_ms": 109.62539100000001,
+          "warm_context_p95_ms": 110.166161,
           "second_response_source_tokens": 594,
           "estimated_repeated_range_source_tokens": 0,
-          "repeat_request_json_tokens": 1887,
+          "repeat_request_json_tokens": 1922,
           "repeat_total_json_tokens": 1218,
-          "two_turn_context_json_tokens": 4905,
+          "two_turn_context_json_tokens": 4940,
           "known_fragments_resent": 0,
           "known_hash_omission_visible": true,
+          "known_owner_reservations_resent": 0,
+          "owner_known_hash_omission_visible": true,
           "dead_end_fragments": 5,
           "dead_end_source_tokens": 708
         }
@@ -654,7 +643,7 @@
       "indexed_files": 138,
       "indexed_chunks": 428,
       "index_warnings": [],
-      "cold_index_ms": 507.11304999999993,
+      "cold_index_ms": 397.763837,
       "database_bytes": 14148368,
       "tasks": [
         {
@@ -716,7 +705,7 @@
             "searches": 12,
             "auxiliary_searches": 6,
             "structural_hits": 41,
-            "corroborating_hits": 49,
+            "corroborating_hits": 0,
             "candidate_paths": [
               "src/click/core.py",
               "src/click/decorators.py"
@@ -910,19 +899,6 @@
               "concept_weight": 1.0,
               "score": 4.704610962574238,
               "token_count": 262
-            },
-            {
-              "path": "src/click/core.py",
-              "start_line": 2465,
-              "end_line": 2477,
-              "representation": "ast_owner_reservation",
-              "match_kinds": [
-                "symbol"
-              ],
-              "concepts": [],
-              "concept_weight": 0.0,
-              "score": 0.0,
-              "token_count": 128
             }
           ],
           "omitted_relevant_files": [],
@@ -950,21 +926,23 @@
           "leantoken_total_json_tokens": 1122,
           "source_savings_against_oracle_fraction": 0.9809393598198488,
           "total_json_savings_against_scripted_fraction": 0.9598267034265459,
-          "first_context_ms": 98.052542,
+          "first_context_ms": 90.272632,
           "warm_context_ms_samples": [
-            93.77134299999999,
-            87.479633,
-            83.421154
+            87.86187299999999,
+            83.999773,
+            85.94658299999999
           ],
-          "warm_context_median_ms": 87.479633,
-          "warm_context_p95_ms": 93.77134299999999,
+          "warm_context_median_ms": 85.94658299999999,
+          "warm_context_p95_ms": 87.86187299999999,
           "second_response_source_tokens": 389,
           "estimated_repeated_range_source_tokens": 0,
-          "repeat_request_json_tokens": 761,
+          "repeat_request_json_tokens": 800,
           "repeat_total_json_tokens": 959,
-          "two_turn_context_json_tokens": 2842,
+          "two_turn_context_json_tokens": 2881,
           "known_fragments_resent": 0,
           "known_hash_omission_visible": true,
+          "known_owner_reservations_resent": 0,
+          "owner_known_hash_omission_visible": true,
           "dead_end_fragments": 8,
           "dead_end_source_tokens": 346
         }
