@@ -1,26 +1,18 @@
-use std::time::{Duration, Instant};
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc, Mutex, RwLock,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc, RwLock,
+    atomic::{AtomicBool, Ordering},
 };
+use std::time::{Duration, Instant};
 
 use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
     handler::server::wrapper::Parameters,
-    model::{
-        CallToolResult, ClientNotification, ClientRequest, ContentBlock, GetExtensions,
-        JsonRpcMessage, ServerResult,
-    },
-    service::{NotificationContext, RequestContext, RxJsonRpcMessage, TxJsonRpcMessage},
+    model::{CallToolResult, ContentBlock},
+    service::{NotificationContext, RequestContext},
     tool, tool_handler, tool_router,
-    transport::Transport,
 };
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Deserializer, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 use crate::Config;
@@ -41,8 +33,6 @@ use crate::services::{
 
 const DEFAULT_ACTIVE_TOOL_CALL_CAPACITY: usize = 16;
 const DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY: usize = DEFAULT_ACTIVE_TOOL_CALL_CAPACITY;
-const MAX_MCP_STDIO_FRAME_BYTES: usize = 4 * 1024 * 1024;
-const RETAINED_MCP_FRAME_CAPACITY: usize = 64 * 1024;
 const INITIAL_INDEX_WAIT: Duration = Duration::from_secs(30);
 const MCP_INSTRUCTIONS: &str = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken.context first with the user's task. For an uncertain broad task, first use context plan_only=true, inspect its bounded metadata and coverage, then repeat the same request with plan_only=false to materialize source. PREFER leantoken.search over grep or rg for source search; leantoken.files over find, ls, or glob for paths; leantoken.outline over opening whole files to discover structure; leantoken.read over cat, head, or sed for exact current symbols and ranges; leantoken.history over git show, diff, or log -L for one symbol across immutable revisions; and leantoken.json over jq or whole-file reads for structural JSON queries, summaries, and selected-field diffs. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=reconcile_working_tree on index-backed tools after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, runtime probes, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence.";
 
@@ -64,248 +54,12 @@ pub(crate) fn mcp_runtime_version() -> String {
     )
 }
 
-#[derive(Clone)]
-struct DispatchedToolCall {
-    id: rmcp::model::RequestId,
-    dispatched_calls:
-        Arc<Mutex<HashMap<rmcp::model::RequestId, tokio::sync::OwnedSemaphorePermit>>>,
-}
+mod error;
+mod transport;
 
-impl Drop for DispatchedToolCall {
-    fn drop(&mut self) {
-        if std::thread::panicking() {
-            self.dispatched_calls
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .remove(&self.id);
-        }
-    }
-}
+use error::{into_mcp_error, mcp_error_data, tool_unavailable};
+use transport::BoundedStdioTransport;
 
-struct BoundedStdioTransport {
-    reader: tokio::io::BufReader<tokio::io::Stdin>,
-    writer: Arc<tokio::sync::Mutex<tokio::io::Stdout>>,
-    frame: Vec<u8>,
-    discarding_oversized_frame: bool,
-    request_dispatch: RequestAdmission,
-    dispatched_calls:
-        Arc<Mutex<HashMap<rmcp::model::RequestId, tokio::sync::OwnedSemaphorePermit>>>,
-    result_mode: McpResultMode,
-}
-
-impl BoundedStdioTransport {
-    fn new(request_dispatch: RequestAdmission, result_mode: McpResultMode) -> Self {
-        Self {
-            reader: tokio::io::BufReader::with_capacity(8 * 1024, tokio::io::stdin()),
-            writer: Arc::new(tokio::sync::Mutex::new(tokio::io::stdout())),
-            frame: Vec::new(),
-            discarding_oversized_frame: false,
-            request_dispatch,
-            dispatched_calls: Arc::new(Mutex::new(HashMap::new())),
-            result_mode,
-        }
-    }
-
-    fn release_frame(&mut self) {
-        self.frame.clear();
-        if self.frame.capacity() > RETAINED_MCP_FRAME_CAPACITY {
-            self.frame = Vec::new();
-        }
-    }
-
-    async fn write_message(
-        writer: Arc<tokio::sync::Mutex<tokio::io::Stdout>>,
-        item: TxJsonRpcMessage<RoleServer>,
-    ) -> std::io::Result<()> {
-        let mut bytes = serde_json::to_vec(&item)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-        bytes.push(b'\n');
-        let mut writer = writer.lock().await;
-        writer.write_all(&bytes).await?;
-        writer.flush().await
-    }
-
-    fn admit_message(
-        &self,
-        message: &mut RxJsonRpcMessage<RoleServer>,
-    ) -> Result<(), rmcp::model::RequestId> {
-        let request = match message {
-            JsonRpcMessage::Notification(notification) => {
-                if let ClientNotification::CancelledNotification(cancelled) =
-                    &notification.notification
-                    && let Some(id) = &cancelled.params.request_id
-                {
-                    Self::finish_dispatch(&self.dispatched_calls, id);
-                }
-                return Ok(());
-            }
-            JsonRpcMessage::Request(request) => request,
-            JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => return Ok(()),
-        };
-        if !matches!(&request.request, ClientRequest::CallToolRequest(_)) {
-            return Ok(());
-        }
-        let id = request.id.clone();
-        let mut dispatched = self
-            .dispatched_calls
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if dispatched.contains_key(&id) {
-            return Err(id);
-        }
-        let permit = match self.request_dispatch.try_admit() {
-            Ok(permit) => permit,
-            Err(_) => return Err(id),
-        };
-        dispatched.insert(id.clone(), permit);
-        drop(dispatched);
-        request.request.extensions_mut().insert(DispatchedToolCall {
-            id,
-            dispatched_calls: Arc::clone(&self.dispatched_calls),
-        });
-        Ok(())
-    }
-
-    fn response_id(item: &TxJsonRpcMessage<RoleServer>) -> Option<rmcp::model::RequestId> {
-        match item {
-            JsonRpcMessage::Response(response) => Some(response.id.clone()),
-            JsonRpcMessage::Error(error) => error.id.clone(),
-            JsonRpcMessage::Request(_) | JsonRpcMessage::Notification(_) => None,
-        }
-    }
-
-    fn finish_dispatch(
-        dispatched_calls: &Mutex<
-            HashMap<rmcp::model::RequestId, tokio::sync::OwnedSemaphorePermit>,
-        >,
-        id: &rmcp::model::RequestId,
-    ) {
-        dispatched_calls
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(id);
-    }
-
-    fn overloaded_response(&self, id: rmcp::model::RequestId) -> TxJsonRpcMessage<RoleServer> {
-        let result = retryable_tool_result(
-            RetryableToolResponse::new(
-                "retrieval_capacity_exhausted",
-                "repository tool-call capacity is exhausted; retry shortly",
-                500,
-            ),
-            self.result_mode,
-        );
-        TxJsonRpcMessage::<RoleServer>::response(ServerResult::CallToolResult(result), id)
-    }
-}
-
-impl Transport<RoleServer> for BoundedStdioTransport {
-    type Error = std::io::Error;
-
-    fn send(
-        &mut self,
-        item: TxJsonRpcMessage<RoleServer>,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send + 'static {
-        let writer = Arc::clone(&self.writer);
-        let dispatched_calls = Arc::clone(&self.dispatched_calls);
-        let response_id = Self::response_id(&item);
-        async move {
-            let result = Self::write_message(writer, item).await;
-            if let Some(id) = response_id {
-                Self::finish_dispatch(&dispatched_calls, &id);
-            }
-            result
-        }
-    }
-
-    async fn receive(&mut self) -> Option<RxJsonRpcMessage<RoleServer>> {
-        loop {
-            let available = match self.reader.fill_buf().await {
-                Ok([]) => return None,
-                Ok(bytes) => bytes,
-                Err(error) => {
-                    tracing::warn!(%error, "MCP stdio read failed");
-                    return None;
-                }
-            };
-            let newline = available.iter().position(|byte| *byte == b'\n');
-
-            if self.discarding_oversized_frame {
-                let consumed = newline.map_or(available.len(), |position| position + 1);
-                self.reader.consume(consumed);
-                if newline.is_some() {
-                    self.discarding_oversized_frame = false;
-                }
-                continue;
-            }
-
-            let payload_bytes = newline.unwrap_or(available.len());
-            if self.frame.len().saturating_add(payload_bytes) > MAX_MCP_STDIO_FRAME_BYTES {
-                let consumed = newline.map_or(available.len(), |position| position + 1);
-                self.reader.consume(consumed);
-                self.release_frame();
-                self.discarding_oversized_frame = newline.is_none();
-                tracing::warn!(
-                    limit = MAX_MCP_STDIO_FRAME_BYTES,
-                    "discarded oversized MCP stdio frame"
-                );
-                continue;
-            }
-
-            self.frame.extend_from_slice(&available[..payload_bytes]);
-            self.reader
-                .consume(newline.map_or(payload_bytes, |position| position + 1));
-            if newline.is_none() {
-                continue;
-            }
-            if self.frame.last() == Some(&b'\r') {
-                self.frame.pop();
-            }
-            if self.frame.is_empty() {
-                continue;
-            }
-
-            let parsed = serde_json::from_slice(&self.frame);
-            self.release_frame();
-            match parsed {
-                Ok(mut message) => match self.admit_message(&mut message) {
-                    Ok(()) => return Some(message),
-                    Err(id) => {
-                        let response = self.overloaded_response(id);
-                        if Self::write_message(Arc::clone(&self.writer), response)
-                            .await
-                            .is_err()
-                        {
-                            return None;
-                        }
-                    }
-                },
-                Err(error) => match error.classify() {
-                    serde_json::error::Category::Syntax | serde_json::error::Category::Eof => {
-                        tracing::debug!("ignored unparsable MCP stdio frame");
-                    }
-                    serde_json::error::Category::Data | serde_json::error::Category::Io => {
-                        tracing::debug!("rejected invalid MCP stdio message shape");
-                        let response = TxJsonRpcMessage::<RoleServer>::error(
-                            ErrorData::invalid_request("Invalid request", None),
-                            None,
-                        );
-                        if Self::write_message(Arc::clone(&self.writer), response)
-                            .await
-                            .is_err()
-                        {
-                            return None;
-                        }
-                    }
-                },
-            }
-        }
-    }
-
-    async fn close(&mut self) -> Result<(), Self::Error> {
-        self.writer.lock().await.shutdown().await
-    }
-}
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SavingsMcpRequest {
@@ -1699,6 +1453,18 @@ enum McpServiceState {
     },
 }
 
+struct PreparedRetrievalCall {
+    services: Arc<Services>,
+    limits: McpLimitPolicy,
+    cancellation: CancellationToken,
+    deadline: tokio::time::Instant,
+}
+
+enum RetrievalPreparation {
+    Ready(PreparedRetrievalCall),
+    Unavailable(CallToolResult),
+}
+
 impl McpServiceState {
     const fn limits(&self) -> McpLimitPolicy {
         match self {
@@ -1819,6 +1585,70 @@ impl LeanTokenMcp {
 
     fn retryable_result(&self, response: RetryableToolResponse) -> CallToolResult {
         retryable_tool_result(response, self.result_mode)
+    }
+
+    async fn prepare_retrieval_call(
+        &self,
+        cancellation: CancellationToken,
+        validate: impl Fn(McpLimitPolicy) -> crate::Result<()>,
+    ) -> Result<RetrievalPreparation, ErrorData> {
+        let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
+        let state = self.services.get();
+        validate(state.limits()).map_err(into_mcp_error)?;
+        let state = self
+            .services
+            .wait_for_services(state, cancellation.clone(), deadline)
+            .await
+            .map_err(into_mcp_error)?;
+        let limits = state.limits();
+        validate(limits).map_err(into_mcp_error)?;
+        let services = match self.services(&state) {
+            Ok(services) => services,
+            Err(result) => return Ok(RetrievalPreparation::Unavailable(result)),
+        };
+        Ok(RetrievalPreparation::Ready(PreparedRetrievalCall {
+            services,
+            limits,
+            cancellation,
+            deadline,
+        }))
+    }
+
+    async fn run_prepared<T, F, Fut>(
+        &self,
+        tool: &'static str,
+        prepared: PreparedRetrievalCall,
+        expected_repository_id: Option<String>,
+        mut operation: F,
+    ) -> Result<CallToolResult, ErrorData>
+    where
+        T: Serialize,
+        F: FnMut(Arc<Services>, CancellationToken) -> Fut,
+        Fut: Future<Output = crate::Result<T>>,
+    {
+        let PreparedRetrievalCall {
+            services,
+            cancellation,
+            deadline,
+            ..
+        } = prepared;
+        let mcp_services = self.services.clone();
+        self.run_admitted(
+            services,
+            expected_repository_id,
+            move |services| async move {
+                retry_after_initial_index(
+                    tool,
+                    &mcp_services,
+                    &services,
+                    cancellation.clone(),
+                    deadline,
+                    || operation(Arc::clone(&services), cancellation.clone()),
+                )
+                .await
+            },
+        )
+        .await
     }
 
     fn service_result<T: Serialize>(
@@ -2160,62 +1990,42 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<FilesMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
-        let state = self.services.get();
-        req.validate_limits(state.limits())
-            .map_err(into_mcp_error)?;
-        let state = self
-            .services
-            .wait_for_services(state, context.ct.clone(), deadline)
-            .await
-            .map_err(into_mcp_error)?;
-        req.validate_limits(state.limits())
-            .map_err(into_mcp_error)?;
-        let services = match self.services(&state) {
-            Ok(services) => services,
-            Err(result) => return Ok(result),
+        let prepared = match self
+            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .await?
+        {
+            RetrievalPreparation::Ready(prepared) => prepared,
+            RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
-        let cancellation = context.ct.clone();
-        let mcp_services = self.services.clone();
-        self.run_admitted(
-            services,
+        self.run_prepared(
+            "files",
+            prepared,
             expected_repository_id,
-            move |services| async move {
-                retry_after_initial_index(
-                    "files",
-                    &mcp_services,
-                    &services,
-                    cancellation.clone(),
-                    deadline,
-                    || {
-                        let request = request.clone();
-                        let cancellation = cancellation.clone();
-                        async {
-                            match projection {
-                                FilesMcpProjection::Full => services
-                                    .files_with_options_consistency_cancellable(
-                                        request,
-                                        consistency,
-                                        options,
-                                        cancellation,
-                                    )
-                                    .await
-                                    .and_then(serialized_response),
-                                FilesMcpProjection::Paths => services
-                                    .files_paths_with_options_consistency_cancellable(
-                                        request,
-                                        consistency,
-                                        options,
-                                        cancellation,
-                                    )
-                                    .await
-                                    .and_then(serialized_response),
-                            }
-                        }
-                    },
-                )
-                .await
+            move |services, cancellation| {
+                let request = request.clone();
+                async move {
+                    match projection {
+                        FilesMcpProjection::Full => services
+                            .files_with_options_consistency_cancellable(
+                                request,
+                                consistency,
+                                options,
+                                cancellation,
+                            )
+                            .await
+                            .and_then(serialized_response),
+                        FilesMcpProjection::Paths => services
+                            .files_paths_with_options_consistency_cancellable(
+                                request,
+                                consistency,
+                                options,
+                                cancellation,
+                            )
+                            .await
+                            .and_then(serialized_response),
+                    }
+                }
             },
         )
         .await
@@ -2230,76 +2040,56 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<SearchMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
-        let state = self.services.get();
-        req.validate_limits(state.limits())
-            .map_err(into_mcp_error)?;
-        let state = self
-            .services
-            .wait_for_services(state, context.ct.clone(), deadline)
-            .await
-            .map_err(into_mcp_error)?;
-        req.validate_limits(state.limits())
-            .map_err(into_mcp_error)?;
-        let services = match self.services(&state) {
-            Ok(services) => services,
-            Err(result) => return Ok(result),
+        let prepared = match self
+            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .await?
+        {
+            RetrievalPreparation::Ready(prepared) => prepared,
+            RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let (request, projection, coordinates_only, consistency, options, expected_repository_id) =
             req.into_parts();
-        let cancellation = context.ct.clone();
-        let mcp_services = self.services.clone();
-        self.run_admitted(
-            services,
+        self.run_prepared(
+            "search",
+            prepared,
             expected_repository_id,
-            move |services| async move {
-                retry_after_initial_index(
-                    "search",
-                    &mcp_services,
-                    &services,
-                    cancellation.clone(),
-                    deadline,
-                    || {
-                        let request = request.clone();
-                        let cancellation = cancellation.clone();
-                        async {
-                            match projection {
-                                SearchMcpProjection::Auto => {
-                                    unreachable!("search projection is resolved by into_parts")
-                                }
-                                SearchMcpProjection::Full => services
-                                    .search_with_options_consistency_cancellable(
-                                        request,
-                                        consistency,
-                                        options,
-                                        cancellation,
-                                    )
-                                    .await
-                                    .and_then(serialized_response),
-                                SearchMcpProjection::Grouped => services
-                                    .search_grouped_with_options_consistency_cancellable(
-                                        request,
-                                        consistency,
-                                        options,
-                                        cancellation,
-                                    )
-                                    .await
-                                    .and_then(serialized_response),
-                                SearchMcpProjection::Occurrences => services
-                                    .search_occurrences_with_options_consistency_cancellable(
-                                        request,
-                                        coordinates_only,
-                                        consistency,
-                                        options,
-                                        cancellation,
-                                    )
-                                    .await
-                                    .and_then(serialized_response),
-                            }
+            move |services, cancellation| {
+                let request = request.clone();
+                async move {
+                    match projection {
+                        SearchMcpProjection::Auto => {
+                            unreachable!("search projection is resolved by into_parts")
                         }
-                    },
-                )
-                .await
+                        SearchMcpProjection::Full => services
+                            .search_with_options_consistency_cancellable(
+                                request,
+                                consistency,
+                                options,
+                                cancellation,
+                            )
+                            .await
+                            .and_then(serialized_response),
+                        SearchMcpProjection::Grouped => services
+                            .search_grouped_with_options_consistency_cancellable(
+                                request,
+                                consistency,
+                                options,
+                                cancellation,
+                            )
+                            .await
+                            .and_then(serialized_response),
+                        SearchMcpProjection::Occurrences => services
+                            .search_occurrences_with_options_consistency_cancellable(
+                                request,
+                                coordinates_only,
+                                consistency,
+                                options,
+                                cancellation,
+                            )
+                            .await
+                            .and_then(serialized_response),
+                    }
+                }
             },
         )
         .await
@@ -2314,62 +2104,42 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<OutlineMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
-        let state = self.services.get();
-        req.validate_limits(state.limits())
-            .map_err(into_mcp_error)?;
-        let state = self
-            .services
-            .wait_for_services(state, context.ct.clone(), deadline)
-            .await
-            .map_err(into_mcp_error)?;
-        req.validate_limits(state.limits())
-            .map_err(into_mcp_error)?;
-        let services = match self.services(&state) {
-            Ok(services) => services,
-            Err(result) => return Ok(result),
+        let prepared = match self
+            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .await?
+        {
+            RetrievalPreparation::Ready(prepared) => prepared,
+            RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
-        let cancellation = context.ct.clone();
-        let mcp_services = self.services.clone();
-        self.run_admitted(
-            services,
+        self.run_prepared(
+            "outline",
+            prepared,
             expected_repository_id,
-            move |services| async move {
-                retry_after_initial_index(
-                    "outline",
-                    &mcp_services,
-                    &services,
-                    cancellation.clone(),
-                    deadline,
-                    || {
-                        let request = request.clone();
-                        let cancellation = cancellation.clone();
-                        async {
-                            match projection {
-                                OutlineMcpProjection::Full => services
-                                    .outline_with_options_consistency_cancellable(
-                                        request,
-                                        consistency,
-                                        options,
-                                        cancellation,
-                                    )
-                                    .await
-                                    .and_then(serialized_response),
-                                OutlineMcpProjection::Signatures => services
-                                    .outline_signatures_with_options_consistency_cancellable(
-                                        request,
-                                        consistency,
-                                        options,
-                                        cancellation,
-                                    )
-                                    .await
-                                    .and_then(serialized_response),
-                            }
-                        }
-                    },
-                )
-                .await
+            move |services, cancellation| {
+                let request = request.clone();
+                async move {
+                    match projection {
+                        OutlineMcpProjection::Full => services
+                            .outline_with_options_consistency_cancellable(
+                                request,
+                                consistency,
+                                options,
+                                cancellation,
+                            )
+                            .await
+                            .and_then(serialized_response),
+                        OutlineMcpProjection::Signatures => services
+                            .outline_signatures_with_options_consistency_cancellable(
+                                request,
+                                consistency,
+                                options,
+                                cancellation,
+                            )
+                            .await
+                            .and_then(serialized_response),
+                    }
+                }
             },
         )
         .await
@@ -2384,44 +2154,30 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<ReadMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
-        let state = self.services.get();
-        req.validate_limits(state.limits())
-            .map_err(into_mcp_error)?;
-        let state = self
-            .services
-            .wait_for_services(state, context.ct.clone(), deadline)
-            .await
-            .map_err(into_mcp_error)?;
-        req.validate_limits(state.limits())
-            .map_err(into_mcp_error)?;
-        let services = match self.services(&state) {
-            Ok(services) => services,
-            Err(result) => return Ok(result),
+        let prepared = match self
+            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .await?
+        {
+            RetrievalPreparation::Ready(prepared) => prepared,
+            RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let (request, consistency, options, expected_repository_id) = req.into_parts();
-        let cancellation = context.ct.clone();
-        let mcp_services = self.services.clone();
-        self.run_admitted(
-            services,
+        self.run_prepared(
+            "read",
+            prepared,
             expected_repository_id,
-            move |services| async move {
-                retry_after_initial_index(
-                    "read",
-                    &mcp_services,
-                    &services,
-                    cancellation.clone(),
-                    deadline,
-                    || {
-                        services.read_with_options_consistency_cancellable(
-                            request.clone(),
+            move |services, cancellation| {
+                let request = request.clone();
+                async move {
+                    services
+                        .read_with_options_consistency_cancellable(
+                            request,
                             consistency,
                             options,
-                            cancellation.clone(),
+                            cancellation,
                         )
-                    },
-                )
-                .await
+                        .await
+                }
             },
         )
         .await
@@ -2436,61 +2192,36 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<HistoryMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
-        let state = self.services.get();
-        req.validate_limits(state.limits())
-            .map_err(into_mcp_error)?;
-        let state = self
-            .services
-            .wait_for_services(state, context.ct.clone(), deadline)
-            .await
-            .map_err(into_mcp_error)?;
-        req.validate_limits(state.limits())
-            .map_err(into_mcp_error)?;
-        let services = match self.services(&state) {
-            Ok(services) => services,
-            Err(result) => return Ok(result),
+        let prepared = match self
+            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .await?
+        {
+            RetrievalPreparation::Ready(prepared) => prepared,
+            RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let (call, options, expected_repository_id) = req.into_parts().map_err(into_mcp_error)?;
-        let cancellation = context.ct.clone();
-        let mcp_services = self.services.clone();
-        self.run_admitted(
-            services,
+        self.run_prepared(
+            "history",
+            prepared,
             expected_repository_id,
-            move |services| async move {
-                retry_after_initial_index(
-                    "history",
-                    &mcp_services,
-                    &services,
-                    cancellation.clone(),
-                    deadline,
-                    || {
-                        let call = call.clone();
-                        let services = services.clone();
-                        let cancellation = cancellation.clone();
-                        async move {
-                            match call {
-                                HistoryMcpCall::Single(request) => services
-                                    .history_cancellable_with_options(
-                                        request,
-                                        options,
-                                        cancellation,
-                                    )
-                                    .await
-                                    .and_then(serialized_response),
-                                HistoryMcpCall::DiffSymbols(request) => services
-                                    .history_diff_symbols_cancellable_with_options(
-                                        request,
-                                        options,
-                                        cancellation,
-                                    )
-                                    .await
-                                    .and_then(serialized_response),
-                            }
-                        }
-                    },
-                )
-                .await
+            move |services, cancellation| {
+                let call = call.clone();
+                async move {
+                    match call {
+                        HistoryMcpCall::Single(request) => services
+                            .history_cancellable_with_options(request, options, cancellation)
+                            .await
+                            .and_then(serialized_response),
+                        HistoryMcpCall::DiffSymbols(request) => services
+                            .history_diff_symbols_cancellable_with_options(
+                                request,
+                                options,
+                                cancellation,
+                            )
+                            .await
+                            .and_then(serialized_response),
+                    }
+                }
             },
         )
         .await
@@ -2505,44 +2236,30 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<JsonMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
-        let state = self.services.get();
-        req.validate_limits(state.limits())
-            .map_err(into_mcp_error)?;
-        let state = self
-            .services
-            .wait_for_services(state, context.ct.clone(), deadline)
-            .await
-            .map_err(into_mcp_error)?;
-        req.validate_limits(state.limits())
-            .map_err(into_mcp_error)?;
-        let services = match self.services(&state) {
-            Ok(services) => services,
-            Err(result) => return Ok(result),
+        let prepared = match self
+            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .await?
+        {
+            RetrievalPreparation::Ready(prepared) => prepared,
+            RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let (request, options, execution, expected_repository_id) = req.into_parts();
-        let cancellation = context.ct.clone();
-        let mcp_services = self.services.clone();
-        self.run_admitted(
-            services,
+        self.run_prepared(
+            "json",
+            prepared,
             expected_repository_id,
-            move |services| async move {
-                retry_after_initial_index(
-                    "json",
-                    &mcp_services,
-                    &services,
-                    cancellation.clone(),
-                    deadline,
-                    || {
-                        services.json_cancellable_with_execution_options(
-                            request.clone(),
+            move |services, cancellation| {
+                let request = request.clone();
+                async move {
+                    services
+                        .json_cancellable_with_execution_options(
+                            request,
                             options,
                             execution,
-                            cancellation.clone(),
+                            cancellation,
                         )
-                    },
-                )
-                .await
+                        .await
+                }
             },
         )
         .await
@@ -2557,20 +2274,12 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<ContextMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
-        let state = self.services.get();
-        let limits = state.limits();
-        req.validate_limits(limits).map_err(into_mcp_error)?;
-        let state = self
-            .services
-            .wait_for_services(state, context.ct.clone(), deadline)
-            .await
-            .map_err(into_mcp_error)?;
-        let limits = state.limits();
-        req.validate_limits(limits).map_err(into_mcp_error)?;
-        let services = match self.services(&state) {
-            Ok(services) => services,
-            Err(result) => return Ok(result),
+        let prepared = match self
+            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .await?
+        {
+            RetrievalPreparation::Ready(prepared) => prepared,
+            RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let (
             request,
@@ -2580,32 +2289,28 @@ impl LeanTokenMcp {
             options,
             expected_repository_id,
             handoff,
-        ) = req.into_parts(limits.default_context_tokens);
-        let cancellation = context.ct.clone();
-        let mcp_services = self.services.clone();
-        self.run_admitted(
-            services,
+        ) = req.into_parts(prepared.limits.default_context_tokens);
+        self.run_prepared(
+            "context",
+            prepared,
             expected_repository_id,
-            move |services| async move {
-                retry_after_initial_index(
-                    "context",
-                    &mcp_services,
-                    &services,
-                    cancellation.clone(),
-                    deadline,
-                    || {
-                        services.context_with_workflow_evidence_options_consistency_cancellable(
-                            request.clone(),
-                            handoff.clone(),
+            move |services, cancellation| {
+                let request = request.clone();
+                let handoff = handoff.clone();
+                let workflow_evidence = workflow_evidence.clone();
+                async move {
+                    services
+                        .context_with_workflow_evidence_options_consistency_cancellable(
+                            request,
+                            handoff,
                             workflow,
-                            workflow_evidence.clone(),
+                            workflow_evidence,
                             consistency,
                             options,
-                            cancellation.clone(),
+                            cancellation,
                         )
-                    },
-                )
-                .await
+                        .await
+                }
             },
         )
         .await
@@ -2693,200 +2398,6 @@ fn retryable_tool_result(response: RetryableToolResponse, mode: McpResultMode) -
     })
 }
 
-fn into_mcp_error(error: crate::Error) -> ErrorData {
-    let cause = error.reconciliation_cause();
-    match cause {
-        crate::Error::Cancelled => {
-            ErrorData::invalid_request("request cancelled", mcp_error_data("request_cancelled"))
-        }
-        crate::Error::PathOutsideRoot(_) => {
-            tracing::debug!(%cause, "MCP path rejected outside repository root");
-            ErrorData::invalid_params(
-                "path must stay within the repository root",
-                mcp_error_data("path_outside_root"),
-            )
-        }
-        crate::Error::UnsupportedPathEncoding(_) => ErrorData::invalid_params(
-            "repository path is not valid UTF-8",
-            mcp_error_data("unsupported_path_encoding"),
-        ),
-        crate::Error::NotIndexed(_) => ErrorData::invalid_params(
-            "requested path is not indexed",
-            mcp_error_data("not_indexed"),
-        ),
-        crate::Error::SymbolNotFound { .. } => ErrorData::invalid_params(
-            "requested symbol is not indexed",
-            mcp_error_data("symbol_not_found"),
-        ),
-        crate::Error::HeadingNotFound { .. } => ErrorData::invalid_params(
-            "requested document heading occurrence is not indexed",
-            mcp_error_data("heading_not_found"),
-        ),
-        crate::Error::RepositoryIdentityMismatch { expected, actual } => ErrorData::invalid_params(
-            "repository identity does not match this server",
-            Some(serde_json::json!({
-                "category": "repository_identity_mismatch",
-                "expected_repository_id": expected,
-                "actual_repository_id": actual,
-            })),
-        ),
-        crate::Error::LimitExceeded => ErrorData::invalid_params(
-            "request exceeds a configured limit",
-            mcp_error_data("request_limit_exceeded"),
-        ),
-        crate::Error::RequestLimitExceeded {
-            field,
-            requested,
-            limit,
-        } => ErrorData::invalid_params(
-            format!("{field} exceeds its configured limit"),
-            Some(serde_json::json!({
-                "category": "request_limit_exceeded",
-                "field": field,
-                "requested": requested,
-                "limit": limit,
-            })),
-        ),
-        crate::Error::UnsupportedLanguage(_) => ErrorData::invalid_params(
-            "requested structured language is unsupported",
-            mcp_error_data("unsupported_language"),
-        ),
-        crate::Error::InvalidJson {
-            syntax_category,
-            byte_offset,
-            line,
-            column,
-            reason,
-        } => ErrorData::invalid_params(
-            format!("file is not valid JSON at line {line}, column {column}"),
-            Some(serde_json::json!({
-                "category": "invalid_json",
-                "field": "path",
-                "syntax_category": syntax_category,
-                "byte_offset": byte_offset,
-                "line": line,
-                "column": column,
-                "reason": reason,
-            })),
-        ),
-        crate::Error::InvalidJsonSelector {
-            stage,
-            offset,
-            line,
-            column,
-            reason,
-        } => ErrorData::invalid_params(
-            format!("JMESPath {stage} failed at line {line}, column {column}"),
-            Some(serde_json::json!({
-                "category": "invalid_json_selector",
-                "field": "JMESPath expression",
-                "stage": stage,
-                "offset": offset,
-                "line": line,
-                "column": column,
-                "reason": reason,
-            })),
-        ),
-        crate::Error::InvalidInput { field, reason } => ErrorData::invalid_params(
-            format!("invalid {field}: {reason}"),
-            Some(serde_json::json!({
-                "category": "invalid_input",
-                "field": field,
-            })),
-        ),
-        crate::Error::InputTooLong { field, max_bytes } => ErrorData::invalid_params(
-            "request input exceeds its byte limit",
-            Some(serde_json::json!({
-                "category": "input_too_long",
-                "field": field,
-                "limit": max_bytes,
-            })),
-        ),
-        crate::Error::InvalidRequest(_) => ErrorData::invalid_params(
-            "request parameters are invalid",
-            mcp_error_data("invalid_request"),
-        ),
-        crate::Error::StaleCursor => {
-            ErrorData::invalid_params("cursor is stale or invalid", mcp_error_data("stale_cursor"))
-        }
-        crate::Error::UnknownReceipt(_) => ErrorData::invalid_params(
-            "retrieval receipt is unknown or expired",
-            mcp_error_data("unknown_receipt"),
-        ),
-        crate::Error::StaleReceipt { .. } => ErrorData::invalid_params(
-            "retrieval receipt belongs to a stale repository generation",
-            mcp_error_data("stale_receipt"),
-        ),
-        crate::Error::Regex(_) => ErrorData::invalid_params(
-            "regular expression is invalid",
-            mcp_error_data("invalid_regex"),
-        ),
-        crate::Error::Glob(_) => {
-            ErrorData::invalid_params("glob pattern is invalid", mcp_error_data("invalid_glob"))
-        }
-        crate::Error::RootNotFound(_)
-        | crate::Error::UnsafeRepositoryRoot(_)
-        | crate::Error::RepositoryMismatch { .. }
-        | crate::Error::InvalidConfiguration(_) => {
-            tracing::error!(%cause, "repository configuration is invalid");
-            ErrorData::internal_error(
-                "repository configuration is invalid",
-                mcp_error_data("repository_configuration"),
-            )
-        }
-        crate::Error::IndexLimitExceeded { .. } => {
-            tracing::error!(%cause, "repository indexing limit exceeded");
-            ErrorData::internal_error(
-                "repository indexing limit exceeded",
-                mcp_error_data("repository_index_limit"),
-            )
-        }
-        crate::Error::RepositoryTraversal(_) => {
-            tracing::error!(%cause, "repository traversal failed");
-            ErrorData::internal_error(
-                "repository traversal failed",
-                mcp_error_data("repository_traversal"),
-            )
-        }
-        crate::Error::RuntimeCapabilityUnavailable { .. } => {
-            tracing::error!(%cause, "repository runtime is unavailable");
-            ErrorData::internal_error(
-                "repository runtime is unavailable",
-                mcp_error_data("runtime_unavailable"),
-            )
-        }
-        crate::Error::IndexNotReady => ErrorData::internal_error(
-            "repository index is not ready",
-            mcp_error_data("index_not_ready"),
-        ),
-        crate::Error::RetryableConflict(_) => ErrorData::internal_error(
-            "repository operation should be retried",
-            mcp_error_data("retryable_conflict"),
-        ),
-        _ => {
-            tracing::error!(%cause, "MCP tool failed");
-            ErrorData::internal_error(
-                "repository retrieval failed",
-                mcp_error_data("repository_retrieval"),
-            )
-        }
-    }
-}
-
-fn mcp_error_data(category: &'static str) -> Option<serde_json::Value> {
-    Some(serde_json::json!({ "category": category }))
-}
-
-fn tool_unavailable(reason: &'static str, message: &'static str) -> CallToolResult {
-    let mut result = CallToolResult::error(vec![ContentBlock::text(message)]);
-    result.structured_content = Some(serde_json::json!({
-        "status": "unavailable",
-        "reason": reason,
-        "message": message,
-    }));
-    result
-}
-
 /// Return the complete JSON-serialized tool catalog for telemetry and snapshots.
 ///
 /// Catalog size is measured rather than capped: descriptions are part of the
@@ -2934,1631 +2445,4 @@ pub async fn serve_stdio_server(server: LeanTokenMcp) -> crate::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use rmcp::{serve_client, serve_server};
-
-    use super::*;
-
-    fn incoming_request(value: serde_json::Value) -> RxJsonRpcMessage<RoleServer> {
-        serde_json::from_value(value).expect("valid MCP request")
-    }
-
-    #[test]
-    fn transport_dispatch_has_an_exact_tool_boundary_and_bypasses_control_requests() {
-        let dispatch = RequestAdmission::new(DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY);
-        let transport = BoundedStdioTransport::new(dispatch.clone(), McpResultMode::Dual);
-        let mut admitted = (0..DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY)
-            .map(|id| {
-                let mut request = incoming_request(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "method": "tools/call",
-                    "params": {"name": "files", "arguments": {}}
-                }));
-                transport
-                    .admit_message(&mut request)
-                    .expect("admit tool call");
-                request
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(dispatch.available_permits(), 0);
-
-        let mut excess = incoming_request(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1000,
-            "method": "tools/call",
-            "params": {"name": "files", "arguments": {}}
-        }));
-        assert!(transport.admit_message(&mut excess).is_err());
-
-        for mut control in [
-            incoming_request(serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1001,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-06-18",
-                    "capabilities": {},
-                    "clientInfo": {"name": "test", "version": "1"}
-                }
-            })),
-            incoming_request(serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1002,
-                "method": "tools/list",
-                "params": {}
-            })),
-        ] {
-            transport
-                .admit_message(&mut control)
-                .expect("control request bypasses tool dispatch");
-        }
-
-        let request_ids = admitted
-            .iter()
-            .map(|message| match message {
-                JsonRpcMessage::Request(request) => request.id.clone(),
-                _ => unreachable!("test creates requests"),
-            })
-            .collect::<Vec<_>>();
-        admitted.clear();
-        assert_eq!(
-            dispatch.available_permits(),
-            0,
-            "handler completion alone must not release response capacity"
-        );
-        for id in request_ids {
-            BoundedStdioTransport::finish_dispatch(&transport.dispatched_calls, &id);
-        }
-        assert_eq!(
-            dispatch.available_permits(),
-            DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY
-        );
-    }
-
-    #[test]
-    fn transport_dispatch_permit_returns_when_a_handler_unwinds() {
-        let dispatch = RequestAdmission::new(1);
-        let transport = BoundedStdioTransport::new(dispatch.clone(), McpResultMode::Dual);
-
-        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut request = incoming_request(serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {"name": "files", "arguments": {}}
-            }));
-            transport
-                .admit_message(&mut request)
-                .expect("admit tool call");
-            assert_eq!(dispatch.available_permits(), 0);
-            panic!("injected handler panic");
-        }));
-
-        assert!(unwind.is_err());
-        assert_eq!(dispatch.available_permits(), 1);
-    }
-
-    #[test]
-    fn transport_dispatch_permit_returns_when_a_request_is_cancelled() {
-        let dispatch = RequestAdmission::new(1);
-        let transport = BoundedStdioTransport::new(dispatch.clone(), McpResultMode::Dual);
-        let mut request = incoming_request(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": "files", "arguments": {}}
-        }));
-        transport
-            .admit_message(&mut request)
-            .expect("admit tool call");
-        assert_eq!(dispatch.available_permits(), 0);
-
-        let mut cancellation = incoming_request(serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "notifications/cancelled",
-            "params": {"requestId": 1, "reason": "no longer needed"}
-        }));
-        transport
-            .admit_message(&mut cancellation)
-            .expect("admit cancellation");
-        assert_eq!(dispatch.available_permits(), 1);
-
-        drop(request);
-        assert_eq!(dispatch.available_permits(), 1);
-    }
-
-    #[test]
-    fn request_admission_has_an_exact_fail_fast_boundary() {
-        let (server, _) = LeanTokenMcp::pending();
-        let permits = (0..DEFAULT_ACTIVE_TOOL_CALL_CAPACITY)
-            .map(|_| {
-                server
-                    .request_admission
-                    .try_admit()
-                    .expect("admitted tool call")
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(server.request_admission.available_permits(), 0);
-        assert!(matches!(
-            server.request_admission.try_admit(),
-            Err(crate::Error::RetrievalOverloaded)
-        ));
-        drop(permits);
-        assert_eq!(
-            server.request_admission.available_permits(),
-            DEFAULT_ACTIVE_TOOL_CALL_CAPACITY
-        );
-    }
-
-    #[test]
-    fn cloned_servers_share_admission_but_separate_instances_do_not() {
-        let (server, _) = LeanTokenMcp::pending();
-        let clone = server.clone();
-        let permits = (0..DEFAULT_ACTIVE_TOOL_CALL_CAPACITY)
-            .map(|_| {
-                clone
-                    .request_admission
-                    .try_admit()
-                    .expect("admitted clone tool call")
-            })
-            .collect::<Vec<_>>();
-
-        assert!(matches!(
-            server.request_admission.try_admit(),
-            Err(crate::Error::RetrievalOverloaded)
-        ));
-
-        let (independent, _) = LeanTokenMcp::pending();
-        let independent_permit = independent
-            .request_admission
-            .try_admit()
-            .expect("separate server has independent capacity");
-        drop(independent_permit);
-        drop(permits);
-    }
-
-    #[test]
-    fn capacity_errors_are_structured_retryable_tool_results() {
-        let (server, _) = LeanTokenMcp::pending();
-        for (error, reason) in [
-            (
-                crate::Error::RetrievalOverloaded,
-                "retrieval_capacity_exhausted",
-            ),
-            (
-                crate::Error::RetrievalQueueTimeout,
-                "retrieval_queue_timeout",
-            ),
-        ] {
-            let result = server
-                .service_result::<()>(Err(error))
-                .expect("capacity result");
-            let structured = result.structured_content.expect("structured result");
-            assert_eq!(structured["status"], "retryable");
-            assert_eq!(structured["reason"], reason);
-            assert_eq!(structured["retry_after_ms"], 500);
-            assert_eq!(result.is_error, Some(false));
-        }
-    }
-
-    #[tokio::test]
-    async fn initialization_and_tool_listing_bypass_saturated_tool_admission() {
-        let (server, _) = LeanTokenMcp::pending();
-        let permits = (0..DEFAULT_ACTIVE_TOOL_CALL_CAPACITY)
-            .map(|_| {
-                server
-                    .request_admission
-                    .try_admit()
-                    .expect("saturate tool admission")
-            })
-            .collect::<Vec<_>>();
-        let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
-        let server_start = tokio::spawn(async move {
-            serve_server(server, server_stream)
-                .await
-                .expect("start server")
-        });
-        let mut client = serve_client((), client_stream)
-            .await
-            .expect("initialize client while saturated");
-        let mut server = server_start.await.expect("join server startup");
-
-        assert_eq!(
-            client
-                .peer()
-                .peer_info()
-                .expect("initialize response")
-                .server_info
-                .name,
-            "leantoken"
-        );
-        assert_eq!(
-            client
-                .peer()
-                .peer_info()
-                .expect("initialize response")
-                .server_info
-                .version,
-            mcp_runtime_version()
-        );
-        assert_eq!(mcp_schema_fingerprint().len(), 32);
-        assert_eq!(
-            client
-                .peer()
-                .list_all_tools()
-                .await
-                .expect("list tools while saturated")
-                .len(),
-            8
-        );
-
-        drop(permits);
-        client.close().await.expect("close client");
-        server.close().await.expect("close server");
-    }
-
-    #[tokio::test]
-    async fn repository_identity_is_checked_before_tool_admission() {
-        let root = tempfile::tempdir().expect("root");
-        let config =
-            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
-        let services = Arc::new(Services::open(config).expect("services"));
-        let server = LeanTokenMcp::new(Arc::clone(&services));
-        let permits = (0..DEFAULT_ACTIVE_TOOL_CALL_CAPACITY)
-            .map(|_| {
-                server
-                    .request_admission
-                    .try_admit()
-                    .expect("saturate tool admission")
-            })
-            .collect::<Vec<_>>();
-        let called = Arc::new(AtomicBool::new(false));
-        let operation_called = Arc::clone(&called);
-
-        let error = server
-            .run_admitted::<(), _, _>(
-                services,
-                Some("not-this-repository".into()),
-                move |_| async move {
-                    operation_called.store(true, Ordering::SeqCst);
-                    Ok(())
-                },
-            )
-            .await
-            .expect_err("identity mismatch must win over overload");
-
-        assert_eq!(
-            error.data,
-            Some(serde_json::json!({
-                "category": "repository_identity_mismatch",
-                "expected_repository_id": "not-this-repository",
-                "actual_repository_id": server.services(&server.services.get())
-                    .expect("ready services")
-                    .repository_id(),
-            }))
-        );
-        assert!(!called.load(Ordering::SeqCst));
-        drop(permits);
-    }
-
-    #[tokio::test]
-    async fn savings_is_covered_by_protocol_admission() {
-        let root = tempfile::tempdir().expect("root");
-        let config =
-            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
-        let services = Arc::new(Services::open(config).expect("services"));
-        let server = LeanTokenMcp::new(services);
-        let permits = (0..DEFAULT_ACTIVE_TOOL_CALL_CAPACITY)
-            .map(|_| {
-                server
-                    .request_admission
-                    .try_admit()
-                    .expect("saturate tool admission")
-            })
-            .collect::<Vec<_>>();
-
-        let result = server
-            .leantoken_savings(Parameters(SavingsMcpRequest { snapshot: None }))
-            .await
-            .expect("retryable savings response");
-        assert_eq!(
-            result
-                .structured_content
-                .as_ref()
-                .and_then(|value| value["reason"].as_str()),
-            Some("retrieval_capacity_exhausted")
-        );
-        drop(permits);
-    }
-
-    #[test]
-    fn startup_failures_expose_only_allowlisted_guidance() {
-        let marker = "/secret/repository";
-        let failure =
-            StartupFailure::from_error(&crate::Error::UnsafeRepositoryRoot(marker.into()));
-        let result = tool_unavailable(failure.reason, failure.message);
-        assert_eq!(
-            result
-                .structured_content
-                .as_ref()
-                .and_then(|value| value["reason"].as_str()),
-            Some("unsafe_repository_root")
-        );
-        assert!(!serde_json::to_string(&result).unwrap().contains(marker));
-    }
-
-    #[test]
-    fn mcp_exposes_eight_tools() {
-        let router = LeanTokenMcp::tool_router();
-        let tools = router.list_all();
-        assert_eq!(tools.len(), 8);
-
-        let names: std::collections::HashSet<_> = tools.iter().map(|t| t.name.as_ref()).collect();
-        for name in [
-            "files", "search", "outline", "read", "history", "json", "context", "savings",
-        ] {
-            assert!(names.contains(name), "missing tool {name}");
-        }
-    }
-
-    #[test]
-    fn user_docs_list_the_exact_runtime_tool_catalog() {
-        let expected = LeanTokenMcp::tool_router()
-            .list_all()
-            .into_iter()
-            .map(|tool| format!("leantoken.{}", tool.name))
-            .collect::<std::collections::BTreeSet<_>>();
-
-        let readme = include_str!("../README.md");
-        let readme_tools = readme
-            .split_once("## Available tools")
-            .expect("README tool section")
-            .1
-            .split_once("## CLI usage")
-            .expect("README tool section end")
-            .0
-            .lines()
-            .filter_map(|line| line.strip_prefix("| `"))
-            .filter_map(|line| line.split_once('`').map(|(name, _)| name.to_owned()))
-            .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(readme_tools, expected, "README tool table drifted");
-
-        let usage_tools = include_str!("../docs/usage.md")
-            .lines()
-            .filter_map(|line| line.strip_prefix("## `"))
-            .filter_map(|line| line.strip_suffix('`'))
-            .filter(|name| name.starts_with("leantoken."))
-            .map(str::to_owned)
-            .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(usage_tools, expected, "usage guide tool sections drifted");
-    }
-
-    #[test]
-    fn tools_have_input_schemas_without_redundant_output_schemas() {
-        let router = LeanTokenMcp::tool_router();
-        let tools = router.list_all();
-        for tool in tools {
-            assert!(
-                !tool.input_schema.is_empty(),
-                "{} input_schema is empty",
-                tool.name
-            );
-            assert!(
-                tool.output_schema.is_none(),
-                "{} output_schema adds catalog tokens despite structured results",
-                tool.name
-            );
-        }
-    }
-
-    #[test]
-    fn result_modes_emit_only_the_selected_representations() {
-        let value = serde_json::json!({"answer": 42});
-        let dual = tool_result(value.clone(), McpResultMode::Dual).expect("dual");
-        let text = tool_result(value.clone(), McpResultMode::Text).expect("text");
-        let structured = tool_result(value, McpResultMode::Structured).expect("structured");
-
-        assert!(!dual.content.is_empty());
-        assert!(dual.structured_content.is_some());
-        assert!(!text.content.is_empty());
-        assert!(text.structured_content.is_none());
-        assert!(structured.content.is_empty());
-        assert!(structured.structured_content.is_some());
-    }
-
-    #[test]
-    fn retryable_conflicts_are_successful_structured_results() {
-        let (server, _state) = LeanTokenMcp::pending();
-        for error in [
-            crate::Error::RetryableConflict(crate::error::RetryableOperation::Retrieval),
-            crate::Error::ReconciliationFailed(Arc::new(crate::Error::RetryableConflict(
-                crate::error::RetryableOperation::Retrieval,
-            ))),
-        ] {
-            let result = server
-                .service_result::<()>(Err(error))
-                .expect("tool result");
-
-            assert_eq!(result.is_error, Some(false));
-            let structured = result.structured_content.expect("structured retry result");
-            assert_eq!(structured["status"], "retryable");
-            assert_eq!(structured["reason"], "repository_changed");
-            assert_eq!(structured["retry_after_ms"], 100);
-        }
-    }
-
-    #[tokio::test]
-    async fn ready_operation_is_not_retried() {
-        let (_server, mcp_services) = LeanTokenMcp::pending();
-        let calls = std::sync::atomic::AtomicUsize::new(0);
-        let waits = std::sync::atomic::AtomicUsize::new(0);
-
-        let result = retry_after_initial_index_with_policy(
-            "files",
-            &mcp_services,
-            CancellationToken::new(),
-            Duration::from_secs(30),
-            |_| {
-                waits.fetch_add(1, Ordering::AcqRel);
-                std::future::ready(Ok::<(), crate::Error>(()))
-            },
-            || {
-                calls.fetch_add(1, Ordering::AcqRel);
-                std::future::ready(Ok::<_, crate::Error>(42))
-            },
-        )
-        .await
-        .expect("ready operation");
-
-        assert_eq!(result, 42);
-        assert_eq!(calls.load(Ordering::Acquire), 1);
-        assert_eq!(waits.load(Ordering::Acquire), 0);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn initial_index_retry_is_bounded() {
-        let (_server, mcp_services) = LeanTokenMcp::pending();
-        let calls = std::sync::atomic::AtomicUsize::new(0);
-        let waits = std::sync::atomic::AtomicUsize::new(0);
-
-        let error = retry_after_initial_index_with_policy(
-            "files",
-            &mcp_services,
-            CancellationToken::new(),
-            Duration::from_millis(250),
-            |cancellation| {
-                waits.fetch_add(1, Ordering::AcqRel);
-                async move {
-                    cancellation.cancelled().await;
-                    Err(crate::Error::Cancelled)
-                }
-            },
-            || {
-                calls.fetch_add(1, Ordering::AcqRel);
-                std::future::ready(Err::<(), _>(crate::Error::IndexNotReady))
-            },
-        )
-        .await
-        .expect_err("generation-zero operation must time out");
-
-        assert!(matches!(error, crate::Error::IndexNotReady));
-        assert_eq!(calls.load(Ordering::Acquire), 1);
-        assert_eq!(waits.load(Ordering::Acquire), 1);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn initial_index_retry_returns_first_published_result() {
-        let (_server, mcp_services) = LeanTokenMcp::pending();
-        let ready = Arc::new(AtomicBool::new(false));
-        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let operation_ready = Arc::clone(&ready);
-        let operation_calls = Arc::clone(&calls);
-        let waiting = tokio::spawn(async move {
-            retry_after_initial_index_with_policy(
-                "files",
-                &mcp_services,
-                CancellationToken::new(),
-                Duration::from_secs(1),
-                |_| async {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    Ok(())
-                },
-                move || {
-                    operation_calls.fetch_add(1, Ordering::AcqRel);
-                    let result = if operation_ready.load(Ordering::Acquire) {
-                        Ok(42)
-                    } else {
-                        Err(crate::Error::IndexNotReady)
-                    };
-                    std::future::ready(result)
-                },
-            )
-            .await
-        });
-        tokio::task::yield_now().await;
-        assert_eq!(calls.load(Ordering::Acquire), 1);
-
-        ready.store(true, Ordering::Release);
-        tokio::time::advance(Duration::from_millis(100)).await;
-
-        assert_eq!(
-            waiting
-                .await
-                .expect("join readiness retry")
-                .expect("published result"),
-            42
-        );
-        assert_eq!(calls.load(Ordering::Acquire), 2);
-    }
-
-    #[tokio::test]
-    async fn initial_index_retry_honors_cancellation() {
-        let (_server, mcp_services) = LeanTokenMcp::pending();
-        let cancellation = CancellationToken::new();
-        cancellation.cancel();
-
-        let error = retry_after_initial_index_with_policy(
-            "files",
-            &mcp_services,
-            cancellation,
-            Duration::from_secs(30),
-            |_| std::future::pending::<crate::Result<()>>(),
-            || std::future::ready(Err::<(), _>(crate::Error::IndexNotReady)),
-        )
-        .await
-        .expect_err("cancelled retry must stop");
-
-        assert!(matches!(error, crate::Error::Cancelled));
-    }
-
-    #[tokio::test]
-    async fn initial_index_retry_stops_when_runtime_fails() {
-        let (_server, mcp_services) = LeanTokenMcp::pending();
-        let waiting_services = mcp_services.clone();
-        let waiting = tokio::spawn(async move {
-            retry_after_initial_index_with_policy(
-                "files",
-                &waiting_services,
-                CancellationToken::new(),
-                Duration::from_secs(30),
-                |_| std::future::pending::<crate::Result<()>>(),
-                || std::future::ready(Err::<(), _>(crate::Error::IndexNotReady)),
-            )
-            .await
-        });
-        tokio::task::yield_now().await;
-        assert!(!waiting.is_finished());
-
-        mcp_services.set_failed(&crate::Error::McpRuntimeStopped);
-
-        let error = waiting
-            .await
-            .expect("join initial-index retry")
-            .expect_err("runtime failure must interrupt readiness retry");
-        assert!(matches!(error, crate::Error::McpRuntimeStopped));
-    }
-
-    #[tokio::test]
-    async fn initial_index_retry_prefers_runtime_failure_over_readiness_error() {
-        let (_server, mcp_services) = LeanTokenMcp::pending();
-        let failed_services = mcp_services.clone();
-
-        let error = retry_after_initial_index_with_policy(
-            "files",
-            &mcp_services,
-            CancellationToken::new(),
-            Duration::from_secs(30),
-            move |_| async move {
-                failed_services.set_failed(&crate::Error::McpRuntimeStopped);
-                Err(crate::Error::IndexNotReady)
-            },
-            || std::future::ready(Err::<(), _>(crate::Error::IndexNotReady)),
-        )
-        .await
-        .expect_err("terminal runtime failure must supersede readiness error");
-
-        assert!(matches!(error, crate::Error::McpRuntimeStopped));
-    }
-
-    #[tokio::test]
-    async fn protocol_initialization_wait_observes_transition() {
-        let (_server, services) = LeanTokenMcp::pending();
-        let waiting_services = services.clone();
-        let waiting = tokio::spawn(async move {
-            waiting_services.wait_initialized().await;
-        });
-        tokio::task::yield_now().await;
-        assert!(!waiting.is_finished());
-
-        services.mark_protocol_initialized();
-
-        tokio::time::timeout(Duration::from_secs(1), waiting)
-            .await
-            .expect("initialization wait must wake")
-            .expect("join initialization wait");
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn starting_service_wait_is_bounded() {
-        let (_server, services) = LeanTokenMcp::pending();
-
-        let state = services
-            .wait_for_services(
-                services.get(),
-                CancellationToken::new(),
-                tokio::time::Instant::now() + Duration::from_millis(250),
-            )
-            .await
-            .expect("bounded wait");
-
-        assert!(matches!(state, McpServiceState::Starting(_)));
-    }
-
-    #[tokio::test]
-    async fn starting_service_wait_observes_terminal_transition() {
-        let (_server, services) = LeanTokenMcp::pending();
-        let waiting_services = services.clone();
-        let waiting = tokio::spawn(async move {
-            waiting_services
-                .wait_for_services(
-                    waiting_services.get(),
-                    CancellationToken::new(),
-                    tokio::time::Instant::now() + Duration::from_secs(1),
-                )
-                .await
-        });
-        tokio::task::yield_now().await;
-        assert!(!waiting.is_finished());
-
-        services.set_failed(&crate::Error::McpRuntimeStopped);
-
-        let state = waiting
-            .await
-            .expect("join service wait")
-            .expect("terminal service state");
-        assert!(matches!(state, McpServiceState::Failed { .. }));
-    }
-
-    #[tokio::test]
-    async fn starting_service_wait_honors_cancellation() {
-        let (_server, services) = LeanTokenMcp::pending();
-        let cancellation = CancellationToken::new();
-        cancellation.cancel();
-
-        let error = services
-            .wait_for_services(
-                services.get(),
-                cancellation,
-                tokio::time::Instant::now() + Duration::from_secs(30),
-            )
-            .await
-            .expect_err("cancelled startup wait must stop");
-
-        assert!(matches!(error, crate::Error::Cancelled));
-    }
-
-    #[test]
-    fn mcp_error_mapping_separates_invalid_input_from_internal_failures() {
-        let invalid = into_mcp_error(crate::Error::InputTooLong {
-            field: "search query",
-            max_bytes: 64,
-        });
-        assert_eq!(invalid.code, rmcp::model::ErrorCode::INVALID_PARAMS);
-        assert_eq!(
-            invalid
-                .data
-                .as_ref()
-                .and_then(|data| data["category"].as_str()),
-            Some("input_too_long")
-        );
-        assert_eq!(
-            invalid.data.as_ref().map(|data| &data["limit"]),
-            Some(&serde_json::json!(64))
-        );
-
-        let request_limit = into_mcp_error(crate::Error::RequestLimitExceeded {
-            field: "max_tokens",
-            requested: 32_001,
-            limit: 32_000,
-        });
-        assert_eq!(request_limit.code, rmcp::model::ErrorCode::INVALID_PARAMS);
-        assert_eq!(
-            request_limit.data,
-            Some(serde_json::json!({
-                "category": "request_limit_exceeded",
-                "field": "max_tokens",
-                "requested": 32_001,
-                "limit": 32_000,
-            }))
-        );
-
-        let selector = into_mcp_error(crate::Error::InvalidJsonSelector {
-            stage: "evaluate",
-            offset: 6,
-            line: 1,
-            column: 7,
-            reason: "Runtime error: Argument 0 expects type array, given number".into(),
-        });
-        assert_eq!(selector.code, rmcp::model::ErrorCode::INVALID_PARAMS);
-        assert_eq!(
-            selector.data,
-            Some(serde_json::json!({
-                "category": "invalid_json_selector",
-                "field": "JMESPath expression",
-                "stage": "evaluate",
-                "offset": 6,
-                "line": 1,
-                "column": 7,
-                "reason": "Runtime error: Argument 0 expects type array, given number",
-            }))
-        );
-
-        let syntax = into_mcp_error(crate::Error::InvalidJson {
-            syntax_category: "syntax",
-            byte_offset: 12,
-            line: 1,
-            column: 13,
-            reason: "trailing comma at line 1 column 13".into(),
-        });
-        assert_eq!(syntax.code, rmcp::model::ErrorCode::INVALID_PARAMS);
-        assert_eq!(
-            syntax
-                .data
-                .as_ref()
-                .and_then(|data| data["byte_offset"].as_u64()),
-            Some(12)
-        );
-
-        let stale_receipt = into_mcp_error(crate::Error::StaleReceipt {
-            receipt_generation: 4,
-            repository_generation: 5,
-        });
-        assert_eq!(stale_receipt.code, rmcp::model::ErrorCode::INVALID_PARAMS);
-        assert_eq!(
-            stale_receipt
-                .data
-                .as_ref()
-                .and_then(|data| data["category"].as_str()),
-            Some("stale_receipt")
-        );
-
-        let internal = [
-            crate::Error::InvalidConfiguration("chunk size must be positive".into()),
-            crate::Error::InternalFailure("parser returned None".into()),
-            crate::Error::RuntimeCapabilityUnavailable {
-                capability: "SQLite FTS5",
-                source: None,
-            },
-        ];
-        for error in internal {
-            assert_eq!(
-                into_mcp_error(error).code,
-                rmcp::model::ErrorCode::INTERNAL_ERROR
-            );
-        }
-    }
-
-    #[test]
-    fn mcp_error_mapping_never_serializes_internal_or_input_paths() {
-        let unix_marker = "/home/example/sensitive-marker/external.sqlite";
-        let windows_marker = r"C:\Users\example\sensitive-marker\external.sqlite";
-        let invalid_regex = ["(?P<", "sensitive-marker", ">"].concat();
-        let errors = [
-            crate::Error::RootNotFound(unix_marker.into()),
-            crate::Error::UnsafeRepositoryRoot(unix_marker.into()),
-            crate::Error::PathOutsideRoot(unix_marker.into()),
-            crate::Error::PathOutsideRoot(windows_marker.into()),
-            crate::Error::NotIndexed(unix_marker.into()),
-            crate::Error::SymbolNotFound {
-                path: unix_marker.into(),
-                symbol: "sensitive-marker".into(),
-            },
-            crate::Error::HeadingNotFound {
-                path: unix_marker.into(),
-                heading: "sensitive-marker".into(),
-                occurrence: 2,
-            },
-            crate::Error::UnsupportedLanguage(unix_marker.into()),
-            crate::Error::InvalidRequest(format!("invalid path: {unix_marker}")),
-            crate::Error::InternalFailure(format!("failed at {unix_marker}")),
-            crate::Error::RepositoryMismatch {
-                database: windows_marker.into(),
-                expected_repository: unix_marker.into(),
-                actual_repository: unix_marker.into(),
-            },
-            crate::Error::Io(std::io::Error::other(format!(
-                "permission denied at {unix_marker}"
-            ))),
-            crate::Error::Sqlite(rusqlite::Error::InvalidPath(windows_marker.into())),
-            crate::Error::Regex(regex::Regex::new(&invalid_regex).expect_err("regex")),
-            crate::Error::Glob(globset::Glob::new("[sensitive-marker").expect_err("glob")),
-        ];
-
-        for error in errors {
-            let response = into_mcp_error(error);
-            let wire = serde_json::to_string(&response).expect("serialize public error");
-            for marker in [
-                unix_marker,
-                windows_marker,
-                "sensitive-marker",
-                "external.sqlite",
-                "example",
-            ] {
-                assert!(
-                    !wire.contains(marker),
-                    "public error leaked {marker}: {wire}"
-                );
-            }
-            assert!(
-                response
-                    .data
-                    .as_ref()
-                    .and_then(|data| data["category"].as_str())
-                    .is_some(),
-                "public error has no stable category: {wire}"
-            );
-        }
-    }
-
-    #[test]
-    fn explicit_null_limits_are_not_treated_as_omitted() {
-        assert!(
-            serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
-                "operation": "tree",
-                "max_results": null
-            }))
-            .is_err()
-        );
-        assert!(
-            serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-                "query": "answer",
-                "max_results": null
-            }))
-            .is_err()
-        );
-        assert!(
-            serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-                "query": "answer",
-                "max_tokens": null
-            }))
-            .is_err()
-        );
-        assert!(
-            serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-                "query": "answer",
-                "context_lines": null
-            }))
-            .is_err()
-        );
-        assert!(
-            serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
-                "paths": ["lib.rs"],
-                "max_results": null
-            }))
-            .is_err()
-        );
-        assert!(
-            serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
-                "paths": ["lib.rs"],
-                "max_tokens": null
-            }))
-            .is_err()
-        );
-        assert!(
-            serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
-                "path": "lib.rs",
-                "target": {"kind": "lines", "start": 1, "end": 1},
-                "max_tokens": null
-            }))
-            .is_err()
-        );
-        assert!(
-            serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
-                "task": "find answer",
-                "token_budget": null
-            }))
-            .is_err()
-        );
-        assert!(
-            serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
-                "task": "find answer",
-                "minimum_fragments_per_focus_path": null
-            }))
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn omitted_context_budget_uses_the_runtime_default() {
-        let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
-            "task": "find answer"
-        }))
-        .expect("context request without a budget");
-        let (request, _, _, _, _, _, _) = request.into_parts(37);
-        assert_eq!(request.token_budget, 37);
-        assert!(!request.verbose_diagnostics);
-        let null_limit = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
-            "task": "find answer",
-            "max_response_tokens": null
-        }))
-        .expect("null response limit is equivalent to omission");
-        let (_, _, _, _, options, _, _) = null_limit.into_parts(37);
-        assert_eq!(options.max_response_tokens(), None);
-
-        let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
-            "task": "find answer",
-            "token_budget": 23,
-            "max_response_tokens": 47,
-            "focus_paths": ["src/**"],
-            "strict_focus_paths": true,
-            "minimum_fragments_per_focus_path": 2,
-            "required_evidence": [{
-                "path": "paper/**",
-                "queries": ["failure boundary", "disclosure"],
-                "minimum_query_matches": 2
-            }],
-            "changed_paths": ["src/lib.rs"],
-            "strict_changed_paths": true,
-            "verbose_diagnostics": true,
-            "workflow_evidence": {
-                "failure_traces": ["error[E0001]"],
-                "symbols": ["answer"],
-                "paths": ["src/lib.rs"],
-                "test_intents": ["answer regression"]
-            }
-        }))
-        .expect("context request with a budget");
-        let (request, _, workflow_evidence, _, options, _, _) = request.into_parts(37);
-        assert_eq!(request.token_budget, 23);
-        assert_eq!(options.max_response_tokens(), Some(47));
-        assert_eq!(request.focus_paths, ["src/**"]);
-        assert!(request.strict_focus_paths);
-        assert_eq!(request.minimum_fragments_per_focus_path, Some(2));
-        assert_eq!(request.required_evidence.len(), 1);
-        assert_eq!(request.required_evidence[0].path, "paper/**");
-        assert_eq!(
-            request.required_evidence[0].queries,
-            ["failure boundary", "disclosure"]
-        );
-        assert_eq!(request.required_evidence[0].minimum_query_matches, 2);
-        assert_eq!(request.changed_paths, ["src/lib.rs"]);
-        assert!(request.strict_changed_paths);
-        assert!(request.verbose_diagnostics);
-        assert_eq!(workflow_evidence.failure_traces, ["error[E0001]"]);
-        assert_eq!(workflow_evidence.symbols, ["answer"]);
-        assert_eq!(workflow_evidence.paths, ["src/lib.rs"]);
-        assert_eq!(workflow_evidence.test_intents, ["answer regression"]);
-
-        for invalid in [0, MAX_OUTPUT_TOKENS + 1] {
-            let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
-                "task": "find answer",
-                "max_response_tokens": invalid
-            }))
-            .expect("syntactically valid context response limit");
-            assert!(request.validate_limits(McpLimitPolicy::DEFAULT).is_err());
-        }
-        assert!(
-            serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
-                "task": "find answer",
-                "max_response_tokens": -1
-            }))
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn context_mcp_maps_bounded_handoff_state() {
-        let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
-            "task": "continue implementation",
-            "handoff": {
-                "summary": "executor state",
-                "validations": [{
-                    "command": "cargo test",
-                    "status": "passed",
-                    "summary": "all tests passed"
-                }],
-                "assumptions": ["public API remains stable"],
-                "open_questions": ["is another fixture required?"],
-                "negative_evidence": ["no alternate owner found"],
-                "avoid_rules": ["do not copy source bodies"]
-            }
-        }))
-        .expect("context handoff request");
-        let (_, _, _, _, _, _, handoff) = request.into_parts(37);
-        let handoff = handoff.expect("handoff");
-        assert_eq!(handoff.summary.as_deref(), Some("executor state"));
-        assert_eq!(handoff.validations.len(), 1);
-        assert_eq!(handoff.assumptions, ["public API remains stable"]);
-
-        assert!(
-            serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
-                "task": "continue implementation",
-                "handoff": {"unexpected": true}
-            }))
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn tool_input_fields_are_documented() {
-        for tool in LeanTokenMcp::tool_router().list_all() {
-            // Savings accepts an optional snapshot and follows the same field contract.
-            let properties = tool
-                .input_schema
-                .get("properties")
-                .and_then(serde_json::Value::as_object);
-            let properties =
-                properties.unwrap_or_else(|| panic!("{} input properties missing", tool.name));
-            for (field, schema) in properties {
-                assert!(
-                    schema
-                        .get("description")
-                        .and_then(serde_json::Value::as_str)
-                        .is_some_and(|description| !description.trim().is_empty()),
-                    "{}.{} is missing a schema description",
-                    tool.name,
-                    field
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn files_schema_matches_operation_specific_runtime_requirements() {
-        let tool = LeanTokenMcp::tool_router()
-            .list_all()
-            .into_iter()
-            .find(|tool| tool.name == "files")
-            .expect("files tool");
-        let schema = serde_json::Value::Object((*tool.input_schema).clone());
-        let variants = schema["oneOf"].as_array().expect("operation variants");
-        assert_eq!(variants.len(), 3);
-        assert_eq!(variants[0]["properties"]["operation"]["const"], "tree");
-        assert_eq!(variants[1]["properties"]["operation"]["const"], "find");
-        assert_eq!(variants[1]["properties"]["query"]["type"], "string");
-        assert_eq!(variants[1]["required"], serde_json::json!(["query"]));
-        assert_eq!(variants[2]["properties"]["operation"]["const"], "glob");
-        assert_eq!(variants[2]["properties"]["pattern"]["type"], "string");
-        assert_eq!(variants[2]["required"], serde_json::json!(["pattern"]));
-        assert_eq!(schema["properties"]["query"]["minLength"], 1);
-        assert_eq!(schema["properties"]["pattern"]["minLength"], 1);
-    }
-
-    #[test]
-    fn retrieval_tools_expose_consistency_boundary() {
-        for tool in LeanTokenMcp::tool_router()
-            .list_all()
-            .into_iter()
-            .filter(|tool| tool.name != "savings" && tool.name != "history" && tool.name != "json")
-        {
-            let consistency = tool
-                .input_schema
-                .get("properties")
-                .and_then(serde_json::Value::as_object)
-                .and_then(|properties| properties.get("consistency"))
-                .unwrap_or_else(|| panic!("{} consistency schema missing", tool.name));
-            assert_eq!(
-                consistency.get("default"),
-                Some(&serde_json::json!("indexed_generation"))
-            );
-            assert_eq!(
-                consistency.get("enum"),
-                Some(&serde_json::json!([
-                    "indexed_generation",
-                    "reconcile_working_tree"
-                ]))
-            );
-            assert!(
-                consistency
-                    .get("description")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|description| {
-                        description.contains("reconcile_working_tree")
-                            && description.contains("edits")
-                    }),
-                "{}.consistency must tell agents when to synchronize",
-                tool.name
-            );
-        }
-        let history = LeanTokenMcp::tool_router()
-            .list_all()
-            .into_iter()
-            .find(|tool| tool.name == "history")
-            .expect("history tool");
-        assert!(
-            history
-                .input_schema
-                .get("properties")
-                .and_then(serde_json::Value::as_object)
-                .is_none_or(|properties| !properties.contains_key("consistency"))
-        );
-    }
-
-    #[test]
-    fn tool_descriptions_route_native_discovery_workflows() {
-        let descriptions = LeanTokenMcp::tool_router()
-            .list_all()
-            .into_iter()
-            .map(|tool| {
-                (
-                    tool.name.into_owned(),
-                    tool.description.expect("tool description").into_owned(),
-                )
-            })
-            .collect::<std::collections::HashMap<_, _>>();
-        assert!(descriptions["files"].contains("instead of find"));
-        assert!(descriptions["search"].contains("instead of grep or rg"));
-        assert!(descriptions["outline"].contains("without reading whole source files"));
-        assert!(descriptions["read"].contains("expected_hash"));
-        assert!(descriptions["read"].contains("instead of cat"));
-        assert!(descriptions["context"].contains("DEFAULT FIRST CALL"));
-        assert!(descriptions["savings"].contains("explicitly unobserved task outcomes"));
-        assert!(descriptions["savings"].contains("not claims about task success"));
-        assert!(
-            descriptions
-                .values()
-                .all(|description| description.contains("Example:"))
-        );
-    }
-
-    #[test]
-    fn savings_tool_is_local_and_read_only() {
-        let tool = LeanTokenMcp::tool_router()
-            .list_all()
-            .into_iter()
-            .find(|tool| tool.name == "savings")
-            .expect("savings tool");
-        let annotations = tool.annotations.expect("savings annotations");
-        assert_eq!(annotations.read_only_hint, Some(true));
-        assert_eq!(annotations.open_world_hint, Some(false));
-    }
-
-    #[test]
-    fn tool_schemas_are_closed_bounded_and_remove_ambiguous_inputs() {
-        let tools = LeanTokenMcp::tool_router()
-            .list_all()
-            .into_iter()
-            .map(|tool| {
-                (
-                    tool.name.into_owned(),
-                    serde_json::Value::Object((*tool.input_schema).clone()),
-                )
-            })
-            .collect::<std::collections::HashMap<_, _>>();
-
-        for (name, schema) in &tools {
-            assert_eq!(
-                schema.get("additionalProperties"),
-                Some(&serde_json::json!(false)),
-                "{name} must reject unknown arguments"
-            );
-        }
-        assert_eq!(
-            tools["context"].pointer("/properties/token_budget/default"),
-            Some(&serde_json::json!(3_000))
-        );
-        assert!(tools["files"].pointer("/properties/query").is_some());
-        assert!(tools["files"].pointer("/properties/pattern").is_some());
-        assert!(tools["read"].pointer("/properties/symbol").is_none());
-        assert!(tools["read"].pointer("/properties/start_line").is_none());
-        assert!(tools["read"].pointer("/properties/target").is_some());
-
-        let request = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
-            "operation": "find",
-            "query": "mcp",
-            "pattern": "*.rs"
-        }))
-        .expect("flat files request shape");
-        assert!(request.validate_limits(McpLimitPolicy::DEFAULT).is_err());
-        assert!(
-            serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
-                "path": "src/mcp.rs",
-                "target": {"kind": "symbol", "name": "LeanTokenMcp", "start": 1}
-            }))
-            .is_err()
-        );
-        for target in [
-            serde_json::json!({"kind": "range", "start": 10, "end": 20}),
-            serde_json::json!({"kind": "line_range", "start_line": 10, "end_line": 20}),
-        ] {
-            let request = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
-                "path": "src/mcp.rs",
-                "target": target
-            }))
-            .expect("common line-range aliases should remain readable");
-            let (request, _, _, _) = request.into_parts();
-            assert_eq!(request.start_line, Some(10));
-            assert_eq!(request.end_line, Some(20));
-        }
-        let heading = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
-            "path": "README.md",
-            "target": {"kind": "heading", "name": "Installation", "occurrence": 2}
-        }))
-        .expect("Markdown heading target");
-        assert!(heading.validate_limits(McpLimitPolicy::DEFAULT).is_ok());
-        let (heading, _, _, _) = heading.into_parts();
-        assert_eq!(heading.heading.as_deref(), Some("Installation"));
-        assert_eq!(heading.heading_occurrence, Some(2));
-        assert!(heading.symbol.is_none());
-        let invalid_heading = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
-            "path": "README.md",
-            "target": {"kind": "heading", "name": "Installation", "occurrence": 0}
-        }))
-        .expect("schema validation remains a runtime boundary");
-        assert!(
-            invalid_heading
-                .validate_limits(McpLimitPolicy::DEFAULT)
-                .is_err()
-        );
-        let continuation = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
-            "path": "src/mcp.rs",
-            "target": {"kind": "continuation", "cursor": "opaque"}
-        }))
-        .expect("continuation target");
-        let (continuation, _, _, _) = continuation.into_parts();
-        assert_eq!(continuation.continuation_cursor.as_deref(), Some("opaque"));
-        assert!(continuation.symbol.is_none());
-        assert!(continuation.heading.is_none());
-        assert!(continuation.heading_occurrence.is_none());
-        assert!(continuation.start_line.is_none());
-        assert!(continuation.end_line.is_none());
-    }
-
-    #[test]
-    fn retrieval_response_budget_schemas_are_optional_and_bounded() {
-        let tools = LeanTokenMcp::tool_router().list_all();
-        for name in [
-            "context", "read", "search", "outline", "files", "history", "json",
-        ] {
-            let tool = tools
-                .iter()
-                .find(|tool| tool.name == name)
-                .unwrap_or_else(|| panic!("{name} tool"));
-            let schema = serde_json::Value::Object((*tool.input_schema).clone());
-            assert_eq!(
-                schema.pointer("/properties/max_response_tokens/minimum"),
-                Some(&serde_json::json!(1)),
-                "{name}"
-            );
-            assert_eq!(
-                schema.pointer("/properties/max_response_tokens/maximum"),
-                Some(&serde_json::json!(32_000)),
-                "{name}"
-            );
-            assert_eq!(
-                schema.pointer("/properties/max_response_tokens/default"),
-                Some(&serde_json::Value::Null),
-                "{name}"
-            );
-        }
-    }
-
-    #[test]
-    fn context_focus_candidate_schema_exposes_generation_bounds() {
-        let context = LeanTokenMcp::tool_router()
-            .list_all()
-            .into_iter()
-            .find(|tool| tool.name == "context")
-            .expect("context tool");
-        let schema = serde_json::Value::Object((*context.input_schema).clone());
-        assert_eq!(
-            schema.pointer("/properties/focus_paths/maxItems"),
-            Some(&serde_json::json!(32))
-        );
-        assert_eq!(
-            schema.pointer("/properties/minimum_fragments_per_focus_path/maximum"),
-            Some(&serde_json::json!(8))
-        );
-    }
-
-    #[test]
-    fn retrieval_response_budget_limits_are_validated_for_every_tool() {
-        macro_rules! assert_invalid {
-            ($ty:ty, $base:expr) => {
-                for invalid in [0, MAX_OUTPUT_TOKENS + 1] {
-                    let mut value = $base;
-                    value["max_response_tokens"] = serde_json::json!(invalid);
-                    let request =
-                        serde_json::from_value::<$ty>(value).expect("deserialize request");
-                    assert!(
-                        request.validate_limits(McpLimitPolicy::DEFAULT).is_err(),
-                        "{} accepted {invalid}",
-                        stringify!($ty)
-                    );
-                }
-            };
-        }
-
-        assert_invalid!(FilesMcpRequest, serde_json::json!({"operation": "tree"}));
-        assert_invalid!(SearchMcpRequest, serde_json::json!({"query": "needle"}));
-        assert_invalid!(
-            OutlineMcpRequest,
-            serde_json::json!({"paths": ["src/lib.rs"]})
-        );
-        assert_invalid!(
-            ReadMcpRequest,
-            serde_json::json!({
-                "path": "src/lib.rs",
-                "target": {"kind": "lines", "start": 1, "end": 1}
-            })
-        );
-        assert_invalid!(
-            HistoryMcpRequest,
-            serde_json::json!({
-                "operation": {
-                    "kind": "read_symbol",
-                    "path": "src/lib.rs",
-                    "symbol": "owner",
-                    "revision": "HEAD"
-                }
-            })
-        );
-        assert_invalid!(
-            JsonMcpRequest,
-            serde_json::json!({
-                "operation": {"kind": "query", "path": "data.json"}
-            })
-        );
-    }
-
-    #[test]
-    fn receipt_id_maps_to_the_service_request() {
-        let request = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
-            "path": "README.md",
-            "receipt_id": "r0000000000000001",
-            "target": {"kind": "lines", "start": 1, "end": 2}
-        }))
-        .expect("read request with receipt");
-        let (request, _, _, _) = request.into_parts();
-        assert_eq!(request.receipt_id.as_deref(), Some("r0000000000000001"));
-    }
-
-    #[test]
-    fn history_operation_maps_to_the_service_request() {
-        let request = serde_json::from_value::<HistoryMcpRequest>(serde_json::json!({
-            "operation": {
-                "kind": "diff_symbol",
-                "path": "src/lib.rs",
-                "symbol": "Services",
-                "base_revision": "main~1",
-                "head_revision": "main"
-            },
-            "max_tokens": 500
-        }))
-        .expect("history request");
-        request
-            .validate_limits(McpLimitPolicy::DEFAULT)
-            .expect("history limits");
-        let (call, _, _) = request.into_parts().expect("history parts");
-        let HistoryMcpCall::Single(request) = call else {
-            panic!("expected single-symbol history call");
-        };
-        assert_eq!(request.max_tokens, Some(500));
-        assert!(matches!(
-            request.operation,
-            HistoryOperation::DiffSymbol {
-                path,
-                symbol,
-                base_revision,
-                head_revision,
-            } if path == "src/lib.rs"
-                && symbol == "Services"
-                && base_revision == "main~1"
-                && head_revision == "main"
-        ));
-    }
-
-    #[test]
-    fn diff_symbols_history_maps_targets_cursor_and_response_budget() {
-        let request = serde_json::from_value::<HistoryMcpRequest>(serde_json::json!({
-            "operation": {
-                "kind": "diff_symbols",
-                "targets": [
-                    {
-                        "path": "src/old.rs",
-                        "symbol": "old_name",
-                        "head_path": "src/new.rs",
-                        "head_symbol": "new_name"
-                    }
-                ],
-                "base_revision": "main~1",
-                "head_revision": "main"
-            },
-            "max_results": 1,
-            "max_tokens": 500,
-            "max_response_tokens": 900,
-            "cursor": "history-cursor"
-        }))
-        .expect("batched history request");
-        request
-            .validate_limits(McpLimitPolicy::DEFAULT)
-            .expect("batched history limits");
-        let (call, options, _) = request.into_parts().expect("batched history parts");
-        assert_eq!(options.max_response_tokens(), Some(900));
-        let HistoryMcpCall::DiffSymbols(request) = call else {
-            panic!("expected batched-symbol history call");
-        };
-        assert_eq!(request.base_revision, "main~1");
-        assert_eq!(request.head_revision, "main");
-        assert_eq!(request.max_results, Some(1));
-        assert_eq!(request.max_tokens, Some(500));
-        assert_eq!(request.cursor.as_deref(), Some("history-cursor"));
-        assert_eq!(request.targets.len(), 1);
-        assert_eq!(request.targets[0].path, "src/old.rs");
-        assert_eq!(request.targets[0].symbol, "old_name");
-        assert_eq!(request.targets[0].head_path.as_deref(), Some("src/new.rs"));
-        assert_eq!(request.targets[0].head_symbol.as_deref(), Some("new_name"));
-
-        let single_with_cursor = serde_json::from_value::<HistoryMcpRequest>(serde_json::json!({
-            "operation": {
-                "kind": "read_symbol",
-                "path": "src/lib.rs",
-                "symbol": "item",
-                "revision": "main"
-            },
-            "cursor": "not-valid-here"
-        }))
-        .expect("single history request");
-        assert!(matches!(
-            single_with_cursor
-                .into_parts()
-                .expect_err("cursor is exclusive to diff_symbols"),
-            crate::Error::InvalidInput {
-                field: "cursor",
-                reason: "is only valid for diff_symbols"
-            }
-        ));
-    }
-
-    #[test]
-    fn json_operation_maps_to_the_service_request() {
-        let request = serde_json::from_value::<JsonMcpRequest>(serde_json::json!({
-            "operation": {
-                "kind": "numeric_summary",
-                "path": "artifacts/results.json",
-                "selector": {
-                    "kind": "jmespath",
-                    "expression": "runs[].score"
-                }
-            },
-            "max_items": 500
-        }))
-        .expect("JSON request");
-        request
-            .validate_limits(McpLimitPolicy::DEFAULT)
-            .expect("JSON limits");
-        let (request, _, execution, _) = request.into_parts();
-        assert_eq!(request.max_items, Some(500));
-        assert!(request.cursor.is_none());
-        assert_eq!(execution, JsonExecutionOptions::mcp(None));
-        assert!(matches!(
-            request.operation,
-            JsonOperation::NumericSummary {
-                path,
-                selector: Some(JsonSelector::Jmespath { expression }),
-            } if path == "artifacts/results.json" && expression == "runs[].score"
-        ));
-
-        let request = serde_json::from_value::<JsonMcpRequest>(serde_json::json!({
-            "operation": {
-                "kind": "query",
-                "path": "artifacts/results.json",
-                "projection": "keys"
-            },
-            "depth": 1,
-            "cursor": "j2:source:query:2"
-        }))
-        .expect("paged JSON request");
-        let (request, _, execution, _) = request.into_parts();
-        assert_eq!(request.cursor.as_deref(), Some("j2:source:query:2"));
-        assert_eq!(execution, JsonExecutionOptions::mcp(Some(1)));
-        assert!(matches!(
-            request.operation,
-            JsonOperation::Query {
-                projection: JsonProjection::Keys,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn tool_catalog_schema_snapshot() {
-        let tools = LeanTokenMcp::tool_router().list_all();
-        insta::assert_json_snapshot!("mcp_tool_catalog", tools);
-    }
-
-    #[test]
-    fn outline_cursor_maps_to_the_service_request() {
-        let request = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
-            "paths": ["src/lib.rs"],
-            "cursor": "12:outline:34:0000000000000000"
-        }))
-        .expect("outline request");
-        let (request, _, _, _, _) = request.into_parts();
-
-        assert_eq!(
-            request.cursor.as_deref(),
-            Some("12:outline:34:0000000000000000")
-        );
-    }
-
-    #[test]
-    fn compact_projections_map_to_service_requests() {
-        let files = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
-            "operation": "tree"
-        }))
-        .expect("default files projection");
-        let (_, projection, _, _, _) = files.into_parts();
-        assert_eq!(projection, FilesMcpProjection::Full);
-
-        let files = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
-            "operation": "find",
-            "query": "service",
-            "projection": "paths"
-        }))
-        .expect("path projection");
-        let (_, projection, _, _, _) = files.into_parts();
-        assert_eq!(projection, FilesMcpProjection::Paths);
-
-        let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-            "query": "Services"
-        }))
-        .expect("default search projection");
-        let (_, projection, coordinates_only, _, _, _) = search.into_parts();
-        assert_eq!(projection, SearchMcpProjection::Full);
-        assert!(!coordinates_only);
-
-        let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-            "query": "Services",
-            "projection": "grouped"
-        }))
-        .expect("grouped projection");
-        let (_, projection, coordinates_only, _, _, _) = search.into_parts();
-        assert_eq!(projection, SearchMcpProjection::Grouped);
-        assert!(!coordinates_only);
-
-        let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-            "query": "Services",
-            "mode": "text",
-            "all_occurrences": true,
-            "coordinates_only": true
-        }))
-        .expect("coordinates-only occurrence projection");
-        search
-            .validate_limits(McpLimitPolicy::DEFAULT)
-            .expect("valid occurrence projection");
-        let (_, projection, coordinates_only, _, _, _) = search.into_parts();
-        assert_eq!(projection, SearchMcpProjection::Occurrences);
-        assert!(coordinates_only);
-
-        let invalid = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-            "query": "Services",
-            "mode": "text",
-            "coordinates_only": true
-        }))
-        .expect("structurally valid search request");
-        assert!(matches!(
-            invalid.validate_limits(McpLimitPolicy::DEFAULT),
-            Err(crate::Error::InvalidInput {
-                field: "coordinates_only",
-                ..
-            })
-        ));
-
-        let outline = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
-            "paths": ["src/services.rs"]
-        }))
-        .expect("default outline projection");
-        let (_, projection, _, _, _) = outline.into_parts();
-        assert_eq!(projection, OutlineMcpProjection::Full);
-
-        let outline = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
-            "paths": ["src/services.rs"],
-            "projection": "signatures"
-        }))
-        .expect("signature projection");
-        let (_, projection, _, _, _) = outline.into_parts();
-        assert_eq!(projection, OutlineMcpProjection::Signatures);
-    }
-}
+mod tests;
