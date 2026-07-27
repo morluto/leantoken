@@ -14,9 +14,10 @@ use std::time::{Duration, Instant};
 
 use leantoken::tokens::Tokenizer;
 use model_ab_artifacts::{
-    ARTIFACT_SCHEMA_V1, PREWALK_HANDOFF_FILE, PROVIDER_USAGE_FILE, PrewalkHandoff, ProviderUsage,
-    ProviderUsageReceipt, RangeIdentity, RunBinding, TOOL_TRACE_FILE, TRAJECTORY_FILE, ToolCall,
-    ToolOutcome, ToolTrace, Trajectory, ValidatedEdit, is_bounded_prewalk_todo_event,
+    ARTIFACT_SCHEMA_V1, OrientationCapsule, PREWALK_HANDOFF_FILE, PROVIDER_USAGE_FILE,
+    PrewalkHandoff, ProviderUsage, ProviderUsageReceipt, RangeIdentity, RunBinding,
+    TOOL_TRACE_FILE, TRAJECTORY_FILE, ToolCall, ToolOutcome, ToolTrace, Trajectory, ValidatedEdit,
+    is_bounded_prewalk_todo_event, orientation_capsule_prompt, validate_orientation_capsule,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -47,6 +48,8 @@ struct AdapterRequest {
     revision: String,
     task_id: String,
     prompt: String,
+    #[serde(default)]
+    orientation_capsule: Option<OrientationCapsule>,
     artifacts_directory: PathBuf,
     timeout_seconds: u64,
 }
@@ -274,6 +277,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         .iter()
         .filter(|call| call.tool_name == "edit" && call.outcome == ToolOutcome::Success)
         .count();
+    let orientation_capsule_prompt_tokens = request
+        .orientation_capsule
+        .as_ref()
+        .map(orientation_capsule_prompt)
+        .transpose()?
+        .map(|prompt| configuration.tokenizer.count(&prompt));
     let result = AdapterResult {
         schema_version: 4,
         task_success: successful_edits > 0 && failed_tool_calls == 0,
@@ -296,6 +305,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             "successful_edits": successful_edits,
             "random_seed": request.random_seed,
             "arm_order_index": request.arm_order_index,
+            "orientation_capsule_tokens": request
+                .orientation_capsule
+                .as_ref()
+                .map(|capsule| capsule.capsule_tokens),
+            "orientation_capsule_prompt_tokens": orientation_capsule_prompt_tokens,
         }),
         repository_generation: analysis.repository_generation,
     };
@@ -323,6 +337,7 @@ fn validate_request(
         ("lean_token_progressive", "progressive") => RetrievalPolicy::LeanTokenProgressive,
         ("lean_token_one_shot", "one_shot_context") => RetrievalPolicy::LeanTokenOneShot,
         ("prewalk", "frontier_prewalk_executor") => RetrievalPolicy::Prewalk,
+        ("prewalk_capsule", "frontier_prewalk_executor") => RetrievalPolicy::Prewalk,
         _ => return Err("arm and retrieval configuration do not match".into()),
     };
     if configuration.mcp_enabled != (retrieval_policy != RetrievalPolicy::NativeOnly) {
@@ -373,9 +388,19 @@ fn validate_request(
         {
             return Err("prewalk phase limits or model separation are invalid".into());
         }
+        let capsule_arm = request.arm == "prewalk_capsule";
+        if capsule_arm != request.orientation_capsule.is_some() {
+            return Err(
+                "orientation capsule presence does not match the selected prewalk arm".into(),
+            );
+        }
+        if let Some(capsule) = &request.orientation_capsule {
+            validate_orientation_capsule(capsule, configuration.tokenizer)?;
+        }
     } else if request.executor_model.is_some()
         || configuration.prewalk_tool_call_limit.is_some()
         || configuration.executor_tool_call_limit.is_some()
+        || request.orientation_capsule.is_some()
     {
         return Err("non-prewalk arm contains prewalk-only configuration".into());
     }
@@ -423,13 +448,20 @@ fn execute_prewalk(
     let started = Instant::now();
     let total_timeout = Duration::from_secs(request.timeout_seconds.saturating_sub(5));
     let prewalk_timeout = total_timeout / 2;
+    let capsule_prompt = request
+        .orientation_capsule
+        .as_ref()
+        .map(orientation_capsule_prompt)
+        .transpose()?
+        .unwrap_or_default();
     let prewalk_prompt = format!(
-        "Explore and begin the repository task below as the frontier prewalk. Use LeanToken as the only repository discovery and source-reading mechanism; native shell commands are allowed only for Git preflight and validation. Do not issue tool calls in parallel. Maintain a bounded todo list, gather grounded path/range evidence, and make the first evidence-grounded edit. After that edit, you must run a successful build, test, lint, or `git diff --check` shell command; the handoff is rejected without a successful post-edit validation. Then stop, leaving unfinished steps as pending in the required structured final response, but do not finish the entire task when a validated first edit is available.\n\nFrozen retrieval contract: {}\nPer-call retrieval source budget: {} tokens. Prewalk tool-call limit: {}.\n\nTask:\n{}",
+        "Explore and begin the repository task below as the frontier prewalk. Use LeanToken as the only repository discovery and source-reading mechanism; native shell commands are allowed only for Git preflight and validation. Do not issue tool calls in parallel. Maintain a bounded todo list, gather grounded path/range evidence, and make the first evidence-grounded edit. After that edit, you must run a successful build, test, lint, or `git diff --check` shell command; the handoff is rejected without a successful post-edit validation. Then stop, leaving unfinished steps as pending in the required structured final response, but do not finish the entire task when a validated first edit is available.\n\nFrozen retrieval contract: {}\nPer-call retrieval source budget: {} tokens. Prewalk tool-call limit: {}.{}\n\nTask:\n{}",
         request.arm_definition.retrieval_contract,
         request.arm_definition.budget.context_token_limit,
         configuration
             .prewalk_tool_call_limit
             .expect("validated prewalk limit"),
+        capsule_prompt,
         request.prompt
     );
     let mut output_schema = tempfile::NamedTempFile::new()?;
@@ -500,6 +532,7 @@ fn execute_prewalk(
         evidence_calls,
         worktree_patch: patch,
         first_validated_edit,
+        orientation_capsule: request.orientation_capsule.clone(),
     };
     write_json(
         request.artifacts_directory.join(PREWALK_HANDOFF_FILE),
@@ -1235,6 +1268,12 @@ fn persist_artifacts(
     configuration: &CodexConfiguration,
     request: &AdapterRequest,
 ) -> Result<(), Box<dyn Error>> {
+    let orientation_capsule_prompt_tokens = request
+        .orientation_capsule
+        .as_ref()
+        .map(orientation_capsule_prompt)
+        .transpose()?
+        .map(|prompt| configuration.tokenizer.count(&prompt));
     write_json(
         directory.join(TOOL_TRACE_FILE),
         &ToolTrace {
@@ -1265,6 +1304,11 @@ fn persist_artifacts(
                 "turn_completed_event": analysis.usage_event,
                 "phase_boundary": analysis.phase_boundary,
                 "cache_creation_input_tokens_exposed": false,
+                "orientation_capsule_tokens": request
+                    .orientation_capsule
+                    .as_ref()
+                    .map(|capsule| capsule.capsule_tokens),
+                "orientation_capsule_prompt_tokens": orientation_capsule_prompt_tokens,
             }),
         },
     )?;

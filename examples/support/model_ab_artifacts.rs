@@ -6,6 +6,10 @@ pub const TOOL_TRACE_FILE: &str = "tool-trace.json";
 pub const TRAJECTORY_FILE: &str = "trajectory.json";
 pub const PROVIDER_USAGE_FILE: &str = "provider-usage.json";
 pub const PREWALK_HANDOFF_FILE: &str = "prewalk-handoff.json";
+pub const ORIENTATION_CAPSULE_MAX_PATHS: usize = 1;
+pub const ORIENTATION_CAPSULE_MAX_TERMS: usize = 4;
+pub const ORIENTATION_CAPSULE_MAX_DEFINITIONS: usize = 4;
+pub const ORIENTATION_CAPSULE_MAX_TOKENS: usize = 128;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct RunBinding {
@@ -86,6 +90,19 @@ pub struct ProviderUsageReceipt {
     pub raw_receipt: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct OrientationCapsule {
+    pub entries: Vec<OrientationCapsuleEntry>,
+    pub capsule_tokens: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct OrientationCapsuleEntry {
+    pub path: String,
+    pub matched_terms: Vec<String>,
+    pub definitions: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PrewalkHandoff {
     pub schema_version: u32,
@@ -97,12 +114,70 @@ pub struct PrewalkHandoff {
     pub evidence_calls: Vec<ToolCall>,
     pub worktree_patch: String,
     pub first_validated_edit: ValidatedEdit,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation_capsule: Option<OrientationCapsule>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ValidatedEdit {
     pub edit_sequence: usize,
     pub validation_sequence: usize,
+}
+
+pub fn validate_orientation_capsule(
+    capsule: &OrientationCapsule,
+    tokenizer: leantoken::tokens::Tokenizer,
+) -> Result<(), String> {
+    if capsule.entries.is_empty() || capsule.entries.len() > ORIENTATION_CAPSULE_MAX_PATHS {
+        return Err("orientation capsule must contain exactly one bounded path".to_owned());
+    }
+    for entry in &capsule.entries {
+        if !is_relative_capsule_path(&entry.path)
+            || entry.matched_terms.is_empty()
+            || entry.matched_terms.len() > ORIENTATION_CAPSULE_MAX_TERMS
+            || entry.definitions.len() > ORIENTATION_CAPSULE_MAX_DEFINITIONS
+            || entry
+                .matched_terms
+                .iter()
+                .chain(&entry.definitions)
+                .any(|value| value.trim().is_empty())
+        {
+            return Err("orientation capsule entry exceeds its structural bounds".to_owned());
+        }
+    }
+    let serialized = serde_json::to_string(&capsule.entries)
+        .map_err(|error| format!("orientation capsule serialization failed: {error}"))?;
+    let exact_tokens = tokenizer.count(&serialized);
+    if exact_tokens != capsule.capsule_tokens || exact_tokens > ORIENTATION_CAPSULE_MAX_TOKENS {
+        return Err(format!(
+            "orientation capsule token count is {}, expected {}, with maximum {}",
+            capsule.capsule_tokens, exact_tokens, ORIENTATION_CAPSULE_MAX_TOKENS
+        ));
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+pub fn orientation_capsule_prompt(
+    capsule: &OrientationCapsule,
+) -> Result<String, serde_json::Error> {
+    Ok(format!(
+        "\n\nBounded orientation capsule (routing hint, not source evidence):\n\
+         Inspect the named owner first, verify it with repository evidence before editing, and \
+         record contrary evidence instead of forcing the route.\n\
+         ORIENTATION_CAPSULE_JSON\n{}\nEND_ORIENTATION_CAPSULE_JSON",
+        serde_json::to_string(capsule)?
+    ))
+}
+
+fn is_relative_capsule_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.starts_with('\\')
+        && !path.contains('\\')
+        && path
+            .split('/')
+            .all(|component| !component.is_empty() && component != "." && component != "..")
 }
 
 pub fn is_bounded_prewalk_todo_event(event: &Value) -> bool {

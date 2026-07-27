@@ -10,9 +10,9 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 
 use model_ab_artifacts::{
-    ARTIFACT_SCHEMA_V1, PREWALK_HANDOFF_FILE, PROVIDER_USAGE_FILE, PrewalkHandoff, ProviderUsage,
-    ProviderUsageReceipt, RunBinding, TOOL_TRACE_FILE, TRAJECTORY_FILE, ToolCall, ToolOutcome,
-    ToolTrace, Trajectory, ValidatedEdit,
+    ARTIFACT_SCHEMA_V1, OrientationCapsule, PREWALK_HANDOFF_FILE, PROVIDER_USAGE_FILE,
+    PrewalkHandoff, ProviderUsage, ProviderUsageReceipt, RunBinding, TOOL_TRACE_FILE,
+    TRAJECTORY_FILE, ToolCall, ToolOutcome, ToolTrace, Trajectory, ValidatedEdit,
 };
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +28,8 @@ struct AdapterRequest {
     primary_model: String,
     executor_model: Option<String>,
     task_id: String,
+    #[serde(default)]
+    orientation_capsule: Option<OrientationCapsule>,
     artifacts_directory: PathBuf,
 }
 
@@ -125,7 +127,7 @@ fn dry_run_trace(
     request: &AdapterRequest,
     binding: &RunBinding,
 ) -> Result<(Vec<ToolCall>, Vec<serde_json::Value>), Box<dyn Error>> {
-    if request.arm != "prewalk" {
+    if !matches!(request.arm.as_str(), "prewalk" | "prewalk_capsule") {
         return Ok((Vec::new(), Vec::new()));
     }
     let executor_model = request
@@ -194,6 +196,7 @@ fn dry_run_trace(
                 edit_sequence: 1,
                 validation_sequence: 2,
             },
+            orientation_capsule: request.orientation_capsule.clone(),
         },
     )?;
     Ok((calls, vec![todo]))
