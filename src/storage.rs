@@ -17,8 +17,11 @@ use rusqlite::{
     config::DbConfig, params,
 };
 use rusqlite_migration::{M, Migrations};
+use serde::{Deserialize, Serialize};
 
-use crate::model::{ReferenceRole, ResponseMeta, TokenAccountingOperation};
+use crate::model::{
+    ReferenceRole, ResponseMeta, TokenAccountingOperation, TokenSavingsRequestClass,
+};
 use crate::{Error, Result};
 
 pub(crate) const MAX_READ_CONNECTIONS: u32 = 8;
@@ -499,6 +502,10 @@ CREATE TABLE IF NOT EXISTS token_savings (
     receipt_suppressed_overlap INTEGER NOT NULL DEFAULT 0,
     expected_hash_not_modified_responses INTEGER NOT NULL DEFAULT 0,
     expected_hash_suppressed_source_tokens INTEGER NOT NULL DEFAULT 0,
+    useful_requests INTEGER NOT NULL DEFAULT 0,
+    incomplete_requests INTEGER NOT NULL DEFAULT 0,
+    unsupported_requests INTEGER NOT NULL DEFAULT 0,
+    hash_suppressed_requests INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(tokenizer, operation)
 );
 "#;
@@ -743,7 +750,7 @@ pub(crate) struct ReadOnlyStatusSnapshot {
     pub counts: StorageCounts,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct TokenSavingsRecord {
     pub tracked_requests: u64,
     pub response_tracked_requests: u64,
@@ -760,13 +767,25 @@ pub(crate) struct TokenSavingsRecord {
     pub receipt_suppressed_overlap: u64,
     pub expected_hash_not_modified_responses: u64,
     pub expected_hash_suppressed_source_tokens: u64,
+    pub useful_requests: u64,
+    pub incomplete_requests: u64,
+    pub unsupported_requests: u64,
+    pub hash_suppressed_requests: u64,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ServiceFailureRecord {
     pub operation: String,
     pub error_category: String,
     pub failed_requests: u64,
+}
+
+pub(crate) struct TokenSavingsObservation<'a> {
+    pub operation: TokenAccountingOperation,
+    pub baseline_source_tokens: Option<usize>,
+    pub meta: &'a ResponseMeta,
+    pub classification: TokenSavingsRequestClass,
+    pub expected_hash_suppressed_source_tokens: usize,
 }
 
 /// SQLite-backed repository index with one serialized writer and pooled readers.
@@ -1338,6 +1357,22 @@ impl Storage {
                 "expected_hash_suppressed_source_tokens",
                 "ALTER TABLE token_savings ADD COLUMN expected_hash_suppressed_source_tokens INTEGER NOT NULL DEFAULT 0;",
             ),
+            (
+                "useful_requests",
+                "ALTER TABLE token_savings ADD COLUMN useful_requests INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "incomplete_requests",
+                "ALTER TABLE token_savings ADD COLUMN incomplete_requests INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "unsupported_requests",
+                "ALTER TABLE token_savings ADD COLUMN unsupported_requests INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "hash_suppressed_requests",
+                "ALTER TABLE token_savings ADD COLUMN hash_suppressed_requests INTEGER NOT NULL DEFAULT 0;",
+            ),
         ] {
             if !savings_columns.contains(column) {
                 tx.execute_batch(statement)?;
@@ -1811,17 +1846,26 @@ impl Storage {
     pub(crate) fn record_token_savings(
         &self,
         tokenizer: &str,
-        operation: TokenAccountingOperation,
-        baseline_source_tokens: Option<usize>,
-        meta: &ResponseMeta,
-        expected_hash_not_modified: bool,
-        expected_hash_suppressed_source_tokens: usize,
+        observation: TokenSavingsObservation<'_>,
     ) -> Result<bool> {
-        let tracked_requests = i64::from(baseline_source_tokens.is_some());
-        let response_baseline_requests = tracked_requests;
-        let baseline_source_tokens = usize_to_i64(baseline_source_tokens.unwrap_or(0))?;
-        let response_baseline_source_tokens = baseline_source_tokens;
+        let TokenSavingsObservation {
+            operation,
+            baseline_source_tokens,
+            meta,
+            classification,
+            expected_hash_suppressed_source_tokens,
+        } = observation;
+        let response_baseline_requests = i64::from(baseline_source_tokens.is_some());
+        let response_baseline_source_tokens = usize_to_i64(baseline_source_tokens.unwrap_or(0))?;
         let response_source_tokens = usize_to_i64(meta.source_tokens)?;
+        let tracked_requests = i64::from(
+            response_baseline_requests != 0 && classification == TokenSavingsRequestClass::Useful,
+        );
+        let baseline_source_tokens = if tracked_requests == 0 {
+            0
+        } else {
+            response_baseline_source_tokens
+        };
         let emitted_source_tokens = if tracked_requests == 0 {
             0
         } else {
@@ -1839,9 +1883,20 @@ impl Storage {
         let total_response_tokens = usize_to_i64(meta.total_response_tokens)?;
         let receipt_suppressed_exact = usize_to_i64(meta.receipt_suppressed_exact)?;
         let receipt_suppressed_overlap = usize_to_i64(meta.receipt_suppressed_overlap)?;
-        let expected_hash_not_modified_responses = i64::from(expected_hash_not_modified);
+        let expected_hash_not_modified_responses =
+            i64::from(classification == TokenSavingsRequestClass::HashSuppressed);
         let expected_hash_suppressed_source_tokens =
-            usize_to_i64(expected_hash_suppressed_source_tokens)?;
+            if classification == TokenSavingsRequestClass::HashSuppressed {
+                usize_to_i64(expected_hash_suppressed_source_tokens)?
+            } else {
+                0
+            };
+        let useful_requests = i64::from(classification == TokenSavingsRequestClass::Useful);
+        let incomplete_requests = i64::from(classification == TokenSavingsRequestClass::Incomplete);
+        let unsupported_requests =
+            i64::from(classification == TokenSavingsRequestClass::Unsupported);
+        let hash_suppressed_requests =
+            i64::from(classification == TokenSavingsRequestClass::HashSuppressed);
         let conn = match self.writer.try_lock() {
             Ok(conn) => conn,
             Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
@@ -1859,10 +1914,12 @@ impl Storage {
                  protocol_tokens, total_response_tokens,
                  receipt_suppressed_exact, receipt_suppressed_overlap,
                  expected_hash_not_modified_responses,
-                 expected_hash_suppressed_source_tokens
+                 expected_hash_suppressed_source_tokens,
+                 useful_requests, incomplete_requests,
+                 unsupported_requests, hash_suppressed_requests
              ) VALUES (
                  ?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                 ?14, ?15, ?16
+                 ?14, ?15, ?16, ?17, ?18, ?19, ?20
              )
              ON CONFLICT(tokenizer, operation) DO UPDATE SET
                  tracked_requests = CASE
@@ -1939,6 +1996,26 @@ impl Storage {
                      WHEN expected_hash_suppressed_source_tokens > 9223372036854775807 - excluded.expected_hash_suppressed_source_tokens
                          THEN 9223372036854775807
                      ELSE expected_hash_suppressed_source_tokens + excluded.expected_hash_suppressed_source_tokens
+                 END,
+                 useful_requests = CASE
+                     WHEN useful_requests > 9223372036854775807 - excluded.useful_requests
+                         THEN 9223372036854775807
+                     ELSE useful_requests + excluded.useful_requests
+                 END,
+                 incomplete_requests = CASE
+                     WHEN incomplete_requests > 9223372036854775807 - excluded.incomplete_requests
+                         THEN 9223372036854775807
+                     ELSE incomplete_requests + excluded.incomplete_requests
+                 END,
+                 unsupported_requests = CASE
+                     WHEN unsupported_requests > 9223372036854775807 - excluded.unsupported_requests
+                         THEN 9223372036854775807
+                     ELSE unsupported_requests + excluded.unsupported_requests
+                 END,
+                 hash_suppressed_requests = CASE
+                     WHEN hash_suppressed_requests > 9223372036854775807 - excluded.hash_suppressed_requests
+                         THEN 9223372036854775807
+                     ELSE hash_suppressed_requests + excluded.hash_suppressed_requests
                  END",
             params![
                 tokenizer,
@@ -1957,6 +2034,10 @@ impl Storage {
                 receipt_suppressed_overlap,
                 expected_hash_not_modified_responses,
                 expected_hash_suppressed_source_tokens,
+                useful_requests,
+                incomplete_requests,
+                unsupported_requests,
+                hash_suppressed_requests,
             ],
         );
         let restore_timeout = conn.busy_timeout(DEFAULT_BUSY_TIMEOUT);
@@ -2313,7 +2394,9 @@ impl ReadSession {
                     total_response_tokens, receipt_suppressed_exact,
                     receipt_suppressed_overlap,
                     expected_hash_not_modified_responses,
-                    expected_hash_suppressed_source_tokens
+                    expected_hash_suppressed_source_tokens,
+                    useful_requests, incomplete_requests,
+                    unsupported_requests, hash_suppressed_requests
              FROM token_savings
              WHERE tokenizer = ?1
              ORDER BY operation",
@@ -2337,6 +2420,10 @@ impl ReadSession {
                     receipt_suppressed_overlap: i64_to_u64(row.get(13)?),
                     expected_hash_not_modified_responses: i64_to_u64(row.get(14)?),
                     expected_hash_suppressed_source_tokens: i64_to_u64(row.get(15)?),
+                    useful_requests: i64_to_u64(row.get(16)?),
+                    incomplete_requests: i64_to_u64(row.get(17)?),
+                    unsupported_requests: i64_to_u64(row.get(18)?),
+                    hash_suppressed_requests: i64_to_u64(row.get(19)?),
                 },
             ))
         })?;
@@ -2776,7 +2863,7 @@ impl ReadSession {
             .optional()?)
     }
 
-    pub(crate) fn find_markdown_heading(
+    pub(crate) fn find_document_heading(
         &self,
         file_id: i64,
         name: &str,
@@ -2789,7 +2876,13 @@ impl ReadSession {
                 "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
                      FROM symbols
                      WHERE file_id = ?1
-                       AND kind = 'markdown_heading'
+                       AND kind IN (
+                           'markdown_heading',
+                           'latex_section',
+                           'latex_subsection',
+                           'latex_subsubsection',
+                           'latex_paragraph'
+                       )
                        AND (name = ?2 OR signature = ?2)
                      ORDER BY start_byte, id
                      LIMIT 1 OFFSET ?3",
@@ -3786,11 +3879,13 @@ mod tests {
             !storage
                 .record_token_savings(
                     "cl100k_base",
-                    TokenAccountingOperation::Search,
-                    Some(10),
-                    &meta,
-                    false,
-                    0,
+                    TokenSavingsObservation {
+                        operation: TokenAccountingOperation::Search,
+                        baseline_source_tokens: Some(10),
+                        meta: &meta,
+                        classification: TokenSavingsRequestClass::Useful,
+                        expected_hash_suppressed_source_tokens: 0,
+                    },
                 )
                 .expect("best-effort accounting")
         );
@@ -3808,11 +3903,13 @@ mod tests {
             storage
                 .record_token_savings(
                     "cl100k_base",
-                    TokenAccountingOperation::Search,
-                    Some(10),
-                    &meta,
-                    true,
-                    8,
+                    TokenSavingsObservation {
+                        operation: TokenAccountingOperation::Search,
+                        baseline_source_tokens: Some(10),
+                        meta: &meta,
+                        classification: TokenSavingsRequestClass::HashSuppressed,
+                        expected_hash_suppressed_source_tokens: 8,
+                    },
                 )
                 .expect("available accounting")
         );
@@ -3829,18 +3926,19 @@ mod tests {
             .token_savings("cl100k_base")
             .expect("stored accounting");
         let record = records.get("search").expect("search accounting");
-        assert_eq!(record.tracked_requests, 1);
+        assert_eq!(record.tracked_requests, 0);
         assert_eq!(record.response_tracked_requests, 1);
         assert_eq!(record.response_baseline_requests, 1);
-        assert_eq!(record.baseline_source_tokens, 10);
+        assert_eq!(record.baseline_source_tokens, 0);
         assert_eq!(record.response_baseline_source_tokens, 10);
-        assert_eq!(record.emitted_source_tokens, 2);
+        assert_eq!(record.emitted_source_tokens, 0);
         assert_eq!(record.response_source_tokens, 2);
         assert_eq!(record.path_and_metadata_tokens, 5);
         assert_eq!(record.protocol_tokens, 3);
         assert_eq!(record.total_response_tokens, 10);
         assert_eq!(record.expected_hash_not_modified_responses, 1);
         assert_eq!(record.expected_hash_suppressed_source_tokens, 8);
+        assert_eq!(record.hash_suppressed_requests, 1);
         let failures = storage
             .begin_read()
             .expect("failure read session")

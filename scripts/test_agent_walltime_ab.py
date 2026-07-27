@@ -150,6 +150,44 @@ sys.stderr.flush()
             ):
                 MODULE.parse_leantoken_occurrences(response, root)
 
+    def test_grouped_leantoken_occurrences_preserve_every_coordinate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source.rs").write_text(
+                "target target\n", encoding="utf-8"
+            )
+            response = {
+                "groups": [
+                    {
+                        "path": "source.rs",
+                        "start_line": 1,
+                        "end_line": 1,
+                        "occurrences": [
+                            {
+                                "line": 1,
+                                "start_column": 0,
+                                "end_column": 6,
+                            },
+                            {
+                                "line": 1,
+                                "start_column": 7,
+                                "end_column": 13,
+                            },
+                        ],
+                    }
+                ],
+                "occurrences_returned": 2,
+                "occurrences_total": 2,
+            }
+
+            self.assertEqual(
+                MODULE.parse_leantoken_occurrences(response, root),
+                [
+                    MODULE.Occurrence("source.rs", 1, 0, 6),
+                    MODULE.Occurrence("source.rs", 1, 7, 13),
+                ],
+            )
+
     def test_measure_pair_counterbalances_order_and_keeps_raw_samples(self) -> None:
         native_calls = 0
         lean_calls = 0

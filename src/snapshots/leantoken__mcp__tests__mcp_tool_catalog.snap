@@ -1359,14 +1359,14 @@ expression: tools
             },
             {
               "additionalProperties": false,
-              "description": "Read one indexed Markdown section by exact heading title or outline signature.",
+              "description": "Read one indexed Markdown or LaTeX section by exact title or outline signature.",
               "properties": {
                 "kind": {
                   "const": "heading",
                   "type": "string"
                 },
                 "name": {
-                  "description": "Exact rendered heading title or outline signature such as `## Performance`.",
+                  "description": "Exact title or outline signature such as `## Performance` or `\\section{Method}`.",
                   "maxLength": 4096,
                   "minLength": 1,
                   "type": "string"
@@ -1505,7 +1505,7 @@ expression: tools
         },
         "target": {
           "$ref": "#/$defs/ReadMcpTarget",
-          "description": "Exact symbol, Markdown heading, line range, or continuation to read."
+          "description": "Exact symbol, document heading, line range, or continuation to read."
         }
       },
       "required": [
@@ -1517,10 +1517,21 @@ expression: tools
   },
   {
     "name": "savings",
-    "description": "Report repository-local observed response accounting, expected-hash suppression, service failures, and explicitly unobserved task outcomes. Source and response deltas are comparisons against represented source, not claims about task success. Example: {}.",
+    "description": "Report repository-local observed response accounting, request classifications, expected-hash suppression, service failures, and explicitly unobserved task outcomes. Returns an opaque snapshot; supply it later for a bounded aggregate delta. Source compression and full-response net cost are separate comparisons against represented source, not claims about task success or complete session savings. Example: {}.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
+      "properties": {
+        "snapshot": {
+          "default": null,
+          "description": "Opaque snapshot from an earlier savings response; returns aggregate deltas.",
+          "maxLength": 32768,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     },
     "annotations": {
@@ -1530,12 +1541,17 @@ expression: tools
   },
   {
     "name": "search",
-    "description": "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Set projection=grouped for opt-in symbol/file summaries that retain one verifiable excerpt, reference counts, coverage, freshness, and continuation without repeated scores or excerpts. Set all_occurrences in text or regex mode for exact occurrence coordinates and returned/total counts; exhaustive scans fail instead of silently truncating at internal scan limits. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}.",
+    "description": "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Set projection=grouped for opt-in symbol/file summaries. Exhaustive text or regex searches default to projection=occurrences: one excerpt plus every exact line/column coordinate; set coordinates_only=true to omit excerpts and hashes. Use explicit projection=full for legacy per-occurrence hits. Exhaustive scans keep exact returned/total counts and fail instead of silently truncating at internal scan limits. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}.",
     "inputSchema": {
       "$defs": {
         "SearchMcpProjection": {
           "description": "Response projection for indexed search.",
           "oneOf": [
+            {
+              "const": "auto",
+              "description": "Select `occurrences` for exhaustive lexical search and `full` otherwise.",
+              "type": "string"
+            },
             {
               "const": "full",
               "description": "Preserve the complete ranked-hit response.",
@@ -1544,6 +1560,11 @@ expression: tools
             {
               "const": "grouped",
               "description": "Group the selected page into symbol or file summaries.",
+              "type": "string"
+            },
+            {
+              "const": "occurrences",
+              "description": "Share each exhaustive lexical excerpt across its exact occurrence coordinates.",
               "type": "string"
             }
           ]
@@ -1613,6 +1634,11 @@ expression: tools
           "maximum": 20,
           "minimum": 0,
           "type": "integer"
+        },
+        "coordinates_only": {
+          "default": false,
+          "description": "Omit excerpts and hashes from an exhaustive occurrence response.",
+          "type": "boolean"
         },
         "cursor": {
           "default": null,
@@ -1698,8 +1724,8 @@ expression: tools
         },
         "projection": {
           "$ref": "#/$defs/SearchMcpProjection",
-          "default": "full",
-          "description": "Response shape: `full` hits (default) or compact `grouped` matches."
+          "default": "auto",
+          "description": "Response shape. Exhaustive searches default to `occurrences`; others default to `full`."
         },
         "query": {
           "description": "Non-empty text, identifier, symbol, or Rust regular expression to find.",

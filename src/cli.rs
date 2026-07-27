@@ -357,7 +357,12 @@ impl Cli {
         match self.command {
             Commands::Index { rebuild } => AppRequest::Index { rebuild },
             Commands::Status => AppRequest::Status,
-            Commands::Savings => AppRequest::Savings,
+            Commands::Savings(args) => {
+                args.snapshot
+                    .map_or(AppRequest::Savings, |snapshot| AppRequest::SavingsDelta {
+                        snapshot,
+                    })
+            }
             Commands::Files(args) => {
                 let max_response_tokens = args.max_response_tokens;
                 let request: FilesRequest = args.into();
@@ -479,6 +484,9 @@ pub enum AppRequest {
     },
     Status,
     Savings,
+    SavingsDelta {
+        snapshot: String,
+    },
     Files(FilesRequest),
     Search(SearchRequest),
     Outline(OutlineRequest),
@@ -547,7 +555,7 @@ pub enum Commands {
     Status,
 
     /// Show source compression and full-response token accounting.
-    Savings,
+    Savings(SavingsArgs),
 
     /// List, find, or glob repository paths.
     Files(FilesArgs),
@@ -925,6 +933,13 @@ pub struct RetrievalConsistencyArgs {
     pub consistency: IndexConsistencyArg,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct SavingsArgs {
+    /// Opaque snapshot from an earlier report; show only subsequent aggregate activity.
+    #[arg(long)]
+    pub snapshot: Option<String>,
+}
+
 #[derive(Debug, Clone, Parser)]
 pub struct FilesArgs {
     /// Files operation to perform.
@@ -1187,11 +1202,11 @@ pub struct ReadArgs {
     #[arg(long, conflicts_with_all = ["lines", "heading", "cursor"])]
     pub symbol: Option<String>,
 
-    /// Read the section for an exact Markdown heading title or outline signature.
+    /// Read an exact Markdown or LaTeX section title or outline signature.
     #[arg(long, conflicts_with_all = ["lines", "symbol", "cursor"])]
     pub heading: Option<String>,
 
-    /// One-based occurrence of a duplicate Markdown heading.
+    /// One-based occurrence of a duplicate document heading.
     #[arg(
         long,
         requires = "heading",

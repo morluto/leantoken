@@ -7,7 +7,8 @@ use leantoken::{
     HandoffValidationStatus, HandoffWorkingTreeState, HistoryOperation, HistoryRequest,
     IndexConsistency, IndexState, JsonIncompleteReason, JsonOperation, JsonProjection, JsonRequest,
     JsonSelector, OutlineRequest, ReadDeltaFallback, ReadDeltaOutcome, ReadRequest, ReadStatus,
-    SearchMode, SearchRequest, TokenAccountingOperation, TokenSavingsOperation, WorkflowEvidence,
+    ReferenceRole, SearchMode, SearchRequest, TokenAccountingOperation, TokenSavingsOperation,
+    TokenSavingsWindow, WorkflowEvidence,
     coordination::IndexCoordination,
     services::{ServiceCallOptions, Services},
     tokens::Tokenizer,
@@ -1018,6 +1019,8 @@ async fn exhaustive_text_search_returns_each_occurrence_with_exact_total_and_pag
     );
     assert_eq!(occurrence.start_line, 2);
     assert_eq!(occurrence.end_line, 2);
+    assert_eq!(occurrence.start_column, 16);
+    assert_eq!(occurrence.end_column, 25);
 
     let mut short_query = search_limit_request(Some(10), Some(1_000), Some(0));
     short_query.query = "it".into();
@@ -1031,6 +1034,114 @@ async fn exhaustive_text_search_returns_each_occurrence_with_exact_total_and_pag
         .expect("short substring occurrence search");
     assert_eq!(short.occurrences_total, Some(3));
     assert_eq!(short.occurrences_returned, 3);
+}
+
+#[tokio::test]
+async fn exhaustive_occurrence_groups_preserve_probe_e_coordinates_without_repeated_excerpts() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let line =
+        "F4-P 0-RTT forbidden-phase early-data Handshake handshake completion\n";
+    let source = line.repeat(10);
+    std::fs::write(root.path().join("probe-e.tex"), &source).expect("write source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+    let request = SearchRequest {
+        query: "F4-P|0-RTT|forbidden-phase|early-data|Handshake|handshake completion".into(),
+        mode: SearchMode::Regex,
+        include_paths: vec!["probe-e.tex".into()],
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(100),
+        max_tokens: Some(6_000),
+        context_lines: Some(1),
+        case_sensitive: true,
+        all_occurrences: true,
+        prefer_structural: false,
+        receipt_id: None,
+        cursor: None,
+    };
+
+    let full = services
+        .search(request.clone())
+        .await
+        .expect("legacy exhaustive response");
+    assert_eq!(full.occurrences_total, Some(60));
+    assert_eq!(full.occurrences_returned, 60);
+    assert_eq!(full.hits.len(), 60);
+
+    let grouped = services
+        .search_occurrences(request.clone(), false)
+        .await
+        .expect("grouped occurrence response");
+    assert_eq!(grouped.occurrences_total, 60);
+    assert_eq!(grouped.occurrences_returned, 60);
+    assert_eq!(grouped.groups_returned, 10);
+    assert!(grouped.groups.iter().all(|group| {
+        group.excerpt.is_some()
+            && group.content_hash.is_some()
+            && group.occurrences.len() == 6
+    }));
+    let coordinates = grouped
+        .groups
+        .iter()
+        .flat_map(|group| &group.occurrences)
+        .collect::<Vec<_>>();
+    assert_eq!(coordinates.len(), 60);
+    assert!(coordinates.iter().all(|coordinate| {
+        coordinate.end_line.is_none()
+            && coordinate.start_column < coordinate.end_column
+            && (1..=10).contains(&coordinate.line)
+    }));
+    assert!(
+        grouped.meta.total_response_tokens < 10_941,
+        "Probe E grouped response used {} tokens",
+        grouped.meta.total_response_tokens
+    );
+    assert!(
+        grouped.meta.total_response_tokens * 2 < full.meta.total_response_tokens,
+        "grouped={} full={}",
+        grouped.meta.total_response_tokens,
+        full.meta.total_response_tokens
+    );
+    assert_response_token_accounting!(grouped, Tokenizer::default());
+
+    let response_limit = grouped.meta.total_response_tokens.saturating_sub(1);
+    let error = services
+        .search_occurrences_with_options(
+            request.clone(),
+            false,
+            ServiceCallOptions::new().with_max_response_tokens(response_limit),
+        )
+        .await
+        .expect_err("grouped coordinates must honor the serialized response bound");
+    assert!(matches!(
+        error,
+        Error::RequestLimitExceeded {
+            field: "max_response_tokens",
+            limit,
+            ..
+        } if limit == response_limit
+    ));
+
+    let mut coordinate_request = request;
+    coordinate_request.max_tokens = Some(1);
+    let coordinate_only = services
+        .search_occurrences(coordinate_request, true)
+        .await
+        .expect("coordinate-only exhaustive response");
+    assert_eq!(coordinate_only.occurrences_total, 60);
+    assert_eq!(coordinate_only.occurrences_returned, 60);
+    assert_eq!(coordinate_only.groups_returned, 1);
+    assert_eq!(coordinate_only.groups[0].occurrences.len(), 60);
+    assert!(coordinate_only.groups[0].excerpt.is_none());
+    assert!(coordinate_only.groups[0].content_hash.is_none());
+    assert_eq!(coordinate_only.meta.source_tokens, 0);
+    assert!(
+        coordinate_only.meta.total_response_tokens < grouped.meta.total_response_tokens
+    );
+    assert_response_token_accounting!(coordinate_only, Tokenizer::default());
 }
 
 #[tokio::test]
@@ -4618,6 +4729,11 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     assert_eq!(initial.tracked_requests, 0);
     assert_eq!(initial.estimated_source_tokens_saved, 0);
     assert_eq!(initial.by_operation.len(), 4);
+    let initial_snapshot = services
+        .observed_token_savings_snapshot(None)
+        .await
+        .expect("initial snapshot");
+    assert_eq!(initial_snapshot.window, TokenSavingsWindow::Lifetime);
 
     let search = services
         .search(search_limit_request(Some(5), Some(100), Some(1)))
@@ -4671,7 +4787,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     assert_eq!(repeated_read.status, ReadStatus::NotModified);
     let report = services.token_savings().await.expect("tracked savings");
     assert_eq!(report.tokenizer, services.config().tokenizer.name());
-    assert_eq!(report.tracked_requests, 5);
+    assert_eq!(report.tracked_requests, 4);
     assert_eq!(report.by_operation.len(), 4);
     assert_eq!(
         report
@@ -4682,7 +4798,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
         vec![
             (TokenSavingsOperation::Search, 1),
             (TokenSavingsOperation::Outline, 1),
-            (TokenSavingsOperation::Read, 2),
+            (TokenSavingsOperation::Read, 1),
             (TokenSavingsOperation::Context, 1),
         ]
     );
@@ -4778,7 +4894,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     assert_eq!(observed.report, effective);
     assert_eq!(observed.observations.successful_response_records, 5);
     assert_eq!(observed.observations.responses_with_baseline, 5);
-    assert_eq!(observed.observations.source_compression_requests, 5);
+    assert_eq!(observed.observations.source_compression_requests, 4);
     assert_eq!(observed.observations.failed_service_requests, 1);
     assert_eq!(
         observed.observations.expected_hash_not_modified_responses,
@@ -4806,6 +4922,60 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     assert!(observed.observations.unobserved.iter().any(|outcome| {
         outcome.contains("retry chains") && outcome.contains("task/outcome identifier")
     }));
+    assert_eq!(observed.observations.request_classification.useful, 4);
+    assert_eq!(
+        observed
+            .observations
+            .request_classification
+            .hash_suppressed,
+        1
+    );
+    assert_eq!(observed.observations.request_classification.failed, 1);
+    assert_eq!(
+        observed
+            .observations
+            .request_classification
+            .legacy_unclassified,
+        0
+    );
+    let delta = services
+        .observed_token_savings_snapshot(Some(initial_snapshot.snapshot))
+        .await
+        .expect("snapshot delta");
+    assert_eq!(delta.window, TokenSavingsWindow::Delta);
+    assert_eq!(delta.observed, observed);
+    assert!(delta.snapshot.len() < 4_096);
+    let zero_delta = services
+        .observed_token_savings_snapshot(Some(delta.snapshot.clone()))
+        .await
+        .expect("empty snapshot delta");
+    assert_eq!(zero_delta.observed.observations.successful_response_records, 0);
+    assert_eq!(zero_delta.observed.observations.failed_service_requests, 0);
+    assert_eq!(
+        zero_delta.observed.report.response_accounting.total_response_tokens,
+        0
+    );
+    let (_other_root, other_services) = fixture().await;
+    assert!(matches!(
+        other_services
+            .observed_token_savings_snapshot(Some(delta.snapshot.clone()))
+            .await,
+        Err(Error::InvalidInput {
+            field: "snapshot",
+            ..
+        })
+    ));
+    let mut invalid_snapshot = delta.snapshot;
+    invalid_snapshot.push('x');
+    assert!(matches!(
+        services
+            .observed_token_savings_snapshot(Some(invalid_snapshot))
+            .await,
+        Err(Error::InvalidInput {
+            field: "snapshot",
+            ..
+        })
+    ));
     let serialized = serde_json::to_value(&observed).expect("serialize observed accounting");
     assert!(serialized.get("tokenizer").is_some());
     assert!(serialized.get("estimated_source_tokens_saved").is_some());
@@ -4852,6 +5022,85 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             .tracked_requests,
         0
     );
+}
+
+#[tokio::test]
+async fn savings_excludes_incomplete_and_zero_symbol_latex_outlines_from_source_compression() {
+    let (root, services) = fixture().await;
+    std::fs::write(
+        root.path().join("empty.tex"),
+        "Plain prose without structural LaTeX commands.\n",
+    )
+    .expect("write empty LaTeX fixture");
+    services.index(false).await.expect("index LaTeX fixture");
+    let base = services
+        .observed_token_savings_snapshot(None)
+        .await
+        .expect("baseline snapshot");
+
+    let unsupported = services
+        .outline(OutlineRequest {
+            paths: vec!["empty.tex".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(10),
+            max_tokens: Some(100),
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect("zero-symbol LaTeX outline");
+    assert_eq!(unsupported.total_symbols, 0);
+    assert_eq!(unsupported.files[0].language.as_deref(), Some("latex"));
+
+    let incomplete = services
+        .outline(OutlineRequest {
+            paths: vec!["src/lib.rs".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(1),
+            max_tokens: Some(100),
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect("bounded outline");
+    assert!(!incomplete.result_complete);
+    let delta = services
+        .observed_token_savings_snapshot(Some(base.snapshot))
+        .await
+        .expect("classified delta");
+    assert_eq!(delta.window, TokenSavingsWindow::Delta);
+    assert_eq!(delta.observed.report.source_savings.tracked_requests, 0);
+    assert_eq!(
+        delta
+            .observed
+            .report
+            .response_accounting
+            .tracked_requests,
+        2
+    );
+    assert_eq!(
+        delta
+            .observed
+            .observations
+            .request_classification
+            .unsupported,
+        1
+    );
+    assert_eq!(
+        delta
+            .observed
+            .observations
+            .request_classification
+            .incomplete,
+        1
+    );
+    assert_eq!(
+        delta.observed.observations.request_classification.failed,
+        0
+    );
+    assert_eq!(delta.observed.observations.failed_service_requests, 0);
 }
 
 #[tokio::test]
@@ -5543,6 +5792,140 @@ Setext
             reason: "must be one-based"
         }
     ));
+}
+
+#[tokio::test]
+async fn latex_outline_and_read_share_exact_section_label_and_bibliography_structure() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("sections")).expect("sections");
+    std::fs::write(
+        root.path().join("paper.tex"),
+        "\\section{Overview}\nintro\n\\subsection{Method}\nmethod \\cite{alpha}\n\\label{sec:method}\n\\input{sections/results}\n\\section{References}\n\\begin{thebibliography}{9}\n\\bibitem{alpha} Source.\n\\end{thebibliography}\n",
+    )
+    .expect("LaTeX source");
+    std::fs::write(root.path().join("sections/results.tex"), "result\n").expect("input");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    let outline = services
+        .outline(OutlineRequest {
+            paths: vec!["paper.tex".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(50),
+            max_tokens: Some(4_000),
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect("LaTeX outline");
+    assert!(outline.parse_complete);
+    assert!(outline.result_complete);
+    let latex = &outline.files[0];
+    assert_eq!(latex.language.as_deref(), Some("latex"));
+    assert!(latex.structurally_complete);
+    assert!(latex.symbols.iter().any(|symbol| {
+        symbol.name == "Method"
+            && symbol.kind == "latex_subsection"
+            && symbol.start_line == 3
+            && symbol.end_line == 6
+    }));
+    assert_eq!(
+        latex
+            .imports
+            .iter()
+            .map(|import| (
+                import.raw_target.as_str(),
+                import.resolved_path.as_deref(),
+                import.line
+            ))
+            .collect::<Vec<_>>(),
+        vec![("sections/results", Some("sections/results.tex"), 6)]
+    );
+
+    let references = services
+        .search(SearchRequest {
+            query: "alpha".into(),
+            mode: SearchMode::Reference,
+            include_paths: vec!["paper.tex".into()],
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(10),
+            max_tokens: Some(2_000),
+            context_lines: Some(0),
+            case_sensitive: true,
+            all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect("LaTeX citation audit");
+    assert!(references.hits.iter().any(|hit| {
+        hit.symbol.as_deref() == Some("alpha")
+            && hit.role == Some(ReferenceRole::Reference)
+            && hit.start_line == 4
+            && hit.enclosing_symbol.as_deref() == Some("Method")
+    }));
+    assert!(references.hits.iter().any(|hit| {
+        hit.symbol.as_deref() == Some("alpha")
+            && hit.role == Some(ReferenceRole::Definition)
+            && hit.start_line == 9
+    }));
+
+    for (heading, symbol, expected_range, expected_content) in [
+        (
+            Some("Method"),
+            None,
+            (3, 6),
+            "\\subsection{Method}\nmethod \\cite{alpha}\n\\label{sec:method}\n\\input{sections/results}",
+        ),
+        (
+            Some("\\subsection{Method}"),
+            None,
+            (3, 6),
+            "\\subsection{Method}\nmethod \\cite{alpha}\n\\label{sec:method}\n\\input{sections/results}",
+        ),
+        (
+            None,
+            Some("sec:method"),
+            (3, 6),
+            "\\subsection{Method}\nmethod \\cite{alpha}\n\\label{sec:method}\n\\input{sections/results}",
+        ),
+        (
+            None,
+            Some("alpha"),
+            (9, 10),
+            "\\bibitem{alpha} Source.\n\\end{thebibliography}",
+        ),
+    ] {
+        let read = services
+            .read(ReadRequest {
+                path: "paper.tex".into(),
+                start_line: None,
+                end_line: None,
+                symbol: symbol.map(str::to_owned),
+                heading: heading.map(str::to_owned),
+                heading_occurrence: None,
+                continuation_cursor: None,
+                max_tokens: Some(2_000),
+                expected_hash: None,
+                delta: false,
+                receipt_id: None,
+            })
+            .await
+            .expect("LaTeX structured read");
+        assert_eq!(
+            (read.target_start_line, read.target_end_line),
+            expected_range
+        );
+        assert_eq!(
+            read.content.as_deref().map(str::trim_end),
+            Some(expected_content)
+        );
+    }
 }
 
 #[tokio::test]

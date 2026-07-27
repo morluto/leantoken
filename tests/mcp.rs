@@ -508,7 +508,13 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
 
     let server_info = client.peer().peer_info().expect("server initialize result");
     assert_eq!(server_info.server_info.name, "leantoken");
-    assert_eq!(server_info.server_info.version, env!("CARGO_PKG_VERSION"));
+    let schema_fingerprint = server_info
+        .server_info
+        .version
+        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+schema."))
+        .expect("runtime version carries the MCP schema fingerprint");
+    assert_eq!(schema_fingerprint.len(), 32);
+    assert!(schema_fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()));
     let instructions = server_info
         .instructions
         .clone()
@@ -548,6 +554,32 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     assert_ne!(response.is_error, Some(true));
     let structured = response.structured_content.expect("structured response");
     assert_eq!(structured["entries"][0]["path"], "lib.rs");
+
+    let response = call_tool(
+        client.peer(),
+        "search",
+        serde_json::json!({
+            "query": "answer",
+            "mode": "text",
+            "all_occurrences": true,
+            "include_paths": ["lib.rs"],
+            "context_lines": 0,
+            "max_results": 10
+        }),
+    )
+    .await
+    .expect("call exhaustive search");
+    assert_ne!(response.is_error, Some(true));
+    let structured = response.structured_content.expect("occurrence response");
+    assert!(structured.get("hits").is_none());
+    assert_eq!(structured["groups_returned"], 1);
+    assert_eq!(structured["occurrences_returned"], 1);
+    assert_eq!(structured["occurrences_total"], 1);
+    assert_eq!(structured["groups"][0]["occurrences"][0]["line"], 1);
+    assert_eq!(
+        structured["groups"][0]["occurrences"][0]["start_column"],
+        7
+    );
 
     let response = call_tool(
         client.peer(),

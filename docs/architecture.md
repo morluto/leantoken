@@ -58,7 +58,11 @@ Successful retrieval accounting has one row per tokenizer and each of the
 eight fixed retrieval operations. A finalized response performs at most one
 best-effort saturating upsert. Exact read `expected_hash` matches add their
 not-modified count and represented-source tokens omitted to that same row;
-receipt suppression remains a separate counter.
+receipt suppression remains a separate counter. Four additive counters classify
+new successful responses as useful, incomplete, unsupported, or
+hash-suppressed; failures remain in the failure table. Only useful responses
+with a represented-source baseline update the effective source-compression
+columns. Full-response accounting still includes every successful class.
 
 Observed service failures use `service_failures`, keyed by tokenizer, operation,
 and a finite, non-sensitive error-variant category. No request source, path,
@@ -75,8 +79,17 @@ combined savings report reads success and failure tables through one pinned
 `ReadSession`, preserving request snapshot consistency. Failure reporting is a
 primary-key range query on tokenizer, ordered by operation and category; a
 checked query-plan test prevents a table scan or temporary sort from entering
-this path. These properties make the counters persisted lower bounds rather
-than an audit ledger.
+this path. The successful-accounting read has matching query-plan evidence for
+the `(tokenizer, operation)` primary key.
+
+Savings deltas do not add stored events. A response serializes the pinned
+aggregate counters into a compact, checksummed, caller-carried opaque snapshot
+bound to repository identity and tokenizer. A later request subtracts that
+snapshot with checked arithmetic and fails closed on malformed, cross-repository,
+cross-tokenizer, reset, or future counters. Snapshot input and output are each
+bounded to 32 KiB; current rows remain bounded by eight operations and failures
+by the finite category matrix. These properties make the counters persisted
+lower bounds rather than an audit ledger.
 
 LeanToken does not serialize a separate in-memory index snapshot. In this
 document, a request snapshot means a SQLite read transaction pinned to one
@@ -407,6 +420,7 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | Full-scan fallback chunks per file | 256 |
 | File scan page size | 1000 for find/glob; tree queries `max_results + 1` projected paths |
 | Opt-in compact projection materialization | At most the 100 selected files, symbols, groups, or hits already admitted by `max_results`; no additional repository scan |
+| Exhaustive occurrence grouping | At most 100 selected occurrence coordinates and 100 group-map entries per response page; the existing 100,000-occurrence fail-closed scan cap is unchanged |
 | Opt-in response-bounded read materializations | At most 18 within one pinned generation |
 | Batched history targets / page | 64 requested / 32 returned |
 | Batched history distinct paths | 32 per revision endpoint |
@@ -521,6 +535,17 @@ explicitly if more than 100,000 FTS rows would need inspection. Both paths
 retain the matching-chunk limit, while the fallback retains its file and
 per-file chunk limits. Compiled regex size and DFA cache are also limited so
 pathological patterns fail closed.
+
+Occurrence grouping is a response projection over the already ranked and
+paginated exhaustive page; it performs no additional repository or SQLite
+scan. A bounded hash map shares identical path/range/content-hash excerpts, and
+coordinates-only mode shares one group per selected path. Unique excerpts,
+rather than repeated hits, consume the source-token budget. Coordinates-only
+mode consumes zero source tokens, but its complete coordinate arrays still
+count against `max_results`, `max_response_tokens`, and the final serialized
+response accounting. The MCP initialize version hashes the deterministic
+runtime tool catalog; computing that fingerprint adds no storage or retrieval
+fan-out.
 
 Every retrieval operation accepts an optional serialized service-response
 ceiling through `ServiceCallOptions`, MCP `max_response_tokens`, or CLI
@@ -749,6 +774,16 @@ tree-sitter parse. CSS selector and at-rule symbols retain complete rule ranges;
 HTML ID and element symbols retain complete owning-element ranges. Attribute
 and selector references keep their exact lexical ranges, while resource links
 flow through the shared import model.
+
+Markdown and LaTeX use custom document parsers instead of tree-sitter. The
+LaTeX parser makes one bounded pass over the already size-limited indexed
+source, then performs linear section-range closure and bounded sorting of the
+facts it found. Memory is proportional to recognized facts plus section and
+environment nesting; it does not retain a syntax tree. It ignores comments and
+verbatim-like environments, marks malformed brace/environment structure
+incomplete while retaining recovered facts, and uses the same section, label,
+bibliography, citation, reference, and input/include facts for outline, exact
+read, reference search, and import resolution.
 
 C# extraction covers namespaces, classes, structs, interfaces, records, enums,
 delegates, methods, local functions, constructors, properties, fields, events,

@@ -202,8 +202,14 @@ async fn run(cli: Cli) -> Result<()> {
         AppRequest::Index { rebuild } => print(&services.index_report(rebuild).await?, json),
         AppRequest::Status => unreachable!("handled before service setup"),
         AppRequest::Savings => {
-            savings::print_report(&services.observed_token_savings_report().await?, json)
+            savings::print_report(&services.observed_token_savings_snapshot(None).await?, json)
         }
+        AppRequest::SavingsDelta { snapshot } => savings::print_report(
+            &services
+                .observed_token_savings_snapshot(Some(snapshot))
+                .await?,
+            json,
+        ),
         AppRequest::Files(request) => print(
             &services
                 .files_with_consistency_cancellable(request, consistency, CancellationToken::new())
@@ -1067,7 +1073,7 @@ mod tests {
                     occurrence: 2,
                 },
                 serde_json::json!({
-                    "error": "Markdown heading occurrence 2 is not indexed in README.md: Installation",
+                    "error": "document heading occurrence 2 is not indexed in README.md: Installation",
                     "category": "heading_not_found"
                 }),
             ),

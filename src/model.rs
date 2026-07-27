@@ -314,6 +314,12 @@ pub struct SearchOccurrence {
     pub start_line: usize,
     /// One-based line containing the end of the match.
     pub end_line: usize,
+    /// Zero-based UTF-8 byte column of the match start on `start_line`.
+    #[serde(default)]
+    pub start_column: usize,
+    /// Zero-based exclusive UTF-8 byte column of the match end on `end_line`.
+    #[serde(default)]
+    pub end_column: usize,
     /// Zero-based UTF-8 byte offset of the match start in the indexed file.
     pub start_byte: usize,
     /// Zero-based exclusive UTF-8 byte offset of the match end in the indexed file.
@@ -381,6 +387,47 @@ pub struct SearchResponse {
     /// Exact filtered occurrence count when `all_occurrences` is enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occurrences_total: Option<usize>,
+    pub meta: ResponseMeta,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Compact line/column coordinates for one exhaustive lexical occurrence.
+pub struct SearchOccurrenceCoordinate {
+    /// One-based line containing the start of the match.
+    pub line: usize,
+    /// One-based end line when a regular expression spans multiple lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<usize>,
+    /// Zero-based UTF-8 byte column on `line`.
+    pub start_column: usize,
+    /// Zero-based exclusive UTF-8 byte column on `end_line`, or `line` for a single-line match.
+    pub end_column: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// One excerpt shared by every exhaustive occurrence it contains.
+pub struct SearchOccurrenceGroup {
+    pub path: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    /// Omitted by `coordinates_only` responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excerpt: Option<String>,
+    /// Hash of `excerpt`; omitted by `coordinates_only` responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    pub occurrences: Vec<SearchOccurrenceCoordinate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Exhaustive lexical matches without repeated excerpts or ranked-hit metadata.
+pub struct SearchOccurrencesResponse {
+    pub groups: Vec<SearchOccurrenceGroup>,
+    pub groups_returned: usize,
+    pub occurrences_returned: usize,
+    pub occurrences_total: usize,
+    pub coordinates_only: bool,
+    pub coverage: SearchCoverage,
     pub meta: ResponseMeta,
 }
 
@@ -668,10 +715,10 @@ pub struct ReadRequest {
     /// Indexed symbol to read; cannot be combined with line fields.
     #[serde(default)]
     pub symbol: Option<String>,
-    /// Indexed Markdown heading title or outline signature to read.
+    /// Indexed Markdown or LaTeX section title or outline signature to read.
     #[serde(default)]
     pub heading: Option<String>,
-    /// One-based occurrence of a duplicate Markdown heading; defaults to 1.
+    /// One-based occurrence of a duplicate document heading; defaults to 1.
     #[serde(default)]
     pub heading_occurrence: Option<usize>,
     /// Opaque cursor returned by a truncated read; cannot be combined with a new target.
@@ -2472,6 +2519,8 @@ pub struct TokenSavingsObservations {
     pub expected_hash_not_modified_responses: u64,
     /// Requested source tokens omitted by exact `expected_hash` matches.
     pub expected_hash_suppressed_source_tokens: u64,
+    /// Mutually exclusive observed request outcome classes.
+    pub request_classification: TokenSavingsRequestClassification,
     /// Fixed-order breakdown of observed failures by operation and category.
     pub failed_by_operation_and_category: Vec<ServiceFailureObservation>,
     /// Outcomes that cannot be inferred without a host task/outcome identity.
@@ -2486,6 +2535,60 @@ pub struct ObservedTokenSavingsReport {
     pub report: TokenSavingsReport,
     /// Additive counters whose observation boundaries are explicitly documented.
     pub observations: TokenSavingsObservations,
+}
+
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
+)]
+#[serde(rename_all = "snake_case")]
+/// Outcome assigned to one successful retrieval for aggregate savings accounting.
+pub enum TokenSavingsRequestClass {
+    /// Returned supported evidence or useful negative evidence.
+    Useful,
+    /// Returned a bounded or explicitly partial result.
+    Incomplete,
+    /// Could not provide the requested structural retrieval contract.
+    Unsupported,
+    /// Suppressed unchanged source because `expected_hash` matched.
+    HashSuppressed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Aggregate mutually exclusive retrieval outcome counts.
+pub struct TokenSavingsRequestClassification {
+    /// Successful complete supported retrievals.
+    pub useful: u64,
+    /// Successful bounded or explicitly partial retrievals.
+    pub incomplete: u64,
+    /// Successful unsupported results plus typed unsupported-language errors.
+    pub unsupported: u64,
+    /// Successful exact `expected_hash` suppression.
+    pub hash_suppressed: u64,
+    /// Successful records created before outcome classification was available.
+    pub legacy_unclassified: u64,
+    /// Observed errors other than typed unsupported-language outcomes.
+    pub failed: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+/// Time window represented by a savings snapshot response.
+pub enum TokenSavingsWindow {
+    /// All persisted aggregate records.
+    Lifetime,
+    /// Aggregate counters added after the supplied opaque snapshot.
+    Delta,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Observed accounting plus a caller-carried opaque aggregate snapshot.
+pub struct TokenSavingsSnapshotReport {
+    #[serde(flatten)]
+    pub observed: ObservedTokenSavingsReport,
+    /// Opaque state that can be supplied to a later savings request.
+    pub snapshot: String,
+    /// Whether the report covers lifetime totals or a snapshot delta.
+    pub window: TokenSavingsWindow,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

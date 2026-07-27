@@ -50,6 +50,19 @@ enum SearchDiagnostics {
     Collect,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchOutputShape {
+    Full,
+    OccurrenceGroups { coordinates_only: bool },
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SearchExecutionOptions {
+    output_shape: SearchOutputShape,
+    response_options: ServiceCallOptions,
+    record_savings: bool,
+}
+
 struct RegexScan {
     hits: Vec<ChunkHit>,
     phases: SearchPhaseCounters,
@@ -435,6 +448,158 @@ fn group_search_hits(hits: &[SearchHit]) -> Vec<SearchGroup> {
     groups
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum OccurrenceGroupKey {
+    Path(String),
+    Excerpt {
+        path: String,
+        start_line: usize,
+        end_line: usize,
+        content_hash: String,
+    },
+}
+
+fn occurrence_group_key(hit: &SearchHit, coordinates_only: bool) -> OccurrenceGroupKey {
+    if coordinates_only {
+        OccurrenceGroupKey::Path(hit.path.clone())
+    } else {
+        OccurrenceGroupKey::Excerpt {
+            path: hit.path.clone(),
+            start_line: hit.start_line,
+            end_line: hit.end_line,
+            content_hash: hit.content_hash.clone(),
+        }
+    }
+}
+
+fn group_occurrence_hits(
+    hits: &[SearchHit],
+    coordinates_only: bool,
+) -> Result<Vec<SearchOccurrenceGroup>> {
+    let mut groups = Vec::<SearchOccurrenceGroup>::new();
+    let mut positions = HashMap::<OccurrenceGroupKey, usize>::new();
+    for hit in hits {
+        let occurrence = hit.occurrence.as_ref().ok_or_else(|| {
+            Error::InternalFailure(
+                "exhaustive occurrence response omitted exact coordinates".into(),
+            )
+        })?;
+        let key = occurrence_group_key(hit, coordinates_only);
+        let index = *positions.entry(key).or_insert_with(|| {
+            let index = groups.len();
+            groups.push(SearchOccurrenceGroup {
+                path: hit.path.clone(),
+                start_line: if coordinates_only {
+                    occurrence.start_line
+                } else {
+                    hit.start_line
+                },
+                end_line: if coordinates_only {
+                    occurrence.end_line
+                } else {
+                    hit.end_line
+                },
+                excerpt: (!coordinates_only).then(|| hit.excerpt.clone()),
+                content_hash: (!coordinates_only).then(|| hit.content_hash.clone()),
+                occurrences: Vec::new(),
+            });
+            index
+        });
+        let group = &mut groups[index];
+        if coordinates_only {
+            group.start_line = group.start_line.min(occurrence.start_line);
+            group.end_line = group.end_line.max(occurrence.end_line);
+        }
+        group.occurrences.push(SearchOccurrenceCoordinate {
+            line: occurrence.start_line,
+            end_line: (occurrence.end_line != occurrence.start_line).then_some(occurrence.end_line),
+            start_column: occurrence.start_column,
+            end_column: occurrence.end_column,
+        });
+    }
+    Ok(groups)
+}
+
+fn select_search_page(
+    hits: &[CandidateSearchHit],
+    offset: usize,
+    limit: usize,
+    token_limit: usize,
+    output_shape: SearchOutputShape,
+    tokenizer: &crate::tokens::Tokenizer,
+    cancellation: &CancellationToken,
+) -> Result<(Vec<CandidateSearchHit>, usize, usize)> {
+    let mut emitted_tokens = 0usize;
+    let mut selected = Vec::new();
+    let mut consumed = 0usize;
+    let mut charged_occurrence_groups = HashSet::new();
+    for candidate in hits.iter().skip(offset).take(limit).cloned() {
+        check_cancelled(cancellation)?;
+        consumed += 1;
+        let group_key = match output_shape {
+            SearchOutputShape::OccurrenceGroups {
+                coordinates_only: false,
+            } => Some(occurrence_group_key(&candidate.hit, false)),
+            SearchOutputShape::Full
+            | SearchOutputShape::OccurrenceGroups {
+                coordinates_only: true,
+            } => None,
+        };
+        let count = match output_shape {
+            SearchOutputShape::Full => tokenizer.count(&candidate.hit.excerpt),
+            SearchOutputShape::OccurrenceGroups {
+                coordinates_only: true,
+            } => 0,
+            SearchOutputShape::OccurrenceGroups {
+                coordinates_only: false,
+            } if group_key
+                .as_ref()
+                .is_some_and(|key| charged_occurrence_groups.contains(key)) =>
+            {
+                0
+            }
+            SearchOutputShape::OccurrenceGroups {
+                coordinates_only: false,
+            } => tokenizer.count(&candidate.hit.excerpt),
+        };
+        if emitted_tokens.saturating_add(count) > token_limit {
+            continue;
+        }
+        emitted_tokens += count;
+        if let Some(key) = group_key {
+            charged_occurrence_groups.insert(key);
+        }
+        selected.push(candidate);
+    }
+    Ok((selected, consumed, emitted_tokens))
+}
+
+fn selected_search_source_tokens(
+    selected: &[CandidateSearchHit],
+    output_shape: SearchOutputShape,
+    tokenizer: &crate::tokens::Tokenizer,
+) -> usize {
+    match output_shape {
+        SearchOutputShape::Full => selected
+            .iter()
+            .map(|candidate| tokenizer.count(&candidate.hit.excerpt))
+            .sum(),
+        SearchOutputShape::OccurrenceGroups {
+            coordinates_only: true,
+        } => 0,
+        SearchOutputShape::OccurrenceGroups {
+            coordinates_only: false,
+        } => {
+            let mut seen = HashSet::new();
+            selected
+                .iter()
+                .filter(|candidate| seen.insert(occurrence_group_key(&candidate.hit, false)))
+                .map(|candidate| tokenizer.count(&candidate.hit.excerpt))
+                .sum()
+        }
+    }
+}
+
 fn collect_filtered_hits<T>(
     request: &SearchRequest,
     max_candidates: usize,
@@ -593,6 +758,8 @@ pub(super) fn chunk_search_hit_for_range(
         occurrence: include_occurrence.then_some(SearchOccurrence {
             start_line: hit.start_line + local_start - 1,
             end_line: hit.start_line + local_end - 1,
+            start_column: start.saturating_sub(line_starts[local_start.saturating_sub(1)]),
+            end_column: end.saturating_sub(line_starts[local_end.saturating_sub(1)]),
             start_byte: hit.start_byte + start,
             end_byte: hit.start_byte + end,
         }),
@@ -710,6 +877,17 @@ fn validate_search_input(request: &SearchRequest) -> Result<()> {
         compile_regex(request)?;
     } else {
         compile_literal_regex(&request.query, request.case_sensitive)?;
+    }
+    Ok(())
+}
+
+fn validate_occurrence_group_input(request: &SearchRequest) -> Result<()> {
+    validate_search_input(request)?;
+    if !request.all_occurrences {
+        return Err(Error::InvalidInput {
+            field: "occurrence projection",
+            reason: "requires all_occurrences=true",
+        });
     }
     Ok(())
 }
@@ -846,8 +1024,11 @@ impl Services {
                     cancellation,
                     RegexPlanning::Enabled,
                     SearchDiagnostics::Omit,
-                    options,
-                    true,
+                    SearchExecutionOptions {
+                        output_shape: SearchOutputShape::Full,
+                        response_options: options,
+                        record_savings: true,
+                    },
                 )
                 .map(|evaluation| evaluation.response)
             })
@@ -914,8 +1095,11 @@ impl Services {
                         cancellation,
                         RegexPlanning::Enabled,
                         SearchDiagnostics::Omit,
-                        ServiceCallOptions::new(),
-                        false,
+                        SearchExecutionOptions {
+                            output_shape: SearchOutputShape::Full,
+                            response_options: ServiceCallOptions::new(),
+                            record_savings: false,
+                        },
                     )?
                     .response;
                 let hits_returned = response.hits.len();
@@ -945,6 +1129,113 @@ impl Services {
         self.observe_service_result(operation, result)
     }
 
+    /// Search every lexical occurrence while sharing repeated excerpts.
+    pub async fn search_occurrences(
+        &self,
+        request: SearchRequest,
+        coordinates_only: bool,
+    ) -> Result<SearchOccurrencesResponse> {
+        self.search_occurrences_with_options(request, coordinates_only, ServiceCallOptions::new())
+            .await
+    }
+
+    /// Search every lexical occurrence under an exact serialized-response bound.
+    pub async fn search_occurrences_with_options(
+        &self,
+        request: SearchRequest,
+        coordinates_only: bool,
+        options: ServiceCallOptions,
+    ) -> Result<SearchOccurrencesResponse> {
+        self.search_occurrences_cancellable_with_options(
+            request,
+            coordinates_only,
+            options,
+            CancellationToken::new(),
+        )
+        .await
+    }
+
+    /// Search grouped occurrences after applying the requested consistency boundary.
+    pub async fn search_occurrences_with_options_consistency_cancellable(
+        &self,
+        request: SearchRequest,
+        coordinates_only: bool,
+        consistency: IndexConsistency,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<SearchOccurrencesResponse> {
+        let operation = TokenAccountingOperation::Search;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, validate_occurrence_group_input(&request))?;
+        self.observe_service_result(operation, self.result_limit(request.max_results))?;
+        self.observe_service_result(
+            operation,
+            self.token_limit(request.max_tokens, self.config.default_read_tokens),
+        )?;
+        self.observe_service_result(operation, self.context_line_limit(request.context_lines))?;
+        let consistency_result = self
+            .apply_consistency(consistency, cancellation.clone())
+            .await;
+        self.observe_service_result(operation, consistency_result)?;
+        self.search_occurrences_cancellable_with_options(
+            request,
+            coordinates_only,
+            options,
+            cancellation,
+        )
+        .await
+    }
+
+    async fn search_occurrences_cancellable_with_options(
+        &self,
+        request: SearchRequest,
+        coordinates_only: bool,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<SearchOccurrencesResponse> {
+        let operation = TokenAccountingOperation::Search;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, validate_occurrence_group_input(&request))?;
+        let this = self.clone();
+        let result = self
+            .blocking_executor
+            .run(cancellation, move |cancellation| {
+                let response = this
+                    .search_sync(
+                        request,
+                        cancellation,
+                        RegexPlanning::Enabled,
+                        SearchDiagnostics::Omit,
+                        SearchExecutionOptions {
+                            output_shape: SearchOutputShape::OccurrenceGroups { coordinates_only },
+                            response_options: ServiceCallOptions::new(),
+                            record_savings: false,
+                        },
+                    )?
+                    .response;
+                let occurrences_total = response.occurrences_total.ok_or_else(|| {
+                    Error::InternalFailure(
+                        "grouped occurrence search omitted its exact total".into(),
+                    )
+                })?;
+                let groups = group_occurrence_hits(&response.hits, coordinates_only)?;
+                let mut compact = SearchOccurrencesResponse {
+                    groups_returned: groups.len(),
+                    groups,
+                    occurrences_returned: response.occurrences_returned,
+                    occurrences_total,
+                    coordinates_only,
+                    coverage: response.coverage,
+                    meta: response.meta,
+                };
+                this.finalize_bounded_response(&mut compact, options)?;
+                this.record_token_savings(TokenAccountingOperation::Search, None, &compact.meta);
+                Ok(compact)
+            })
+            .await;
+        self.observe_service_result(operation, result)
+    }
+
     /// Search and expose deterministic candidate-phase counts for evaluation.
     ///
     /// Production adapters should use [`Self::search`]. This method does not
@@ -958,8 +1249,11 @@ impl Services {
                     cancellation,
                     RegexPlanning::Enabled,
                     SearchDiagnostics::Collect,
-                    ServiceCallOptions::new(),
-                    true,
+                    SearchExecutionOptions {
+                        output_shape: SearchOutputShape::Full,
+                        response_options: ServiceCallOptions::new(),
+                        record_savings: true,
+                    },
                 )
             })
             .await
@@ -981,8 +1275,11 @@ impl Services {
                     cancellation,
                     RegexPlanning::Disabled,
                     SearchDiagnostics::Collect,
-                    ServiceCallOptions::new(),
-                    true,
+                    SearchExecutionOptions {
+                        output_shape: SearchOutputShape::Full,
+                        response_options: ServiceCallOptions::new(),
+                        record_savings: true,
+                    },
                 )
             })
             .await
@@ -994,8 +1291,7 @@ impl Services {
         cancellation: &CancellationToken,
         regex_planning: RegexPlanning,
         diagnostics: SearchDiagnostics,
-        options: ServiceCallOptions,
-        record_savings: bool,
+        execution: SearchExecutionOptions,
     ) -> Result<SearchEvaluation> {
         check_cancelled(cancellation)?;
         validate_search_input(&request)?;
@@ -1287,21 +1583,16 @@ impl Services {
             }
             normalize_search_scores(&mut hits);
 
-            let mut emitted_tokens = 0usize;
-            let mut selected = Vec::new();
             let total_candidates = hits.len();
-            let page = hits.iter().skip(offset).take(limit).cloned();
-            let mut consumed = 0usize;
-            for candidate in page {
-                check_cancelled(cancellation)?;
-                consumed += 1;
-                let count = self.config.tokenizer.count(&candidate.hit.excerpt);
-                if emitted_tokens.saturating_add(count) > token_limit {
-                    continue;
-                }
-                emitted_tokens += count;
-                selected.push(candidate);
-            }
+            let (mut selected, consumed, _) = select_search_page(
+                &hits,
+                offset,
+                limit,
+                token_limit,
+                execution.output_shape,
+                &self.config.tokenizer,
+                cancellation,
+            )?;
             let has_more = offset.saturating_add(consumed) < total_candidates;
             self.ensure_search_page_fits(
                 &mut selected,
@@ -1314,7 +1605,7 @@ impl Services {
                     consumed,
                     has_more,
                 },
-                options,
+                execution.response_options,
             )?;
             let receipt_candidates = selected
                 .iter()
@@ -1329,7 +1620,9 @@ impl Services {
                 })
                 .collect::<Vec<_>>();
             let receipt = self.evaluate_receipt(
-                request.receipt_id.as_deref(),
+                matches!(execution.output_shape, SearchOutputShape::Full)
+                    .then_some(request.receipt_id.as_deref())
+                    .flatten(),
                 generation,
                 &receipt_candidates,
             )?;
@@ -1344,10 +1637,11 @@ impl Services {
                     .then_some(candidate)
                 })
                 .collect();
-            emitted_tokens = selected
-                .iter()
-                .map(|candidate| self.config.tokenizer.count(&candidate.hit.excerpt))
-                .sum();
+            let emitted_tokens = selected_search_source_tokens(
+                &selected,
+                execution.output_shape,
+                &self.config.tokenizer,
+            );
             let paths = selected
                 .iter()
                 .map(|candidate| candidate.hit.path.clone())
@@ -1377,8 +1671,8 @@ impl Services {
             Ok((response, baseline_source_tokens, phases, primitive_keys))
         });
         let (mut response, baseline_source_tokens, phases, primitive_keys) = search_result?;
-        self.finalize_bounded_response(&mut response, options)?;
-        if record_savings {
+        self.finalize_bounded_response(&mut response, execution.response_options)?;
+        if execution.record_savings {
             self.record_token_savings(
                 TokenAccountingOperation::Search,
                 baseline_source_tokens,

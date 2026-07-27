@@ -1742,6 +1742,11 @@ fn import_candidates(source_path: &str, raw_target: &str) -> Vec<String> {
         bases.push(parent.join(raw_target));
     } else if source.extension().and_then(|ext| ext.to_str()) == Some("rs") {
         bases.extend(rust_module_paths(source, raw_target));
+    } else if matches!(
+        source.extension().and_then(|ext| ext.to_str()),
+        Some("tex" | "ltx")
+    ) {
+        bases.push(parent.join(raw_target));
     } else {
         return Vec::new();
     }
@@ -1757,6 +1762,7 @@ fn import_candidates(source_path: &str, raw_target: &str) -> Vec<String> {
         Some("ts" | "mts" | "cts" | "tsx") => &["", "ts", "tsx", "mts", "cts", "js"],
         Some("py" | "pyi") => &["", "py", "pyi"],
         Some("rs") => &["", "rs"],
+        Some("tex" | "ltx") => &["", "tex", "ltx"],
         _ => &[""],
     };
     let mut matches = Vec::new();
@@ -2115,6 +2121,26 @@ mod tests {
             Some("src/pkg/index.ts")
         );
         assert!(resolve_import("src/app.ts", "external-package", &paths).is_none());
+    }
+
+    #[test]
+    fn latex_inputs_resolve_relative_tex_files() {
+        let paths = [
+            "paper/main.tex".to_string(),
+            "paper/sections/results.tex".to_string(),
+            "paper/appendix.ltx".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            resolve_import("paper/main.tex", "sections/results", &paths).as_deref(),
+            Some("paper/sections/results.tex")
+        );
+        assert_eq!(
+            resolve_import("paper/main.tex", "appendix.ltx", &paths).as_deref(),
+            Some("paper/appendix.ltx")
+        );
+        assert!(resolve_import("paper/main.tex", "missing", &paths).is_none());
     }
 
     #[test]

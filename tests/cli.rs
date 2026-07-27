@@ -889,6 +889,12 @@ fn cli_index_and_status_and_mcp_commands() {
 
     let cli = parse(&["savings"]);
     assert!(matches!(cli.app_request(), AppRequest::Savings));
+    let cli = parse(&["savings", "--snapshot", "lts1.payload.checksum"]);
+    assert!(matches!(
+        cli.app_request(),
+        AppRequest::SavingsDelta { snapshot }
+            if snapshot == "lts1.payload.checksum"
+    ));
 
     let cli = parse(&["mcp"]);
     assert!(matches!(

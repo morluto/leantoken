@@ -227,6 +227,10 @@ fn storage_adds_full_response_accounting_to_existing_savings_table() {
              ALTER TABLE token_savings DROP COLUMN receipt_suppressed_overlap;
              ALTER TABLE token_savings DROP COLUMN expected_hash_not_modified_responses;
              ALTER TABLE token_savings DROP COLUMN expected_hash_suppressed_source_tokens;
+             ALTER TABLE token_savings DROP COLUMN useful_requests;
+             ALTER TABLE token_savings DROP COLUMN incomplete_requests;
+             ALTER TABLE token_savings DROP COLUMN unsupported_requests;
+             ALTER TABLE token_savings DROP COLUMN hash_suppressed_requests;
              DROP TABLE service_failures;",
         )
         .expect("simulate source-only savings table");
@@ -255,6 +259,10 @@ fn storage_adds_full_response_accounting_to_existing_savings_table() {
         "receipt_suppressed_overlap",
         "expected_hash_not_modified_responses",
         "expected_hash_suppressed_source_tokens",
+        "useful_requests",
+        "incomplete_requests",
+        "unsupported_requests",
+        "hash_suppressed_requests",
     ] {
         let present: i64 = connection
             .query_row(
@@ -265,6 +273,27 @@ fn storage_adds_full_response_accounting_to_existing_savings_table() {
             .expect("accounting column");
         assert_eq!(present, 1, "missing {column}");
     }
+    let savings_plan = connection
+        .prepare(
+            "EXPLAIN QUERY PLAN
+             SELECT operation, useful_requests, incomplete_requests,
+                    unsupported_requests, hash_suppressed_requests
+             FROM token_savings
+             WHERE tokenizer = ?1
+             ORDER BY operation",
+        )
+        .expect("prepare savings query plan")
+        .query_map(["cl100k_base"], |row| row.get::<_, String>(3))
+        .expect("query savings plan")
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("collect savings plan");
+    assert!(
+        savings_plan.iter().any(|detail| {
+            detail.contains("SEARCH token_savings USING INDEX")
+                && detail.contains("tokenizer=?")
+        }),
+        "unexpected savings query plan: {savings_plan:?}"
+    );
     let legacy: (i64, i64, i64, i64, i64, i64) = connection
         .query_row(
             "SELECT tracked_requests, baseline_source_tokens,

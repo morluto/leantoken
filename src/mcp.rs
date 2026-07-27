@@ -44,9 +44,24 @@ const DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY: usize = DEFAULT_ACTIVE_TOOL_CALL_CA
 const MAX_MCP_STDIO_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const RETAINED_MCP_FRAME_CAPACITY: usize = 64 * 1024;
 const INITIAL_INDEX_WAIT: Duration = Duration::from_secs(30);
+const MCP_INSTRUCTIONS: &str = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken.context first with the user's task. For an uncertain broad task, first use context plan_only=true, inspect its bounded metadata and coverage, then repeat the same request with plan_only=false to materialize source. PREFER leantoken.search over grep or rg for source search; leantoken.files over find, ls, or glob for paths; leantoken.outline over opening whole files to discover structure; leantoken.read over cat, head, or sed for exact current symbols and ranges; leantoken.history over git show, diff, or log -L for one symbol across immutable revisions; and leantoken.json over jq or whole-file reads for structural JSON queries, summaries, and selected-field diffs. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=reconcile_working_tree on index-backed tools after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, runtime probes, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence.";
 
 fn serialized_response<T: Serialize>(response: T) -> crate::Result<serde_json::Value> {
     serde_json::to_value(response).map_err(|error| crate::Error::InternalFailure(error.to_string()))
+}
+
+fn mcp_schema_fingerprint() -> String {
+    let catalog = LeanTokenMcp::tool_router().list_all();
+    let encoded = serde_json::to_vec(&catalog).expect("MCP tool catalog is serializable");
+    crate::text::hash_bytes(&encoded)
+}
+
+fn mcp_runtime_version() -> String {
+    format!(
+        "{}+schema.{}",
+        env!("CARGO_PKG_VERSION"),
+        mcp_schema_fingerprint()
+    )
 }
 
 #[derive(Clone)]
@@ -293,7 +308,12 @@ impl Transport<RoleServer> for BoundedStdioTransport {
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct SavingsMcpRequest {}
+struct SavingsMcpRequest {
+    /// Opaque snapshot from an earlier savings response; returns aggregate deltas.
+    #[serde(default)]
+    #[schemars(length(max = 32768))]
+    snapshot: Option<String>,
+}
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -381,11 +401,15 @@ enum LegacyFilesMcpOperation {
 #[serde(rename_all = "snake_case")]
 /// Response projection for indexed search.
 enum SearchMcpProjection {
-    /// Preserve the complete ranked-hit response.
+    /// Select `occurrences` for exhaustive lexical search and `full` otherwise.
     #[default]
+    Auto,
+    /// Preserve the complete ranked-hit response.
     Full,
     /// Group the selected page into symbol or file summaries.
     Grouped,
+    /// Share each exhaustive lexical excerpt across its exact occurrence coordinates.
+    Occurrences,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -438,6 +462,9 @@ struct SearchMcpRequest {
     /// Return every text or regex occurrence with exact coordinates and counts.
     #[serde(default)]
     all_occurrences: bool,
+    /// Omit excerpts and hashes from an exhaustive occurrence response.
+    #[serde(default)]
+    coordinates_only: bool,
     /// Prefer structural definitions when identifier channels find the same definition.
     #[serde(default)]
     prefer_structural: bool,
@@ -453,7 +480,7 @@ struct SearchMcpRequest {
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
-    /// Response shape: `full` hits (default) or compact `grouped` matches.
+    /// Response shape. Exhaustive searches default to `occurrences`; others default to `full`.
     #[serde(default)]
     projection: SearchMcpProjection,
 }
@@ -471,7 +498,31 @@ impl SearchMcpRequest {
             "context_lines",
             self.context_lines,
             limits.max_context_lines,
-        )
+        )?;
+        if self.coordinates_only && !self.all_occurrences {
+            return Err(crate::Error::InvalidInput {
+                field: "coordinates_only",
+                reason: "requires all_occurrences=true",
+            });
+        }
+        if self.coordinates_only
+            && !matches!(
+                self.projection,
+                SearchMcpProjection::Auto | SearchMcpProjection::Occurrences
+            )
+        {
+            return Err(crate::Error::InvalidInput {
+                field: "coordinates_only",
+                reason: "requires the occurrences projection",
+            });
+        }
+        if self.projection == SearchMcpProjection::Occurrences && !self.all_occurrences {
+            return Err(crate::Error::InvalidInput {
+                field: "projection",
+                reason: "occurrences requires all_occurrences=true",
+            });
+        }
+        Ok(())
     }
 
     fn into_parts(
@@ -479,10 +530,16 @@ impl SearchMcpRequest {
     ) -> (
         SearchRequest,
         SearchMcpProjection,
+        bool,
         IndexConsistency,
         ServiceCallOptions,
         Option<String>,
     ) {
+        let projection = match self.projection {
+            SearchMcpProjection::Auto if self.all_occurrences => SearchMcpProjection::Occurrences,
+            SearchMcpProjection::Auto => SearchMcpProjection::Full,
+            projection => projection,
+        };
         (
             SearchRequest {
                 query: self.query,
@@ -499,7 +556,8 @@ impl SearchMcpRequest {
                 receipt_id: self.receipt_id,
                 cursor: self.cursor,
             },
-            self.projection,
+            projection,
+            self.coordinates_only,
             self.consistency,
             service_call_options(self.max_response_tokens),
             self.expected_repository_id,
@@ -713,7 +771,7 @@ struct ReadMcpRequest {
     /// Repository-relative UTF-8 source file.
     #[schemars(length(min = 1, max = 4096))]
     path: String,
-    /// Exact symbol, Markdown heading, line range, or continuation to read.
+    /// Exact symbol, document heading, line range, or continuation to read.
     target: ReadMcpTarget,
     /// Maximum source tokens to return (default 8000, maximum 32000).
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
@@ -749,9 +807,9 @@ enum ReadMcpTarget {
         #[schemars(length(min = 1, max = 4096))]
         name: String,
     },
-    /// Read one indexed Markdown section by exact heading title or outline signature.
+    /// Read one indexed Markdown or LaTeX section by exact title or outline signature.
     Heading {
-        /// Exact rendered heading title or outline signature such as `## Performance`.
+        /// Exact title or outline signature such as `## Performance` or `\section{Method}`.
         #[schemars(length(min = 1, max = 4096))]
         name: String,
         /// One-based occurrence when the heading text is duplicated.
@@ -2164,7 +2222,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "search",
-        description = "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Set projection=grouped for opt-in symbol/file summaries that retain one verifiable excerpt, reference counts, coverage, freshness, and continuation without repeated scores or excerpts. Set all_occurrences in text or regex mode for exact occurrence coordinates and returned/total counts; exhaustive scans fail instead of silently truncating at internal scan limits. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
+        description = "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Set projection=grouped for opt-in symbol/file summaries. Exhaustive text or regex searches default to projection=occurrences: one excerpt plus every exact line/column coordinate; set coordinates_only=true to omit excerpts and hashes. Use explicit projection=full for legacy per-occurrence hits. Exhaustive scans keep exact returned/total counts and fail instead of silently truncating at internal scan limits. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
     )]
     async fn leantoken_search(
         &self,
@@ -2186,7 +2244,8 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
+        let (request, projection, coordinates_only, consistency, options, expected_repository_id) =
+            req.into_parts();
         let cancellation = context.ct.clone();
         let mcp_services = self.services.clone();
         self.run_admitted(
@@ -2204,6 +2263,9 @@ impl LeanTokenMcp {
                         let cancellation = cancellation.clone();
                         async {
                             match projection {
+                                SearchMcpProjection::Auto => {
+                                    unreachable!("search projection is resolved by into_parts")
+                                }
                                 SearchMcpProjection::Full => services
                                     .search_with_options_consistency_cancellable(
                                         request,
@@ -2216,6 +2278,16 @@ impl LeanTokenMcp {
                                 SearchMcpProjection::Grouped => services
                                     .search_grouped_with_options_consistency_cancellable(
                                         request,
+                                        consistency,
+                                        options,
+                                        cancellation,
+                                    )
+                                    .await
+                                    .and_then(serialized_response),
+                                SearchMcpProjection::Occurrences => services
+                                    .search_occurrences_with_options_consistency_cancellable(
+                                        request,
+                                        coordinates_only,
                                         consistency,
                                         options,
                                         cancellation,
@@ -2540,12 +2612,12 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "savings",
-        description = "Report repository-local observed response accounting, expected-hash suppression, service failures, and explicitly unobserved task outcomes. Source and response deltas are comparisons against represented source, not claims about task success. Example: {}.",
+        description = "Report repository-local observed response accounting, request classifications, expected-hash suppression, service failures, and explicitly unobserved task outcomes. Returns an opaque snapshot; supply it later for a bounded aggregate delta. Source compression and full-response net cost are separate comparisons against represented source, not claims about task success or complete session savings. Example: {}.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn leantoken_savings(
         &self,
-        Parameters(_req): Parameters<SavingsMcpRequest>,
+        Parameters(req): Parameters<SavingsMcpRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let state = self.services.get();
         let services = match self.services(&state) {
@@ -2553,17 +2625,27 @@ impl LeanTokenMcp {
             Err(result) => return Ok(result),
         };
         self.run_admitted(services, None, |services| async move {
-            services.observed_token_savings_report().await
+            services.observed_token_savings_snapshot(req.snapshot).await
         })
         .await
     }
 }
 
-#[tool_handler(
-    name = "leantoken",
-    instructions = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: for broad coding, debugging, review, or architecture tasks, call leantoken.context first with the user's task. For an uncertain broad task, first use context plan_only=true, inspect its bounded metadata and coverage, then repeat the same request with plan_only=false to materialize source. PREFER leantoken.search over grep or rg for source search; leantoken.files over find, ls, or glob for paths; leantoken.outline over opening whole files to discover structure; leantoken.read over cat, head, or sed for exact current symbols and ranges; leantoken.history over git show, diff, or log -L for one symbol across immutable revisions; and leantoken.json over jq or whole-file reads for structural JSON queries, summaries, and selected-field diffs. For known identifiers use search then read; for a known file with an unknown range use outline then read; for unknown paths use files. Set consistency=reconcile_working_tree on index-backed tools after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, runtime probes, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms. Reuse returned hashes to suppress unchanged evidence."
-)]
+#[tool_handler(name = "leantoken")]
 impl ServerHandler for LeanTokenMcp {
+    fn get_info(&self) -> rmcp::model::ServerInfo {
+        rmcp::model::ServerInfo::new(
+            rmcp::model::ServerCapabilities::builder()
+                .enable_tools()
+                .build(),
+        )
+        .with_server_info(rmcp::model::Implementation::new(
+            "leantoken",
+            mcp_runtime_version(),
+        ))
+        .with_instructions(MCP_INSTRUCTIONS.to_string())
+    }
+
     fn on_initialized(
         &self,
         _context: NotificationContext<RoleServer>,
@@ -2636,7 +2718,7 @@ fn into_mcp_error(error: crate::Error) -> ErrorData {
             mcp_error_data("symbol_not_found"),
         ),
         crate::Error::HeadingNotFound { .. } => ErrorData::invalid_params(
-            "requested Markdown heading occurrence is not indexed",
+            "requested document heading occurrence is not indexed",
             mcp_error_data("heading_not_found"),
         ),
         crate::Error::RepositoryIdentityMismatch { expected, actual } => ErrorData::invalid_params(
@@ -3093,6 +3175,16 @@ mod tests {
         assert_eq!(
             client
                 .peer()
+                .peer_info()
+                .expect("initialize response")
+                .server_info
+                .version,
+            mcp_runtime_version()
+        );
+        assert_eq!(mcp_schema_fingerprint().len(), 32);
+        assert_eq!(
+            client
+                .peer()
                 .list_all_tools()
                 .await
                 .expect("list tools while saturated")
@@ -3166,7 +3258,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let result = server
-            .leantoken_savings(Parameters(SavingsMcpRequest {}))
+            .leantoken_savings(Parameters(SavingsMcpRequest { snapshot: None }))
             .await
             .expect("retryable savings response");
         assert_eq!(
@@ -4418,16 +4510,46 @@ mod tests {
             "query": "Services"
         }))
         .expect("default search projection");
-        let (_, projection, _, _, _) = search.into_parts();
+        let (_, projection, coordinates_only, _, _, _) = search.into_parts();
         assert_eq!(projection, SearchMcpProjection::Full);
+        assert!(!coordinates_only);
 
         let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
             "query": "Services",
             "projection": "grouped"
         }))
         .expect("grouped projection");
-        let (_, projection, _, _, _) = search.into_parts();
+        let (_, projection, coordinates_only, _, _, _) = search.into_parts();
         assert_eq!(projection, SearchMcpProjection::Grouped);
+        assert!(!coordinates_only);
+
+        let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+            "query": "Services",
+            "mode": "text",
+            "all_occurrences": true,
+            "coordinates_only": true
+        }))
+        .expect("coordinates-only occurrence projection");
+        search
+            .validate_limits(McpLimitPolicy::DEFAULT)
+            .expect("valid occurrence projection");
+        let (_, projection, coordinates_only, _, _, _) = search.into_parts();
+        assert_eq!(projection, SearchMcpProjection::Occurrences);
+        assert!(coordinates_only);
+
+        let invalid = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+            "query": "Services",
+            "mode": "text",
+            "coordinates_only": true
+        }))
+        .expect("structurally valid search request");
+        assert!(matches!(
+            invalid.validate_limits(McpLimitPolicy::DEFAULT),
+            Err(crate::Error::InvalidInput {
+                field: "coordinates_only",
+                ..
+            })
+        ));
 
         let outline = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
             "paths": ["src/services.rs"]
