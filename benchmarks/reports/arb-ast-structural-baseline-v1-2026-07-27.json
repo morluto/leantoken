@@ -8,7 +8,7 @@
   "reclassification_rule": "Do not edit converted labels after observing LeanToken output; update the pinned dataset revision and record a new corpus lock instead.",
   "manifest_description": "Agent Retrieval Bench trace2code smoke: 2 deterministically selected task(s) from pinned release v2_trace2code (archive SHA-256 19b252e8cfff42107fedc74005dbb6972f2970af33651ce0c1571546819e41c4). This is a bounded smoke baseline, not a complete ARB leaderboard run.",
   "leantoken_version": "0.1.16",
-  "harness_revision": "bc1e0747f49c511c0abf0139c88bce6c02e3fe02",
+  "harness_revision": "301ba182ee05fd848d2807e45aa03fa3b139018f",
   "harness_worktree_dirty": true,
   "candidate_runtime_tree_verified": null,
   "diagnostic_only": false,
@@ -19,7 +19,7 @@
   "host_arch": "x86_64",
   "rustc_version": "rustc 1.95.0 (59807616e 2026-04-14)",
   "ripgrep_version": "ripgrep 15.1.0 (rev af60c2de9d)",
-  "generated_at_unix_seconds": 1785148519,
+  "generated_at_unix_seconds": 1785148658,
   "tokenizer": "cl100k_base",
   "token_count_exact": true,
   "methodology": {
@@ -85,7 +85,7 @@
       "indexed_files": 588,
       "indexed_chunks": 1696,
       "index_warnings": [],
-      "cold_index_ms": 1723.7664989999998,
+      "cold_index_ms": 1833.080598,
       "database_bytes": 37400576,
       "tasks": [
         {
@@ -545,14 +545,14 @@
           "leantoken_total_json_tokens": 1623,
           "source_savings_against_oracle_fraction": 0.9835760488562859,
           "total_json_savings_against_scripted_fraction": 0.9749683827385175,
-          "first_context_ms": 123.75938599999999,
+          "first_context_ms": 136.457443,
           "warm_context_ms_samples": [
-            120.42264499999999,
-            117.287667,
-            117.280876
+            116.38955700000001,
+            117.280017,
+            132.606124
           ],
-          "warm_context_median_ms": 117.287667,
-          "warm_context_p95_ms": 120.42264499999999,
+          "warm_context_median_ms": 117.280017,
+          "warm_context_p95_ms": 132.606124,
           "second_response_source_tokens": 594,
           "estimated_repeated_range_source_tokens": 0,
           "repeat_request_json_tokens": 1887,
@@ -585,7 +585,7 @@
       "indexed_files": 138,
       "indexed_chunks": 428,
       "index_warnings": [],
-      "cold_index_ms": 486.420554,
+      "cold_index_ms": 415.252788,
       "database_bytes": 14148368,
       "tasks": [
         {
@@ -819,14 +819,14 @@
           "leantoken_total_json_tokens": 911,
           "source_savings_against_oracle_fraction": 0.9860865369149108,
           "total_json_savings_against_scripted_fraction": 0.9673815747072935,
-          "first_context_ms": 95.696191,
+          "first_context_ms": 91.561932,
           "warm_context_ms_samples": [
-            92.12163199999999,
-            93.745201,
-            99.928451
+            84.184893,
+            87.358853,
+            82.245134
           ],
-          "warm_context_median_ms": 93.745201,
-          "warm_context_p95_ms": 99.928451,
+          "warm_context_median_ms": 84.184893,
+          "warm_context_p95_ms": 87.358853,
           "second_response_source_tokens": 389,
           "estimated_repeated_range_source_tokens": 0,
           "repeat_request_json_tokens": 761,

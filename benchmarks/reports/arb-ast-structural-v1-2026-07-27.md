@@ -21,7 +21,7 @@ quality win by itself.
 - Manifest BLAKE3:
   `888fd766be72d8831946cf0038cf39374b5480564088f8d2cf7aa8d553bb6a7f`.
 - Harness revision:
-  `bc1e0747f49c511c0abf0139c88bce6c02e3fe02`.
+  `301ba182ee05fd848d2807e45aa03fa3b139018f`.
 - No corpus, repository, or history download was performed for this
   experiment.
 - Baseline: `--workflow-evidence`.
@@ -76,4 +76,3 @@ The next useful experiment should test a bounded owner-evidence reservation or
 orientation capsule that can admit one small structural owner excerpt without
 boosting every candidate from that file. Reusing the current focus-minimum
 contract is not justified by this smoke result.
-
