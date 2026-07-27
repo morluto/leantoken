@@ -744,7 +744,8 @@ cargo run --release --example representative_benchmark -- \
 
 Capsule path relevance is scored separately from selected and generated source.
 It measures whether the route names a labeled owner, not whether an agent reads
-that owner or solves the task.
+that owner or solves the task. The frozen handoff decision is recorded in
+[`reports/arb-orientation-capsule-v1-2026-07-27.md`](reports/arb-orientation-capsule-v1-2026-07-27.md).
 
 Each repository directory under `target/arb-repos` must match the generated
 manifest's `directory` and exact `base_revision`. The adapter preserves the
