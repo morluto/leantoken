@@ -497,7 +497,19 @@ CREATE TABLE IF NOT EXISTS token_savings (
     total_response_tokens INTEGER NOT NULL DEFAULT 0,
     receipt_suppressed_exact INTEGER NOT NULL DEFAULT 0,
     receipt_suppressed_overlap INTEGER NOT NULL DEFAULT 0,
+    expected_hash_not_modified_responses INTEGER NOT NULL DEFAULT 0,
+    expected_hash_suppressed_source_tokens INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(tokenizer, operation)
+);
+"#;
+
+const SERVICE_FAILURES_TABLE_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS service_failures (
+    tokenizer TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    error_category TEXT NOT NULL,
+    failed_requests INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(tokenizer, operation, error_category)
 );
 "#;
 
@@ -746,6 +758,15 @@ pub(crate) struct TokenSavingsRecord {
     pub total_response_tokens: u64,
     pub receipt_suppressed_exact: u64,
     pub receipt_suppressed_overlap: u64,
+    pub expected_hash_not_modified_responses: u64,
+    pub expected_hash_suppressed_source_tokens: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ServiceFailureRecord {
+    pub operation: String,
+    pub error_category: String,
+    pub failed_requests: u64,
 }
 
 /// SQLite-backed repository index with one serialized writer and pooled readers.
@@ -1309,11 +1330,20 @@ impl Storage {
                 "receipt_suppressed_overlap",
                 "ALTER TABLE token_savings ADD COLUMN receipt_suppressed_overlap INTEGER NOT NULL DEFAULT 0;",
             ),
+            (
+                "expected_hash_not_modified_responses",
+                "ALTER TABLE token_savings ADD COLUMN expected_hash_not_modified_responses INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "expected_hash_suppressed_source_tokens",
+                "ALTER TABLE token_savings ADD COLUMN expected_hash_suppressed_source_tokens INTEGER NOT NULL DEFAULT 0;",
+            ),
         ] {
             if !savings_columns.contains(column) {
                 tx.execute_batch(statement)?;
             }
         }
+        tx.execute_batch(SERVICE_FAILURES_TABLE_SQL)?;
         tx.commit()?;
         Ok(())
     }
@@ -1784,6 +1814,8 @@ impl Storage {
         operation: TokenAccountingOperation,
         baseline_source_tokens: Option<usize>,
         meta: &ResponseMeta,
+        expected_hash_not_modified: bool,
+        expected_hash_suppressed_source_tokens: usize,
     ) -> Result<bool> {
         let tracked_requests = i64::from(baseline_source_tokens.is_some());
         let response_baseline_requests = tracked_requests;
@@ -1807,6 +1839,9 @@ impl Storage {
         let total_response_tokens = usize_to_i64(meta.total_response_tokens)?;
         let receipt_suppressed_exact = usize_to_i64(meta.receipt_suppressed_exact)?;
         let receipt_suppressed_overlap = usize_to_i64(meta.receipt_suppressed_overlap)?;
+        let expected_hash_not_modified_responses = i64::from(expected_hash_not_modified);
+        let expected_hash_suppressed_source_tokens =
+            usize_to_i64(expected_hash_suppressed_source_tokens)?;
         let conn = match self.writer.try_lock() {
             Ok(conn) => conn,
             Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
@@ -1822,8 +1857,13 @@ impl Storage {
                  estimated_source_tokens_saved, response_source_tokens,
                  path_and_metadata_tokens,
                  protocol_tokens, total_response_tokens,
-                 receipt_suppressed_exact, receipt_suppressed_overlap
-             ) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                 receipt_suppressed_exact, receipt_suppressed_overlap,
+                 expected_hash_not_modified_responses,
+                 expected_hash_suppressed_source_tokens
+             ) VALUES (
+                 ?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                 ?14, ?15, ?16
+             )
              ON CONFLICT(tokenizer, operation) DO UPDATE SET
                  tracked_requests = CASE
                      WHEN tracked_requests > 9223372036854775807 - excluded.tracked_requests
@@ -1889,6 +1929,16 @@ impl Storage {
                      WHEN receipt_suppressed_overlap > 9223372036854775807 - excluded.receipt_suppressed_overlap
                          THEN 9223372036854775807
                      ELSE receipt_suppressed_overlap + excluded.receipt_suppressed_overlap
+                 END,
+                 expected_hash_not_modified_responses = CASE
+                     WHEN expected_hash_not_modified_responses > 9223372036854775807 - excluded.expected_hash_not_modified_responses
+                         THEN 9223372036854775807
+                     ELSE expected_hash_not_modified_responses + excluded.expected_hash_not_modified_responses
+                 END,
+                 expected_hash_suppressed_source_tokens = CASE
+                     WHEN expected_hash_suppressed_source_tokens > 9223372036854775807 - excluded.expected_hash_suppressed_source_tokens
+                         THEN 9223372036854775807
+                     ELSE expected_hash_suppressed_source_tokens + excluded.expected_hash_suppressed_source_tokens
                  END",
             params![
                 tokenizer,
@@ -1905,7 +1955,55 @@ impl Storage {
                 total_response_tokens,
                 receipt_suppressed_exact,
                 receipt_suppressed_overlap,
+                expected_hash_not_modified_responses,
+                expected_hash_suppressed_source_tokens,
             ],
+        );
+        let restore_timeout = conn.busy_timeout(DEFAULT_BUSY_TIMEOUT);
+        match result {
+            Ok(_) => {
+                restore_timeout?;
+                Ok(true)
+            }
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if matches!(
+                    error.code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                ) =>
+            {
+                restore_timeout?;
+                Ok(false)
+            }
+            Err(error) => {
+                restore_timeout?;
+                Err(error.into())
+            }
+        }
+    }
+
+    pub(crate) fn record_service_failure(
+        &self,
+        tokenizer: &str,
+        operation: TokenAccountingOperation,
+        error_category: &str,
+    ) -> Result<bool> {
+        let conn = match self.writer.try_lock() {
+            Ok(conn) => conn,
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        };
+        conn.busy_timeout(Duration::ZERO)?;
+        let result = conn.execute(
+            "INSERT INTO service_failures(
+                 tokenizer, operation, error_category, failed_requests
+             ) VALUES (?1, ?2, ?3, 1)
+             ON CONFLICT(tokenizer, operation, error_category) DO UPDATE SET
+                 failed_requests = CASE
+                     WHEN failed_requests = 9223372036854775807
+                         THEN failed_requests
+                     ELSE failed_requests + 1
+                 END",
+            params![tokenizer, operation.as_str(), error_category],
         );
         let restore_timeout = conn.busy_timeout(DEFAULT_BUSY_TIMEOUT);
         match result {
@@ -2213,7 +2311,9 @@ impl ReadSession {
                     estimated_source_tokens_saved, response_source_tokens,
                     path_and_metadata_tokens, protocol_tokens,
                     total_response_tokens, receipt_suppressed_exact,
-                    receipt_suppressed_overlap
+                    receipt_suppressed_overlap,
+                    expected_hash_not_modified_responses,
+                    expected_hash_suppressed_source_tokens
              FROM token_savings
              WHERE tokenizer = ?1
              ORDER BY operation",
@@ -2235,10 +2335,29 @@ impl ReadSession {
                     total_response_tokens: i64_to_u64(row.get(11)?),
                     receipt_suppressed_exact: i64_to_u64(row.get(12)?),
                     receipt_suppressed_overlap: i64_to_u64(row.get(13)?),
+                    expected_hash_not_modified_responses: i64_to_u64(row.get(14)?),
+                    expected_hash_suppressed_source_tokens: i64_to_u64(row.get(15)?),
                 },
             ))
         })?;
         Ok(rows.collect::<std::result::Result<HashMap<_, _>, _>>()?)
+    }
+
+    pub(crate) fn service_failures(&self, tokenizer: &str) -> Result<Vec<ServiceFailureRecord>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT operation, error_category, failed_requests
+             FROM service_failures
+             WHERE tokenizer = ?1
+             ORDER BY operation, error_category",
+        )?;
+        let rows = stmt.query_map(params![tokenizer], |row| {
+            Ok(ServiceFailureRecord {
+                operation: row.get(0)?,
+                error_category: row.get(1)?,
+                failed_requests: i64_to_u64(row.get(2)?),
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     /// Return a row-id keyset page from this session's pinned snapshot.
@@ -3670,8 +3789,19 @@ mod tests {
                     TokenAccountingOperation::Search,
                     Some(10),
                     &meta,
+                    false,
+                    0,
                 )
                 .expect("best-effort accounting")
+        );
+        assert!(
+            !storage
+                .record_service_failure(
+                    "cl100k_base",
+                    TokenAccountingOperation::Search,
+                    "invalid_input",
+                )
+                .expect("best-effort failure accounting")
         );
         drop(writer);
         assert!(
@@ -3681,8 +3811,19 @@ mod tests {
                     TokenAccountingOperation::Search,
                     Some(10),
                     &meta,
+                    true,
+                    8,
                 )
                 .expect("available accounting")
+        );
+        assert!(
+            storage
+                .record_service_failure(
+                    "cl100k_base",
+                    TokenAccountingOperation::Search,
+                    "invalid_input",
+                )
+                .expect("available failure accounting")
         );
         let records = storage
             .token_savings("cl100k_base")
@@ -3698,6 +3839,21 @@ mod tests {
         assert_eq!(record.path_and_metadata_tokens, 5);
         assert_eq!(record.protocol_tokens, 3);
         assert_eq!(record.total_response_tokens, 10);
+        assert_eq!(record.expected_hash_not_modified_responses, 1);
+        assert_eq!(record.expected_hash_suppressed_source_tokens, 8);
+        let failures = storage
+            .begin_read()
+            .expect("failure read session")
+            .service_failures("cl100k_base")
+            .expect("stored failure accounting");
+        assert_eq!(
+            failures,
+            vec![ServiceFailureRecord {
+                operation: "search".into(),
+                error_category: "invalid_input".into(),
+                failed_requests: 1,
+            }]
+        );
     }
 
     #[test]

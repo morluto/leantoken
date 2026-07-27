@@ -150,11 +150,15 @@ fn cli_savings_renders_a_color_aware_human_table() {
         .expect("plain savings report");
     assert!(plain.status.success());
     let plain = String::from_utf8(plain.stdout).expect("plain UTF-8");
-    assert!(plain.starts_with("LeanToken Savings\n=================\n"));
-    assert!(plain.contains("source tokens saved"));
+    assert!(plain.starts_with(
+        "LeanToken Observed Token Accounting\n===================================\n"
+    ));
+    assert!(plain.contains("fewer source tokens"));
+    assert!(plain.contains("Persisted observations"));
+    assert!(plain.contains("Unobserved task outcomes"));
     assert!(plain.contains("Operation"));
     assert!(plain.contains("Search"));
-    assert!(plain.contains("Reduction"));
+    assert!(plain.contains("reduction"));
     assert!(!plain.contains("\x1b["));
 
     let colored = command()
@@ -165,7 +169,7 @@ fn cli_savings_renders_a_color_aware_human_table() {
     assert!(colored.status.success());
     assert!(String::from_utf8(colored.stdout)
         .expect("colored UTF-8")
-        .contains("\x1b[1;36mLeanToken Savings\x1b[0m"));
+        .contains("\x1b[1;36mLeanToken Observed Token Accounting\x1b[0m"));
 
     let no_color = command()
         .env("CLICOLOR_FORCE", "1")

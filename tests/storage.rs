@@ -224,7 +224,10 @@ fn storage_adds_full_response_accounting_to_existing_savings_table() {
              ALTER TABLE token_savings DROP COLUMN protocol_tokens;
              ALTER TABLE token_savings DROP COLUMN total_response_tokens;
              ALTER TABLE token_savings DROP COLUMN receipt_suppressed_exact;
-             ALTER TABLE token_savings DROP COLUMN receipt_suppressed_overlap;",
+             ALTER TABLE token_savings DROP COLUMN receipt_suppressed_overlap;
+             ALTER TABLE token_savings DROP COLUMN expected_hash_not_modified_responses;
+             ALTER TABLE token_savings DROP COLUMN expected_hash_suppressed_source_tokens;
+             DROP TABLE service_failures;",
         )
         .expect("simulate source-only savings table");
     connection
@@ -250,6 +253,8 @@ fn storage_adds_full_response_accounting_to_existing_savings_table() {
         "total_response_tokens",
         "receipt_suppressed_exact",
         "receipt_suppressed_overlap",
+        "expected_hash_not_modified_responses",
+        "expected_hash_suppressed_source_tokens",
     ] {
         let present: i64 = connection
             .query_row(
@@ -260,17 +265,61 @@ fn storage_adds_full_response_accounting_to_existing_savings_table() {
             .expect("accounting column");
         assert_eq!(present, 1, "missing {column}");
     }
-    let legacy: (i64, i64, i64, i64) = connection
+    let legacy: (i64, i64, i64, i64, i64, i64) = connection
         .query_row(
             "SELECT tracked_requests, baseline_source_tokens,
-                    response_tracked_requests, response_baseline_source_tokens
+                    response_tracked_requests, response_baseline_source_tokens,
+                    expected_hash_not_modified_responses,
+                    expected_hash_suppressed_source_tokens
              FROM token_savings
              WHERE tokenizer = 'cl100k_base' AND operation = 'search'",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
         )
         .expect("legacy row");
-    assert_eq!(legacy, (2, 100, 0, 0));
+    assert_eq!(legacy, (2, 100, 0, 0, 0, 0));
+    let failures_table: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'service_failures'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("service failures table");
+    assert_eq!(failures_table, 1);
+}
+
+#[test]
+fn service_failure_report_uses_the_bounded_primary_key_range() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("index.sqlite");
+    drop(Storage::open(&db).expect("storage"));
+    let connection = rusqlite::Connection::open(&db).expect("inspect storage");
+
+    let plan = query_plan(
+        &connection,
+        "EXPLAIN QUERY PLAN
+         SELECT operation, error_category, failed_requests
+         FROM service_failures
+         WHERE tokenizer = ?1
+         ORDER BY operation, error_category",
+        &[&"cl100k_base"],
+    );
+    assert!(
+        plan.contains("sqlite_autoindex_service_failures_1")
+            && plan.contains("tokenizer=?")
+            && !plan.contains("USE TEMP B-TREE"),
+        "unexpected service failure query plan:\n{plan}"
+    );
 }
 
 #[test]

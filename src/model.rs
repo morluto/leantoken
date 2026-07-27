@@ -2108,6 +2108,12 @@ impl TokenAccountingOperation {
             Self::History => "history",
         }
     }
+
+    pub(crate) fn from_str(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|operation| operation.as_str() == value)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -2176,6 +2182,50 @@ pub struct TokenSavingsReport {
     pub source_savings: TokenSavingsResponse,
     /// Full-response costs and net estimate for every retrieval operation.
     pub response_accounting: ResponseTokenAccounting,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Count of observed failed service requests for one operation and error category.
+pub struct ServiceFailureObservation {
+    /// Retrieval operation that returned the error.
+    pub operation: TokenAccountingOperation,
+    /// Stable, non-sensitive error variant category.
+    pub error_category: String,
+    /// Number of best-effort failure records persisted for this category.
+    pub failed_requests: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Directly observed request and suppression counters.
+pub struct TokenSavingsObservations {
+    /// Stable description of where records are captured and when they may be skipped.
+    pub observation_scope: String,
+    /// Successful service response records persisted after final accounting.
+    pub successful_response_records: u64,
+    /// Successful responses with a represented-source baseline.
+    pub responses_with_baseline: u64,
+    /// Backward-compatible source-compression comparisons.
+    pub source_compression_requests: u64,
+    /// Failed service requests persisted at an instrumented operation boundary.
+    pub failed_service_requests: u64,
+    /// Exact `expected_hash` matches that returned `not_modified`.
+    pub expected_hash_not_modified_responses: u64,
+    /// Requested source tokens omitted by exact `expected_hash` matches.
+    pub expected_hash_suppressed_source_tokens: u64,
+    /// Fixed-order breakdown of observed failures by operation and category.
+    pub failed_by_operation_and_category: Vec<ServiceFailureObservation>,
+    /// Outcomes that cannot be inferred without a host task/outcome identity.
+    pub unobserved: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Backward-compatible savings report plus directly observed service outcomes.
+pub struct ObservedTokenSavingsReport {
+    /// Existing source and full-response accounting fields.
+    #[serde(flatten)]
+    pub report: TokenSavingsReport,
+    /// Additive counters whose observation boundaries are explicitly documented.
+    pub observations: TokenSavingsObservations,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -16,7 +16,9 @@ use crate::coordination::{CacheLease, IndexCoordination, IndexLeadership};
 use crate::error::RetryableOperation;
 use crate::indexer::Indexer;
 use crate::model::*;
-use crate::storage::{ReadSession, Storage, StorageCounts, TokenSavingsRecord};
+use crate::storage::{
+    ReadSession, ServiceFailureRecord, Storage, StorageCounts, TokenSavingsRecord,
+};
 use crate::tokens::response_token_accounting;
 use crate::{Config, Error, Result};
 
@@ -47,16 +49,39 @@ const INITIAL_INDEX_IDLE_GRACE: Duration = Duration::from_secs(1);
 const INITIAL_INDEX_PROBE_INTERVAL: Duration = Duration::from_millis(100);
 pub(crate) const MAX_EXPECTED_REPOSITORY_ID_BYTES: usize = 128;
 const TOKEN_SAVINGS_ESTIMATE_BASIS: &str =
-    "requested read ranges or whole source files represented in each response";
+    "represented-source baseline minus source tokens emitted in successful responses";
 const RESPONSE_ACCOUNTING_SCOPE: &str = "successful repository retrieval responses recorded after \
     full-response accounting was enabled; includes successful retries as separate requests but \
     excludes pre-response failures, tool discovery, task success, and native-tool costs";
 const RESPONSE_ACCOUNTING_ESTIMATE_BASIS: &str =
     "represented-source baseline minus complete serialized response tokens";
+const OBSERVATION_SCOPE: &str = "repository-local best-effort service records; successful responses \
+    are recorded after final token accounting, failures at instrumented service-operation \
+    boundaries, and busy telemetry writers are skipped without delaying retrieval";
+const UNOBSERVED_OUTCOMES: [&str; 4] = [
+    "retry chains without a host task/outcome identifier",
+    "unused or irrelevant returned evidence",
+    "superseded calls",
+    "task completion or success",
+];
 
 fn signed_token_difference(baseline: u64, response: u64) -> i64 {
     let difference = i128::from(baseline) - i128::from(response);
     difference.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
+}
+
+fn service_failure_observation(record: ServiceFailureRecord) -> Result<ServiceFailureObservation> {
+    let operation = TokenAccountingOperation::from_str(&record.operation).ok_or_else(|| {
+        Error::InternalFailure(format!(
+            "unknown observed service operation: {}",
+            record.operation
+        ))
+    })?;
+    Ok(ServiceFailureObservation {
+        operation,
+        error_category: record.error_category,
+        failed_requests: record.failed_requests,
+    })
 }
 
 pub(crate) fn retrieval_primitive_key(
@@ -658,10 +683,61 @@ impl Services {
         tokio::task::spawn_blocking(move || this.token_savings_report_sync()).await?
     }
 
+    /// Return the backward-compatible report plus directly observed service outcomes.
+    pub async fn observed_token_savings_report(&self) -> Result<ObservedTokenSavingsReport> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.observed_token_savings_report_sync()).await?
+    }
+
+    fn observed_token_savings_report_sync(&self) -> Result<ObservedTokenSavingsReport> {
+        let tokenizer = self.config.tokenizer.name();
+        let session = self.storage.begin_read()?;
+        let stored = session.token_savings(tokenizer)?;
+        let failures = session.service_failures(tokenizer)?;
+        let report = self.token_savings_report_from_records(&stored);
+        let expected_hash_not_modified_responses = stored
+            .values()
+            .map(|record| record.expected_hash_not_modified_responses)
+            .fold(0u64, u64::saturating_add);
+        let expected_hash_suppressed_source_tokens = stored
+            .values()
+            .map(|record| record.expected_hash_suppressed_source_tokens)
+            .fold(0u64, u64::saturating_add);
+        let failed_service_requests = failures
+            .iter()
+            .map(|record| record.failed_requests)
+            .fold(0u64, u64::saturating_add);
+        let failed_by_operation_and_category = failures
+            .into_iter()
+            .map(service_failure_observation)
+            .collect::<Result<Vec<_>>>()?;
+        Ok(ObservedTokenSavingsReport {
+            observations: TokenSavingsObservations {
+                observation_scope: OBSERVATION_SCOPE.to_owned(),
+                successful_response_records: report.response_accounting.tracked_requests,
+                responses_with_baseline: report.response_accounting.baseline_requests,
+                source_compression_requests: report.source_savings.tracked_requests,
+                failed_service_requests,
+                expected_hash_not_modified_responses,
+                expected_hash_suppressed_source_tokens,
+                failed_by_operation_and_category,
+                unobserved: UNOBSERVED_OUTCOMES.map(str::to_owned).to_vec(),
+            },
+            report,
+        })
+    }
+
     fn token_savings_report_sync(&self) -> Result<TokenSavingsReport> {
         let tokenizer = self.config.tokenizer.name();
         let stored = self.storage.token_savings(tokenizer)?;
-        let source_savings = self.source_savings_from_records(&stored);
+        Ok(self.token_savings_report_from_records(&stored))
+    }
+
+    fn token_savings_report_from_records(
+        &self,
+        stored: &HashMap<String, TokenSavingsRecord>,
+    ) -> TokenSavingsReport {
+        let source_savings = self.source_savings_from_records(stored);
         let mut tracked_requests = 0u64;
         let mut baseline_requests = 0u64;
         let mut baseline_source_tokens = 0u64;
@@ -710,7 +786,7 @@ impl Services {
                 }
             })
             .collect();
-        Ok(TokenSavingsReport {
+        TokenSavingsReport {
             source_savings,
             response_accounting: ResponseTokenAccounting {
                 accounting_scope: RESPONSE_ACCOUNTING_SCOPE.to_owned(),
@@ -730,7 +806,7 @@ impl Services {
                 receipt_suppressed_overlap,
                 by_operation,
             },
-        })
+        }
     }
 
     fn source_savings_from_records(
@@ -929,11 +1005,30 @@ impl Services {
         baseline_source_tokens: Option<usize>,
         meta: &ResponseMeta,
     ) {
+        self.record_token_savings_with_expected_hash(
+            operation,
+            baseline_source_tokens,
+            meta,
+            false,
+            0,
+        );
+    }
+
+    pub(super) fn record_token_savings_with_expected_hash(
+        &self,
+        operation: TokenAccountingOperation,
+        baseline_source_tokens: Option<usize>,
+        meta: &ResponseMeta,
+        expected_hash_not_modified: bool,
+        expected_hash_suppressed_source_tokens: usize,
+    ) {
         match self.storage.record_token_savings(
             self.config.tokenizer.name(),
             operation,
             baseline_source_tokens,
             meta,
+            expected_hash_not_modified,
+            expected_hash_suppressed_source_tokens,
         ) {
             Ok(true) => {}
             Ok(false) => tracing::debug!(
@@ -944,6 +1039,38 @@ impl Services {
                 %error,
                 operation = operation.as_str(),
                 "token-savings accounting was skipped"
+            ),
+        }
+    }
+
+    pub(super) fn observe_service_result<T>(
+        &self,
+        operation: TokenAccountingOperation,
+        result: Result<T>,
+    ) -> Result<T> {
+        if let Err(error) = &result {
+            self.record_service_failure(operation, error);
+        }
+        result
+    }
+
+    fn record_service_failure(&self, operation: TokenAccountingOperation, error: &Error) {
+        let category = error.observation_category();
+        match self
+            .storage
+            .record_service_failure(self.config.tokenizer.name(), operation, category)
+        {
+            Ok(true) => {}
+            Ok(false) => tracing::debug!(
+                operation = operation.as_str(),
+                error_category = category,
+                "service-failure observation skipped a busy writer"
+            ),
+            Err(observation_error) => tracing::warn!(
+                error = %observation_error,
+                operation = operation.as_str(),
+                error_category = category,
+                "service-failure observation was skipped"
             ),
         }
     }

@@ -343,14 +343,17 @@ impl Services {
         execution: JsonExecutionOptions,
         cancellation: CancellationToken,
     ) -> Result<JsonResponse> {
-        self.validate_call_options(options)?;
-        validate_json_request(&request, execution)?;
+        let operation = TokenAccountingOperation::Json;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, validate_json_request(&request, execution))?;
         let this = self.clone();
-        self.blocking_executor
+        let result = self
+            .blocking_executor
             .run(cancellation, move |cancellation| {
                 this.json_sync(request, options, execution, cancellation)
             })
-            .await
+            .await;
+        self.observe_service_result(operation, result)
     }
 
     fn json_sync(

@@ -3437,10 +3437,12 @@ async fn reconcile_working_tree_static_input_errors_do_not_reconcile_the_index()
         "pub fn unreconciled() {}\n",
     )
     .expect("write unindexed source");
+    let mut expected_failures = 0u64;
 
     macro_rules! assert_static_error {
         ($future:expr, $case:literal) => {{
             assert!($future.await.is_err(), concat!($case, " must fail"));
+            expected_failures += 1;
             let current = services.status().await.expect("status after static error");
             assert_eq!(
                 current.repository_generation, generation,
@@ -3641,6 +3643,7 @@ async fn reconcile_working_tree_static_input_errors_do_not_reconcile_the_index()
         ),
         "unexpected empty read symbol error: {error:?}"
     );
+    expected_failures += 1;
 
     let mut context = context_limit_request(1);
     context.task = " ".into();
@@ -3726,6 +3729,24 @@ async fn reconcile_working_tree_static_input_errors_do_not_reconcile_the_index()
         .await
         .expect("committed lookup");
     assert!(committed.entries.is_empty());
+    let observed = services
+        .observed_token_savings_report()
+        .await
+        .expect("observed static failures");
+    assert_eq!(
+        observed.observations.failed_service_requests,
+        expected_failures,
+        "each failed public service request must be observed exactly once"
+    );
+    assert_eq!(
+        observed
+            .observations
+            .failed_by_operation_and_category
+            .iter()
+            .map(|failure| failure.failed_requests)
+            .sum::<u64>(),
+        expected_failures
+    );
 }
 
 #[tokio::test]
@@ -4370,6 +4391,10 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
         .context(context_limit_request(200))
         .await
         .expect("context");
+    services
+        .search(search_limit_request(Some(0), Some(100), Some(1)))
+        .await
+        .expect_err("zero max_results must fail");
 
     assert_eq!(repeated_read.status, ReadStatus::NotModified);
     let report = services.token_savings().await.expect("tracked savings");
@@ -4474,6 +4499,47 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             (TokenAccountingOperation::History, 0),
         ]
     );
+    let observed = services
+        .observed_token_savings_report()
+        .await
+        .expect("observed accounting");
+    assert_eq!(observed.report, effective);
+    assert_eq!(observed.observations.successful_response_records, 5);
+    assert_eq!(observed.observations.responses_with_baseline, 5);
+    assert_eq!(observed.observations.source_compression_requests, 5);
+    assert_eq!(observed.observations.failed_service_requests, 1);
+    assert_eq!(
+        observed.observations.expected_hash_not_modified_responses,
+        1
+    );
+    assert!(
+        observed
+            .observations
+            .expected_hash_suppressed_source_tokens
+            > 0
+    );
+    assert_eq!(
+        observed
+            .observations
+            .failed_by_operation_and_category
+            .iter()
+            .map(|failure| (
+                failure.operation,
+                failure.error_category.as_str(),
+                failure.failed_requests
+            ))
+            .collect::<Vec<_>>(),
+        vec![(TokenAccountingOperation::Search, "invalid_input", 1)]
+    );
+    assert!(observed.observations.unobserved.iter().any(|outcome| {
+        outcome.contains("retry chains") && outcome.contains("task/outcome identifier")
+    }));
+    let serialized = serde_json::to_value(&observed).expect("serialize observed accounting");
+    assert!(serialized.get("tokenizer").is_some());
+    assert!(serialized.get("estimated_source_tokens_saved").is_some());
+    assert!(serialized.get("response_accounting").is_some());
+    assert!(serialized.get("observations").is_some());
+    assert!(serialized.get("report").is_none());
 
     let config = Config::discover(root.path(), Some(root.path().join("index.sqlite")))
         .expect("reopen config");
@@ -4488,6 +4554,13 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             .await
             .expect("persisted effective savings"),
         effective
+    );
+    assert_eq!(
+        reopened
+            .observed_token_savings_report()
+            .await
+            .expect("persisted observed accounting"),
+        observed
     );
 
     let mut alternate_config =

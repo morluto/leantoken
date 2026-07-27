@@ -405,12 +405,18 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<OutlineResponse> {
-        self.validate_call_options(options)?;
-        validate_outline_input(&request)?;
-        self.result_limit(request.max_results)?;
-        self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
-        self.apply_consistency(consistency, cancellation.clone())
-            .await?;
+        let operation = TokenAccountingOperation::Outline;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, validate_outline_input(&request))?;
+        self.observe_service_result(operation, self.result_limit(request.max_results))?;
+        self.observe_service_result(
+            operation,
+            self.token_limit(request.max_tokens, self.config.default_read_tokens),
+        )?;
+        let consistency_result = self
+            .apply_consistency(consistency, cancellation.clone())
+            .await;
+        self.observe_service_result(operation, consistency_result)?;
         self.outline_cancellable_with_options(request, options, cancellation)
             .await
     }
@@ -430,13 +436,16 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<OutlineResponse> {
-        self.validate_call_options(options)?;
+        let operation = TokenAccountingOperation::Outline;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
         let this = self.clone();
-        self.blocking_executor
+        let result = self
+            .blocking_executor
             .run(cancellation, move |cancellation| {
                 this.outline_sync(request, options, true, true, cancellation)
             })
-            .await
+            .await;
+        self.observe_service_result(operation, result)
     }
 
     /// Outline only symbol signatures, line ranges, and verifiable content hashes.
@@ -466,12 +475,18 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<OutlineSignaturesResponse> {
-        self.validate_call_options(options)?;
-        validate_outline_input(&request)?;
-        self.result_limit(request.max_results)?;
-        self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
-        self.apply_consistency(consistency, cancellation.clone())
-            .await?;
+        let operation = TokenAccountingOperation::Outline;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, validate_outline_input(&request))?;
+        self.observe_service_result(operation, self.result_limit(request.max_results))?;
+        self.observe_service_result(
+            operation,
+            self.token_limit(request.max_tokens, self.config.default_read_tokens),
+        )?;
+        let consistency_result = self
+            .apply_consistency(consistency, cancellation.clone())
+            .await;
+        self.observe_service_result(operation, consistency_result)?;
         self.outline_signatures_cancellable_with_options(request, options, cancellation)
             .await
     }
@@ -482,9 +497,11 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<OutlineSignaturesResponse> {
-        self.validate_call_options(options)?;
+        let operation = TokenAccountingOperation::Outline;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
         let this = self.clone();
-        self.blocking_executor
+        let result = self
+            .blocking_executor
             .run(cancellation, move |cancellation| {
                 let response = this.outline_sync(
                     request,
@@ -533,7 +550,8 @@ impl Services {
                 this.record_token_savings(TokenAccountingOperation::Outline, None, &compact.meta);
                 Ok(compact)
             })
-            .await
+            .await;
+        self.observe_service_result(operation, result)
     }
 
     /// Read a bounded live source range and report index staleness.
@@ -576,11 +594,17 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<ReadResponse> {
-        self.validate_call_options(options)?;
-        validate_read_input(&request)?;
-        self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
-        self.apply_consistency(consistency, cancellation.clone())
-            .await?;
+        let operation = TokenAccountingOperation::Read;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, validate_read_input(&request))?;
+        self.observe_service_result(
+            operation,
+            self.token_limit(request.max_tokens, self.config.default_read_tokens),
+        )?;
+        let consistency_result = self
+            .apply_consistency(consistency, cancellation.clone())
+            .await;
+        self.observe_service_result(operation, consistency_result)?;
         self.read_cancellable_with_options(request, options, cancellation)
             .await
     }
@@ -600,13 +624,16 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<ReadResponse> {
-        self.validate_call_options(options)?;
+        let operation = TokenAccountingOperation::Read;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
         let this = self.clone();
-        self.blocking_executor
+        let result = self
+            .blocking_executor
             .run(cancellation, move |cancellation| {
                 this.read_sync(request, options, cancellation)
             })
-            .await
+            .await;
+        self.observe_service_result(operation, result)
     }
 
     fn outline_sync(
@@ -1003,10 +1030,17 @@ impl Services {
         }
         receipt.apply_meta(&mut response.meta);
         self.finalize_bounded_response(&mut response, options)?;
-        self.record_token_savings(
+        let expected_hash_not_modified = request.expected_hash.is_some() && response.not_modified;
+        self.record_token_savings_with_expected_hash(
             TokenAccountingOperation::Read,
             Some(materialized.baseline_source_tokens),
             &response.meta,
+            expected_hash_not_modified,
+            if expected_hash_not_modified {
+                materialized.baseline_source_tokens
+            } else {
+                0
+            },
         );
         Ok(response)
     }

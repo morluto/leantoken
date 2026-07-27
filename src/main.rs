@@ -201,7 +201,9 @@ async fn run(cli: Cli) -> Result<()> {
     match request {
         AppRequest::Index { rebuild } => print(&services.index_report(rebuild).await?, json),
         AppRequest::Status => unreachable!("handled before service setup"),
-        AppRequest::Savings => savings::print_report(&services.token_savings_report().await?, json),
+        AppRequest::Savings => {
+            savings::print_report(&services.observed_token_savings_report().await?, json)
+        }
         AppRequest::Files(request) => print(
             &services
                 .files_with_consistency_cancellable(request, consistency, CancellationToken::new())
