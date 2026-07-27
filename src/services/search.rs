@@ -1455,11 +1455,22 @@ impl Services {
                     phases = scan.phases;
                     scan.hits
                 }
+                SearchMode::Text | SearchMode::Auto if request.query.chars().count() < 3 => {
+                    let short_literal_regex = compile_occurrence_literal_regex(&request)?;
+                    let scan = self.regex_hits(
+                        session,
+                        &request,
+                        &short_literal_regex,
+                        Some(limit.saturating_mul(20)),
+                        cancellation,
+                        RegexPlanning::Disabled,
+                    )?;
+                    phases = scan.phases;
+                    scan.hits
+                }
                 SearchMode::Text | SearchMode::Auto | SearchMode::Identifier => {
                     let fetch_page = |offset, page_limit| {
-                        if matches!(request.mode, SearchMode::Identifier)
-                            || request.query.chars().count() < 3
-                        {
+                        if matches!(request.mode, SearchMode::Identifier) {
                             session.search_word_page(&fts_quote(&request.query), page_limit, offset)
                         } else {
                             session.search_trigram_page(&request.query, page_limit, offset)

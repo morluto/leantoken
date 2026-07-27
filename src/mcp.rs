@@ -56,7 +56,7 @@ fn mcp_schema_fingerprint() -> String {
     crate::text::hash_bytes(&encoded)
 }
 
-fn mcp_runtime_version() -> String {
+pub(crate) fn mcp_runtime_version() -> String {
     format!(
         "{}+schema.{}",
         env!("CARGO_PKG_VERSION"),
@@ -3983,6 +3983,7 @@ mod tests {
     #[test]
     fn tool_input_fields_are_documented() {
         for tool in LeanTokenMcp::tool_router().list_all() {
+            // Savings accepts an optional snapshot and follows the same field contract.
             let properties = tool
                 .input_schema
                 .get("properties")

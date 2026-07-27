@@ -1582,8 +1582,9 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "rmcp"
-version = "2.2.0"
-source = "git+https://github.com/N0zoM1z0/rust-sdk?rev=58b75588dd884f4e28bb6bc60d255d91e8ce2deb#58b75588dd884f4e28bb6bc60d255d91e8ce2deb"
+version = "3.0.0-beta.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3875f7c471c2d709062bc2165d8dc883b021b44255bd00bb4d8025f5108178c8"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1599,12 +1600,14 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
 name = "rmcp-macros"
-version = "2.2.0"
-source = "git+https://github.com/N0zoM1z0/rust-sdk?rev=58b75588dd884f4e28bb6bc60d255d91e8ce2deb#58b75588dd884f4e28bb6bc60d255d91e8ce2deb"
+version = "3.0.0-beta.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37a5ce7541aff2f3df9e8c3c48c7241800fa6fa68e2fbcba386c0d7dcdfc953c"
 dependencies = [
  "darling",
  "proc-macro2",

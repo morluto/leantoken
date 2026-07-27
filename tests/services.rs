@@ -2366,6 +2366,34 @@ async fn context_rejects_empty_include_patterns() {
         }
     ));
 
+    let mut empty_exclude = context_limit_request(100);
+    empty_exclude.exclude_paths = vec![String::new()];
+    let error = services
+        .context(empty_exclude)
+        .await
+        .expect_err("empty exclude pattern");
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "exclude paths",
+            reason: "must not contain empty patterns"
+        }
+    ));
+
+    let mut empty_focus_symbol = context_limit_request(100);
+    empty_focus_symbol.focus_symbols = vec!["   ".into()];
+    let error = services
+        .context(empty_focus_symbol)
+        .await
+        .expect_err("empty focus symbol");
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "focus symbols",
+            reason: "must not contain empty symbols"
+        }
+    ));
+
     let mut plan_with_receipt = context_limit_request(100);
     plan_with_receipt.plan_only = true;
     plan_with_receipt.receipt_id = Some("existing".into());
@@ -6428,6 +6456,40 @@ async fn maximum_text_context_keeps_the_original_read_bounded_range_match() {
     let hit = response.hits.first().expect("legacy text hit");
     assert!(hit.excerpt.contains("read_bounded_range"));
     assert!(hit.start_line <= 30 && hit.end_line >= 30);
+}
+
+#[tokio::test]
+async fn short_text_queries_match_inside_longer_tokens() {
+    let source = b"alpha prefixfnordsuffix omega\n";
+    let (_root, services) = indexed_source("short.txt", source).await;
+
+    for mode in [SearchMode::Text, SearchMode::Auto] {
+        for query in ["f", "fn"] {
+            let response = services
+                .search(SearchRequest {
+                    query: query.into(),
+                    mode,
+                    include_paths: vec!["short.txt".into()],
+                    exclude_paths: Vec::new(),
+                    focus_paths: Vec::new(),
+                    max_results: Some(1),
+                    max_tokens: Some(1_000),
+                    context_lines: Some(1),
+                    case_sensitive: true,
+                    all_occurrences: false,
+                    prefer_structural: false,
+                    receipt_id: None,
+                    cursor: None,
+                })
+                .await
+                .expect("short text search");
+
+            let hit = response.hits.first().expect("embedded substring hit");
+            assert_eq!(hit.path, "short.txt");
+            assert_eq!(hit.match_kind, "text");
+            assert!(hit.excerpt.contains("prefixfnordsuffix"));
+        }
+    }
 }
 
 #[tokio::test]
