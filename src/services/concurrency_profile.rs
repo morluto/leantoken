@@ -640,6 +640,7 @@ fn context_request(query: &str) -> ContextRequest {
         include_paths: Vec::new(),
         must_include_paths: Vec::new(),
         must_include_symbols: Vec::new(),
+        required_evidence: Vec::new(),
         max_fragments: Some(8),
         plan_only: false,
         focus_paths: Vec::new(),

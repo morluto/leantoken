@@ -42,6 +42,7 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
         include_paths: Vec::new(),
         must_include_paths: Vec::new(),
         must_include_symbols: Vec::new(),
+        required_evidence: Vec::new(),
         max_fragments: None,
         plan_only: false,
         focus_paths: vec!["src/mcp.rs".into()],

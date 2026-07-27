@@ -1,13 +1,13 @@
 use std::time::Instant;
 
 use leantoken::{
-    Config, ContextRequest, ContextSignalPolicy, ContextWorkflow, DiffSymbolsIncompleteReason,
-    DiffSymbolsRequest, DiffSymbolsStatus, DiffSymbolsTarget, Error, FileOperation, FilesRequest,
-    Freshness, HandoffManifestRequest, HandoffValidation, HandoffValidationStatus,
-    HandoffWorkingTreeState, HistoryOperation, HistoryRequest, IndexConsistency, IndexState,
-    JsonIncompleteReason, JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest,
-    ReadDeltaFallback, ReadDeltaOutcome, ReadRequest, ReadStatus, SearchMode, SearchRequest,
-    TokenAccountingOperation, TokenSavingsOperation, WorkflowEvidence,
+    Config, ContextRequest, ContextRequiredEvidence, ContextSignalPolicy, ContextWorkflow,
+    DiffSymbolsIncompleteReason, DiffSymbolsRequest, DiffSymbolsStatus, DiffSymbolsTarget, Error,
+    FileOperation, FilesRequest, Freshness, HandoffManifestRequest, HandoffValidation,
+    HandoffValidationStatus, HandoffWorkingTreeState, HistoryOperation, HistoryRequest,
+    IndexConsistency, IndexState, JsonIncompleteReason, JsonOperation, JsonProjection, JsonRequest,
+    JsonSelector, OutlineRequest, ReadDeltaFallback, ReadDeltaOutcome, ReadRequest, ReadStatus,
+    SearchMode, SearchRequest, TokenAccountingOperation, TokenSavingsOperation, WorkflowEvidence,
     coordination::IndexCoordination,
     services::{ServiceCallOptions, Services},
     tokens::Tokenizer,
@@ -1736,6 +1736,7 @@ async fn contribution_context_routes_to_guidance_validation_and_owner_tests() {
                 include_paths: Vec::new(),
                 must_include_paths: Vec::new(),
                 must_include_symbols: Vec::new(),
+                required_evidence: Vec::new(),
                 max_fragments: None,
                 plan_only: false,
                 focus_paths: Vec::new(),
@@ -1899,6 +1900,7 @@ fn context_limit_request(token_budget: usize) -> ContextRequest {
         include_paths: Vec::new(),
         must_include_paths: Vec::new(),
         must_include_symbols: Vec::new(),
+        required_evidence: Vec::new(),
         max_fragments: None,
         plan_only: false,
         focus_paths: Vec::new(),
@@ -2492,6 +2494,7 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
         .await
         .expect("ordinary focus context");
     assert_eq!(ordinary_focus.coverage.strict_scope_satisfied, None);
+    assert_eq!(ordinary_focus.coverage.path_scope_satisfied, None);
     assert_eq!(ordinary_focus.coverage.focus_path_coverage.len(), 2);
     assert!(
         ordinary_focus
@@ -2527,6 +2530,7 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
                 || fragment.path.starts_with("src/beta/"))
     );
     assert_eq!(response.coverage.strict_scope_satisfied, Some(true));
+    assert_eq!(response.coverage.path_scope_satisfied, Some(true));
     assert_eq!(response.coverage.focus_path_coverage.len(), 2);
     assert!(
         response
@@ -2551,6 +2555,7 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
         .expect("soft focus minimum");
     assert_eq!(soft_minimum.fragments.len(), 3);
     assert_eq!(soft_minimum.coverage.strict_scope_satisfied, Some(true));
+    assert_eq!(soft_minimum.coverage.path_scope_satisfied, Some(true));
     assert_eq!(
         soft_minimum.coverage.focus_path_coverage[0].selected_fragments,
         2
@@ -2574,6 +2579,7 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
         .expect("underfilled focus context");
     assert_eq!(underfilled.fragments.len(), 3);
     assert_eq!(underfilled.coverage.strict_scope_satisfied, Some(false));
+    assert_eq!(underfilled.coverage.path_scope_satisfied, Some(false));
     assert_eq!(
         underfilled
             .coverage
@@ -2591,6 +2597,7 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
     let missing = services.context(missing).await.expect("missing strict focus");
     assert!(missing.fragments.is_empty());
     assert_eq!(missing.coverage.strict_scope_satisfied, Some(false));
+    assert_eq!(missing.coverage.path_scope_satisfied, Some(false));
     assert_eq!(missing.coverage.unmatched_focus_paths, ["src/missing/**"]);
     assert_eq!(missing.coverage.focus_path_coverage[0].indexed_paths, 0);
     assert!(!missing.coverage.focus_path_coverage[0].satisfied);
@@ -3029,6 +3036,156 @@ async fn context_must_cover_generates_evidence_and_reports_unmatched_constraints
             .iter()
             .all(|key| !previous_keys.contains(key.key_blake3.as_str()))
     );
+}
+
+#[tokio::test]
+async fn context_required_evidence_covers_doq_ranges_and_rejects_intro_fallbacks() {
+    fn document(lines: usize, evidence_line: usize, evidence: &str) -> String {
+        (1..=lines)
+            .map(|line| {
+                if line == evidence_line {
+                    evidence.to_owned()
+                } else {
+                    format!(
+                        "Background narrative line {line} records ordinary setup material without the required finding."
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    let root = tempfile::tempdir().expect("temporary repository");
+    let latex = root.path().join("paper/latex");
+    std::fs::create_dir_all(&latex).expect("latex directory");
+    let fixtures = [
+        (
+            "3-study-overview.tex",
+            223,
+            "THREAT_ORDERING_SENTINEL establishes the threat-model ordering criterion.",
+        ),
+        (
+            "4-failure-families.tex",
+            251,
+            "F4P_CASE_SENTINEL bounds the representative failure-family claim.",
+        ),
+        (
+            "5-cross-implementation-evaluation.tex",
+            91,
+            "CROSS_IMPLEMENTATION_SENTINEL records the parity evidence.",
+        ),
+        (
+            "7-discussion-limitations.tex",
+            59,
+            "DISCUSSION_LIMIT_SENTINEL states the measured limitation.",
+        ),
+        (
+            "appendix-chains.tex",
+            147,
+            "QLOG_COMMIT_SENTINEL binds the qlog observation to the commit.",
+        ),
+        (
+            "appendix-disclosure-registry.tex",
+            40,
+            "DISCLOSURE_SENTINEL records the disclosure status.",
+        ),
+    ];
+    for (name, line, evidence) in fixtures {
+        std::fs::write(latex.join(name), document(line + 40, line, evidence))
+            .expect("write DoQ-shaped fixture");
+    }
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let mut request = context_limit_request(5_000);
+    request.task =
+        "Retrieve the exact threat, F4-P, cross-implementation, limitation, qlog, and disclosure evidence."
+            .into();
+    request.max_fragments = Some(fixtures.len());
+    for (name, _, evidence) in fixtures {
+        let path = format!("paper/latex/{name}");
+        request.must_include_paths.push(path.clone());
+        request.required_evidence.push(ContextRequiredEvidence {
+            path,
+            queries: vec![evidence.split_whitespace().next().expect("sentinel").into()],
+            minimum_query_matches: 1,
+        });
+    }
+
+    let response = services
+        .context(request)
+        .await
+        .expect("required evidence context");
+
+    assert_eq!(
+        response.coverage.evidence_scope_satisfied,
+        Some(true),
+        "{:#?}",
+        response.coverage.required_evidence
+    );
+    assert!(
+        response
+            .coverage
+            .required_evidence
+            .iter()
+            .all(|coverage| coverage.satisfied && coverage.selected_fragments > 0)
+    );
+    for (name, line, evidence) in fixtures {
+        let sentinel = evidence.split_whitespace().next().expect("sentinel");
+        let fragment = response
+            .fragments
+            .iter()
+            .find(|fragment| fragment.path == format!("paper/latex/{name}"))
+            .expect("path-scoped evidence");
+        assert!(fragment.start_line <= line && fragment.end_line >= line);
+        assert!(fragment.content.contains(sentinel));
+        if line > 40 {
+            assert!(
+                fragment.start_line > 1,
+                "intro excerpt must not satisfy evidence for {name}"
+            );
+        }
+    }
+
+    let mut missing = context_limit_request(1_500);
+    missing.task = "Find ABSENT_EVIDENCE_SENTINEL.".into();
+    missing.must_include_paths = vec!["paper/latex/3-study-overview.tex".into()];
+    missing.required_evidence = vec![ContextRequiredEvidence {
+        path: "paper/latex/3-study-overview.tex".into(),
+        queries: vec!["ABSENT_EVIDENCE_SENTINEL".into()],
+        minimum_query_matches: 1,
+    }];
+    missing.max_fragments = Some(1);
+    let missing = services
+        .context(missing)
+        .await
+        .expect("unsatisfied evidence context");
+
+    assert_eq!(missing.coverage.evidence_scope_satisfied, Some(false));
+    assert!(!missing.coverage.required_evidence[0].satisfied);
+    assert!(missing.coverage.required_evidence[0].matched_queries.is_empty());
+    assert_eq!(
+        missing.fragments[0].representation,
+        "required_path_fallback"
+    );
+    assert_eq!(missing.fragments[0].start_line, 1);
+    assert!(missing.fragments[0].end_line <= 40);
+
+    let mut invalid = context_limit_request(500);
+    invalid.required_evidence = vec![ContextRequiredEvidence {
+        path: "paper/latex/3-study-overview.tex".into(),
+        queries: vec!["one".into()],
+        minimum_query_matches: 2,
+    }];
+    assert!(matches!(
+        services.context(invalid).await,
+        Err(Error::InvalidInput {
+            field: "required_evidence minimum_query_matches",
+            ..
+        })
+    ));
 }
 
 #[tokio::test]
@@ -4166,6 +4323,7 @@ async fn five_services_return_bounded_grounded_responses() {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -4197,6 +4355,7 @@ async fn five_services_return_bounded_grounded_responses() {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -4232,6 +4391,7 @@ async fn five_services_return_bounded_grounded_responses() {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -4275,6 +4435,46 @@ async fn five_services_return_bounded_grounded_responses() {
         files_accounting.estimated_net_tokens_saved,
         -(files.meta.total_response_tokens as i64)
     );
+}
+
+#[tokio::test]
+async fn context_required_evidence_reports_bounded_path_inspection() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let docs = root.path().join("docs");
+    std::fs::create_dir_all(&docs).expect("docs directory");
+    for name in ["a.tex", "b.tex", "c.tex", "d.tex"] {
+        std::fs::write(docs.join(name), "ordinary background\n").expect("background fixture");
+    }
+    std::fs::write(
+        docs.join("e.tex"),
+        "EVIDENCE_OUTSIDE_INSPECTION_BOUND\n",
+    )
+    .expect("bounded fixture");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+    let mut request = context_limit_request(500);
+    request.task = "Find EVIDENCE_OUTSIDE_INSPECTION_BOUND.".into();
+    request.required_evidence = vec![ContextRequiredEvidence {
+        path: "docs/*.tex".into(),
+        queries: vec!["EVIDENCE_OUTSIDE_INSPECTION_BOUND".into()],
+        minimum_query_matches: 1,
+    }];
+
+    let response = services
+        .context(request)
+        .await
+        .expect("bounded evidence context");
+
+    assert_eq!(response.coverage.evidence_scope_satisfied, Some(false));
+    let coverage = &response.coverage.required_evidence[0];
+    assert_eq!(coverage.indexed_paths, 5);
+    assert_eq!(coverage.inspected_paths, 4);
+    assert!(!coverage.satisfied);
+    assert!(response.warnings.iter().any(|warning| {
+        warning.contains("matched more indexed paths than the bounded local inspection covered")
+    }));
 }
 
 #[tokio::test]
@@ -4360,6 +4560,7 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -4697,6 +4898,7 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
                 include_paths: Vec::new(),
                 must_include_paths: Vec::new(),
                 must_include_symbols: Vec::new(),
+                required_evidence: Vec::new(),
                 max_fragments: None,
                 plan_only: false,
                 focus_paths: Vec::new(),
@@ -4850,6 +5052,7 @@ public sealed class Worker {
             include_paths: vec!["Worker.cs".into()],
             must_include_paths: Vec::new(),
             must_include_symbols: vec!["Run".into()],
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -5345,6 +5548,7 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -5376,6 +5580,7 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -5444,6 +5649,7 @@ async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
         include_paths: Vec::new(),
         must_include_paths: Vec::new(),
         must_include_symbols: Vec::new(),
+        required_evidence: Vec::new(),
         max_fragments: None,
         plan_only: false,
         focus_paths: Vec::new(),
@@ -7511,6 +7717,7 @@ async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_service
                 include_paths: Vec::new(),
                 must_include_paths: Vec::new(),
                 must_include_symbols: Vec::new(),
+                required_evidence: Vec::new(),
                 max_fragments: None,
                 plan_only: false,
                 focus_paths: Vec::new(),
@@ -8152,6 +8359,7 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -9750,6 +9958,7 @@ async fn working_tree_diff_boosts_changed_files() {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -9802,6 +10011,7 @@ async fn tokenizer_configuration_is_scoped_to_each_service() {
         include_paths: Vec::new(),
         must_include_paths: Vec::new(),
         must_include_symbols: Vec::new(),
+        required_evidence: Vec::new(),
         max_fragments: None,
         plan_only: false,
         focus_paths: Vec::new(),
@@ -9851,6 +10061,7 @@ async fn context_declaration_excerpt_retains_long_body_across_chunks() {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -9903,6 +10114,7 @@ async fn context_text_hits_use_bounded_declaration_excerpts() {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -10158,6 +10370,7 @@ async fn reconcile_working_tree_consistency_applies_to_each_retrieval_service() 
                 include_paths: Vec::new(),
                 must_include_paths: Vec::new(),
                 must_include_symbols: Vec::new(),
+                required_evidence: Vec::new(),
                 max_fragments: None,
                 plan_only: false,
                 focus_paths: vec!["context_package.rs".into()],
@@ -10361,6 +10574,7 @@ async fn diff_scoped_context_with_explicit_changed_paths_reports_receipt() {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -10587,6 +10801,7 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
                 include_paths: Vec::new(),
                 must_include_paths: Vec::new(),
                 must_include_symbols: Vec::new(),
+                required_evidence: Vec::new(),
                 max_fragments: None,
                 plan_only: false,
                 focus_paths: Vec::new(),
@@ -10954,6 +11169,7 @@ async fn diff_scoped_context_preserves_task_only_behavior_without_scope() {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -10990,6 +11206,7 @@ async fn diff_scoped_context_rejects_path_outside_repository() {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -11026,6 +11243,7 @@ async fn diff_scoped_context_rejects_excessive_changed_path_count() {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -11058,6 +11276,7 @@ async fn diff_scoped_context_counts_zero_for_nonexistent_changed_path() {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),

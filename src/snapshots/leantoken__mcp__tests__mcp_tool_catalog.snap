@@ -5,9 +5,45 @@ expression: tools
 [
   {
     "name": "context",
-    "description": "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. For uncertain broad tasks, set plan_only=true to preview bounded ranked paths, ranges, reasons, token estimates, focus coverage, and generated-artifact warnings without source or receipt mutation; then repeat the same request with plan_only=false to materialize. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required evidence. When the caller has directly observed a failure, pass workflow_evidence with bounded failure_traces, symbols, paths, or test_intents; do not infer or copy gold labels into it. Compact omission counts preserve fail-loud coverage by default; set verbose_diagnostics=true only for full omission facets. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Set handoff for a compact provenance manifest without copied source. Example: {\"task\":\"Audit MCP tool discovery\"}.",
+    "description": "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. For uncertain broad tasks, set plan_only=true to preview bounded ranked paths, ranges, reasons, token estimates, focus coverage, and generated-artifact warnings without source or receipt mutation; then repeat the same request with plan_only=false to materialize. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required paths or symbols. When path presence is insufficient, pass required_evidence entries with a path and literal queries; path_scope_satisfied reports only path coverage, while evidence_scope_satisfied requires matching selected evidence. When the caller has directly observed a failure, pass workflow_evidence with bounded failure_traces, symbols, paths, or test_intents; do not infer or copy gold labels into it. Compact omission counts preserve fail-loud coverage by default; set verbose_diagnostics=true only for full omission facets. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Set handoff for a compact provenance manifest without copied source. Example: {\"task\":\"Audit MCP tool discovery\"}.",
     "inputSchema": {
       "$defs": {
+        "ContextRequiredEvidence": {
+          "additionalProperties": false,
+          "description": "One path-scoped evidence requirement for `leantoken.context`.",
+          "properties": {
+            "minimum_query_matches": {
+              "default": 1,
+              "description": "Minimum number of distinct queries that selected evidence must match.",
+              "format": "uint",
+              "maximum": 16,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "path": {
+              "description": "Repository-relative path pattern whose evidence must be represented.",
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            "queries": {
+              "description": "Alternative literal queries; distinct matches contribute to the minimum.",
+              "items": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 16,
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "required": [
+            "path",
+            "queries"
+          ],
+          "type": "object"
+        },
         "ContextWorkflow": {
           "description": "Requested or resolved evidence workflow for context retrieval.",
           "oneOf": [
@@ -372,6 +408,15 @@ expression: tools
             "string",
             "null"
           ]
+        },
+        "required_evidence": {
+          "default": [],
+          "description": "Require matching query evidence within each path-scoped contract.",
+          "items": {
+            "$ref": "#/$defs/ContextRequiredEvidence"
+          },
+          "maxItems": 32,
+          "type": "array"
         },
         "strict_changed_paths": {
           "default": false,

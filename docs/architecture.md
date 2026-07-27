@@ -396,6 +396,10 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | File-local focused records inspected | 256 chunks and 128 symbols per file |
 | Focus-local candidates retained per pattern | 8 |
 | Focus-local storage lookups | At most 256 (32 patterns × 4 files × 2 record kinds) |
+| Must-path task-relevance inspection | First eligible file and 256 chunks per pattern, at most 256 patterns |
+| Required-evidence contracts | 32 contracts, 16 literal queries each, 64 KiB query text total |
+| Required-evidence local inspection | First 4 policy-eligible paths and 256 chunks per path/contract |
+| Required-evidence candidates | 8 centered excerpts per contract, 40 lines per excerpt |
 | Regex matching chunks | `min(max_results × 20, 2000)` |
 | Trigram candidate chunks | 10000 |
 | Lightweight rows inspected for path-scoped trigram planning | 100000 |
@@ -431,6 +435,21 @@ an explicit incomplete warning. Include/exclude, generated-artifact, strict
 focus, and strict changed-path policies apply before local generation, and a
 policy-empty focus scope is reported separately from a pattern that matches no
 indexed file.
+
+Path-scoped required evidence uses the same paged constraint scan and
+lexicographically retained four-file bound as focus-local generation. It checks
+at most 256 indexed chunks per retained file for case-insensitive literal
+queries, retains at most eight deterministic match locations per contract, and
+materializes at most 40 lines centered on each retained location. Ranking
+reserves enough candidates to cover the requested number of distinct queries
+before must-path fallback and ordinary selection. Coverage keeps path scope and
+evidence scope separate: a required file prefix cannot satisfy an evidence
+contract unless the returned or already-held fragment carries a matching query.
+Must-path generation inspects at most 256 chunks from the first eligible file
+for each of the existing 256 bounded patterns. It chooses the highest
+task-matching chunk deterministically; a pattern with no task match performs
+one batched stored-excerpt lookup and emits a `required_path_fallback`
+representation covering at most the first 40 lines.
 
 The offline `context_utilization` classifier consumes the existing model A/B
 `tool-trace.json` and `trajectory.json` contracts. It performs no repository or

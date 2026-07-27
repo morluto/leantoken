@@ -16,9 +16,9 @@ use crate::cache::{
 use crate::config::DEFAULT_CONTEXT_TOKENS;
 use crate::mcp::McpResultMode;
 use crate::model::{
-    ContextRequest, FileOperation, FilesRequest, HandoffManifestRequest, HistoryOperation,
-    HistoryRequest, IndexConsistency, JsonOperation, JsonProjection, JsonRequest, JsonSelector,
-    OutlineRequest, ReadRequest, SearchMode, SearchRequest, WorkflowEvidence,
+    ContextRequest, ContextRequiredEvidence, FileOperation, FilesRequest, HandoffManifestRequest,
+    HistoryOperation, HistoryRequest, IndexConsistency, JsonOperation, JsonProjection, JsonRequest,
+    JsonSelector, OutlineRequest, ReadRequest, SearchMode, SearchRequest, WorkflowEvidence,
 };
 use crate::setup::{SetupClient, SetupRequest};
 use crate::tokens::Tokenizer;
@@ -31,6 +31,10 @@ fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
         return Err("value must be a positive integer".to_owned());
     }
     Ok(value)
+}
+
+fn parse_required_evidence(value: &str) -> std::result::Result<ContextRequiredEvidence, String> {
+    serde_json::from_str(value).map_err(|error| format!("invalid required-evidence JSON: {error}"))
 }
 
 fn parse_cache_list_limit(value: &str) -> std::result::Result<usize, String> {
@@ -1546,6 +1550,10 @@ pub struct ContextArgs {
     #[arg(long = "must-include-symbol")]
     pub must_include_symbols: Vec<String>,
 
+    /// Require path-scoped literal evidence as a JSON object (repeatable).
+    #[arg(long = "required-evidence", value_name = "JSON", value_parser = parse_required_evidence)]
+    pub required_evidence: Vec<ContextRequiredEvidence>,
+
     /// Maximum number of returned fragments (default: 8).
     #[arg(long, value_parser = parse_positive_usize)]
     pub max_fragments: Option<usize>,
@@ -1654,6 +1662,7 @@ impl From<ContextArgs> for ContextRequest {
             include_paths: args.include_paths,
             must_include_paths: args.must_include_paths,
             must_include_symbols: args.must_include_symbols,
+            required_evidence: args.required_evidence,
             max_fragments: args.max_fragments,
             plan_only: args.plan_only,
             focus_paths: args.focus_paths,
