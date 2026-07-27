@@ -730,16 +730,54 @@ fn convert_arb_trace2code(
     }
     let samples_path = source.join(&arb.samples_file);
     verify_blake3(&samples_path, &arb.samples_blake3)?;
+    let samples = read_jsonl::<ArbSample>(&samples_path)?;
     let repository_locks = arb
         .repositories
         .iter()
         .map(|repository| (repository.name.as_str(), repository))
         .collect::<BTreeMap<_, _>>();
+
+    let mut seen_sample_ids = HashSet::<&str>::new();
+    let mut seen_repositories = HashSet::<&str>::new();
+    for sample in &samples {
+        if sample.task_type != arb.supported_task_type {
+            continue;
+        }
+        seen_sample_ids.insert(sample.id.as_str());
+        seen_repositories.insert(sample.repo.as_str());
+    }
+
+    if !sample_ids.is_empty() {
+        let mut missing = sample_ids
+            .iter()
+            .filter(|sample_id| !seen_sample_ids.contains(sample_id.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        missing.sort();
+        if !missing.is_empty() {
+            return Err(format!("unknown ARB sample IDs: {}", missing.join(", ")).into());
+        }
+    }
+
+    if !repositories.is_empty() {
+        let mut missing = repositories
+            .iter()
+            .filter(|repository| !seen_repositories.contains(repository.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        missing.sort();
+        if !missing.is_empty() {
+            return Err(
+                format!("unknown or empty ARB repositories: {}", missing.join(", ")).into(),
+            );
+        }
+    }
+
     let mut corpora = BTreeMap::<(String, String), Corpus>::new();
     let mut converted = 0usize;
     let mut skipped = 0usize;
 
-    for sample in read_jsonl::<ArbSample>(&samples_path)? {
+    for sample in samples {
         if sample.task_type != arb.supported_task_type {
             skipped += 1;
             continue;
@@ -1003,6 +1041,49 @@ fn write_manifest(path: &Path, manifest: &Manifest) -> Result<(), Box<dyn Error>
 mod tests {
     use super::*;
 
+    fn dummy_lock(arb: Option<ArbLock>) -> CorpusLock {
+        CorpusLock {
+            schema_version: LOCK_SCHEMA_VERSION,
+            frozen_at: "1970-01-01T00:00:00Z".into(),
+            semble: SembleLock {
+                dataset_url: "https://example.invalid/semble.json".into(),
+                dataset_revision: "0123456789abcdef0123456789abcdef01234567".into(),
+                dataset_license: "CC0-1.0".into(),
+                repositories_file: "repositories.json".into(),
+                annotations_directory: "annotations".into(),
+                prompt_provenance: "prompt provenance".into(),
+                label_provenance: "label provenance".into(),
+                limitations: vec!["synthetic".into()],
+            },
+            sverklo: SverkloLock {
+                dataset_url: "https://example.invalid/sverklo.json".into(),
+                dataset_revision: "0123456789abcdef0123456789abcdef01234567".into(),
+                dataset_license: "CC0-1.0".into(),
+                tasks_file: "sverklo.jsonl".into(),
+                repository: LockedRepository {
+                    name: "sverklo".into(),
+                    url: "https://example.invalid/sverklo.git".into(),
+                    directory: "sverklo".into(),
+                    revision: "0123456789abcdef0123456789abcdef01234567".into(),
+                    language: "rust".into(),
+                },
+                supported_categories: vec!["P1".into()],
+                prompt_provenance: "prompt provenance".into(),
+                label_provenance: "label provenance".into(),
+                limitations: vec!["synthetic".into()],
+            },
+            arb,
+        }
+    }
+
+    fn write_arb_samples(path: &std::path::Path, lines: &[&str]) -> String {
+        let samples_path = path.join("samples.jsonl");
+        fs::write(&samples_path, lines.join("\n")).unwrap();
+        blake3::hash(&fs::read(samples_path).unwrap())
+            .to_hex()
+            .to_string()
+    }
+
     fn repository() -> SembleRepository {
         SembleRepository {
             name: "demo".into(),
@@ -1123,6 +1204,98 @@ mod tests {
         assert_eq!(task.relevant_files.len(), 1);
         assert_eq!(task.relevant_files[0].path, "src/lib.rs");
         assert_eq!(task.relevant_files[0].line_anchors, vec![10]);
+    }
+
+    #[test]
+    fn arb_trace2code_rejects_unknown_sample_id() {
+        let source = tempfile::tempdir().unwrap();
+        let hash = write_arb_samples(
+            source.path(),
+            &[
+                r#"{"id":"known","repo":"acme/app","base_commit":"0123456789abcdef0123456789abcdef01234567","task_type":"trace2code","query":{"command":"cargo test"},"gold":{"root_cause_files":["src/main.rs"]},"gold_spans":[]}"#,
+            ],
+        );
+        let lock = dummy_lock(Some(ArbLock {
+            dataset_url: "https://example.invalid/arb.json".into(),
+            dataset_revision: "0123456789abcdef0123456789abcdef01234567".into(),
+            dataset_license: "CC0-1.0".into(),
+            release_id: "v1".into(),
+            release_sha256: "a".repeat(64),
+            samples_file: "samples.jsonl".into(),
+            samples_blake3: hash,
+            supported_task_type: "trace2code".into(),
+            repositories: vec![ArbRepository {
+                name: "acme/app".into(),
+                url: "https://example.invalid/acme/app.git".into(),
+                language: "rust".into(),
+            }],
+            prompt_provenance: "prompt provenance".into(),
+            label_provenance: "label provenance".into(),
+            limitations: vec!["synthetic".into()],
+        }));
+        let arb = lock.arb.as_ref().unwrap();
+        let error = convert_arb_trace2code(
+            source.path(),
+            &lock,
+            arb,
+            &HashSet::from(["known".into(), "missing".into()]),
+            &HashSet::new(),
+            None,
+            2_000,
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("unknown ARB sample IDs: missing")
+        );
+    }
+
+    #[test]
+    fn arb_trace2code_rejects_unknown_repository() {
+        let source = tempfile::tempdir().unwrap();
+        let hash = write_arb_samples(
+            source.path(),
+            &[
+                r#"{"id":"known","repo":"acme/app","base_commit":"0123456789abcdef0123456789abcdef01234567","task_type":"trace2code","query":{"command":"cargo test"},"gold":{"root_cause_files":["src/main.rs"]},"gold_spans":[]}"#,
+            ],
+        );
+        let lock = dummy_lock(Some(ArbLock {
+            dataset_url: "https://example.invalid/arb.json".into(),
+            dataset_revision: "0123456789abcdef0123456789abcdef01234567".into(),
+            dataset_license: "CC0-1.0".into(),
+            release_id: "v1".into(),
+            release_sha256: "a".repeat(64),
+            samples_file: "samples.jsonl".into(),
+            samples_blake3: hash,
+            supported_task_type: "trace2code".into(),
+            repositories: vec![ArbRepository {
+                name: "acme/app".into(),
+                url: "https://example.invalid/acme/app.git".into(),
+                language: "rust".into(),
+            }],
+            prompt_provenance: "prompt provenance".into(),
+            label_provenance: "label provenance".into(),
+            limitations: vec!["synthetic".into()],
+        }));
+        let arb = lock.arb.as_ref().unwrap();
+        let error = convert_arb_trace2code(
+            source.path(),
+            &lock,
+            arb,
+            &HashSet::new(),
+            &HashSet::from(["missing/app".into()]),
+            None,
+            2_000,
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("unknown or empty ARB repositories: missing/app")
+        );
     }
 
     #[test]
