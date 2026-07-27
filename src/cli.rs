@@ -353,12 +353,66 @@ impl Cli {
             Commands::Index { rebuild } => AppRequest::Index { rebuild },
             Commands::Status => AppRequest::Status,
             Commands::Savings => AppRequest::Savings,
-            Commands::Files(args) => AppRequest::Files(args.into()),
-            Commands::Search(args) => AppRequest::Search(args.into()),
-            Commands::Outline(args) => AppRequest::Outline(args.into()),
-            Commands::Read(args) => AppRequest::Read(args.into()),
-            Commands::History(args) => AppRequest::History(args.into()),
-            Commands::Json(args) => AppRequest::Json(args.into()),
+            Commands::Files(args) => {
+                let max_response_tokens = args.max_response_tokens;
+                let request: FilesRequest = args.into();
+                max_response_tokens.map_or(AppRequest::Files(request.clone()), |limit| {
+                    AppRequest::FilesWithOptions {
+                        request,
+                        max_response_tokens: limit,
+                    }
+                })
+            }
+            Commands::Search(args) => {
+                let max_response_tokens = args.max_response_tokens;
+                let request: SearchRequest = args.into();
+                max_response_tokens.map_or(AppRequest::Search(request.clone()), |limit| {
+                    AppRequest::SearchWithOptions {
+                        request,
+                        max_response_tokens: limit,
+                    }
+                })
+            }
+            Commands::Outline(args) => {
+                let max_response_tokens = args.max_response_tokens;
+                let request: OutlineRequest = args.into();
+                max_response_tokens.map_or(AppRequest::Outline(request.clone()), |limit| {
+                    AppRequest::OutlineWithOptions {
+                        request,
+                        max_response_tokens: limit,
+                    }
+                })
+            }
+            Commands::Read(args) => {
+                let max_response_tokens = args.max_response_tokens;
+                let request: ReadRequest = args.into();
+                max_response_tokens.map_or(AppRequest::Read(request.clone()), |limit| {
+                    AppRequest::ReadWithOptions {
+                        request,
+                        max_response_tokens: limit,
+                    }
+                })
+            }
+            Commands::History(args) => {
+                let max_response_tokens = args.max_response_tokens;
+                let request: HistoryRequest = args.into();
+                max_response_tokens.map_or(AppRequest::History(request.clone()), |limit| {
+                    AppRequest::HistoryWithOptions {
+                        request,
+                        max_response_tokens: limit,
+                    }
+                })
+            }
+            Commands::Json(args) => {
+                let max_response_tokens = args.max_response_tokens;
+                let request: JsonRequest = args.into();
+                max_response_tokens.map_or(AppRequest::Json(request.clone()), |limit| {
+                    AppRequest::JsonWithOptions {
+                        request,
+                        max_response_tokens: limit,
+                    }
+                })
+            }
             Commands::Context(args) => {
                 let workflow = args.workflow.into();
                 let handoff = args.handoff_request();
@@ -422,6 +476,30 @@ pub enum AppRequest {
     Read(ReadRequest),
     History(HistoryRequest),
     Json(JsonRequest),
+    FilesWithOptions {
+        request: FilesRequest,
+        max_response_tokens: usize,
+    },
+    SearchWithOptions {
+        request: SearchRequest,
+        max_response_tokens: usize,
+    },
+    OutlineWithOptions {
+        request: OutlineRequest,
+        max_response_tokens: usize,
+    },
+    ReadWithOptions {
+        request: ReadRequest,
+        max_response_tokens: usize,
+    },
+    HistoryWithOptions {
+        request: HistoryRequest,
+        max_response_tokens: usize,
+    },
+    JsonWithOptions {
+        request: JsonRequest,
+        max_response_tokens: usize,
+    },
     Context {
         request: ContextRequest,
         workflow: crate::model::ContextWorkflow,
@@ -809,6 +887,10 @@ pub struct FilesArgs {
     #[arg(long, value_parser = parse_positive_usize)]
     pub max_results: Option<usize>,
 
+    /// Maximum tokens in the final serialized JSON service response.
+    #[arg(long, value_parser = parse_positive_usize)]
+    pub max_response_tokens: Option<usize>,
+
     /// Pagination cursor.
     #[arg(long)]
     pub cursor: Option<String>,
@@ -864,6 +946,10 @@ pub struct SearchArgs {
     /// Maximum tokens to return.
     #[arg(long, value_parser = parse_positive_usize)]
     pub max_tokens: Option<usize>,
+
+    /// Maximum tokens in the final serialized JSON service response.
+    #[arg(long, value_parser = parse_positive_usize)]
+    pub max_response_tokens: Option<usize>,
 
     /// Lines of context around each match.
     #[arg(long)]
@@ -930,6 +1016,10 @@ pub struct OutlineArgs {
     /// Maximum tokens to return.
     #[arg(long, value_parser = parse_positive_usize)]
     pub max_tokens: Option<usize>,
+
+    /// Maximum tokens in the final serialized JSON service response.
+    #[arg(long, value_parser = parse_positive_usize)]
+    pub max_response_tokens: Option<usize>,
 
     /// Continue a result-limited outline.
     #[arg(long)]
@@ -1057,6 +1147,10 @@ pub struct ReadArgs {
     #[arg(long, value_parser = parse_positive_usize)]
     pub max_tokens: Option<usize>,
 
+    /// Maximum tokens in the final serialized JSON service response.
+    #[arg(long, value_parser = parse_positive_usize)]
+    pub max_response_tokens: Option<usize>,
+
     /// Expected content hash; returns not_modified when current.
     #[arg(long)]
     pub expected_hash: Option<String>,
@@ -1103,6 +1197,10 @@ pub struct HistoryArgs {
     /// Maximum source or diff tokens to return.
     #[arg(long, global = true, value_parser = parse_positive_usize)]
     pub max_tokens: Option<usize>,
+
+    /// Maximum tokens in the final serialized JSON service response.
+    #[arg(long, global = true, value_parser = parse_positive_usize)]
+    pub max_response_tokens: Option<usize>,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -1188,6 +1286,10 @@ pub struct JsonArgs {
     /// Maximum tokens across selected/projected JSON.
     #[arg(long, global = true, value_parser = parse_positive_usize)]
     pub max_tokens: Option<usize>,
+
+    /// Maximum tokens in the final serialized JSON service response.
+    #[arg(long, global = true, value_parser = parse_positive_usize)]
+    pub max_response_tokens: Option<usize>,
 
     /// Maximum structural items returned.
     #[arg(long, global = true, value_parser = parse_positive_usize)]

@@ -11,7 +11,7 @@ use super::validation::{
     MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled, make_cursor, parse_cursor,
     validate_cursor, validate_glob_patterns, validate_input,
 };
-use super::{Services, retrieval_primitive_key};
+use super::{ServiceCallOptions, Services, retrieval_primitive_key};
 use crate::model::*;
 use crate::storage::{ChunkHit, ReadSession, ReferenceHit, SymbolHit};
 use crate::text::{
@@ -199,6 +199,16 @@ struct DefinitionIdentity {
 struct CandidateSearchHit {
     hit: SearchHit,
     definition: Option<DefinitionIdentity>,
+}
+
+struct SearchResponseShape<'a> {
+    all: &'a [CandidateSearchHit],
+    request: &'a SearchRequest,
+    generation: u64,
+    total_candidates: usize,
+    offset: usize,
+    consumed: usize,
+    has_more: bool,
 }
 
 fn hit_has_kind(hit: &SearchHit, kind: &str) -> bool {
@@ -623,9 +633,67 @@ fn validate_search_input(request: &SearchRequest) -> Result<()> {
 }
 
 impl Services {
+    fn ensure_search_page_fits(
+        &self,
+        selected: &mut [CandidateSearchHit],
+        shape: SearchResponseShape<'_>,
+        options: ServiceCallOptions,
+    ) -> Result<()> {
+        let provisional = |selected: &[CandidateSearchHit]| SearchResponse {
+            hits: selected
+                .iter()
+                .map(|candidate| candidate.hit.clone())
+                .collect(),
+            coverage: search_coverage(shape.all, selected),
+            occurrences_returned: selected.len(),
+            occurrences_total: shape
+                .request
+                .all_occurrences
+                .then_some(shape.total_candidates),
+            meta: self.meta(
+                shape.generation,
+                selected
+                    .iter()
+                    .map(|candidate| self.config.tokenizer.count(&candidate.hit.excerpt))
+                    .sum(),
+                shape
+                    .has_more
+                    .then(|| make_cursor(shape.generation, shape.offset + shape.consumed)),
+            ),
+        };
+        let mut sized = provisional(selected);
+        if self.response_fits_with_receipt_reserve(&sized, selected.len(), options)? {
+            return Ok(());
+        }
+        for candidate in selected.iter_mut() {
+            candidate.hit.score_reasons.clear();
+        }
+        sized = provisional(selected);
+        if self.response_fits_with_receipt_reserve(&sized, selected.len(), options)? {
+            return Ok(());
+        }
+        Err(Error::RequestLimitExceeded {
+            field: "max_response_tokens",
+            requested: self.finalized_response_tokens(&sized)?,
+            limit: options
+                .max_response_tokens()
+                .expect("fitting only runs with a response limit"),
+        })
+    }
+
     /// Search indexed lexical and structural evidence.
     pub async fn search(&self, request: SearchRequest) -> Result<SearchResponse> {
-        self.search_cancellable(request, CancellationToken::new())
+        self.search_with_options(request, ServiceCallOptions::new())
+            .await
+    }
+
+    /// Search under explicit serialized-response controls.
+    pub async fn search_with_options(
+        &self,
+        request: SearchRequest,
+        options: ServiceCallOptions,
+    ) -> Result<SearchResponse> {
+        self.search_cancellable_with_options(request, options, CancellationToken::new())
             .await
     }
 
@@ -636,13 +704,32 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<SearchResponse> {
+        self.search_with_options_consistency_cancellable(
+            request,
+            consistency,
+            ServiceCallOptions::new(),
+            cancellation,
+        )
+        .await
+    }
+
+    /// Search under consistency and serialized-response controls.
+    pub async fn search_with_options_consistency_cancellable(
+        &self,
+        request: SearchRequest,
+        consistency: IndexConsistency,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<SearchResponse> {
+        self.validate_call_options(options)?;
         validate_search_input(&request)?;
         self.result_limit(request.max_results)?;
         self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         self.context_line_limit(request.context_lines)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
-        self.search_cancellable(request, cancellation).await
+        self.search_cancellable_with_options(request, options, cancellation)
+            .await
     }
 
     pub async fn search_cancellable(
@@ -650,6 +737,17 @@ impl Services {
         request: SearchRequest,
         cancellation: CancellationToken,
     ) -> Result<SearchResponse> {
+        self.search_cancellable_with_options(request, ServiceCallOptions::new(), cancellation)
+            .await
+    }
+
+    async fn search_cancellable_with_options(
+        &self,
+        request: SearchRequest,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<SearchResponse> {
+        self.validate_call_options(options)?;
         let this = self.clone();
         self.blocking_executor
             .run(cancellation, move |cancellation| {
@@ -658,6 +756,7 @@ impl Services {
                     cancellation,
                     RegexPlanning::Enabled,
                     SearchDiagnostics::Omit,
+                    options,
                 )
                 .map(|evaluation| evaluation.response)
             })
@@ -677,6 +776,7 @@ impl Services {
                     cancellation,
                     RegexPlanning::Enabled,
                     SearchDiagnostics::Collect,
+                    ServiceCallOptions::new(),
                 )
             })
             .await
@@ -698,6 +798,7 @@ impl Services {
                     cancellation,
                     RegexPlanning::Disabled,
                     SearchDiagnostics::Collect,
+                    ServiceCallOptions::new(),
                 )
             })
             .await
@@ -709,6 +810,7 @@ impl Services {
         cancellation: &CancellationToken,
         regex_planning: RegexPlanning,
         diagnostics: SearchDiagnostics,
+        options: ServiceCallOptions,
     ) -> Result<SearchEvaluation> {
         check_cancelled(cancellation)?;
         validate_search_input(&request)?;
@@ -1005,6 +1107,19 @@ impl Services {
                 selected.push(candidate);
             }
             let has_more = offset.saturating_add(consumed) < total_candidates;
+            self.ensure_search_page_fits(
+                &mut selected,
+                SearchResponseShape {
+                    all: &hits,
+                    request: &request,
+                    generation,
+                    total_candidates,
+                    offset,
+                    consumed,
+                    has_more,
+                },
+                options,
+            )?;
             let receipt_candidates = selected
                 .iter()
                 .map(|candidate| {
@@ -1066,7 +1181,7 @@ impl Services {
             Ok((response, baseline_source_tokens, phases, primitive_keys))
         });
         let (mut response, baseline_source_tokens, phases, primitive_keys) = search_result?;
-        self.finalize_response(&mut response)?;
+        self.finalize_bounded_response(&mut response, options)?;
         self.record_token_savings(
             TokenAccountingOperation::Search,
             baseline_source_tokens,

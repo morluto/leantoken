@@ -20,6 +20,12 @@ use serde::Serialize;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
+fn service_call_options(max_response_tokens: Option<usize>) -> ServiceCallOptions {
+    max_response_tokens.map_or_else(ServiceCallOptions::new, |limit| {
+        ServiceCallOptions::new().with_max_response_tokens(limit)
+    })
+}
+
 mod savings;
 
 const WATCHER_QUEUE_CAPACITY: usize = 1;
@@ -90,6 +96,9 @@ fn exit_cli_error(error: clap::Error, json_requested: bool) -> ! {
     error.exit()
 }
 
+// Command routing is deliberately flat so every externally visible operation
+// keeps its service-owned policy and error path explicit.
+#[allow(clippy::cognitive_complexity)]
 async fn run(cli: Cli) -> Result<()> {
     let json = cli.json;
 
@@ -186,9 +195,37 @@ async fn run(cli: Cli) -> Result<()> {
                 .await?,
             json,
         ),
+        AppRequest::FilesWithOptions {
+            request,
+            max_response_tokens,
+        } => print(
+            &services
+                .files_with_options_consistency_cancellable(
+                    request,
+                    consistency,
+                    service_call_options(Some(max_response_tokens)),
+                    CancellationToken::new(),
+                )
+                .await?,
+            json,
+        ),
         AppRequest::Search(request) => print(
             &services
                 .search_with_consistency_cancellable(request, consistency, CancellationToken::new())
+                .await?,
+            json,
+        ),
+        AppRequest::SearchWithOptions {
+            request,
+            max_response_tokens,
+        } => print(
+            &services
+                .search_with_options_consistency_cancellable(
+                    request,
+                    consistency,
+                    service_call_options(Some(max_response_tokens)),
+                    CancellationToken::new(),
+                )
                 .await?,
             json,
         ),
@@ -202,14 +239,60 @@ async fn run(cli: Cli) -> Result<()> {
                 .await?,
             json,
         ),
+        AppRequest::OutlineWithOptions {
+            request,
+            max_response_tokens,
+        } => print(
+            &services
+                .outline_with_options_consistency_cancellable(
+                    request,
+                    consistency,
+                    service_call_options(Some(max_response_tokens)),
+                    CancellationToken::new(),
+                )
+                .await?,
+            json,
+        ),
         AppRequest::Read(request) => print(
             &services
                 .read_with_consistency_cancellable(request, consistency, CancellationToken::new())
                 .await?,
             json,
         ),
+        AppRequest::ReadWithOptions {
+            request,
+            max_response_tokens,
+        } => print(
+            &services
+                .read_with_options_consistency_cancellable(
+                    request,
+                    consistency,
+                    service_call_options(Some(max_response_tokens)),
+                    CancellationToken::new(),
+                )
+                .await?,
+            json,
+        ),
         AppRequest::History(request) => print(&services.history(request).await?, json),
+        AppRequest::HistoryWithOptions {
+            request,
+            max_response_tokens,
+        } => print(
+            &services
+                .history_with_options(request, service_call_options(Some(max_response_tokens)))
+                .await?,
+            json,
+        ),
         AppRequest::Json(request) => print(&services.json(request).await?, json),
+        AppRequest::JsonWithOptions {
+            request,
+            max_response_tokens,
+        } => print(
+            &services
+                .json_with_options(request, service_call_options(Some(max_response_tokens)))
+                .await?,
+            json,
+        ),
         AppRequest::Context {
             request,
             workflow,
@@ -217,9 +300,7 @@ async fn run(cli: Cli) -> Result<()> {
             max_response_tokens,
         } => {
             let cancellation = tokio_util::sync::CancellationToken::new();
-            let options = max_response_tokens.map_or_else(ServiceCallOptions::new, |limit| {
-                ServiceCallOptions::new().with_max_response_tokens(limit)
-            });
+            let options = service_call_options(max_response_tokens);
             let response = services
                 .context_with_options_workflow_consistency_cancellable(
                     request,

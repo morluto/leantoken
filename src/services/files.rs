@@ -9,13 +9,14 @@ use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config as MatcherConfig, Matcher};
 use tokio_util::sync::CancellationToken;
 
-use super::Services;
 use super::validation::{
     MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, check_cancelled, validate_optional_input,
 };
+use super::{ServiceCallOptions, Services};
 use crate::model::*;
 use crate::repository::{slash_path, validate_relative};
 use crate::storage::{FileRecord, ReadSession};
+use crate::tokens::ResponseBudget;
 use crate::{Error, Result};
 
 /// Page size for bounded scans over the indexed file table.
@@ -404,7 +405,17 @@ fn hex_nibble(value: u8) -> Result<u8> {
 impl Services {
     /// Discover repository paths.
     pub async fn files(&self, request: FilesRequest) -> Result<FilesResponse> {
-        self.files_cancellable(request, CancellationToken::new())
+        self.files_with_options(request, ServiceCallOptions::new())
+            .await
+    }
+
+    /// Discover repository paths under explicit serialized-response controls.
+    pub async fn files_with_options(
+        &self,
+        request: FilesRequest,
+        options: ServiceCallOptions,
+    ) -> Result<FilesResponse> {
+        self.files_cancellable_with_options(request, options, CancellationToken::new())
             .await
     }
 
@@ -415,11 +426,30 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<FilesResponse> {
+        self.files_with_options_consistency_cancellable(
+            request,
+            consistency,
+            ServiceCallOptions::new(),
+            cancellation,
+        )
+        .await
+    }
+
+    /// Discover paths under consistency and serialized-response controls.
+    pub async fn files_with_options_consistency_cancellable(
+        &self,
+        request: FilesRequest,
+        consistency: IndexConsistency,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<FilesResponse> {
+        self.validate_call_options(options)?;
         validate_files_input(&request)?;
         self.result_limit(request.max_results)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
-        self.files_cancellable(request, cancellation).await
+        self.files_cancellable_with_options(request, options, cancellation)
+            .await
     }
 
     pub async fn files_cancellable(
@@ -427,10 +457,21 @@ impl Services {
         request: FilesRequest,
         cancellation: CancellationToken,
     ) -> Result<FilesResponse> {
+        self.files_cancellable_with_options(request, ServiceCallOptions::new(), cancellation)
+            .await
+    }
+
+    async fn files_cancellable_with_options(
+        &self,
+        request: FilesRequest,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<FilesResponse> {
+        self.validate_call_options(options)?;
         let this = self.clone();
         self.blocking_executor
             .run(cancellation, move |cancellation| {
-                this.files_sync(request, cancellation)
+                this.files_sync(request, options, cancellation)
             })
             .await
     }
@@ -438,6 +479,7 @@ impl Services {
     fn files_sync(
         &self,
         request: FilesRequest,
+        options: ServiceCallOptions,
         cancellation: &CancellationToken,
     ) -> Result<FilesResponse> {
         check_cancelled(cancellation)?;
@@ -446,6 +488,7 @@ impl Services {
         let mut response = self.consistent(|session, generation| {
             let cursor =
                 parse_files_cursor(request.cursor.as_deref(), generation, &request.operation)?;
+            let operation = request.operation.clone();
             let page = match request.operation {
                 FileOperation::Tree => tree_entries(
                     session,
@@ -470,13 +513,87 @@ impl Services {
                     cancellation,
                 )?,
             };
-            Ok(FilesResponse {
+            let mut response = FilesResponse {
                 entries: page.entries,
                 meta: self.meta(generation, 0, page.next.map(|next| next.encode(generation))),
-            })
+            };
+            self.fit_files_response(&mut response, operation, generation, options)?;
+            Ok(response)
         })?;
-        self.finalize_response(&mut response)?;
+        self.finalize_bounded_response(&mut response, options)?;
         self.record_token_savings(TokenAccountingOperation::Files, None, &response.meta);
         Ok(response)
+    }
+
+    fn fit_files_response(
+        &self,
+        response: &mut FilesResponse,
+        operation: FileOperation,
+        generation: u64,
+        options: ServiceCallOptions,
+    ) -> Result<()> {
+        if self.response_fits(response, options)? {
+            return Ok(());
+        }
+
+        let original = response.clone();
+        let max_response_tokens = options
+            .max_response_tokens()
+            .expect("fitting only runs with a response limit");
+        let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+        let keep = budget.largest_fitting_prefix(original.entries.len(), |keep| {
+            let mut candidate = original.clone();
+            candidate.entries.truncate(keep);
+            candidate.meta.next_cursor = candidate
+                .entries
+                .last()
+                .map(|entry| files_cursor_for_entry(&operation, entry).encode(generation));
+            self.finalized_response_tokens(&candidate)
+        })?;
+        if let Some(keep) = keep.filter(|keep| *keep > 0) {
+            response.entries.truncate(keep);
+            response.meta.next_cursor = response
+                .entries
+                .last()
+                .map(|entry| files_cursor_for_entry(&operation, entry).encode(generation));
+            return Ok(());
+        }
+
+        let requested = original
+            .entries
+            .first()
+            .map(|entry| {
+                let mut minimum = original.clone();
+                minimum.entries.truncate(1);
+                minimum.meta.next_cursor =
+                    Some(files_cursor_for_entry(&operation, entry).encode(generation));
+                self.finalized_response_tokens(&minimum)
+            })
+            .transpose()?
+            .unwrap_or(self.finalized_response_tokens(&original)?);
+        Err(Error::RequestLimitExceeded {
+            field: "max_response_tokens",
+            requested,
+            limit: max_response_tokens,
+        })
+    }
+}
+
+fn files_cursor_for_entry(operation: &FileOperation, entry: &FileEntry) -> FileCursor {
+    match operation {
+        FileOperation::Tree => FileCursor::Path {
+            operation: PathOperation::Tree,
+            path: entry.path.clone(),
+        },
+        FileOperation::Glob => FileCursor::Path {
+            operation: PathOperation::Glob,
+            path: entry.path.clone(),
+        },
+        FileOperation::Find => FileCursor::Fuzzy {
+            score: entry
+                .score
+                .expect("fuzzy results retain their cursor score") as u32,
+            path: entry.path.clone(),
+        },
     }
 }

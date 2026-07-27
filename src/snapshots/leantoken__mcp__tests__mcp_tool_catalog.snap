@@ -1,6 +1,6 @@
 ---
 source: src/mcp.rs
-assertion_line: 2371
+assertion_line: 3971
 expression: tools
 ---
 [
@@ -517,6 +517,14 @@ expression: tools
             "null"
           ]
         },
+        "max_response_tokens": {
+          "default": null,
+          "description": "Maximum tokens in the final serialized service response.",
+          "format": "uint",
+          "maximum": 32000,
+          "minimum": 1,
+          "type": "integer"
+        },
         "max_results": {
           "default": 20,
           "description": "Maximum entries to return (default 20, maximum 100).",
@@ -691,6 +699,14 @@ expression: tools
             "string",
             "null"
           ]
+        },
+        "max_response_tokens": {
+          "default": null,
+          "description": "Maximum tokens in the final serialized service response.",
+          "format": "uint",
+          "maximum": 32000,
+          "minimum": 1,
+          "type": "integer"
         },
         "max_results": {
           "default": 20,
@@ -943,6 +959,14 @@ expression: tools
             "null"
           ]
         },
+        "max_response_tokens": {
+          "default": null,
+          "description": "Maximum tokens in the final serialized service response.",
+          "format": "uint",
+          "maximum": 32000,
+          "minimum": 1,
+          "type": "integer"
+        },
         "max_tokens": {
           "default": 8000,
           "description": "Maximum tokens across selected/projected JSON (default 8000, maximum 32000).",
@@ -995,6 +1019,14 @@ expression: tools
             "string",
             "null"
           ]
+        },
+        "max_response_tokens": {
+          "default": null,
+          "description": "Maximum tokens in the final serialized service response.",
+          "format": "uint",
+          "maximum": 32000,
+          "minimum": 1,
+          "type": "integer"
         },
         "max_results": {
           "default": 20,
@@ -1199,6 +1231,14 @@ expression: tools
             "null"
           ]
         },
+        "max_response_tokens": {
+          "default": null,
+          "description": "Maximum tokens in the final serialized service response.",
+          "format": "uint",
+          "maximum": 32000,
+          "minimum": 1,
+          "type": "integer"
+        },
         "max_tokens": {
           "default": 8000,
           "description": "Maximum source tokens to return (default 8000, maximum 32000).",
@@ -1365,6 +1405,14 @@ expression: tools
           },
           "maxItems": 256,
           "type": "array"
+        },
+        "max_response_tokens": {
+          "default": null,
+          "description": "Maximum tokens in the final serialized service response.",
+          "format": "uint",
+          "maximum": 32000,
+          "minimum": 1,
+          "type": "integer"
         },
         "max_results": {
           "default": 20,

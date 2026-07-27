@@ -350,6 +350,7 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | Full-scan fallback files | 10000 |
 | Full-scan fallback chunks per file | 256 |
 | File scan page size | 1000 for find/glob; tree queries `max_results + 1` projected paths |
+| Opt-in response-bounded read materializations | At most 18 within one pinned generation |
 
 Regex mode first parses a bounded HIR candidate plan. Mandatory case-sensitive
 ASCII word literals of at least three bytes become trigram `AND`/`OR`
@@ -367,8 +368,8 @@ retain the matching-chunk limit, while the fallback retains its file and
 per-file chunk limits. Compiled regex size and DFA cache are also limited so
 pathological patterns fail closed.
 
-Context accepts an optional serialized service-response ceiling through
-`ServiceCallOptions`, MCP `max_response_tokens`, or CLI
+Every retrieval operation accepts an optional serialized service-response
+ceiling through `ServiceCallOptions`, MCP `max_response_tokens`, or CLI
 `--max-response-tokens`. This boundary counts the final compact service DTO,
 including paths, diagnostics, receipts, metadata, and the accounting fields
 themselves. It does not count MCP `CallToolResult` duplication, JSON-RPC
@@ -391,6 +392,23 @@ Accounting converges to a fixed point and
 The shared `ResponseBudget` counter provides a logarithmic largest-prefix
 primitive; operation services supply the response-shaped projection and
 correctness skeleton rather than applying generic JSON truncation.
+
+Path discovery derives continuation cursors from the last retained path (and
+fuzzy score), history truncates only UTF-8 character boundaries or commit
+prefixes, and JSON keys pagination binds a reduced page to the same source and
+query hashes. Search and outline validate a conservative receipt shape before
+committing receipt evidence. If their already source-bounded page does not fit,
+they return a typed limit error instead of manufacturing a cursor that could
+skip omitted evidence. Fixed-shape JSON projections use the same fail-loud
+rule; shallow schema degradation remains owned by the JSON projection stage.
+
+When an explicitly response-bounded `read` page does not initially fit, the
+service binary-searches the existing source-token ceiling and rematerializes at
+most 18 bounded live pages inside the same SQLite generation. Each probe keeps
+the existing 8 MiB live-read cap and cancellation checks. The selected page
+uses the normal content-bound continuation cursor, so fitting cannot skip
+source. Delta mode falls back to that fitted direct page if delta metadata
+would cross the total-response ceiling.
 
 Run the reproducible hot-path profile with, for example,
 `cargo run --example hot_path_bounds --release -- --files 10000 --iterations 20`.
