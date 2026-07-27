@@ -292,6 +292,12 @@ Rust source compatibility. Additive preparation accounting is exposed through
 JSON output, so CLI consumers receive `skip_reasons` without forcing existing
 Rust consumers to update struct literals or destructuring patterns.
 
+`CacheListRequest`, `CacheListReport`, and `CachePruneRequest` likewise retain
+their constructible field sets. Content-compatibility filters and summaries use
+`CacheListV2Request`/`CacheListV2Report`; compatibility pruning uses
+`CachePruneV2Request`. The CLI selects those versioned APIs while older Rust
+callers can continue using the original list/prune methods.
+
 Use `InvalidRequest` only for audited caller validation. Infrastructure and
 invariant failures use `InternalFailure`, which retains the historical
 `invalid request: ...` display prefix for CLI text compatibility while adapters

@@ -10,7 +10,8 @@ use clap::{Args, Command, Parser, Subcommand, ValueEnum};
 use crate::Config;
 use crate::Result;
 use crate::cache::{
-    CacheListRequest, CachePruneRequest, CacheState, DEFAULT_CACHE_LIST_LIMIT, MAX_CACHE_LIST_LIMIT,
+    CacheCompatibility, CacheListRequest, CacheListV2Request, CachePruneRequest,
+    CachePruneV2Request, CacheState, DEFAULT_CACHE_LIST_LIMIT, MAX_CACHE_LIST_LIMIT,
 };
 use crate::config::DEFAULT_CONTEXT_TOKENS;
 use crate::mcp::McpResultMode;
@@ -431,8 +432,8 @@ impl Cli {
             Commands::Setup(args) => AppRequest::Setup(args.into()),
             Commands::Remove(args) => AppRequest::Remove(args.into()),
             Commands::Cache(args) => match args.command {
-                CacheCommand::List(args) => AppRequest::CacheList(args.into()),
-                CacheCommand::Prune(args) => AppRequest::CachePrune(args.into()),
+                CacheCommand::List(args) => AppRequest::CacheListV2(args.into()),
+                CacheCommand::Prune(args) => AppRequest::CachePruneV2(args.into()),
             },
             Commands::Update(args) | Commands::Upgrade(args) => AppRequest::Upgrade {
                 check: args.check,
@@ -514,6 +515,8 @@ pub enum AppRequest {
     Remove(SetupRequest),
     CacheList(CacheListRequest),
     CachePrune(CachePruneRequest),
+    CacheListV2(CacheListV2Request),
+    CachePruneV2(CachePruneV2Request),
     Upgrade {
         check: bool,
         yes: bool,
@@ -667,6 +670,15 @@ pub struct CacheListArgs {
     /// Keep caches in this metadata state (repeatable).
     #[arg(long, value_enum, value_name = "STATE")]
     pub state: Vec<CacheStateArg>,
+    /// Keep caches in this content-compatibility class (repeatable).
+    #[arg(long, value_enum, value_name = "COMPATIBILITY")]
+    pub compatibility: Vec<CacheCompatibilityArg>,
+    /// Keep caches with this exact index-content version (repeatable).
+    #[arg(long, value_name = "VERSION")]
+    pub index_content_version: Vec<u32>,
+    /// Keep only older or legacy-unversioned content.
+    #[arg(long)]
+    pub incompatible_with_current: bool,
     /// Keep the exact recorded repository root.
     #[arg(long, value_name = "PATH")]
     pub repository_root: Option<PathBuf>,
@@ -699,6 +711,21 @@ pub enum CacheStateArg {
     Unrecognized,
 }
 
+/// Cache content compatibility accepted by `cache list --compatibility`.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CacheCompatibilityArg {
+    /// Content produced by the current index-content version.
+    CompatibleCurrent,
+    /// Content produced by a known older version.
+    ObsoleteOlder,
+    /// Legacy content without a versioned cache identity.
+    LegacyUnversioned,
+    /// Content produced by a newer unsupported version.
+    NewerUnsupported,
+    /// Content whose compatibility cannot be trusted.
+    Unknown,
+}
+
 impl From<CacheStateArg> for CacheState {
     fn from(value: CacheStateArg) -> Self {
         match value {
@@ -712,14 +739,31 @@ impl From<CacheStateArg> for CacheState {
     }
 }
 
-impl From<CacheListArgs> for CacheListRequest {
+impl From<CacheCompatibilityArg> for CacheCompatibility {
+    fn from(value: CacheCompatibilityArg) -> Self {
+        match value {
+            CacheCompatibilityArg::CompatibleCurrent => Self::CompatibleCurrent,
+            CacheCompatibilityArg::ObsoleteOlder => Self::ObsoleteOlder,
+            CacheCompatibilityArg::LegacyUnversioned => Self::LegacyUnversioned,
+            CacheCompatibilityArg::NewerUnsupported => Self::NewerUnsupported,
+            CacheCompatibilityArg::Unknown => Self::Unknown,
+        }
+    }
+}
+
+impl From<CacheListArgs> for CacheListV2Request {
     fn from(args: CacheListArgs) -> Self {
         Self {
-            summary: args.summary,
-            states: args.state.into_iter().map(Into::into).collect(),
-            repository_root: args.repository_root,
-            limit: args.limit,
-            cursor: args.cursor,
+            request: CacheListRequest {
+                summary: args.summary,
+                states: args.state.into_iter().map(Into::into).collect(),
+                repository_root: args.repository_root,
+                limit: args.limit,
+                cursor: args.cursor,
+            },
+            compatibilities: args.compatibility.into_iter().map(Into::into).collect(),
+            index_content_versions: args.index_content_version,
+            incompatible_with_current: args.incompatible_with_current,
         }
     }
 }
@@ -736,6 +780,11 @@ pub struct CachePruneArgs {
     /// Remove caches whose recorded repository roots are currently missing.
     #[arg(long)]
     pub remove_missing_roots: bool,
+    /// Select inactive older or legacy-unversioned caches.
+    ///
+    /// Without `--yes`, this criterion defaults to a dry-run.
+    #[arg(long)]
+    pub incompatible_with_current: bool,
     /// Show the exact prune plan without deleting files.
     #[arg(long)]
     pub dry_run: bool,
@@ -744,14 +793,17 @@ pub struct CachePruneArgs {
     pub yes: bool,
 }
 
-impl From<CachePruneArgs> for CachePruneRequest {
+impl From<CachePruneArgs> for CachePruneV2Request {
     fn from(args: CachePruneArgs) -> Self {
         Self {
-            older_than_days: args.older_than.map(NonZeroU64::get),
-            max_total_bytes: args.max_total_bytes,
-            remove_missing_roots: args.remove_missing_roots,
-            dry_run: args.dry_run,
-            yes: args.yes,
+            request: CachePruneRequest {
+                older_than_days: args.older_than.map(NonZeroU64::get),
+                max_total_bytes: args.max_total_bytes,
+                remove_missing_roots: args.remove_missing_roots,
+                dry_run: args.dry_run || (args.incompatible_with_current && !args.yes),
+                yes: args.yes,
+            },
+            incompatible_with_current: args.incompatible_with_current,
         }
     }
 }

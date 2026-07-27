@@ -128,6 +128,19 @@ async fn run(cli: Cli) -> Result<()> {
                     ));
                 }
             }
+            AppRequest::CacheListV2(request) => {
+                let report = cache::list_v2_with(&request)?;
+                cache::print_list_v2(&report, json)?;
+            }
+            AppRequest::CachePruneV2(request) => {
+                let report = cache::prune_v2(&request)?;
+                cache::print_prune(&report, json)?;
+                if report.has_failures() {
+                    return Err(leantoken::Error::InternalFailure(
+                        "one or more managed caches could not be pruned".into(),
+                    ));
+                }
+            }
             _ => unreachable!("cache command checked above"),
         }
         return Ok(());
@@ -318,7 +331,10 @@ async fn run(cli: Cli) -> Result<()> {
         AppRequest::Setup(_) | AppRequest::Remove(_) => {
             unreachable!("handled before service setup")
         }
-        AppRequest::CacheList(_) | AppRequest::CachePrune(_) => {
+        AppRequest::CacheList(_)
+        | AppRequest::CachePrune(_)
+        | AppRequest::CacheListV2(_)
+        | AppRequest::CachePruneV2(_) => {
             unreachable!("handled before repository setup")
         }
         AppRequest::Upgrade { .. } => unreachable!("handled before repository setup"),

@@ -252,6 +252,14 @@ service startup; retrieval calls do not turn every read into a metadata write.
 Central cache inspection opens SQLite read-only and falls back to direct artifact
 mtime for corrupt, incomplete, or older-schema entries.
 
+Cache metadata/access state and index-content compatibility are separate
+classifications. A readable current metadata schema can therefore coexist with
+an `obsolete_older` or `legacy_unversioned` content identity without being
+reported as content-compatible. Versioned list requests accept at most five
+compatibility classes and 32 exact content versions; both filters and the
+`incompatible_with_current` convenience predicate are included in the cursor
+shape.
+
 Every service instance acquires a shared cache lease before initialization and
 keeps it through all clones. Explicit pruning requires the exclusive lease, so
 active leaders and read-only followers are both protected rather than relying on
@@ -263,7 +271,11 @@ the platform-managed cache root participate; unexpected directory content,
 future content versions, and explicit databases outside that root fail closed
 from automatic deletion. Versioned identities let compatible builds share a
 cache without allowing an older process left alive during an upgrade to
-downgrade the newer index.
+downgrade the newer index. Compatibility pruning deletes only inactive,
+recognizable older or legacy-unversioned entries and re-inspects the same
+criterion after acquiring the exclusive lease. Corrupt/unknown, future,
+unexpected, identity-mismatched, and lease-unavailable entries are never
+automatically deleted.
 
 An explicit database path preserves the caller-selected identity and is not
 rewritten by the managed-cache policy. Callers must not concurrently share one

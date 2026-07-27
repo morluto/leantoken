@@ -43,9 +43,11 @@ leantoken mcp [--result-mode dual|text|structured]
 leantoken setup [CLIENT...] [--all] [--refresh] [--yes] [--dry-run] [--allow-outdated]
 leantoken remove [CLIENT...] [--all] [--yes] [--dry-run]
 leantoken cache list [--summary] [--state STATE] [--repository-root PATH]
-                     [--limit COUNT] [--cursor CURSOR]
+                     [--compatibility CLASS] [--index-content-version VERSION]
+                     [--incompatible-with-current] [--limit COUNT] [--cursor CURSOR]
 leantoken cache prune [--older-than DAYS] [--max-total-bytes BYTES]
-                      [--remove-missing-roots] [--dry-run] [--yes]
+                      [--remove-missing-roots] [--incompatible-with-current]
+                      [--dry-run] [--yes]
 ```
 
 Use `leantoken <command> --help` for the complete argument list.
@@ -179,12 +181,22 @@ cache in the platform `ProjectDirs` cache directory and reports exact aggregate
 counts and bytes. Per-cache entries are returned in stable identifier order,
 20 at a time by default and at most 100 at a time. Pass `--cursor` with the same
 filters to continue. `--summary` omits entries, repeatable `--state` values are
-OR filters, and `--repository-root` matches one exact recorded root. Entry pages
-include compatibility version, recorded root, schema, last access, direct
-SQLite/sidecar bytes, metadata state, and active lease status. Legacy
-repository-only cache identities remain visible and prunable. Listing does not
-open repository services and therefore works from any directory. JSON output
-contains Unix timestamps and returned/matched/total counts for automation.
+OR filters, and `--repository-root` matches one exact recorded root.
+`--compatibility` independently filters `compatible-current`,
+`obsolete-older`, `legacy-unversioned`, `newer-unsupported`, or `unknown`;
+`--index-content-version` is an exact repeatable filter, while
+`--incompatible-with-current` keeps only older and legacy-unversioned content.
+At most five compatibility and 32 exact-version filters are accepted. All
+filters are bound into the versioned cursor and cannot be changed between
+pages.
+
+Entry pages retain the existing metadata `state` and separately expose content
+`compatibility`, recorded root, schema, last access, direct SQLite/sidecar
+bytes, and active lease status. Summaries report entries/bytes by compatibility
+plus inactive incompatible bytes that are actually safe to reclaim. Legacy
+repository-only identities remain visible. Listing does not open repository
+services and therefore works from any directory. JSON output contains Unix
+timestamps and returned/matched/total counts for automation.
 
 The versioned identity applies to automatically managed caches. An explicit
 `--database` path remains unchanged and must not be shared concurrently by
@@ -197,14 +209,19 @@ incompatible index-content versions.
 - `--max-total-bytes BYTES` selects least-recently-used caches until the managed
   total reaches the requested bound;
 - `--remove-missing-roots` explicitly selects a cache when its recorded root is
-  currently absent.
+  currently absent;
+- `--incompatible-with-current` targets recognizable `obsolete-older` and
+  `legacy-unversioned` caches; active entries are reported but skipped. Without
+  `--yes`, this criterion automatically performs a dry run.
 
 Use `--dry-run` to inspect every keep/delete/skip decision. Actual deletion
 requires `--yes`. Missing roots are not an implicit deletion criterion because
-offline mounts and removable volumes can return later. Corrupt, incomplete, and
-older-schema caches remain listable and can be selected by age or size. A cache
-with a newer schema, mismatched root identity, or unexpected directory content
-is always skipped.
+offline mounts and removable volumes can return later. Older-schema and
+recognizable incomplete caches remain eligible for explicit age or size
+policies. Corrupt/unknown inspection results, newer content, newer schema,
+mismatched root identity, and unexpected directory content always fail closed.
+After acquiring the exclusive lease, prune re-inspects compatibility and safety
+before deleting to prevent a stale plan from crossing a state change.
 
 Every `Services` instance holds a shared lease from before SQLite initialization
 until its final clone drops. Prune must acquire the exclusive form and therefore

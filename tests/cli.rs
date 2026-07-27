@@ -1,5 +1,5 @@
 use clap::{CommandFactory, Parser, error::ErrorKind};
-use leantoken::cache::{CacheState, DEFAULT_CACHE_LIST_LIMIT};
+use leantoken::cache::{CacheCompatibility, CacheState, DEFAULT_CACHE_LIST_LIMIT};
 use leantoken::cli::{AppRequest, Cli};
 use leantoken::model::{
     ContextWorkflow, FileOperation, HistoryOperation, IndexConsistency, JsonOperation,
@@ -943,23 +943,31 @@ fn cli_update_and_upgrade_are_aliases() {
 }
 
 #[test]
-fn cli_cache_commands_resolve_without_repository_configuration() {
-    let AppRequest::CacheList(default_list) = parse(&["cache", "list"]).app_request() else {
+fn cli_cache_list_resolves_without_repository_configuration() {
+    let AppRequest::CacheListV2(default_list) = parse(&["cache", "list"]).app_request() else {
         panic!("expected cache list request");
     };
-    assert!(!default_list.summary);
-    assert!(default_list.states.is_empty());
-    assert!(default_list.repository_root.is_none());
-    assert_eq!(default_list.limit, DEFAULT_CACHE_LIST_LIMIT);
-    assert!(default_list.cursor.is_none());
+    assert!(!default_list.request.summary);
+    assert!(default_list.request.states.is_empty());
+    assert!(default_list.request.repository_root.is_none());
+    assert_eq!(default_list.request.limit, DEFAULT_CACHE_LIST_LIMIT);
+    assert!(default_list.request.cursor.is_none());
+    assert!(default_list.compatibilities.is_empty());
+    assert!(default_list.index_content_versions.is_empty());
+    assert!(!default_list.incompatible_with_current);
 
-    let AppRequest::CacheList(filtered_list) = parse(&[
+    let AppRequest::CacheListV2(filtered_list) = parse(&[
         "cache",
         "list",
         "--state",
         "corrupt",
         "--state",
         "legacy",
+        "--compatibility",
+        "obsolete-older",
+        "--index-content-version",
+        "11",
+        "--incompatible-with-current",
         "--repository-root",
         "repository",
         "--limit",
@@ -972,23 +980,29 @@ fn cli_cache_commands_resolve_without_repository_configuration() {
         panic!("expected filtered cache list request");
     };
     assert_eq!(
-        filtered_list.states,
+        filtered_list.request.states,
         vec![CacheState::Corrupt, CacheState::Legacy]
     );
     assert_eq!(
-        filtered_list.repository_root.as_deref(),
+        filtered_list.compatibilities,
+        vec![CacheCompatibility::ObsoleteOlder]
+    );
+    assert_eq!(filtered_list.index_content_versions, vec![11]);
+    assert!(filtered_list.incompatible_with_current);
+    assert_eq!(
+        filtered_list.request.repository_root.as_deref(),
         Some(std::path::Path::new("repository"))
     );
-    assert_eq!(filtered_list.limit, 7);
-    assert_eq!(filtered_list.cursor.as_deref(), Some("opaque"));
+    assert_eq!(filtered_list.request.limit, 7);
+    assert_eq!(filtered_list.request.cursor.as_deref(), Some("opaque"));
 
-    let AppRequest::CacheList(summary) =
+    let AppRequest::CacheListV2(summary) =
         parse(&["cache", "list", "--summary", "--state", "current"]).app_request()
     else {
         panic!("expected summary cache list request");
     };
-    assert!(summary.summary);
-    assert_eq!(summary.states, vec![CacheState::Current]);
+    assert!(summary.request.summary);
+    assert_eq!(summary.request.states, vec![CacheState::Current]);
     assert!(
         Cli::try_parse_from([
             "leantoken",
@@ -1003,7 +1017,10 @@ fn cli_cache_commands_resolve_without_repository_configuration() {
     assert!(
         Cli::try_parse_from(["leantoken", "cache", "list", "--limit", "101"]).is_err()
     );
+}
 
+#[test]
+fn cli_cache_prune_resolves_without_repository_configuration() {
     let request = parse(&[
         "cache",
         "prune",
@@ -1015,22 +1032,32 @@ fn cli_cache_commands_resolve_without_repository_configuration() {
         "--dry-run",
     ])
     .app_request();
-    let AppRequest::CachePrune(request) = request else {
+    let AppRequest::CachePruneV2(request) = request else {
         panic!("expected cache prune request");
     };
-    assert_eq!(request.older_than_days, Some(30));
-    assert_eq!(request.max_total_bytes, Some(1_048_576));
-    assert!(request.remove_missing_roots);
-    assert!(request.dry_run);
-    assert!(!request.yes);
+    assert_eq!(request.request.older_than_days, Some(30));
+    assert_eq!(request.request.max_total_bytes, Some(1_048_576));
+    assert!(request.request.remove_missing_roots);
+    assert!(request.request.dry_run);
+    assert!(!request.request.yes);
+    assert!(!request.incompatible_with_current);
 
-    let AppRequest::CachePrune(zero_budget) =
+    let AppRequest::CachePruneV2(zero_budget) =
         parse(&["cache", "prune", "--max-total-bytes", "0", "--dry-run"])
             .app_request()
     else {
         panic!("expected zero-budget cache prune request");
     };
-    assert_eq!(zero_budget.max_total_bytes, Some(0));
+    assert_eq!(zero_budget.request.max_total_bytes, Some(0));
+
+    let AppRequest::CachePruneV2(incompatible) =
+        parse(&["cache", "prune", "--incompatible-with-current"]).app_request()
+    else {
+        panic!("expected incompatible cache prune request");
+    };
+    assert!(incompatible.incompatible_with_current);
+    assert!(incompatible.request.dry_run);
+    assert!(!incompatible.request.yes);
 }
 
 #[test]
