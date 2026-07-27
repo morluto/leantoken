@@ -13,6 +13,11 @@ use leantoken::{
 };
 use serde::{Deserialize, Serialize};
 
+const HISTORY_LANE_MAX_COMMITS: usize = 256;
+const HISTORY_LANE_MAX_OUTPUT_LINES: usize = 4_096;
+const HISTORY_LANE_MAX_LINE_BYTES: usize = 32 * 1024;
+const HISTORY_LANE_MAX_PATHS: usize = 4;
+
 #[derive(Debug, Parser)]
 #[command(about = "Run a pinned LeanToken context-retrieval benchmark")]
 struct Args {
@@ -37,6 +42,9 @@ struct Args {
     /// Derive typed workflow evidence from each JSON task prompt.
     #[arg(long)]
     workflow_evidence: bool,
+    /// Add a bounded Git-history path lane derived from workflow-evidence symbols.
+    #[arg(long, requires = "workflow_evidence")]
+    history_lane: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,6 +179,7 @@ struct Report {
     candidate_runtime_tree_verified: Option<bool>,
     diagnostic_only: bool,
     workflow_evidence_enabled: bool,
+    history_lane_enabled: bool,
     host_os: &'static str,
     host_arch: &'static str,
     rustc_version: String,
@@ -261,6 +270,7 @@ struct TaskReport {
     task_shapes: Vec<String>,
     token_budget: usize,
     workflow_evidence: WorkflowEvidenceCounts,
+    history_lane: HistoryLaneReport,
     relevant_files: Vec<String>,
     returned_files: Vec<String>,
     returned_evidence: Vec<EvidenceSummary>,
@@ -309,6 +319,23 @@ struct WorkflowEvidenceCounts {
     paths: usize,
     test_intents: usize,
     total_bytes: usize,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct HistoryLaneReport {
+    enabled: bool,
+    available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unavailable_reason: Option<&'static str>,
+    revision: String,
+    symbols: usize,
+    subprocesses: usize,
+    commits_examined: usize,
+    commit_window_complete: bool,
+    matching_commits: usize,
+    output_truncated: bool,
+    candidate_paths: Vec<String>,
+    relevant_candidate_paths: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -402,6 +429,14 @@ struct ScriptedBaseline<'a> {
     reads: &'a [BaselineRead<'a>],
 }
 
+struct RunTaskOptions<'a> {
+    rg_max_lines_per_query: usize,
+    concept_labels: Option<&'a ConceptTaskLabels>,
+    workflow_evidence_enabled: bool,
+    history_lane_enabled: bool,
+    base_revision: &'a str,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
@@ -452,6 +487,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 "harness_worktree_dirty": harness_worktree_dirty,
                 "candidate_runtime_tree_verified": candidate_runtime_tree_verified,
                 "diagnostic_only": args.consumed_diagnostic,
+                "workflow_evidence_enabled": args.workflow_evidence,
+                "history_lane_enabled": args.history_lane,
                 "concept_labels_blake3": concept_labels.as_ref().map(|labels| &labels.blake3),
                 "concept_count": concept_labels.as_ref().map(|labels| {
                     labels.tasks.values().map(|task| task.concepts.len()).sum::<usize>()
@@ -487,9 +524,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 &root,
                 &services,
                 task,
-                manifest.rg_max_lines_per_query,
-                labels.as_ref(),
-                args.workflow_evidence,
+                RunTaskOptions {
+                    rg_max_lines_per_query: manifest.rg_max_lines_per_query,
+                    concept_labels: labels.as_ref(),
+                    workflow_evidence_enabled: args.workflow_evidence,
+                    history_lane_enabled: args.history_lane,
+                    base_revision: &corpus.base_revision,
+                },
             )
             .await?;
             accumulate(&mut aggregate, &report);
@@ -573,6 +614,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         candidate_runtime_tree_verified,
         diagnostic_only: args.consumed_diagnostic,
         workflow_evidence_enabled: args.workflow_evidence,
+        history_lane_enabled: args.history_lane,
         host_os: std::env::consts::OS,
         host_arch: std::env::consts::ARCH,
         rustc_version: command_version("rustc")?,
@@ -594,6 +636,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             &manifest.dataset_kind,
             args.consumed_diagnostic,
             args.concept_labels.is_some(),
+            args.history_lane,
         ),
     };
     let json = serde_json::to_string_pretty(&report)?;
@@ -1097,6 +1140,7 @@ fn benchmark_limitations(
     dataset_kind: &str,
     consumed_diagnostic: bool,
     concept_labels: bool,
+    history_lane: bool,
 ) -> Vec<&'static str> {
     let mut limitations = vec![
         "The oracle baseline assumes perfect file selection and reads whole files rather than exact decisive ranges.",
@@ -1147,6 +1191,14 @@ fn benchmark_limitations(
         );
         limitations.push(
             "The concept overlay partitions labels from a consumed development set. Its thresholds are regression floors, not promotion or generalization evidence.",
+        );
+    }
+    if history_lane {
+        limitations.push(
+            "The Git-history lane examines at most 256 pinned ancestors and four current paths; absence is not evidence that history has no useful path.",
+        );
+        limitations.push(
+            "Pickaxe path matches are a retrieval proxy, not proof that historical changes explain the current failure.",
         );
     }
     limitations
@@ -1296,13 +1348,206 @@ fn workflow_evidence_counts(evidence: &WorkflowEvidence) -> WorkflowEvidenceCoun
     }
 }
 
+#[derive(Debug, Default)]
+struct HistoryPathStats {
+    matching_commits: usize,
+    first_seen: usize,
+}
+
+struct BoundedGitLines {
+    lines: Vec<String>,
+    truncated: bool,
+}
+
+fn discover_history_lane(
+    root: &Path,
+    revision: &str,
+    symbols: &[String],
+) -> Result<HistoryLaneReport, Box<dyn Error>> {
+    let mut report = HistoryLaneReport {
+        enabled: true,
+        revision: revision.to_owned(),
+        symbols: symbols.len(),
+        ..HistoryLaneReport::default()
+    };
+    if symbols.is_empty() {
+        report.unavailable_reason = Some("no_workflow_symbols");
+        return Ok(report);
+    }
+    let commits_output = Command::new("git")
+        .args([
+            "rev-list",
+            &format!("--max-count={HISTORY_LANE_MAX_COMMITS}"),
+            revision,
+        ])
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .current_dir(root)
+        .output()?;
+    report.subprocesses += 1;
+    if !commits_output.status.success() {
+        return Err(format!(
+            "git rev-list failed in {}: {}",
+            root.display(),
+            String::from_utf8_lossy(&commits_output.stderr).trim()
+        )
+        .into());
+    }
+    let commits = String::from_utf8(commits_output.stdout)?
+        .lines()
+        .map(str::trim)
+        .filter(|commit| !commit.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if commits.len() > HISTORY_LANE_MAX_COMMITS
+        || commits.iter().any(|commit| {
+            commit.len() != 40 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+    {
+        return Err("git rev-list returned an invalid bounded commit set".into());
+    }
+    report.commits_examined = commits.len();
+    report.commit_window_complete = commits.len() < HISTORY_LANE_MAX_COMMITS;
+    if commits.is_empty() {
+        report.available = true;
+        return Ok(report);
+    }
+
+    let regex = symbols
+        .iter()
+        .map(|symbol| escape_posix_extended(symbol))
+        .collect::<Vec<_>>()
+        .join("|");
+    let mut args = vec![
+        "-c".to_owned(),
+        "core.quotePath=false".to_owned(),
+        "log".to_owned(),
+        "--no-walk=unsorted".to_owned(),
+        "--extended-regexp".to_owned(),
+        "--format=__LEANTOKEN_HISTORY_COMMIT__%H".to_owned(),
+        "--name-only".to_owned(),
+        "-G".to_owned(),
+        regex,
+    ];
+    args.extend(commits);
+    let output = match run_git_lines_bounded(root, &args) {
+        Ok(output) => output,
+        Err(error)
+            if error.to_string().contains("promisor remote")
+                || error.to_string().contains("lazy fetching disabled") =>
+        {
+            report.subprocesses += 1;
+            report.unavailable_reason = Some("history_objects_unavailable_without_lazy_fetch");
+            return Ok(report);
+        }
+        Err(error) => return Err(error),
+    };
+    report.subprocesses += 1;
+    report.available = true;
+    report.output_truncated = output.truncated;
+
+    let mut paths = BTreeMap::<String, HistoryPathStats>::new();
+    let mut matching_commit = None;
+    let mut order = 0usize;
+    for line in output.lines {
+        if let Some(commit) = line.strip_prefix("__LEANTOKEN_HISTORY_COMMIT__") {
+            if commit.len() == 40 && commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                report.matching_commits += 1;
+                matching_commit = Some(commit.to_owned());
+            } else {
+                matching_commit = None;
+            }
+            continue;
+        }
+        if line.is_empty() || matching_commit.is_none() || validate_benchmark_path(&line).is_err() {
+            continue;
+        }
+        if !root.join(&line).is_file() {
+            continue;
+        }
+        let entry = paths.entry(line).or_insert_with(|| HistoryPathStats {
+            matching_commits: 0,
+            first_seen: order,
+        });
+        entry.matching_commits = entry.matching_commits.saturating_add(1);
+        order = order.saturating_add(1);
+    }
+    let mut ranked = paths.into_iter().collect::<Vec<_>>();
+    ranked.sort_by(|(left_path, left), (right_path, right)| {
+        right
+            .matching_commits
+            .cmp(&left.matching_commits)
+            .then_with(|| left.first_seen.cmp(&right.first_seen))
+            .then_with(|| left_path.cmp(right_path))
+    });
+    report.candidate_paths = ranked
+        .into_iter()
+        .take(HISTORY_LANE_MAX_PATHS)
+        .map(|(path, _)| path)
+        .collect();
+    Ok(report)
+}
+
+fn escape_posix_extended(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if matches!(
+            character,
+            '.' | '[' | ']' | '\\' | '*' | '^' | '$' | '+' | '?' | '{' | '}' | '|' | '(' | ')'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
+}
+
+fn run_git_lines_bounded(root: &Path, args: &[String]) -> Result<BoundedGitLines, Box<dyn Error>> {
+    let mut child = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("git history stdout unavailable")?;
+    let mut reader = BufReader::new(stdout);
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    let mut truncated = false;
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            break;
+        }
+        if lines.len() == HISTORY_LANE_MAX_OUTPUT_LINES || line.len() > HISTORY_LANE_MAX_LINE_BYTES
+        {
+            truncated = true;
+            let _ = child.kill();
+            break;
+        }
+        lines.push(line.trim_end_matches(['\r', '\n']).to_owned());
+    }
+    drop(reader);
+    let output = child.wait_with_output()?;
+    if !truncated && !output.status.success() {
+        return Err(format!(
+            "git history pickaxe failed in {}: {}",
+            root.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into());
+    }
+    Ok(BoundedGitLines { lines, truncated })
+}
+
 async fn run_task(
     root: &Path,
     services: &Services,
     task: TaskSpec,
-    rg_max_lines_per_query: usize,
-    concept_labels: Option<&ConceptTaskLabels>,
-    workflow_evidence_enabled: bool,
+    options: RunTaskOptions<'_>,
 ) -> Result<TaskReport, Box<dyn Error>> {
     let relevant_paths = task
         .relevant_files
@@ -1325,7 +1570,7 @@ async fn run_task(
     let rg_results = task
         .rg_queries
         .iter()
-        .map(|query| run_rg(root, query, rg_max_lines_per_query))
+        .map(|query| run_rg(root, query, options.rg_max_lines_per_query))
         .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
     let rg_discovery_tokens = rg_results
         .iter()
@@ -1337,7 +1582,7 @@ async fn run_task(
         reads: &reads,
     })?;
 
-    let request = ContextRequest {
+    let mut request = ContextRequest {
         task: task.prompt.clone(),
         token_budget: task.token_budget,
         include_paths: Vec::new(),
@@ -1358,17 +1603,32 @@ async fn run_task(
         strict_changed_paths: false,
         verbose_diagnostics: false,
     };
-    let workflow_evidence = if workflow_evidence_enabled {
+    let workflow_evidence = if options.workflow_evidence_enabled {
         workflow_evidence_from_json_prompt(&task.prompt)?
     } else {
         WorkflowEvidence::default()
     };
     let workflow_evidence_counts = workflow_evidence_counts(&workflow_evidence);
+    let mut history_lane = if options.history_lane_enabled {
+        discover_history_lane(root, options.base_revision, &workflow_evidence.symbols)?
+    } else {
+        HistoryLaneReport::default()
+    };
+    history_lane.relevant_candidate_paths = history_lane
+        .candidate_paths
+        .iter()
+        .filter(|path| relevant_paths.contains(*path))
+        .count();
+    if !history_lane.candidate_paths.is_empty() {
+        request.focus_paths = history_lane.candidate_paths.clone();
+        request.minimum_fragments_per_focus_path = Some(1);
+    }
     let started = Instant::now();
     let evaluation = services
         .context_evaluation_with_workflow_evidence(request.clone(), workflow_evidence.clone())
         .await?;
-    let concept_coverage = concept_labels
+    let concept_coverage = options
+        .concept_labels
         .map(|labels| {
             evaluate_concept_coverage(
                 labels,
@@ -1536,6 +1796,7 @@ async fn run_task(
         task_shapes: task.task_shapes,
         token_budget: task.token_budget,
         workflow_evidence: workflow_evidence_counts,
+        history_lane,
         relevant_files: task
             .relevant_files
             .into_iter()
@@ -2091,6 +2352,66 @@ mod tests {
                 .any(|value| value.contains("default_values_regression"))
         );
         assert!(workflow_evidence_counts(&evidence).total_bytes <= 32 * 1024);
+    }
+
+    #[test]
+    fn history_lane_uses_one_bounded_pickaxe_for_all_symbols() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let root = tempfile::tempdir().expect("repository");
+        let run = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(root.path())
+                .output()
+                .expect("git command");
+            assert!(
+                output.status.success(),
+                "git {}: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run(&["init"]);
+        run(&["config", "user.email", "benchmark@example.com"]);
+        run(&["config", "user.name", "Benchmark"]);
+        fs::create_dir(root.path().join("src")).expect("src");
+        fs::write(
+            root.path().join("src/owner.rs"),
+            "fn default_values_if() {}\n",
+        )
+        .expect("owner");
+        run(&["add", "."]);
+        run(&["commit", "-m", "add owner"]);
+        fs::write(
+            root.path().join("src/owner.rs"),
+            "pub fn default_values_if() {}\n",
+        )
+        .expect("modify owner");
+        run(&["add", "."]);
+        run(&["commit", "-m", "update owner"]);
+        let revision = git_output(root.path(), &["rev-parse", "HEAD"])
+            .expect("revision")
+            .trim()
+            .to_owned();
+
+        let report = discover_history_lane(
+            root.path(),
+            &revision,
+            &["default_values_if".into(), "Parser::parse".into()],
+        )
+        .expect("history lane");
+
+        assert_eq!(report.subprocesses, 2);
+        assert!(report.available);
+        assert_eq!(report.commits_examined, 2);
+        assert!(report.commit_window_complete);
+        assert!(!report.output_truncated);
+        assert_eq!(
+            report.candidate_paths.first().map(String::as_str),
+            Some("src/owner.rs")
+        );
     }
 
     fn context_response(receipt_id: &str) -> ContextResponse {

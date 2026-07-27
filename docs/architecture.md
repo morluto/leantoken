@@ -412,6 +412,7 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | Batched history Git subprocesses | At most 7, independent of target count |
 | Offline context-utilization artifacts | 64 MiB each, 100,000 trace calls, 100,000 trajectory events |
 | Offline context-utilization evidence | 100,000 total ranges and hash inputs, 10,000 ranges per repository-generation/path, 1,000 context calls/ranges, 256 relevance paths, 4 KiB per path |
+| Experimental Git-history lane | 256 pinned ancestors, 2 Git subprocesses, 4,096 output lines, 32 KiB per line, 4 current paths |
 
 Focus quotas do not depend on global per-query top-N channels. During the
 existing 512-row paged constraint scan, context counts every indexed focus
@@ -437,6 +438,15 @@ keeps relevance-path proxies, explicit later hash inputs, receipt follow-ups,
 exact/overlap rereads, missing token attribution, and absence of an observable
 downstream signal as separate fields. None is relabeled as model reasoning or a
 causal utilization score.
+
+The benchmark-only Git-history lane first freezes at most 256 ancestors, then
+submits the complete commit set and one merged workflow-symbol regex to one
+pickaxe process. It ranks at most four current files by matching-commit count
+and recency before reusing the existing context focus-minimum path. The runner
+sets `GIT_NO_LAZY_FETCH=1`: a blobless partial clone reports
+`history_objects_unavailable_without_lazy_fetch` instead of downloading history
+or treating missing objects as a complete empty result. The lane performs no
+production scan and does not change default ranking.
 
 The 12-query context planner retains up to four early domain terms and two
 high-specificity terms selected from the remainder of the complete task.
