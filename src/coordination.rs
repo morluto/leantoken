@@ -1,5 +1,5 @@
 use std::{
-    fs::{File, OpenOptions, TryLockError},
+    fs::{self, File, OpenOptions, TryLockError},
     path::{Path, PathBuf},
     sync::Arc,
     thread,
@@ -11,6 +11,44 @@ use tokio_util::sync::CancellationToken;
 use crate::{Error, Result};
 
 const LOCK_RETRY_DELAY: Duration = Duration::from_millis(25);
+pub(crate) const DEFAULT_INDEX_DATABASE_NAME: &str = "index.sqlite";
+pub(crate) const LEASE_LOCK_SUFFIX: &str = ".lease.lock";
+pub(crate) const INITIALIZATION_LOCK_SUFFIX: &str = ".init.lock";
+pub(crate) const LEADERSHIP_LOCK_SUFFIX: &str = ".leader.lock";
+pub(crate) const OPERATION_LOCK_SUFFIX: &str = ".index.lock";
+pub(crate) const COORDINATION_LOCK_SUFFIXES: [&str; 4] = [
+    LEASE_LOCK_SUFFIX,
+    INITIALIZATION_LOCK_SUFFIX,
+    LEADERSHIP_LOCK_SUFFIX,
+    OPERATION_LOCK_SUFFIX,
+];
+
+pub(crate) fn coordination_sidecar_path(database_path: &Path, suffix: &str) -> PathBuf {
+    let mut value = database_path.as_os_str().to_os_string();
+    value.push(suffix);
+    PathBuf::from(value)
+}
+
+pub(crate) fn is_coordination_sidecar_for_database(candidate: &Path, database_path: &Path) -> bool {
+    COORDINATION_LOCK_SUFFIXES
+        .into_iter()
+        .any(|suffix| candidate == coordination_sidecar_path(database_path, suffix))
+}
+
+/// Recognize a stale default-name lock without ignoring arbitrary user locks.
+pub(crate) fn is_recognized_stale_coordination_sidecar(candidate: &Path) -> bool {
+    let Some(name) = candidate.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let Some(suffix) = name.strip_prefix(DEFAULT_INDEX_DATABASE_NAME) else {
+        return false;
+    };
+    if !COORDINATION_LOCK_SUFFIXES.contains(&suffix) {
+        return false;
+    }
+    fs::symlink_metadata(candidate)
+        .is_ok_and(|metadata| metadata.file_type().is_file() && metadata.len() == 0)
+}
 
 /// Repository-scoped operating-system locks for index ownership and publication.
 ///
@@ -31,10 +69,13 @@ impl IndexCoordination {
     #[must_use]
     pub fn for_database(database_path: &Path) -> Self {
         Self {
-            lease_path: with_suffix(database_path, ".lease.lock"),
-            initialization_path: with_suffix(database_path, ".init.lock"),
-            leadership_path: with_suffix(database_path, ".leader.lock"),
-            operation_path: with_suffix(database_path, ".index.lock"),
+            lease_path: coordination_sidecar_path(database_path, LEASE_LOCK_SUFFIX),
+            initialization_path: coordination_sidecar_path(
+                database_path,
+                INITIALIZATION_LOCK_SUFFIX,
+            ),
+            leadership_path: coordination_sidecar_path(database_path, LEADERSHIP_LOCK_SUFFIX),
+            operation_path: coordination_sidecar_path(database_path, OPERATION_LOCK_SUFFIX),
         }
     }
 
@@ -203,17 +244,36 @@ fn open_lock_file(path: &Path) -> Result<File> {
         .map_err(Into::into)
 }
 
-fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
-    let mut value = path.as_os_str().to_os_string();
-    value.push(suffix);
-    PathBuf::from(value)
-}
-
 #[cfg(test)]
 mod tests {
     use std::io;
 
     use super::*;
+
+    #[test]
+    fn stale_sidecar_recognition_is_exact_and_requires_a_zero_byte_regular_file() {
+        let directory = tempfile::tempdir().expect("directory");
+        for suffix in COORDINATION_LOCK_SUFFIXES {
+            let path = directory
+                .path()
+                .join(format!("{DEFAULT_INDEX_DATABASE_NAME}{suffix}"));
+            fs::write(&path, []).expect("zero-byte sidecar");
+            assert!(is_recognized_stale_coordination_sidecar(&path));
+        }
+
+        let nonzero = directory.path().join("index.sqlite.lease.lock");
+        fs::write(&nonzero, "user data").expect("non-zero same-name file");
+        assert!(!is_recognized_stale_coordination_sidecar(&nonzero));
+
+        let arbitrary = directory.path().join("project.lock");
+        fs::write(&arbitrary, []).expect("arbitrary lock");
+        assert!(!is_recognized_stale_coordination_sidecar(&arbitrary));
+
+        let directory_match = directory.path().join("index.sqlite.init.lock");
+        fs::remove_file(&directory_match).expect("replace sidecar");
+        fs::create_dir(&directory_match).expect("same-name directory");
+        assert!(!is_recognized_stale_coordination_sidecar(&directory_match));
+    }
 
     #[test]
     fn leadership_is_exclusive_and_released_with_the_guard() {

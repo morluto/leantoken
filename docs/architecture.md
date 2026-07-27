@@ -213,6 +213,16 @@ while proving the 50,000-directory registration bound. The admission walk runs
 as cancellable blocking work; entry overflow, cancellation, or traversal error
 selects periodic polling instead of delaying the async runtime.
 
+Configured SQLite databases and their four coordination lock sidecars are always
+excluded from repository membership. Old unconfigured coordination sidecars are
+excluded only when they are zero-byte regular files named exactly
+`index.sqlite.{lease,init,leader,index}.lock`; arbitrary `.lock` files and
+non-empty same-name files remain indexable. Full discovery, visibility
+fallbacks, and targeted watcher reconciliation use the same predicate, and a
+targeted event removes a previously indexed file when it becomes a recognized
+sidecar. Recognition adds no independent filesystem walk and performs metadata
+inspection only after the exact filename shape matches.
+
 Canonical filesystem roots, the current user's home directory, and ancestors of
 that home directory are rejected before cache or watcher initialization unless
 the caller explicitly opts into broad-root indexing. MCP performs this check
