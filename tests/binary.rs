@@ -9,6 +9,15 @@ use assert_cmd::Command;
 use clap::Parser;
 use wait_timeout::ChildExt;
 
+fn assert_runtime_version(value: &serde_json::Value) {
+    let version = value.as_str().expect("runtime version string");
+    let fingerprint = version
+        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+schema."))
+        .expect("runtime version carries the current package version and schema fingerprint");
+    assert_eq!(fingerprint.len(), 32);
+    assert!(fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()));
+}
+
 #[test]
 fn cli_indexes_statuses_and_searches_as_json() {
     let root = tempfile::tempdir().expect("temporary repository");
@@ -457,15 +466,6 @@ fn cli_index_limit_error_is_structured_and_does_not_publish_partial_files() {
     assert_eq!(database_state(&database).map(|state| state.1), Some(0));
 }
 
-fn assert_schema_qualified_version(version: &serde_json::Value) {
-    let version = version.as_str().expect("server version is a string");
-    let fingerprint = version
-        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+schema."))
-        .expect("server version includes the package version and schema fingerprint");
-    assert_eq!(fingerprint.len(), 32);
-    assert!(fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()));
-}
-
 const EXPECTED_INDEX_CONTENT_VERSION: u64 = 13;
 
 #[test]
@@ -481,7 +481,7 @@ fn doctor_verifies_identity_catalog_and_first_retrieval() {
     let report = run(root.path(), &database, &["doctor"]);
     assert_eq!(report["status"], "ready");
     assert_eq!(report["server_name"], "leantoken");
-    assert_schema_qualified_version(&report["server_version"]);
+    assert_runtime_version(&report["server_version"]);
     assert_eq!(
         report["index_content_version"],
         EXPECTED_INDEX_CONTENT_VERSION
@@ -701,7 +701,7 @@ fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
 
     let initialize = process.initialize();
     assert_eq!(initialize["result"]["serverInfo"]["name"], "leantoken");
-    assert_schema_qualified_version(&initialize["result"]["serverInfo"]["version"]);
+    assert_runtime_version(&initialize["result"]["serverInfo"]["version"]);
     assert!(
         initialize["result"]["instructions"]
             .as_str()

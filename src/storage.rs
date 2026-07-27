@@ -785,6 +785,7 @@ pub(crate) struct TokenSavingsObservation<'a> {
     pub baseline_source_tokens: Option<usize>,
     pub meta: &'a ResponseMeta,
     pub classification: TokenSavingsRequestClass,
+    pub expected_hash_not_modified: bool,
     pub expected_hash_suppressed_source_tokens: usize,
 }
 
@@ -1853,8 +1854,15 @@ impl Storage {
             baseline_source_tokens,
             meta,
             classification,
+            expected_hash_not_modified,
             expected_hash_suppressed_source_tokens,
         } = observation;
+        if expected_hash_not_modified && classification != TokenSavingsRequestClass::HashSuppressed
+        {
+            return Err(Error::InternalFailure(
+                "expected-hash suppression requires hash-suppressed classification".into(),
+            ));
+        }
         let response_baseline_requests = i64::from(baseline_source_tokens.is_some());
         let response_baseline_source_tokens = usize_to_i64(baseline_source_tokens.unwrap_or(0))?;
         let response_source_tokens = usize_to_i64(meta.source_tokens)?;
@@ -1883,14 +1891,12 @@ impl Storage {
         let total_response_tokens = usize_to_i64(meta.total_response_tokens)?;
         let receipt_suppressed_exact = usize_to_i64(meta.receipt_suppressed_exact)?;
         let receipt_suppressed_overlap = usize_to_i64(meta.receipt_suppressed_overlap)?;
-        let expected_hash_not_modified_responses =
-            i64::from(classification == TokenSavingsRequestClass::HashSuppressed);
-        let expected_hash_suppressed_source_tokens =
-            if classification == TokenSavingsRequestClass::HashSuppressed {
-                usize_to_i64(expected_hash_suppressed_source_tokens)?
-            } else {
-                0
-            };
+        let expected_hash_not_modified_responses = i64::from(expected_hash_not_modified);
+        let expected_hash_suppressed_source_tokens = if expected_hash_not_modified {
+            usize_to_i64(expected_hash_suppressed_source_tokens)?
+        } else {
+            0
+        };
         let useful_requests = i64::from(classification == TokenSavingsRequestClass::Useful);
         let incomplete_requests = i64::from(classification == TokenSavingsRequestClass::Incomplete);
         let unsupported_requests =
@@ -3884,6 +3890,7 @@ mod tests {
                         baseline_source_tokens: Some(10),
                         meta: &meta,
                         classification: TokenSavingsRequestClass::Useful,
+                        expected_hash_not_modified: false,
                         expected_hash_suppressed_source_tokens: 0,
                     },
                 )
@@ -3908,6 +3915,7 @@ mod tests {
                         baseline_source_tokens: Some(10),
                         meta: &meta,
                         classification: TokenSavingsRequestClass::HashSuppressed,
+                        expected_hash_not_modified: true,
                         expected_hash_suppressed_source_tokens: 8,
                     },
                 )

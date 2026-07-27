@@ -706,8 +706,13 @@ edits. Pass `expected_hash` on rereads to suppress unchanged ranges. Exact
 line, symbol, and heading reads can opt into a repository-local bounded delta
 registry. It retains only complete targets and returns a unified diff only when
 the target coordinates still match and the complete delta is strictly cheaper
-than current content. Search and outline never invent empty successful results
-at generation zero.
+than current content. With `delta=true` and no `expected_hash`, the registry
+selects the newest compatible base for the same repository and exact target by
+reverse-scanning at most its existing 128 insertion-order keys. This adds no
+unbounded index, storage, fan-out, or concurrency. An unchanged target returns
+`not_modified`; any coordinate change fails safe to full current content.
+Ordinary reads never consult or populate the registry. Search and outline never
+invent empty successful results at generation zero.
 
 ## Concurrency design constraints
 

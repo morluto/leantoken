@@ -730,7 +730,8 @@ pub struct ReadRequest {
     /// Hash from the same prior range; matching content returns `not_modified`.
     #[serde(default)]
     pub expected_hash: Option<String>,
-    /// Record a bounded base and prefer a cheaper unified diff on a changed follow-up.
+    /// Record a bounded base and prefer a cheaper changed follow-up. Without
+    /// `expected_hash`, select the latest compatible base for this exact target.
     #[serde(default)]
     pub delta: bool,
     /// Server-managed receipt whose previously returned evidence should be suppressed.
@@ -767,7 +768,7 @@ pub struct ReadResponse {
     /// Opaque continuation bound to this repository generation and live file content.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuation_cursor: Option<String>,
-    /// Whether `expected_hash` matched this response page.
+    /// Whether an explicit or automatically selected base matched this response page.
     #[serde(default)]
     pub not_modified: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1231,7 +1232,7 @@ pub enum ReadDeltaOutcome {
     Full,
     /// A complete unified diff was returned.
     Delta,
-    /// The requested base hash already identifies the current content.
+    /// The requested or automatically selected base already identifies current content.
     NotModified,
     /// A general evidence receipt already contained the exact current content.
     ReceiptSuppressed,
@@ -1241,7 +1242,7 @@ pub enum ReadDeltaOutcome {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadDeltaFallback {
-    /// No bounded base matched the target and requested hash.
+    /// No bounded base matched the exact target and optional requested hash.
     BaseUnavailable,
     /// The resolved target or returned coordinates changed.
     TargetChanged,
@@ -1258,7 +1259,7 @@ pub enum ReadDeltaFallback {
 pub struct ReadDeltaReceipt {
     /// Stable hash of the repository and caller-selected target.
     pub target_key: String,
-    /// Requested prior content hash, when supplied.
+    /// Requested or automatically selected prior content hash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_hash: Option<String>,
     /// Hash of the complete current response page.
@@ -2549,7 +2550,7 @@ pub enum TokenSavingsRequestClass {
     Incomplete,
     /// Could not provide the requested structural retrieval contract.
     Unsupported,
-    /// Suppressed unchanged source because `expected_hash` matched.
+    /// Suppressed unchanged source because an explicit or automatic base hash matched.
     HashSuppressed,
 }
 
