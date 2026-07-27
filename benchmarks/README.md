@@ -689,6 +689,31 @@ The frozen baseline and its exact provenance are recorded in
 The paired workflow-evidence adoption decision is recorded in
 [`reports/arb-workflow-evidence-v1-2026-07-27.md`](reports/arb-workflow-evidence-v1-2026-07-27.md).
 
+## Context utilization telemetry
+
+`context_utilization` attaches to the existing model A/B `tool-trace.json` and
+`trajectory.json` artifacts. It isolates ranges returned by
+`leantoken_context`, then reports separate observable signals: final-patch or
+gold-path relevance, later explicit hash inputs, receipt-bearing follow-ups,
+exact/overlap rereads, and ranges with no downstream signal. It does not turn
+those signals into a guessed utilization percentage:
+
+```bash
+cargo run --release --example context_utilization -- \
+  --tool-trace target/model-ab/run/tool-trace.json \
+  --trajectory target/model-ab/run/trajectory.json \
+  --relevant-path src/parser.rs \
+  --outcome success \
+  --output target/model-ab/run/context-utilization.json
+```
+
+The report binds the classifier source, both input hashes, and their shared run
+identity. Relevance is an offline proxy, explicit hash input proves identity
+retention rather than reasoning, and rereads represent downstream retrieval
+pressure. An absent signal is not labeled unused evidence. Artifact bytes,
+calls, events, ranges, and relevance paths are all bounded and fail closed; the
+classifier performs no repository scan and writes no production telemetry.
+
 ## Measurements
 
 The synthetic `hot_path_bounds` report includes deterministic phase counters

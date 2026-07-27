@@ -410,6 +410,8 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | Batched history parsed symbols | 1,024 per revision endpoint (2,048 total) |
 | Batched history retained diff | 1 MiB per response page |
 | Batched history Git subprocesses | At most 7, independent of target count |
+| Offline context-utilization artifacts | 64 MiB each, 100,000 trace calls, 100,000 trajectory events |
+| Offline context-utilization evidence | 100,000 total ranges and hash inputs, 10,000 ranges per repository-generation/path, 1,000 context calls/ranges, 256 relevance paths, 4 KiB per path |
 
 Focus quotas do not depend on global per-query top-N channels. During the
 existing 512-row paged constraint scan, context counts every indexed focus
@@ -425,6 +427,16 @@ an explicit incomplete warning. Include/exclude, generated-artifact, strict
 focus, and strict changed-path policies apply before local generation, and a
 policy-empty focus scope is reported separately from a pattern that matches no
 indexed file.
+
+The offline `context_utilization` classifier consumes the existing model A/B
+`tool-trace.json` and `trajectory.json` contracts. It performs no repository or
+SQLite scan and adds no production telemetry writes. It binds matching artifact
+identities, requires strictly increasing call sequences, validates every
+repository-relative range, and fails above the bounds in the table. The report
+keeps relevance-path proxies, explicit later hash inputs, receipt follow-ups,
+exact/overlap rereads, missing token attribution, and absence of an observable
+downstream signal as separate fields. None is relabeled as model reasoning or a
+causal utilization score.
 
 The 12-query context planner retains up to four early domain terms and two
 high-specificity terms selected from the remainder of the complete task.
