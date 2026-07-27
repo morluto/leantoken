@@ -451,6 +451,17 @@ they return a typed limit error instead of manufacturing a cursor that could
 skip omitted evidence. Fixed-shape JSON projections use the same fail-loud
 rule; shallow schema degradation remains owned by the JSON projection stage.
 
+MCP JSON keys use depth-then-pointer order and an optional maximum depth of 64;
+root depth is zero and array elements share one wildcard path. Version-two keys
+cursors bind this traversal shape, while the public Rust service keeps its
+legacy pointer ordering and version-one cursor contract. Schema fitting builds
+at most 10,000 in-memory nodes per projection and performs at most 16
+deterministic breadth-first materializations (the item-limited candidate, root,
+and logarithmic token fitting). Incomplete schema metadata returns at most 32
+sorted omission-frontier pointers plus the exact frontier count. These passes
+operate on the already byte-bounded parsed JSON value and perform no filesystem
+rescan.
+
 When an explicitly response-bounded `read` page does not initially fit, the
 service binary-searches the existing source-token ceiling and rematerializes at
 most 18 bounded live pages inside the same SQLite generation. Each probe keeps

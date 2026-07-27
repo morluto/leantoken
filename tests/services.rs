@@ -8532,6 +8532,129 @@ async fn json_keys_paginate_by_item_and_token_limits_with_exact_diagnostics() {
 }
 
 #[tokio::test]
+async fn json_schema_degrades_breadth_first_under_token_limits() {
+    let root = tempfile::tempdir().expect("root");
+    let mut deep = serde_json::json!(true);
+    for index in (0..80).rev() {
+        deep = serde_json::json!({format!("level_{index:02}"): deep});
+    }
+    let mut fixture = serde_json::Map::new();
+    fixture.insert("deep".into(), deep);
+    fixture.insert("empty_array".into(), serde_json::json!([]));
+    fixture.insert("empty_object".into(), serde_json::json!({}));
+    fixture.insert(
+        "gate".into(),
+        serde_json::json!({"enabled": true, "mode": "strict"}),
+    );
+    for index in 0..16 {
+        fixture.insert(format!("top_{index:02}"), serde_json::json!(index));
+    }
+    std::fs::write(
+        root.path().join("wide.json"),
+        serde_json::to_vec(&serde_json::Value::Object(fixture)).expect("serialize fixture"),
+    )
+    .expect("write fixture");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    let operation = JsonOperation::Query {
+        path: "wide.json".into(),
+        selector: None,
+        projection: JsonProjection::Schema,
+    };
+
+    let full = services
+        .json(JsonRequest {
+            operation: operation.clone(),
+            max_tokens: Some(32_000),
+            max_items: Some(10_000),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("complete schema");
+    assert!(full.result_complete);
+    assert!(
+        full.value
+            .as_ref()
+            .expect("complete schema value")
+            .get("x-leantoken-incomplete")
+            .is_none()
+    );
+    let partial_limit = full.meta.source_tokens.saturating_sub(1).max(1);
+    let partial = services
+        .json(JsonRequest {
+            operation,
+            max_tokens: Some(partial_limit),
+            max_items: Some(10_000),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("token-bounded schema");
+
+    assert!(!partial.result_complete);
+    assert_eq!(
+        partial.incomplete_reason,
+        Some(JsonIncompleteReason::MaxTokens)
+    );
+    assert!(partial.meta.source_tokens <= partial_limit);
+    assert!(partial.meta.next_cursor.is_none());
+    assert!(
+        partial
+            .remaining_items
+            .is_some_and(|remaining| remaining > 0)
+    );
+    let partial_value = partial.value.as_ref().expect("partial schema value");
+    let properties = partial_value["properties"]
+        .as_object()
+        .expect("partial top-level properties");
+    for key in [
+        "deep",
+        "empty_array",
+        "empty_object",
+        "gate",
+        "top_00",
+        "top_15",
+    ] {
+        assert!(properties.contains_key(key), "missing shallow key {key}");
+    }
+    assert!(
+        partial_value["x-leantoken-incomplete"]["omitted_subtree_count"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
+    );
+    assert!(
+        partial_value["x-leantoken-incomplete"]["omitted_subtree_pointers"]
+            .as_array()
+            .is_some_and(|pointers| !pointers.is_empty())
+    );
+    assert_response_token_accounting!(partial, Tokenizer::default());
+
+    let exact = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "wide.json".into(),
+                selector: Some(JsonSelector::Pointer {
+                    pointer: "/gate".into(),
+                }),
+                projection: JsonProjection::Schema,
+            },
+            max_tokens: Some(100),
+            max_items: Some(100),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("exact selector schema");
+    assert!(exact.result_complete);
+    assert_eq!(
+        exact.value.as_ref().expect("exact schema")["properties"]["enabled"]["type"],
+        "boolean"
+    );
+}
+
+#[tokio::test]
 async fn json_cursors_and_incomplete_results_fail_loud_with_typed_diagnostics() {
     let root = tempfile::tempdir().expect("root");
     let path = root.path().join("report.json");

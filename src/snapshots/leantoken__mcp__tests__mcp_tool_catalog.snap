@@ -737,7 +737,7 @@ expression: tools
   },
   {
     "name": "json",
-    "description": "Query, summarize, or compare bounded live JSON without indexing raw artifacts. Select with RFC 6901 JSON Pointer or standard JMESPath; use collapsed, keys, or schema projections for large arrays and objects, numeric_summary for count/min/median/p95/max, and diff_fields for selected values across two files. Incomplete keys projections return exact item counts and meta.next_cursor; repeat the same query with cursor to continue. Example: {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"artifacts/results.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"runs[].score\"}}}.",
+    "description": "Query, summarize, or compare bounded live JSON without indexing raw artifacts. Select with RFC 6901 JSON Pointer or standard JMESPath; use collapsed, keys, or schema projections for large arrays and objects, numeric_summary for count/min/median/p95/max, and diff_fields for selected values across two files. Keys can be bounded by depth (root is zero) and paginate in depth-then-pointer order; incomplete schemas return a breadth-first shape with explicit omission metadata. Repeat an incomplete keys query with its cursor. Example: {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"artifacts/results.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"runs[].score\"}}}.",
     "inputSchema": {
       "$defs": {
         "JsonMcpOperation": {
@@ -936,6 +936,17 @@ expression: tools
           "maxLength": 256,
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "depth": {
+          "default": null,
+          "description": "Maximum keys traversal depth relative to the selected root (root is zero).",
+          "format": "uint",
+          "maximum": 64,
+          "minimum": 0,
+          "type": [
+            "integer",
             "null"
           ]
         },
