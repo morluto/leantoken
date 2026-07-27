@@ -322,6 +322,25 @@ exact MCP wire proxy are documented in [`measurement.md`](measurement.md).
 The same guide documents the synthetic indexing and file-read profile used to
 gate targeted reconciliation and any future hot-file cache.
 
+On Linux, reproduce the stdio MCP ownership and resource profile after building
+the product binary in release mode:
+
+```bash
+cargo build --release
+cargo run --release --example mcp_multiprocess_profile -- \
+  --binary target/release/leantoken \
+  --process-counts 1,2,4 \
+  --files 200 \
+  --functions-per-file 40 \
+  --warm-iterations 10 \
+  --output benchmarks/reports/mcp-multiprocess-resource-v1-2026-07-27.json
+```
+
+The example rejects more than 16 processes, 10,000 fixture files, 1,000
+functions per file, 1,000 warm rounds, or a timeout above 300 seconds. It
+requires Linux `/proc`; the raw artifact and interpretation are linked from the
+benchmark guide.
+
 Run the deterministic semantic change receipt gate in release mode:
 
 ```bash

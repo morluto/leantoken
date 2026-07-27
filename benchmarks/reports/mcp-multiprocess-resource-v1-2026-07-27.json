@@ -1,0 +1,356 @@
+{
+  "schema_version": 1,
+  "generated_at_unix_seconds": 1785138602,
+  "platform": "linux-procfs",
+  "kernel_release": "6.1.0-50-cloud-amd64",
+  "logical_cpus": 8,
+  "binary": "/home/yann/yann/leantoken/target/release/leantoken",
+  "binary_blake3": "7c46cb8aa47f3202b03eba1b8a575ce251d2d3348e633604b617089213dfa79c",
+  "fixture_files": 200,
+  "functions_per_file": 40,
+  "warm_iterations_per_process": 10,
+  "thresholds": {
+    "max_incremental_rss_mib_per_follower": 128.0,
+    "max_startup_p95_ratio": 3.0,
+    "max_warm_p95_ratio": 3.0,
+    "max_normalized_wal_bytes_per_query_ratio": 3.0,
+    "max_established_read_connections_per_process": 8,
+    "max_takeover_ms": 5000.0
+  },
+  "runs": [
+    {
+      "process_count": 1,
+      "leader_pid": 3420112,
+      "leader_lock_owners": 1,
+      "watcher_processes": 1,
+      "aggregate_rss_kib": 48404,
+      "aggregate_peak_rss_kib": 48404,
+      "aggregate_threads": 17,
+      "aggregate_file_descriptors": 27,
+      "aggregate_estimated_read_connections": 8,
+      "startup_to_ready": {
+        "samples": 1,
+        "p50_ms": 423.70005199999997,
+        "p95_ms": 423.70005199999997,
+        "max_ms": 423.70005199999997
+      },
+      "cold_query": {
+        "samples": 1,
+        "p50_ms": 6.01469,
+        "p95_ms": 6.01469,
+        "max_ms": 6.01469
+      },
+      "warm_query": {
+        "samples": 10,
+        "p50_ms": 5.156389000000001,
+        "p95_ms": 6.60679895,
+        "max_ms": 6.812857999999999
+      },
+      "storage_before_queries": {
+        "repository_generation": 1,
+        "response_accounting_updates": 1,
+        "tracked_baseline_requests": 0,
+        "database_bytes": 4096,
+        "wal_bytes": 2476152,
+        "shm_bytes": 32768
+      },
+      "storage_after_queries": {
+        "repository_generation": 1,
+        "response_accounting_updates": 12,
+        "tracked_baseline_requests": 0,
+        "database_bytes": 4096,
+        "wal_bytes": 2521472,
+        "shm_bytes": 32768
+      },
+      "generation_publications": 1,
+      "expected_response_accounting_updates": 11,
+      "observed_response_accounting_updates": 11,
+      "processes": [
+        {
+          "resources": {
+            "pid": 3420112,
+            "role": "leader",
+            "rss_kib": 48404,
+            "peak_rss_kib": 48404,
+            "threads": 17,
+            "file_descriptors": 27,
+            "database_file_descriptors": 9,
+            "sqlite_artifact_file_descriptors": 12,
+            "estimated_established_read_connections": 8,
+            "inotify_file_descriptors": 1
+          },
+          "startup_to_ready_ms": 423.70005199999997,
+          "cold_query_ms": 6.01469,
+          "warm_query": {
+            "samples": 10,
+            "p50_ms": 5.156389000000001,
+            "p95_ms": 6.60679895,
+            "max_ms": 6.812857999999999
+          }
+        }
+      ],
+      "takeover": null
+    },
+    {
+      "process_count": 2,
+      "leader_pid": 3420149,
+      "leader_lock_owners": 1,
+      "watcher_processes": 1,
+      "aggregate_rss_kib": 86864,
+      "aggregate_peak_rss_kib": 86884,
+      "aggregate_threads": 31,
+      "aggregate_file_descriptors": 50,
+      "aggregate_estimated_read_connections": 16,
+      "startup_to_ready": {
+        "samples": 2,
+        "p50_ms": 535.973555,
+        "p95_ms": 539.018534,
+        "max_ms": 539.356865
+      },
+      "cold_query": {
+        "samples": 2,
+        "p50_ms": 5.1347045,
+        "p95_ms": 6.54988655,
+        "max_ms": 6.707129
+      },
+      "warm_query": {
+        "samples": 20,
+        "p50_ms": 5.425914000000001,
+        "p95_ms": 6.2327935000000005,
+        "max_ms": 7.070779
+      },
+      "storage_before_queries": {
+        "repository_generation": 1,
+        "response_accounting_updates": 2,
+        "tracked_baseline_requests": 0,
+        "database_bytes": 4096,
+        "wal_bytes": 2472032,
+        "shm_bytes": 32768
+      },
+      "storage_after_queries": {
+        "repository_generation": 1,
+        "response_accounting_updates": 13,
+        "tracked_baseline_requests": 0,
+        "database_bytes": 4096,
+        "wal_bytes": 2517352,
+        "shm_bytes": 32768
+      },
+      "generation_publications": 1,
+      "expected_response_accounting_updates": 22,
+      "observed_response_accounting_updates": 11,
+      "processes": [
+        {
+          "resources": {
+            "pid": 3420147,
+            "role": "follower",
+            "rss_kib": 39696,
+            "peak_rss_kib": 39716,
+            "threads": 15,
+            "file_descriptors": 23,
+            "database_file_descriptors": 9,
+            "sqlite_artifact_file_descriptors": 12,
+            "estimated_established_read_connections": 8,
+            "inotify_file_descriptors": 0
+          },
+          "startup_to_ready_ms": 532.590245,
+          "cold_query_ms": 3.5622800000000003,
+          "warm_query": {
+            "samples": 10,
+            "p50_ms": 5.3308195000000005,
+            "p95_ms": 6.099373,
+            "max_ms": 6.188689
+          }
+        },
+        {
+          "resources": {
+            "pid": 3420149,
+            "role": "leader",
+            "rss_kib": 47168,
+            "peak_rss_kib": 47168,
+            "threads": 16,
+            "file_descriptors": 27,
+            "database_file_descriptors": 9,
+            "sqlite_artifact_file_descriptors": 12,
+            "estimated_established_read_connections": 8,
+            "inotify_file_descriptors": 1
+          },
+          "startup_to_ready_ms": 539.356865,
+          "cold_query_ms": 6.707129,
+          "warm_query": {
+            "samples": 10,
+            "p50_ms": 5.533124,
+            "p95_ms": 6.663866049999999,
+            "max_ms": 7.070779
+          }
+        }
+      ],
+      "takeover": {
+        "killed_leader_pid": 3420149,
+        "successor_leader_pid": 3420147,
+        "takeover_ms": 299.021212,
+        "repository_generation": 2,
+        "watcher_processes_after_takeover": 1
+      }
+    },
+    {
+      "process_count": 4,
+      "leader_pid": 3420188,
+      "leader_lock_owners": 1,
+      "watcher_processes": 1,
+      "aggregate_rss_kib": 169700,
+      "aggregate_peak_rss_kib": 169700,
+      "aggregate_threads": 59,
+      "aggregate_file_descriptors": 96,
+      "aggregate_estimated_read_connections": 32,
+      "startup_to_ready": {
+        "samples": 4,
+        "p50_ms": 627.1889205,
+        "p95_ms": 711.59690075,
+        "max_ms": 725.847035
+      },
+      "cold_query": {
+        "samples": 4,
+        "p50_ms": 4.6120540000000005,
+        "p95_ms": 4.6996985,
+        "max_ms": 4.704839
+      },
+      "warm_query": {
+        "samples": 40,
+        "p50_ms": 4.333129,
+        "p95_ms": 5.954129,
+        "max_ms": 6.020159
+      },
+      "storage_before_queries": {
+        "repository_generation": 1,
+        "response_accounting_updates": 4,
+        "tracked_baseline_requests": 0,
+        "database_bytes": 4096,
+        "wal_bytes": 2480272,
+        "shm_bytes": 32768
+      },
+      "storage_after_queries": {
+        "repository_generation": 1,
+        "response_accounting_updates": 15,
+        "tracked_baseline_requests": 0,
+        "database_bytes": 4096,
+        "wal_bytes": 2525592,
+        "shm_bytes": 32768
+      },
+      "generation_publications": 1,
+      "expected_response_accounting_updates": 44,
+      "observed_response_accounting_updates": 11,
+      "processes": [
+        {
+          "resources": {
+            "pid": 3420184,
+            "role": "follower",
+            "rss_kib": 40748,
+            "peak_rss_kib": 40748,
+            "threads": 14,
+            "file_descriptors": 23,
+            "database_file_descriptors": 9,
+            "sqlite_artifact_file_descriptors": 12,
+            "estimated_established_read_connections": 8,
+            "inotify_file_descriptors": 0
+          },
+          "startup_to_ready_ms": 536.0754049999999,
+          "cold_query_ms": 4.271459,
+          "warm_query": {
+            "samples": 10,
+            "p50_ms": 2.80816,
+            "p95_ms": 5.592780949999999,
+            "max_ms": 6.020159
+          }
+        },
+        {
+          "resources": {
+            "pid": 3420186,
+            "role": "follower",
+            "rss_kib": 39136,
+            "peak_rss_kib": 39136,
+            "threads": 15,
+            "file_descriptors": 23,
+            "database_file_descriptors": 9,
+            "sqlite_artifact_file_descriptors": 12,
+            "estimated_established_read_connections": 8,
+            "inotify_file_descriptors": 0
+          },
+          "startup_to_ready_ms": 623.531701,
+          "cold_query_ms": 4.553539,
+          "warm_query": {
+            "samples": 10,
+            "p50_ms": 4.115319,
+            "p95_ms": 5.5945965,
+            "max_ms": 5.982249
+          }
+        },
+        {
+          "resources": {
+            "pid": 3420188,
+            "role": "leader",
+            "rss_kib": 47260,
+            "peak_rss_kib": 47260,
+            "threads": 16,
+            "file_descriptors": 27,
+            "database_file_descriptors": 9,
+            "sqlite_artifact_file_descriptors": 12,
+            "estimated_established_read_connections": 8,
+            "inotify_file_descriptors": 1
+          },
+          "startup_to_ready_ms": 630.8461400000001,
+          "cold_query_ms": 4.704839,
+          "warm_query": {
+            "samples": 10,
+            "p50_ms": 4.5701789999999995,
+            "p95_ms": 5.876194,
+            "max_ms": 5.952649
+          }
+        },
+        {
+          "resources": {
+            "pid": 3420190,
+            "role": "follower",
+            "rss_kib": 42556,
+            "peak_rss_kib": 42556,
+            "threads": 14,
+            "file_descriptors": 23,
+            "database_file_descriptors": 9,
+            "sqlite_artifact_file_descriptors": 12,
+            "estimated_established_read_connections": 8,
+            "inotify_file_descriptors": 0
+          },
+          "startup_to_ready_ms": 725.847035,
+          "cold_query_ms": 4.670569,
+          "warm_query": {
+            "samples": 10,
+            "p50_ms": 4.7506895,
+            "p95_ms": 5.8211034999999995,
+            "max_ms": 5.883019
+          }
+        }
+      ],
+      "takeover": {
+        "killed_leader_pid": 3420188,
+        "successor_leader_pid": 3420184,
+        "takeover_ms": 122.95917,
+        "repository_generation": 2,
+        "watcher_processes_after_takeover": 1
+      }
+    }
+  ],
+  "decision": {
+    "recommendation": "retain_stdio",
+    "reasons": [],
+    "incremental_rss_mib_per_follower": 39.484375,
+    "startup_p95_ratio": 1.6794826844864301,
+    "warm_p95_ratio": 0.9012123791053155,
+    "normalized_wal_bytes_per_query_ratio": 0.25
+  },
+  "observation_limits": [
+    "RSS, HWM, threads, file descriptors, lock ownership, and watcher ownership require Linux /proc.",
+    "Established read connections are inferred as main-database file descriptors minus the one writer connection.",
+    "SQLite does not expose cross-process statement counts; successful response-accounting updates and generation publications are reported as observed writes.",
+    "Latency is host-local wall time from one orchestrator and is comparable only on the same host and release build.",
+    "Startup readiness and concurrent-query responses are observed by one orchestrator in process order, so later processes can include bounded client-side receipt delay."
+  ]
+}
