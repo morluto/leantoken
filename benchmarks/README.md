@@ -676,6 +676,28 @@ cargo run --release --example benchmark_ablation -- \
   --candidate target/arb-workflow-evidence-candidate.json
 ```
 
+The bounded Git-history experiment uses the workflow-evidence arm as its
+baseline. It examines at most 256 already-local ancestor commits with one
+merged pickaxe query and feeds at most four current paths into context:
+
+```bash
+cargo run --release --example representative_benchmark -- \
+  --manifest target/external-corpora/arb-trace2code-smoke.json \
+  --repos-root target/arb-repos \
+  --output target/arb-history-lane-baseline.json \
+  --workflow-evidence
+cargo run --release --example representative_benchmark -- \
+  --manifest target/external-corpora/arb-trace2code-smoke.json \
+  --repos-root target/arb-repos \
+  --output target/arb-history-lane-candidate.json \
+  --workflow-evidence --history-lane
+```
+
+Lazy object fetching is disabled. Blobless checkouts therefore report an
+explicit unavailable lane rather than downloading historical blobs or claiming
+zero matches. The frozen smoke decision is recorded in
+[`reports/arb-history-lane-v1-2026-07-27.md`](reports/arb-history-lane-v1-2026-07-27.md).
+
 Each repository directory under `target/arb-repos` must match the generated
 manifest's `directory` and exact `base_revision`. The adapter preserves the
 public ARB query object verbatim as JSON, promotes only `root_cause_files` to
