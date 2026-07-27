@@ -484,13 +484,13 @@ rule; shallow schema degradation remains owned by the JSON projection stage.
 
 Batched symbol history resolves both revisions once, reads commit metadata in
 one command, performs one tree lookup per endpoint, and uses at most one
-`cat-file` batch per endpoint. Distinct blobs are parsed once and reused for all
-targets on that page. Endpoint parsing quotas are independent so a symbol-heavy
-base cannot starve head evidence. The cursor hashes resolved base/head commits
-and ordered normalized target pairings. Response fitting retains the largest
-ordered status skeleton before spending remaining capacity on diff prefixes;
-it never keeps a large early diff at the cost of otherwise representable symbol
-outcomes.
+`cat-file` batch per endpoint. Each distinct requested path is parsed once and
+reused for all targets on that page. Endpoint parsing quotas are independent so
+a symbol-heavy base cannot starve head evidence. The cursor hashes resolved
+base/head commits and ordered normalized target pairings. Response fitting
+retains the largest ordered status skeleton before spending remaining capacity
+on diff prefixes; it never keeps a large early diff at the cost of otherwise
+representable symbol outcomes.
 
 Compact response projections are explicit and never replace the default DTO.
 `files=paths` maps the already selected entry page to ordered strings and keeps

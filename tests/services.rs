@@ -8291,6 +8291,7 @@ async fn batched_symbol_history_classifies_endpoints_renames_and_request_bounds(
     assert_eq!(response.diagnostics.git_subprocesses, 7);
     assert_eq!(response.diagnostics.base_paths_requested, 1);
     assert_eq!(response.diagnostics.head_paths_requested, 2);
+    assert!(response.diagnostics.retained_diff_bytes <= 1024 * 1024);
     assert!(response.result_complete);
     assert_response_token_accounting!(response, Tokenizer::default());
 
