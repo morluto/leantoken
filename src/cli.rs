@@ -466,6 +466,8 @@ mod tests {
 }
 
 /// Parsed application request produced by the CLI.
+// Boxing the established public variants would be a source-breaking API change.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum AppRequest {
     Index {
@@ -526,6 +528,8 @@ pub enum AppRequest {
     },
 }
 
+// Clap owns this public command shape; keep it source-compatible with AppRequest.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Subcommand)]
 pub enum Commands {
     /// Index the repository.
