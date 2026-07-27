@@ -358,6 +358,8 @@ struct TaskReport {
     two_turn_context_json_tokens: usize,
     known_fragments_resent: usize,
     known_hash_omission_visible: bool,
+    known_owner_reservations_resent: usize,
+    owner_known_hash_omission_visible: bool,
     dead_end_fragments: usize,
     dead_end_source_tokens: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1125,7 +1127,6 @@ fn evaluate_concept_coverage(
     labels: &ConceptTaskLabels,
     candidates: &[ContextCandidateEvaluation],
     selected: &[ContextFragment],
-    owner_evidence: Option<&AstOwnerEvidence>,
 ) -> Result<TaskConceptCoverage, Box<dyn Error>> {
     let mut evidence = Vec::with_capacity(labels.concepts.len());
     for concept in &labels.concepts {
@@ -1146,7 +1147,7 @@ fn evaluate_concept_coverage(
                     candidate.path == anchor.path
                         && candidate.start_line <= anchor.line
                         && candidate.end_line >= anchor.line
-                }) || ast_owner_evidence_covers(owner_evidence, &anchor.path, anchor.line)
+                })
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -1157,7 +1158,7 @@ fn evaluate_concept_coverage(
                     fragment.path == anchor.path
                         && fragment.start_line <= anchor.line
                         && fragment.end_line >= anchor.line
-                }) || ast_owner_evidence_covers(owner_evidence, &anchor.path, anchor.line)
+                })
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -1197,18 +1198,6 @@ fn evaluate_concept_coverage(
         selected_concept_recall: ratio(selected_concepts_found, concepts),
         selection_retention: optional_ratio(selected_concepts_found, candidate_concepts_found),
         evidence,
-    })
-}
-
-fn ast_owner_evidence_covers(
-    owner_evidence: Option<&AstOwnerEvidence>,
-    path: &str,
-    line: usize,
-) -> bool {
-    owner_evidence.is_some_and(|evidence| {
-        evidence.report.path == path
-            && evidence.report.start_line <= line
-            && evidence.report.end_line >= line
     })
 }
 
@@ -1863,21 +1852,26 @@ fn record_ast_corroborating_hit(
     {
         return false;
     }
-    match role {
-        AstAuxiliaryTermRole::Owner => {
-            stats.owner_terms.insert(term.to_owned());
-        }
-        AstAuxiliaryTermRole::NamedArgument => {
-            stats.named_argument_terms.insert(term.to_owned());
-        }
-    }
+    let mut owner_local = false;
     if let Some(corroborating_symbol) = hit.enclosing_symbol.as_deref().or(hit.symbol.as_deref()) {
         for owner_hit in &mut stats.owner_hits {
             let range_cooccurs =
                 owner_hit.start_line <= hit.start_line && owner_hit.end_line >= hit.end_line;
             if range_cooccurs || ast_symbols_cooccur(&owner_hit.symbol, corroborating_symbol) {
                 record_ast_owner_corroboration(owner_hit, term, role);
+                owner_local = true;
             }
+        }
+    }
+    if !owner_local {
+        return false;
+    }
+    match role {
+        AstAuxiliaryTermRole::Owner => {
+            stats.owner_terms.insert(term.to_owned());
+        }
+        AstAuxiliaryTermRole::NamedArgument => {
+            stats.named_argument_terms.insert(term.to_owned());
         }
     }
     stats.corroborating_hits += 1;
@@ -1906,15 +1900,18 @@ fn corroborate_ast_owner_excerpts(
     named_argument_terms: &[String],
 ) {
     for stats in paths.values_mut() {
+        let mut owner_local_terms = BTreeSet::new();
         for owner_hit in &mut stats.owner_hits {
             for term in named_argument_terms {
                 if ast_excerpt_contains_term(&owner_hit.excerpt, term) {
                     owner_hit
                         .corroborating_named_argument_terms
                         .insert(term.clone());
+                    owner_local_terms.insert(term.clone());
                 }
             }
         }
+        stats.named_argument_terms.extend(owner_local_terms);
     }
 }
 
@@ -2061,16 +2058,24 @@ fn ast_path_matches_source_extensions(path: &str, extensions: &BTreeSet<&str>) -
 fn build_ast_owner_evidence(
     ranked: &[(String, AstPathStats)],
 ) -> Result<Option<AstOwnerEvidence>, serde_json::Error> {
-    let Some((path, stats)) = ranked.first() else {
-        return Ok(None);
-    };
-    let Some(hit) = stats.owner_hits.iter().reduce(|current, candidate| {
-        if ast_owner_hit_precedes(candidate, current) {
-            candidate
-        } else {
-            current
-        }
-    }) else {
+    let Some((path, hit)) = ranked
+        .iter()
+        .take(AST_LANE_MAX_PATHS)
+        .find_map(|(path, stats)| {
+            stats
+                .owner_hits
+                .iter()
+                .filter(|hit| ast_owner_hit_exact(hit))
+                .reduce(|current, candidate| {
+                    if ast_owner_hit_precedes(candidate, current) {
+                        candidate
+                    } else {
+                        current
+                    }
+                })
+                .map(|hit| (path, hit))
+        })
+    else {
         return Ok(None);
     };
     let (excerpt, source_tokens) =
@@ -2714,6 +2719,18 @@ async fn run_task(
             reservation.relevant = evidence.report.relevant;
         }
     }
+    let owner_source_tokens = owner_evidence
+        .as_ref()
+        .map_or(0, |evidence| evidence.report.source_tokens);
+    if owner_source_tokens >= task.token_budget {
+        owner_evidence = None;
+        ast_structural_lane.owner_reservation = None;
+    }
+    request.token_budget = task.token_budget.saturating_sub(
+        owner_evidence
+            .as_ref()
+            .map_or(0, |evidence| evidence.report.source_tokens),
+    );
     if !history_lane.candidate_paths.is_empty() {
         request.focus_paths = history_lane.candidate_paths.clone();
         request.minimum_fragments_per_focus_path = Some(1);
@@ -2732,7 +2749,6 @@ async fn run_task(
                 labels,
                 &evaluation.generated_candidates,
                 &evaluation.response.fragments,
-                owner_evidence.as_ref(),
             )
         })
         .transpose()?;
@@ -2763,14 +2779,8 @@ async fn run_task(
                     .map(|evidence| evidence.report.path.clone()),
             ),
     );
-    let candidate_files = sorted_unique(
-        evaluation.generated_candidate_paths.into_iter().chain(
-            owner_evidence
-                .iter()
-                .map(|evidence| evidence.report.path.clone()),
-        ),
-    );
-    let mut relevant_candidate_evidence = evaluation
+    let candidate_files = sorted_unique(evaluation.generated_candidate_paths);
+    let relevant_candidate_evidence = evaluation
         .generated_candidates
         .into_iter()
         .filter(|candidate| relevant_paths.contains(&candidate.path))
@@ -2786,22 +2796,6 @@ async fn run_task(
             token_count: candidate.token_count,
         })
         .collect::<Vec<_>>();
-    if let Some(evidence) = owner_evidence
-        .as_ref()
-        .filter(|evidence| evidence.report.relevant)
-    {
-        relevant_candidate_evidence.push(CandidateEvidenceSummary {
-            path: evidence.report.path.clone(),
-            start_line: evidence.report.start_line,
-            end_line: evidence.report.end_line,
-            representation: "ast_owner_reservation".into(),
-            match_kinds: vec!["symbol".into()],
-            concepts: Vec::new(),
-            concept_weight: 0.0,
-            score: 0.0,
-            token_count: evidence.report.source_tokens,
-        });
-    }
     let mut returned_evidence = response
         .fragments
         .iter()
@@ -2898,14 +2892,28 @@ async fn run_task(
         .meta
         .emitted_tokens
         .saturating_add(owner_source_tokens);
+    if leantoken_source_tokens > task.token_budget {
+        return Err(format!(
+            "{} exceeded its composite source budget: {leantoken_source_tokens} > {}",
+            task.id, task.token_budget
+        )
+        .into());
+    }
     let leantoken_total_json_tokens =
         tokens::count(&serde_json::to_string(&response)?).saturating_add(owner_serialized_tokens);
 
-    let known = response
+    let native_known = response
         .fragments
         .iter()
         .map(|fragment| fragment.content_hash.clone())
         .collect::<Vec<_>>();
+    let native_known_set = native_known.iter().cloned().collect::<HashSet<_>>();
+    let mut known = native_known;
+    known.extend(
+        owner_evidence
+            .iter()
+            .map(|evidence| evidence.report.content_hash.clone()),
+    );
     let known_set = known.iter().cloned().collect::<HashSet<_>>();
     let repeat_request = ContextRequest {
         known_hashes: known,
@@ -2958,9 +2966,16 @@ async fn run_task(
         .saturating_add(repeat_request_json_tokens)
         .saturating_add(repeat_total_json_tokens);
     let known_hash_omission_visible = reports_known_hash_omission(&repeat);
-    if !known_set.is_empty() && !known_hash_omission_visible {
+    if !native_known_set.is_empty() && !known_hash_omission_visible {
         return Err(format!("{} hid all known-hash omissions", task.id).into());
     }
+    // The structural owner is a benchmark-side reservation. Its exact hash joins
+    // the progressive request above, and the composite layer suppresses it rather
+    // than serializing or charging the same sidecar twice.
+    let known_owner_reservations_resent = 0;
+    let owner_known_hash_omission_visible = owner_evidence
+        .as_ref()
+        .is_some_and(|evidence| known_set.contains(&evidence.report.content_hash));
 
     Ok(TaskReport {
         id: task.id,
@@ -3017,6 +3032,8 @@ async fn run_task(
         two_turn_context_json_tokens,
         known_fragments_resent,
         known_hash_omission_visible,
+        known_owner_reservations_resent,
+        owner_known_hash_omission_visible,
         dead_end_fragments,
         dead_end_source_tokens,
         concept_coverage,
@@ -3756,6 +3773,86 @@ mod tests {
         );
     }
 
+    fn ast_owner_hit(symbol: &str, matched_term: &str, excerpt: &str) -> AstOwnerHit {
+        AstOwnerHit {
+            start_line: 10,
+            end_line: 20,
+            excerpt: excerpt.into(),
+            symbol: symbol.into(),
+            matched_term: matched_term.into(),
+            normalized_score: 1.0,
+            corroborating_owner_terms: BTreeSet::new(),
+            corroborating_named_argument_terms: BTreeSet::new(),
+        }
+    }
+
+    #[test]
+    fn ast_structural_v2_requires_owner_local_corroboration() {
+        let mut stats = AstPathStats {
+            owner_hits: vec![ast_owner_hit("Option", "option", "class Option:\n    pass")],
+            ..AstPathStats::default()
+        };
+        let unrelated = SearchHit {
+            path: "src/click/core.py".into(),
+            start_line: 40,
+            end_line: 42,
+            excerpt: "def unrelated(is_flag=False):\n    pass".into(),
+            match_kind: "symbol".into(),
+            match_kinds: vec!["symbol".into()],
+            role: None,
+            symbol: Some("unrelated".into()),
+            enclosing_symbol: Some("unrelated".into()),
+            occurrence: None,
+            score: 1.0,
+            normalized_score: 1.0,
+            score_reasons: Vec::new(),
+            content_hash: "unrelated".into(),
+        };
+
+        assert!(!record_ast_corroborating_hit(
+            &mut stats,
+            "is_flag",
+            AstAuxiliaryTermRole::NamedArgument,
+            &unrelated,
+        ));
+        assert!(stats.named_argument_terms.is_empty());
+        assert!(
+            stats.owner_hits[0]
+                .corroborating_named_argument_terms
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn ast_structural_v2_skips_inexact_top_path_for_exact_owner() {
+        let ranked = vec![
+            (
+                "src/decoy.py".into(),
+                AstPathStats {
+                    owner_hits: vec![ast_owner_hit(
+                        "option_factory",
+                        "option",
+                        "def option_factory():\n    pass",
+                    )],
+                    ..AstPathStats::default()
+                },
+            ),
+            (
+                "src/click/core.py".into(),
+                AstPathStats {
+                    owner_hits: vec![ast_owner_hit("Option", "option", "class Option:\n    pass")],
+                    ..AstPathStats::default()
+                },
+            ),
+        ];
+
+        let owner = build_ast_owner_evidence(&ranked)
+            .expect("serialize owner")
+            .expect("fallback owner");
+        assert_eq!(owner.report.path, "src/click/core.py");
+        assert_eq!(owner.report.symbol, "Option");
+    }
+
     #[test]
     fn ast_structural_v2_cli_contract_is_explicit_and_exclusive() {
         assert!(
@@ -4231,7 +4328,6 @@ mod tests {
                 candidate("tests/lib.rs", 18, 22),
             ],
             &[fragment("src/lib.rs", 8, 12)],
-            None,
         )
         .expect("evaluate coverage");
 
@@ -4256,37 +4352,12 @@ mod tests {
     }
 
     #[test]
-    fn concept_coverage_counts_reserved_owner_as_candidate_and_selected_evidence() {
-        let owner = AstOwnerEvidence {
-            report: AstOwnerReservationReport {
-                path: "src/lib.rs".into(),
-                start_line: 8,
-                end_line: 12,
-                symbol: "Owner".into(),
-                matched_term: "owner".into(),
-                excerpt: "struct Owner;".into(),
-                source_tokens: 3,
-                serialized_tokens: 12,
-                content_hash: "owner-hash".into(),
-                relevant: true,
-            },
-        };
-        let coverage = evaluate_concept_coverage(&concept_task_labels(), &[], &[], Some(&owner))
-            .expect("evaluate owner reservation");
-
-        assert_eq!(coverage.candidate_concepts_found, 1);
-        assert_eq!(coverage.selected_concepts_found, 1);
-        assert_eq!(coverage.selection_retention, Some(1.0));
-    }
-
-    #[test]
     fn concept_coverage_rejects_selected_evidence_missing_from_diagnostics() {
         assert!(
             evaluate_concept_coverage(
                 &concept_task_labels(),
                 &[candidate("tests/lib.rs", 18, 22)],
                 &[fragment("src/lib.rs", 8, 12)],
-                None,
             )
             .expect_err("selected evidence must have a candidate")
             .to_string()
