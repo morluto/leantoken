@@ -42,6 +42,12 @@ struct Aggregate {
     leantoken_total_json_tokens: usize,
     dead_end_fragments: usize,
     dead_end_source_tokens: usize,
+    #[serde(default)]
+    orientation_capsule_paths: usize,
+    #[serde(default)]
+    orientation_capsule_relevant_paths: usize,
+    #[serde(default)]
+    orientation_capsule_tokens: usize,
     known_fragments_resent: usize,
     estimated_repeated_range_source_tokens: usize,
     two_turn_context_json_tokens: usize,
@@ -73,6 +79,10 @@ struct Metrics {
     response_json_tokens: usize,
     dead_end_fragments: usize,
     dead_end_source_tokens: usize,
+    orientation_capsule_paths: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    orientation_capsule_path_recall: Option<f64>,
+    orientation_capsule_tokens: usize,
     exact_hash_resends: usize,
     estimated_repeated_range_source_tokens: usize,
     two_turn_json_tokens: usize,
@@ -92,6 +102,10 @@ struct MetricDelta {
     response_json_tokens: i64,
     dead_end_fragments: i64,
     dead_end_source_tokens: i64,
+    orientation_capsule_paths: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    orientation_capsule_path_recall: Option<f64>,
+    orientation_capsule_tokens: i64,
     exact_hash_resends: i64,
     estimated_repeated_range_source_tokens: i64,
     two_turn_json_tokens: i64,
@@ -171,6 +185,12 @@ impl From<&Aggregate> for Metrics {
             response_json_tokens: value.leantoken_total_json_tokens,
             dead_end_fragments: value.dead_end_fragments,
             dead_end_source_tokens: value.dead_end_source_tokens,
+            orientation_capsule_paths: value.orientation_capsule_paths,
+            orientation_capsule_path_recall: optional_ratio(
+                value.orientation_capsule_relevant_paths,
+                value.orientation_capsule_paths,
+            ),
+            orientation_capsule_tokens: value.orientation_capsule_tokens,
             exact_hash_resends: value.known_fragments_resent,
             estimated_repeated_range_source_tokens: value.estimated_repeated_range_source_tokens,
             two_turn_json_tokens: value.two_turn_context_json_tokens,
@@ -204,6 +224,18 @@ impl MetricDelta {
             dead_end_source_tokens: signed_delta(
                 baseline.dead_end_source_tokens,
                 candidate.dead_end_source_tokens,
+            ),
+            orientation_capsule_paths: signed_delta(
+                baseline.orientation_capsule_paths,
+                candidate.orientation_capsule_paths,
+            ),
+            orientation_capsule_path_recall: optional_difference(
+                baseline.orientation_capsule_path_recall,
+                candidate.orientation_capsule_path_recall,
+            ),
+            orientation_capsule_tokens: signed_delta(
+                baseline.orientation_capsule_tokens,
+                candidate.orientation_capsule_tokens,
             ),
             exact_hash_resends: signed_delta(
                 baseline.exact_hash_resends,
@@ -274,6 +306,9 @@ mod tests {
                 leantoken_total_json_tokens: 1,
                 dead_end_fragments: 0,
                 dead_end_source_tokens: 0,
+                orientation_capsule_paths: 0,
+                orientation_capsule_relevant_paths: 0,
+                orientation_capsule_tokens: 0,
                 known_fragments_resent: 0,
                 estimated_repeated_range_source_tokens: 0,
                 two_turn_context_json_tokens: 1,
@@ -300,5 +335,24 @@ mod tests {
                 .to_string()
                 .contains("different concept-label overlays")
         );
+    }
+
+    #[test]
+    fn orientation_capsule_metrics_remain_separate_from_source_recall() {
+        let baseline = report(None);
+        let mut candidate = report(None);
+        candidate.aggregate.orientation_capsule_paths = 2;
+        candidate.aggregate.orientation_capsule_relevant_paths = 2;
+        candidate.aggregate.orientation_capsule_tokens = 79;
+
+        let baseline_metrics = Metrics::from(&baseline.aggregate);
+        let candidate_metrics = Metrics::from(&candidate.aggregate);
+        let delta = MetricDelta::between(&baseline_metrics, &candidate_metrics);
+
+        assert_eq!(candidate_metrics.orientation_capsule_path_recall, Some(1.0));
+        assert_eq!(delta.orientation_capsule_paths, 2);
+        assert_eq!(delta.orientation_capsule_tokens, 79);
+        assert_eq!(delta.file_recall, 0.0);
+        assert_eq!(delta.source_tokens, 0);
     }
 }
