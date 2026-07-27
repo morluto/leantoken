@@ -414,6 +414,7 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | Offline context-utilization evidence | 100,000 total ranges and hash inputs, 10,000 ranges per repository-generation/path, 1,000 context calls/ranges, 256 relevance paths, 4 KiB per path |
 | Experimental Git-history lane | 256 pinned ancestors, 2 Git subprocesses, 4,096 output lines, 32 KiB per line, 4 current paths |
 | Experimental AST structural lane | 16 KiB failure-trace input, 2 languages, 8 AST-derived terms, 16 structural definitions / 1,024 tokens per term, 2 focus paths |
+| Experimental orientation capsule | 1 AST owner path, 4 matched terms, 4 definitions, 128 exact tokens |
 
 Focus quotas do not depend on global per-query top-N channels. During the
 existing 512-row paged constraint scan, context counts every indexed focus
@@ -457,6 +458,14 @@ definition terms, hit count, normalized score, and lexical path; at most two
 become soft context focus paths. Gold labels never enter discovery. The lane
 adds no parser pass during indexing, performs no file scan, does not force a
 fragment quota, and does not change default production ranking.
+
+The optional benchmark orientation capsule reuses the AST lane's already-ranked
+definition hits, so it issues no additional search or parser work. It serializes
+at most one owner path, four matched trace terms, and four indexed definition
+names, dropping definitions and then terms until the complete routing artifact
+fits 128 exact tokens. The capsule is reported separately from context
+fragments and token budgets: it is a follow-up route, not selected source,
+downstream-use evidence, or a production response contract.
 
 The 12-query context planner retains up to four early domain terms and two
 high-specificity terms selected from the remainder of the complete task.

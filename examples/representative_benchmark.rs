@@ -23,6 +23,10 @@ const AST_LANE_MAX_TERMS: usize = 8;
 const AST_LANE_MAX_RESULTS_PER_TERM: usize = 16;
 const AST_LANE_MAX_TOKENS_PER_TERM: usize = 1_024;
 const AST_LANE_MAX_PATHS: usize = 2;
+const ORIENTATION_CAPSULE_MAX_PATHS: usize = 1;
+const ORIENTATION_CAPSULE_MAX_TERMS: usize = 4;
+const ORIENTATION_CAPSULE_MAX_DEFINITIONS: usize = 4;
+const ORIENTATION_CAPSULE_MAX_TOKENS: usize = 128;
 
 #[derive(Debug, Parser)]
 #[command(about = "Run a pinned LeanToken context-retrieval benchmark")]
@@ -58,6 +62,9 @@ struct Args {
     /// Add bounded AST-derived structural path candidates from failure traces.
     #[arg(long, requires = "workflow_evidence", conflicts_with = "history_lane")]
     ast_structural_lane: bool,
+    /// Emit a bounded structural owner-routing capsule without changing context selection.
+    #[arg(long, requires = "ast_structural_lane")]
+    orientation_capsule: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -194,6 +201,7 @@ struct Report {
     workflow_evidence_enabled: bool,
     history_lane_enabled: bool,
     ast_structural_lane_enabled: bool,
+    orientation_capsule_enabled: bool,
     host_os: &'static str,
     host_arch: &'static str,
     rustc_version: String,
@@ -242,6 +250,10 @@ struct AggregateReport {
     known_fragments_resent: usize,
     dead_end_fragments: usize,
     dead_end_source_tokens: usize,
+    orientation_capsule_paths: usize,
+    orientation_capsule_relevant_paths: usize,
+    orientation_capsule_path_recall: Option<f64>,
+    orientation_capsule_tokens: usize,
     second_response_source_tokens: usize,
     estimated_repeated_range_source_tokens: usize,
     repeat_request_json_tokens: usize,
@@ -286,6 +298,7 @@ struct TaskReport {
     workflow_evidence: WorkflowEvidenceCounts,
     history_lane: HistoryLaneReport,
     ast_structural_lane: AstStructuralLaneReport,
+    orientation_capsule: OrientationCapsuleReport,
     relevant_files: Vec<String>,
     returned_files: Vec<String>,
     returned_evidence: Vec<EvidenceSummary>,
@@ -364,6 +377,23 @@ struct AstStructuralLaneReport {
     structural_hits: usize,
     candidate_paths: Vec<String>,
     relevant_candidate_paths: usize,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct OrientationCapsuleReport {
+    enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unavailable_reason: Option<&'static str>,
+    entries: Vec<OrientationCapsuleEntry>,
+    capsule_tokens: usize,
+    relevant_paths: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct OrientationCapsuleEntry {
+    path: String,
+    matched_terms: Vec<String>,
+    definitions: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -463,6 +493,7 @@ struct RunTaskOptions<'a> {
     workflow_evidence_enabled: bool,
     history_lane_enabled: bool,
     ast_structural_lane_enabled: bool,
+    orientation_capsule_enabled: bool,
     base_revision: &'a str,
 }
 
@@ -519,6 +550,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 "workflow_evidence_enabled": args.workflow_evidence,
                 "history_lane_enabled": args.history_lane,
                 "ast_structural_lane_enabled": args.ast_structural_lane,
+                "orientation_capsule_enabled": args.orientation_capsule,
                 "concept_labels_blake3": concept_labels.as_ref().map(|labels| &labels.blake3),
                 "concept_count": concept_labels.as_ref().map(|labels| {
                     labels.tasks.values().map(|task| task.concepts.len()).sum::<usize>()
@@ -560,6 +592,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     workflow_evidence_enabled: args.workflow_evidence,
                     history_lane_enabled: args.history_lane,
                     ast_structural_lane_enabled: args.ast_structural_lane,
+                    orientation_capsule_enabled: args.orientation_capsule,
                     base_revision: &corpus.base_revision,
                 },
             )
@@ -598,6 +631,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         ratio(aggregate.relevant_files_found, aggregate.returned_files);
     aggregate.line_anchor_recall =
         optional_ratio(aggregate.line_anchors_found, aggregate.line_anchors);
+    aggregate.orientation_capsule_path_recall = optional_ratio(
+        aggregate.orientation_capsule_relevant_paths,
+        aggregate.orientation_capsule_paths,
+    );
     aggregate.candidate_concept_recall =
         optional_ratio(aggregate.candidate_concepts_found, aggregate.concepts);
     aggregate.selected_concept_recall =
@@ -647,6 +684,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         workflow_evidence_enabled: args.workflow_evidence,
         history_lane_enabled: args.history_lane,
         ast_structural_lane_enabled: args.ast_structural_lane,
+        orientation_capsule_enabled: args.orientation_capsule,
         host_os: std::env::consts::OS,
         host_arch: std::env::consts::ARCH,
         rustc_version: command_version("rustc")?,
@@ -670,6 +708,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             args.concept_labels.is_some(),
             args.history_lane,
             args.ast_structural_lane,
+            args.orientation_capsule,
         ),
     };
     let json = serde_json::to_string_pretty(&report)?;
@@ -1175,6 +1214,7 @@ fn benchmark_limitations(
     concept_labels: bool,
     history_lane: bool,
     ast_structural_lane: bool,
+    orientation_capsule: bool,
 ) -> Vec<&'static str> {
     let mut limitations = vec![
         "The oracle baseline assumes perfect file selection and reads whole files rather than exact decisive ranges.",
@@ -1241,6 +1281,14 @@ fn benchmark_limitations(
         );
         limitations.push(
             "Tolerant parsing of terminal output can recover incomplete code fragments; a structural hit is a path-discovery proxy, not proof that the file owns the failure.",
+        );
+    }
+    if orientation_capsule {
+        limitations.push(
+            "The orientation capsule is a bounded routing artifact, not selected source evidence or proof that a model will perform the required follow-up read.",
+        );
+        limitations.push(
+            "Capsule path relevance uses labels only after discovery and does not establish end-to-end task success or downstream token savings.",
         );
     }
     limitations
@@ -1404,6 +1452,7 @@ struct BoundedGitLines {
 #[derive(Debug, Default)]
 struct AstPathStats {
     terms: BTreeSet<String>,
+    definitions: BTreeSet<String>,
     structural_hits: usize,
     best_score: f64,
 }
@@ -1412,7 +1461,8 @@ async fn discover_ast_structural_lane(
     services: &Services,
     languages: &[String],
     failure_traces: &[String],
-) -> Result<AstStructuralLaneReport, Box<dyn Error>> {
+    orientation_capsule_enabled: bool,
+) -> Result<(AstStructuralLaneReport, OrientationCapsuleReport), Box<dyn Error>> {
     let trace = utf8_tail(&failure_traces.join("\n"), AST_LANE_MAX_TRACE_BYTES);
     let mut report = AstStructuralLaneReport {
         enabled: true,
@@ -1420,7 +1470,16 @@ async fn discover_ast_structural_lane(
         ..AstStructuralLaneReport::default()
     };
     if trace.is_empty() {
-        return Ok(report);
+        let capsule = if orientation_capsule_enabled {
+            OrientationCapsuleReport {
+                enabled: true,
+                unavailable_reason: Some("no_failure_trace"),
+                ..OrientationCapsuleReport::default()
+            }
+        } else {
+            OrientationCapsuleReport::default()
+        };
+        return Ok((report, capsule));
     }
 
     let mut terms = Vec::new();
@@ -1481,6 +1540,9 @@ async fn discover_ast_structural_lane(
             report.structural_hits += 1;
             let stats = paths.entry(hit.path).or_default();
             stats.terms.insert(term.clone());
+            if let Some(symbol) = hit.symbol {
+                stats.definitions.insert(symbol);
+            }
             stats.structural_hits += 1;
             stats.best_score = stats.best_score.max(hit.normalized_score);
         }
@@ -1496,12 +1558,69 @@ async fn discover_ast_structural_lane(
             .then_with(|| right.best_score.total_cmp(&left.best_score))
             .then_with(|| left_path.cmp(right_path))
     });
+    let capsule = build_orientation_capsule(&ranked, orientation_capsule_enabled)?;
     report.candidate_paths = ranked
-        .into_iter()
+        .iter()
         .map(|(path, _)| path)
         .take(AST_LANE_MAX_PATHS)
+        .cloned()
         .collect();
-    Ok(report)
+    Ok((report, capsule))
+}
+
+fn build_orientation_capsule(
+    ranked: &[(String, AstPathStats)],
+    enabled: bool,
+) -> Result<OrientationCapsuleReport, serde_json::Error> {
+    if !enabled {
+        return Ok(OrientationCapsuleReport::default());
+    }
+    let Some((path, stats)) = ranked.first() else {
+        return Ok(OrientationCapsuleReport {
+            enabled: true,
+            unavailable_reason: Some("no_structural_owner_candidates"),
+            ..OrientationCapsuleReport::default()
+        });
+    };
+    let mut entry = OrientationCapsuleEntry {
+        path: path.clone(),
+        matched_terms: stats
+            .terms
+            .iter()
+            .take(ORIENTATION_CAPSULE_MAX_TERMS)
+            .cloned()
+            .collect(),
+        definitions: stats
+            .definitions
+            .iter()
+            .take(ORIENTATION_CAPSULE_MAX_DEFINITIONS)
+            .cloned()
+            .collect(),
+    };
+    loop {
+        let entries = vec![entry.clone()]
+            .into_iter()
+            .take(ORIENTATION_CAPSULE_MAX_PATHS)
+            .collect::<Vec<_>>();
+        let capsule_tokens = tokens::count(&serde_json::to_string(&entries)?);
+        if capsule_tokens <= ORIENTATION_CAPSULE_MAX_TOKENS {
+            return Ok(OrientationCapsuleReport {
+                enabled: true,
+                unavailable_reason: None,
+                entries,
+                capsule_tokens,
+                relevant_paths: 0,
+            });
+        }
+        if entry.definitions.pop().is_some() || entry.matched_terms.pop().is_some() {
+            continue;
+        }
+        return Ok(OrientationCapsuleReport {
+            enabled: true,
+            unavailable_reason: Some("capsule_exceeds_token_limit"),
+            ..OrientationCapsuleReport::default()
+        });
+    }
 }
 
 fn normalize_ast_search_term(value: &str) -> Option<String> {
@@ -1777,11 +1896,20 @@ async fn run_task(
     } else {
         HistoryLaneReport::default()
     };
-    let mut ast_structural_lane = if options.ast_structural_lane_enabled {
-        discover_ast_structural_lane(services, &task.languages, &workflow_evidence.failure_traces)
-            .await?
+    let (mut ast_structural_lane, mut orientation_capsule) = if options.ast_structural_lane_enabled
+    {
+        discover_ast_structural_lane(
+            services,
+            &task.languages,
+            &workflow_evidence.failure_traces,
+            options.orientation_capsule_enabled,
+        )
+        .await?
     } else {
-        AstStructuralLaneReport::default()
+        (
+            AstStructuralLaneReport::default(),
+            OrientationCapsuleReport::default(),
+        )
     };
     history_lane.relevant_candidate_paths = history_lane
         .candidate_paths
@@ -1792,6 +1920,11 @@ async fn run_task(
         .candidate_paths
         .iter()
         .filter(|path| relevant_paths.contains(*path))
+        .count();
+    orientation_capsule.relevant_paths = orientation_capsule
+        .entries
+        .iter()
+        .filter(|entry| relevant_paths.contains(&entry.path))
         .count();
     if !history_lane.candidate_paths.is_empty() {
         request.focus_paths = history_lane.candidate_paths.clone();
@@ -1974,6 +2107,7 @@ async fn run_task(
         workflow_evidence: workflow_evidence_counts,
         history_lane,
         ast_structural_lane,
+        orientation_capsule,
         relevant_files: task
             .relevant_files
             .into_iter()
@@ -2447,6 +2581,9 @@ fn accumulate(aggregate: &mut AggregateReport, task: &TaskReport) {
     aggregate.known_fragments_resent += task.known_fragments_resent;
     aggregate.dead_end_fragments += task.dead_end_fragments;
     aggregate.dead_end_source_tokens += task.dead_end_source_tokens;
+    aggregate.orientation_capsule_paths += task.orientation_capsule.entries.len();
+    aggregate.orientation_capsule_relevant_paths += task.orientation_capsule.relevant_paths;
+    aggregate.orientation_capsule_tokens += task.orientation_capsule.capsule_tokens;
     aggregate.second_response_source_tokens += task.second_response_source_tokens;
     aggregate.estimated_repeated_range_source_tokens += task.estimated_repeated_range_source_tokens;
     aggregate.repeat_request_json_tokens += task.repeat_request_json_tokens;
@@ -2572,10 +2709,14 @@ mod tests {
             "result = runner.invoke(cmd, [\"--foo\"])\n",
         );
 
-        let report =
-            discover_ast_structural_lane(&services, &[String::from("python")], &[trace.into()])
-                .await
-                .expect("AST structural lane");
+        let (report, capsule) = discover_ast_structural_lane(
+            &services,
+            &[String::from("python")],
+            &[trace.into()],
+            true,
+        )
+        .await
+        .expect("AST structural lane");
 
         assert_eq!(report.languages_attempted, ["python"]);
         assert!(report.terms.iter().any(|term| term == "option"));
@@ -2584,6 +2725,22 @@ mod tests {
         assert_eq!(
             report.candidate_paths.first().map(String::as_str),
             Some("src/click/core.py")
+        );
+        assert!(capsule.enabled);
+        assert!(capsule.capsule_tokens <= ORIENTATION_CAPSULE_MAX_TOKENS);
+        assert_eq!(capsule.entries.len(), 1);
+        assert_eq!(capsule.entries[0].path, "src/click/core.py");
+        assert!(
+            capsule.entries[0]
+                .matched_terms
+                .iter()
+                .any(|term| term == "option")
+        );
+        assert!(
+            capsule.entries[0]
+                .definitions
+                .iter()
+                .any(|definition| definition.eq_ignore_ascii_case("Option"))
         );
     }
 

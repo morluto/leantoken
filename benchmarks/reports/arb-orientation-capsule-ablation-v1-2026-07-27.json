@@ -1,0 +1,45 @@
+{
+  "dataset_kind": "external_retrieval_corpus",
+  "manifest_blake3": "888fd766be72d8831946cf0038cf39374b5480564088f8d2cf7aa8d553bb6a7f",
+  "task_count": 2,
+  "baseline": {
+    "file_recall": 0.3333333333333333,
+    "line_recall": 0.0,
+    "source_tokens": 1255,
+    "response_json_tokens": 2698,
+    "dead_end_fragments": 13,
+    "dead_end_source_tokens": 1054,
+    "orientation_capsule_paths": 0,
+    "orientation_capsule_tokens": 0,
+    "exact_hash_resends": 0,
+    "estimated_repeated_range_source_tokens": 0,
+    "two_turn_json_tokens": 7729
+  },
+  "candidate": {
+    "file_recall": 0.3333333333333333,
+    "line_recall": 0.0,
+    "source_tokens": 1255,
+    "response_json_tokens": 2698,
+    "dead_end_fragments": 13,
+    "dead_end_source_tokens": 1054,
+    "orientation_capsule_paths": 2,
+    "orientation_capsule_path_recall": 1.0,
+    "orientation_capsule_tokens": 79,
+    "exact_hash_resends": 0,
+    "estimated_repeated_range_source_tokens": 0,
+    "two_turn_json_tokens": 7729
+  },
+  "delta": {
+    "file_recall": 0.0,
+    "line_recall": 0.0,
+    "source_tokens": 0,
+    "response_json_tokens": 0,
+    "dead_end_fragments": 0,
+    "dead_end_source_tokens": 0,
+    "orientation_capsule_paths": 2,
+    "orientation_capsule_tokens": 79,
+    "exact_hash_resends": 0,
+    "estimated_repeated_range_source_tokens": 0,
+    "two_turn_json_tokens": 0
+  }
+}
