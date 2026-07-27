@@ -505,6 +505,17 @@ target/release/examples/orientation_capsule_trajectory \
   --output target/orientation-capsule/trajectory-report.json
 ```
 
+The first two-task local run is recorded in the
+[redacted machine report](../benchmarks/reports/arb-orientation-capsule-trajectory-v1-2026-07-27.json)
+and
+[decision record](../benchmarks/reports/arb-orientation-capsule-trajectory-v1-2026-07-27.md).
+On Clap, both arms passed and the capsule reduced retrieval source from 8,525
+to 4,327 tokens while charging 103 complete prompt tokens; dead-end source fell
+from 3,869 to zero. On Click, the candidate executor exceeded its frozen limit
+and the baseline executor violated the native-retrieval contract. The missing
+candidate trace makes paired deltas `null`, so the fail-closed decision is
+`no_measured_win` and authorizes no production change.
+
 ### Published four-arm evaluation
 
 The first committed run was aborted after seven completed cells because Codex

@@ -747,6 +747,17 @@ It measures whether the route names a labeled owner, not whether an agent reads
 that owner or solves the task. The frozen handoff decision is recorded in
 [`reports/arb-orientation-capsule-v1-2026-07-27.md`](reports/arb-orientation-capsule-v1-2026-07-27.md).
 
+The follow-up model trajectory run compares `prewalk` with the same prewalk plus
+that capsule on the two already prepared repositories. Clap passed in both arms;
+the capsule saved 4,198 retrieval source tokens against a 103-token complete
+prompt and removed 3,869 labeled dead-end tokens. Click did not yield a complete
+pair: the candidate executor exceeded its frozen tool limit and the baseline
+executor violated the native-retrieval contract. The classifier preserves the
+partial failure, emits `null` paired deltas, and records `no_measured_win` in the
+[machine report](reports/arb-orientation-capsule-trajectory-v1-2026-07-27.json)
+and
+[decision record](reports/arb-orientation-capsule-trajectory-v1-2026-07-27.md).
+
 Each repository directory under `target/arb-repos` must match the generated
 manifest's `directory` and exact `base_revision`. The adapter preserves the
 public ARB query object verbatim as JSON, promotes only `root_cause_files` to
