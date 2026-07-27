@@ -1381,6 +1381,7 @@ impl Services {
             baseline_source_tokens,
             meta,
             classification,
+            false,
             0,
         );
     }
@@ -1391,6 +1392,7 @@ impl Services {
         baseline_source_tokens: Option<usize>,
         meta: &ResponseMeta,
         classification: TokenSavingsRequestClass,
+        expected_hash_not_modified: bool,
         expected_hash_suppressed_source_tokens: usize,
     ) {
         match self.storage.record_token_savings(
@@ -1400,6 +1402,7 @@ impl Services {
                 baseline_source_tokens,
                 meta,
                 classification,
+                expected_hash_not_modified,
                 expected_hash_suppressed_source_tokens,
             },
         ) {
