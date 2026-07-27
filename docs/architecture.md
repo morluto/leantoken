@@ -413,6 +413,7 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | Offline context-utilization artifacts | 64 MiB each, 100,000 trace calls, 100,000 trajectory events |
 | Offline context-utilization evidence | 100,000 total ranges and hash inputs, 10,000 ranges per repository-generation/path, 1,000 context calls/ranges, 256 relevance paths, 4 KiB per path |
 | Experimental Git-history lane | 256 pinned ancestors, 2 Git subprocesses, 4,096 output lines, 32 KiB per line, 4 current paths |
+| Experimental AST structural lane | 16 KiB failure-trace input, 2 languages, 8 AST-derived terms, 16 structural definitions / 1,024 tokens per term, 2 focus paths |
 
 Focus quotas do not depend on global per-query top-N channels. During the
 existing 512-row paged constraint scan, context counts every indexed focus
@@ -447,6 +448,15 @@ sets `GIT_NO_LAZY_FETCH=1`: a blobless partial clone reports
 `history_objects_unavailable_without_lazy_fetch` instead of downloading history
 or treating missing objects as a complete empty result. The lane performs no
 production scan and does not change default ranking.
+
+The benchmark-only AST structural lane tolerantly parses bounded observed
+failure traces with the existing tree-sitter parser. It retains call references
+from at most two declared task languages, normalizes at most eight terms, and
+uses one bounded definition-only search per term. Paths rank by distinct
+definition terms, hit count, normalized score, and lexical path; at most two
+become soft context focus paths. Gold labels never enter discovery. The lane
+adds no parser pass during indexing, performs no file scan, does not force a
+fragment quota, and does not change default production ranking.
 
 The 12-query context planner retains up to four early domain terms and two
 high-specificity terms selected from the remainder of the complete task.

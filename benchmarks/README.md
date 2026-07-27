@@ -698,6 +698,31 @@ explicit unavailable lane rather than downloading historical blobs or claiming
 zero matches. The frozen smoke decision is recorded in
 [`reports/arb-history-lane-v1-2026-07-27.md`](reports/arb-history-lane-v1-2026-07-27.md).
 
+The AST structural experiment also uses the workflow-evidence arm as its
+baseline. It parses at most 16 KiB of observed failure traces, derives at most
+eight call terms, queries only indexed structural definitions, and supplies at
+most two soft focus paths:
+
+```bash
+cargo run --release --example representative_benchmark -- \
+  --manifest target/external-corpora/arb-trace2code-smoke.json \
+  --repos-root target/arb-repos \
+  --output target/arb-ast-structural-baseline.json \
+  --workflow-evidence
+cargo run --release --example representative_benchmark -- \
+  --manifest target/external-corpora/arb-trace2code-smoke.json \
+  --repos-root target/arb-repos \
+  --output target/arb-ast-structural-candidate.json \
+  --workflow-evidence --ast-structural-lane
+cargo run --release --example benchmark_ablation -- \
+  --baseline target/arb-ast-structural-baseline.json \
+  --candidate target/arb-ast-structural-candidate.json
+```
+
+This lane never reads ARB root-cause labels during discovery. The paired report
+must distinguish owner-path discovery from selected evidence: a relevant soft
+focus path is not itself a retrieval-quality gain.
+
 Each repository directory under `target/arb-repos` must match the generated
 manifest's `directory` and exact `base_revision`. The adapter preserves the
 public ARB query object verbatim as JSON, promotes only `root_cause_files` to
