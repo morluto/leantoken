@@ -3982,17 +3982,11 @@ mod tests {
     #[test]
     fn tool_input_fields_are_documented() {
         for tool in LeanTokenMcp::tool_router().list_all() {
+            // Savings accepts an optional snapshot and follows the same field contract.
             let properties = tool
                 .input_schema
                 .get("properties")
                 .and_then(serde_json::Value::as_object);
-            if tool.name == "savings" {
-                assert!(
-                    properties.is_none_or(serde_json::Map::is_empty),
-                    "savings must remain a zero-input tool"
-                );
-                continue;
-            }
             let properties =
                 properties.unwrap_or_else(|| panic!("{} input properties missing", tool.name));
             for (field, schema) in properties {
