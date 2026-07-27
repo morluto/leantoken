@@ -126,12 +126,13 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
             format!("MCP identified itself as {server_name:?}, expected \"leantoken\""),
         ));
     }
-    if server_version != env!("CARGO_PKG_VERSION") {
+    let expected_server_version = crate::mcp::mcp_runtime_version();
+    if server_version != expected_server_version {
         return Err(doctor_error(
             "handshake",
             format!(
                 "MCP reported version {server_version}, expected {}",
-                env!("CARGO_PKG_VERSION")
+                expected_server_version
             ),
         ));
     }

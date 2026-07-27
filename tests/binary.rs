@@ -25,7 +25,10 @@ fn cli_indexes_statuses_and_searches_as_json() {
 
     let status = run(root.path(), &database, &["status"]);
     assert_eq!(status["file_count"], 1);
-    assert_eq!(status["index_content_version"], 13);
+    assert_eq!(
+        status["index_content_version"],
+        EXPECTED_INDEX_CONTENT_VERSION
+    );
     assert_eq!(
         status["indexed_source_bytes"],
         "pub fn answer() -> u8 { 42 }\n".len()
@@ -454,6 +457,17 @@ fn cli_index_limit_error_is_structured_and_does_not_publish_partial_files() {
     assert_eq!(database_state(&database).map(|state| state.1), Some(0));
 }
 
+fn assert_schema_qualified_version(version: &serde_json::Value) {
+    let version = version.as_str().expect("server version is a string");
+    let fingerprint = version
+        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+schema."))
+        .expect("server version includes the package version and schema fingerprint");
+    assert_eq!(fingerprint.len(), 32);
+    assert!(fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()));
+}
+
+const EXPECTED_INDEX_CONTENT_VERSION: u64 = 13;
+
 #[test]
 fn doctor_verifies_identity_catalog_and_first_retrieval() {
     let root = tempfile::tempdir().expect("temporary repository");
@@ -467,8 +481,11 @@ fn doctor_verifies_identity_catalog_and_first_retrieval() {
     let report = run(root.path(), &database, &["doctor"]);
     assert_eq!(report["status"], "ready");
     assert_eq!(report["server_name"], "leantoken");
-    assert_eq!(report["server_version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(report["index_content_version"], 13);
+    assert_schema_qualified_version(&report["server_version"]);
+    assert_eq!(
+        report["index_content_version"],
+        EXPECTED_INDEX_CONTENT_VERSION
+    );
     assert_eq!(report["instructions_loaded"], true);
     assert_eq!(report["tools"].as_array().map(Vec::len), Some(8));
     assert!(
@@ -559,7 +576,9 @@ fn doctor_human_output_uses_context_distillery_handoff() {
     assert!(stderr.contains("Context Distillery is checking"));
     assert!(stdout.contains("LeanToken // Context Distillery"));
     assert!(stdout.contains("MCP identity: leantoken"));
-    assert!(stdout.contains("Index compatibility: v12"));
+    assert!(stdout.contains(&format!(
+        "Index compatibility: v{EXPECTED_INDEX_CONTENT_VERSION}"
+    )));
     assert!(stdout.contains("Tool catalog: 8 MCP tools"));
     assert!(stdout.contains("leantoken.context first"));
 }
@@ -682,10 +701,7 @@ fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
 
     let initialize = process.initialize();
     assert_eq!(initialize["result"]["serverInfo"]["name"], "leantoken");
-    assert_eq!(
-        initialize["result"]["serverInfo"]["version"],
-        env!("CARGO_PKG_VERSION")
-    );
+    assert_schema_qualified_version(&initialize["result"]["serverInfo"]["version"]);
     assert!(
         initialize["result"]["instructions"]
             .as_str()

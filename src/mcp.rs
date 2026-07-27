@@ -56,7 +56,7 @@ fn mcp_schema_fingerprint() -> String {
     crate::text::hash_bytes(&encoded)
 }
 
-fn mcp_runtime_version() -> String {
+pub(crate) fn mcp_runtime_version() -> String {
     format!(
         "{}+schema.{}",
         env!("CARGO_PKG_VERSION"),
