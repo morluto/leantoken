@@ -2255,6 +2255,34 @@ async fn context_rejects_empty_include_patterns() {
         }
     ));
 
+    let mut empty_exclude = context_limit_request(100);
+    empty_exclude.exclude_paths = vec![String::new()];
+    let error = services
+        .context(empty_exclude)
+        .await
+        .expect_err("empty exclude pattern");
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "exclude paths",
+            reason: "must not contain empty patterns"
+        }
+    ));
+
+    let mut empty_focus_symbol = context_limit_request(100);
+    empty_focus_symbol.focus_symbols = vec!["   ".into()];
+    let error = services
+        .context(empty_focus_symbol)
+        .await
+        .expect_err("empty focus symbol");
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "focus symbols",
+            reason: "must not contain empty symbols"
+        }
+    ));
+
     let mut plan_with_receipt = context_limit_request(100);
     plan_with_receipt.plan_only = true;
     plan_with_receipt.receipt_id = Some("existing".into());

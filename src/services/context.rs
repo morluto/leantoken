@@ -1186,11 +1186,27 @@ impl Services {
             });
         }
         validate_glob_patterns(&request.exclude_paths)?;
+        if request
+            .exclude_paths
+            .iter()
+            .any(|pattern| pattern.trim().is_empty())
+        {
+            return Err(Error::InvalidInput {
+                field: "exclude paths",
+                reason: "must not contain empty patterns",
+            });
+        }
         if request.focus_symbols.len() > MAX_INPUT_ITEMS {
             return Err(Error::LimitExceeded);
         }
         for symbol in &request.focus_symbols {
             validate_input(symbol, "focus symbol", MAX_PATTERN_BYTES)?;
+            if symbol.trim().is_empty() {
+                return Err(Error::InvalidInput {
+                    field: "focus symbols",
+                    reason: "must not contain empty symbols",
+                });
+            }
         }
         if request.must_include_symbols.len() > MAX_INPUT_ITEMS {
             return Err(Error::LimitExceeded);
