@@ -53,6 +53,78 @@ pub enum ContextWorkflow {
     Investigation,
 }
 
+/// Caller-observed workflow signals kept separate from the natural-language task.
+///
+/// Use the builder methods instead of constructing this non-exhaustive type
+/// directly. Values are validated by [`crate::Services`] before retrieval.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[non_exhaustive]
+#[serde(default, deny_unknown_fields)]
+pub struct WorkflowEvidence {
+    /// Bounded compiler, test, runtime, or log excerpts.
+    #[schemars(length(max = 8), inner(length(min = 1, max = 8192)))]
+    pub failure_traces: Vec<String>,
+    /// Exact or qualified identifiers observed by the caller.
+    #[schemars(length(max = 8), inner(length(min = 1, max = 8192)))]
+    pub symbols: Vec<String>,
+    /// Normalized repository-relative paths observed by the caller.
+    #[schemars(length(max = 8), inner(length(min = 1, max = 8192)))]
+    pub paths: Vec<String>,
+    /// Test names, commands, or behavioral checks relevant to the task.
+    #[schemars(length(max = 8), inner(length(min = 1, max = 8192)))]
+    pub test_intents: Vec<String>,
+}
+
+impl WorkflowEvidence {
+    /// Construct an empty evidence contract.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            failure_traces: Vec::new(),
+            symbols: Vec::new(),
+            paths: Vec::new(),
+            test_intents: Vec::new(),
+        }
+    }
+
+    /// Attach caller-observed failure traces.
+    #[must_use]
+    pub fn with_failure_traces(mut self, values: impl IntoIterator<Item = String>) -> Self {
+        self.failure_traces = values.into_iter().collect();
+        self
+    }
+
+    /// Attach caller-observed exact or qualified symbols.
+    #[must_use]
+    pub fn with_symbols(mut self, values: impl IntoIterator<Item = String>) -> Self {
+        self.symbols = values.into_iter().collect();
+        self
+    }
+
+    /// Attach caller-observed repository-relative paths.
+    #[must_use]
+    pub fn with_paths(mut self, values: impl IntoIterator<Item = String>) -> Self {
+        self.paths = values.into_iter().collect();
+        self
+    }
+
+    /// Attach caller-observed test names, commands, or behavioral checks.
+    #[must_use]
+    pub fn with_test_intents(mut self, values: impl IntoIterator<Item = String>) -> Self {
+        self.test_intents = values.into_iter().collect();
+        self
+    }
+
+    /// Return whether the contract contains no workflow evidence.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.failure_traces.is_empty()
+            && self.symbols.is_empty()
+            && self.paths.is_empty()
+            && self.test_intents.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ResponseMeta {
     /// Stable opaque identity for the canonical repository root.

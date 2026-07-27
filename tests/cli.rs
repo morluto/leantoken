@@ -675,10 +675,19 @@ fn cli_context_request() {
         "--verbose-diagnostics",
         "--workflow",
         "contribution",
+        "--failure-trace",
+        "error[E0001]",
+        "--evidence-symbol",
+        "owner_symbol",
+        "--evidence-path",
+        "src/owner.rs",
+        "--test-intent",
+        "owner regression",
     ]);
     let AppRequest::Context {
         request,
         workflow,
+        workflow_evidence,
         handoff,
         max_response_tokens,
     } = cli.app_request()
@@ -687,6 +696,10 @@ fn cli_context_request() {
     };
     assert!(handoff.is_none());
     assert_eq!(workflow, ContextWorkflow::Contribution);
+    assert_eq!(workflow_evidence.failure_traces, vec!["error[E0001]"]);
+    assert_eq!(workflow_evidence.symbols, vec!["owner_symbol"]);
+    assert_eq!(workflow_evidence.paths, vec!["src/owner.rs"]);
+    assert_eq!(workflow_evidence.test_intents, vec!["owner regression"]);
     assert_eq!(max_response_tokens, Some(2048));
     assert_eq!(request.task, "fix the bug");
     assert_eq!(request.token_budget, 1024);

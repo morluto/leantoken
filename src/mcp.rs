@@ -32,7 +32,7 @@ use crate::model::{
     ContextRequest, ContextWorkflow, DiffSymbolsRequest, DiffSymbolsTarget, FileOperation,
     FilesRequest, HandoffManifestRequest, HistoryOperation, HistoryRequest, IndexConsistency,
     JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadRequest,
-    SearchMode, SearchRequest,
+    SearchMode, SearchRequest, WorkflowEvidence,
 };
 use crate::services::{
     JsonExecutionOptions, MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN, MAX_JSON_DEPTH,
@@ -1204,6 +1204,9 @@ struct ContextMcpRequest {
     /// Evidence workflow; `auto` selects only on high-confidence task language.
     #[serde(default)]
     workflow: ContextWorkflow,
+    /// Typed caller-observed failure traces, symbols, paths, and test intent.
+    #[serde(default)]
+    workflow_evidence: WorkflowEvidence,
     /// Natural-language coding task; include known identifiers and constraints.
     #[schemars(length(min = 3, max = 65536))]
     task: String,
@@ -1319,6 +1322,7 @@ impl ContextMcpRequest {
     ) -> (
         ContextRequest,
         ContextWorkflow,
+        WorkflowEvidence,
         IndexConsistency,
         ServiceCallOptions,
         Option<String>,
@@ -1347,6 +1351,7 @@ impl ContextMcpRequest {
                 verbose_diagnostics: self.verbose_diagnostics,
             },
             self.workflow,
+            self.workflow_evidence,
             self.consistency,
             self.max_response_tokens
                 .map_or_else(ServiceCallOptions::new, |limit| {
@@ -2467,7 +2472,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "context",
-        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. For uncertain broad tasks, set plan_only=true to preview bounded ranked paths, ranges, reasons, token estimates, focus coverage, and generated-artifact warnings without source or receipt mutation; then repeat the same request with plan_only=false to materialize. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required evidence. Compact omission counts preserve fail-loud coverage by default; set verbose_diagnostics=true only for full omission facets. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Set handoff for a compact provenance manifest without copied source. Example: {\"task\":\"Audit MCP tool discovery\"}."
+        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. For uncertain broad tasks, set plan_only=true to preview bounded ranked paths, ranges, reasons, token estimates, focus coverage, and generated-artifact warnings without source or receipt mutation; then repeat the same request with plan_only=false to materialize. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required evidence. When the caller has directly observed a failure, pass workflow_evidence with bounded failure_traces, symbols, paths, or test_intents; do not infer or copy gold labels into it. Compact omission counts preserve fail-loud coverage by default; set verbose_diagnostics=true only for full omission facets. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Set handoff for a compact provenance manifest without copied source. Example: {\"task\":\"Audit MCP tool discovery\"}."
     )]
     async fn leantoken_context(
         &self,
@@ -2489,8 +2494,15 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, workflow, consistency, options, expected_repository_id, handoff) =
-            req.into_parts(limits.default_context_tokens);
+        let (
+            request,
+            workflow,
+            workflow_evidence,
+            consistency,
+            options,
+            expected_repository_id,
+            handoff,
+        ) = req.into_parts(limits.default_context_tokens);
         let cancellation = context.ct.clone();
         let mcp_services = self.services.clone();
         self.run_admitted(
@@ -2504,10 +2516,11 @@ impl LeanTokenMcp {
                     cancellation.clone(),
                     deadline,
                     || {
-                        services.context_with_options_workflow_consistency_cancellable(
+                        services.context_with_workflow_evidence_options_consistency_cancellable(
                             request.clone(),
                             handoff.clone(),
                             workflow,
+                            workflow_evidence.clone(),
                             consistency,
                             options,
                             cancellation.clone(),
@@ -3764,7 +3777,7 @@ mod tests {
             "task": "find answer"
         }))
         .expect("context request without a budget");
-        let (request, _, _, _, _, _) = request.into_parts(37);
+        let (request, _, _, _, _, _, _) = request.into_parts(37);
         assert_eq!(request.token_budget, 37);
         assert!(!request.verbose_diagnostics);
         let null_limit = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
@@ -3772,7 +3785,7 @@ mod tests {
             "max_response_tokens": null
         }))
         .expect("null response limit is equivalent to omission");
-        let (_, _, _, options, _, _) = null_limit.into_parts(37);
+        let (_, _, _, _, options, _, _) = null_limit.into_parts(37);
         assert_eq!(options.max_response_tokens(), None);
 
         let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
@@ -3784,10 +3797,16 @@ mod tests {
             "minimum_fragments_per_focus_path": 2,
             "changed_paths": ["src/lib.rs"],
             "strict_changed_paths": true,
-            "verbose_diagnostics": true
+            "verbose_diagnostics": true,
+            "workflow_evidence": {
+                "failure_traces": ["error[E0001]"],
+                "symbols": ["answer"],
+                "paths": ["src/lib.rs"],
+                "test_intents": ["answer regression"]
+            }
         }))
         .expect("context request with a budget");
-        let (request, _, _, options, _, _) = request.into_parts(37);
+        let (request, _, workflow_evidence, _, options, _, _) = request.into_parts(37);
         assert_eq!(request.token_budget, 23);
         assert_eq!(options.max_response_tokens(), Some(47));
         assert_eq!(request.focus_paths, ["src/**"]);
@@ -3796,6 +3815,10 @@ mod tests {
         assert_eq!(request.changed_paths, ["src/lib.rs"]);
         assert!(request.strict_changed_paths);
         assert!(request.verbose_diagnostics);
+        assert_eq!(workflow_evidence.failure_traces, ["error[E0001]"]);
+        assert_eq!(workflow_evidence.symbols, ["answer"]);
+        assert_eq!(workflow_evidence.paths, ["src/lib.rs"]);
+        assert_eq!(workflow_evidence.test_intents, ["answer regression"]);
 
         for invalid in [0, MAX_OUTPUT_TOKENS + 1] {
             let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
@@ -3832,7 +3855,7 @@ mod tests {
             }
         }))
         .expect("context handoff request");
-        let (_, _, _, _, _, handoff) = request.into_parts(37);
+        let (_, _, _, _, _, _, handoff) = request.into_parts(37);
         let handoff = handoff.expect("handoff");
         assert_eq!(handoff.summary.as_deref(), Some("executor state"));
         assert_eq!(handoff.validations.len(), 1);

@@ -656,6 +656,26 @@ cargo run --release --example representative_benchmark -- \
   --output target/external-corpora/arb-trace2code-smoke-report.json
 ```
 
+To compare the opt-in workflow-evidence contract on the same frozen tasks, run
+the baseline and candidate from one revision. The candidate derives evidence
+only from the public ARB query/trace; it never reads `root_cause_files`, spans,
+or other labels:
+
+```bash
+cargo run --release --example representative_benchmark -- \
+  --manifest target/external-corpora/arb-trace2code-smoke.json \
+  --repos-root target/arb-repos \
+  --output target/arb-workflow-evidence-baseline.json
+cargo run --release --example representative_benchmark -- \
+  --manifest target/external-corpora/arb-trace2code-smoke.json \
+  --repos-root target/arb-repos \
+  --output target/arb-workflow-evidence-candidate.json \
+  --workflow-evidence
+cargo run --release --example benchmark_ablation -- \
+  --baseline target/arb-workflow-evidence-baseline.json \
+  --candidate target/arb-workflow-evidence-candidate.json
+```
+
 Each repository directory under `target/arb-repos` must match the generated
 manifest's `directory` and exact `base_revision`. The adapter preserves the
 public ARB query object verbatim as JSON, promotes only `root_cause_files` to
@@ -666,6 +686,8 @@ ARB leaderboard or scalability result.
 
 The frozen baseline and its exact provenance are recorded in
 [`reports/arb-trace2code-smoke-baseline-v1-2026-07-27.md`](reports/arb-trace2code-smoke-baseline-v1-2026-07-27.md).
+The paired workflow-evidence adoption decision is recorded in
+[`reports/arb-workflow-evidence-v1-2026-07-27.md`](reports/arb-workflow-evidence-v1-2026-07-27.md).
 
 ## Measurements
 

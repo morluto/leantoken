@@ -7,7 +7,8 @@ use leantoken::{
     HandoffWorkingTreeState, HistoryOperation, HistoryRequest, IndexConsistency, IndexState,
     JsonIncompleteReason, JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest,
     ReadDeltaFallback, ReadDeltaOutcome, ReadRequest, ReadStatus, SearchMode, SearchRequest,
-    TokenAccountingOperation, TokenSavingsOperation, coordination::IndexCoordination,
+    TokenAccountingOperation, TokenSavingsOperation, WorkflowEvidence,
+    coordination::IndexCoordination,
     services::{ServiceCallOptions, Services},
     tokens::Tokenizer,
 };
@@ -1913,6 +1914,47 @@ fn context_limit_request(token_budget: usize) -> ContextRequest {
         strict_changed_paths: false,
         verbose_diagnostics: false,
     }
+}
+
+#[tokio::test]
+async fn typed_workflow_evidence_is_bounded_and_reaches_candidate_provenance() {
+    let (_root, services) = fixture().await;
+    let evidence = WorkflowEvidence::new()
+        .with_failure_traces(["error: greet failed".into()])
+        .with_symbols(["greet".into()])
+        .with_paths(["src/lib.rs".into()])
+        .with_test_intents(["greet regression".into()]);
+    let mut request = context_limit_request(300);
+    request.task = "investigate the observed failure".into();
+
+    let evaluation = services
+        .context_evaluation_with_workflow_evidence(request.clone(), evidence)
+        .await
+        .expect("typed workflow evidence");
+
+    assert!(evaluation.generated_candidate_paths.iter().any(|path| path == "src/lib.rs"));
+    assert!(evaluation.generated_candidates.iter().any(|candidate| {
+        candidate
+            .match_kinds
+            .iter()
+            .any(|kind| kind.starts_with("facet:symbol:"))
+    }));
+
+    let error = services
+        .context_with_workflow_evidence(
+            request,
+            WorkflowEvidence::new().with_symbols((0..9).map(|index| format!("symbol_{index}"))),
+        )
+        .await
+        .expect_err("per-class bound");
+    assert!(matches!(
+        error,
+        Error::RequestLimitExceeded {
+            field: "workflow_evidence items per class",
+            requested: 9,
+            limit: 8,
+        }
+    ));
 }
 
 #[tokio::test]

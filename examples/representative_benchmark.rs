@@ -9,7 +9,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use clap::Parser;
 use leantoken::{
     Config, ContextCandidateEvaluation, ContextFragment, ContextRequest, ContextResponse,
-    services::Services, tokens,
+    WorkflowEvidence, services::Services, tokens,
 };
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +34,9 @@ struct Args {
     /// Re-run a consumed blind holdout for diagnostics without claiming blind evidence.
     #[arg(long)]
     consumed_diagnostic: bool,
+    /// Derive typed workflow evidence from each JSON task prompt.
+    #[arg(long)]
+    workflow_evidence: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -167,6 +170,7 @@ struct Report {
     harness_worktree_dirty: bool,
     candidate_runtime_tree_verified: Option<bool>,
     diagnostic_only: bool,
+    workflow_evidence_enabled: bool,
     host_os: &'static str,
     host_arch: &'static str,
     rustc_version: String,
@@ -256,6 +260,7 @@ struct TaskReport {
     languages: Vec<String>,
     task_shapes: Vec<String>,
     token_budget: usize,
+    workflow_evidence: WorkflowEvidenceCounts,
     relevant_files: Vec<String>,
     returned_files: Vec<String>,
     returned_evidence: Vec<EvidenceSummary>,
@@ -295,6 +300,15 @@ struct TaskReport {
     dead_end_source_tokens: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     concept_coverage: Option<TaskConceptCoverage>,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct WorkflowEvidenceCounts {
+    failure_traces: usize,
+    symbols: usize,
+    paths: usize,
+    test_intents: usize,
+    total_bytes: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -475,6 +489,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 task,
                 manifest.rg_max_lines_per_query,
                 labels.as_ref(),
+                args.workflow_evidence,
             )
             .await?;
             accumulate(&mut aggregate, &report);
@@ -557,6 +572,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         harness_worktree_dirty,
         candidate_runtime_tree_verified,
         diagnostic_only: args.consumed_diagnostic,
+        workflow_evidence_enabled: args.workflow_evidence,
         host_os: std::env::consts::OS,
         host_arch: std::env::consts::ARCH,
         rustc_version: command_version("rustc")?,
@@ -1140,12 +1156,153 @@ fn is_patch_free_dataset(dataset_kind: &str) -> bool {
     matches!(dataset_kind, "prospective_validation" | "blind_holdout")
 }
 
+fn workflow_evidence_from_json_prompt(prompt: &str) -> Result<WorkflowEvidence, Box<dyn Error>> {
+    let query: serde_json::Value = serde_json::from_str(prompt)?;
+    let object = query
+        .as_object()
+        .ok_or("workflow-evidence prompt must be a JSON object")?;
+    let failure_trace = object
+        .get("failure_excerpt")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("workflow-evidence prompt has no failure_excerpt")?;
+    let failure_trace = utf8_tail(failure_trace, 8 * 1024);
+    let mut test_intents = Vec::new();
+    let mut seen_test_intents = HashSet::new();
+    for line in failure_trace.lines() {
+        let trimmed = line.trim();
+        if let Some(failed) = trimmed.strip_prefix("FAILED ") {
+            retain_observed_value(
+                &mut test_intents,
+                &mut seen_test_intents,
+                failed.trim().to_owned(),
+            );
+        } else if let Some(test_name) = trimmed.strip_prefix("def test_") {
+            let suffix = test_name
+                .split(|character: char| !character.is_alphanumeric() && character != '_')
+                .next()
+                .unwrap_or_default();
+            if !suffix.is_empty() {
+                retain_observed_value(
+                    &mut test_intents,
+                    &mut seen_test_intents,
+                    format!("test_{suffix}"),
+                );
+            }
+        }
+    }
+    if let Some(command) = object.get("command").and_then(serde_json::Value::as_str)
+        && !command.trim().is_empty()
+    {
+        retain_observed_value(
+            &mut test_intents,
+            &mut seen_test_intents,
+            command.trim().to_owned(),
+        );
+    }
+    Ok(WorkflowEvidence::new()
+        .with_failure_traces([failure_trace.clone()])
+        .with_symbols(observed_trace_symbols(&failure_trace))
+        .with_paths(observed_trace_paths(&failure_trace))
+        .with_test_intents(test_intents.into_iter().take(8)))
+}
+
+fn utf8_tail(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_owned();
+    }
+    let mut start = value.len() - max_bytes;
+    while !value.is_char_boundary(start) {
+        start += 1;
+    }
+    value[start..].to_owned()
+}
+
+fn observed_trace_paths(trace: &str) -> Vec<String> {
+    let mut paths = BTreeSet::new();
+    for token in trace.split_whitespace() {
+        let token = token.trim_matches(|character: char| {
+            !character.is_alphanumeric() && !matches!(character, '/' | '.' | '_' | '-' | ':' | '\\')
+        });
+        let path = token.split_once("::").map_or(token, |(path, _)| path);
+        let path = path
+            .split_once(':')
+            .filter(|(_, suffix)| {
+                suffix
+                    .chars()
+                    .next()
+                    .is_some_and(|character| character.is_ascii_digit())
+            })
+            .map_or(path, |(path, _)| path)
+            .trim_start_matches("./");
+        if path.contains('/') && path.contains('.') && validate_benchmark_path(path).is_ok() {
+            paths.insert(path.to_owned());
+        }
+    }
+    paths.into_iter().take(8).collect()
+}
+
+fn observed_trace_symbols(trace: &str) -> Vec<String> {
+    let mut symbols = Vec::new();
+    let mut seen = HashSet::new();
+    for (index, value) in trace.split('`').enumerate() {
+        if index % 2 == 1 {
+            retain_trace_symbol(&mut symbols, &mut seen, value);
+        }
+    }
+    for token in trace.split_whitespace() {
+        let token = token.trim_matches(|character: char| {
+            !character.is_alphanumeric() && !matches!(character, '_' | '.' | ':')
+        });
+        retain_trace_symbol(&mut symbols, &mut seen, token);
+    }
+    symbols.into_iter().take(8).collect()
+}
+
+fn retain_trace_symbol(symbols: &mut Vec<String>, seen: &mut HashSet<String>, value: &str) {
+    if (3..=128).contains(&value.len())
+        && !value.contains('/')
+        && !value.chars().any(char::is_whitespace)
+        && value.chars().any(char::is_alphabetic)
+        && (value.contains('_')
+            || value.contains('.')
+            || value.contains("::")
+            || value.chars().any(char::is_uppercase))
+        && seen.insert(value.to_owned())
+    {
+        symbols.push(value.to_owned());
+    }
+}
+
+fn retain_observed_value(values: &mut Vec<String>, seen: &mut HashSet<String>, value: String) {
+    if !value.is_empty() && seen.insert(value.clone()) {
+        values.push(value);
+    }
+}
+
+fn workflow_evidence_counts(evidence: &WorkflowEvidence) -> WorkflowEvidenceCounts {
+    WorkflowEvidenceCounts {
+        failure_traces: evidence.failure_traces.len(),
+        symbols: evidence.symbols.len(),
+        paths: evidence.paths.len(),
+        test_intents: evidence.test_intents.len(),
+        total_bytes: evidence
+            .failure_traces
+            .iter()
+            .chain(&evidence.symbols)
+            .chain(&evidence.paths)
+            .chain(&evidence.test_intents)
+            .map(String::len)
+            .sum(),
+    }
+}
+
 async fn run_task(
     root: &Path,
     services: &Services,
     task: TaskSpec,
     rg_max_lines_per_query: usize,
     concept_labels: Option<&ConceptTaskLabels>,
+    workflow_evidence_enabled: bool,
 ) -> Result<TaskReport, Box<dyn Error>> {
     let relevant_paths = task
         .relevant_files
@@ -1201,8 +1358,16 @@ async fn run_task(
         strict_changed_paths: false,
         verbose_diagnostics: false,
     };
+    let workflow_evidence = if workflow_evidence_enabled {
+        workflow_evidence_from_json_prompt(&task.prompt)?
+    } else {
+        WorkflowEvidence::default()
+    };
+    let workflow_evidence_counts = workflow_evidence_counts(&workflow_evidence);
     let started = Instant::now();
-    let evaluation = services.context_evaluation(request.clone()).await?;
+    let evaluation = services
+        .context_evaluation_with_workflow_evidence(request.clone(), workflow_evidence.clone())
+        .await?;
     let concept_coverage = concept_labels
         .map(|labels| {
             evaluate_concept_coverage(
@@ -1219,7 +1384,9 @@ async fn run_task(
     let mut warm_context_ms_samples = Vec::with_capacity(3);
     for _ in 0..3 {
         let started = Instant::now();
-        let warm = services.context(request.clone()).await?;
+        let warm = services
+            .context_with_workflow_evidence(request.clone(), workflow_evidence.clone())
+            .await?;
         warm_context_ms_samples.push(elapsed_ms(started));
         verify_token_accounting(&warm)?;
         if deterministic_context_json(&warm)? != canonical_response {
@@ -1320,7 +1487,9 @@ async fn run_task(
         ..request
     };
     let repeat_request_json_tokens = tokens::count(&serde_json::to_string(&repeat_request)?);
-    let repeat = services.context(repeat_request).await?;
+    let repeat = services
+        .context_with_workflow_evidence(repeat_request, workflow_evidence)
+        .await?;
     let known_fragments_resent = repeat
         .fragments
         .iter()
@@ -1366,6 +1535,7 @@ async fn run_task(
         languages: task.languages,
         task_shapes: task.task_shapes,
         token_budget: task.token_budget,
+        workflow_evidence: workflow_evidence_counts,
         relevant_files: task
             .relevant_files
             .into_iter()
@@ -1890,6 +2060,37 @@ mod tests {
             }]
         }))
         .expect("parse external manifest")
+    }
+
+    #[test]
+    fn arb_prompt_derives_bounded_workflow_evidence_without_gold_labels() {
+        let prompt = serde_json::json!({
+            "command": "cargo test",
+            "failure_excerpt": concat!(
+                "error[E0599]: no method named `default_values_if`\n",
+                " --> tests/builder/default_vals.rs:326:18\n",
+                "FAILED tests/builder/default_vals.rs::default_values_regression\n"
+            )
+        })
+        .to_string();
+
+        let evidence = workflow_evidence_from_json_prompt(&prompt).expect("workflow evidence");
+
+        assert_eq!(evidence.failure_traces.len(), 1);
+        assert!(
+            evidence
+                .symbols
+                .iter()
+                .any(|value| value == "default_values_if")
+        );
+        assert_eq!(evidence.paths, ["tests/builder/default_vals.rs"]);
+        assert!(
+            evidence
+                .test_intents
+                .iter()
+                .any(|value| value.contains("default_values_regression"))
+        );
+        assert!(workflow_evidence_counts(&evidence).total_bytes <= 32 * 1024);
     }
 
     fn context_response(receipt_id: &str) -> ContextResponse {

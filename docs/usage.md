@@ -743,6 +743,26 @@ silently broadens another. `must_include_paths` and
 focus minimums and ordinary ranking. `max_fragments` defaults to 8 and accepts
 values through 100.
 
+`workflow_evidence` is an opt-in object for facts the caller directly observed
+while executing the workflow. Its four arrays are `failure_traces`, `symbols`,
+repository-relative `paths`, and `test_intents`. Each class accepts at most
+eight items, each item accepts at most 8 KiB, and the combined payload accepts
+at most 32 KiB. Evidence shares the existing 12-query context fan-out instead
+of starting an unbounded second search. Do not populate it from benchmark gold
+labels or guesses:
+
+```json
+{
+  "task": "fix the failing default-value regression",
+  "workflow_evidence": {
+    "failure_traces": ["error: default_values_if is missing"],
+    "symbols": ["default_values_if"],
+    "paths": ["tests/builder/default_vals.rs"],
+    "test_intents": ["default values regression"]
+  }
+}
+```
+
 Required symbols share the request token budget. A definition that fits its
 share is returned completely. When it does not fit, the fragment and plan
 candidate report `truncated: true` together with the complete
@@ -884,6 +904,9 @@ CLI equivalents make the reuse contract explicit:
 leantoken --json read src/lib.rs --lines 40:90 --expected-hash HASH
 leantoken --json context --task "finish the validated fix" --budget 1200 \
   --known-hash HASH_FROM_RECEIPT --prior-generation 7
+leantoken --json context --task "fix the observed parser failure" \
+  --failure-trace "error: unexpected token" --evidence-symbol Parser::parse \
+  --evidence-path src/parser.rs --test-intent "parser regression"
 leantoken --json context --task "transfer the grounded implementation state" \
   --handoff --handoff-summary "Continue the validated parser fix"
 ```
