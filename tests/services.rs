@@ -7,7 +7,8 @@ use leantoken::{
     HandoffValidationStatus, HandoffWorkingTreeState, HistoryOperation, HistoryRequest,
     IndexConsistency, IndexState, JsonIncompleteReason, JsonOperation, JsonProjection, JsonRequest,
     JsonSelector, OutlineRequest, ReadDeltaFallback, ReadDeltaOutcome, ReadRequest, ReadStatus,
-    SearchMode, SearchRequest, TokenAccountingOperation, TokenSavingsOperation, WorkflowEvidence,
+    ReferenceRole, SearchMode, SearchRequest, TokenAccountingOperation, TokenSavingsOperation,
+    WorkflowEvidence,
     coordination::IndexCoordination,
     services::{ServiceCallOptions, Services},
     tokens::Tokenizer,
@@ -5515,6 +5516,140 @@ Setext
             reason: "must be one-based"
         }
     ));
+}
+
+#[tokio::test]
+async fn latex_outline_and_read_share_exact_section_label_and_bibliography_structure() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("sections")).expect("sections");
+    std::fs::write(
+        root.path().join("paper.tex"),
+        "\\section{Overview}\nintro\n\\subsection{Method}\nmethod \\cite{alpha}\n\\label{sec:method}\n\\input{sections/results}\n\\section{References}\n\\begin{thebibliography}{9}\n\\bibitem{alpha} Source.\n\\end{thebibliography}\n",
+    )
+    .expect("LaTeX source");
+    std::fs::write(root.path().join("sections/results.tex"), "result\n").expect("input");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index");
+
+    let outline = services
+        .outline(OutlineRequest {
+            paths: vec!["paper.tex".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(50),
+            max_tokens: Some(4_000),
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect("LaTeX outline");
+    assert!(outline.parse_complete);
+    assert!(outline.result_complete);
+    let latex = &outline.files[0];
+    assert_eq!(latex.language.as_deref(), Some("latex"));
+    assert!(latex.structurally_complete);
+    assert!(latex.symbols.iter().any(|symbol| {
+        symbol.name == "Method"
+            && symbol.kind == "latex_subsection"
+            && symbol.start_line == 3
+            && symbol.end_line == 6
+    }));
+    assert_eq!(
+        latex
+            .imports
+            .iter()
+            .map(|import| (
+                import.raw_target.as_str(),
+                import.resolved_path.as_deref(),
+                import.line
+            ))
+            .collect::<Vec<_>>(),
+        vec![("sections/results", Some("sections/results.tex"), 6)]
+    );
+
+    let references = services
+        .search(SearchRequest {
+            query: "alpha".into(),
+            mode: SearchMode::Reference,
+            include_paths: vec!["paper.tex".into()],
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(10),
+            max_tokens: Some(2_000),
+            context_lines: Some(0),
+            case_sensitive: true,
+            all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect("LaTeX citation audit");
+    assert!(references.hits.iter().any(|hit| {
+        hit.symbol.as_deref() == Some("alpha")
+            && hit.role == Some(ReferenceRole::Reference)
+            && hit.start_line == 4
+            && hit.enclosing_symbol.as_deref() == Some("Method")
+    }));
+    assert!(references.hits.iter().any(|hit| {
+        hit.symbol.as_deref() == Some("alpha")
+            && hit.role == Some(ReferenceRole::Definition)
+            && hit.start_line == 9
+    }));
+
+    for (heading, symbol, expected_range, expected_content) in [
+        (
+            Some("Method"),
+            None,
+            (3, 6),
+            "\\subsection{Method}\nmethod \\cite{alpha}\n\\label{sec:method}\n\\input{sections/results}",
+        ),
+        (
+            Some("\\subsection{Method}"),
+            None,
+            (3, 6),
+            "\\subsection{Method}\nmethod \\cite{alpha}\n\\label{sec:method}\n\\input{sections/results}",
+        ),
+        (
+            None,
+            Some("sec:method"),
+            (3, 6),
+            "\\subsection{Method}\nmethod \\cite{alpha}\n\\label{sec:method}\n\\input{sections/results}",
+        ),
+        (
+            None,
+            Some("alpha"),
+            (9, 10),
+            "\\bibitem{alpha} Source.\n\\end{thebibliography}",
+        ),
+    ] {
+        let read = services
+            .read(ReadRequest {
+                path: "paper.tex".into(),
+                start_line: None,
+                end_line: None,
+                symbol: symbol.map(str::to_owned),
+                heading: heading.map(str::to_owned),
+                heading_occurrence: None,
+                continuation_cursor: None,
+                max_tokens: Some(2_000),
+                expected_hash: None,
+                delta: false,
+                receipt_id: None,
+            })
+            .await
+            .expect("LaTeX structured read");
+        assert_eq!(
+            (read.target_start_line, read.target_end_line),
+            expected_range
+        );
+        assert_eq!(
+            read.content.as_deref().map(str::trim_end),
+            Some(expected_content)
+        );
+    }
 }
 
 #[tokio::test]

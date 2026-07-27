@@ -750,6 +750,16 @@ HTML ID and element symbols retain complete owning-element ranges. Attribute
 and selector references keep their exact lexical ranges, while resource links
 flow through the shared import model.
 
+Markdown and LaTeX use custom document parsers instead of tree-sitter. The
+LaTeX parser makes one bounded pass over the already size-limited indexed
+source, then performs linear section-range closure and bounded sorting of the
+facts it found. Memory is proportional to recognized facts plus section and
+environment nesting; it does not retain a syntax tree. It ignores comments and
+verbatim-like environments, marks malformed brace/environment structure
+incomplete while retaining recovered facts, and uses the same section, label,
+bibliography, citation, reference, and input/include facts for outline, exact
+read, reference search, and import resolution.
+
 C# extraction covers namespaces, classes, structs, interfaces, records, enums,
 delegates, methods, local functions, constructors, properties, fields, events,
 indexers, and operators. Method-like symbols retain their complete bodies,

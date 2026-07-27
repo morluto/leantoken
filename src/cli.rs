@@ -1187,11 +1187,11 @@ pub struct ReadArgs {
     #[arg(long, conflicts_with_all = ["lines", "heading", "cursor"])]
     pub symbol: Option<String>,
 
-    /// Read the section for an exact Markdown heading title or outline signature.
+    /// Read an exact Markdown or LaTeX section title or outline signature.
     #[arg(long, conflicts_with_all = ["lines", "symbol", "cursor"])]
     pub heading: Option<String>,
 
-    /// One-based occurrence of a duplicate Markdown heading.
+    /// One-based occurrence of a duplicate document heading.
     #[arg(
         long,
         requires = "heading",

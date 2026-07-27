@@ -86,8 +86,8 @@ pub enum Error {
         /// Exact symbol identity requested by the caller.
         symbol: String,
     },
-    /// Requested Markdown heading occurrence was absent from an indexed file.
-    #[error("Markdown heading occurrence {occurrence} is not indexed in {path}: {heading}")]
+    /// Requested document heading occurrence was absent from an indexed file.
+    #[error("document heading occurrence {occurrence} is not indexed in {path}: {heading}")]
     HeadingNotFound {
         /// Repository-relative indexed file.
         path: String,

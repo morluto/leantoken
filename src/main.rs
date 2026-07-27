@@ -1067,7 +1067,7 @@ mod tests {
                     occurrence: 2,
                 },
                 serde_json::json!({
-                    "error": "Markdown heading occurrence 2 is not indexed in README.md: Installation",
+                    "error": "document heading occurrence 2 is not indexed in README.md: Installation",
                     "category": "heading_not_found"
                 }),
             ),
