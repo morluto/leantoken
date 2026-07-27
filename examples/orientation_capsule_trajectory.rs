@@ -129,7 +129,7 @@ struct UnclassifiedRun {
 
 #[derive(Debug, Default, Serialize)]
 struct ArmSummary {
-    runs: usize,
+    classified_runs: usize,
     successes: usize,
     retrieval_calls: usize,
     retrieval_source_tokens: u64,
@@ -176,8 +176,9 @@ struct Report {
     tokenizer: &'static str,
     tasks: usize,
     repetitions: usize,
+    selected_runs: usize,
     verified_artifacts: usize,
-    arms: BTreeMap<String, ArmSummary>,
+    classified_arms: BTreeMap<String, ArmSummary>,
     runs: Vec<RunClassification>,
     unclassified_runs: Vec<UnclassifiedRun>,
     decision: Decision,
@@ -222,7 +223,12 @@ fn main() -> Result<(), DynError> {
             )?);
         }
     }
-    let arms = summarize_arms(&runs);
+    let classified_arms = summarize_arms(&runs);
+    let selected_runs = raw
+        .runs
+        .iter()
+        .filter(|run| matches!(run.arm.as_str(), BASELINE_ARM | CANDIDATE_ARM))
+        .count();
     let decision = decide(&raw.runs, &runs, &task_map)?;
     let report = Report {
         schema_version: REPORT_SCHEMA_V1,
@@ -236,8 +242,9 @@ fn main() -> Result<(), DynError> {
         tokenizer: Tokenizer::Cl100kBase.name(),
         tasks: raw.task_definitions.len(),
         repetitions: raw.repetitions,
+        selected_runs,
         verified_artifacts,
-        arms,
+        classified_arms,
         runs,
         unclassified_runs,
         decision,
@@ -603,7 +610,7 @@ fn summarize_arms(runs: &[RunClassification]) -> BTreeMap<String, ArmSummary> {
     let mut arms = BTreeMap::<String, ArmSummary>::new();
     for run in runs {
         let arm = arms.entry(run.arm.clone()).or_default();
-        arm.runs += 1;
+        arm.classified_runs += 1;
         arm.successes += usize::from(run.official_success);
         arm.retrieval_calls += run.retrieval_calls;
         arm.retrieval_source_tokens += run.retrieval_source_tokens;
