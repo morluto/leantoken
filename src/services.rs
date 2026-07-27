@@ -179,10 +179,13 @@ macro_rules! impl_retrieval_response {
 
 impl_retrieval_response!(
     FilesResponse,
+    FilesPathsResponse,
     HistoryResponse,
     JsonResponse,
     SearchResponse,
+    SearchGroupedResponse,
     OutlineResponse,
+    OutlineSignaturesResponse,
     ReadResponse,
     ContextResponse,
 );

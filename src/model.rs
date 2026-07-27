@@ -163,6 +163,13 @@ pub struct FilesResponse {
     pub meta: ResponseMeta,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Path-only `leantoken.files` response for callers that do not need ranking metadata.
+pub struct FilesPathsResponse {
+    pub paths: Vec<String>,
+    pub meta: ResponseMeta,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 /// Search candidate source.
@@ -302,6 +309,59 @@ pub struct SearchResponse {
     pub meta: ResponseMeta,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// One verifiable source excerpt retained by grouped search.
+pub struct SearchGroupEvidence {
+    pub path: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excerpt: Option<String>,
+    pub content_hash: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub match_kinds: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<ReferenceRole>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Reference locations summarized by file without repeating excerpts or scores.
+pub struct SearchReferenceGroup {
+    pub path: String,
+    pub count: usize,
+    pub start_line: usize,
+    pub end_line: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roles: Vec<ReferenceRole>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Search hits grouped by their matched symbol or enclosing structural scope.
+pub struct SearchGroup {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<SearchGroupEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub representative: Option<SearchGroupEvidence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<SearchReferenceGroup>,
+    pub text_matches: usize,
+    pub total_hits: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Opt-in grouped search response with the same coverage and freshness contract.
+pub struct SearchGroupedResponse {
+    pub groups: Vec<SearchGroup>,
+    pub coverage: SearchCoverage,
+    pub hits_returned: usize,
+    pub groups_returned: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrences_total: Option<usize>,
+    pub meta: ResponseMeta,
+}
+
 #[derive(Debug, Clone)]
 /// Evaluation-only search result with deterministic execution counters.
 ///
@@ -430,6 +490,48 @@ pub struct OutlineResponse {
     #[serde(default)]
     pub truncated_by_max_tokens: bool,
     /// Exact filtered symbol counts grouped by syntax kind.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub symbol_counts_by_kind: BTreeMap<String, usize>,
+    pub meta: ResponseMeta,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Signature-only symbol identity with line coordinates.
+pub struct OutlineSignature {
+    pub name: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    pub start_line: usize,
+    pub end_line: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// One file in a signature-only outline response.
+pub struct OutlineSignaturesFile {
+    pub path: String,
+    /// Hash of the serialized ordered `signatures` array.
+    pub content_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    pub parse_complete: bool,
+    pub structurally_complete: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub signatures: Vec<OutlineSignature>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Opt-in outline response that omits imports and symbol byte offsets.
+pub struct OutlineSignaturesResponse {
+    pub files: Vec<OutlineSignaturesFile>,
+    pub parse_complete: bool,
+    pub result_complete: bool,
+    pub total_symbols: usize,
+    pub returned_symbols: usize,
+    pub truncated_by_max_results: bool,
+    pub truncated_by_max_tokens: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub symbol_counts_by_kind: BTreeMap<String, usize>,
     pub meta: ResponseMeta,

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "experiment": "compact-projections-v1",
+  "fixture": {
+    "root": "fixtures/sample_repo",
+    "tree_blake3": "ca7d364bbeed76efdc34ac8646d44da96580322e351f531b22106b25ff310131",
+    "tokenizer": "cl100k_base",
+    "generated_reference_callers": 64
+  },
+  "tasks": {
+    "files": {
+      "depth": 3,
+      "max_results": 100
+    },
+    "outline": {
+      "paths": [
+        "src/rust/math.rs",
+        "src/python/greeter.py",
+        "src/compact_projection_fixture.rs"
+      ],
+      "max_results": 100,
+      "max_tokens": 32000
+    },
+    "search": {
+      "query": "compact_target",
+      "max_results": 100,
+      "max_tokens": 32000,
+      "context_lines": 0
+    }
+  },
+  "acceptance": {
+    "require_default_membership_parity": true,
+    "require_verifiable_path_range_hash": true,
+    "require_zero_retry_proxy_delta": true,
+    "require_each_complete_response_token_delta_negative": true
+  }
+}

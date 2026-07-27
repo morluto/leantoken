@@ -65,8 +65,12 @@ struct TaskReport {
     context_full_read_total_json_tokens: usize,
     search_source_tokens: usize,
     search_total_json_tokens: usize,
+    search_grouped_source_tokens: usize,
+    search_grouped_total_json_tokens: usize,
     outline_source_tokens: usize,
     outline_total_json_tokens: usize,
+    outline_signatures_source_tokens: usize,
+    outline_signatures_total_json_tokens: usize,
     read_source_tokens: usize,
     read_total_json_tokens: usize,
     repo_map_total_json_tokens: usize,
@@ -88,7 +92,9 @@ struct Aggregate {
     context_full_read_source_tokens: usize,
     context_full_read_total_json_tokens: usize,
     search_total_json_tokens: usize,
+    search_grouped_total_json_tokens: usize,
     outline_total_json_tokens: usize,
+    outline_signatures_total_json_tokens: usize,
     read_total_json_tokens: usize,
     repo_map_total_json_tokens: usize,
     aggregate_context_source_savings_vs_read_fraction: f64,
@@ -131,6 +137,29 @@ async fn compare_context_representations() {
         })
         .await
         .expect("repo map");
+    let repo_map_paths = services
+        .files_paths(FilesRequest {
+            operation: FileOperation::Tree,
+            path: None,
+            query: None,
+            pattern: None,
+            max_results: Some(100),
+            cursor: None,
+            depth: Some(2),
+        })
+        .await
+        .expect("path-only repo map");
+    assert_eq!(
+        repo_map_paths.paths,
+        repo_map
+            .entries
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        repo_map_paths.meta.total_response_tokens < repo_map.meta.total_response_tokens
+    );
 
     let mut task_reports = Vec::new();
     let mut aggregate = Aggregate {
@@ -215,41 +244,79 @@ async fn compare_context_representations() {
             .map(|r| r.meta.emitted_tokens)
             .sum();
 
+        let search_request = SearchRequest {
+            query: task.search_query.into(),
+            mode: SearchMode::Auto,
+            include_paths: task.relevant.iter().map(|&p| p.into()).collect(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(20),
+            max_tokens: Some(TOKEN_BUDGET),
+            context_lines: Some(2),
+            case_sensitive: false,
+            all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
+            cursor: None,
+        };
         let search = services
-            .search(SearchRequest {
-                query: task.search_query.into(),
-                mode: SearchMode::Auto,
-                include_paths: task.relevant.iter().map(|&p| p.into()).collect(),
-                exclude_paths: Vec::new(),
-                focus_paths: Vec::new(),
-                max_results: Some(20),
-                max_tokens: Some(TOKEN_BUDGET),
-                context_lines: Some(2),
-                case_sensitive: false,
-                all_occurrences: false,
-                prefer_structural: false,
-                receipt_id: None,
-                cursor: None,
-            })
+            .search(search_request.clone())
             .await
             .expect("search");
+        let grouped_search = services
+            .search_grouped(search_request)
+            .await
+            .expect("grouped search");
         let search_total_json =
             tokens::count(&serde_json::to_string(&search).expect("search json"));
+        let search_grouped_total_json = tokens::count(
+            &serde_json::to_string(&grouped_search).expect("grouped search json"),
+        );
+        assert_eq!(
+            grouped_search
+                .groups
+                .iter()
+                .map(|group| group.total_hits)
+                .sum::<usize>(),
+            search.hits.len()
+        );
 
+        let outline_request = OutlineRequest {
+            paths: task.relevant.iter().map(|&p| p.into()).collect(),
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(100),
+            max_tokens: Some(TOKEN_BUDGET),
+            receipt_id: None,
+            cursor: None,
+        };
         let outline = services
-            .outline(OutlineRequest {
-                paths: task.relevant.iter().map(|&p| p.into()).collect(),
-                symbol_name: None,
-                symbol_kind: None,
-                max_results: Some(100),
-                max_tokens: Some(TOKEN_BUDGET),
-                receipt_id: None,
-                cursor: None,
-            })
+            .outline(outline_request.clone())
             .await
             .expect("outline");
+        let signature_outline = services
+            .outline_signatures(outline_request)
+            .await
+            .expect("signature outline");
         let outline_total_json =
             tokens::count(&serde_json::to_string(&outline).expect("outline json"));
+        let outline_signatures_total_json = tokens::count(
+            &serde_json::to_string(&signature_outline).expect("signature outline json"),
+        );
+        assert_eq!(
+            signature_outline
+                .files
+                .iter()
+                .flat_map(|file| &file.signatures)
+                .map(|symbol| (&symbol.name, symbol.start_line, symbol.end_line))
+                .collect::<Vec<_>>(),
+            outline
+                .files
+                .iter()
+                .flat_map(|file| &file.symbols)
+                .map(|symbol| (&symbol.name, symbol.start_line, symbol.end_line))
+                .collect::<Vec<_>>()
+        );
 
         let mut read_hits = Vec::new();
         for path in task.relevant {
@@ -289,8 +356,12 @@ async fn compare_context_representations() {
             context_full_read_total_json_tokens,
             search_source_tokens: search.meta.emitted_tokens,
             search_total_json_tokens: search_total_json,
+            search_grouped_source_tokens: grouped_search.meta.emitted_tokens,
+            search_grouped_total_json_tokens: search_grouped_total_json,
             outline_source_tokens: outline.meta.emitted_tokens,
             outline_total_json_tokens: outline_total_json,
+            outline_signatures_source_tokens: signature_outline.meta.emitted_tokens,
+            outline_signatures_total_json_tokens: outline_signatures_total_json,
             read_source_tokens,
             read_total_json_tokens,
             repo_map_total_json_tokens: repo_map_total_json,
@@ -318,7 +389,11 @@ async fn compare_context_representations() {
         aggregate.context_full_read_source_tokens += report.context_full_read_source_tokens;
         aggregate.context_full_read_total_json_tokens += report.context_full_read_total_json_tokens;
         aggregate.search_total_json_tokens += report.search_total_json_tokens;
+        aggregate.search_grouped_total_json_tokens +=
+            report.search_grouped_total_json_tokens;
         aggregate.outline_total_json_tokens += report.outline_total_json_tokens;
+        aggregate.outline_signatures_total_json_tokens +=
+            report.outline_signatures_total_json_tokens;
         aggregate.read_total_json_tokens += report.read_total_json_tokens;
         aggregate.repo_map_total_json_tokens += report.repo_map_total_json_tokens;
 
@@ -365,6 +440,7 @@ async fn compare_context_representations() {
             "Full-file reads, search include-paths, and outline inputs use labeled paths; context receives only the task text.",
             "Source-token savings compare content tokens only; total JSON includes schemas, metadata, and JSON syntax.",
             "Repo-map JSON measures one compact tree listing; it is not a substitute for content.",
+            "Compact projection totals preserve labeled path/symbol coverage, but this small corpus is not a task-success or retry-rate estimate.",
             "No model executes an edit, so sufficiency is not measured here.",
         ],
     };

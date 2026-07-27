@@ -804,6 +804,28 @@ rejected; structured-only remains a Codex CLI 0.144.1 opt-in and `dual` remains
 the global default. Provider-native values remain null because the available
 receipts do not expose an attributable provider request frame.
 
+The frozen
+[`compact-projections-v1`](compact_projection_tasks.json) corpus compares the
+default and opt-in `files=paths`, `outline=signatures`, and `search=grouped`
+service DTOs. It binds the canonical multilingual fixture, adds one deterministic
+64-caller reference workload, requires full membership/concept parity,
+verifiable compact coordinates/hashes, zero retry-proxy regression, and a
+negative complete-response token delta for every projection. Run it in release
+mode with:
+
+```bash
+cargo run --release --example compact_projection_benchmark -- \
+  --manifest benchmarks/compact_projection_tasks.json \
+  --repository-root . \
+  --source-revision "$(git rev-parse HEAD)" \
+  --output target/compact-projection-report.json
+```
+
+The checked machine-readable and decision reports live under
+`benchmarks/reports/mcp-response-ablation-compact-projections-v1-*`. The retry
+proxy only proves that labeled path/symbol routing and verification data remain
+available; it is not a model task-success measurement.
+
 The separate
 [`multi_agent_context_pilot.json`](multi_agent_context_pilot.json) manifest and
 [`run_multi_agent_context_pilot.sh`](run_multi_agent_context_pilot.sh) runner

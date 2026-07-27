@@ -461,6 +461,54 @@ impl Services {
             .await
     }
 
+    /// Discover repository paths without per-entry kind, language, size, or score metadata.
+    pub async fn files_paths(&self, request: FilesRequest) -> Result<FilesPathsResponse> {
+        self.files_paths_with_options(request, ServiceCallOptions::new())
+            .await
+    }
+
+    /// Discover path-only results under an exact serialized-response bound.
+    pub async fn files_paths_with_options(
+        &self,
+        request: FilesRequest,
+        options: ServiceCallOptions,
+    ) -> Result<FilesPathsResponse> {
+        self.files_paths_cancellable_with_options(request, options, CancellationToken::new())
+            .await
+    }
+
+    /// Discover path-only results after applying the requested consistency boundary.
+    pub async fn files_paths_with_options_consistency_cancellable(
+        &self,
+        request: FilesRequest,
+        consistency: IndexConsistency,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<FilesPathsResponse> {
+        self.validate_call_options(options)?;
+        validate_files_input(&request)?;
+        self.result_limit(request.max_results)?;
+        self.apply_consistency(consistency, cancellation.clone())
+            .await?;
+        self.files_paths_cancellable_with_options(request, options, cancellation)
+            .await
+    }
+
+    async fn files_paths_cancellable_with_options(
+        &self,
+        request: FilesRequest,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<FilesPathsResponse> {
+        self.validate_call_options(options)?;
+        let this = self.clone();
+        self.blocking_executor
+            .run(cancellation, move |cancellation| {
+                this.files_paths_sync(request, options, cancellation)
+            })
+            .await
+    }
+
     async fn files_cancellable_with_options(
         &self,
         request: FilesRequest,
@@ -525,6 +573,56 @@ impl Services {
         Ok(response)
     }
 
+    fn files_paths_sync(
+        &self,
+        request: FilesRequest,
+        options: ServiceCallOptions,
+        cancellation: &CancellationToken,
+    ) -> Result<FilesPathsResponse> {
+        check_cancelled(cancellation)?;
+        validate_files_input(&request)?;
+        let limit = self.result_limit(request.max_results)?;
+        let mut response = self.consistent(|session, generation| {
+            let cursor =
+                parse_files_cursor(request.cursor.as_deref(), generation, &request.operation)?;
+            let operation = request.operation.clone();
+            let page = match request.operation {
+                FileOperation::Tree => tree_entries(
+                    session,
+                    request.path.as_deref(),
+                    request.depth,
+                    cursor,
+                    limit,
+                    cancellation,
+                )?,
+                FileOperation::Find => fuzzy_entries(
+                    session,
+                    request.query.as_deref(),
+                    cursor,
+                    limit,
+                    cancellation,
+                )?,
+                FileOperation::Glob => glob_entries(
+                    session,
+                    request.pattern.as_deref(),
+                    cursor,
+                    limit,
+                    cancellation,
+                )?,
+            };
+            let entries = page.entries;
+            let mut response = FilesPathsResponse {
+                paths: entries.iter().map(|entry| entry.path.clone()).collect(),
+                meta: self.meta(generation, 0, page.next.map(|next| next.encode(generation))),
+            };
+            self.fit_files_paths_response(&mut response, &entries, operation, generation, options)?;
+            Ok(response)
+        })?;
+        self.finalize_bounded_response(&mut response, options)?;
+        self.record_token_savings(TokenAccountingOperation::Files, None, &response.meta);
+        Ok(response)
+    }
+
     fn fit_files_response(
         &self,
         response: &mut FilesResponse,
@@ -565,6 +663,57 @@ impl Services {
             .map(|entry| {
                 let mut minimum = original.clone();
                 minimum.entries.truncate(1);
+                minimum.meta.next_cursor =
+                    Some(files_cursor_for_entry(&operation, entry).encode(generation));
+                self.finalized_response_tokens(&minimum)
+            })
+            .transpose()?
+            .unwrap_or(self.finalized_response_tokens(&original)?);
+        Err(Error::RequestLimitExceeded {
+            field: "max_response_tokens",
+            requested,
+            limit: max_response_tokens,
+        })
+    }
+
+    fn fit_files_paths_response(
+        &self,
+        response: &mut FilesPathsResponse,
+        entries: &[FileEntry],
+        operation: FileOperation,
+        generation: u64,
+        options: ServiceCallOptions,
+    ) -> Result<()> {
+        if self.response_fits(response, options)? {
+            return Ok(());
+        }
+
+        let original = response.clone();
+        let max_response_tokens = options
+            .max_response_tokens()
+            .expect("fitting only runs with a response limit");
+        let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+        let keep = budget.largest_fitting_prefix(original.paths.len(), |keep| {
+            let mut candidate = original.clone();
+            candidate.paths.truncate(keep);
+            candidate.meta.next_cursor = entries
+                .get(keep.saturating_sub(1))
+                .map(|entry| files_cursor_for_entry(&operation, entry).encode(generation));
+            self.finalized_response_tokens(&candidate)
+        })?;
+        if let Some(keep) = keep.filter(|keep| *keep > 0) {
+            response.paths.truncate(keep);
+            response.meta.next_cursor = entries
+                .get(keep - 1)
+                .map(|entry| files_cursor_for_entry(&operation, entry).encode(generation));
+            return Ok(());
+        }
+
+        let requested = entries
+            .first()
+            .map(|entry| {
+                let mut minimum = original.clone();
+                minimum.paths.truncate(1);
                 minimum.meta.next_cursor =
                     Some(files_cursor_for_entry(&operation, entry).encode(generation));
                 self.finalized_response_tokens(&minimum)

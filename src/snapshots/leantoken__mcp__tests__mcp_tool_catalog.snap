@@ -1,6 +1,5 @@
 ---
 source: src/mcp.rs
-assertion_line: 4056
 expression: tools
 ---
 [
@@ -366,7 +365,7 @@ expression: tools
   },
   {
     "name": "files",
-    "description": "Preferred repository path discovery instead of find, ls, or glob. Use tree for hierarchy, find for fuzzy filenames, and glob for path patterns; returns paths, not source. Example: {\"operation\":\"find\",\"query\":\"mcp\"}.",
+    "description": "Preferred repository path discovery instead of find, ls, or glob. Use tree for hierarchy, find for fuzzy filenames, and glob for path patterns; returns paths, not source. Set projection=paths for opt-in path-only results without kind, language, size, or score metadata. Example: {\"operation\":\"find\",\"query\":\"mcp\"}.",
     "inputSchema": {
       "$defs": {
         "FileOperation": {
@@ -385,6 +384,21 @@ expression: tools
             {
               "const": "glob",
               "description": "Match indexed paths with a glob.",
+              "type": "string"
+            }
+          ]
+        },
+        "FilesMcpProjection": {
+          "description": "Response projection for repository path discovery.",
+          "oneOf": [
+            {
+              "const": "full",
+              "description": "Preserve the complete files response.",
+              "type": "string"
+            },
+            {
+              "const": "paths",
+              "description": "Return paths without per-entry kind, language, size, or score metadata.",
               "type": "string"
             }
           ]
@@ -555,6 +569,10 @@ expression: tools
             "string",
             "null"
           ]
+        },
+        "projection": {
+          "$ref": "#/$defs/FilesMcpProjection",
+          "default": "full"
         },
         "query": {
           "default": null,
@@ -999,8 +1017,25 @@ expression: tools
   },
   {
     "name": "outline",
-    "description": "Inspect file structure without reading whole source files. Prefer this when the file is known but the relevant symbol or range is not; then use leantoken.read. Example: {\"paths\":[\"src/mcp.rs\"]}.",
+    "description": "Inspect file structure without reading whole source files. Prefer this when the file is known but the relevant symbol or range is not; then use leantoken.read. Set projection=signatures to omit imports and byte offsets while retaining path, line range, signature-set hash, parse coverage, freshness, and continuation. Example: {\"paths\":[\"src/mcp.rs\"]}.",
     "inputSchema": {
+      "$defs": {
+        "OutlineMcpProjection": {
+          "description": "Response projection for structural outlines.",
+          "oneOf": [
+            {
+              "const": "full",
+              "description": "Preserve symbols, imports, and byte offsets.",
+              "type": "string"
+            },
+            {
+              "const": "signatures",
+              "description": "Return symbol signatures and line ranges without imports or byte offsets.",
+              "type": "string"
+            }
+          ]
+        }
+      },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
@@ -1064,6 +1099,10 @@ expression: tools
           "maxItems": 256,
           "minItems": 1,
           "type": "array"
+        },
+        "projection": {
+          "$ref": "#/$defs/OutlineMcpProjection",
+          "default": "full"
         },
         "receipt_id": {
           "default": null,
@@ -1300,9 +1339,24 @@ expression: tools
   },
   {
     "name": "search",
-    "description": "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Set all_occurrences in text or regex mode for exact occurrence coordinates and returned/total counts; exhaustive scans fail instead of silently truncating at internal scan limits. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}.",
+    "description": "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Set projection=grouped for opt-in symbol/file summaries that retain one verifiable excerpt, reference counts, coverage, freshness, and continuation without repeated scores or excerpts. Set all_occurrences in text or regex mode for exact occurrence coordinates and returned/total counts; exhaustive scans fail instead of silently truncating at internal scan limits. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}.",
     "inputSchema": {
       "$defs": {
+        "SearchMcpProjection": {
+          "description": "Response projection for indexed search.",
+          "oneOf": [
+            {
+              "const": "full",
+              "description": "Preserve the complete ranked-hit response.",
+              "type": "string"
+            },
+            {
+              "const": "grouped",
+              "description": "Group the selected page into symbol or file summaries.",
+              "type": "string"
+            }
+          ]
+        },
         "SearchMode": {
           "description": "Search candidate source.",
           "oneOf": [
@@ -1450,6 +1504,10 @@ expression: tools
           "default": false,
           "description": "Prefer structural definitions when identifier channels find the same definition.",
           "type": "boolean"
+        },
+        "projection": {
+          "$ref": "#/$defs/SearchMcpProjection",
+          "default": "full"
         },
         "query": {
           "description": "Non-empty text, identifier, symbol, or Rust regular expression to find.",

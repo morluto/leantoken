@@ -423,6 +423,12 @@ cannot be mixed. Common inputs are `max_results` (default 20, maximum 100) and
 `cursor`. Output contains bounded file/directory entries with language and size
 metadata when available.
 
+Set `projection="paths"` for the opt-in path-only response. It returns the same
+ordered page as `full` in a `paths` array plus the complete `meta` freshness,
+repository, token-accounting, and continuation contract. Kind, language, byte
+size, and fuzzy score are omitted. The default remains `full`; use it when those
+fields affect the next routing decision.
+
 ## `leantoken.search`
 
 Returns ranked source excerpts. Modes are `auto`, `text`, `regex`,
@@ -443,6 +449,17 @@ merged; merged channel and score-reason diagnostics are preserved either way.
 The response `coverage` reports `total`, current-page `returned`, and
 `truncated` counts separately for definitions, references, and text/regex
 matches. One merged hit can represent more than one channel.
+
+Set `projection="grouped"` for broad symbol/reference discovery that does not
+need every repeated excerpt or score. Grouping runs after the normal ranked
+page, exact-hit deduplication, lexical/structural definition merge, and receipt
+filtering. Each group retains an explicit definition when available, otherwise
+one representative path/range/excerpt/content hash; references are summarized
+by file with their count, covered line span, and roles. `coverage`,
+`occurrences_total`, repository freshness, exact token accounting, and the
+normal continuation cursor remain available. The default `full` projection is
+unchanged. Use `leantoken.read` with a returned path/range to expand source, or
+repeat a narrowed `full` search when individual reference excerpts are needed.
 
 Set `all_occurrences` in `text` or `regex` mode to return one hit for every
 non-overlapping match, including repeated matches in one indexed chunk or line.
@@ -484,6 +501,16 @@ and import. Exact `total_symbols`, `returned_symbols`, `total_imports`,
 `truncated_by_max_tokens` means the query must be repeated with a larger token
 budget to recover omitted entries. Outline cursors are bound to the repository
 generation, normalized path order, and symbol filters.
+
+Set `projection="signatures"` to exclude imports before result/token selection
+and omit symbol byte offsets. The response retains path, language,
+parse-completeness state, symbol name/kind/parent/signature, one-based line
+ranges, exact symbol coverage, freshness, and continuation. Each file includes
+a `content_hash` over the serialized ordered `signatures` array so the compact
+representation can be checked and reused without paying one hash per symbol.
+`result_complete` then describes the filtered symbol set, not imports. Signature
+cursors are projection-bound; switching between `full` and `signatures` with a
+cursor fails stale instead of applying incompatible offsets.
 
 Supported languages report whether parsing was structurally complete.
 JavaScript, TypeScript, and TSX outlines include top-level `const`, `let`, and
