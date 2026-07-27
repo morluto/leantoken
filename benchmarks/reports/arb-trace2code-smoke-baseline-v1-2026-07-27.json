@@ -1,0 +1,1022 @@
+{
+  "schema_version": 4,
+  "dataset_kind": "external_retrieval_corpus",
+  "manifest_blake3": "888fd766be72d8831946cf0038cf39374b5480564088f8d2cf7aa8d553bb6a7f",
+  "frozen_at": "2026-07-27",
+  "candidate_revision": null,
+  "evaluation_protocol": "External labels are converted deterministically. Production ranking is unchanged, and reports are diagnostic until a separate promotion commitment is frozen.",
+  "reclassification_rule": "Do not edit converted labels after observing LeanToken output; update the pinned dataset revision and record a new corpus lock instead.",
+  "manifest_description": "Agent Retrieval Bench trace2code smoke: 2 deterministically selected task(s) from pinned release v2_trace2code (archive SHA-256 19b252e8cfff42107fedc74005dbb6972f2970af33651ce0c1571546819e41c4). This is a bounded smoke baseline, not a complete ARB leaderboard run.",
+  "leantoken_version": "0.1.16",
+  "harness_revision": "bc0027249287dfff38e09302bcaecef385a40721",
+  "harness_worktree_dirty": true,
+  "candidate_runtime_tree_verified": null,
+  "diagnostic_only": false,
+  "host_os": "linux",
+  "host_arch": "x86_64",
+  "rustc_version": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "ripgrep_version": "ripgrep 15.1.0 (rev af60c2de9d)",
+  "generated_at_unix_seconds": 1785143430,
+  "tokenizer": "cl100k_base",
+  "token_count_exact": true,
+  "methodology": {
+    "oracle_baseline": "Full contents of fix-labeled relevant files, as if an agent chose every file perfectly and paid no discovery cost.",
+    "rg_discovery_baseline": "Bounded, path-sorted ripgrep --json output for fixed-string queries derived from each public bug task.",
+    "scripted_baseline": "One JSON envelope containing the ripgrep discovery output and oracle full-file reads.",
+    "source_tokens": "Tokens in source content only; excludes paths, scores, reasons, receipts, and JSON syntax.",
+    "serialized_tokens": "Tokens in the complete serialized JSON payload, including metadata and syntax."
+  },
+  "aggregate": {
+    "corpus_count": 2,
+    "task_count": 2,
+    "relevant_files": 3,
+    "relevant_files_found": 0,
+    "relevant_file_recall": 0.0,
+    "candidate_relevant_files_found": 1,
+    "candidate_relevant_file_recall": 0.3333333333333333,
+    "returned_files": 10,
+    "labeled_file_precision": 0.0,
+    "line_anchors": 3,
+    "line_anchors_found": 0,
+    "line_anchor_recall": 0.0,
+    "oracle_source_tokens": 80214,
+    "rg_discovery_tokens": 0,
+    "scripted_baseline_total_json_tokens": 92767,
+    "leantoken_source_tokens": 1151,
+    "leantoken_total_json_tokens": 2367,
+    "source_savings_against_oracle_fraction": 0.985650883885606,
+    "total_json_savings_against_scripted_fraction": 0.9744844610691302,
+    "known_fragments_resent": 0,
+    "dead_end_fragments": 16,
+    "dead_end_source_tokens": 1151,
+    "second_response_source_tokens": 1285,
+    "estimated_repeated_range_source_tokens": 11,
+    "repeat_request_json_tokens": 2645,
+    "repeat_total_json_tokens": 2551,
+    "two_turn_context_json_tokens": 7563,
+    "concepts": 0,
+    "candidate_concepts_found": 0,
+    "candidate_concept_recall": null,
+    "selected_concepts_found": 0,
+    "selected_concept_recall": null,
+    "concept_selection_retention": null
+  },
+  "corpora": [
+    {
+      "name": "arb:clap-rs/clap:e82e1edf76bc",
+      "url": "https://github.com/clap-rs/clap.git",
+      "base_revision": "e82e1edf76bcbddf5fe53428d297520d76a6a300",
+      "fix_commit": null,
+      "issue_url": null,
+      "prompt_provenance": "Exact JSON serialization of the public ARB query object from the pinned v2_trace2code release.",
+      "label_provenance": "ARB target_gold_files semantics for trace2code: public root_cause_files with public gold_spans supplying optional line anchors.",
+      "dataset_url": "https://huggingface.co/datasets/eyuansu71/agent_retrieval_bench",
+      "dataset_revision": "c50401f20c60a8c45da94f2ef785ac9a99a6eb55",
+      "dataset_license": "MIT benchmark metadata; redistributed source chunks retain upstream repository licenses",
+      "external_limitations": [
+        "The adapter intentionally supports only the pinned trace2code release; other ARB workflow schemas require separate evidence-aware adapters.",
+        "A filtered smoke manifest is not representative of the 101 trace2code tasks and must not be reported as an ARB leaderboard or scalability result.",
+        "Related tests and hard negatives are not promoted to trace2code gold files.",
+        "The generated manifest contains metadata and labels only; source snapshots remain upstream under their original licenses."
+      ],
+      "indexed_files": 588,
+      "indexed_chunks": 1696,
+      "index_warnings": [],
+      "cold_index_ms": 1831.882438,
+      "database_bytes": 37400576,
+      "tasks": [
+        {
+          "id": "arb:2d65eeb2c97d07f557b1ddb2",
+          "prompt": "{\"command\":\"cargo test\",\"failure_excerpt\":\"$ cargo test\\n\\n   Compiling proc-macro2 v1.0.94\\n   Compiling unicode-ident v1.0.12\\n   Compiling serde v1.0.204\\n   Compiling anstyle v1.0.10\\n   Compiling utf8parse v0.2.2\\n   Compiling crossbeam-utils v0.8.20\\n   Compiling colorchoice v1.0.1\\n   Compiling is_terminal_polyfill v1.70.0\\n   Compiling anstyle-parse v0.2.4\\n   Compiling anstyle-query v1.1.0\\n   Compiling libc v0.2.155\\n   Compiling serde_json v1.0.120\\n   Compiling ryu v1.0.18\\n   Compiling anstream v0.6.14\\n   Compiling itoa v1.0.11\\n   Compiling rayon-core v1.12.1\\n   Compiling escargot v0.5.13\\n   Compiling utf8-width v0.1.7\\n   Compiling html-escape v0.2.13\\n   Compiling anstyle-lossy v1.1.3\\n   Compiling equivalent v1.0.1\\n   Compiling unicode-width v0.2.0\\n   Compiling once_cell v1.19.0\\n   Compiling hashbrown v0.14.5\\n   Compiling crossbeam-epoch v0.9.18\\n   Compiling log v0.4.22\\n   Compiling quote v1.0.39\\n   Compiling syn v2.0.99\\n   Compiling crossbeam-deque v0.8.5\\n   Compiling winnow v0.7.11\\n   Compiling target-triple v0.1.3\\n   Compiling indexmap v2.2.6\\n   Compiling anstyle-svg v0.1.7\\n   Compiling os_pipe v1.2.0\\n   Compiling wait-timeout v0.2.0\\n   Compiling snapbox-macros v0.3.10\\n   Compiling humantime v2.1.0\\n   Compiling normalize-line-endings v0.3.0\\n   Compiling winnow v0.6.13\\n   Compiling clap_lex v0.7.6 (/Users/eyuansu62/llm_judge/a-good-project/data/repro_worktrees/clap-rs__clap/ab51d1a1e5a81742420a3175/clap_lex)\\n   Compiling semver v1.0.26\\n   Compiling rustversion v1.0.21\\n   Compiling glob v0.3.1\\n   Compiling either v1.13.0\\n   Compiling toml_writer v1.0.0\\n   Compiling strsim v0.11.1\\n   Compiling similar v2.5.0\\n   Compiling clap_builder v4.5.52 (/Users/eyuansu62/llm_judge/a-good-project/data/repro_worktrees/clap-rs__clap/ab51d1a1e5a81742420a3175/clap_builder)\\n   Compiling toml_parser v1.0.0\\n   Compiling rayon v1.10.0\\n   Compiling serde_derive v1.0.204\\n   Compiling automod v1.0.15\\n   Compiling termcolor v1.4.1\\n   Compiling shlex v1.3.0\\n   Compiling clap-cargo v0.15.2\\n   Compiling jiff v0.2.15\\n   Compiling clap v4.5.52 (/Users/eyuansu62/llm_judge/a-good-project/data/repro_worktrees/clap-rs__clap/ab51d1a1e5a81742420a3175)\\n   Compiling serde_spanned v0.6.6\\n   Compiling toml_datetime v0.7.0\\n   Compiling serde_spanned v1.0.0\\n   Compiling toml_datetime v0.6.6\\n   Compiling toml v0.9.0\\n   Compiling humantime-serde v1.1.1\\n   Compiling toml_edit v0.22.15\\n   Compiling snapbox v0.6.21\\n   Compiling trycmd v0.15.9\\n   Compiling trybuild v1.0.106\\nerror[E0599]: no method named `default_values_if` found for struct `clap::Arg` in the current scope\\n   --> tests/builder/default_vals.rs:326:18\\n    |\\n323 | /             Arg::new(\\\"args\\\")\\n324 | |                 .long(\\\"args\\\")\\n325 | |                 .num_args(2)\\n326 | |                 .default_values_if(\\\"opt\\\", \\\"value\\\", [\\\"df1\\\",\\\"df2\\\"]),\\n    | |_________________-^^^^^^^^^^^^^^^^^\\n    |\\nhelp: there is a method `default_value_if` with a similar name\\n    |\\n326 |                 .default_value_if(\\\"opt\\\", \\\"value\\\", [\\\"df1\\\",\\\"df2\\\"]),\\n    |                  ~~~~~~~~~~~~~~~~\\n\\nerror[E0599]: no method named `default_values_if` found for struct `clap::Arg` in the current scope\\n   --> tests/builder/default_vals.rs:358:18\\n    |\\n355 | /             Arg::new(\\\"args\\\")\\n356 | |                 .long(\\\"args\\\")\\n357 | |                 .num_args(2)\\n358 | |                 .default_values_if(\\\"opt\\\", \\\"value\\\", [\\\"df1\\\", \\\"df2\\\"]),\\n    | |_________________-^^^^^^^^^^^^^^^^^\\n    |\\nhelp: there is a method `default_value_if` with a similar name\\n    |\\n358 |                 .default_value_if(\\\"opt\\\", \\\"value\\\", [\\\"df1\\\", \\\"df2\\\"]),\\n    |                  ~~~~~~~~~~~~~~~~\\n\\nerror[E0599]: no method named `default_values_if` found for struct `clap::Arg` in the current scope\\n   --> tests/builder/default_vals.rs:390:18\\n    |\\n387 | /             Arg::new(\\\"args\\\")\\n388 | |                 .long(\\\"args\\\")\\n389 | |                 .num_args(2)\\n390 | |                 .default_values_if(\\\"opt\\\", \\\"value\\\", [\\\"df1\\\", \\\"df2\\\"])\\n    | |_________________-^^^^^^^^^^^^^^^^^\\n    |\\nhelp: there is a method `default_value_if` with a\\n...[truncated]\",\"run_strategy\":\"cargo_test_guess\",\"source_type\":\"local_test_reproduction\"}",
+          "languages": [
+            "rust"
+          ],
+          "task_shapes": [
+            "failure_trace_root_cause"
+          ],
+          "token_budget": 2000,
+          "relevant_files": [
+            "clap_builder/src/builder/arg.rs",
+            "clap_builder/src/parser/parser.rs"
+          ],
+          "returned_files": [
+            "Cargo.lock",
+            "clap_builder/src/builder/command.rs",
+            "clap_builder/src/builder/mod.rs",
+            "clap_builder/src/macros.rs",
+            "clap_complete_nushell/tests/common.rs",
+            "clap_derive/Cargo.toml"
+          ],
+          "returned_evidence": [
+            {
+              "path": "clap_derive/Cargo.toml",
+              "start_line": 33,
+              "end_line": 37,
+              "representation": "source",
+              "reason": "text",
+              "score": 4.75,
+              "token_count": 75,
+              "content_hash": "65cd349c270dd88f0affe7c96d804a50"
+            },
+            {
+              "path": "Cargo.lock",
+              "start_line": 3190,
+              "end_line": 3194,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.8364,
+              "token_count": 15,
+              "content_hash": "0d0fdbded4d0db09dc6e7cc03fef5db6"
+            },
+            {
+              "path": "clap_builder/src/builder/command.rs",
+              "start_line": 74,
+              "end_line": 113,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 8.0958,
+              "token_count": 341,
+              "content_hash": "4e5015d30425e54aadf84a0a79c13d35"
+            },
+            {
+              "path": "clap_builder/src/macros.rs",
+              "start_line": 1,
+              "end_line": 3,
+              "representation": "source",
+              "reason": "text",
+              "score": 6.9,
+              "token_count": 30,
+              "content_hash": "e075fadfbc618269443c7ceb4e6bd5a4"
+            },
+            {
+              "path": "clap_complete_nushell/tests/common.rs",
+              "start_line": 338,
+              "end_line": 367,
+              "representation": "source",
+              "reason": "text",
+              "score": 4.3565,
+              "token_count": 248,
+              "content_hash": "1dbef8f69a324971ecf67dee107c9ad9"
+            },
+            {
+              "path": "Cargo.lock",
+              "start_line": 3601,
+              "end_line": 3604,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.821,
+              "token_count": 36,
+              "content_hash": "64891aee1811b4ae6f6dc9522e65e490"
+            },
+            {
+              "path": "Cargo.lock",
+              "start_line": 2563,
+              "end_line": 2567,
+              "representation": "source",
+              "reason": "text; multi-query",
+              "score": 1.8131,
+              "token_count": 49,
+              "content_hash": "930338b4877e4d9c7fb571f1fe5f397e"
+            },
+            {
+              "path": "clap_builder/src/builder/mod.rs",
+              "start_line": 9,
+              "end_line": 9,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 7.9471,
+              "token_count": 3,
+              "content_hash": "e400fb93613757e258a89190bd7891b9"
+            }
+          ],
+          "candidate_files": [
+            ".github/ISSUE_TEMPLATE/bug_report.yml",
+            ".github/renovate.json5",
+            ".github/workflows/audit.yml",
+            ".github/workflows/ci.yml",
+            ".github/workflows/rust-next.yml",
+            "CHANGELOG.md",
+            "Cargo.lock",
+            "Cargo.toml",
+            "Makefile",
+            "clap_bench/benches/rustup.rs",
+            "clap_builder/Cargo.toml",
+            "clap_builder/src/builder/command.rs",
+            "clap_builder/src/builder/mod.rs",
+            "clap_builder/src/derive.rs",
+            "clap_builder/src/macros.rs",
+            "clap_complete/examples/dynamic.rs",
+            "clap_complete/src/aot/shells/zsh.rs",
+            "clap_complete/tests/snapshots/basic.zsh",
+            "clap_complete/tests/snapshots/custom_bin_name.zsh",
+            "clap_complete/tests/snapshots/external_subcommands.zsh",
+            "clap_complete/tests/snapshots/feature_sample.zsh",
+            "clap_complete/tests/snapshots/home/static/exhaustive/fish/fish/completions/exhaustive.fish",
+            "clap_complete/tests/snapshots/home/static/exhaustive/zsh/zsh/_exhaustive",
+            "clap_complete/tests/snapshots/quoting.zsh",
+            "clap_complete/tests/snapshots/special_commands.zsh",
+            "clap_complete/tests/snapshots/sub_subcommands.fish",
+            "clap_complete/tests/snapshots/sub_subcommands.zsh",
+            "clap_complete/tests/snapshots/subcommand_last.zsh",
+            "clap_complete/tests/testsuite/common.rs",
+            "clap_complete_nushell/tests/common.rs",
+            "clap_derive/Cargo.toml",
+            "deny.toml",
+            "examples/README.md",
+            "examples/cargo-example-derive.md",
+            "examples/cargo-example-derive.rs",
+            "examples/cargo-example.md",
+            "examples/cargo-example.rs",
+            "examples/escaped-positional.rs",
+            "examples/find.rs",
+            "examples/git-derive.md",
+            "examples/git.md",
+            "examples/tutorial_builder/01_quick.rs",
+            "examples/tutorial_builder/02_app_settings.rs",
+            "examples/tutorial_builder/02_crate.rs",
+            "examples/tutorial_builder/03_01_flag_bool.rs",
+            "examples/tutorial_builder/03_01_flag_count.rs",
+            "examples/tutorial_builder/03_02_option.rs",
+            "examples/tutorial_builder/03_02_option_mult.rs",
+            "examples/tutorial_builder/03_03_positional.rs",
+            "examples/tutorial_builder/03_03_positional_mult.rs",
+            "examples/tutorial_builder/03_04_subcommands.md",
+            "examples/tutorial_derive/03_04_subcommands.md",
+            "src/_cookbook/cargo_example.rs",
+            "src/_cookbook/cargo_example_derive.rs",
+            "src/_cookbook/mod.rs",
+            "src/_faq.rs",
+            "src/_features.rs",
+            "tests/builder/app_settings.rs",
+            "tests/builder/command.rs",
+            "tests/builder/flag_subcommands.rs",
+            "tests/builder/help.rs",
+            "tests/builder/subcommands.rs",
+            "tests/derive/doc_comments_help.rs",
+            "tests/derive/flatten.rs",
+            "tests/derive/groups.rs",
+            "tests/derive/issues.rs",
+            "tests/derive/macros.rs",
+            "tests/derive/markdown.rs",
+            "tests/derive/subcommands.rs",
+            "tests/examples.rs",
+            "tests/ui.rs"
+          ],
+          "relevant_candidate_evidence": [],
+          "omitted_relevant_files": [],
+          "relevant_files_found": 0,
+          "relevant_file_recall": 0.0,
+          "candidate_relevant_files_found": 0,
+          "candidate_relevant_file_recall": 0.0,
+          "labeled_file_precision": 0.0,
+          "line_anchors": 2,
+          "line_anchors_found": 0,
+          "line_anchor_recall": 0.0,
+          "unlabeled_returned_files": [
+            "Cargo.lock",
+            "clap_builder/src/builder/command.rs",
+            "clap_builder/src/builder/mod.rs",
+            "clap_builder/src/macros.rs",
+            "clap_complete_nushell/tests/common.rs",
+            "clap_derive/Cargo.toml"
+          ],
+          "oracle_source_tokens": 55346,
+          "oracle_minimal_read_json_tokens": 64833,
+          "rg_discovery_tokens": 0,
+          "rg_discovery_json_tokens": 1,
+          "scripted_baseline_total_json_tokens": 64838,
+          "leantoken_source_tokens": 797,
+          "leantoken_total_json_tokens": 1456,
+          "source_savings_against_oracle_fraction": 0.985599682000506,
+          "total_json_savings_against_scripted_fraction": 0.9775440328202597,
+          "first_context_ms": 76.37498500000001,
+          "warm_context_ms_samples": [
+            76.208376,
+            80.132784,
+            80.772304
+          ],
+          "warm_context_median_ms": 80.132784,
+          "warm_context_p95_ms": 80.772304,
+          "second_response_source_tokens": 550,
+          "estimated_repeated_range_source_tokens": 0,
+          "repeat_request_json_tokens": 1885,
+          "repeat_total_json_tokens": 1201,
+          "two_turn_context_json_tokens": 4542,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 8,
+          "dead_end_source_tokens": 797
+        }
+      ]
+    },
+    {
+      "name": "arb:pallets/click:011b9f9d190c",
+      "url": "https://github.com/pallets/click.git",
+      "base_revision": "011b9f9d190c71310264e6c54bae6259f5e38a9f",
+      "fix_commit": null,
+      "issue_url": null,
+      "prompt_provenance": "Exact JSON serialization of the public ARB query object from the pinned v2_trace2code release.",
+      "label_provenance": "ARB target_gold_files semantics for trace2code: public root_cause_files with public gold_spans supplying optional line anchors.",
+      "dataset_url": "https://huggingface.co/datasets/eyuansu71/agent_retrieval_bench",
+      "dataset_revision": "c50401f20c60a8c45da94f2ef785ac9a99a6eb55",
+      "dataset_license": "MIT benchmark metadata; redistributed source chunks retain upstream repository licenses",
+      "external_limitations": [
+        "The adapter intentionally supports only the pinned trace2code release; other ARB workflow schemas require separate evidence-aware adapters.",
+        "A filtered smoke manifest is not representative of the 101 trace2code tasks and must not be reported as an ARB leaderboard or scalability result.",
+        "Related tests and hard negatives are not promoted to trace2code gold files.",
+        "The generated manifest contains metadata and labels only; source snapshots remain upstream under their original licenses."
+      ],
+      "indexed_files": 138,
+      "indexed_chunks": 428,
+      "index_warnings": [],
+      "cold_index_ms": 442.105633,
+      "database_bytes": 14148368,
+      "tasks": [
+        {
+          "id": "arb:08d24e63e480c9447082ccfb",
+          "prompt": "{\"command\":\". .arb-venv/bin/activate && python -m pytest tests/test_options.py\",\"failure_excerpt\":\"$ python -m venv .arb-venv\\n...\\nype\\\": click.BOOL}, False, \\\"False\\\"),\\n            pytest.param({\\\"type\\\": click.BOOL}, True, \\\"True\\\"),\\n            pytest.param({\\\"type\\\": click.BOOL, \\\"default\\\": True}, False, \\\"True\\\"),\\n            pytest.param({\\\"type\\\": click.BOOL, \\\"default\\\": True}, True, \\\"False\\\"),\\n            pytest.param({\\\"type\\\": str}, False, \\\"\\\"),\\n            pytest.param({\\\"type\\\": str}, True, \\\"True\\\"),\\n        ],\\n    )\\n    def test_flag_value_is_correctly_set(runner, opts, pass_flag, expected):\\n        @click.command()\\n        @click.option(\\\"--foo\\\", is_flag=True, **opts)\\n        def cmd(foo):\\n            click.echo(foo)\\n    \\n        result = runner.invoke(cmd, [\\\"--foo\\\"] if pass_flag else [])\\n>       assert result.output == f\\\"{expected}\\\\n\\\"\\nE       AssertionError: assert '\\\\n' == 'True\\\\n'\\nE         \\nE         Strings contain only whitespace, escaping them using repr()\\nE         - 'True\\\\n'\\nE         + '\\\\n'\\n\\ntests/test_options.py:1032: AssertionError\\n=========================== short test summary info ============================\\nFAILED tests/test_options.py::test_flag_value_is_correctly_set[opts1-True-True]\\nFAILED tests/test_options.py::test_flag_value_is_correctly_set[opts3-True-False]\\nFAILED tests/test_options.py::test_flag_value_is_correctly_set[opts5-True-True]\\nFAILED tests/test_options.py::test_flag_value_is_correctly_set[opts7-True-False]\\nFAILED tests/test_options.py::test_flag_value_is_correctly_set[opts9-True-True]\\n======================== 5 failed, 139 passed in 0.32s =========================\\n\\n\",\"run_strategy\":\"pytest\",\"source_type\":\"local_test_reproduction\"}",
+          "languages": [
+            "python"
+          ],
+          "task_shapes": [
+            "failure_trace_root_cause"
+          ],
+          "token_budget": 2000,
+          "relevant_files": [
+            "src/click/core.py"
+          ],
+          "returned_files": [
+            "tests/test_defaults.py",
+            "tests/test_info_dict.py",
+            "tests/test_options.py",
+            "tests/test_testing.py"
+          ],
+          "returned_evidence": [
+            {
+              "path": "tests/test_info_dict.py",
+              "start_line": 8,
+              "end_line": 8,
+              "representation": "source",
+              "reason": "text; symbol",
+              "score": 16.8308,
+              "token_count": 22,
+              "content_hash": "b9e9f497aee66b330174120be434fae1"
+            },
+            {
+              "path": "tests/test_info_dict.py",
+              "start_line": 165,
+              "end_line": 169,
+              "representation": "source",
+              "reason": "text",
+              "score": 15.4078,
+              "token_count": 37,
+              "content_hash": "6ee89f2621202bb1fcab098435d9b3ed"
+            },
+            {
+              "path": "tests/test_options.py",
+              "start_line": 872,
+              "end_line": 886,
+              "representation": "source",
+              "reason": "text; symbol",
+              "score": 36.434,
+              "token_count": 118,
+              "content_hash": "36098775e85b270be95ff38840f21a3f"
+            },
+            {
+              "path": "tests/test_testing.py",
+              "start_line": 50,
+              "end_line": 52,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 15.4301,
+              "token_count": 23,
+              "content_hash": "5c12a115a1e5ff68a0383a7430968cbb"
+            },
+            {
+              "path": "tests/test_info_dict.py",
+              "start_line": 272,
+              "end_line": 273,
+              "representation": "symbol",
+              "reason": "symbol",
+              "score": 15.4398,
+              "token_count": 11,
+              "content_hash": "3ec657fa316263d7b9cf3449473826a8"
+            },
+            {
+              "path": "tests/test_options.py",
+              "start_line": 831,
+              "end_line": 833,
+              "representation": "source",
+              "reason": "text",
+              "score": 35.6453,
+              "token_count": 37,
+              "content_hash": "ae86115e5ab5ed1822e40417e3565280"
+            },
+            {
+              "path": "tests/test_options.py",
+              "start_line": 166,
+              "end_line": 170,
+              "representation": "source",
+              "reason": "text",
+              "score": 35.6028,
+              "token_count": 26,
+              "content_hash": "01a1b5e5b84cc1dfc20761929978649a"
+            },
+            {
+              "path": "tests/test_defaults.py",
+              "start_line": 4,
+              "end_line": 13,
+              "representation": "source",
+              "reason": "text; symbol",
+              "score": 16.6978,
+              "token_count": 80,
+              "content_hash": "bdd9d94c6e5d2f25393cad1168611434"
+            }
+          ],
+          "candidate_files": [
+            ".devcontainer/devcontainer.json",
+            ".github/workflows/pre-commit.yaml",
+            ".github/workflows/tests.yaml",
+            "CHANGES.rst",
+            "README.md",
+            "docs/advanced.rst",
+            "docs/commands.rst",
+            "docs/conf.py",
+            "docs/documentation.rst",
+            "docs/entry-points.rst",
+            "docs/options.md",
+            "docs/parameter-types.rst",
+            "docs/prompts.rst",
+            "docs/shell-completion.rst",
+            "docs/testing.md",
+            "docs/unicode-support.rst",
+            "examples/aliases/aliases.py",
+            "examples/naval/naval.py",
+            "pyproject.toml",
+            "src/click/__init__.py",
+            "src/click/_compat.py",
+            "src/click/_winconsole.py",
+            "src/click/core.py",
+            "src/click/decorators.py",
+            "src/click/exceptions.py",
+            "src/click/globals.py",
+            "src/click/parser.py",
+            "src/click/shell_completion.py",
+            "src/click/termui.py",
+            "src/click/testing.py",
+            "src/click/types.py",
+            "src/click/utils.py",
+            "tests/test_arguments.py",
+            "tests/test_basic.py",
+            "tests/test_commands.py",
+            "tests/test_custom_classes.py",
+            "tests/test_defaults.py",
+            "tests/test_formatting.py",
+            "tests/test_info_dict.py",
+            "tests/test_options.py",
+            "tests/test_shell_completion.py",
+            "tests/test_termui.py",
+            "tests/test_testing.py",
+            "tests/test_types.py",
+            "tests/test_utils.py",
+            "tests/typing/typing_progressbar.py",
+            "uv.lock"
+          ],
+          "relevant_candidate_evidence": [
+            {
+              "path": "src/click/core.py",
+              "start_line": 2477,
+              "end_line": 2509,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:false",
+                "channel:text:9"
+              ],
+              "concepts": [
+                "false"
+              ],
+              "concept_weight": 0.45,
+              "score": 3.8276063290904645,
+              "token_count": 411
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 887,
+              "end_line": 917,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:false",
+                "channel:text:26"
+              ],
+              "concepts": [
+                "false"
+              ],
+              "concept_weight": 0.45,
+              "score": 3.9046109625742385,
+              "token_count": 262
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2288,
+              "end_line": 2337,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:type",
+                "channel:symbol:14"
+              ],
+              "concepts": [
+                "type"
+              ],
+              "concept_weight": 0.45,
+              "score": 3.840760869565217,
+              "token_count": 402
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 732,
+              "end_line": 738,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:behavior:type",
+                "channel:reference:0"
+              ],
+              "concepts": [
+                "type"
+              ],
+              "concept_weight": 0.45,
+              "score": 3.607142857142857,
+              "token_count": 60
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 1655,
+              "end_line": 1688,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:behavior:type",
+                "channel:reference:1"
+              ],
+              "concepts": [
+                "type"
+              ],
+              "concept_weight": 0.45,
+              "score": 3.561141304347826,
+              "token_count": 218
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2308,
+              "end_line": 2309,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:behavior:type",
+                "channel:reference:2"
+              ],
+              "concepts": [
+                "type"
+              ],
+              "concept_weight": 0.45,
+              "score": 3.6285714285714286,
+              "token_count": 25
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2313,
+              "end_line": 2314,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:behavior:type",
+                "channel:reference:3"
+              ],
+              "concepts": [
+                "type"
+              ],
+              "concept_weight": 0.45,
+              "score": 3.61968085106383,
+              "token_count": 38
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2318,
+              "end_line": 2332,
+              "representation": "source",
+              "match_kinds": [
+                "reference",
+                "facet:behavior:type",
+                "channel:reference:4"
+              ],
+              "concepts": [
+                "type"
+              ],
+              "concept_weight": 0.45,
+              "score": 3.582720588235294,
+              "token_count": 122
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2554,
+              "end_line": 2585,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:type",
+                "channel:text:14"
+              ],
+              "concepts": [
+                "type"
+              ],
+              "concept_weight": 0.45,
+              "score": 3.6554410313797163,
+              "token_count": 206
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2091,
+              "end_line": 2122,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:type",
+                "channel:text:16"
+              ],
+              "concepts": [
+                "type"
+              ],
+              "concept_weight": 0.45,
+              "score": 3.6401722069351035,
+              "token_count": 222
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2232,
+              "end_line": 2263,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:type",
+                "channel:text:25"
+              ],
+              "concepts": [
+                "type"
+              ],
+              "concept_weight": 0.45,
+              "score": 3.6983326843118856,
+              "token_count": 237
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2223,
+              "end_line": 2225,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:default",
+                "channel:symbol:0"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 3.9236263736263735,
+              "token_count": 32
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2228,
+              "end_line": 2230,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:default",
+                "channel:symbol:1"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 3.9216216216216213,
+              "token_count": 35
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2232,
+              "end_line": 2263,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:default",
+                "channel:symbol:2"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 3.858139534883721,
+              "token_count": 237
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2902,
+              "end_line": 2904,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:default",
+                "channel:symbol:3"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 3.9236263736263735,
+              "token_count": 32
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2907,
+              "end_line": 2909,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:default",
+                "channel:symbol:4"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 3.9216216216216213,
+              "token_count": 35
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2911,
+              "end_line": 2925,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:default",
+                "channel:symbol:5"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 3.875250836120401,
+              "token_count": 149
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 669,
+              "end_line": 671,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:default",
+                "channel:symbol:8"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 3.9236263736263735,
+              "token_count": 32
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 674,
+              "end_line": 676,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:default",
+                "channel:symbol:9"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 3.9184210526315786,
+              "token_count": 40
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 678,
+              "end_line": 696,
+              "representation": "symbol",
+              "match_kinds": [
+                "symbol",
+                "facet:behavior:default",
+                "channel:symbol:10"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 3.880935251798561,
+              "token_count": 128
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2785,
+              "end_line": 2819,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:default",
+                "channel:text:0"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 3.8554166902033105,
+              "token_count": 256
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2866,
+              "end_line": 2899,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:default",
+                "channel:text:2"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 3.8561076750060375,
+              "token_count": 251
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2076,
+              "end_line": 2107,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:default",
+                "channel:text:7"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 3.9127211198671903,
+              "token_count": 298
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 142,
+              "end_line": 165,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:default",
+                "channel:text:11"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 3.902526768803009,
+              "token_count": 196
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2138,
+              "end_line": 2169,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:default",
+                "channel:text:17"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 4.045939359084228,
+              "token_count": 235
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2595,
+              "end_line": 2626,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:default",
+                "channel:text:21"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 4.041845605874412,
+              "token_count": 264
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 2232,
+              "end_line": 2263,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:default",
+                "channel:text:23"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 4.058137304479791,
+              "token_count": 237
+            },
+            {
+              "path": "src/click/core.py",
+              "start_line": 669,
+              "end_line": 671,
+              "representation": "source",
+              "match_kinds": [
+                "text",
+                "facet:behavior:default",
+                "channel:text:27"
+              ],
+              "concepts": [
+                "default"
+              ],
+              "concept_weight": 0.65,
+              "score": 4.136124133787734,
+              "token_count": 32
+            }
+          ],
+          "omitted_relevant_files": [
+            {
+              "path": "src/click/core.py",
+              "reason": "generated but not selected"
+            }
+          ],
+          "relevant_files_found": 0,
+          "relevant_file_recall": 0.0,
+          "candidate_relevant_files_found": 1,
+          "candidate_relevant_file_recall": 1.0,
+          "labeled_file_precision": 0.0,
+          "line_anchors": 1,
+          "line_anchors_found": 0,
+          "line_anchor_recall": 0.0,
+          "unlabeled_returned_files": [
+            "tests/test_defaults.py",
+            "tests/test_info_dict.py",
+            "tests/test_options.py",
+            "tests/test_testing.py"
+          ],
+          "oracle_source_tokens": 24868,
+          "oracle_minimal_read_json_tokens": 27924,
+          "rg_discovery_tokens": 0,
+          "rg_discovery_json_tokens": 1,
+          "scripted_baseline_total_json_tokens": 27929,
+          "leantoken_source_tokens": 354,
+          "leantoken_total_json_tokens": 911,
+          "source_savings_against_oracle_fraction": 0.9857648383464693,
+          "total_json_savings_against_scripted_fraction": 0.9673815747072935,
+          "first_context_ms": 148.825041,
+          "warm_context_ms_samples": [
+            163.300218,
+            133.357223,
+            152.68379000000002
+          ],
+          "warm_context_median_ms": 152.68379000000002,
+          "warm_context_p95_ms": 163.300218,
+          "second_response_source_tokens": 735,
+          "estimated_repeated_range_source_tokens": 11,
+          "repeat_request_json_tokens": 760,
+          "repeat_total_json_tokens": 1350,
+          "two_turn_context_json_tokens": 3021,
+          "known_fragments_resent": 0,
+          "known_hash_omission_visible": true,
+          "dead_end_fragments": 8,
+          "dead_end_source_tokens": 354
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "The oracle baseline assumes perfect file selection and reads whole files rather than exact decisive ranges.",
+    "The scripted ripgrep baseline uses fixed queries supplied by the manifest and is not an autonomous agent trajectory.",
+    "No model executes an edit, so this runner does not measure pass rate, prewalk handoff quality, or end-to-end task cost.",
+    "Cold indexing and warm latency depend on host hardware and filesystem cache state.",
+    "External labels retain their source methodology and limitations; this diagnostic does not make them blind or independently validated.",
+    "File-only tasks do not contribute line-anchor recall, and unsupported task families remain excluded rather than inferred.",
+    "External-corpus results are comparison evidence for retrieval experiments, not permission to change production ranking without a separately frozen promotion gate."
+  ]
+}

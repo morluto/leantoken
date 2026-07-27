@@ -96,6 +96,14 @@ retain dataset URL, revision, license, prompt provenance, label provenance, and
 upstream limitations. Unsupported or ambiguous labels are skipped explicitly;
 the adapter must never manufacture file or line ground truth.
 
+The lock also supports a bounded Agent Retrieval Bench `v2_trace2code` smoke
+adapter. It records the release archive SHA-256, verifies the extracted
+sample-file BLAKE3, preserves the public query object exactly, and converts only
+public root-cause files and spans. Sample and repository filters make small,
+deterministic cross-language runs possible without downloading or executing the
+complete benchmark. Related tests and hard negatives remain non-gold, and smoke
+results must not be generalized to the complete ARB distribution.
+
 External corpora answer whether a retrieval experiment transfers to another
 task distribution. They do not replace the prospective validation or sealed
 holdout lifecycle. A production retrieval change still needs a separately
