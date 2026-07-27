@@ -413,7 +413,8 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | Offline context-utilization artifacts | 64 MiB each, 100,000 trace calls, 100,000 trajectory events |
 | Offline context-utilization evidence | 100,000 total ranges and hash inputs, 10,000 ranges per repository-generation/path, 1,000 context calls/ranges, 256 relevance paths, 4 KiB per path |
 | Experimental Git-history lane | 256 pinned ancestors, 2 Git subprocesses, 4,096 output lines, 32 KiB per line, 4 current paths |
-| Experimental AST structural lane | 16 KiB failure-trace input, 2 languages, 8 AST-derived terms, 16 structural definitions / 1,024 tokens per term, 2 focus paths |
+| Experimental AST structural lane v1 | 16 KiB failure-trace input, 2 languages, 8 AST-derived terms, 16 structural definitions / 1,024 tokens per term, 2 soft focus paths |
+| Experimental AST structural lane v2 | 16 KiB failure-trace input, 2 languages, 8 structural terms, 4 qualified-owner terms, 4 named-argument/object-field terms, 16 hits / 1,024 tokens per term, 2 diagnostic paths, 1 exact owner excerpt / 128 source tokens reserved inside the task budget and suppressed by content hash after the first turn |
 | Experimental orientation capsule | 1 AST owner path, 4 matched terms, 4 definitions, 128 exact tokens |
 
 Focus quotas do not depend on global per-query top-N channels. During the
