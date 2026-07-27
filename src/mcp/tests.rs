@@ -1,0 +1,1496 @@
+use rmcp::{serve_client, serve_server};
+
+use super::*;
+
+#[test]
+fn request_admission_has_an_exact_fail_fast_boundary() {
+    let (server, _) = LeanTokenMcp::pending();
+    let permits = (0..DEFAULT_ACTIVE_TOOL_CALL_CAPACITY)
+        .map(|_| {
+            server
+                .request_admission
+                .try_admit()
+                .expect("admitted tool call")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(server.request_admission.available_permits(), 0);
+    assert!(matches!(
+        server.request_admission.try_admit(),
+        Err(crate::Error::RetrievalOverloaded)
+    ));
+    drop(permits);
+    assert_eq!(
+        server.request_admission.available_permits(),
+        DEFAULT_ACTIVE_TOOL_CALL_CAPACITY
+    );
+}
+
+#[test]
+fn cloned_servers_share_admission_but_separate_instances_do_not() {
+    let (server, _) = LeanTokenMcp::pending();
+    let clone = server.clone();
+    let permits = (0..DEFAULT_ACTIVE_TOOL_CALL_CAPACITY)
+        .map(|_| {
+            clone
+                .request_admission
+                .try_admit()
+                .expect("admitted clone tool call")
+        })
+        .collect::<Vec<_>>();
+
+    assert!(matches!(
+        server.request_admission.try_admit(),
+        Err(crate::Error::RetrievalOverloaded)
+    ));
+
+    let (independent, _) = LeanTokenMcp::pending();
+    let independent_permit = independent
+        .request_admission
+        .try_admit()
+        .expect("separate server has independent capacity");
+    drop(independent_permit);
+    drop(permits);
+}
+
+#[test]
+fn capacity_errors_are_structured_retryable_tool_results() {
+    let (server, _) = LeanTokenMcp::pending();
+    for (error, reason) in [
+        (
+            crate::Error::RetrievalOverloaded,
+            "retrieval_capacity_exhausted",
+        ),
+        (
+            crate::Error::RetrievalQueueTimeout,
+            "retrieval_queue_timeout",
+        ),
+    ] {
+        let result = server
+            .service_result::<()>(Err(error))
+            .expect("capacity result");
+        let structured = result.structured_content.expect("structured result");
+        assert_eq!(structured["status"], "retryable");
+        assert_eq!(structured["reason"], reason);
+        assert_eq!(structured["retry_after_ms"], 500);
+        assert_eq!(result.is_error, Some(false));
+    }
+}
+
+#[tokio::test]
+async fn initialization_and_tool_listing_bypass_saturated_tool_admission() {
+    let (server, _) = LeanTokenMcp::pending();
+    let permits = (0..DEFAULT_ACTIVE_TOOL_CALL_CAPACITY)
+        .map(|_| {
+            server
+                .request_admission
+                .try_admit()
+                .expect("saturate tool admission")
+        })
+        .collect::<Vec<_>>();
+    let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
+    let server_start = tokio::spawn(async move {
+        serve_server(server, server_stream)
+            .await
+            .expect("start server")
+    });
+    let mut client = serve_client((), client_stream)
+        .await
+        .expect("initialize client while saturated");
+    let mut server = server_start.await.expect("join server startup");
+
+    assert_eq!(
+        client
+            .peer()
+            .peer_info()
+            .expect("initialize response")
+            .server_info
+            .name,
+        "leantoken"
+    );
+    assert_eq!(
+        client
+            .peer()
+            .peer_info()
+            .expect("initialize response")
+            .server_info
+            .version,
+        mcp_runtime_version()
+    );
+    assert_eq!(mcp_schema_fingerprint().len(), 32);
+    assert_eq!(
+        client
+            .peer()
+            .list_all_tools()
+            .await
+            .expect("list tools while saturated")
+            .len(),
+        8
+    );
+
+    drop(permits);
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
+async fn repository_identity_is_checked_before_tool_admission() {
+    let root = tempfile::tempdir().expect("root");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Arc::new(Services::open(config).expect("services"));
+    let server = LeanTokenMcp::new(Arc::clone(&services));
+    let permits = (0..DEFAULT_ACTIVE_TOOL_CALL_CAPACITY)
+        .map(|_| {
+            server
+                .request_admission
+                .try_admit()
+                .expect("saturate tool admission")
+        })
+        .collect::<Vec<_>>();
+    let called = Arc::new(AtomicBool::new(false));
+    let operation_called = Arc::clone(&called);
+
+    let error = server
+        .run_admitted::<(), _, _>(
+            services,
+            Some("not-this-repository".into()),
+            move |_| async move {
+                operation_called.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await
+        .expect_err("identity mismatch must win over overload");
+
+    assert_eq!(
+        error.data,
+        Some(serde_json::json!({
+            "category": "repository_identity_mismatch",
+            "expected_repository_id": "not-this-repository",
+            "actual_repository_id": server.services(&server.services.get())
+                .expect("ready services")
+                .repository_id(),
+        }))
+    );
+    assert!(!called.load(Ordering::SeqCst));
+    drop(permits);
+}
+
+#[tokio::test]
+async fn savings_is_covered_by_protocol_admission() {
+    let root = tempfile::tempdir().expect("root");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Arc::new(Services::open(config).expect("services"));
+    let server = LeanTokenMcp::new(services);
+    let permits = (0..DEFAULT_ACTIVE_TOOL_CALL_CAPACITY)
+        .map(|_| {
+            server
+                .request_admission
+                .try_admit()
+                .expect("saturate tool admission")
+        })
+        .collect::<Vec<_>>();
+
+    let result = server
+        .leantoken_savings(Parameters(SavingsMcpRequest { snapshot: None }))
+        .await
+        .expect("retryable savings response");
+    assert_eq!(
+        result
+            .structured_content
+            .as_ref()
+            .and_then(|value| value["reason"].as_str()),
+        Some("retrieval_capacity_exhausted")
+    );
+    drop(permits);
+}
+
+#[test]
+fn startup_failures_expose_only_allowlisted_guidance() {
+    let marker = "/secret/repository";
+    let failure = StartupFailure::from_error(&crate::Error::UnsafeRepositoryRoot(marker.into()));
+    let result = tool_unavailable(failure.reason, failure.message);
+    assert_eq!(
+        result
+            .structured_content
+            .as_ref()
+            .and_then(|value| value["reason"].as_str()),
+        Some("unsafe_repository_root")
+    );
+    assert!(!serde_json::to_string(&result).unwrap().contains(marker));
+}
+
+#[test]
+fn mcp_exposes_eight_tools() {
+    let router = LeanTokenMcp::tool_router();
+    let tools = router.list_all();
+    assert_eq!(tools.len(), 8);
+
+    let names: std::collections::HashSet<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    for name in [
+        "files", "search", "outline", "read", "history", "json", "context", "savings",
+    ] {
+        assert!(names.contains(name), "missing tool {name}");
+    }
+}
+
+#[test]
+fn user_docs_list_the_exact_runtime_tool_catalog() {
+    let expected = LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .map(|tool| format!("leantoken.{}", tool.name))
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let readme = include_str!("../../README.md");
+    let readme_tools = readme
+        .split_once("## Available tools")
+        .expect("README tool section")
+        .1
+        .split_once("## CLI usage")
+        .expect("README tool section end")
+        .0
+        .lines()
+        .filter_map(|line| line.strip_prefix("| `"))
+        .filter_map(|line| line.split_once('`').map(|(name, _)| name.to_owned()))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(readme_tools, expected, "README tool table drifted");
+
+    let usage_tools = include_str!("../../docs/usage.md")
+        .lines()
+        .filter_map(|line| line.strip_prefix("## `"))
+        .filter_map(|line| line.strip_suffix('`'))
+        .filter(|name| name.starts_with("leantoken."))
+        .map(str::to_owned)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(usage_tools, expected, "usage guide tool sections drifted");
+}
+
+#[test]
+fn tools_have_input_schemas_without_redundant_output_schemas() {
+    let router = LeanTokenMcp::tool_router();
+    let tools = router.list_all();
+    for tool in tools {
+        assert!(
+            !tool.input_schema.is_empty(),
+            "{} input_schema is empty",
+            tool.name
+        );
+        assert!(
+            tool.output_schema.is_none(),
+            "{} output_schema adds catalog tokens despite structured results",
+            tool.name
+        );
+    }
+}
+
+#[test]
+fn result_modes_emit_only_the_selected_representations() {
+    let value = serde_json::json!({"answer": 42});
+    let dual = tool_result(value.clone(), McpResultMode::Dual).expect("dual");
+    let text = tool_result(value.clone(), McpResultMode::Text).expect("text");
+    let structured = tool_result(value, McpResultMode::Structured).expect("structured");
+
+    assert!(!dual.content.is_empty());
+    assert!(dual.structured_content.is_some());
+    assert!(!text.content.is_empty());
+    assert!(text.structured_content.is_none());
+    assert!(structured.content.is_empty());
+    assert!(structured.structured_content.is_some());
+}
+
+#[test]
+fn retryable_conflicts_are_successful_structured_results() {
+    let (server, _state) = LeanTokenMcp::pending();
+    for error in [
+        crate::Error::RetryableConflict(crate::error::RetryableOperation::Retrieval),
+        crate::Error::ReconciliationFailed(Arc::new(crate::Error::RetryableConflict(
+            crate::error::RetryableOperation::Retrieval,
+        ))),
+    ] {
+        let result = server
+            .service_result::<()>(Err(error))
+            .expect("tool result");
+
+        assert_eq!(result.is_error, Some(false));
+        let structured = result.structured_content.expect("structured retry result");
+        assert_eq!(structured["status"], "retryable");
+        assert_eq!(structured["reason"], "repository_changed");
+        assert_eq!(structured["retry_after_ms"], 100);
+    }
+}
+
+#[tokio::test]
+async fn ready_operation_is_not_retried() {
+    let (_server, mcp_services) = LeanTokenMcp::pending();
+    let calls = std::sync::atomic::AtomicUsize::new(0);
+    let waits = std::sync::atomic::AtomicUsize::new(0);
+
+    let result = retry_after_initial_index_with_policy(
+        "files",
+        &mcp_services,
+        CancellationToken::new(),
+        Duration::from_secs(30),
+        |_| {
+            waits.fetch_add(1, Ordering::AcqRel);
+            std::future::ready(Ok::<(), crate::Error>(()))
+        },
+        || {
+            calls.fetch_add(1, Ordering::AcqRel);
+            std::future::ready(Ok::<_, crate::Error>(42))
+        },
+    )
+    .await
+    .expect("ready operation");
+
+    assert_eq!(result, 42);
+    assert_eq!(calls.load(Ordering::Acquire), 1);
+    assert_eq!(waits.load(Ordering::Acquire), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn initial_index_retry_is_bounded() {
+    let (_server, mcp_services) = LeanTokenMcp::pending();
+    let calls = std::sync::atomic::AtomicUsize::new(0);
+    let waits = std::sync::atomic::AtomicUsize::new(0);
+
+    let error = retry_after_initial_index_with_policy(
+        "files",
+        &mcp_services,
+        CancellationToken::new(),
+        Duration::from_millis(250),
+        |cancellation| {
+            waits.fetch_add(1, Ordering::AcqRel);
+            async move {
+                cancellation.cancelled().await;
+                Err(crate::Error::Cancelled)
+            }
+        },
+        || {
+            calls.fetch_add(1, Ordering::AcqRel);
+            std::future::ready(Err::<(), _>(crate::Error::IndexNotReady))
+        },
+    )
+    .await
+    .expect_err("generation-zero operation must time out");
+
+    assert!(matches!(error, crate::Error::IndexNotReady));
+    assert_eq!(calls.load(Ordering::Acquire), 1);
+    assert_eq!(waits.load(Ordering::Acquire), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn initial_index_retry_returns_first_published_result() {
+    let (_server, mcp_services) = LeanTokenMcp::pending();
+    let ready = Arc::new(AtomicBool::new(false));
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let operation_ready = Arc::clone(&ready);
+    let operation_calls = Arc::clone(&calls);
+    let waiting = tokio::spawn(async move {
+        retry_after_initial_index_with_policy(
+            "files",
+            &mcp_services,
+            CancellationToken::new(),
+            Duration::from_secs(1),
+            |_| async {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok(())
+            },
+            move || {
+                operation_calls.fetch_add(1, Ordering::AcqRel);
+                let result = if operation_ready.load(Ordering::Acquire) {
+                    Ok(42)
+                } else {
+                    Err(crate::Error::IndexNotReady)
+                };
+                std::future::ready(result)
+            },
+        )
+        .await
+    });
+    tokio::task::yield_now().await;
+    assert_eq!(calls.load(Ordering::Acquire), 1);
+
+    ready.store(true, Ordering::Release);
+    tokio::time::advance(Duration::from_millis(100)).await;
+
+    assert_eq!(
+        waiting
+            .await
+            .expect("join readiness retry")
+            .expect("published result"),
+        42
+    );
+    assert_eq!(calls.load(Ordering::Acquire), 2);
+}
+
+#[tokio::test]
+async fn initial_index_retry_honors_cancellation() {
+    let (_server, mcp_services) = LeanTokenMcp::pending();
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+
+    let error = retry_after_initial_index_with_policy(
+        "files",
+        &mcp_services,
+        cancellation,
+        Duration::from_secs(30),
+        |_| std::future::pending::<crate::Result<()>>(),
+        || std::future::ready(Err::<(), _>(crate::Error::IndexNotReady)),
+    )
+    .await
+    .expect_err("cancelled retry must stop");
+
+    assert!(matches!(error, crate::Error::Cancelled));
+}
+
+#[tokio::test]
+async fn initial_index_retry_stops_when_runtime_fails() {
+    let (_server, mcp_services) = LeanTokenMcp::pending();
+    let waiting_services = mcp_services.clone();
+    let waiting = tokio::spawn(async move {
+        retry_after_initial_index_with_policy(
+            "files",
+            &waiting_services,
+            CancellationToken::new(),
+            Duration::from_secs(30),
+            |_| std::future::pending::<crate::Result<()>>(),
+            || std::future::ready(Err::<(), _>(crate::Error::IndexNotReady)),
+        )
+        .await
+    });
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished());
+
+    mcp_services.set_failed(&crate::Error::McpRuntimeStopped);
+
+    let error = waiting
+        .await
+        .expect("join initial-index retry")
+        .expect_err("runtime failure must interrupt readiness retry");
+    assert!(matches!(error, crate::Error::McpRuntimeStopped));
+}
+
+#[tokio::test]
+async fn initial_index_retry_prefers_runtime_failure_over_readiness_error() {
+    let (_server, mcp_services) = LeanTokenMcp::pending();
+    let failed_services = mcp_services.clone();
+
+    let error = retry_after_initial_index_with_policy(
+        "files",
+        &mcp_services,
+        CancellationToken::new(),
+        Duration::from_secs(30),
+        move |_| async move {
+            failed_services.set_failed(&crate::Error::McpRuntimeStopped);
+            Err(crate::Error::IndexNotReady)
+        },
+        || std::future::ready(Err::<(), _>(crate::Error::IndexNotReady)),
+    )
+    .await
+    .expect_err("terminal runtime failure must supersede readiness error");
+
+    assert!(matches!(error, crate::Error::McpRuntimeStopped));
+}
+
+#[tokio::test]
+async fn protocol_initialization_wait_observes_transition() {
+    let (_server, services) = LeanTokenMcp::pending();
+    let waiting_services = services.clone();
+    let waiting = tokio::spawn(async move {
+        waiting_services.wait_initialized().await;
+    });
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished());
+
+    services.mark_protocol_initialized();
+
+    tokio::time::timeout(Duration::from_secs(1), waiting)
+        .await
+        .expect("initialization wait must wake")
+        .expect("join initialization wait");
+}
+
+#[tokio::test(start_paused = true)]
+async fn starting_service_wait_is_bounded() {
+    let (_server, services) = LeanTokenMcp::pending();
+
+    let state = services
+        .wait_for_services(
+            services.get(),
+            CancellationToken::new(),
+            tokio::time::Instant::now() + Duration::from_millis(250),
+        )
+        .await
+        .expect("bounded wait");
+
+    assert!(matches!(state, McpServiceState::Starting(_)));
+}
+
+#[tokio::test]
+async fn starting_service_wait_observes_terminal_transition() {
+    let (_server, services) = LeanTokenMcp::pending();
+    let waiting_services = services.clone();
+    let waiting = tokio::spawn(async move {
+        waiting_services
+            .wait_for_services(
+                waiting_services.get(),
+                CancellationToken::new(),
+                tokio::time::Instant::now() + Duration::from_secs(1),
+            )
+            .await
+    });
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished());
+
+    services.set_failed(&crate::Error::McpRuntimeStopped);
+
+    let state = waiting
+        .await
+        .expect("join service wait")
+        .expect("terminal service state");
+    assert!(matches!(state, McpServiceState::Failed { .. }));
+}
+
+#[tokio::test]
+async fn starting_service_wait_honors_cancellation() {
+    let (_server, services) = LeanTokenMcp::pending();
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+
+    let error = services
+        .wait_for_services(
+            services.get(),
+            cancellation,
+            tokio::time::Instant::now() + Duration::from_secs(30),
+        )
+        .await
+        .expect_err("cancelled startup wait must stop");
+
+    assert!(matches!(error, crate::Error::Cancelled));
+}
+
+#[test]
+fn mcp_error_mapping_separates_invalid_input_from_internal_failures() {
+    let invalid = into_mcp_error(crate::Error::InputTooLong {
+        field: "search query",
+        max_bytes: 64,
+    });
+    assert_eq!(invalid.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        invalid
+            .data
+            .as_ref()
+            .and_then(|data| data["category"].as_str()),
+        Some("input_too_long")
+    );
+    assert_eq!(
+        invalid.data.as_ref().map(|data| &data["limit"]),
+        Some(&serde_json::json!(64))
+    );
+
+    let request_limit = into_mcp_error(crate::Error::RequestLimitExceeded {
+        field: "max_tokens",
+        requested: 32_001,
+        limit: 32_000,
+    });
+    assert_eq!(request_limit.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        request_limit.data,
+        Some(serde_json::json!({
+            "category": "request_limit_exceeded",
+            "field": "max_tokens",
+            "requested": 32_001,
+            "limit": 32_000,
+        }))
+    );
+
+    let selector = into_mcp_error(crate::Error::InvalidJsonSelector {
+        stage: "evaluate",
+        offset: 6,
+        line: 1,
+        column: 7,
+        reason: "Runtime error: Argument 0 expects type array, given number".into(),
+    });
+    assert_eq!(selector.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        selector.data,
+        Some(serde_json::json!({
+            "category": "invalid_json_selector",
+            "field": "JMESPath expression",
+            "stage": "evaluate",
+            "offset": 6,
+            "line": 1,
+            "column": 7,
+            "reason": "Runtime error: Argument 0 expects type array, given number",
+        }))
+    );
+
+    let syntax = into_mcp_error(crate::Error::InvalidJson {
+        syntax_category: "syntax",
+        byte_offset: 12,
+        line: 1,
+        column: 13,
+        reason: "trailing comma at line 1 column 13".into(),
+    });
+    assert_eq!(syntax.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        syntax
+            .data
+            .as_ref()
+            .and_then(|data| data["byte_offset"].as_u64()),
+        Some(12)
+    );
+
+    let stale_receipt = into_mcp_error(crate::Error::StaleReceipt {
+        receipt_generation: 4,
+        repository_generation: 5,
+    });
+    assert_eq!(stale_receipt.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        stale_receipt
+            .data
+            .as_ref()
+            .and_then(|data| data["category"].as_str()),
+        Some("stale_receipt")
+    );
+
+    let internal = [
+        crate::Error::InvalidConfiguration("chunk size must be positive".into()),
+        crate::Error::InternalFailure("parser returned None".into()),
+        crate::Error::RuntimeCapabilityUnavailable {
+            capability: "SQLite FTS5",
+            source: None,
+        },
+    ];
+    for error in internal {
+        assert_eq!(
+            into_mcp_error(error).code,
+            rmcp::model::ErrorCode::INTERNAL_ERROR
+        );
+    }
+}
+
+#[test]
+fn mcp_error_mapping_never_serializes_internal_or_input_paths() {
+    let unix_marker = "/home/example/sensitive-marker/external.sqlite";
+    let windows_marker = r"C:\Users\example\sensitive-marker\external.sqlite";
+    let invalid_regex = ["(?P<", "sensitive-marker", ">"].concat();
+    let errors = [
+        crate::Error::RootNotFound(unix_marker.into()),
+        crate::Error::UnsafeRepositoryRoot(unix_marker.into()),
+        crate::Error::PathOutsideRoot(unix_marker.into()),
+        crate::Error::PathOutsideRoot(windows_marker.into()),
+        crate::Error::NotIndexed(unix_marker.into()),
+        crate::Error::SymbolNotFound {
+            path: unix_marker.into(),
+            symbol: "sensitive-marker".into(),
+        },
+        crate::Error::HeadingNotFound {
+            path: unix_marker.into(),
+            heading: "sensitive-marker".into(),
+            occurrence: 2,
+        },
+        crate::Error::UnsupportedLanguage(unix_marker.into()),
+        crate::Error::InvalidRequest(format!("invalid path: {unix_marker}")),
+        crate::Error::InternalFailure(format!("failed at {unix_marker}")),
+        crate::Error::RepositoryMismatch {
+            database: windows_marker.into(),
+            expected_repository: unix_marker.into(),
+            actual_repository: unix_marker.into(),
+        },
+        crate::Error::Io(std::io::Error::other(format!(
+            "permission denied at {unix_marker}"
+        ))),
+        crate::Error::Sqlite(rusqlite::Error::InvalidPath(windows_marker.into())),
+        crate::Error::Regex(regex::Regex::new(&invalid_regex).expect_err("regex")),
+        crate::Error::Glob(globset::Glob::new("[sensitive-marker").expect_err("glob")),
+    ];
+
+    for error in errors {
+        let response = into_mcp_error(error);
+        let wire = serde_json::to_string(&response).expect("serialize public error");
+        for marker in [
+            unix_marker,
+            windows_marker,
+            "sensitive-marker",
+            "external.sqlite",
+            "example",
+        ] {
+            assert!(
+                !wire.contains(marker),
+                "public error leaked {marker}: {wire}"
+            );
+        }
+        assert!(
+            response
+                .data
+                .as_ref()
+                .and_then(|data| data["category"].as_str())
+                .is_some(),
+            "public error has no stable category: {wire}"
+        );
+    }
+}
+
+#[test]
+fn explicit_null_limits_are_not_treated_as_omitted() {
+    assert!(
+        serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
+            "operation": "tree",
+            "max_results": null
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+            "query": "answer",
+            "max_results": null
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+            "query": "answer",
+            "max_tokens": null
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+            "query": "answer",
+            "context_lines": null
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
+            "paths": ["lib.rs"],
+            "max_results": null
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
+            "paths": ["lib.rs"],
+            "max_tokens": null
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+            "path": "lib.rs",
+            "target": {"kind": "lines", "start": 1, "end": 1},
+            "max_tokens": null
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+            "task": "find answer",
+            "token_budget": null
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+            "task": "find answer",
+            "minimum_fragments_per_focus_path": null
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn omitted_context_budget_uses_the_runtime_default() {
+    let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+        "task": "find answer"
+    }))
+    .expect("context request without a budget");
+    let (request, _, _, _, _, _, _) = request.into_parts(37);
+    assert_eq!(request.token_budget, 37);
+    assert!(!request.verbose_diagnostics);
+    let null_limit = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+        "task": "find answer",
+        "max_response_tokens": null
+    }))
+    .expect("null response limit is equivalent to omission");
+    let (_, _, _, _, options, _, _) = null_limit.into_parts(37);
+    assert_eq!(options.max_response_tokens(), None);
+
+    let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+        "task": "find answer",
+        "token_budget": 23,
+        "max_response_tokens": 47,
+        "focus_paths": ["src/**"],
+        "strict_focus_paths": true,
+        "minimum_fragments_per_focus_path": 2,
+        "required_evidence": [{
+            "path": "paper/**",
+            "queries": ["failure boundary", "disclosure"],
+            "minimum_query_matches": 2
+        }],
+        "changed_paths": ["src/lib.rs"],
+        "strict_changed_paths": true,
+        "verbose_diagnostics": true,
+        "workflow_evidence": {
+            "failure_traces": ["error[E0001]"],
+            "symbols": ["answer"],
+            "paths": ["src/lib.rs"],
+            "test_intents": ["answer regression"]
+        }
+    }))
+    .expect("context request with a budget");
+    let (request, _, workflow_evidence, _, options, _, _) = request.into_parts(37);
+    assert_eq!(request.token_budget, 23);
+    assert_eq!(options.max_response_tokens(), Some(47));
+    assert_eq!(request.focus_paths, ["src/**"]);
+    assert!(request.strict_focus_paths);
+    assert_eq!(request.minimum_fragments_per_focus_path, Some(2));
+    assert_eq!(request.required_evidence.len(), 1);
+    assert_eq!(request.required_evidence[0].path, "paper/**");
+    assert_eq!(
+        request.required_evidence[0].queries,
+        ["failure boundary", "disclosure"]
+    );
+    assert_eq!(request.required_evidence[0].minimum_query_matches, 2);
+    assert_eq!(request.changed_paths, ["src/lib.rs"]);
+    assert!(request.strict_changed_paths);
+    assert!(request.verbose_diagnostics);
+    assert_eq!(workflow_evidence.failure_traces, ["error[E0001]"]);
+    assert_eq!(workflow_evidence.symbols, ["answer"]);
+    assert_eq!(workflow_evidence.paths, ["src/lib.rs"]);
+    assert_eq!(workflow_evidence.test_intents, ["answer regression"]);
+
+    for invalid in [0, MAX_OUTPUT_TOKENS + 1] {
+        let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+            "task": "find answer",
+            "max_response_tokens": invalid
+        }))
+        .expect("syntactically valid context response limit");
+        assert!(request.validate_limits(McpLimitPolicy::DEFAULT).is_err());
+    }
+    assert!(
+        serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+            "task": "find answer",
+            "max_response_tokens": -1
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn context_mcp_maps_bounded_handoff_state() {
+    let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+        "task": "continue implementation",
+        "handoff": {
+            "summary": "executor state",
+            "validations": [{
+                "command": "cargo test",
+                "status": "passed",
+                "summary": "all tests passed"
+            }],
+            "assumptions": ["public API remains stable"],
+            "open_questions": ["is another fixture required?"],
+            "negative_evidence": ["no alternate owner found"],
+            "avoid_rules": ["do not copy source bodies"]
+        }
+    }))
+    .expect("context handoff request");
+    let (_, _, _, _, _, _, handoff) = request.into_parts(37);
+    let handoff = handoff.expect("handoff");
+    assert_eq!(handoff.summary.as_deref(), Some("executor state"));
+    assert_eq!(handoff.validations.len(), 1);
+    assert_eq!(handoff.assumptions, ["public API remains stable"]);
+
+    assert!(
+        serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+            "task": "continue implementation",
+            "handoff": {"unexpected": true}
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn tool_input_fields_are_documented() {
+    for tool in LeanTokenMcp::tool_router().list_all() {
+        // Savings accepts an optional snapshot and follows the same field contract.
+        let properties = tool
+            .input_schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object);
+        let properties =
+            properties.unwrap_or_else(|| panic!("{} input properties missing", tool.name));
+        for (field, schema) in properties {
+            assert!(
+                schema
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|description| !description.trim().is_empty()),
+                "{}.{} is missing a schema description",
+                tool.name,
+                field
+            );
+        }
+    }
+}
+
+#[test]
+fn files_schema_matches_operation_specific_runtime_requirements() {
+    let tool = LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .find(|tool| tool.name == "files")
+        .expect("files tool");
+    let schema = serde_json::Value::Object((*tool.input_schema).clone());
+    let variants = schema["oneOf"].as_array().expect("operation variants");
+    assert_eq!(variants.len(), 3);
+    assert_eq!(variants[0]["properties"]["operation"]["const"], "tree");
+    assert_eq!(variants[1]["properties"]["operation"]["const"], "find");
+    assert_eq!(variants[1]["properties"]["query"]["type"], "string");
+    assert_eq!(variants[1]["required"], serde_json::json!(["query"]));
+    assert_eq!(variants[2]["properties"]["operation"]["const"], "glob");
+    assert_eq!(variants[2]["properties"]["pattern"]["type"], "string");
+    assert_eq!(variants[2]["required"], serde_json::json!(["pattern"]));
+    assert_eq!(schema["properties"]["query"]["minLength"], 1);
+    assert_eq!(schema["properties"]["pattern"]["minLength"], 1);
+}
+
+#[test]
+fn retrieval_tools_expose_consistency_boundary() {
+    for tool in LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .filter(|tool| tool.name != "savings" && tool.name != "history" && tool.name != "json")
+    {
+        let consistency = tool
+            .input_schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|properties| properties.get("consistency"))
+            .unwrap_or_else(|| panic!("{} consistency schema missing", tool.name));
+        assert_eq!(
+            consistency.get("default"),
+            Some(&serde_json::json!("indexed_generation"))
+        );
+        assert_eq!(
+            consistency.get("enum"),
+            Some(&serde_json::json!([
+                "indexed_generation",
+                "reconcile_working_tree"
+            ]))
+        );
+        assert!(
+            consistency
+                .get("description")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|description| {
+                    description.contains("reconcile_working_tree") && description.contains("edits")
+                }),
+            "{}.consistency must tell agents when to synchronize",
+            tool.name
+        );
+    }
+    let history = LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .find(|tool| tool.name == "history")
+        .expect("history tool");
+    assert!(
+        history
+            .input_schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .is_none_or(|properties| !properties.contains_key("consistency"))
+    );
+}
+
+#[test]
+fn tool_descriptions_route_native_discovery_workflows() {
+    let descriptions = LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .map(|tool| {
+            (
+                tool.name.into_owned(),
+                tool.description.expect("tool description").into_owned(),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    assert!(descriptions["files"].contains("instead of find"));
+    assert!(descriptions["search"].contains("instead of grep or rg"));
+    assert!(descriptions["outline"].contains("without reading whole source files"));
+    assert!(descriptions["read"].contains("expected_hash"));
+    assert!(descriptions["read"].contains("instead of cat"));
+    assert!(descriptions["context"].contains("DEFAULT FIRST CALL"));
+    assert!(descriptions["savings"].contains("explicitly unobserved task outcomes"));
+    assert!(descriptions["savings"].contains("not claims about task success"));
+    assert!(
+        descriptions
+            .values()
+            .all(|description| description.contains("Example:"))
+    );
+}
+
+#[test]
+fn savings_tool_is_local_and_read_only() {
+    let tool = LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .find(|tool| tool.name == "savings")
+        .expect("savings tool");
+    let annotations = tool.annotations.expect("savings annotations");
+    assert_eq!(annotations.read_only_hint, Some(true));
+    assert_eq!(annotations.open_world_hint, Some(false));
+}
+
+#[test]
+fn tool_schemas_are_closed_bounded_and_remove_ambiguous_inputs() {
+    let tools = LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .map(|tool| {
+            (
+                tool.name.into_owned(),
+                serde_json::Value::Object((*tool.input_schema).clone()),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+
+    for (name, schema) in &tools {
+        assert_eq!(
+            schema.get("additionalProperties"),
+            Some(&serde_json::json!(false)),
+            "{name} must reject unknown arguments"
+        );
+    }
+    assert_eq!(
+        tools["context"].pointer("/properties/token_budget/default"),
+        Some(&serde_json::json!(3_000))
+    );
+    assert!(tools["files"].pointer("/properties/query").is_some());
+    assert!(tools["files"].pointer("/properties/pattern").is_some());
+    assert!(tools["read"].pointer("/properties/symbol").is_none());
+    assert!(tools["read"].pointer("/properties/start_line").is_none());
+    assert!(tools["read"].pointer("/properties/target").is_some());
+
+    let request = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
+        "operation": "find",
+        "query": "mcp",
+        "pattern": "*.rs"
+    }))
+    .expect("flat files request shape");
+    assert!(request.validate_limits(McpLimitPolicy::DEFAULT).is_err());
+    assert!(
+        serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+            "path": "src/mcp.rs",
+            "target": {"kind": "symbol", "name": "LeanTokenMcp", "start": 1}
+        }))
+        .is_err()
+    );
+    for target in [
+        serde_json::json!({"kind": "range", "start": 10, "end": 20}),
+        serde_json::json!({"kind": "line_range", "start_line": 10, "end_line": 20}),
+    ] {
+        let request = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+            "path": "src/mcp.rs",
+            "target": target
+        }))
+        .expect("common line-range aliases should remain readable");
+        let (request, _, _, _) = request.into_parts();
+        assert_eq!(request.start_line, Some(10));
+        assert_eq!(request.end_line, Some(20));
+    }
+    let heading = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+        "path": "README.md",
+        "target": {"kind": "heading", "name": "Installation", "occurrence": 2}
+    }))
+    .expect("Markdown heading target");
+    assert!(heading.validate_limits(McpLimitPolicy::DEFAULT).is_ok());
+    let (heading, _, _, _) = heading.into_parts();
+    assert_eq!(heading.heading.as_deref(), Some("Installation"));
+    assert_eq!(heading.heading_occurrence, Some(2));
+    assert!(heading.symbol.is_none());
+    let invalid_heading = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+        "path": "README.md",
+        "target": {"kind": "heading", "name": "Installation", "occurrence": 0}
+    }))
+    .expect("schema validation remains a runtime boundary");
+    assert!(
+        invalid_heading
+            .validate_limits(McpLimitPolicy::DEFAULT)
+            .is_err()
+    );
+    let continuation = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+        "path": "src/mcp.rs",
+        "target": {"kind": "continuation", "cursor": "opaque"}
+    }))
+    .expect("continuation target");
+    let (continuation, _, _, _) = continuation.into_parts();
+    assert_eq!(continuation.continuation_cursor.as_deref(), Some("opaque"));
+    assert!(continuation.symbol.is_none());
+    assert!(continuation.heading.is_none());
+    assert!(continuation.heading_occurrence.is_none());
+    assert!(continuation.start_line.is_none());
+    assert!(continuation.end_line.is_none());
+}
+
+#[test]
+fn retrieval_response_budget_schemas_are_optional_and_bounded() {
+    let tools = LeanTokenMcp::tool_router().list_all();
+    for name in [
+        "context", "read", "search", "outline", "files", "history", "json",
+    ] {
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == name)
+            .unwrap_or_else(|| panic!("{name} tool"));
+        let schema = serde_json::Value::Object((*tool.input_schema).clone());
+        assert_eq!(
+            schema.pointer("/properties/max_response_tokens/minimum"),
+            Some(&serde_json::json!(1)),
+            "{name}"
+        );
+        assert_eq!(
+            schema.pointer("/properties/max_response_tokens/maximum"),
+            Some(&serde_json::json!(32_000)),
+            "{name}"
+        );
+        assert_eq!(
+            schema.pointer("/properties/max_response_tokens/default"),
+            Some(&serde_json::Value::Null),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn context_focus_candidate_schema_exposes_generation_bounds() {
+    let context = LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .find(|tool| tool.name == "context")
+        .expect("context tool");
+    let schema = serde_json::Value::Object((*context.input_schema).clone());
+    assert_eq!(
+        schema.pointer("/properties/focus_paths/maxItems"),
+        Some(&serde_json::json!(32))
+    );
+    assert_eq!(
+        schema.pointer("/properties/minimum_fragments_per_focus_path/maximum"),
+        Some(&serde_json::json!(8))
+    );
+}
+
+#[test]
+fn retrieval_response_budget_limits_are_validated_for_every_tool() {
+    macro_rules! assert_invalid {
+        ($ty:ty, $base:expr) => {
+            for invalid in [0, MAX_OUTPUT_TOKENS + 1] {
+                let mut value = $base;
+                value["max_response_tokens"] = serde_json::json!(invalid);
+                let request = serde_json::from_value::<$ty>(value).expect("deserialize request");
+                assert!(
+                    request.validate_limits(McpLimitPolicy::DEFAULT).is_err(),
+                    "{} accepted {invalid}",
+                    stringify!($ty)
+                );
+            }
+        };
+    }
+
+    assert_invalid!(FilesMcpRequest, serde_json::json!({"operation": "tree"}));
+    assert_invalid!(SearchMcpRequest, serde_json::json!({"query": "needle"}));
+    assert_invalid!(
+        OutlineMcpRequest,
+        serde_json::json!({"paths": ["src/lib.rs"]})
+    );
+    assert_invalid!(
+        ReadMcpRequest,
+        serde_json::json!({
+            "path": "src/lib.rs",
+            "target": {"kind": "lines", "start": 1, "end": 1}
+        })
+    );
+    assert_invalid!(
+        HistoryMcpRequest,
+        serde_json::json!({
+            "operation": {
+                "kind": "read_symbol",
+                "path": "src/lib.rs",
+                "symbol": "owner",
+                "revision": "HEAD"
+            }
+        })
+    );
+    assert_invalid!(
+        JsonMcpRequest,
+        serde_json::json!({
+            "operation": {"kind": "query", "path": "data.json"}
+        })
+    );
+}
+
+#[test]
+fn receipt_id_maps_to_the_service_request() {
+    let request = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+        "path": "README.md",
+        "receipt_id": "r0000000000000001",
+        "target": {"kind": "lines", "start": 1, "end": 2}
+    }))
+    .expect("read request with receipt");
+    let (request, _, _, _) = request.into_parts();
+    assert_eq!(request.receipt_id.as_deref(), Some("r0000000000000001"));
+}
+
+#[test]
+fn history_operation_maps_to_the_service_request() {
+    let request = serde_json::from_value::<HistoryMcpRequest>(serde_json::json!({
+        "operation": {
+            "kind": "diff_symbol",
+            "path": "src/lib.rs",
+            "symbol": "Services",
+            "base_revision": "main~1",
+            "head_revision": "main"
+        },
+        "max_tokens": 500
+    }))
+    .expect("history request");
+    request
+        .validate_limits(McpLimitPolicy::DEFAULT)
+        .expect("history limits");
+    let (call, _, _) = request.into_parts().expect("history parts");
+    let HistoryMcpCall::Single(request) = call else {
+        panic!("expected single-symbol history call");
+    };
+    assert_eq!(request.max_tokens, Some(500));
+    assert!(matches!(
+        request.operation,
+        HistoryOperation::DiffSymbol {
+            path,
+            symbol,
+            base_revision,
+            head_revision,
+        } if path == "src/lib.rs"
+            && symbol == "Services"
+            && base_revision == "main~1"
+            && head_revision == "main"
+    ));
+}
+
+#[test]
+fn diff_symbols_history_maps_targets_cursor_and_response_budget() {
+    let request = serde_json::from_value::<HistoryMcpRequest>(serde_json::json!({
+        "operation": {
+            "kind": "diff_symbols",
+            "targets": [
+                {
+                    "path": "src/old.rs",
+                    "symbol": "old_name",
+                    "head_path": "src/new.rs",
+                    "head_symbol": "new_name"
+                }
+            ],
+            "base_revision": "main~1",
+            "head_revision": "main"
+        },
+        "max_results": 1,
+        "max_tokens": 500,
+        "max_response_tokens": 900,
+        "cursor": "history-cursor"
+    }))
+    .expect("batched history request");
+    request
+        .validate_limits(McpLimitPolicy::DEFAULT)
+        .expect("batched history limits");
+    let (call, options, _) = request.into_parts().expect("batched history parts");
+    assert_eq!(options.max_response_tokens(), Some(900));
+    let HistoryMcpCall::DiffSymbols(request) = call else {
+        panic!("expected batched-symbol history call");
+    };
+    assert_eq!(request.base_revision, "main~1");
+    assert_eq!(request.head_revision, "main");
+    assert_eq!(request.max_results, Some(1));
+    assert_eq!(request.max_tokens, Some(500));
+    assert_eq!(request.cursor.as_deref(), Some("history-cursor"));
+    assert_eq!(request.targets.len(), 1);
+    assert_eq!(request.targets[0].path, "src/old.rs");
+    assert_eq!(request.targets[0].symbol, "old_name");
+    assert_eq!(request.targets[0].head_path.as_deref(), Some("src/new.rs"));
+    assert_eq!(request.targets[0].head_symbol.as_deref(), Some("new_name"));
+
+    let single_with_cursor = serde_json::from_value::<HistoryMcpRequest>(serde_json::json!({
+        "operation": {
+            "kind": "read_symbol",
+            "path": "src/lib.rs",
+            "symbol": "item",
+            "revision": "main"
+        },
+        "cursor": "not-valid-here"
+    }))
+    .expect("single history request");
+    assert!(matches!(
+        single_with_cursor
+            .into_parts()
+            .expect_err("cursor is exclusive to diff_symbols"),
+        crate::Error::InvalidInput {
+            field: "cursor",
+            reason: "is only valid for diff_symbols"
+        }
+    ));
+}
+
+#[test]
+fn json_operation_maps_to_the_service_request() {
+    let request = serde_json::from_value::<JsonMcpRequest>(serde_json::json!({
+        "operation": {
+            "kind": "numeric_summary",
+            "path": "artifacts/results.json",
+            "selector": {
+                "kind": "jmespath",
+                "expression": "runs[].score"
+            }
+        },
+        "max_items": 500
+    }))
+    .expect("JSON request");
+    request
+        .validate_limits(McpLimitPolicy::DEFAULT)
+        .expect("JSON limits");
+    let (request, _, execution, _) = request.into_parts();
+    assert_eq!(request.max_items, Some(500));
+    assert!(request.cursor.is_none());
+    assert_eq!(execution, JsonExecutionOptions::mcp(None));
+    assert!(matches!(
+        request.operation,
+        JsonOperation::NumericSummary {
+            path,
+            selector: Some(JsonSelector::Jmespath { expression }),
+        } if path == "artifacts/results.json" && expression == "runs[].score"
+    ));
+
+    let request = serde_json::from_value::<JsonMcpRequest>(serde_json::json!({
+        "operation": {
+            "kind": "query",
+            "path": "artifacts/results.json",
+            "projection": "keys"
+        },
+        "depth": 1,
+        "cursor": "j2:source:query:2"
+    }))
+    .expect("paged JSON request");
+    let (request, _, execution, _) = request.into_parts();
+    assert_eq!(request.cursor.as_deref(), Some("j2:source:query:2"));
+    assert_eq!(execution, JsonExecutionOptions::mcp(Some(1)));
+    assert!(matches!(
+        request.operation,
+        JsonOperation::Query {
+            projection: JsonProjection::Keys,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn tool_catalog_schema_snapshot() {
+    let tools = LeanTokenMcp::tool_router().list_all();
+    insta::with_settings!({ snapshot_path => "../snapshots" }, {
+        insta::assert_json_snapshot!("mcp_tool_catalog", tools);
+    });
+}
+
+#[test]
+fn outline_cursor_maps_to_the_service_request() {
+    let request = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
+        "paths": ["src/lib.rs"],
+        "cursor": "12:outline:34:0000000000000000"
+    }))
+    .expect("outline request");
+    let (request, _, _, _, _) = request.into_parts();
+
+    assert_eq!(
+        request.cursor.as_deref(),
+        Some("12:outline:34:0000000000000000")
+    );
+}
+
+#[test]
+fn compact_projections_map_to_service_requests() {
+    let files = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
+        "operation": "tree"
+    }))
+    .expect("default files projection");
+    let (_, projection, _, _, _) = files.into_parts();
+    assert_eq!(projection, FilesMcpProjection::Full);
+
+    let files = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
+        "operation": "find",
+        "query": "service",
+        "projection": "paths"
+    }))
+    .expect("path projection");
+    let (_, projection, _, _, _) = files.into_parts();
+    assert_eq!(projection, FilesMcpProjection::Paths);
+
+    let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+        "query": "Services"
+    }))
+    .expect("default search projection");
+    let (_, projection, coordinates_only, _, _, _) = search.into_parts();
+    assert_eq!(projection, SearchMcpProjection::Full);
+    assert!(!coordinates_only);
+
+    let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+        "query": "Services",
+        "projection": "grouped"
+    }))
+    .expect("grouped projection");
+    let (_, projection, coordinates_only, _, _, _) = search.into_parts();
+    assert_eq!(projection, SearchMcpProjection::Grouped);
+    assert!(!coordinates_only);
+
+    let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+        "query": "Services",
+        "mode": "text",
+        "all_occurrences": true,
+        "coordinates_only": true
+    }))
+    .expect("coordinates-only occurrence projection");
+    search
+        .validate_limits(McpLimitPolicy::DEFAULT)
+        .expect("valid occurrence projection");
+    let (_, projection, coordinates_only, _, _, _) = search.into_parts();
+    assert_eq!(projection, SearchMcpProjection::Occurrences);
+    assert!(coordinates_only);
+
+    let invalid = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+        "query": "Services",
+        "mode": "text",
+        "coordinates_only": true
+    }))
+    .expect("structurally valid search request");
+    assert!(matches!(
+        invalid.validate_limits(McpLimitPolicy::DEFAULT),
+        Err(crate::Error::InvalidInput {
+            field: "coordinates_only",
+            ..
+        })
+    ));
+
+    let outline = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
+        "paths": ["src/services.rs"]
+    }))
+    .expect("default outline projection");
+    let (_, projection, _, _, _) = outline.into_parts();
+    assert_eq!(projection, OutlineMcpProjection::Full);
+
+    let outline = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
+        "paths": ["src/services.rs"],
+        "projection": "signatures"
+    }))
+    .expect("signature projection");
+    let (_, projection, _, _, _) = outline.into_parts();
+    assert_eq!(projection, OutlineMcpProjection::Signatures);
+}
