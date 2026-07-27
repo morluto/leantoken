@@ -223,13 +223,21 @@ used to alter ranking, prompts, labels, queries, ranges, or budgets.
 
 ## Model-in-the-loop A/B
 
-`model_ab` executes the same frozen task across four required arms:
+`model_ab` defines four required core arms for the same frozen task:
 
 - ordinary filesystem tools;
 - progressive narrow LeanToken retrieval with no native repository reads;
 - exactly one LeanToken context bundle with no later repository retrieval;
 - a frontier LeanToken prewalk followed by a frozen cheaper executor using the
   transferred trajectory, todo state, evidence, patch, and validated first edit.
+
+An experiment may also declare the diagnostic `prewalk_capsule` arm. It is
+identical to prewalk except that the frontier receives a frozen bounded owner
+capsule. `--arms` can execute an explicit subset of declared arms, for example
+`--arms prewalk,prewalk_capsule`; the report records that selection and the
+harness rejects unknown, duplicate, or empty selections. All four core
+definitions remain required so a subset run cannot weaken manifest preflight or
+runtime-identity parity.
 
 Each run receives a fresh detached Git worktree at the same revision. The
 external adapter receives one JSON request on stdin and must return one JSON
@@ -300,7 +308,7 @@ provider receipt beside typed uncached-input, cache-creation, cache-read,
 output, and reasoning categories. Use `null` for categories the provider does
 not expose; do not infer or replace them with zero.
 
-The prewalk arm must additionally write `prewalk-handoff.json`. The harness
+Each prewalk arm must additionally write `prewalk-handoff.json`. The harness
 binds its evidence calls and first validated edit back to the exact tool trace,
 requires nonempty trajectory and todo state, and rejects a handoff from any
 ordinary arm. The Codex adapter constrains the frontier model's final response
@@ -308,6 +316,13 @@ with `--output-schema` to a summary plus one to eight structured todo entries.
 It copies the resulting raw `item.completed` agent-message event into the
 handoff; the harness rejects rewritten or synthesized todo state unless that
 exact bounded event is also present in the transferred trajectory.
+
+`prewalk_capsule` additionally requires an exact task-owned capsule in the
+handoff. It contains one safe relative path, one to four terms, at most four
+definition names, and no more than 128 exact `cl100k_base` tokens across the
+serialized entries. The task's frozen relevant-file labels must include the
+owner path. Reports retain both the entry token count and the complete injected
+prompt token count; an orientation claim must charge the latter.
 
 The harness rejects missing files, binding mismatches, unavailable tools,
 invalid ranges, duplicate IDs, and summary counts that cannot be recomputed
@@ -340,11 +355,12 @@ cargo run --release --example artifact_blake3 -- \
   /path/to/leantoken /path/to/provider-adapter /path/to/validator
 ```
 
-The harness itself must also run from a clean worktree. Report schema v6 records
+The harness itself must also run from a clean worktree. Report schema v7 records
 its exact revision and executable BLAKE3, the verified arm and task definitions,
-random seed, schedules, per-run artifact identities, and validation-receipt
-identities. A hash records artifact identity; it does not establish that two
-builds used equivalent compilers, dependencies, or host environments.
+selected arms, random seed, schedules, per-run artifact identities, and
+validation-receipt identities. A hash records artifact identity; it does not
+establish that two builds used equivalent compilers, dependencies, or host
+environments.
 
 Schema v4 tasks also require `success_command_executable_blake3` and an absolute
 success-command executable. The harness verifies that digest before every run
@@ -369,6 +385,15 @@ remain `null`. LeanToken structured results retain exact range identities.
 Native shell output has exact local source-token counts but does not expose
 reliable repository range identities, so native reread and dead-end metrics are
 lower bounds.
+
+An agent may first locate and read the externally installed LeanToken
+`SKILL.md` required by its host instructions. The adapter exempts only a
+single absolute `/skills/.../SKILL.md` bounded `sed` or `cat`, or an exact
+`rg --files -g SKILL.md` over that absolute skill root, from
+repository-retrieval classification; it still records and charges the shell
+call. It also accepts a compound Git preflight only when every `&&`-separated
+segment is independently allowlisted. Relative paths, alternate connectors,
+extra chained commands, and every repository source read remain forbidden.
 
 The adapter also enforces the retrieval arm from the completed tool trajectory.
 Progressive runs must call LeanToken before any substantive command or edit,
@@ -438,6 +463,58 @@ passing success command therefore validates only deterministic scheduling,
 artifact preflight, isolated task worktrees, adapter invocation, and validation
 plumbing; it is not task-success, quality, or cost evidence. Do not use the
 example manifest as a formal experiment set.
+
+### Orientation-capsule trajectory A/B
+
+`orientation_capsule_trajectory` is a preregistered small-sample classifier for
+the selected `prewalk` and `prewalk_capsule` arms. It rehashes the raw report
+and every declared trace, trajectory, and handoff; requires the baseline
+handoff to contain no capsule and the candidate handoff to contain the exact
+frozen capsule; then reports validated success, owner-path follow-through,
+post-boundary retrieval, retrieval source tokens, dead-end tokens, and reread
+tokens. Its report binds the classifier source and executable.
+
+The candidate is only `promising_small_sample` when no paired success regresses,
+every candidate run follows its owner path, saved retrieval source tokens exceed
+the complete capsule prompt cost, and neither dead-end nor reread tokens
+increase. Even a positive result sets `production_change_authorized` to false;
+two local tasks and one repetition establish mechanism behavior, not population
+quality.
+
+With already prepared pinned repositories, run the bounded experiment without
+downloading a larger corpus:
+
+```bash
+cargo build --release --bin leantoken \
+  --example model_ab \
+  --example model_ab_codex_adapter \
+  --example orientation_capsule_task_validator \
+  --example orientation_capsule_trajectory
+
+target/release/examples/model_ab \
+  --manifest target/orientation-capsule/model-ab.json \
+  --adapter target/release/examples/model_ab_codex_adapter \
+  --arms prewalk,prewalk_capsule \
+  --repetitions 1 \
+  --artifacts-dir target/orientation-capsule/artifacts \
+  --output target/orientation-capsule/raw-report.json
+
+target/release/examples/orientation_capsule_trajectory \
+  --report target/orientation-capsule/raw-report.json \
+  --artifacts-dir target/orientation-capsule/artifacts \
+  --output target/orientation-capsule/trajectory-report.json
+```
+
+The first two-task local run is recorded in the
+[redacted machine report](../benchmarks/reports/arb-orientation-capsule-trajectory-v1-2026-07-27.json)
+and
+[decision record](../benchmarks/reports/arb-orientation-capsule-trajectory-v1-2026-07-27.md).
+On Clap, both arms passed and the capsule reduced retrieval source from 8,525
+to 4,327 tokens while charging 103 complete prompt tokens; dead-end source fell
+from 3,869 to zero. On Click, the candidate executor exceeded its frozen limit
+and the baseline executor violated the native-retrieval contract. The missing
+candidate trace makes paired deltas `null`, so the fail-closed decision is
+`no_measured_win` and authorizes no production change.
 
 ### Published four-arm evaluation
 

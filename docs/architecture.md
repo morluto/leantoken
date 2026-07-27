@@ -782,6 +782,15 @@ time-bounded; unavailable commit or working-tree provenance becomes an explicit
 gap instead of a clean-state guess. The final response is token-accounted only
 after the manifest is attached, so protocol cost remains visible.
 
+The model A/B harness can attach an optional benchmark-only orientation capsule
+to a prewalk handoff. A capsule contains exactly one safe relative owner path,
+one to four nonempty query terms, at most four nonempty definition names, and at
+most 128 exact source tokens across its serialized entries. The adapter rejects
+missing, extra, or rewritten capsules and separately counts the complete
+injected instruction and JSON wrapper. These bounds apply only to experimental
+artifacts: the capsule does not change production candidate generation,
+ranking, context selection, or any public protocol.
+
 Immutable review context can derive a model-free semantic change receipt after
 ranking. The repository layer resolves each revision once, maps the bounded path
 set with `git ls-tree`, and reads selected unique objects with one

@@ -10,10 +10,12 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
+use leantoken::tokens::Tokenizer;
 use model_ab_artifacts::{
-    ARTIFACT_SCHEMA_V1, PREWALK_HANDOFF_FILE, PROVIDER_USAGE_FILE, PrewalkHandoff, ProviderUsage,
-    ProviderUsageReceipt, RunBinding, TOOL_TRACE_FILE, TRAJECTORY_FILE, ToolOutcome, ToolTrace,
-    Trajectory, is_bounded_prewalk_todo_event,
+    ARTIFACT_SCHEMA_V1, OrientationCapsule, PREWALK_HANDOFF_FILE, PROVIDER_USAGE_FILE,
+    PrewalkHandoff, ProviderUsage, ProviderUsageReceipt, RunBinding, TOOL_TRACE_FILE,
+    TRAJECTORY_FILE, ToolOutcome, ToolTrace, Trajectory, is_bounded_prewalk_todo_event,
+    validate_orientation_capsule,
 };
 use serde::{Deserialize, Serialize};
 use statrs::statistics::Statistics;
@@ -37,6 +39,9 @@ struct Args {
     /// Repetitions per task and arm.
     #[arg(long, default_value_t = 1)]
     repetitions: usize,
+    /// Comma-delimited manifest arms to execute. Empty runs every declared arm.
+    #[arg(long, value_delimiter = ',')]
+    arms: Vec<String>,
     /// JSON report path.
     #[arg(long, default_value = "target/model_ab_report.json")]
     output: PathBuf,
@@ -69,6 +74,10 @@ struct Task {
     success_command: Vec<String>,
     #[serde(default)]
     success_command_executable_blake3: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    orientation_capsule: Option<OrientationCapsule>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    relevant_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -78,6 +87,7 @@ enum Arm {
     LeanTokenProgressive,
     LeanTokenOneShot,
     Prewalk,
+    PrewalkCapsule,
 }
 
 impl Arm {
@@ -94,7 +104,24 @@ impl Arm {
             Self::LeanTokenProgressive => "lean_token_progressive",
             Self::LeanTokenOneShot => "lean_token_one_shot",
             Self::Prewalk => "prewalk",
+            Self::PrewalkCapsule => "prewalk_capsule",
         }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        [
+            Self::Filesystem,
+            Self::LeanTokenProgressive,
+            Self::LeanTokenOneShot,
+            Self::Prewalk,
+            Self::PrewalkCapsule,
+        ]
+        .into_iter()
+        .find(|arm| arm.as_str() == value)
+    }
+
+    fn is_prewalk(self) -> bool {
+        matches!(self, Self::Prewalk | Self::PrewalkCapsule)
     }
 }
 
@@ -135,6 +162,8 @@ struct AdapterRequest<'a> {
     revision: &'a str,
     task_id: &'a str,
     prompt: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    orientation_capsule: Option<&'a OrientationCapsule>,
     success_command: &'a [String],
     artifacts_directory: &'a Path,
     timeout_seconds: u64,
@@ -244,6 +273,7 @@ struct Report {
     primary_model: String,
     executor_model: String,
     repetitions: usize,
+    selected_arms: Vec<Arm>,
     arm_definitions: BTreeMap<Arm, ArmDefinition>,
     task_definitions: Vec<Task>,
     schedules: Vec<RunSchedule>,
@@ -324,6 +354,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let adapter_binary_blake3 = hash_file(&args.adapter)?;
     let arm_definitions =
         prepare_arm_definitions(&manifest.arms, &args.adapter, &adapter_binary_blake3)?;
+    let selected_arms = select_arms(&args.arms, &arm_definitions)?;
     for task in &manifest.tasks {
         verify_clean_revision(&task.repository, &task.revision)?;
         verify_success_command_identity(task, manifest.schema_version)?;
@@ -337,6 +368,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "harness_revision": &harness_identity.revision,
             "harness_binary_blake3": &harness_binary_blake3,
             "adapter_binary_blake3": &adapter_binary_blake3,
+            "selected_arms": &selected_arms,
             "arm_definitions": &arm_definitions,
             "task_definitions": &manifest.tasks,
         });
@@ -356,7 +388,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 manifest.random_seed,
                 &task.id,
                 repetition,
-                arm_definitions.keys().copied(),
+                selected_arms.iter().copied(),
             );
             schedules.push(RunSchedule {
                 task_id: task.id.clone(),
@@ -365,6 +397,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             });
             for (arm_order_index, arm) in arm_order.into_iter().enumerate() {
                 let arm_definition = arm_definitions.get(&arm).expect("scheduled arm definition");
+                let orientation_capsule = (arm == Arm::PrewalkCapsule).then(|| {
+                    task.orientation_capsule
+                        .as_ref()
+                        .expect("validated orientation capsule")
+                });
                 let workspace = IsolatedWorkspace::create(&task.repository, &task.revision)?;
                 let binding = RunBinding {
                     experiment_id: manifest.experiment_id.clone(),
@@ -389,13 +426,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                     arm_order_index,
                     arm,
                     primary_model: &manifest.primary_model,
-                    executor_model: (arm == Arm::Prewalk)
-                        .then_some(manifest.executor_model.as_str()),
+                    executor_model: arm.is_prewalk().then_some(manifest.executor_model.as_str()),
                     arm_definition,
                     repository: workspace.path(),
                     revision: &task.revision,
                     task_id: &task.id,
                     prompt: &task.prompt,
+                    orientation_capsule,
                     success_command: &task.success_command,
                     artifacts_directory: &artifacts_directory,
                     timeout_seconds: manifest.timeout_seconds,
@@ -418,7 +455,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                             arm_order_index,
                             arm,
                             primary_model: manifest.primary_model.clone(),
-                            executor_model: (arm == Arm::Prewalk)
+                            executor_model: arm
+                                .is_prewalk()
                                 .then(|| manifest.executor_model.clone()),
                             duration_ms: started.elapsed().as_millis(),
                             status: match failure.kind {
@@ -441,6 +479,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     arm_definition,
                     &result,
                     &mut artifacts,
+                    orientation_capsule,
                 ) {
                     runs.push(RunReport {
                         task_id: task.id.clone(),
@@ -448,8 +487,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         arm_order_index,
                         arm,
                         primary_model: manifest.primary_model.clone(),
-                        executor_model: (arm == Arm::Prewalk)
-                            .then(|| manifest.executor_model.clone()),
+                        executor_model: arm.is_prewalk().then(|| manifest.executor_model.clone()),
                         duration_ms: started.elapsed().as_millis(),
                         status: RunStatus::AdapterFailed,
                         validation_duration_ms: None,
@@ -468,8 +506,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         arm_order_index,
                         arm,
                         primary_model: manifest.primary_model.clone(),
-                        executor_model: (arm == Arm::Prewalk)
-                            .then(|| manifest.executor_model.clone()),
+                        executor_model: arm.is_prewalk().then(|| manifest.executor_model.clone()),
                         duration_ms: started.elapsed().as_millis(),
                         status: RunStatus::AdapterFailed,
                         validation_duration_ms: None,
@@ -531,7 +568,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     arm_order_index,
                     arm,
                     primary_model: manifest.primary_model.clone(),
-                    executor_model: (arm == Arm::Prewalk).then(|| manifest.executor_model.clone()),
+                    executor_model: arm.is_prewalk().then(|| manifest.executor_model.clone()),
                     duration_ms: started.elapsed().as_millis(),
                     status,
                     validation_duration_ms: Some(validation_duration_ms),
@@ -550,7 +587,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let report = Report {
-        schema_version: 6,
+        schema_version: 7,
         experiment_id: manifest.experiment_id,
         manifest_blake3,
         random_seed: manifest.random_seed,
@@ -562,6 +599,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         primary_model: manifest.primary_model,
         executor_model: manifest.executor_model,
         repetitions: args.repetitions,
+        selected_arms,
         arm_definitions,
         task_definitions: manifest.tasks,
         schedules,
@@ -717,8 +755,52 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Box<dyn Error>> {
         if !task_ids.insert(task.id.as_str()) {
             return Err(format!("duplicate task id: {}", task.id).into());
         }
+        if manifest.arms.contains_key(&Arm::PrewalkCapsule) {
+            let capsule = task.orientation_capsule.as_ref().ok_or_else(|| {
+                format!(
+                    "task {} is missing the prewalk_capsule orientation capsule",
+                    task.id
+                )
+            })?;
+            validate_orientation_capsule(capsule, Tokenizer::Cl100kBase)?;
+            if task.relevant_files.is_empty()
+                || capsule
+                    .entries
+                    .iter()
+                    .any(|entry| !task.relevant_files.contains(&entry.path))
+            {
+                return Err(format!(
+                    "task {} must label every orientation capsule path as relevant",
+                    task.id
+                )
+                .into());
+            }
+        }
     }
     Ok(())
+}
+
+fn select_arms(
+    requested: &[String],
+    definitions: &BTreeMap<Arm, ArmDefinition>,
+) -> Result<Vec<Arm>, Box<dyn Error>> {
+    if requested.is_empty() {
+        return Ok(definitions.keys().copied().collect());
+    }
+    let mut selected = Vec::with_capacity(requested.len());
+    let mut unique = HashSet::new();
+    for value in requested {
+        let arm =
+            Arm::parse(value).ok_or_else(|| format!("unknown selected model A/B arm: {value}"))?;
+        if !definitions.contains_key(&arm) {
+            return Err(format!("selected arm {value} is absent from the manifest").into());
+        }
+        if !unique.insert(arm) {
+            return Err(format!("selected arm {value} appears more than once").into());
+        }
+        selected.push(arm);
+    }
+    Ok(selected)
 }
 
 fn verify_success_command_identity(
@@ -831,8 +913,10 @@ fn prepare_arm_definitions(
             return Err("all arms must use identical tool and context budgets".into());
         }
     }
-    for arm in [Arm::LeanTokenOneShot, Arm::Prewalk] {
-        let candidate = &prepared[&arm];
+    for arm in [Arm::LeanTokenOneShot, Arm::Prewalk, Arm::PrewalkCapsule] {
+        let Some(candidate) = prepared.get(&arm) else {
+            continue;
+        };
         if candidate.runtime_revision != progressive.runtime_revision
             || candidate.runtime_binary_blake3 != progressive.runtime_binary_blake3
         {
@@ -990,6 +1074,7 @@ fn validate_run_artifacts(
     arm: &ArmDefinition,
     result: &AdapterResult,
     artifacts: &mut RunArtifacts,
+    expected_orientation_capsule: Option<&OrientationCapsule>,
 ) -> Result<(), Box<dyn Error>> {
     if directory.join(VALIDATION_RECEIPT_FILE).exists() {
         return Err(format!(
@@ -1012,7 +1097,9 @@ fn validate_run_artifacts(
             return Err(format!("adapter did not persist required artifact {name}").into());
         }
     }
-    let handoff = if binding.arm == Arm::Prewalk.as_str() {
+    let binding_arm =
+        Arm::parse(&binding.arm).ok_or("run binding contains an unknown model A/B arm")?;
+    let handoff = if binding_arm.is_prewalk() {
         let handoff: PrewalkHandoff = read_artifact_json(directory, PREWALK_HANDOFF_FILE)?;
         validate_artifact_header(
             handoff.schema_version,
@@ -1041,6 +1128,14 @@ fn validate_run_artifacts(
             return Err(
                 "prewalk handoff todo is not a bounded event from its exact trajectory".into(),
             );
+        }
+        if handoff.orientation_capsule.as_ref() != expected_orientation_capsule {
+            return Err(
+                "prewalk handoff orientation capsule differs from the frozen request".into(),
+            );
+        }
+        if let Some(capsule) = &handoff.orientation_capsule {
+            validate_orientation_capsule(capsule, Tokenizer::Cl100kBase)?;
         }
         artifacts.prewalk_handoff = Some(artifact_identity(&directory.join(PREWALK_HANDOFF_FILE))?);
         Some(handoff)
@@ -1741,6 +1836,67 @@ mod tests {
     }
 
     #[test]
+    fn selected_arms_are_explicit_bounded_and_unique() {
+        let manifest = valid_manifest();
+        assert_eq!(
+            select_arms(
+                &["prewalk".to_owned(), "lean_token_progressive".to_owned()],
+                &manifest.arms,
+            )
+            .expect("selected arms"),
+            vec![Arm::Prewalk, Arm::LeanTokenProgressive]
+        );
+        assert!(
+            select_arms(
+                &["prewalk".to_owned(), "prewalk".to_owned()],
+                &manifest.arms
+            )
+            .expect_err("duplicate selection")
+            .to_string()
+            .contains("more than once")
+        );
+        assert!(
+            select_arms(&["prewalk_capsule".to_owned()], &manifest.arms)
+                .expect_err("undeclared selection")
+                .to_string()
+                .contains("absent from the manifest")
+        );
+    }
+
+    #[test]
+    fn capsule_arm_requires_exact_bounded_relevant_owner_labels() {
+        let mut manifest = valid_manifest();
+        let capsule_definition = manifest
+            .arms
+            .get(&Arm::Prewalk)
+            .expect("prewalk definition")
+            .clone();
+        manifest
+            .arms
+            .insert(Arm::PrewalkCapsule, capsule_definition);
+        let entries = vec![model_ab_artifacts::OrientationCapsuleEntry {
+            path: "src/owner.rs".to_owned(),
+            matched_terms: vec!["owner".to_owned()],
+            definitions: vec!["Owner".to_owned()],
+        }];
+        manifest.tasks[0].orientation_capsule = Some(OrientationCapsule {
+            capsule_tokens: Tokenizer::Cl100kBase
+                .count(&serde_json::to_string(&entries).expect("capsule JSON")),
+            entries,
+        });
+        manifest.tasks[0].relevant_files = vec!["src/owner.rs".to_owned()];
+        validate_manifest(&manifest).expect("bounded capsule manifest");
+
+        manifest.tasks[0].relevant_files.clear();
+        assert!(
+            validate_manifest(&manifest)
+                .expect_err("owner label required")
+                .to_string()
+                .contains("label every orientation capsule path")
+        );
+    }
+
+    #[test]
     fn manifest_requires_all_core_arms_and_frozen_identity_fields() {
         let mut manifest = valid_manifest();
         validate_manifest(&manifest).expect("valid manifest");
@@ -1899,6 +2055,7 @@ mod tests {
             &artifact_arm_definition(),
             &valid_adapter_result(),
             &mut artifacts,
+            None,
         )
         .expect("valid artifact chain");
 
@@ -1997,6 +2154,7 @@ mod tests {
                     edit_sequence: 1,
                     validation_sequence: 2,
                 },
+                orientation_capsule: None,
             },
         );
         let mut result = valid_adapter_result();
@@ -2014,8 +2172,15 @@ mod tests {
         ];
         let mut artifacts = artifact_identities(directory.path());
 
-        validate_run_artifacts(directory.path(), &binding, &arm, &result, &mut artifacts)
-            .expect("valid prewalk artifact chain");
+        validate_run_artifacts(
+            directory.path(),
+            &binding,
+            &arm,
+            &result,
+            &mut artifacts,
+            None,
+        )
+        .expect("valid prewalk artifact chain");
 
         assert!(artifacts.prewalk_handoff.is_some());
 
@@ -2024,9 +2189,15 @@ mod tests {
         handoff.todo_events[0]["item"]["id"] = serde_json::json!("not-in-trajectory");
         write_json_fixture(directory.path().join(PREWALK_HANDOFF_FILE), &handoff);
         let mut artifacts = artifact_identities(directory.path());
-        let error =
-            validate_run_artifacts(directory.path(), &binding, &arm, &result, &mut artifacts)
-                .expect_err("todo must be copied from the exact trajectory");
+        let error = validate_run_artifacts(
+            directory.path(),
+            &binding,
+            &arm,
+            &result,
+            &mut artifacts,
+            None,
+        )
+        .expect_err("todo must be copied from the exact trajectory");
         assert!(error.to_string().contains("bounded event"));
     }
 
@@ -2045,6 +2216,7 @@ mod tests {
                 &artifact_arm_definition(),
                 &valid_adapter_result(),
                 &mut artifacts,
+                None,
             )
             .expect_err("binding mismatch")
             .to_string()
@@ -2062,6 +2234,7 @@ mod tests {
                 &artifact_arm_definition(),
                 &result,
                 &mut artifacts,
+                None,
             )
             .expect_err("summary mismatch")
             .to_string()
@@ -2084,6 +2257,7 @@ mod tests {
                 &artifact_arm_definition(),
                 &valid_adapter_result(),
                 &mut artifacts,
+                None,
             )
             .expect_err("missing receipt")
             .to_string()
@@ -2107,6 +2281,7 @@ mod tests {
                 &artifact_arm_definition(),
                 &valid_adapter_result(),
                 &mut artifacts,
+                None,
             )
             .expect_err("adapter-written validation receipt")
             .to_string()
@@ -2419,6 +2594,8 @@ mod tests {
                 prompt: "fix the task".to_owned(),
                 success_command: vec![success_command.to_owned()],
                 success_command_executable_blake3: Some(binary_blake3),
+                orientation_capsule: None,
+                relevant_files: Vec::new(),
             }],
         }
     }

@@ -14,9 +14,10 @@ use std::time::{Duration, Instant};
 
 use leantoken::tokens::Tokenizer;
 use model_ab_artifacts::{
-    ARTIFACT_SCHEMA_V1, PREWALK_HANDOFF_FILE, PROVIDER_USAGE_FILE, PrewalkHandoff, ProviderUsage,
-    ProviderUsageReceipt, RangeIdentity, RunBinding, TOOL_TRACE_FILE, TRAJECTORY_FILE, ToolCall,
-    ToolOutcome, ToolTrace, Trajectory, ValidatedEdit, is_bounded_prewalk_todo_event,
+    ARTIFACT_SCHEMA_V1, OrientationCapsule, PREWALK_HANDOFF_FILE, PROVIDER_USAGE_FILE,
+    PrewalkHandoff, ProviderUsage, ProviderUsageReceipt, RangeIdentity, RunBinding,
+    TOOL_TRACE_FILE, TRAJECTORY_FILE, ToolCall, ToolOutcome, ToolTrace, Trajectory, ValidatedEdit,
+    is_bounded_prewalk_todo_event, orientation_capsule_prompt, validate_orientation_capsule,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -47,6 +48,8 @@ struct AdapterRequest {
     revision: String,
     task_id: String,
     prompt: String,
+    #[serde(default)]
+    orientation_capsule: Option<OrientationCapsule>,
     artifacts_directory: PathBuf,
     timeout_seconds: u64,
 }
@@ -274,6 +277,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         .iter()
         .filter(|call| call.tool_name == "edit" && call.outcome == ToolOutcome::Success)
         .count();
+    let orientation_capsule_prompt_tokens = request
+        .orientation_capsule
+        .as_ref()
+        .map(orientation_capsule_prompt)
+        .transpose()?
+        .map(|prompt| configuration.tokenizer.count(&prompt));
     let result = AdapterResult {
         schema_version: 4,
         task_success: successful_edits > 0 && failed_tool_calls == 0,
@@ -296,6 +305,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             "successful_edits": successful_edits,
             "random_seed": request.random_seed,
             "arm_order_index": request.arm_order_index,
+            "orientation_capsule_tokens": request
+                .orientation_capsule
+                .as_ref()
+                .map(|capsule| capsule.capsule_tokens),
+            "orientation_capsule_prompt_tokens": orientation_capsule_prompt_tokens,
         }),
         repository_generation: analysis.repository_generation,
     };
@@ -323,6 +337,7 @@ fn validate_request(
         ("lean_token_progressive", "progressive") => RetrievalPolicy::LeanTokenProgressive,
         ("lean_token_one_shot", "one_shot_context") => RetrievalPolicy::LeanTokenOneShot,
         ("prewalk", "frontier_prewalk_executor") => RetrievalPolicy::Prewalk,
+        ("prewalk_capsule", "frontier_prewalk_executor") => RetrievalPolicy::Prewalk,
         _ => return Err("arm and retrieval configuration do not match".into()),
     };
     if configuration.mcp_enabled != (retrieval_policy != RetrievalPolicy::NativeOnly) {
@@ -373,9 +388,19 @@ fn validate_request(
         {
             return Err("prewalk phase limits or model separation are invalid".into());
         }
+        let capsule_arm = request.arm == "prewalk_capsule";
+        if capsule_arm != request.orientation_capsule.is_some() {
+            return Err(
+                "orientation capsule presence does not match the selected prewalk arm".into(),
+            );
+        }
+        if let Some(capsule) = &request.orientation_capsule {
+            validate_orientation_capsule(capsule, configuration.tokenizer)?;
+        }
     } else if request.executor_model.is_some()
         || configuration.prewalk_tool_call_limit.is_some()
         || configuration.executor_tool_call_limit.is_some()
+        || request.orientation_capsule.is_some()
     {
         return Err("non-prewalk arm contains prewalk-only configuration".into());
     }
@@ -423,13 +448,20 @@ fn execute_prewalk(
     let started = Instant::now();
     let total_timeout = Duration::from_secs(request.timeout_seconds.saturating_sub(5));
     let prewalk_timeout = total_timeout / 2;
+    let capsule_prompt = request
+        .orientation_capsule
+        .as_ref()
+        .map(orientation_capsule_prompt)
+        .transpose()?
+        .unwrap_or_default();
     let prewalk_prompt = format!(
-        "Explore and begin the repository task below as the frontier prewalk. Use LeanToken as the only repository discovery and source-reading mechanism; native shell commands are allowed only for Git preflight and validation. Do not issue tool calls in parallel. Maintain a bounded todo list, gather grounded path/range evidence, and make the first evidence-grounded edit. After that edit, you must run a successful build, test, lint, or `git diff --check` shell command; the handoff is rejected without a successful post-edit validation. Then stop, leaving unfinished steps as pending in the required structured final response, but do not finish the entire task when a validated first edit is available.\n\nFrozen retrieval contract: {}\nPer-call retrieval source budget: {} tokens. Prewalk tool-call limit: {}.\n\nTask:\n{}",
+        "Explore and begin the repository task below as the frontier prewalk. Use LeanToken as the only repository discovery and source-reading mechanism; native shell commands are allowed only for Git preflight and validation. Do not issue tool calls in parallel. Maintain a bounded todo list, gather grounded path/range evidence, and make the first evidence-grounded edit. After that edit, you must run a successful build, test, lint, or `git diff --check` shell command; the handoff is rejected without a successful post-edit validation. Then stop, leaving unfinished steps as pending in the required structured final response, but do not finish the entire task when a validated first edit is available.\n\nFrozen retrieval contract: {}\nPer-call retrieval source budget: {} tokens. Prewalk tool-call limit: {}.{}\n\nTask:\n{}",
         request.arm_definition.retrieval_contract,
         request.arm_definition.budget.context_token_limit,
         configuration
             .prewalk_tool_call_limit
             .expect("validated prewalk limit"),
+        capsule_prompt,
         request.prompt
     );
     let mut output_schema = tempfile::NamedTempFile::new()?;
@@ -500,6 +532,7 @@ fn execute_prewalk(
         evidence_calls,
         worktree_patch: patch,
         first_validated_edit,
+        orientation_capsule: request.orientation_capsule.clone(),
     };
     write_json(
         request.artifacts_directory.join(PREWALK_HANDOFF_FILE),
@@ -1066,10 +1099,14 @@ impl Analysis {
     fn record_command(&mut self, item: &Value) -> Result<(), Box<dyn Error>> {
         let command = required_str(item, "/command")?;
         let sequence = self.calls.len();
-        if is_native_retrieval_command(command) {
+        let skill_instruction_command = is_bounded_skill_instruction_command(command);
+        if !skill_instruction_command && is_native_retrieval_command(command) {
             self.native_retrieval_sequences.push(sequence);
         }
-        if !self.has_leantoken_call() && !is_preflight_command(command) {
+        if !self.has_leantoken_call()
+            && !is_preflight_command(command)
+            && !skill_instruction_command
+        {
             self.pre_leantoken_substantive_sequences.push(sequence);
         }
         let output = item["aggregated_output"].as_str().unwrap_or_default();
@@ -1235,6 +1272,12 @@ fn persist_artifacts(
     configuration: &CodexConfiguration,
     request: &AdapterRequest,
 ) -> Result<(), Box<dyn Error>> {
+    let orientation_capsule_prompt_tokens = request
+        .orientation_capsule
+        .as_ref()
+        .map(orientation_capsule_prompt)
+        .transpose()?
+        .map(|prompt| configuration.tokenizer.count(&prompt));
     write_json(
         directory.join(TOOL_TRACE_FILE),
         &ToolTrace {
@@ -1265,6 +1308,11 @@ fn persist_artifacts(
                 "turn_completed_event": analysis.usage_event,
                 "phase_boundary": analysis.phase_boundary,
                 "cache_creation_input_tokens_exposed": false,
+                "orientation_capsule_tokens": request
+                    .orientation_capsule
+                    .as_ref()
+                    .map(|capsule| capsule.capsule_tokens),
+                "orientation_capsule_prompt_tokens": orientation_capsule_prompt_tokens,
             }),
         },
     )?;
@@ -1472,9 +1520,57 @@ fn is_native_retrieval_command(command: &str) -> bool {
         || interpreter_eval(&words, "php", "-r")
 }
 
+fn is_bounded_skill_instruction_command(command: &str) -> bool {
+    let words = command_words(command);
+    let is_skill_path = |path: &str| {
+        path.starts_with('/')
+            && path.ends_with("/skill.md")
+            && (path.contains("/skills/") || path.contains("/.agents/skills/"))
+    };
+    let is_skill_root = |path: &str| {
+        path.starts_with('/')
+            && (path.contains("/skills/") || path.contains("/.agents/skills/"))
+            && !path.ends_with("/skill.md")
+    };
+    let is_bounded_discovery = |words: &[String]| {
+        matches!(
+            words,
+            [reader, files, glob, name, path]
+                if reader == "rg"
+                    && files == "--files"
+                    && glob == "-g"
+                    && name == "skill.md"
+                    && is_skill_root(path)
+        )
+    };
+    match words.as_slice() {
+        [reader, path] if reader == "cat" => is_skill_path(path),
+        [reader, flag, range, path] if reader == "sed" && flag == "-n" => {
+            !range.is_empty()
+                && range
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b',' | b'p'))
+                && is_skill_path(path)
+        }
+        [pwd, connector, discovery @ ..] if pwd == "pwd" && connector == "&&" => {
+            is_bounded_discovery(discovery)
+        }
+        discovery if is_bounded_discovery(discovery) => true,
+        _ => false,
+    }
+}
+
 fn is_preflight_command(command: &str) -> bool {
     let words = command_words(command);
-    match words.as_slice() {
+    let mut segments = words.split(|word| word == "&&");
+    let Some(first) = segments.next() else {
+        return false;
+    };
+    is_preflight_words(first) && segments.all(is_preflight_words)
+}
+
+fn is_preflight_words(words: &[String]) -> bool {
+    match words {
         [command] if command == "pwd" => true,
         [git, subcommand, arguments @ ..] if git == "git" && subcommand == "status" => {
             arguments.iter().all(|argument| argument.starts_with('-'))
@@ -1484,6 +1580,9 @@ fn is_preflight_command(command: &str) -> bool {
                 && arguments
                     .iter()
                     .all(|argument| argument == "head" || argument.starts_with('-'))
+        }
+        [git, subcommand, check] if git == "git" && subcommand == "diff" && check == "--check" => {
+            true
         }
         _ => false,
     }
@@ -1872,6 +1971,27 @@ mod tests {
         assert!(is_preflight_command("/bin/bash -lc 'git rev-parse HEAD'"));
         assert!(!is_preflight_command(
             "/bin/bash -lc 'git status --short && cargo test'"
+        ));
+        assert!(is_bounded_skill_instruction_command(
+            "/bin/bash -lc \"sed -n '1,240p' /home/yann/.agents/skills/leantoken/SKILL.md\""
+        ));
+        assert!(is_bounded_skill_instruction_command(
+            "cat /home/yann/.agents/skills/leantoken/SKILL.md"
+        ));
+        assert!(is_bounded_skill_instruction_command(
+            "/bin/bash -lc \"pwd && rg --files -g 'SKILL.md' /home/yann/.agents/skills/leantoken\""
+        ));
+        assert!(!is_bounded_skill_instruction_command(
+            "/bin/bash -lc \"sed -n '1,240p' /home/yann/.agents/skills/leantoken/SKILL.md && cat src/lib.rs\""
+        ));
+        assert!(!is_bounded_skill_instruction_command(
+            "sed -n '1,240p' src/lib.rs"
+        ));
+        assert!(is_preflight_command(
+            "/bin/bash -lc 'git status --short && git diff --check'"
+        ));
+        assert!(!is_preflight_command(
+            "/bin/bash -lc 'git status --short || cat src/lib.rs'"
         ));
     }
 
