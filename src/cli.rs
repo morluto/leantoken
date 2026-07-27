@@ -362,10 +362,12 @@ impl Cli {
             Commands::Context(args) => {
                 let workflow = args.workflow.into();
                 let handoff = args.handoff_request();
+                let max_response_tokens = args.max_response_tokens;
                 AppRequest::Context {
                     request: args.into(),
                     workflow,
                     handoff: handoff.map(Box::new),
+                    max_response_tokens,
                 }
             }
             Commands::Doctor => AppRequest::Doctor,
@@ -424,6 +426,7 @@ pub enum AppRequest {
         request: ContextRequest,
         workflow: crate::model::ContextWorkflow,
         handoff: Option<Box<HandoffManifestRequest>>,
+        max_response_tokens: Option<usize>,
     },
     Doctor,
     Mcp {
@@ -1349,6 +1352,10 @@ pub struct ContextArgs {
         default_value_t = DEFAULT_CONTEXT_TOKENS
     )]
     pub budget: usize,
+
+    /// Maximum tokens in the final serialized JSON service response.
+    #[arg(long, value_parser = parse_positive_usize)]
+    pub max_response_tokens: Option<usize>,
 
     /// Include only paths matching these patterns (repeatable).
     #[arg(long = "include")]

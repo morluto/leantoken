@@ -11,7 +11,7 @@ use leantoken::{
     cli::{AppRequest, Cli},
     doctor, mcp,
     model::{IndexConsistency, IndexState},
-    services::Services,
+    services::{ServiceCallOptions, Services},
     setup::{self, SetupOperation},
     upgrade,
     watcher::{RepositoryWatcher, WatcherAction, WatcherMessage, WatcherReconciliationScheduler},
@@ -214,28 +214,22 @@ async fn run(cli: Cli) -> Result<()> {
             request,
             workflow,
             handoff,
+            max_response_tokens,
         } => {
             let cancellation = tokio_util::sync::CancellationToken::new();
-            let response = if let Some(handoff) = handoff {
-                services
-                    .context_with_handoff_workflow_consistency_cancellable(
-                        request,
-                        *handoff,
-                        workflow,
-                        consistency,
-                        cancellation,
-                    )
-                    .await?
-            } else {
-                services
-                    .context_with_workflow_consistency_cancellable(
-                        request,
-                        workflow,
-                        consistency,
-                        cancellation,
-                    )
-                    .await?
-            };
+            let options = max_response_tokens.map_or_else(ServiceCallOptions::new, |limit| {
+                ServiceCallOptions::new().with_max_response_tokens(limit)
+            });
+            let response = services
+                .context_with_options_workflow_consistency_cancellable(
+                    request,
+                    handoff.map(|handoff| *handoff),
+                    workflow,
+                    consistency,
+                    options,
+                    cancellation,
+                )
+                .await?;
             print(&response, json)
         }
         AppRequest::Doctor => unreachable!("handled before service setup"),

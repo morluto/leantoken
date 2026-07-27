@@ -4,11 +4,63 @@ use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::Result;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ResponseTokenAccounting {
     pub(crate) protocol_tokens: usize,
     pub(crate) path_and_metadata_tokens: usize,
     pub(crate) total_response_tokens: usize,
+}
+
+/// Exact serialized-response counter and monotonic prefix fitting primitive.
+pub(crate) struct ResponseBudget<'a> {
+    tokenizer: &'a Tokenizer,
+    max_tokens: usize,
+}
+
+impl<'a> ResponseBudget<'a> {
+    pub(crate) const fn new(tokenizer: &'a Tokenizer, max_tokens: usize) -> Self {
+        Self {
+            tokenizer,
+            max_tokens,
+        }
+    }
+
+    pub(crate) fn serialized_tokens<T: Serialize>(
+        &self,
+        response: &T,
+    ) -> serde_json::Result<usize> {
+        serde_json::to_string(response).map(|payload| self.tokenizer.count(&payload))
+    }
+
+    pub(crate) fn fits<T: Serialize>(&self, response: &T) -> serde_json::Result<bool> {
+        self.serialized_tokens(response)
+            .map(|tokens| tokens <= self.max_tokens)
+    }
+
+    /// Find the largest prefix accepted by a monotonic serialized-size callback.
+    pub(crate) fn largest_fitting_prefix(
+        &self,
+        item_count: usize,
+        mut count_prefix: impl FnMut(usize) -> Result<usize>,
+    ) -> Result<Option<usize>> {
+        let mut lower = 0usize;
+        let mut upper = item_count;
+        let mut best = None;
+        while lower <= upper {
+            let middle = lower + (upper - lower) / 2;
+            if count_prefix(middle)? <= self.max_tokens {
+                best = Some(middle);
+                lower = middle.saturating_add(1);
+            } else if middle == 0 {
+                break;
+            } else {
+                upper = middle - 1;
+            }
+        }
+        Ok(best)
+    }
 }
 
 pub(crate) fn response_token_accounting<T: Serialize>(
@@ -285,6 +337,29 @@ mod tests {
             accounting.protocol_tokens + accounting.path_and_metadata_tokens
         );
         assert_eq!(accounting.total_response_tokens, tokenizer.count(&payload));
+    }
+
+    #[test]
+    fn response_budget_finds_the_largest_monotonic_prefix() {
+        let tokenizer = Tokenizer::Cl100kBase;
+        let budget = ResponseBudget::new(&tokenizer, 34);
+        assert_eq!(
+            budget
+                .largest_fitting_prefix(8, |prefix| Ok(prefix * 10 + 5))
+                .expect("prefix fit"),
+            Some(2)
+        );
+        assert_eq!(
+            ResponseBudget::new(&tokenizer, 4)
+                .largest_fitting_prefix(8, |prefix| Ok(prefix * 10 + 5))
+                .expect("empty prefix does not fit"),
+            None
+        );
+        let response = json!({"message": "bounded"});
+        let exact = budget
+            .serialized_tokens(&response)
+            .expect("serialized token count");
+        assert_eq!(budget.fits(&response).expect("fit check"), exact <= 34);
     }
 
     #[test]

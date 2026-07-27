@@ -616,6 +616,8 @@ fn cli_context_request() {
         "fix the bug",
         "--budget",
         "1024",
+        "--max-response-tokens",
+        "2048",
         "--include",
         "src/**",
         "--must-include",
@@ -647,12 +649,14 @@ fn cli_context_request() {
         request,
         workflow,
         handoff,
+        max_response_tokens,
     } = cli.app_request()
     else {
         panic!("expected context request");
     };
     assert!(handoff.is_none());
     assert_eq!(workflow, ContextWorkflow::Contribution);
+    assert_eq!(max_response_tokens, Some(2048));
     assert_eq!(request.task, "fix the bug");
     assert_eq!(request.token_budget, 1024);
     assert_eq!(request.include_paths, vec!["src/**".to_string()]);

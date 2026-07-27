@@ -20,7 +20,7 @@ use super::validation::{
     MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, PathFilter, PathMatcher,
     check_cancelled, validate_glob_patterns, validate_input,
 };
-use super::{Services, retrieval_primitive_key};
+use super::{ServiceCallOptions, Services, retrieval_primitive_key};
 use crate::model::*;
 use crate::ranking::{self, Candidate};
 use crate::repository::{
@@ -30,6 +30,7 @@ use crate::repository::{
 use crate::storage::ChunkHit;
 use crate::storage::{FileRecord, ReadSession, SymbolHit, SymbolRecord};
 use crate::text::{byte_to_line, expand_terms, identifier_words, line_starts};
+use crate::tokens::ResponseBudget;
 use crate::{Error, Result};
 use facets::{ContextQuery, FacetKind};
 const GIT_CHANGED_PATHS_MAX: usize = 512;
@@ -1574,10 +1575,21 @@ impl Services {
 
     /// Select ranked task evidence within an exact source-token budget.
     pub async fn context(&self, request: ContextRequest) -> Result<ContextResponse> {
+        self.context_with_options(request, ServiceCallOptions::default())
+            .await
+    }
+
+    /// Select ranked task evidence under explicit serialized-response controls.
+    pub async fn context_with_options(
+        &self,
+        request: ContextRequest,
+        options: ServiceCallOptions,
+    ) -> Result<ContextResponse> {
         let accounted = self
             .context_cancellable_with_workflow(
                 request,
                 ContextWorkflow::Auto,
+                options,
                 CancellationToken::new(),
             )
             .await?;
@@ -1595,6 +1607,7 @@ impl Services {
                 request,
                 ContextWorkflow::Auto,
                 Some(handoff),
+                ServiceCallOptions::default(),
                 CancellationToken::new(),
             )
             .await?;
@@ -1612,7 +1625,12 @@ impl Services {
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
         let accounted = self
-            .context_cancellable_with_workflow(request, ContextWorkflow::Auto, cancellation)
+            .context_cancellable_with_workflow(
+                request,
+                ContextWorkflow::Auto,
+                ServiceCallOptions::default(),
+                cancellation,
+            )
             .await?;
         let mut response = accounted.response;
         set_routing_consistency(&mut response, consistency);
@@ -1637,7 +1655,12 @@ impl Services {
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
         let accounted = self
-            .context_cancellable_with_workflow(request, workflow, cancellation)
+            .context_cancellable_with_workflow(
+                request,
+                workflow,
+                ServiceCallOptions::default(),
+                cancellation,
+            )
             .await?;
         let mut response = accounted.response;
         set_routing_consistency(&mut response, consistency);
@@ -1668,6 +1691,7 @@ impl Services {
                 request,
                 workflow,
                 Some(handoff),
+                ServiceCallOptions::default(),
                 cancellation,
             )
             .await?;
@@ -1688,19 +1712,83 @@ impl Services {
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
         let accounted = self
-            .context_cancellable_with_workflow(request, ContextWorkflow::Auto, cancellation)
+            .context_cancellable_with_workflow(
+                request,
+                ContextWorkflow::Auto,
+                ServiceCallOptions::default(),
+                cancellation,
+            )
             .await?;
         Ok(self.record_context_response(accounted))
+    }
+
+    /// Retrieve context under adapter policy and explicit response controls.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn context_with_options_workflow_consistency_cancellable(
+        &self,
+        request: ContextRequest,
+        handoff: Option<HandoffManifestRequest>,
+        workflow: ContextWorkflow,
+        consistency: IndexConsistency,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<ContextResponse> {
+        if options.max_response_tokens() == Some(0) {
+            return Err(Error::InvalidInput {
+                field: "max_response_tokens",
+                reason: "must be greater than zero",
+            });
+        }
+        self.validate_context_request(&request)?;
+        if let Some(handoff) = &handoff {
+            validate_handoff_context_request(&request, handoff)?;
+        }
+        self.apply_consistency(consistency, cancellation.clone())
+            .await?;
+        let accounted = self
+            .context_cancellable_with_workflow_and_handoff(
+                request,
+                workflow,
+                handoff,
+                options,
+                cancellation,
+            )
+            .await?;
+        let mut response = accounted.response;
+        set_routing_consistency(&mut response, consistency);
+        self.finalize_response(&mut response)?;
+        if let Some(max_response_tokens) = options.max_response_tokens()
+            && response.meta.total_response_tokens > max_response_tokens
+        {
+            return Err(Error::RequestLimitExceeded {
+                field: "max_response_tokens",
+                requested: response.meta.total_response_tokens,
+                limit: max_response_tokens,
+            });
+        }
+        self.record_token_savings(
+            accounted.operation,
+            accounted.baseline_source_tokens,
+            &response.meta,
+        );
+        Ok(response)
     }
 
     async fn context_cancellable_with_workflow(
         &self,
         request: ContextRequest,
         workflow: ContextWorkflow,
+        options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<AccountedContextResponse> {
-        self.context_cancellable_with_workflow_and_handoff(request, workflow, None, cancellation)
-            .await
+        self.context_cancellable_with_workflow_and_handoff(
+            request,
+            workflow,
+            None,
+            options,
+            cancellation,
+        )
+        .await
     }
 
     async fn context_cancellable_with_workflow_and_handoff(
@@ -1708,6 +1796,7 @@ impl Services {
         request: ContextRequest,
         workflow: ContextWorkflow,
         handoff: Option<HandoffManifestRequest>,
+        options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<AccountedContextResponse> {
         let this = self.clone();
@@ -1722,6 +1811,7 @@ impl Services {
                     request,
                     workflow,
                     handoff,
+                    options,
                     cancellation,
                     CandidateDiagnostics::Omit,
                     ContextSignals::PRODUCTION,
@@ -1756,6 +1846,7 @@ impl Services {
                     request,
                     ContextWorkflow::Implementation,
                     None,
+                    ServiceCallOptions::default(),
                     cancellation,
                     CandidateDiagnostics::Collect,
                     ContextSignals::PRODUCTION,
@@ -1781,6 +1872,7 @@ impl Services {
                     request,
                     ContextWorkflow::Implementation,
                     None,
+                    ServiceCallOptions::default(),
                     cancellation,
                     CandidateDiagnostics::Collect,
                     ContextSignals::evaluation(policy),
@@ -2135,17 +2227,227 @@ impl Services {
         })
     }
 
-    #[allow(clippy::cognitive_complexity)]
+    fn context_response_with_receipt_reserve(
+        &self,
+        response: &ContextResponse,
+        request: &ContextRequest,
+    ) -> Result<ContextResponse> {
+        let mut sized = response.clone();
+        if !request.plan_only {
+            let receipt_id = request
+                .receipt_id
+                .clone()
+                .unwrap_or_else(|| "rffffffffffffffff".into());
+            let selected = sized.fragments.len();
+            sized.meta.receipt_id = Some(receipt_id.clone());
+            sized.meta.receipt_suppressed_exact = selected;
+            sized.meta.receipt_suppressed_overlap = selected;
+            sized.meta.receipt_near_duplicates = selected;
+            sized.warnings.push(format!(
+                "{selected} returned fragments are semantic near-duplicates of prior receipt evidence"
+            ));
+            sized
+                .warnings
+                .push("all selected evidence was already covered by the receipt".into());
+            if let Some(manifest) = &mut sized.handoff_manifest {
+                manifest.receipt_id = Some(receipt_id);
+            }
+        }
+        set_routing_consistency(&mut sized, IndexConsistency::ReconcileWorkingTree);
+        self.finalize_response(&mut sized)?;
+        Ok(sized)
+    }
+
+    fn context_response_tokens_with_receipt_reserve(
+        &self,
+        response: &ContextResponse,
+        request: &ContextRequest,
+    ) -> Result<usize> {
+        let sized = self.context_response_with_receipt_reserve(response, request)?;
+        let budget = ResponseBudget::new(&self.config.tokenizer, usize::MAX);
+        let serialized_tokens = budget.serialized_tokens(&sized)?;
+        debug_assert_eq!(serialized_tokens, sized.meta.total_response_tokens);
+        Ok(serialized_tokens)
+    }
+
+    fn context_response_fits(
+        &self,
+        response: &ContextResponse,
+        request: &ContextRequest,
+        max_response_tokens: usize,
+    ) -> Result<bool> {
+        let sized = self.context_response_with_receipt_reserve(response, request)?;
+        ResponseBudget::new(&self.config.tokenizer, max_response_tokens)
+            .fits(&sized)
+            .map_err(Into::into)
+    }
+
+    fn refresh_context_omission_warning(response: &mut ContextResponse) {
+        response.warnings.retain(|warning| {
+            warning
+                .strip_suffix(" omitted")
+                .is_none_or(|count| count.parse::<usize>().is_err())
+        });
+        let omitted = response
+            .omission_summary
+            .path_excluded
+            .saturating_add(response.omission_summary.known_hash)
+            .saturating_add(response.omission_summary.budget_or_result_limit);
+        if omitted > 0 {
+            response.warnings.insert(0, format!("{omitted} omitted"));
+        }
+    }
+
+    fn trim_context_selection(response: &mut ContextResponse, keep: usize) {
+        let (removed, removed_tokens) = if let Some(plan) = &mut response.plan {
+            let removed = plan.candidates.len().saturating_sub(keep);
+            let removed_tokens = plan
+                .candidates
+                .iter()
+                .skip(keep)
+                .map(|candidate| candidate.estimated_tokens)
+                .sum::<usize>();
+            plan.candidates.truncate(keep);
+            plan.estimated_source_tokens =
+                plan.estimated_source_tokens.saturating_sub(removed_tokens);
+            plan.result_complete &= removed == 0;
+            (removed, removed_tokens)
+        } else {
+            let removed = response.fragments.len().saturating_sub(keep);
+            let removed_tokens = response
+                .fragments
+                .iter()
+                .skip(keep)
+                .map(|fragment| fragment.token_count)
+                .sum::<usize>();
+            response.fragments.truncate(keep);
+            response.receipt.fragment_hashes.truncate(keep);
+            (removed, removed_tokens)
+        };
+        response.meta.source_tokens = response.meta.source_tokens.saturating_sub(removed_tokens);
+        response.meta.emitted_tokens = response.meta.source_tokens;
+        response.omission_summary.budget_or_result_limit = response
+            .omission_summary
+            .budget_or_result_limit
+            .saturating_add(removed);
+        Self::refresh_context_omission_warning(response);
+    }
+
+    fn fit_context_response(
+        &self,
+        response: &mut ContextResponse,
+        request: &ContextRequest,
+        max_response_tokens: usize,
+    ) -> Result<()> {
+        self.finalize_response(response)?;
+        if self.context_response_fits(response, request, max_response_tokens)? {
+            return Ok(());
+        }
+
+        response.omitted.clear();
+        response.omission_summary.by_path.clear();
+        response.omission_summary.by_language_or_file_type.clear();
+        response.omission_summary.by_reason.clear();
+        response.omission_summary.by_score_band.clear();
+        if self.context_response_fits(response, request, max_response_tokens)? {
+            self.finalize_response(response)?;
+            return Ok(());
+        }
+
+        if let Some(scope) = &mut response.diff_scope {
+            scope.evidence = None;
+        }
+        if self.context_response_fits(response, request, max_response_tokens)? {
+            self.finalize_response(response)?;
+            return Ok(());
+        }
+
+        response.routing = None;
+        if self.context_response_fits(response, request, max_response_tokens)? {
+            self.finalize_response(response)?;
+            return Ok(());
+        }
+
+        if let Some(plan) = &mut response.plan {
+            for candidate in &mut plan.candidates {
+                candidate.reasons.clear();
+            }
+        }
+        for fragment in &mut response.fragments {
+            fragment.reason.clear();
+        }
+        if self.context_response_fits(response, request, max_response_tokens)? {
+            self.finalize_response(response)?;
+            return Ok(());
+        }
+
+        let can_reduce_selected = request.include_paths.is_empty()
+            && request.must_include_paths.is_empty()
+            && request.must_include_symbols.is_empty()
+            && request.focus_paths.is_empty()
+            && request.focus_symbols.is_empty()
+            && !request.strict_focus_paths
+            && request.minimum_fragments_per_focus_path.is_none()
+            && request.base_revision.is_none()
+            && request.changed_paths.is_empty()
+            && !request.strict_changed_paths
+            && response.handoff_manifest.is_none();
+        if can_reduce_selected {
+            let selected = response
+                .plan
+                .as_ref()
+                .map_or(response.fragments.len(), |plan| plan.candidates.len());
+            let omission_reserve = response
+                .omission_summary
+                .budget_or_result_limit
+                .saturating_add(selected);
+            let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+            let keep = budget.largest_fitting_prefix(selected, |keep| {
+                let mut candidate = response.clone();
+                Self::trim_context_selection(&mut candidate, keep);
+                candidate.omission_summary.budget_or_result_limit = omission_reserve;
+                Self::refresh_context_omission_warning(&mut candidate);
+                self.context_response_tokens_with_receipt_reserve(&candidate, request)
+            })?;
+            if let Some(keep) = keep {
+                Self::trim_context_selection(response, keep);
+                self.finalize_response(response)?;
+                if self.context_response_fits(response, request, max_response_tokens)? {
+                    return Ok(());
+                }
+                return Err(Error::InternalFailure(
+                    "context prefix fitting violated its monotonic sizing reserve".into(),
+                ));
+            }
+            Self::trim_context_selection(response, 0);
+        }
+
+        let minimum = self.context_response_tokens_with_receipt_reserve(response, request)?;
+        Err(Error::RequestLimitExceeded {
+            field: "max_response_tokens",
+            requested: minimum,
+            limit: max_response_tokens,
+        })
+    }
+
+    #[allow(clippy::cognitive_complexity, clippy::too_many_arguments)]
     fn context_sync(
         &self,
         mut request: ContextRequest,
         workflow: ContextWorkflow,
         handoff: Option<HandoffManifestRequest>,
+        options: ServiceCallOptions,
         cancellation: &CancellationToken,
         diagnostics: CandidateDiagnostics,
         signals: ContextSignals,
     ) -> Result<(ContextEvaluation, Option<usize>)> {
         check_cancelled(cancellation)?;
+        if options.max_response_tokens() == Some(0) {
+            return Err(Error::InvalidInput {
+                field: "max_response_tokens",
+                reason: "must be greater than zero",
+            });
+        }
         self.validate_context_request(&request)?;
         if let Some(handoff) = &handoff {
             validate_handoff_context_request(&request, handoff)?;
@@ -2779,13 +3081,17 @@ impl Services {
                     }
                 }
                 scope.indexed_changed_paths = indexed;
-                scope.evidence = Some(self.build_diff_evidence(
-                    session,
-                    &scoped_request,
-                    &scope,
-                    resolved_workflow,
-                    cancellation,
-                )?);
+                scope.evidence = (!request.plan_only || request.verbose_diagnostics)
+                    .then(|| {
+                        self.build_diff_evidence(
+                            session,
+                            &scoped_request,
+                            &scope,
+                            resolved_workflow,
+                            cancellation,
+                        )
+                    })
+                    .transpose()?;
                 response.routing = build_context_routing(
                     &request,
                     &scope,
@@ -2805,8 +3111,8 @@ impl Services {
                 }
                 response.diff_scope = Some(scope);
             }
-            let handoff_evidence = handoff.as_ref().map(|_| {
-                response
+            if let Some(handoff) = &handoff {
+                let evidence = response
                     .fragments
                     .iter()
                     .map(|fragment| HandoffEvidence {
@@ -2815,8 +3121,43 @@ impl Services {
                         end_line: fragment.end_line,
                         content_hash: fragment.content_hash.clone(),
                     })
-                    .collect::<Vec<_>>()
-            });
+                    .collect::<Vec<_>>();
+                let resolved_head = response
+                    .diff_scope
+                    .as_ref()
+                    .and_then(|scope| scope.head_revision.clone());
+                let (commit_revision, commit_revision_available) =
+                    if let Some(head) = resolved_head {
+                        (Some(head), true)
+                    } else {
+                        match git_head_revision(&self.config.root) {
+                            Ok(head) => (Some(head), true),
+                            Err(error) => {
+                                tracing::debug!(%error, "handoff Git identity unavailable");
+                                (None, false)
+                            }
+                        }
+                    };
+                response.handoff_manifest = Some(handoff::build(
+                    &request,
+                    handoff,
+                    &response,
+                    evidence,
+                    HandoffProvenance {
+                        commit_revision,
+                        commit_revision_available,
+                        working_tree_state: if commit_revision_available {
+                            working_tree_state
+                        } else {
+                            HandoffWorkingTreeState::Unknown
+                        },
+                        working_tree_paths: working_tree_paths.clone(),
+                    },
+                ));
+            }
+            if let Some(max_response_tokens) = options.max_response_tokens() {
+                self.fit_context_response(&mut response, &request, max_response_tokens)?;
+            }
             if !request.plan_only {
                 let receipt_candidates = response
                     .fragments
@@ -2881,41 +3222,17 @@ impl Services {
                     }
                 }
             }
-            if let (Some(handoff), Some(evidence)) = (&handoff, handoff_evidence) {
-                let resolved_head = response
-                    .diff_scope
-                    .as_ref()
-                    .and_then(|scope| scope.head_revision.clone());
-                let (commit_revision, commit_revision_available) =
-                    if let Some(head) = resolved_head {
-                        (Some(head), true)
-                    } else {
-                        match git_head_revision(&self.config.root) {
-                            Ok(head) => (Some(head), true),
-                            Err(error) => {
-                                tracing::debug!(%error, "handoff Git identity unavailable");
-                                (None, false)
-                            }
-                        }
-                    };
-                response.handoff_manifest = Some(handoff::build(
-                    &request,
-                    handoff,
-                    &response,
-                    evidence,
-                    HandoffProvenance {
-                        commit_revision,
-                        commit_revision_available,
-                        working_tree_state: if commit_revision_available {
-                            working_tree_state
-                        } else {
-                            HandoffWorkingTreeState::Unknown
-                        },
-                        working_tree_paths: working_tree_paths.clone(),
-                    },
-                ));
+            if let Some(manifest) = &mut response.handoff_manifest {
+                manifest.receipt_id.clone_from(&response.meta.receipt_id);
             }
             self.finalize_response(&mut response)?;
+            if let Some(max_response_tokens) = options.max_response_tokens()
+                && response.meta.total_response_tokens > max_response_tokens
+            {
+                return Err(Error::InternalFailure(
+                    "context response exceeded its fitted serialized-response budget".into(),
+                ));
+            }
             let baseline_source_tokens = if request.plan_only {
                 None
             } else {
