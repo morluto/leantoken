@@ -6048,6 +6048,40 @@ async fn maximum_text_context_keeps_the_original_read_bounded_range_match() {
 }
 
 #[tokio::test]
+async fn short_text_queries_match_inside_longer_tokens() {
+    let source = b"alpha prefixfnordsuffix omega\n";
+    let (_root, services) = indexed_source("short.txt", source).await;
+
+    for mode in [SearchMode::Text, SearchMode::Auto] {
+        for query in ["f", "fn"] {
+            let response = services
+                .search(SearchRequest {
+                    query: query.into(),
+                    mode,
+                    include_paths: vec!["short.txt".into()],
+                    exclude_paths: Vec::new(),
+                    focus_paths: Vec::new(),
+                    max_results: Some(1),
+                    max_tokens: Some(1_000),
+                    context_lines: Some(1),
+                    case_sensitive: true,
+                    all_occurrences: false,
+                    prefer_structural: false,
+                    receipt_id: None,
+                    cursor: None,
+                })
+                .await
+                .expect("short text search");
+
+            let hit = response.hits.first().expect("embedded substring hit");
+            assert_eq!(hit.path, "short.txt");
+            assert_eq!(hit.match_kind, "text");
+            assert!(hit.excerpt.contains("prefixfnordsuffix"));
+        }
+    }
+}
+
+#[tokio::test]
 async fn regex_search_keeps_a_multiline_match_that_exceeds_the_line_cap() {
     let mut lines = (1..=5)
         .map(|line| format!("prefix {line}"))
