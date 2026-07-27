@@ -637,11 +637,12 @@ impl Services {
     where
         T: RetrievalResponse + Clone,
     {
-        let tokens =
-            self.finalized_response_tokens_with_receipt_reserve(response, returned_items)?;
-        Ok(options
-            .max_response_tokens()
-            .is_none_or(|limit| tokens <= limit))
+        options.max_response_tokens().map_or(Ok(true), |limit| {
+            Ok(
+                self.finalized_response_tokens_with_receipt_reserve(response, returned_items)?
+                    <= limit,
+            )
+        })
     }
 
     fn finalized_response_tokens_with_receipt_reserve<T>(
@@ -1753,7 +1754,7 @@ mod tests {
                 search::MAX_REGEX_CHUNKS_PER_FILE
             ),
             format!(
-                "| File scan page size | {} for find/glob; tree queries `max_results + 1` projected paths |",
+                "| File scan page size | {} for find (path projection) and globset fallback; tree/glob SQL-page `max_results + 1` projected paths |",
                 files::FILE_LIST_PAGE_SIZE
             ),
         ];

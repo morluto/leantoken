@@ -21,6 +21,13 @@ struct CacheKey {
     content_hash: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct DeltaCacheKey {
+    target_key: String,
+    base_hash: String,
+    head_hash: String,
+}
+
 #[derive(Debug, Clone)]
 struct CacheEntry {
     content: String,
@@ -32,11 +39,20 @@ struct CacheEntry {
     inserted_at: Instant,
 }
 
+#[derive(Debug, Clone)]
+struct DeltaCacheEntry {
+    delta: String,
+    inserted_at: Instant,
+}
+
 #[derive(Debug, Default)]
 struct RegistryState {
     entries: HashMap<CacheKey, CacheEntry>,
     insertion_order: VecDeque<CacheKey>,
     total_bytes: usize,
+    deltas: HashMap<DeltaCacheKey, DeltaCacheEntry>,
+    delta_order: VecDeque<DeltaCacheKey>,
+    delta_bytes: usize,
 }
 
 #[derive(Debug, Default)]
@@ -84,7 +100,7 @@ impl ReadDeltaRegistry {
                 self.lookup_latest(&target_key)?
             };
             if let Some((selected_hash, base)) = base {
-                base_hash = Some(selected_hash);
+                base_hash = Some(selected_hash.clone());
                 base_generation = Some(base.generation);
                 if base_hash.as_deref() == Some(response.content_hash.as_str()) {
                     outcome = ReadDeltaOutcome::NotModified;
@@ -93,24 +109,39 @@ impl ReadDeltaRegistry {
                 } else if target_coordinates_changed(&base, response) {
                     fallback_reason = Some(ReadDeltaFallback::TargetChanged);
                 } else {
-                    let full_delta = TextDiff::from_lines(base.content.as_str(), current_content)
-                        .unified_diff()
-                        .context_radius(3)
-                        .header(
-                            &format!(
-                                "base/{}:{}-{}",
-                                response.path,
-                                response.returned_start_line,
-                                response.returned_end_line
-                            ),
-                            &format!(
-                                "head/{}:{}-{}",
-                                response.path,
-                                response.returned_start_line,
-                                response.returned_end_line
-                            ),
-                        )
-                        .to_string();
+                    let full_delta = if let Some(cached) =
+                        self.lookup_delta(&target_key, &selected_hash, &response.content_hash)?
+                    {
+                        cached
+                    } else {
+                        let computed = TextDiff::from_lines(base.content.as_str(), current_content)
+                            .unified_diff()
+                            .context_radius(3)
+                            .header(
+                                &format!(
+                                    "base/{}:{}-{}",
+                                    response.path,
+                                    response.returned_start_line,
+                                    response.returned_end_line
+                                ),
+                                &format!(
+                                    "head/{}:{}-{}",
+                                    response.path,
+                                    response.returned_start_line,
+                                    response.returned_end_line
+                                ),
+                            )
+                            .to_string();
+                        self.insert_delta(
+                            DeltaCacheKey {
+                                target_key: target_key.clone(),
+                                base_hash: selected_hash,
+                                head_hash: response.content_hash.clone(),
+                            },
+                            computed.clone(),
+                        )?;
+                        computed
+                    };
                     let candidate_tokens = tokenizer.count(&full_delta);
                     if candidate_tokens < full_tokens {
                         outcome = ReadDeltaOutcome::Delta;
@@ -194,6 +225,27 @@ impl ReadDeltaRegistry {
         }))
     }
 
+    fn lookup_delta(
+        &self,
+        target_key: &str,
+        base_hash: &str,
+        head_hash: &str,
+    ) -> Result<Option<String>> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InternalFailure("read delta registry poisoned".into()))?;
+        prune_expired(&mut state, Instant::now());
+        Ok(state
+            .deltas
+            .get(&DeltaCacheKey {
+                target_key: target_key.to_owned(),
+                base_hash: base_hash.to_owned(),
+                head_hash: head_hash.to_owned(),
+            })
+            .map(|entry| entry.delta.clone()))
+    }
+
     fn insert(&self, key: CacheKey, entry: CacheEntry) -> Result<()> {
         if entry.content.len() > MAX_READ_DELTA_ENTRY_BYTES {
             return Ok(());
@@ -220,6 +272,42 @@ impl ReadDeltaRegistry {
             state.total_bytes += entry.content.len();
             state.insertion_order.push_back(key.clone());
             state.entries.insert(key, entry);
+        }
+        Ok(())
+    }
+
+    fn insert_delta(&self, key: DeltaCacheKey, delta: String) -> Result<()> {
+        if delta.len() > MAX_READ_DELTA_ENTRY_BYTES {
+            return Ok(());
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InternalFailure("read delta registry poisoned".into()))?;
+        prune_expired(&mut state, Instant::now());
+        if let Some(previous) = state.deltas.remove(&key) {
+            state.delta_bytes = state.delta_bytes.saturating_sub(previous.delta.len());
+            state.delta_order.retain(|candidate| candidate != &key);
+        }
+        while state.deltas.len() >= MAX_READ_DELTA_ENTRIES
+            || state.delta_bytes.saturating_add(delta.len()) > MAX_READ_DELTA_TOTAL_BYTES
+        {
+            if !evict_oldest_delta(&mut state) {
+                break;
+            }
+        }
+        if state.deltas.len() < MAX_READ_DELTA_ENTRIES
+            && state.delta_bytes.saturating_add(delta.len()) <= MAX_READ_DELTA_TOTAL_BYTES
+        {
+            state.delta_bytes += delta.len();
+            state.delta_order.push_back(key.clone());
+            state.deltas.insert(
+                key,
+                DeltaCacheEntry {
+                    delta,
+                    inserted_at: Instant::now(),
+                },
+            );
         }
         Ok(())
     }
@@ -279,6 +367,16 @@ fn prune_expired(state: &mut RegistryState, now: Instant) {
         }
         evict_oldest(state);
     }
+    while let Some(key) = state.delta_order.front() {
+        let expired = state
+            .deltas
+            .get(key)
+            .is_none_or(|entry| now.duration_since(entry.inserted_at) >= READ_DELTA_TTL);
+        if !expired {
+            break;
+        }
+        evict_oldest_delta(state);
+    }
 }
 
 fn evict_oldest(state: &mut RegistryState) -> bool {
@@ -287,6 +385,16 @@ fn evict_oldest(state: &mut RegistryState) -> bool {
     };
     if let Some(entry) = state.entries.remove(&key) {
         state.total_bytes = state.total_bytes.saturating_sub(entry.content.len());
+    }
+    true
+}
+
+fn evict_oldest_delta(state: &mut RegistryState) -> bool {
+    let Some(key) = state.delta_order.pop_front() else {
+        return false;
+    };
+    if let Some(entry) = state.deltas.remove(&key) {
+        state.delta_bytes = state.delta_bytes.saturating_sub(entry.delta.len());
     }
     true
 }
@@ -471,5 +579,63 @@ mod tests {
         assert!(state.entries.is_empty());
         assert!(state.insertion_order.is_empty());
         assert_eq!(state.total_bytes, 0);
+    }
+
+    #[test]
+    fn registry_reuses_cached_unified_diff_for_matching_base_and_head() {
+        let registry = ReadDeltaRegistry::default();
+        let key = DeltaCacheKey {
+            target_key: "target".into(),
+            base_hash: "base".into(),
+            head_hash: "head".into(),
+        };
+        registry
+            .insert_delta(key.clone(), "cached-diff".into())
+            .expect("cache unified diff");
+
+        let reused = registry
+            .lookup_delta("target", "base", "head")
+            .expect("lookup")
+            .expect("cached delta");
+        assert_eq!(reused, "cached-diff");
+        assert!(
+            registry
+                .lookup_delta("target", "other", "head")
+                .expect("miss")
+                .is_none()
+        );
+
+        let state = registry.state.lock().expect("delta registry");
+        assert_eq!(state.deltas.len(), 1);
+        assert_eq!(state.delta_order.iter().collect::<Vec<_>>(), vec![&key]);
+        assert_eq!(state.delta_bytes, "cached-diff".len());
+    }
+
+    #[test]
+    fn registry_prunes_expired_delta_entries() {
+        let now = Instant::now();
+        let key = DeltaCacheKey {
+            target_key: "target".into(),
+            base_hash: "base".into(),
+            head_hash: "head".into(),
+        };
+        let mut state = RegistryState {
+            delta_bytes: 3,
+            ..RegistryState::default()
+        };
+        state.delta_order.push_back(key.clone());
+        state.deltas.insert(
+            key,
+            DeltaCacheEntry {
+                delta: "abc".into(),
+                inserted_at: now,
+            },
+        );
+
+        prune_expired(&mut state, now + READ_DELTA_TTL + Duration::from_secs(1));
+
+        assert!(state.deltas.is_empty());
+        assert!(state.delta_order.is_empty());
+        assert_eq!(state.delta_bytes, 0);
     }
 }

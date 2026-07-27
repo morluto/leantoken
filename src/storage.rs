@@ -558,6 +558,15 @@ pub struct FileRecord {
     pub generation: u64,
 }
 
+/// Lean file projection for fuzzy find and other path-only scans.
+#[derive(Debug, Clone)]
+pub(crate) struct FilePathRecord {
+    pub id: i64,
+    pub path: String,
+    pub language: Option<String>,
+    pub size_bytes: u64,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct PathRecord {
     pub path: String,
@@ -2471,6 +2480,70 @@ impl ReadSession {
         Ok(files)
     }
 
+    /// Return a lean path projection page for fuzzy find scans.
+    ///
+    /// Use the final record's `id` as the next cursor. Omits hash, generation,
+    /// and modified metadata that find does not need.
+    pub(crate) fn list_file_paths(
+        &self,
+        max_results: usize,
+        cursor: Option<i64>,
+    ) -> Result<Vec<FilePathRecord>> {
+        let limit = bounded_limit(max_results);
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, path, language, size_bytes FROM files
+             WHERE (?1 IS NULL OR id > ?1)
+             ORDER BY id
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![cursor, limit], |row| {
+            Ok(FilePathRecord {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                language: row.get(2)?,
+                size_bytes: i64_to_u64(row.get(3)?),
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// SQL-paged file paths matching one or two SQLite `GLOB` patterns.
+    ///
+    /// Uses the `path_entries` file projection with a path keyset cursor. Callers
+    /// map globset patterns to SQL GLOB forms; brace expansion and other
+    /// unexpressible patterns keep the in-process globset fallback.
+    pub(crate) fn list_glob_paths(
+        &self,
+        primary: &str,
+        alternate: Option<&str>,
+        after: Option<&str>,
+        max_results: usize,
+    ) -> Result<Vec<PathRecord>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT path_entries.path, files.language, files.size_bytes
+             FROM path_entries
+             JOIN files ON files.id = path_entries.file_id
+             WHERE path_entries.kind = 1
+               AND (path_entries.path GLOB ?1
+                    OR (?2 IS NOT NULL AND path_entries.path GLOB ?2))
+               AND (?3 IS NULL OR path_entries.path > ?3)
+             ORDER BY path_entries.path
+             LIMIT ?4",
+        )?;
+        let rows = stmt.query_map(
+            params![primary, alternate, after, bounded_limit(max_results)],
+            |row| {
+                Ok(PathRecord {
+                    path: row.get(0)?,
+                    is_directory: false,
+                    language: row.get(1)?,
+                    size_bytes: row.get::<_, Option<i64>>(2)?.map(i64_to_u64),
+                })
+            },
+        )?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     pub(crate) fn regex_scan_files(&self, max_results: usize) -> Result<Vec<(FileRecord, usize)>> {
         let limit = bounded_limit(max_results);
         let mut stmt = self.conn.prepare_cached(
@@ -3107,19 +3180,29 @@ impl ReadSession {
         query: &str,
         max_rows_scanned: usize,
         max_candidates: usize,
+        include_paths: &[String],
+        exclude_paths: &[String],
         mut allows_path: impl FnMut(&str) -> bool,
     ) -> Result<Vec<i64>> {
         let limit = i64::try_from(max_rows_scanned.saturating_add(1)).unwrap_or(i64::MAX);
-        let mut stmt = self.conn.prepare_cached(
+        let path_sql = scoped_regex_path_sql(include_paths, exclude_paths);
+        let sql = format!(
             "SELECT c.id, f.path
              FROM chunks_fts_trigram
              JOIN chunks c ON chunks_fts_trigram.rowid = c.rowid
              JOIN files f ON c.file_id = f.id
              WHERE chunks_fts_trigram MATCH ?1
+             {path_clause}
              ORDER BY f.id, c.start_byte, c.id
              LIMIT ?2",
-        )?;
-        let mut rows = stmt.query(params![query, limit])?;
+            path_clause = path_sql.clause,
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut bind = Vec::<rusqlite::types::Value>::with_capacity(2 + path_sql.params.len());
+        bind.push(query.to_owned().into());
+        bind.push(limit.into());
+        bind.extend(path_sql.params.into_iter().map(Into::into));
+        let mut rows = stmt.query(rusqlite::params_from_iter(bind))?;
         let mut rows_scanned = 0usize;
         let mut candidate_ids = Vec::new();
         while let Some(row) = rows.next()? {
@@ -3128,6 +3211,8 @@ impl ReadSession {
                 return Err(Error::LimitExceeded);
             }
             let path: String = row.get(1)?;
+            // Rust PathFilter remains the correctness gate for patterns SQL
+            // cannot express and for over-broad include approximations.
             if !allows_path(&path) {
                 continue;
             }
@@ -3414,6 +3499,104 @@ fn verify_baseline(
     Ok(())
 }
 
+/// SQL-expressible path atoms mirroring `PathFilter` literal / `prefix/**` rules.
+enum ScopedRegexPathAtom {
+    /// Matches `path` or any descendant (`src` → `src`, `src/...`).
+    Prefix(String),
+    /// Matches descendants only (`src/**` → `src/...`).
+    Children(String),
+}
+
+struct ScopedRegexPathSql {
+    clause: String,
+    params: Vec<String>,
+}
+
+fn scoped_regex_path_has_glob_meta(pattern: &str) -> bool {
+    pattern.contains(['*', '?', '[', ']', '{', '}'])
+}
+
+fn expressible_scoped_regex_path(pattern: &str) -> Option<ScopedRegexPathAtom> {
+    let pattern = pattern.replace('\\', "/");
+    let pattern = pattern.trim_matches('/');
+    if pattern.is_empty() {
+        return None;
+    }
+    if !scoped_regex_path_has_glob_meta(pattern) {
+        return Some(ScopedRegexPathAtom::Prefix(pattern.to_owned()));
+    }
+    let prefix = pattern.strip_suffix("/**")?;
+    let prefix = prefix.trim_matches('/');
+    if prefix.is_empty() || scoped_regex_path_has_glob_meta(prefix) {
+        return None;
+    }
+    Some(ScopedRegexPathAtom::Children(prefix.to_owned()))
+}
+
+fn scoped_regex_path_atom_sql(
+    column: &str,
+    param_index: usize,
+    atom: &ScopedRegexPathAtom,
+) -> String {
+    match atom {
+        ScopedRegexPathAtom::Prefix(_) => format!(
+            "({column} = ?{param_index} OR substr({column}, 1, length(?{param_index}) + 1) = ?{param_index} || '/')"
+        ),
+        ScopedRegexPathAtom::Children(_) => {
+            format!("substr({column}, 1, length(?{param_index}) + 1) = ?{param_index} || '/'")
+        }
+    }
+}
+
+fn scoped_regex_path_atom_param(atom: ScopedRegexPathAtom) -> String {
+    match atom {
+        ScopedRegexPathAtom::Prefix(value) | ScopedRegexPathAtom::Children(value) => value,
+    }
+}
+
+/// Push simple include/exclude path predicates into scoped-regex candidate SQL.
+///
+/// Include predicates are emitted only when every include pattern is expressible,
+/// so SQL never under-selects. Expressible excludes are always pushed; patterns
+/// SQL cannot express remain filtered by the Rust `PathFilter` callback.
+fn scoped_regex_path_sql(include_paths: &[String], exclude_paths: &[String]) -> ScopedRegexPathSql {
+    let mut clause = String::new();
+    let mut params = Vec::new();
+    let mut next_index = 3usize;
+
+    if !include_paths.is_empty() {
+        let includes = include_paths
+            .iter()
+            .map(|pattern| expressible_scoped_regex_path(pattern))
+            .collect::<Option<Vec<_>>>();
+        if let Some(includes) = includes {
+            let mut parts = Vec::with_capacity(includes.len());
+            for atom in includes {
+                parts.push(scoped_regex_path_atom_sql("f.path", next_index, &atom));
+                params.push(scoped_regex_path_atom_param(atom));
+                next_index = next_index.saturating_add(1);
+            }
+            if !parts.is_empty() {
+                clause.push_str(" AND (");
+                clause.push_str(&parts.join(" OR "));
+                clause.push(')');
+            }
+        }
+    }
+
+    for pattern in exclude_paths {
+        let Some(atom) = expressible_scoped_regex_path(pattern) else {
+            continue;
+        };
+        clause.push_str(" AND NOT ");
+        clause.push_str(&scoped_regex_path_atom_sql("f.path", next_index, &atom));
+        params.push(scoped_regex_path_atom_param(atom));
+        next_index = next_index.saturating_add(1);
+    }
+
+    ScopedRegexPathSql { clause, params }
+}
+
 fn bounded_limit(limit: usize) -> i64 {
     let capped = limit.clamp(1, HARD_MAX_RESULTS);
     i64::try_from(capped).unwrap_or(i64::MAX)
@@ -3421,6 +3604,53 @@ fn bounded_limit(limit: usize) -> i64 {
 
 fn quoted_fts_phrase(query: &str) -> String {
     format!("\"{}\"", query.replace('"', "\"\""))
+}
+
+#[cfg(test)]
+mod scoped_regex_path_sql_tests {
+    use super::{ScopedRegexPathAtom, expressible_scoped_regex_path, scoped_regex_path_sql};
+
+    #[test]
+    fn expressible_patterns_cover_literals_and_recursive_globs() {
+        assert!(matches!(
+            expressible_scoped_regex_path("src"),
+            Some(ScopedRegexPathAtom::Prefix(value)) if value == "src"
+        ));
+        assert!(matches!(
+            expressible_scoped_regex_path("included/**"),
+            Some(ScopedRegexPathAtom::Children(value)) if value == "included"
+        ));
+        assert!(expressible_scoped_regex_path("**/*.rs").is_none());
+        assert!(expressible_scoped_regex_path("src/{a,b}").is_none());
+    }
+
+    #[test]
+    fn include_sql_requires_every_pattern_to_be_expressible() {
+        let mixed = scoped_regex_path_sql(&["src".into(), "**/*.rs".into()], &[]);
+        assert!(mixed.clause.is_empty());
+        assert!(mixed.params.is_empty());
+
+        let ready = scoped_regex_path_sql(&["src".into(), "included/**".into()], &[]);
+        assert!(ready.clause.contains("f.path = ?3"));
+        assert!(
+            ready
+                .clause
+                .contains("substr(f.path, 1, length(?4) + 1) = ?4 || '/'")
+        );
+        assert_eq!(
+            ready.params,
+            vec!["src".to_string(), "included".to_string()]
+        );
+    }
+
+    #[test]
+    fn exclude_sql_pushes_only_expressible_patterns() {
+        let sql = scoped_regex_path_sql(&[], &["tests".into(), "**/*.snap".into()]);
+        assert!(sql.clause.starts_with(" AND NOT "));
+        assert!(sql.clause.contains("f.path = ?3"));
+        assert!(!sql.clause.contains("?4"));
+        assert_eq!(sql.params, vec!["tests".to_string()]);
+    }
 }
 
 fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
@@ -4007,6 +4237,54 @@ mod tests {
                 .whole_file_source_tokens(&["source.rs".into()], "o200k_base")
                 .expect("mismatched tokenizer"),
             None
+        );
+    }
+
+    #[test]
+    fn list_glob_paths_pages_selective_matches_with_keyset_cursor() {
+        let directory = tempfile::tempdir().expect("directory");
+        let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+        let mut files = (0..80)
+            .map(|i| {
+                sample_file(
+                    &format!("src/other{i}.rs"),
+                    &format!("fn other{i}() {{}}\n"),
+                )
+            })
+            .collect::<Vec<_>>();
+        files.push(sample_file("src/target_alpha.rs", "fn target_alpha() {}\n"));
+        files.push(sample_file("src/target_bravo.rs", "fn target_bravo() {}\n"));
+        files.push(sample_file(
+            "src/target_charlie.rs",
+            "fn target_charlie() {}\n",
+        ));
+        storage.full_reconcile("config", files).expect("reconcile");
+
+        let session = storage.begin_read().expect("session");
+        let first = session
+            .list_glob_paths("src/target_*.rs", None, None, 2)
+            .expect("first glob page");
+        assert_eq!(first.len(), 2);
+        assert!(
+            first.iter().all(|entry| entry.path.contains("target_")),
+            "selective glob must not return non-matching paths: {first:?}"
+        );
+        let second = session
+            .list_glob_paths(
+                "src/target_*.rs",
+                None,
+                first.last().map(|entry| entry.path.as_str()),
+                2,
+            )
+            .expect("second glob page");
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].path, "src/target_charlie.rs");
+
+        let lean = session.list_file_paths(10, None).expect("lean paths");
+        assert_eq!(lean.len(), 10);
+        assert_eq!(
+            lean[0].path,
+            session.list_files(1, None).expect("full")[0].path
         );
     }
 }

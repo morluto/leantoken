@@ -1024,20 +1024,22 @@ impl Services {
             )?;
         }
         let mut returned_items = usize::from(!response.not_modified);
-        if !self.response_fits_with_receipt_reserve(&response, returned_items, options)?
-            && request.delta
-        {
-            response = direct_response;
-            returned_items = usize::from(!response.not_modified);
-        }
-        if !self.response_fits_with_receipt_reserve(&response, returned_items, options)? {
-            return Err(Error::RequestLimitExceeded {
-                field: "max_response_tokens",
-                requested: self.finalized_response_tokens(&response)?,
-                limit: options
-                    .max_response_tokens()
-                    .expect("fitting only runs with a response limit"),
-            });
+        if let Some(limit) = options.max_response_tokens() {
+            let mut reserved =
+                self.finalized_response_tokens_with_receipt_reserve(&response, returned_items)?;
+            if reserved > limit && request.delta {
+                response = direct_response;
+                returned_items = usize::from(!response.not_modified);
+                reserved =
+                    self.finalized_response_tokens_with_receipt_reserve(&response, returned_items)?;
+            }
+            if reserved > limit {
+                return Err(Error::RequestLimitExceeded {
+                    field: "max_response_tokens",
+                    requested: reserved,
+                    limit,
+                });
+            }
         }
         let receipt_candidates = if response.not_modified {
             Vec::new()
