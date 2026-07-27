@@ -9,6 +9,15 @@ use assert_cmd::Command;
 use clap::Parser;
 use wait_timeout::ChildExt;
 
+fn assert_runtime_version(value: &serde_json::Value) {
+    let version = value.as_str().expect("runtime version string");
+    let fingerprint = version
+        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+schema."))
+        .expect("runtime version carries the current package version and schema fingerprint");
+    assert_eq!(fingerprint.len(), 32);
+    assert!(fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()));
+}
+
 #[test]
 fn cli_indexes_statuses_and_searches_as_json() {
     let root = tempfile::tempdir().expect("temporary repository");
@@ -467,7 +476,7 @@ fn doctor_verifies_identity_catalog_and_first_retrieval() {
     let report = run(root.path(), &database, &["doctor"]);
     assert_eq!(report["status"], "ready");
     assert_eq!(report["server_name"], "leantoken");
-    assert_eq!(report["server_version"], env!("CARGO_PKG_VERSION"));
+    assert_runtime_version(&report["server_version"]);
     assert_eq!(report["index_content_version"], 13);
     assert_eq!(report["instructions_loaded"], true);
     assert_eq!(report["tools"].as_array().map(Vec::len), Some(8));
@@ -559,7 +568,7 @@ fn doctor_human_output_uses_context_distillery_handoff() {
     assert!(stderr.contains("Context Distillery is checking"));
     assert!(stdout.contains("LeanToken // Context Distillery"));
     assert!(stdout.contains("MCP identity: leantoken"));
-    assert!(stdout.contains("Index compatibility: v12"));
+    assert!(stdout.contains("Index compatibility: v13"));
     assert!(stdout.contains("Tool catalog: 8 MCP tools"));
     assert!(stdout.contains("leantoken.context first"));
 }
@@ -682,10 +691,7 @@ fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
 
     let initialize = process.initialize();
     assert_eq!(initialize["result"]["serverInfo"]["name"], "leantoken");
-    assert_eq!(
-        initialize["result"]["serverInfo"]["version"],
-        env!("CARGO_PKG_VERSION")
-    );
+    assert_runtime_version(&initialize["result"]["serverInfo"]["version"]);
     assert!(
         initialize["result"]["instructions"]
             .as_str()
