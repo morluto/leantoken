@@ -65,6 +65,7 @@ struct RawRun {
     duration_ms: u128,
     artifacts: RawArtifacts,
     result: Option<RawResult>,
+    error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,6 +114,19 @@ struct RunClassification {
     total_output_tokens: Option<u64>,
 }
 
+#[derive(Debug, Serialize)]
+struct UnclassifiedRun {
+    task_id: String,
+    repetition: usize,
+    arm: String,
+    status: String,
+    official_success: bool,
+    duration_ms: u128,
+    verified_artifacts: usize,
+    missing_artifacts: Vec<&'static str>,
+    error: Option<String>,
+}
+
 #[derive(Debug, Default, Serialize)]
 struct ArmSummary {
     runs: usize,
@@ -137,14 +151,15 @@ struct Decision {
     result: &'static str,
     reason: String,
     paired_runs: usize,
+    unclassified_runs: usize,
     success_regressions: usize,
     candidate_owner_misses: usize,
-    retrieval_calls_saved: i64,
-    retrieval_source_tokens_saved: i64,
+    retrieval_calls_saved: Option<i64>,
+    retrieval_source_tokens_saved: Option<i64>,
     capsule_prompt_tokens: usize,
-    net_tokens_saved_after_prompt: i64,
-    dead_end_source_token_delta: i64,
-    reread_token_delta: i64,
+    net_tokens_saved_after_prompt: Option<i64>,
+    dead_end_source_token_delta: Option<i64>,
+    reread_token_delta: Option<i64>,
     production_change_authorized: bool,
 }
 
@@ -164,6 +179,7 @@ struct Report {
     verified_artifacts: usize,
     arms: BTreeMap<String, ArmSummary>,
     runs: Vec<RunClassification>,
+    unclassified_runs: Vec<UnclassifiedRun>,
     decision: Decision,
     limitations: Vec<&'static str>,
 }
@@ -176,6 +192,7 @@ fn main() -> Result<(), DynError> {
     let task_map = validate_report(&raw)?;
     let mut verified_artifacts = 0usize;
     let mut runs = Vec::new();
+    let mut unclassified_runs = Vec::new();
     for run in raw
         .runs
         .iter()
@@ -184,16 +201,29 @@ fn main() -> Result<(), DynError> {
         let task = task_map
             .get(run.task_id.as_str())
             .ok_or("run references an unknown task")?;
-        runs.push(classify_run(
-            &raw,
-            run,
-            task,
-            &args.artifacts_dir,
-            &mut verified_artifacts,
-        )?);
+        if run.artifacts.tool_trace.is_some()
+            && run.artifacts.trajectory.is_some()
+            && run.artifacts.prewalk_handoff.is_some()
+        {
+            runs.push(classify_run(
+                &raw,
+                run,
+                task,
+                &args.artifacts_dir,
+                &mut verified_artifacts,
+            )?);
+        } else {
+            unclassified_runs.push(verify_partial_run(
+                &raw,
+                run,
+                task,
+                &args.artifacts_dir,
+                &mut verified_artifacts,
+            )?);
+        }
     }
     let arms = summarize_arms(&runs);
-    let decision = decide(&runs)?;
+    let decision = decide(&raw.runs, &runs, &task_map)?;
     let report = Report {
         schema_version: REPORT_SCHEMA_V1,
         report_kind: "orientation_capsule_trajectory_ab",
@@ -209,11 +239,13 @@ fn main() -> Result<(), DynError> {
         verified_artifacts,
         arms,
         runs,
+        unclassified_runs,
         decision,
         limitations: vec![
             "This small local experiment is directional evidence, not a production rollout authorization.",
             "Capsule prompt tokens include the complete fixed instruction and JSON wrapper; retrieval source tokens are LeanToken source accounting, not provider billing tokens.",
             "Dead-end source counts only retrieval calls with explicit ranges whose paths are all outside the frozen relevant-file labels.",
+            "Runs missing a trace, trajectory, or handoff remain explicit unclassified failures; partial artifact identities are still verified, token deltas become null, and no positive decision is possible.",
             "Provider and model nondeterminism remain even with alternating deterministic arm order.",
         ],
     };
@@ -399,6 +431,116 @@ fn classify_run(
     })
 }
 
+fn verify_partial_run(
+    raw: &RawReport,
+    run: &RawRun,
+    task: &TaskDefinition,
+    artifacts_root: &Path,
+    verified_artifacts: &mut usize,
+) -> Result<UnclassifiedRun, DynError> {
+    let directory = artifacts_root
+        .join(&raw.experiment_id)
+        .join(&run.task_id)
+        .join(format!("repetition-{}", run.repetition))
+        .join(&run.arm);
+    let before = *verified_artifacts;
+    let trace: Option<ToolTrace> = run
+        .artifacts
+        .tool_trace
+        .as_ref()
+        .map(|identity| {
+            read_artifact(
+                &directory.join("tool-trace.json"),
+                identity,
+                verified_artifacts,
+            )
+        })
+        .transpose()?;
+    let trajectory: Option<Trajectory> = run
+        .artifacts
+        .trajectory
+        .as_ref()
+        .map(|identity| {
+            read_artifact(
+                &directory.join("trajectory.json"),
+                identity,
+                verified_artifacts,
+            )
+        })
+        .transpose()?;
+    let handoff: Option<PrewalkHandoff> = run
+        .artifacts
+        .prewalk_handoff
+        .as_ref()
+        .map(|identity| {
+            read_artifact(
+                &directory.join("prewalk-handoff.json"),
+                identity,
+                verified_artifacts,
+            )
+        })
+        .transpose()?;
+    let expected = RunBinding {
+        experiment_id: raw.experiment_id.clone(),
+        manifest_blake3: raw.manifest_blake3.clone(),
+        task_id: run.task_id.clone(),
+        repetition: run.repetition,
+        arm: run.arm.clone(),
+    };
+    for binding in [
+        trace.as_ref().map(|artifact| &artifact.binding),
+        trajectory.as_ref().map(|artifact| &artifact.binding),
+        handoff.as_ref().map(|artifact| &artifact.binding),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if binding != &expected {
+            return Err("partial orientation artifact run binding mismatch".into());
+        }
+    }
+    if let Some(handoff) = &handoff {
+        let expected_capsule = (run.arm == CANDIDATE_ARM).then_some(
+            task.orientation_capsule
+                .as_ref()
+                .expect("validated capsule"),
+        );
+        if handoff.orientation_capsule.as_ref() != expected_capsule {
+            return Err("partial orientation handoff capsule differs from the frozen arm".into());
+        }
+        if let Some(trace) = &trace {
+            validate_handoff_trace(handoff, trace)?;
+        }
+    }
+    let mut missing_artifacts = Vec::new();
+    if trace.is_none() {
+        missing_artifacts.push("tool-trace.json");
+    }
+    if trajectory.is_none() {
+        missing_artifacts.push("trajectory.json");
+    }
+    if handoff.is_none() {
+        missing_artifacts.push("prewalk-handoff.json");
+    }
+    if missing_artifacts.is_empty() {
+        return Err("complete run was routed to partial classification".into());
+    }
+    Ok(UnclassifiedRun {
+        task_id: run.task_id.clone(),
+        repetition: run.repetition,
+        arm: run.arm.clone(),
+        status: run.status.clone(),
+        official_success: run
+            .result
+            .as_ref()
+            .is_some_and(|result| result.task_success),
+        duration_ms: run.duration_ms,
+        verified_artifacts: *verified_artifacts - before,
+        missing_artifacts,
+        error: run.error.clone(),
+    })
+}
+
 fn validate_handoff_trace(handoff: &PrewalkHandoff, trace: &ToolTrace) -> Result<(), DynError> {
     if handoff.evidence_calls.is_empty()
         || handoff.first_validated_edit.edit_sequence
@@ -483,13 +625,24 @@ fn summarize_arms(runs: &[RunClassification]) -> BTreeMap<String, ArmSummary> {
     arms
 }
 
-fn decide(runs: &[RunClassification]) -> Result<Decision, DynError> {
-    let mut pairs = BTreeMap::<(&str, usize), BTreeMap<&str, &RunClassification>>::new();
-    for run in runs {
-        pairs
-            .entry((&run.task_id, run.repetition))
+fn decide(
+    raw_runs: &[RawRun],
+    runs: &[RunClassification],
+    tasks: &BTreeMap<&str, &TaskDefinition>,
+) -> Result<Decision, DynError> {
+    let mut pairs = BTreeMap::<(String, usize), BTreeMap<String, &RawRun>>::new();
+    for run in raw_runs
+        .iter()
+        .filter(|run| matches!(run.arm.as_str(), BASELINE_ARM | CANDIDATE_ARM))
+    {
+        if pairs
+            .entry((run.task_id.clone(), run.repetition))
             .or_default()
-            .insert(&run.arm, run);
+            .insert(run.arm.clone(), run)
+            .is_some()
+        {
+            return Err("paired experiment contains a duplicate run".into());
+        }
     }
     let mut baselines = Vec::new();
     let mut candidates = Vec::new();
@@ -505,54 +658,142 @@ fn decide(runs: &[RunClassification]) -> Result<Decision, DynError> {
                 .ok_or("paired experiment is missing a capsule run")?,
         );
     }
+    let official_success = |run: &RawRun| {
+        run.result
+            .as_ref()
+            .is_some_and(|result| result.task_success)
+    };
     let success_regressions = baselines
         .iter()
         .zip(&candidates)
-        .filter(|(baseline, candidate)| baseline.official_success && !candidate.official_success)
+        .filter(|(baseline, candidate)| official_success(baseline) && !official_success(candidate))
         .count();
+    let classified = runs
+        .iter()
+        .map(|run| {
+            (
+                (run.task_id.as_str(), run.repetition, run.arm.as_str()),
+                run,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let unclassified_runs = baselines.len() * 2 - runs.len();
     let candidate_owner_misses = candidates
         .iter()
-        .filter(|candidate| !candidate.owner_path_followed)
+        .filter(|candidate| {
+            !classified
+                .get(&(
+                    candidate.task_id.as_str(),
+                    candidate.repetition,
+                    CANDIDATE_ARM,
+                ))
+                .is_some_and(|run| run.owner_path_followed)
+        })
         .count();
-    let retrieval_calls_saved = signed_delta(
-        baselines.iter().map(|run| run.retrieval_calls as u64).sum(),
-        candidates
-            .iter()
-            .map(|run| run.retrieval_calls as u64)
-            .sum(),
-    );
-    let retrieval_source_tokens_saved = signed_delta(
-        baselines
-            .iter()
-            .map(|run| run.retrieval_source_tokens)
-            .sum(),
-        candidates
-            .iter()
-            .map(|run| run.retrieval_source_tokens)
-            .sum(),
-    );
     let capsule_prompt_tokens = candidates
         .iter()
-        .map(|run| run.capsule_prompt_tokens)
-        .sum::<usize>();
-    let net_tokens_saved_after_prompt =
-        retrieval_source_tokens_saved - capsule_prompt_tokens as i64;
-    let dead_end_source_token_delta = signed_delta(
-        candidates
+        .map(|run| {
+            let capsule = tasks
+                .get(run.task_id.as_str())
+                .and_then(|task| task.orientation_capsule.as_ref())
+                .ok_or("candidate task has no frozen capsule")?;
+            let prompt = orientation_capsule_prompt(capsule)?;
+            Ok(Tokenizer::Cl100kBase.count(&prompt))
+        })
+        .sum::<Result<usize, DynError>>()?;
+
+    let metrics = if unclassified_runs == 0 {
+        let classified_baselines = baselines
             .iter()
-            .map(|run| run.dead_end_source_tokens)
-            .sum(),
-        baselines.iter().map(|run| run.dead_end_source_tokens).sum(),
-    );
-    let reread_token_delta = signed_delta(
-        candidates.iter().map(|run| run.reread_tokens).sum(),
-        baselines.iter().map(|run| run.reread_tokens).sum(),
-    );
+            .map(|run| {
+                classified
+                    .get(&(run.task_id.as_str(), run.repetition, BASELINE_ARM))
+                    .copied()
+                    .ok_or("baseline trajectory classification is missing")
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let classified_candidates = candidates
+            .iter()
+            .map(|run| {
+                classified
+                    .get(&(run.task_id.as_str(), run.repetition, CANDIDATE_ARM))
+                    .copied()
+                    .ok_or("candidate trajectory classification is missing")
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let retrieval_calls_saved = signed_delta(
+            classified_baselines
+                .iter()
+                .map(|run| run.retrieval_calls as u64)
+                .sum(),
+            classified_candidates
+                .iter()
+                .map(|run| run.retrieval_calls as u64)
+                .sum(),
+        );
+        let retrieval_source_tokens_saved = signed_delta(
+            classified_baselines
+                .iter()
+                .map(|run| run.retrieval_source_tokens)
+                .sum(),
+            classified_candidates
+                .iter()
+                .map(|run| run.retrieval_source_tokens)
+                .sum(),
+        );
+        let dead_end_source_token_delta = signed_delta(
+            classified_candidates
+                .iter()
+                .map(|run| run.dead_end_source_tokens)
+                .sum(),
+            classified_baselines
+                .iter()
+                .map(|run| run.dead_end_source_tokens)
+                .sum(),
+        );
+        let reread_token_delta = signed_delta(
+            classified_candidates
+                .iter()
+                .map(|run| run.reread_tokens)
+                .sum(),
+            classified_baselines
+                .iter()
+                .map(|run| run.reread_tokens)
+                .sum(),
+        );
+        Some((
+            retrieval_calls_saved,
+            retrieval_source_tokens_saved,
+            retrieval_source_tokens_saved - capsule_prompt_tokens as i64,
+            dead_end_source_token_delta,
+            reread_token_delta,
+        ))
+    } else {
+        None
+    };
+    let (
+        retrieval_calls_saved,
+        retrieval_source_tokens_saved,
+        net_tokens_saved_after_prompt,
+        dead_end_source_token_delta,
+        reread_token_delta,
+    ) = metrics
+        .map(|(calls, source, net, dead_end, reread)| {
+            (
+                Some(calls),
+                Some(source),
+                Some(net),
+                Some(dead_end),
+                Some(reread),
+            )
+        })
+        .unwrap_or((None, None, None, None, None));
     let promising = success_regressions == 0
+        && unclassified_runs == 0
         && candidate_owner_misses == 0
-        && net_tokens_saved_after_prompt > 0
-        && dead_end_source_token_delta <= 0
-        && reread_token_delta <= 0;
+        && net_tokens_saved_after_prompt.is_some_and(|value| value > 0)
+        && dead_end_source_token_delta.is_some_and(|value| value <= 0)
+        && reread_token_delta.is_some_and(|value| value <= 0);
     let result = if success_regressions > 0 {
         "reject"
     } else if promising {
@@ -562,14 +803,17 @@ fn decide(runs: &[RunClassification]) -> Result<Decision, DynError> {
     };
     Ok(Decision {
         result,
-        reason: if promising {
-            "The capsule preserved validated success, routed every candidate to its owner, and saved more retrieval source tokens than the full injected prompt cost without increasing dead ends or rereads. Repeat before production use.".to_owned()
-        } else if success_regressions > 0 {
+        reason: if success_regressions > 0 {
             "At least one baseline success became a candidate failure, which fails the accuracy-first gate.".to_owned()
+        } else if unclassified_runs > 0 {
+            "At least one adapter failure lacks a complete trajectory, so retrieval deltas remain unknown and the fail-closed gate forbids a positive claim.".to_owned()
+        } else if promising {
+            "The capsule preserved validated success, routed every candidate to its owner, and saved more retrieval source tokens than the full injected prompt cost without increasing dead ends or rereads. Repeat before production use.".to_owned()
         } else {
             "The small sample preserved success but did not clear every pre-registered downstream-work gate.".to_owned()
         },
         paired_runs: pairs.len(),
+        unclassified_runs,
         success_regressions,
         candidate_owner_misses,
         retrieval_calls_saved,
@@ -615,6 +859,19 @@ fn hash_bytes(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
+    fn capsule() -> OrientationCapsule {
+        let entries = vec![model_ab_artifacts::OrientationCapsuleEntry {
+            path: "src/owner.rs".to_owned(),
+            matched_terms: vec!["owner".to_owned()],
+            definitions: vec!["Owner".to_owned()],
+        }];
+        OrientationCapsule {
+            capsule_tokens: Tokenizer::Cl100kBase
+                .count(&serde_json::to_string(&entries).expect("capsule JSON")),
+            entries,
+        }
+    }
+
     fn run(arm: &str, source_tokens: u64, prompt_tokens: usize) -> RunClassification {
         RunClassification {
             task_id: "task".to_owned(),
@@ -642,17 +899,58 @@ mod tests {
         }
     }
 
+    fn raw_run(run: &RunClassification) -> RawRun {
+        RawRun {
+            task_id: run.task_id.clone(),
+            repetition: run.repetition,
+            arm: run.arm.clone(),
+            status: run.status.clone(),
+            duration_ms: run.duration_ms,
+            artifacts: RawArtifacts {
+                tool_trace: None,
+                trajectory: None,
+                prewalk_handoff: None,
+            },
+            result: Some(RawResult {
+                task_success: run.official_success,
+                total_input_tokens: run.total_input_tokens,
+                total_output_tokens: run.total_output_tokens,
+            }),
+            error: None,
+        }
+    }
+
+    fn classify_decision(runs: &[RunClassification]) -> Decision {
+        let raw = runs.iter().map(raw_run).collect::<Vec<_>>();
+        let task = TaskDefinition {
+            id: "task".to_owned(),
+            orientation_capsule: Some(capsule()),
+            relevant_files: vec!["src/owner.rs".to_owned()],
+        };
+        let tasks = BTreeMap::from([("task", &task)]);
+        decide(&raw, runs, &tasks).expect("paired decision")
+    }
+
     #[test]
     fn decision_charges_the_complete_capsule_prompt() {
-        let decision = decide(&[run(BASELINE_ARM, 300, 0), run(CANDIDATE_ARM, 100, 120)])
-            .expect("paired decision");
+        let prompt_tokens = Tokenizer::Cl100kBase
+            .count(&orientation_capsule_prompt(&capsule()).expect("capsule prompt"));
+        let decision = classify_decision(&[
+            run(BASELINE_ARM, 300, 0),
+            run(CANDIDATE_ARM, 100, prompt_tokens),
+        ]);
         assert_eq!(decision.result, "promising_small_sample");
-        assert_eq!(decision.net_tokens_saved_after_prompt, 80);
+        assert_eq!(
+            decision.net_tokens_saved_after_prompt,
+            Some(200 - prompt_tokens as i64)
+        );
 
-        let decision = decide(&[run(BASELINE_ARM, 180, 0), run(CANDIDATE_ARM, 100, 120)])
-            .expect("paired decision");
+        let decision = classify_decision(&[
+            run(BASELINE_ARM, 100 + prompt_tokens as u64 - 1, 0),
+            run(CANDIDATE_ARM, 100, prompt_tokens),
+        ]);
         assert_eq!(decision.result, "no_measured_win");
-        assert_eq!(decision.net_tokens_saved_after_prompt, -40);
+        assert_eq!(decision.net_tokens_saved_after_prompt, Some(-1));
     }
 
     #[test]
@@ -660,9 +958,27 @@ mod tests {
         let baseline = run(BASELINE_ARM, 300, 0);
         let mut candidate = run(CANDIDATE_ARM, 50, 120);
         candidate.official_success = false;
-        let decision = decide(&[baseline, candidate]).expect("paired decision");
+        let decision = classify_decision(&[baseline, candidate]);
         assert_eq!(decision.result, "reject");
         assert_eq!(decision.success_regressions, 1);
         assert!(!decision.production_change_authorized);
+    }
+
+    #[test]
+    fn decision_fails_closed_when_a_trajectory_is_missing() {
+        let baseline = run(BASELINE_ARM, 300, 0);
+        let candidate = run(CANDIDATE_ARM, 50, 120);
+        let raw = vec![raw_run(&baseline), raw_run(&candidate)];
+        let task = TaskDefinition {
+            id: "task".to_owned(),
+            orientation_capsule: Some(capsule()),
+            relevant_files: vec!["src/owner.rs".to_owned()],
+        };
+        let tasks = BTreeMap::from([("task", &task)]);
+        let decision = decide(&raw, &[baseline], &tasks).expect("fail-closed decision");
+        assert_eq!(decision.result, "no_measured_win");
+        assert_eq!(decision.unclassified_runs, 1);
+        assert_eq!(decision.retrieval_source_tokens_saved, None);
+        assert_eq!(decision.net_tokens_saved_after_prompt, None);
     }
 }
