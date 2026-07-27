@@ -19,6 +19,10 @@ retrieval.
   `331bb5f0f8b4660eb9329494701439df98cf05ec0782b3812cb8126e3470eb71`
 - Generated manifest BLAKE3:
   `888fd766be72d8831946cf0038cf39374b5480564088f8d2cf7aa8d553bb6a7f`
+- Harness revision:
+  `bc0027249287dfff38e09302bcaecef385a40721`
+- Harness worktree dirty: `true` from unrelated pre-existing untracked files;
+  all files owned by this benchmark run were committed before execution
 - Tokenizer: `cl100k_base`, exact counts
 
 The smoke set deterministically selects one Rust task from `clap-rs/clap` and
@@ -46,9 +50,9 @@ gold files survived selection.
 The two-turn path resent no known fragments. It used 7,563 complete JSON tokens
 and exposed known-hash suppression through the compact omission summary.
 
-On this host, Clap indexed 588 files and 1,696 chunks in 1.70 seconds; Click
-indexed 138 files and 428 chunks in 0.43 seconds. Task-level warm-context
-medians were 73.8 ms and 130.9 ms respectively. Timings depend on host and
+On this host, Clap indexed 588 files and 1,696 chunks in 1.83 seconds; Click
+indexed 138 files and 428 chunks in 0.44 seconds. Task-level warm-context
+medians were 80.1 ms and 152.7 ms respectively. Timings depend on host and
 filesystem cache state.
 
 ## Interpretation
