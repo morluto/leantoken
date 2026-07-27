@@ -583,21 +583,29 @@ including ignored artifact paths. Operations are:
 responses to the complete live files. Raw values that exceed a cap fail loud.
 
 `keys` is a deterministic flat projection and supports pagination under both
-item and token limits. Every keys response reports exact `total_items`,
-`returned_items`, and `remaining_items`. An incomplete page identifies
-`max_items` or `max_tokens` in `incomplete_reason` and returns
-`meta.next_cursor`; repeat the identical path, selector, and projection with
-`cursor` to continue. The cursor is bound to those query inputs and the live
-source hash, so a changed file or selector fails with `stale_cursor` instead of
-mixing pages from different results.
+item and token limits. MCP orders broad keys by `(depth, JSON pointer)` so root
+and top-level shape precede deep subtrees. Optional `depth` is relative to the
+selected root: root is zero, `depth: 1` includes immediate children, object
+segments use RFC 6901 escaping, and arrays share one `/*` shape segment. Every
+keys response reports exact `total_items`, `returned_items`, and
+`remaining_items`. An incomplete page identifies `max_items` or `max_tokens` in
+`incomplete_reason` and returns `meta.next_cursor`; repeat the identical path,
+selector, projection, and depth with `cursor` to continue. Version-two cursors
+bind the traversal order and depth in addition to those query inputs and the
+live source hash. Legacy cursors, changed files, and changed query shapes fail
+with `stale_cursor` instead of mixing incompatible pages.
 
 Incomplete `schema`, `collapsed`, and projected diff results report the same
-exact counts and `incomplete_reason`. Their nested shapes are not split into
-ambiguous pages, so they do not return a cursor; increase `max_items` or use a
-narrower selector. Strict JSON parse failures include the syntax category,
-one-based line and column, and zero-based byte offset. JMESPath compile and
-runtime failures include their stage, typed reason, expression offset, line,
-and column.
+exact counts and `incomplete_reason`. Schema construction retains breadth-first
+siblings until `max_items` or `max_tokens` is reached and adds an
+`x-leantoken-incomplete` object containing the exact omitted-frontier count and
+up to 32 deterministic JSON pointers. Their nested shapes are not split into
+ambiguous pages, so they do not return a cursor; increase the relevant limit or
+use a narrower selector. A complete schema retains the prior schema shape and
+does not contain the extension. Strict JSON parse failures include the syntax
+category, one-based line and column, and zero-based byte offset. JMESPath
+compile and runtime failures include their stage, typed reason, expression
+offset, line, and column.
 
 ## `leantoken.history`
 

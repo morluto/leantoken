@@ -34,8 +34,8 @@ use crate::model::{
     JsonSelector, OutlineRequest, ReadRequest, SearchMode, SearchRequest,
 };
 use crate::services::{
-    MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN, ServiceCallOptions, Services,
-    validate_positive_request_limit, validate_request_limit,
+    JsonExecutionOptions, MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN, MAX_JSON_DEPTH,
+    ServiceCallOptions, Services, validate_positive_request_limit, validate_request_limit,
 };
 
 const DEFAULT_ACTIVE_TOOL_CALL_CAPACITY: usize = 16;
@@ -923,6 +923,10 @@ struct JsonMcpRequest {
     #[serde(default)]
     #[schemars(range(min = 0, max = 20))]
     array_sample_size: Option<usize>,
+    /// Maximum keys traversal depth relative to the selected root (root is zero).
+    #[serde(default)]
+    #[schemars(range(min = 0, max = 64))]
+    depth: Option<usize>,
     /// Opaque cursor returned by an incomplete keys projection.
     #[serde(default)]
     #[schemars(length(max = 256))]
@@ -1001,10 +1005,24 @@ impl JsonMcpRequest {
                 limit: 20,
             });
         }
+        if self.depth.is_some_and(|value| value > MAX_JSON_DEPTH) {
+            return Err(crate::Error::RequestLimitExceeded {
+                field: "depth",
+                requested: self.depth.unwrap_or_default(),
+                limit: MAX_JSON_DEPTH,
+            });
+        }
         Ok(())
     }
 
-    fn into_parts(self) -> (JsonRequest, ServiceCallOptions, Option<String>) {
+    fn into_parts(
+        self,
+    ) -> (
+        JsonRequest,
+        ServiceCallOptions,
+        JsonExecutionOptions,
+        Option<String>,
+    ) {
         let operation = match self.operation {
             JsonMcpOperation::Query {
                 path,
@@ -1031,6 +1049,7 @@ impl JsonMcpRequest {
                 projection,
             },
         };
+        let execution = JsonExecutionOptions::mcp(self.depth);
         (
             JsonRequest {
                 operation,
@@ -1040,6 +1059,7 @@ impl JsonMcpRequest {
                 cursor: self.cursor,
             },
             service_call_options(self.max_response_tokens),
+            execution,
             self.expected_repository_id,
         )
     }
@@ -2200,7 +2220,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "json",
-        description = "Query, summarize, or compare bounded live JSON without indexing raw artifacts. Select with RFC 6901 JSON Pointer or standard JMESPath; use collapsed, keys, or schema projections for large arrays and objects, numeric_summary for count/min/median/p95/max, and diff_fields for selected values across two files. Incomplete keys projections return exact item counts and meta.next_cursor; repeat the same query with cursor to continue. Example: {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"artifacts/results.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"runs[].score\"}}}."
+        description = "Query, summarize, or compare bounded live JSON without indexing raw artifacts. Select with RFC 6901 JSON Pointer or standard JMESPath; use collapsed, keys, or schema projections for large arrays and objects, numeric_summary for count/min/median/p95/max, and diff_fields for selected values across two files. Keys can be bounded by depth (root is zero) and paginate in depth-then-pointer order; incomplete schemas return a breadth-first shape with explicit omission metadata. Repeat an incomplete keys query with its cursor. Example: {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"artifacts/results.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"runs[].score\"}}}."
     )]
     async fn leantoken_json(
         &self,
@@ -2222,7 +2242,7 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, options, expected_repository_id) = req.into_parts();
+        let (request, options, execution, expected_repository_id) = req.into_parts();
         let cancellation = context.ct.clone();
         let mcp_services = self.services.clone();
         self.run_admitted(
@@ -2236,9 +2256,10 @@ impl LeanTokenMcp {
                     cancellation.clone(),
                     deadline,
                     || {
-                        services.json_cancellable_with_options(
+                        services.json_cancellable_with_execution_options(
                             request.clone(),
                             options,
+                            execution,
                             cancellation.clone(),
                         )
                     },
@@ -4019,9 +4040,10 @@ mod tests {
         request
             .validate_limits(McpLimitPolicy::DEFAULT)
             .expect("JSON limits");
-        let (request, _, _) = request.into_parts();
+        let (request, _, execution, _) = request.into_parts();
         assert_eq!(request.max_items, Some(500));
         assert!(request.cursor.is_none());
+        assert_eq!(execution, JsonExecutionOptions::mcp(None));
         assert!(matches!(
             request.operation,
             JsonOperation::NumericSummary {
@@ -4036,11 +4058,13 @@ mod tests {
                 "path": "artifacts/results.json",
                 "projection": "keys"
             },
-            "cursor": "j1:source:query:2"
+            "depth": 1,
+            "cursor": "j2:source:query:2"
         }))
         .expect("paged JSON request");
-        let (request, _, _) = request.into_parts();
-        assert_eq!(request.cursor.as_deref(), Some("j1:source:query:2"));
+        let (request, _, execution, _) = request.into_parts();
+        assert_eq!(request.cursor.as_deref(), Some("j2:source:query:2"));
+        assert_eq!(execution, JsonExecutionOptions::mcp(Some(1)));
         assert!(matches!(
             request.operation,
             JsonOperation::Query {

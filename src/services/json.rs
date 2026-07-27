@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::Read;
 
 use serde_json::{Map, Value, json};
@@ -25,6 +25,54 @@ const DEFAULT_ARRAY_SAMPLE_SIZE: usize = 3;
 const MAX_ARRAY_SAMPLE_SIZE: usize = 20;
 const MAX_JSON_SELECTORS: usize = 100;
 const MAX_JSON_CURSOR_BYTES: usize = 256;
+pub(crate) const MAX_JSON_DEPTH: usize = 64;
+const MAX_SCHEMA_OMITTED_POINTERS: usize = 32;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum JsonCursorVersion {
+    V1,
+    V2,
+}
+
+impl JsonCursorVersion {
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::V1 => "j1",
+            Self::V2 => "j2",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum JsonKeyOrder {
+    Pointer,
+    DepthThenPointer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct JsonExecutionOptions {
+    depth: Option<usize>,
+    key_order: JsonKeyOrder,
+    cursor_version: JsonCursorVersion,
+}
+
+impl JsonExecutionOptions {
+    fn legacy() -> Self {
+        Self {
+            depth: None,
+            key_order: JsonKeyOrder::Pointer,
+            cursor_version: JsonCursorVersion::V1,
+        }
+    }
+
+    pub(crate) fn mcp(depth: Option<usize>) -> Self {
+        Self {
+            depth,
+            key_order: JsonKeyOrder::DepthThenPointer,
+            cursor_version: JsonCursorVersion::V2,
+        }
+    }
+}
 
 struct LoadedJson {
     source: JsonSource,
@@ -56,6 +104,33 @@ struct KeyProjectionPage {
     remaining_items: usize,
     incomplete_reason: Option<JsonIncompleteReason>,
     next_cursor: Option<String>,
+    projected_tokens: usize,
+}
+
+struct KeyProjectionContext<'a> {
+    cursor: Option<&'a JsonCursor>,
+    source_hash: &'a str,
+    query_hash: &'a str,
+    execution: JsonExecutionOptions,
+}
+
+enum SchemaNodeKind {
+    Scalar(&'static str),
+    Object(BTreeMap<String, usize>),
+    Array { count: usize, variants: Vec<usize> },
+}
+
+struct SchemaNode {
+    kind: SchemaNodeKind,
+    pointer: String,
+}
+
+struct SchemaProjection {
+    value: Value,
+    total_items: usize,
+    returned_items: usize,
+    remaining_items: usize,
+    incomplete_reason: Option<JsonIncompleteReason>,
     projected_tokens: usize,
 }
 
@@ -99,7 +174,7 @@ fn is_fingerprint(value: &str) -> bool {
     value.len() == CONTENT_FINGERPRINT_HEX_LEN && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn decode_json_cursor(cursor: &str) -> Result<JsonCursor> {
+fn decode_json_cursor(cursor: &str, expected_version: JsonCursorVersion) -> Result<JsonCursor> {
     if cursor.len() > MAX_JSON_CURSOR_BYTES {
         return Err(Error::StaleCursor);
     }
@@ -108,7 +183,7 @@ fn decode_json_cursor(cursor: &str) -> Result<JsonCursor> {
     let source_hash = fields.next();
     let query_hash = fields.next();
     let offset = fields.next();
-    if version != Some("j1") || fields.next().is_some() {
+    if version != Some(expected_version.prefix()) || fields.next().is_some() {
         return Err(Error::StaleCursor);
     }
     let (Some(source_hash), Some(query_hash), Some(offset)) = (source_hash, query_hash, offset)
@@ -129,17 +204,30 @@ fn decode_json_cursor(cursor: &str) -> Result<JsonCursor> {
     })
 }
 
-fn json_query_hash(operation: &JsonOperation) -> Result<String> {
-    let serialized = serde_json::to_string(operation)
-        .map_err(|error| Error::InternalFailure(error.to_string()))?;
+fn json_query_hash(operation: &JsonOperation, execution: JsonExecutionOptions) -> Result<String> {
+    let serialized = if execution.cursor_version == JsonCursorVersion::V1 {
+        serde_json::to_string(operation)
+    } else {
+        serde_json::to_string(&json!({
+            "operation": operation,
+            "depth": execution.depth,
+            "order": "depth_then_pointer",
+        }))
+    }
+    .map_err(|error| Error::InternalFailure(error.to_string()))?;
     Ok(crate::text::hash(&serialized))
 }
 
-fn make_json_cursor(source_hash: &str, query_hash: &str, offset: usize) -> String {
-    format!("j1:{source_hash}:{query_hash}:{offset}")
+fn make_json_cursor(
+    version: JsonCursorVersion,
+    source_hash: &str,
+    query_hash: &str,
+    offset: usize,
+) -> String {
+    format!("{}:{source_hash}:{query_hash}:{offset}", version.prefix())
 }
 
-fn validate_json_request(request: &JsonRequest) -> Result<()> {
+fn validate_json_request(request: &JsonRequest, execution: JsonExecutionOptions) -> Result<()> {
     match &request.operation {
         JsonOperation::Query { path, selector, .. }
         | JsonOperation::NumericSummary { path, selector } => {
@@ -172,8 +260,23 @@ fn validate_json_request(request: &JsonRequest) -> Result<()> {
             MAX_ARRAY_SAMPLE_SIZE,
         )?;
     }
+    if let Some(depth) = execution.depth {
+        validate_request_limit("depth", depth, MAX_JSON_DEPTH)?;
+        if !matches!(
+            &request.operation,
+            JsonOperation::Query {
+                projection: JsonProjection::Keys,
+                ..
+            }
+        ) {
+            return Err(Error::InvalidInput {
+                field: "depth",
+                reason: "is supported only for query operations with the keys projection",
+            });
+        }
+    }
     if let Some(cursor) = request.cursor.as_deref() {
-        decode_json_cursor(cursor)?;
+        decode_json_cursor(cursor, execution.cursor_version)?;
         if !matches!(
             &request.operation,
             JsonOperation::Query {
@@ -224,12 +327,28 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<JsonResponse> {
+        self.json_cancellable_with_execution_options(
+            request,
+            options,
+            JsonExecutionOptions::legacy(),
+            cancellation,
+        )
+        .await
+    }
+
+    pub(crate) async fn json_cancellable_with_execution_options(
+        &self,
+        request: JsonRequest,
+        options: ServiceCallOptions,
+        execution: JsonExecutionOptions,
+        cancellation: CancellationToken,
+    ) -> Result<JsonResponse> {
         self.validate_call_options(options)?;
-        validate_json_request(&request)?;
+        validate_json_request(&request, execution)?;
         let this = self.clone();
         self.blocking_executor
             .run(cancellation, move |cancellation| {
-                this.json_sync(request, options, cancellation)
+                this.json_sync(request, options, execution, cancellation)
             })
             .await
     }
@@ -238,10 +357,11 @@ impl Services {
         &self,
         request: JsonRequest,
         options: ServiceCallOptions,
+        execution: JsonExecutionOptions,
         cancellation: &CancellationToken,
     ) -> Result<JsonResponse> {
         check_cancelled(cancellation)?;
-        validate_json_request(&request)?;
+        validate_json_request(&request, execution)?;
         let max_tokens = self.token_limit(request.max_tokens, DEFAULT_JSON_TOKENS)?;
         let max_items = request.max_items.unwrap_or(DEFAULT_JSON_ITEMS);
         let array_sample_size = request
@@ -250,9 +370,9 @@ impl Services {
         let cursor = request
             .cursor
             .as_deref()
-            .map(decode_json_cursor)
+            .map(|cursor| decode_json_cursor(cursor, execution.cursor_version))
             .transpose()?;
-        let query_hash = json_query_hash(&request.operation)?;
+        let query_hash = json_query_hash(&request.operation, execution)?;
         let generation = self.storage.repository_generation()?;
         let mut projected_tokens = 0usize;
         let baseline_source_tokens;
@@ -277,14 +397,18 @@ impl Services {
                         &value,
                         max_items,
                         max_tokens,
-                        cursor.as_ref(),
-                        &loaded.source.content_hash,
-                        &query_hash,
+                        KeyProjectionContext {
+                            cursor: cursor.as_ref(),
+                            source_hash: &loaded.source.content_hash,
+                            query_hash: &query_hash,
+                            execution,
+                        },
                     )?;
                     key_page_context = Some((
                         loaded.source.content_hash.clone(),
                         query_hash.clone(),
                         offset,
+                        execution.cursor_version,
                     ));
                     projected_tokens = page.projected_tokens;
                     JsonResponse {
@@ -299,6 +423,22 @@ impl Services {
                         remaining_items: Some(page.remaining_items),
                         incomplete_reason: page.incomplete_reason,
                         meta: self.meta(generation, 0, page.next_cursor),
+                    }
+                } else if projection == JsonProjection::Schema {
+                    let page = project_schema_page(self, &value, max_items, max_tokens)?;
+                    projected_tokens = page.projected_tokens;
+                    JsonResponse {
+                        kind: "query".into(),
+                        value: Some(page.value),
+                        numeric_summary: None,
+                        differences: Vec::new(),
+                        sources: vec![loaded.source],
+                        result_complete: page.remaining_items == 0,
+                        total_items: (page.remaining_items > 0).then_some(page.total_items),
+                        returned_items: (page.remaining_items > 0).then_some(page.returned_items),
+                        remaining_items: (page.remaining_items > 0).then_some(page.remaining_items),
+                        incomplete_reason: page.incomplete_reason,
+                        meta: self.meta(generation, 0, None),
                     }
                 } else {
                     let total_items = projection_item_count(&value, projection, array_sample_size);
@@ -456,15 +596,17 @@ impl Services {
     fn fit_json_response(
         &self,
         response: &mut JsonResponse,
-        key_page_context: Option<&(String, String, usize)>,
+        key_page_context: Option<&(String, String, usize, JsonCursorVersion)>,
         options: ServiceCallOptions,
     ) -> Result<()> {
         if self.response_fits(response, options)? {
             return Ok(());
         }
 
-        if let (Some((source_hash, query_hash, offset)), Some(Value::Array(entries))) =
-            (key_page_context, response.value.as_ref())
+        if let (
+            Some((source_hash, query_hash, offset, cursor_version)),
+            Some(Value::Array(entries)),
+        ) = (key_page_context, response.value.as_ref())
         {
             let original = response.clone();
             let max_response_tokens = options
@@ -484,8 +626,8 @@ impl Services {
                 candidate.result_complete = remaining == 0;
                 candidate.incomplete_reason =
                     (remaining > 0).then_some(JsonIncompleteReason::MaxTokens);
-                candidate.meta.next_cursor =
-                    (remaining > 0).then(|| make_json_cursor(source_hash, query_hash, consumed));
+                candidate.meta.next_cursor = (remaining > 0)
+                    .then(|| make_json_cursor(*cursor_version, source_hash, query_hash, consumed));
                 let source_tokens = json_tokens(
                     self,
                     candidate
@@ -509,8 +651,8 @@ impl Services {
                 response.result_complete = remaining == 0;
                 response.incomplete_reason =
                     (remaining > 0).then_some(JsonIncompleteReason::MaxTokens);
-                response.meta.next_cursor =
-                    (remaining > 0).then(|| make_json_cursor(source_hash, query_hash, consumed));
+                response.meta.next_cursor = (remaining > 0)
+                    .then(|| make_json_cursor(*cursor_version, source_hash, query_hash, consumed));
                 let source_tokens = json_tokens(
                     self,
                     response
@@ -637,32 +779,52 @@ fn json_error_byte_offset(content: &str, line: usize, column: usize) -> usize {
     content.len()
 }
 
-fn collect_all_keys(value: &Value, pointer: &str, keys: &mut BTreeMap<String, &'static str>) {
+fn collect_all_keys(
+    value: &Value,
+    pointer: &str,
+    depth: usize,
+    max_depth: Option<usize>,
+    keys: &mut BTreeMap<String, (usize, &'static str)>,
+) {
     if !keys.contains_key(pointer) {
-        keys.insert(pointer.to_owned(), json_type(value));
+        keys.insert(pointer.to_owned(), (depth, json_type(value)));
+    }
+    if max_depth.is_some_and(|maximum| depth >= maximum) {
+        return;
     }
     match value {
         Value::Object(values) => {
             for (key, value) in values {
                 let pointer = format!("{pointer}/{}", escape_pointer(key));
-                collect_all_keys(value, &pointer, keys);
+                collect_all_keys(value, &pointer, depth.saturating_add(1), max_depth, keys);
             }
         }
         Value::Array(values) => {
             let pointer = format!("{pointer}/*");
             for value in values {
-                collect_all_keys(value, &pointer, keys);
+                collect_all_keys(value, &pointer, depth.saturating_add(1), max_depth, keys);
             }
         }
         _ => {}
     }
 }
 
-fn key_entries(value: &Value) -> Vec<Value> {
+fn key_entries(value: &Value, max_depth: Option<usize>, order: JsonKeyOrder) -> Vec<Value> {
     let mut keys = BTreeMap::new();
-    collect_all_keys(value, "", &mut keys);
-    keys.into_iter()
-        .map(|(pointer, value_type)| json!({"pointer": pointer, "type": value_type}))
+    collect_all_keys(value, "", 0, max_depth, &mut keys);
+    let mut entries = keys.into_iter().collect::<Vec<_>>();
+    if order == JsonKeyOrder::DepthThenPointer {
+        entries.sort_by(
+            |(left_pointer, (left_depth, _)), (right_pointer, (right_depth, _))| {
+                left_depth
+                    .cmp(right_depth)
+                    .then_with(|| left_pointer.cmp(right_pointer))
+            },
+        );
+    }
+    entries
+        .into_iter()
+        .map(|(pointer, (_, value_type))| json!({"pointer": pointer, "type": value_type}))
         .collect()
 }
 
@@ -702,14 +864,15 @@ fn project_key_page(
     value: &Value,
     max_items: usize,
     max_tokens: usize,
-    cursor: Option<&JsonCursor>,
-    source_hash: &str,
-    query_hash: &str,
+    context: KeyProjectionContext<'_>,
 ) -> Result<KeyProjectionPage> {
-    let entries = key_entries(value);
+    let entries = key_entries(value, context.execution.depth, context.execution.key_order);
     let total_items = entries.len();
-    let offset = match cursor {
-        Some(cursor) if cursor.source_hash == source_hash && cursor.query_hash == query_hash => {
+    let offset = match context.cursor {
+        Some(cursor)
+            if cursor.source_hash == context.source_hash
+                && cursor.query_hash == context.query_hash =>
+        {
             cursor.offset
         }
         Some(_) => return Err(Error::StaleCursor),
@@ -738,8 +901,14 @@ fn project_key_page(
     } else {
         JsonIncompleteReason::MaxItems
     });
-    let next_cursor =
-        (remaining_items > 0).then(|| make_json_cursor(source_hash, query_hash, consumed));
+    let next_cursor = (remaining_items > 0).then(|| {
+        make_json_cursor(
+            context.execution.cursor_version,
+            context.source_hash,
+            context.query_hash,
+            consumed,
+        )
+    });
     Ok(KeyProjectionPage {
         value: Value::Array(candidates[..returned_items].to_vec()),
         total_items,
@@ -778,7 +947,7 @@ fn projection_item_count(
     match projection {
         JsonProjection::Value | JsonProjection::Schema => count_nodes(value),
         JsonProjection::Collapsed => collapsed_item_count(value, array_sample_size),
-        JsonProjection::Keys => key_entries(value).len(),
+        JsonProjection::Keys => key_entries(value, None, JsonKeyOrder::Pointer).len(),
     }
 }
 
@@ -950,6 +1119,211 @@ fn infer_schema(value: &Value, state: &mut ProjectionState) -> Value {
     }
 }
 
+fn schema_node(value: &Value, pointer: String) -> SchemaNode {
+    let kind = match value {
+        Value::Object(_) => SchemaNodeKind::Object(BTreeMap::new()),
+        Value::Array(values) => SchemaNodeKind::Array {
+            count: values.len(),
+            variants: Vec::new(),
+        },
+        _ => SchemaNodeKind::Scalar(json_type(value)),
+    };
+    SchemaNode { kind, pointer }
+}
+
+fn schema_node_has_children(value: &Value) -> bool {
+    match value {
+        Value::Object(values) => !values.is_empty(),
+        Value::Array(values) => !values.is_empty(),
+        _ => false,
+    }
+}
+
+fn schema_frontier(queued: &VecDeque<(&Value, usize, String)>, omitted: &mut BTreeSet<String>) {
+    for (value, _, omission_root) in queued {
+        if schema_node_has_children(value) {
+            omitted.insert(omission_root.clone());
+        }
+    }
+}
+
+fn render_schema_node(nodes: &[SchemaNode], node_id: usize) -> Value {
+    match &nodes[node_id].kind {
+        SchemaNodeKind::Scalar(value_type) => json!({"type": value_type}),
+        SchemaNodeKind::Object(children) => {
+            let properties = children
+                .iter()
+                .map(|(key, child)| (key.clone(), render_schema_node(nodes, *child)))
+                .collect::<Map<_, _>>();
+            json!({"type": "object", "properties": properties})
+        }
+        SchemaNodeKind::Array { count, variants } => {
+            let mut unique = BTreeMap::new();
+            for variant in variants {
+                let schema = render_schema_node(nodes, *variant);
+                let key = serde_json::to_string(&schema).unwrap_or_default();
+                unique.entry(key).or_insert(schema);
+            }
+            let items = match unique.len() {
+                0 => json!({}),
+                1 => unique.into_values().next().unwrap_or_else(|| json!({})),
+                _ => json!({"anyOf": unique.into_values().collect::<Vec<_>>()}),
+            };
+            json!({"type": "array", "count": count, "items": items})
+        }
+    }
+}
+
+fn build_schema_breadth_first(value: &Value, max_items: usize) -> Value {
+    debug_assert!(max_items > 0);
+    let mut nodes = vec![schema_node(value, String::new())];
+    let mut queue = VecDeque::from([(value, 0usize, String::new())]);
+    let mut omitted = BTreeSet::new();
+
+    'build: while let Some((current, node_id, omission_root)) = queue.pop_front() {
+        match current {
+            Value::Object(values) => {
+                for (key, child) in values {
+                    let pointer = format!("{}/{}", nodes[node_id].pointer, escape_pointer(key));
+                    let child_omission_root = if node_id == 0 {
+                        pointer.clone()
+                    } else {
+                        omission_root.clone()
+                    };
+                    if nodes.len() >= max_items {
+                        omitted.insert(child_omission_root);
+                        for remaining_key in values.keys().skip_while(|value| *value != key).skip(1)
+                        {
+                            omitted.insert(if node_id == 0 {
+                                format!(
+                                    "{}/{}",
+                                    nodes[node_id].pointer,
+                                    escape_pointer(remaining_key)
+                                )
+                            } else {
+                                omission_root.clone()
+                            });
+                        }
+                        schema_frontier(&queue, &mut omitted);
+                        break 'build;
+                    }
+                    let child_id = nodes.len();
+                    nodes.push(schema_node(child, pointer));
+                    let SchemaNodeKind::Object(children) = &mut nodes[node_id].kind else {
+                        unreachable!("object source has object schema node");
+                    };
+                    children.insert(key.clone(), child_id);
+                    if schema_node_has_children(child) {
+                        queue.push_back((child, child_id, child_omission_root));
+                    }
+                }
+            }
+            Value::Array(values) => {
+                let pointer = format!("{}/*", nodes[node_id].pointer);
+                let child_omission_root = if node_id == 0 {
+                    pointer.clone()
+                } else {
+                    omission_root.clone()
+                };
+                for child in values {
+                    if nodes.len() >= max_items {
+                        omitted.insert(child_omission_root.clone());
+                        schema_frontier(&queue, &mut omitted);
+                        break 'build;
+                    }
+                    let child_id = nodes.len();
+                    nodes.push(schema_node(child, pointer.clone()));
+                    let SchemaNodeKind::Array { variants, .. } = &mut nodes[node_id].kind else {
+                        unreachable!("array source has array schema node");
+                    };
+                    variants.push(child_id);
+                    if schema_node_has_children(child) {
+                        queue.push_back((child, child_id, child_omission_root.clone()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut schema = render_schema_node(&nodes, 0);
+    if !omitted.is_empty()
+        && let Value::Object(root) = &mut schema
+    {
+        let omitted_subtree_count = omitted.len();
+        let omitted_subtree_pointers = omitted
+            .into_iter()
+            .take(MAX_SCHEMA_OMITTED_POINTERS)
+            .collect::<Vec<_>>();
+        root.insert(
+            "x-leantoken-incomplete".into(),
+            json!({
+                "omitted_subtree_count": omitted_subtree_count,
+                "omitted_subtree_pointers": omitted_subtree_pointers,
+            }),
+        );
+    }
+    schema
+}
+
+fn project_schema_page(
+    services: &Services,
+    value: &Value,
+    max_items: usize,
+    max_tokens: usize,
+) -> Result<SchemaProjection> {
+    let total_items = count_nodes(value);
+    let item_limit = total_items.min(max_items).max(1);
+    let item_limited = build_schema_breadth_first(value, item_limit);
+    let item_limited_tokens = json_tokens(services, &item_limited)?;
+    let (returned_items, schema, projected_tokens) = if item_limited_tokens <= max_tokens {
+        (item_limit, item_limited, item_limited_tokens)
+    } else {
+        let root = build_schema_breadth_first(value, 1);
+        let root_tokens = json_tokens(services, &root)?;
+        if root_tokens > max_tokens {
+            return Err(Error::RequestLimitExceeded {
+                field: "one projected JSON item tokens",
+                requested: root_tokens,
+                limit: max_tokens,
+            });
+        }
+        let mut lower = 1usize;
+        let mut upper = item_limit.saturating_sub(1);
+        let mut best_items = 1usize;
+        let mut best = root;
+        let mut best_tokens = root_tokens;
+        while lower <= upper {
+            let middle = lower.saturating_add(upper.saturating_sub(lower) / 2);
+            let candidate = build_schema_breadth_first(value, middle);
+            let candidate_tokens = json_tokens(services, &candidate)?;
+            if candidate_tokens <= max_tokens {
+                lower = middle.saturating_add(1);
+                best_items = middle;
+                best = candidate;
+                best_tokens = candidate_tokens;
+            } else {
+                upper = middle.saturating_sub(1);
+            }
+        }
+        (best_items, best, best_tokens)
+    };
+    let remaining_items = total_items.saturating_sub(returned_items);
+    let incomplete_reason = (remaining_items > 0).then_some(if returned_items < item_limit {
+        JsonIncompleteReason::MaxTokens
+    } else {
+        JsonIncompleteReason::MaxItems
+    });
+    Ok(SchemaProjection {
+        value: schema,
+        total_items,
+        returned_items,
+        remaining_items,
+        incomplete_reason,
+        projected_tokens,
+    })
+}
+
 fn json_type(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
@@ -1051,7 +1425,250 @@ mod tests {
 
         assert!(!state.complete);
         assert_eq!(projected.as_array().map(Vec::len), Some(3));
-        assert_eq!(key_entries(&value).len(), 4);
+        assert_eq!(key_entries(&value, None, JsonKeyOrder::Pointer).len(), 4);
+    }
+
+    #[test]
+    fn shallow_keys_are_depth_ordered_and_preserve_pointer_escaping() {
+        let value = json!({
+            "a/deep": {"buried": {"value": 1}},
+            "array": [{"left": 1}, {"right": 2}],
+            "β~eta": {},
+        });
+
+        let shallow = key_entries(&value, Some(1), JsonKeyOrder::DepthThenPointer);
+        let shallow_pointers = shallow
+            .iter()
+            .filter_map(|entry| entry["pointer"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(shallow_pointers, ["", "/array", "/a~1deep", "/β~0eta"]);
+        assert_eq!(
+            key_entries(&value, Some(0), JsonKeyOrder::DepthThenPointer),
+            vec![json!({"pointer": "", "type": "object"})]
+        );
+
+        let complete = key_entries(&value, None, JsonKeyOrder::DepthThenPointer);
+        let complete_pointers = complete
+            .iter()
+            .filter_map(|entry| entry["pointer"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            &complete_pointers[..6],
+            [
+                "",
+                "/array",
+                "/a~1deep",
+                "/β~0eta",
+                "/array/*",
+                "/a~1deep/buried",
+            ]
+        );
+        assert!(complete_pointers.contains(&"/array/*/left"));
+        assert!(complete_pointers.contains(&"/array/*/right"));
+    }
+
+    #[test]
+    fn v2_key_cursors_bind_depth_and_reject_legacy_ordering() {
+        let operation = JsonOperation::Query {
+            path: "report.json".into(),
+            selector: None,
+            projection: JsonProjection::Keys,
+        };
+        let shallow =
+            json_query_hash(&operation, JsonExecutionOptions::mcp(Some(1))).expect("shallow hash");
+        let deep =
+            json_query_hash(&operation, JsonExecutionOptions::mcp(Some(2))).expect("deep hash");
+        assert_ne!(shallow, deep);
+
+        let source = crate::text::hash("source");
+        let legacy = make_json_cursor(JsonCursorVersion::V1, &source, &shallow, 1);
+        assert!(matches!(
+            decode_json_cursor(&legacy, JsonCursorVersion::V2),
+            Err(Error::StaleCursor)
+        ));
+        let current = make_json_cursor(JsonCursorVersion::V2, &source, &shallow, 1);
+        assert!(decode_json_cursor(&current, JsonCursorVersion::V2).is_ok());
+    }
+
+    #[test]
+    fn mcp_depth_is_bounded_and_keys_only() {
+        let keys = JsonRequest {
+            operation: JsonOperation::Query {
+                path: "report.json".into(),
+                selector: None,
+                projection: JsonProjection::Keys,
+            },
+            max_tokens: None,
+            max_items: None,
+            array_sample_size: None,
+            cursor: None,
+        };
+        assert!(matches!(
+            validate_json_request(&keys, JsonExecutionOptions::mcp(Some(MAX_JSON_DEPTH + 1))),
+            Err(Error::RequestLimitExceeded { field: "depth", .. })
+        ));
+
+        let value = JsonRequest {
+            operation: JsonOperation::Query {
+                path: "report.json".into(),
+                selector: None,
+                projection: JsonProjection::Value,
+            },
+            ..keys
+        };
+        assert!(matches!(
+            validate_json_request(&value, JsonExecutionOptions::mcp(Some(1))),
+            Err(Error::InvalidInput { field: "depth", .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn mcp_key_pages_preserve_shallow_parity_and_stale_cursor_boundaries() {
+        let root = tempfile::tempdir().expect("root");
+        std::fs::write(
+            root.path().join("report.json"),
+            serde_json::to_vec(&json!({
+                "alpha": {"deep": 1},
+                "array": [{"nested": 2}],
+                "empty": {},
+                "βeta": true,
+            }))
+            .expect("serialize fixture"),
+        )
+        .expect("write fixture");
+        let config = crate::Config::discover(root.path(), Some(root.path().join("index.sqlite")))
+            .expect("config");
+        let services = Services::open(config).expect("services");
+        let operation = JsonOperation::Query {
+            path: "report.json".into(),
+            selector: None,
+            projection: JsonProjection::Keys,
+        };
+        let mut request = JsonRequest {
+            operation: operation.clone(),
+            max_tokens: Some(1_000),
+            max_items: Some(2),
+            array_sample_size: None,
+            cursor: None,
+        };
+        let execution = JsonExecutionOptions::mcp(Some(1));
+        let mut pointers = Vec::new();
+        let first_cursor = loop {
+            let response = services
+                .json_cancellable_with_execution_options(
+                    request.clone(),
+                    ServiceCallOptions::new(),
+                    execution,
+                    CancellationToken::new(),
+                )
+                .await
+                .expect("shallow keys page");
+            pointers.extend(
+                response
+                    .value
+                    .as_ref()
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|entry| entry["pointer"].as_str().map(str::to_owned)),
+            );
+            let next = response.meta.next_cursor;
+            if let Some(cursor) = next {
+                let first = request.cursor.get_or_insert_with(|| cursor.clone()).clone();
+                request.cursor = Some(cursor);
+                if pointers.len() == 2 {
+                    assert!(first.starts_with("j2:"));
+                }
+            } else {
+                break request.cursor.expect("at least one cursor");
+            }
+        };
+        assert_eq!(pointers, ["", "/alpha", "/array", "/empty", "/βeta"]);
+
+        let stale_depth = services
+            .json_cancellable_with_execution_options(
+                JsonRequest {
+                    operation: operation.clone(),
+                    max_tokens: Some(1_000),
+                    max_items: Some(2),
+                    array_sample_size: None,
+                    cursor: Some(first_cursor),
+                },
+                ServiceCallOptions::new(),
+                JsonExecutionOptions::mcp(Some(2)),
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("depth-bound cursor");
+        assert!(matches!(stale_depth, Error::StaleCursor));
+
+        let legacy = services
+            .json(JsonRequest {
+                operation,
+                max_tokens: Some(1_000),
+                max_items: Some(2),
+                array_sample_size: None,
+                cursor: None,
+            })
+            .await
+            .expect("legacy first page")
+            .meta
+            .next_cursor
+            .expect("legacy cursor");
+        let stale_legacy = services
+            .json_cancellable_with_execution_options(
+                JsonRequest {
+                    operation: JsonOperation::Query {
+                        path: "report.json".into(),
+                        selector: None,
+                        projection: JsonProjection::Keys,
+                    },
+                    max_tokens: Some(1_000),
+                    max_items: Some(2),
+                    array_sample_size: None,
+                    cursor: Some(legacy),
+                },
+                ServiceCallOptions::new(),
+                execution,
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("legacy cursor under depth ordering");
+        assert!(matches!(stale_legacy, Error::StaleCursor));
+    }
+
+    #[test]
+    fn breadth_first_schema_preserves_complete_shape_and_shallow_siblings() {
+        let value = json!({
+            "a": {"deep": {"value": 1}},
+            "b": true,
+            "c": [],
+        });
+        let total = count_nodes(&value);
+        let mut legacy_state = ProjectionState {
+            remaining: total,
+            array_sample_size: DEFAULT_ARRAY_SAMPLE_SIZE,
+            complete: true,
+        };
+        let legacy = infer_schema(&value, &mut legacy_state);
+        let complete = build_schema_breadth_first(&value, total);
+        assert!(legacy_state.complete);
+        assert_eq!(complete, legacy);
+
+        let shallow = build_schema_breadth_first(&value, 4);
+        let properties = shallow["properties"]
+            .as_object()
+            .expect("shallow properties");
+        assert_eq!(properties.len(), 3);
+        assert_eq!(properties["a"]["properties"], json!({}));
+        assert_eq!(
+            shallow["x-leantoken-incomplete"]["omitted_subtree_count"],
+            1
+        );
+        assert_eq!(
+            shallow["x-leantoken-incomplete"]["omitted_subtree_pointers"],
+            json!(["/a"])
+        );
     }
 
     #[test]
