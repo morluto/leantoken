@@ -812,10 +812,13 @@ Accounting is filled repeatedly to a deterministic fixed point. Therefore
 `source_tokens + protocol_tokens + path_and_metadata_tokens` equals
 `total_response_tokens`, and tokenizing the final compact DTO produces that
 exact total. Source limits remain independent and do not by themselves impose a
-hard ceiling on the final serialization. Context callers can opt into that
-second boundary with `ServiceCallOptions`, MCP `max_response_tokens`, or CLI
-`--max-response-tokens`; a mandatory correctness skeleton that cannot fit
-returns a typed limit error. These counts and limits describe the service
+hard ceiling on the final serialization. All retrieval callers can opt into
+that second boundary with `ServiceCallOptions`, MCP `max_response_tokens`, or
+CLI `--max-response-tokens`; a mandatory correctness skeleton that cannot fit
+returns a typed limit error. `files`, `read`, history text/commit results,
+context, and JSON keys pages use deterministic operation-aware fitting. Other
+shapes fail loudly instead of dropping evidence without a valid continuation.
+These counts and limits describe the service
 response DTO, not MCP
 text/structured-content duplication, tool schemas, provider framing, or JSON-RPC
 envelopes. In the default `dual` mode, MCP serializes the structured payload in

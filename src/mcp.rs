@@ -316,6 +316,10 @@ struct FilesMcpRequest {
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
     #[schemars(schema_with = "result_limit_schema", default = "default_result_option")]
     max_results: Option<usize>,
+    /// Maximum tokens in the final serialized service response.
+    #[serde(default)]
+    #[schemars(schema_with = "response_token_limit_schema")]
+    max_response_tokens: Option<usize>,
     /// Cursor returned by the same operation and repository generation.
     #[serde(default)]
     #[schemars(length(max = 4096))]
@@ -386,6 +390,10 @@ struct SearchMcpRequest {
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
     #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
     max_tokens: Option<usize>,
+    /// Maximum tokens in the final serialized service response.
+    #[serde(default)]
+    #[schemars(schema_with = "response_token_limit_schema")]
+    max_response_tokens: Option<usize>,
     /// Lines before and after each match (default 2, maximum 20).
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
     #[schemars(
@@ -420,6 +428,11 @@ impl SearchMcpRequest {
     fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
         validate_optional_positive_limit("max_results", self.max_results, limits.max_results)?;
         validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)?;
+        validate_optional_positive_limit(
+            "max_response_tokens",
+            self.max_response_tokens,
+            limits.max_response_tokens,
+        )?;
         validate_optional_limit(
             "context_lines",
             self.context_lines,
@@ -427,7 +440,14 @@ impl SearchMcpRequest {
         )
     }
 
-    fn into_parts(self) -> (SearchRequest, IndexConsistency, Option<String>) {
+    fn into_parts(
+        self,
+    ) -> (
+        SearchRequest,
+        IndexConsistency,
+        ServiceCallOptions,
+        Option<String>,
+    ) {
         (
             SearchRequest {
                 query: self.query,
@@ -445,6 +465,7 @@ impl SearchMcpRequest {
                 cursor: self.cursor,
             },
             self.consistency,
+            service_call_options(self.max_response_tokens),
             self.expected_repository_id,
         )
     }
@@ -476,6 +497,10 @@ struct OutlineMcpRequest {
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
     #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
     max_tokens: Option<usize>,
+    /// Maximum tokens in the final serialized service response.
+    #[serde(default)]
+    #[schemars(schema_with = "response_token_limit_schema")]
+    max_response_tokens: Option<usize>,
     /// Suppress evidence already returned under this server-managed receipt.
     #[serde(default)]
     #[schemars(length(max = 128))]
@@ -493,10 +518,22 @@ struct OutlineMcpRequest {
 impl OutlineMcpRequest {
     fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
         validate_optional_positive_limit("max_results", self.max_results, limits.max_results)?;
-        validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)
+        validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)?;
+        validate_optional_positive_limit(
+            "max_response_tokens",
+            self.max_response_tokens,
+            limits.max_response_tokens,
+        )
     }
 
-    fn into_parts(self) -> (OutlineRequest, IndexConsistency, Option<String>) {
+    fn into_parts(
+        self,
+    ) -> (
+        OutlineRequest,
+        IndexConsistency,
+        ServiceCallOptions,
+        Option<String>,
+    ) {
         (
             OutlineRequest {
                 paths: self.paths,
@@ -508,6 +545,7 @@ impl OutlineMcpRequest {
                 cursor: self.cursor,
             },
             self.consistency,
+            service_call_options(self.max_response_tokens),
             self.expected_repository_id,
         )
     }
@@ -516,6 +554,11 @@ impl OutlineMcpRequest {
 impl FilesMcpRequest {
     fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
         validate_optional_positive_limit("max_results", self.max_results, limits.max_results)?;
+        validate_optional_positive_limit(
+            "max_response_tokens",
+            self.max_response_tokens,
+            limits.max_response_tokens,
+        )?;
         if matches!(self.operation, FilesMcpOperationInput::Nested(_))
             && (self.path.is_some()
                 || self.query.is_some()
@@ -567,7 +610,14 @@ impl FilesMcpRequest {
         Ok(())
     }
 
-    fn into_parts(self) -> (FilesRequest, IndexConsistency, Option<String>) {
+    fn into_parts(
+        self,
+    ) -> (
+        FilesRequest,
+        IndexConsistency,
+        ServiceCallOptions,
+        Option<String>,
+    ) {
         let (operation, path, query, pattern, depth) = match self.operation {
             FilesMcpOperationInput::Flat(operation) => {
                 (operation, self.path, self.query, self.pattern, self.depth)
@@ -593,6 +643,7 @@ impl FilesMcpRequest {
                 depth,
             },
             self.consistency,
+            service_call_options(self.max_response_tokens),
             self.expected_repository_id,
         )
     }
@@ -614,6 +665,10 @@ struct ReadMcpRequest {
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
     #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
     max_tokens: Option<usize>,
+    /// Maximum tokens in the final serialized service response.
+    #[serde(default)]
+    #[schemars(schema_with = "response_token_limit_schema")]
+    max_response_tokens: Option<usize>,
     /// Hash from the same prior target; matching content returns `not_modified`.
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
@@ -673,6 +728,11 @@ enum ReadMcpTarget {
 impl ReadMcpRequest {
     fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
         validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)?;
+        validate_optional_positive_limit(
+            "max_response_tokens",
+            self.max_response_tokens,
+            limits.max_response_tokens,
+        )?;
         if matches!(self.target, ReadMcpTarget::Heading { occurrence: 0, .. }) {
             return Err(crate::Error::InvalidInput {
                 field: "heading occurrence",
@@ -682,7 +742,14 @@ impl ReadMcpRequest {
         Ok(())
     }
 
-    fn into_parts(self) -> (ReadRequest, IndexConsistency, Option<String>) {
+    fn into_parts(
+        self,
+    ) -> (
+        ReadRequest,
+        IndexConsistency,
+        ServiceCallOptions,
+        Option<String>,
+    ) {
         let (start_line, end_line, symbol, heading, heading_occurrence, continuation_cursor) =
             match self.target {
                 ReadMcpTarget::Symbol { name } => (None, None, Some(name), None, None, None),
@@ -711,6 +778,7 @@ impl ReadMcpRequest {
                 receipt_id: self.receipt_id,
             },
             self.consistency,
+            service_call_options(self.max_response_tokens),
             self.expected_repository_id,
         )
     }
@@ -733,6 +801,10 @@ struct HistoryMcpRequest {
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
     #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
     max_tokens: Option<usize>,
+    /// Maximum tokens in the final serialized service response.
+    #[serde(default)]
+    #[schemars(schema_with = "response_token_limit_schema")]
+    max_response_tokens: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -773,10 +845,15 @@ enum HistoryMcpOperation {
 impl HistoryMcpRequest {
     fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
         validate_optional_positive_limit("max_results", self.max_results, MAX_RESULTS)?;
-        validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)
+        validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)?;
+        validate_optional_positive_limit(
+            "max_response_tokens",
+            self.max_response_tokens,
+            limits.max_response_tokens,
+        )
     }
 
-    fn into_parts(self) -> (HistoryRequest, Option<String>) {
+    fn into_parts(self) -> (HistoryRequest, ServiceCallOptions, Option<String>) {
         let operation = match self.operation {
             HistoryMcpOperation::ReadSymbol {
                 path,
@@ -814,6 +891,7 @@ impl HistoryMcpRequest {
                 max_results: self.max_results,
                 max_tokens: self.max_tokens,
             },
+            service_call_options(self.max_response_tokens),
             self.expected_repository_id,
         )
     }
@@ -832,6 +910,10 @@ struct JsonMcpRequest {
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
     #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
     max_tokens: Option<usize>,
+    /// Maximum tokens in the final serialized service response.
+    #[serde(default)]
+    #[schemars(schema_with = "response_token_limit_schema")]
+    max_response_tokens: Option<usize>,
     /// Maximum structural items returned (default 1000, maximum 10000).
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
     #[schemars(range(min = 1, max = 10000))]
@@ -905,6 +987,11 @@ enum JsonMcpOperation {
 impl JsonMcpRequest {
     fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
         validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)?;
+        validate_optional_positive_limit(
+            "max_response_tokens",
+            self.max_response_tokens,
+            limits.max_response_tokens,
+        )?;
         validate_optional_positive_limit("max_items", self.max_items, 10_000)?;
         if self.array_sample_size.is_some_and(|value| value > 20) {
             return Err(crate::Error::RequestLimitExceeded {
@@ -916,7 +1003,7 @@ impl JsonMcpRequest {
         Ok(())
     }
 
-    fn into_parts(self) -> (JsonRequest, Option<String>) {
+    fn into_parts(self) -> (JsonRequest, ServiceCallOptions, Option<String>) {
         let operation = match self.operation {
             JsonMcpOperation::Query {
                 path,
@@ -951,9 +1038,16 @@ impl JsonMcpRequest {
                 array_sample_size: self.array_sample_size,
                 cursor: self.cursor,
             },
+            service_call_options(self.max_response_tokens),
             self.expected_repository_id,
         )
     }
+}
+
+fn service_call_options(max_response_tokens: Option<usize>) -> ServiceCallOptions {
+    max_response_tokens.map_or_else(ServiceCallOptions::new, |limit| {
+        ServiceCallOptions::new().with_max_response_tokens(limit)
+    })
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1859,7 +1953,7 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, consistency, expected_repository_id) = req.into_parts();
+        let (request, consistency, options, expected_repository_id) = req.into_parts();
         let cancellation = context.ct.clone();
         let mcp_services = self.services.clone();
         self.run_admitted(
@@ -1873,9 +1967,10 @@ impl LeanTokenMcp {
                     cancellation.clone(),
                     deadline,
                     || {
-                        services.files_with_consistency_cancellable(
+                        services.files_with_options_consistency_cancellable(
                             request.clone(),
                             consistency,
+                            options,
                             cancellation.clone(),
                         )
                     },
@@ -1910,7 +2005,7 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, consistency, expected_repository_id) = req.into_parts();
+        let (request, consistency, options, expected_repository_id) = req.into_parts();
         let cancellation = context.ct.clone();
         let mcp_services = self.services.clone();
         self.run_admitted(
@@ -1924,9 +2019,10 @@ impl LeanTokenMcp {
                     cancellation.clone(),
                     deadline,
                     || {
-                        services.search_with_consistency_cancellable(
+                        services.search_with_options_consistency_cancellable(
                             request.clone(),
                             consistency,
+                            options,
                             cancellation.clone(),
                         )
                     },
@@ -1961,7 +2057,7 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, consistency, expected_repository_id) = req.into_parts();
+        let (request, consistency, options, expected_repository_id) = req.into_parts();
         let cancellation = context.ct.clone();
         let mcp_services = self.services.clone();
         self.run_admitted(
@@ -1975,9 +2071,10 @@ impl LeanTokenMcp {
                     cancellation.clone(),
                     deadline,
                     || {
-                        services.outline_with_consistency_cancellable(
+                        services.outline_with_options_consistency_cancellable(
                             request.clone(),
                             consistency,
+                            options,
                             cancellation.clone(),
                         )
                     },
@@ -2012,7 +2109,7 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, consistency, expected_repository_id) = req.into_parts();
+        let (request, consistency, options, expected_repository_id) = req.into_parts();
         let cancellation = context.ct.clone();
         let mcp_services = self.services.clone();
         self.run_admitted(
@@ -2026,9 +2123,10 @@ impl LeanTokenMcp {
                     cancellation.clone(),
                     deadline,
                     || {
-                        services.read_with_consistency_cancellable(
+                        services.read_with_options_consistency_cancellable(
                             request.clone(),
                             consistency,
+                            options,
                             cancellation.clone(),
                         )
                     },
@@ -2063,7 +2161,7 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, expected_repository_id) = req.into_parts();
+        let (request, options, expected_repository_id) = req.into_parts();
         let cancellation = context.ct.clone();
         let mcp_services = self.services.clone();
         self.run_admitted(
@@ -2076,7 +2174,13 @@ impl LeanTokenMcp {
                     &services,
                     cancellation.clone(),
                     deadline,
-                    || services.history_cancellable(request.clone(), cancellation.clone()),
+                    || {
+                        services.history_cancellable_with_options(
+                            request.clone(),
+                            options,
+                            cancellation.clone(),
+                        )
+                    },
                 )
                 .await
             },
@@ -2108,7 +2212,7 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, expected_repository_id) = req.into_parts();
+        let (request, options, expected_repository_id) = req.into_parts();
         let cancellation = context.ct.clone();
         let mcp_services = self.services.clone();
         self.run_admitted(
@@ -2121,7 +2225,13 @@ impl LeanTokenMcp {
                     &services,
                     cancellation.clone(),
                     deadline,
-                    || services.json_cancellable(request.clone(), cancellation.clone()),
+                    || {
+                        services.json_cancellable_with_options(
+                            request.clone(),
+                            options,
+                            cancellation.clone(),
+                        )
+                    },
                 )
                 .await
             },
@@ -3703,7 +3813,7 @@ mod tests {
                 "target": target
             }))
             .expect("common line-range aliases should remain readable");
-            let (request, _, _) = request.into_parts();
+            let (request, _, _, _) = request.into_parts();
             assert_eq!(request.start_line, Some(10));
             assert_eq!(request.end_line, Some(20));
         }
@@ -3713,7 +3823,7 @@ mod tests {
         }))
         .expect("Markdown heading target");
         assert!(heading.validate_limits(McpLimitPolicy::DEFAULT).is_ok());
-        let (heading, _, _) = heading.into_parts();
+        let (heading, _, _, _) = heading.into_parts();
         assert_eq!(heading.heading.as_deref(), Some("Installation"));
         assert_eq!(heading.heading_occurrence, Some(2));
         assert!(heading.symbol.is_none());
@@ -3732,7 +3842,7 @@ mod tests {
             "target": {"kind": "continuation", "cursor": "opaque"}
         }))
         .expect("continuation target");
-        let (continuation, _, _) = continuation.into_parts();
+        let (continuation, _, _, _) = continuation.into_parts();
         assert_eq!(continuation.continuation_cursor.as_deref(), Some("opaque"));
         assert!(continuation.symbol.is_none());
         assert!(continuation.heading.is_none());
@@ -3742,24 +3852,81 @@ mod tests {
     }
 
     #[test]
-    fn context_response_budget_schema_is_optional_and_bounded() {
-        let context = LeanTokenMcp::tool_router()
-            .list_all()
-            .into_iter()
-            .find(|tool| tool.name == "context")
-            .expect("context tool");
-        let schema = serde_json::Value::Object((*context.input_schema).clone());
-        assert_eq!(
-            schema.pointer("/properties/max_response_tokens/minimum"),
-            Some(&serde_json::json!(1))
+    fn retrieval_response_budget_schemas_are_optional_and_bounded() {
+        let tools = LeanTokenMcp::tool_router().list_all();
+        for name in [
+            "context", "read", "search", "outline", "files", "history", "json",
+        ] {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name == name)
+                .unwrap_or_else(|| panic!("{name} tool"));
+            let schema = serde_json::Value::Object((*tool.input_schema).clone());
+            assert_eq!(
+                schema.pointer("/properties/max_response_tokens/minimum"),
+                Some(&serde_json::json!(1)),
+                "{name}"
+            );
+            assert_eq!(
+                schema.pointer("/properties/max_response_tokens/maximum"),
+                Some(&serde_json::json!(32_000)),
+                "{name}"
+            );
+            assert_eq!(
+                schema.pointer("/properties/max_response_tokens/default"),
+                Some(&serde_json::Value::Null),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn retrieval_response_budget_limits_are_validated_for_every_tool() {
+        macro_rules! assert_invalid {
+            ($ty:ty, $base:expr) => {
+                for invalid in [0, MAX_OUTPUT_TOKENS + 1] {
+                    let mut value = $base;
+                    value["max_response_tokens"] = serde_json::json!(invalid);
+                    let request =
+                        serde_json::from_value::<$ty>(value).expect("deserialize request");
+                    assert!(
+                        request.validate_limits(McpLimitPolicy::DEFAULT).is_err(),
+                        "{} accepted {invalid}",
+                        stringify!($ty)
+                    );
+                }
+            };
+        }
+
+        assert_invalid!(FilesMcpRequest, serde_json::json!({"operation": "tree"}));
+        assert_invalid!(SearchMcpRequest, serde_json::json!({"query": "needle"}));
+        assert_invalid!(
+            OutlineMcpRequest,
+            serde_json::json!({"paths": ["src/lib.rs"]})
         );
-        assert_eq!(
-            schema.pointer("/properties/max_response_tokens/maximum"),
-            Some(&serde_json::json!(32_000))
+        assert_invalid!(
+            ReadMcpRequest,
+            serde_json::json!({
+                "path": "src/lib.rs",
+                "target": {"kind": "lines", "start": 1, "end": 1}
+            })
         );
-        assert_eq!(
-            schema.pointer("/properties/max_response_tokens/default"),
-            Some(&serde_json::Value::Null)
+        assert_invalid!(
+            HistoryMcpRequest,
+            serde_json::json!({
+                "operation": {
+                    "kind": "read_symbol",
+                    "path": "src/lib.rs",
+                    "symbol": "owner",
+                    "revision": "HEAD"
+                }
+            })
+        );
+        assert_invalid!(
+            JsonMcpRequest,
+            serde_json::json!({
+                "operation": {"kind": "query", "path": "data.json"}
+            })
         );
     }
 
@@ -3771,7 +3938,7 @@ mod tests {
             "target": {"kind": "lines", "start": 1, "end": 2}
         }))
         .expect("read request with receipt");
-        let (request, _, _) = request.into_parts();
+        let (request, _, _, _) = request.into_parts();
         assert_eq!(request.receipt_id.as_deref(), Some("r0000000000000001"));
     }
 
@@ -3791,7 +3958,7 @@ mod tests {
         request
             .validate_limits(McpLimitPolicy::DEFAULT)
             .expect("history limits");
-        let (request, _) = request.into_parts();
+        let (request, _, _) = request.into_parts();
         assert_eq!(request.max_tokens, Some(500));
         assert!(matches!(
             request.operation,
@@ -3824,7 +3991,7 @@ mod tests {
         request
             .validate_limits(McpLimitPolicy::DEFAULT)
             .expect("JSON limits");
-        let (request, _) = request.into_parts();
+        let (request, _, _) = request.into_parts();
         assert_eq!(request.max_items, Some(500));
         assert!(request.cursor.is_none());
         assert!(matches!(
@@ -3844,7 +4011,7 @@ mod tests {
             "cursor": "j1:source:query:2"
         }))
         .expect("paged JSON request");
-        let (request, _) = request.into_parts();
+        let (request, _, _) = request.into_parts();
         assert_eq!(request.cursor.as_deref(), Some("j1:source:query:2"));
         assert!(matches!(
             request.operation,
@@ -3868,7 +4035,7 @@ mod tests {
             "cursor": "12:outline:34:0000000000000000"
         }))
         .expect("outline request");
-        let (request, _, _) = request.into_parts();
+        let (request, _, _, _) = request.into_parts();
 
         assert_eq!(
             request.cursor.as_deref(),

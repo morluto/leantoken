@@ -1733,12 +1733,7 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
-        if options.max_response_tokens() == Some(0) {
-            return Err(Error::InvalidInput {
-                field: "max_response_tokens",
-                reason: "must be greater than zero",
-            });
-        }
+        self.validate_call_options(options)?;
         self.validate_context_request(&request)?;
         if let Some(handoff) = &handoff {
             validate_handoff_context_request(&request, handoff)?;
@@ -2442,12 +2437,7 @@ impl Services {
         signals: ContextSignals,
     ) -> Result<(ContextEvaluation, Option<usize>)> {
         check_cancelled(cancellation)?;
-        if options.max_response_tokens() == Some(0) {
-            return Err(Error::InvalidInput {
-                field: "max_response_tokens",
-                reason: "must be greater than zero",
-            });
-        }
+        self.validate_call_options(options)?;
         self.validate_context_request(&request)?;
         if let Some(handoff) = &handoff {
             validate_handoff_context_request(&request, handoff)?;

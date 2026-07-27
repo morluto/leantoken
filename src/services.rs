@@ -11,7 +11,7 @@ use cap_std::fs::Dir;
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::INDEX_CONTENT_VERSION;
+use crate::config::{INDEX_CONTENT_VERSION, MAX_OUTPUT_TOKENS};
 use crate::coordination::{CacheLease, IndexCoordination, IndexLeadership};
 use crate::error::RetryableOperation;
 use crate::indexer::Indexer;
@@ -143,7 +143,8 @@ impl ServiceCallOptions {
 
     /// Set the inclusive serialized service-response token ceiling.
     ///
-    /// Services reject zero before retrieval or consistency work begins.
+    /// Services reject zero or values above the public 32,000-token ceiling
+    /// before retrieval or consistency work begins.
     #[must_use]
     pub const fn with_max_response_tokens(mut self, max_response_tokens: usize) -> Self {
         self.max_response_tokens = Some(max_response_tokens);
@@ -316,6 +317,99 @@ impl Services {
         Err(Error::InternalFailure(
             "serialized response accounting did not reach a fixed point".into(),
         ))
+    }
+
+    fn validate_call_options(&self, options: ServiceCallOptions) -> Result<()> {
+        match options.max_response_tokens() {
+            Some(0) => Err(Error::InvalidInput {
+                field: "max_response_tokens",
+                reason: "must be greater than zero",
+            }),
+            Some(requested) if requested > MAX_OUTPUT_TOKENS => Err(Error::RequestLimitExceeded {
+                field: "max_response_tokens",
+                requested,
+                limit: MAX_OUTPUT_TOKENS,
+            }),
+            _ => Ok(()),
+        }
+    }
+
+    fn finalized_response_tokens<T>(&self, response: &T) -> Result<usize>
+    where
+        T: RetrievalResponse + Clone,
+    {
+        let mut sized = response.clone();
+        self.finalize_response(&mut sized)?;
+        Ok(sized.meta_mut().total_response_tokens)
+    }
+
+    fn response_fits<T>(&self, response: &T, options: ServiceCallOptions) -> Result<bool>
+    where
+        T: RetrievalResponse + Clone,
+    {
+        options.max_response_tokens().map_or(Ok(true), |limit| {
+            Ok(self.finalized_response_tokens(response)? <= limit)
+        })
+    }
+
+    fn response_fits_with_receipt_reserve<T>(
+        &self,
+        response: &T,
+        returned_items: usize,
+        options: ServiceCallOptions,
+    ) -> Result<bool>
+    where
+        T: RetrievalResponse + Clone,
+    {
+        let tokens =
+            self.finalized_response_tokens_with_receipt_reserve(response, returned_items)?;
+        Ok(options
+            .max_response_tokens()
+            .is_none_or(|limit| tokens <= limit))
+    }
+
+    fn finalized_response_tokens_with_receipt_reserve<T>(
+        &self,
+        response: &T,
+        returned_items: usize,
+    ) -> Result<usize>
+    where
+        T: RetrievalResponse + Clone,
+    {
+        let mut sized = response.clone();
+        {
+            let meta = sized.meta_mut();
+            meta.receipt_id = Some(
+                meta.receipt_id
+                    .clone()
+                    .unwrap_or_else(|| "rffffffffffffffff".into()),
+            );
+            meta.receipt_suppressed_exact = returned_items;
+            meta.receipt_suppressed_overlap = returned_items;
+            meta.receipt_near_duplicates = returned_items;
+        }
+        self.finalized_response_tokens(&sized)
+    }
+
+    fn finalize_bounded_response<T>(
+        &self,
+        response: &mut T,
+        options: ServiceCallOptions,
+    ) -> Result<()>
+    where
+        T: RetrievalResponse,
+    {
+        self.finalize_response(response)?;
+        if let Some(limit) = options.max_response_tokens()
+            && response.meta_mut().total_response_tokens > limit
+        {
+            return Err(Error::RequestLimitExceeded {
+                field: "max_response_tokens",
+                requested: response.meta_mut().total_response_tokens,
+                limit,
+            });
+        }
+        Ok(())
     }
 
     /// Reconcile repository files into one committed index generation.

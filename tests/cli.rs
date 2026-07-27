@@ -98,6 +98,37 @@ fn cli_files_tree_request() {
 }
 
 #[test]
+fn cli_retrieval_response_budget_uses_nonbreaking_options_variants() {
+    let cli = parse(&[
+        "files",
+        "tree",
+        "--path",
+        "src",
+        "--max-response-tokens",
+        "777",
+    ]);
+    let AppRequest::FilesWithOptions {
+        request,
+        max_response_tokens,
+    } = cli.app_request()
+    else {
+        panic!("expected response-bounded files request");
+    };
+    assert_eq!(request.operation, FileOperation::Tree);
+    assert_eq!(max_response_tokens, 777);
+
+    let error = Cli::try_parse_from([
+        "leantoken",
+        "search",
+        "foo",
+        "--max-response-tokens",
+        "0",
+    ])
+    .expect_err("zero response budget");
+    assert_eq!(error.kind(), ErrorKind::ValueValidation);
+}
+
+#[test]
 fn cli_files_find_request() {
     let cli = parse(&["files", "find", "--query", "cli", "--max-results", "10"]);
     let AppRequest::Files(request) = cli.app_request() else {

@@ -6,7 +6,7 @@ use super::change_receipt::{
     classify_historical_symbol_removed,
 };
 use super::validation::{MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input};
-use super::{Services, validate_positive_request_limit};
+use super::{ServiceCallOptions, Services, validate_positive_request_limit};
 use crate::model::{
     HistoricalSymbol, HistoryOperation, HistoryRequest, HistoryResponse, SymbolHistoryCommit,
     TokenAccountingOperation,
@@ -14,6 +14,7 @@ use crate::model::{
 use crate::repository::{
     GitBlob, git_blob_at_revision, git_diff_identity, git_line_history, normalize_relative,
 };
+use crate::tokens::ResponseBudget;
 use crate::{Error, Result, parser};
 
 const DEFAULT_HISTORY_RESULTS: usize = 20;
@@ -24,6 +25,15 @@ struct ResolvedHistoricalSymbol {
     symbol: HistoricalSymbol,
     signature: Option<String>,
     content: String,
+}
+
+fn char_boundaries(value: &str) -> Vec<usize> {
+    let mut boundaries = value
+        .char_indices()
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    boundaries.push(value.len());
+    boundaries
 }
 
 fn validate_history_request(request: &HistoryRequest) -> Result<()> {
@@ -105,7 +115,17 @@ fn normalize_operation(operation: HistoryOperation) -> Result<HistoryOperation> 
 impl Services {
     /// Retrieve symbol-aware evidence from immutable Git revisions.
     pub async fn history(&self, request: HistoryRequest) -> Result<HistoryResponse> {
-        self.history_cancellable(request, CancellationToken::new())
+        self.history_with_options(request, ServiceCallOptions::new())
+            .await
+    }
+
+    /// Retrieve symbol-aware Git evidence under serialized-response controls.
+    pub async fn history_with_options(
+        &self,
+        request: HistoryRequest,
+        options: ServiceCallOptions,
+    ) -> Result<HistoryResponse> {
+        self.history_cancellable_with_options(request, options, CancellationToken::new())
             .await
     }
 
@@ -115,11 +135,23 @@ impl Services {
         request: HistoryRequest,
         cancellation: CancellationToken,
     ) -> Result<HistoryResponse> {
+        self.history_cancellable_with_options(request, ServiceCallOptions::new(), cancellation)
+            .await
+    }
+
+    /// Retrieve symbol-aware Git evidence under response controls and cancellation.
+    pub async fn history_cancellable_with_options(
+        &self,
+        request: HistoryRequest,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<HistoryResponse> {
+        self.validate_call_options(options)?;
         validate_history_request(&request)?;
         let this = self.clone();
         self.blocking_executor
             .run(cancellation, move |cancellation| {
-                this.history_sync(request, cancellation)
+                this.history_sync(request, options, cancellation)
             })
             .await
     }
@@ -127,6 +159,7 @@ impl Services {
     fn history_sync(
         &self,
         request: HistoryRequest,
+        options: ServiceCallOptions,
         cancellation: &CancellationToken,
     ) -> Result<HistoryResponse> {
         check_cancelled(cancellation)?;
@@ -292,9 +325,118 @@ impl Services {
                 }
             }
         };
-        self.finalize_response(&mut response)?;
+        self.fit_history_response(&mut response, options)?;
+        self.finalize_bounded_response(&mut response, options)?;
         self.record_token_savings(TokenAccountingOperation::History, None, &response.meta);
         Ok(response)
+    }
+
+    fn fit_history_response(
+        &self,
+        response: &mut HistoryResponse,
+        options: ServiceCallOptions,
+    ) -> Result<()> {
+        if self.response_fits(response, options)? {
+            return Ok(());
+        }
+
+        if let Some(content) = response
+            .symbol
+            .as_ref()
+            .and_then(|symbol| symbol.content.as_ref())
+            .cloned()
+        {
+            let boundaries = char_boundaries(&content);
+            if let Some(candidate) =
+                self.fit_history_text_prefix(response, &content, &boundaries, options, false)?
+            {
+                *response = candidate;
+                return Ok(());
+            }
+        } else if let Some(diff) = response.diff.clone() {
+            let boundaries = char_boundaries(&diff);
+            if let Some(candidate) =
+                self.fit_history_text_prefix(response, &diff, &boundaries, options, true)?
+            {
+                *response = candidate;
+                return Ok(());
+            }
+        } else if !response.commits.is_empty() {
+            let original = response.clone();
+            let max_response_tokens = options
+                .max_response_tokens()
+                .expect("fitting only runs with a response limit");
+            let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+            let keep = budget.largest_fitting_prefix(original.commits.len(), |keep| {
+                let mut candidate = original.clone();
+                candidate.commits.truncate(keep);
+                candidate.result_complete = false;
+                self.finalized_response_tokens(&candidate)
+            })?;
+            if let Some(keep) = keep.filter(|keep| *keep > 0) {
+                response.commits.truncate(keep);
+                response.result_complete = false;
+                return Ok(());
+            }
+        }
+
+        let requested = self.finalized_response_tokens(response)?;
+        Err(Error::RequestLimitExceeded {
+            field: "max_response_tokens",
+            requested,
+            limit: options
+                .max_response_tokens()
+                .expect("fitting only runs with a response limit"),
+        })
+    }
+
+    fn fit_history_text_prefix(
+        &self,
+        response: &HistoryResponse,
+        text: &str,
+        boundaries: &[usize],
+        options: ServiceCallOptions,
+        is_diff: bool,
+    ) -> Result<Option<HistoryResponse>> {
+        let max_response_tokens = options
+            .max_response_tokens()
+            .expect("fitting only runs with a response limit");
+        let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+        let keep = budget.largest_fitting_prefix(boundaries.len().saturating_sub(1), |keep| {
+            let prefix = &text[..boundaries[keep]];
+            let mut candidate = response.clone();
+            let source_tokens = self.config.tokenizer.count(prefix);
+            candidate.meta.source_tokens = source_tokens;
+            candidate.meta.emitted_tokens = source_tokens;
+            candidate.result_complete = false;
+            if is_diff {
+                candidate.diff = Some(prefix.to_owned());
+                candidate.diff_truncated = true;
+            } else if let Some(symbol) = candidate.symbol.as_mut() {
+                symbol.content = Some(prefix.to_owned());
+                symbol.returned_end_line = returned_end_line(symbol.target_start_line, prefix);
+                symbol.truncated = true;
+            }
+            self.finalized_response_tokens(&candidate)
+        })?;
+        let Some(keep) = keep.filter(|keep| *keep > 0) else {
+            return Ok(None);
+        };
+        let prefix = &text[..boundaries[keep]];
+        let mut candidate = response.clone();
+        let source_tokens = self.config.tokenizer.count(prefix);
+        candidate.meta.source_tokens = source_tokens;
+        candidate.meta.emitted_tokens = source_tokens;
+        candidate.result_complete = false;
+        if is_diff {
+            candidate.diff = Some(prefix.to_owned());
+            candidate.diff_truncated = true;
+        } else if let Some(symbol) = candidate.symbol.as_mut() {
+            symbol.content = Some(prefix.to_owned());
+            symbol.returned_end_line = returned_end_line(symbol.target_start_line, prefix);
+            symbol.truncated = true;
+        }
+        Ok(Some(candidate))
     }
 
     fn historical_symbol(

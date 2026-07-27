@@ -6,16 +6,17 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
 use tokio_util::sync::CancellationToken;
 
-use super::Services;
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
     MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input,
     validate_optional_input,
 };
+use super::{ServiceCallOptions, Services};
 use crate::model::*;
 use crate::repository::{normalize_relative, resolve_existing, validate_relative};
 use crate::storage::ReadSession;
 use crate::text::{anchored_line_window, hash};
+use crate::tokens::ResponseBudget;
 use crate::{Error, Result};
 
 const MIN_CONTEXT_RANGE_LINES: usize = 12;
@@ -356,7 +357,17 @@ fn validate_read_input(request: &ReadRequest) -> Result<()> {
 impl Services {
     /// Return bounded structural outlines for indexed files.
     pub async fn outline(&self, request: OutlineRequest) -> Result<OutlineResponse> {
-        self.outline_cancellable(request, CancellationToken::new())
+        self.outline_with_options(request, ServiceCallOptions::new())
+            .await
+    }
+
+    /// Return outlines under explicit serialized-response controls.
+    pub async fn outline_with_options(
+        &self,
+        request: OutlineRequest,
+        options: ServiceCallOptions,
+    ) -> Result<OutlineResponse> {
+        self.outline_cancellable_with_options(request, options, CancellationToken::new())
             .await
     }
 
@@ -367,12 +378,31 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<OutlineResponse> {
+        self.outline_with_options_consistency_cancellable(
+            request,
+            consistency,
+            ServiceCallOptions::new(),
+            cancellation,
+        )
+        .await
+    }
+
+    /// Outline files under consistency and serialized-response controls.
+    pub async fn outline_with_options_consistency_cancellable(
+        &self,
+        request: OutlineRequest,
+        consistency: IndexConsistency,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<OutlineResponse> {
+        self.validate_call_options(options)?;
         validate_outline_input(&request)?;
         self.result_limit(request.max_results)?;
         self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
-        self.outline_cancellable(request, cancellation).await
+        self.outline_cancellable_with_options(request, options, cancellation)
+            .await
     }
 
     pub async fn outline_cancellable(
@@ -380,17 +410,38 @@ impl Services {
         request: OutlineRequest,
         cancellation: CancellationToken,
     ) -> Result<OutlineResponse> {
+        self.outline_cancellable_with_options(request, ServiceCallOptions::new(), cancellation)
+            .await
+    }
+
+    async fn outline_cancellable_with_options(
+        &self,
+        request: OutlineRequest,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<OutlineResponse> {
+        self.validate_call_options(options)?;
         let this = self.clone();
         self.blocking_executor
             .run(cancellation, move |cancellation| {
-                this.outline_sync(request, cancellation)
+                this.outline_sync(request, options, cancellation)
             })
             .await
     }
 
     /// Read a bounded live source range and report index staleness.
     pub async fn read(&self, request: ReadRequest) -> Result<ReadResponse> {
-        self.read_cancellable(request, CancellationToken::new())
+        self.read_with_options(request, ServiceCallOptions::new())
+            .await
+    }
+
+    /// Read live source under explicit serialized-response controls.
+    pub async fn read_with_options(
+        &self,
+        request: ReadRequest,
+        options: ServiceCallOptions,
+    ) -> Result<ReadResponse> {
+        self.read_cancellable_with_options(request, options, CancellationToken::new())
             .await
     }
 
@@ -401,11 +452,30 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<ReadResponse> {
+        self.read_with_options_consistency_cancellable(
+            request,
+            consistency,
+            ServiceCallOptions::new(),
+            cancellation,
+        )
+        .await
+    }
+
+    /// Read source under consistency and serialized-response controls.
+    pub async fn read_with_options_consistency_cancellable(
+        &self,
+        request: ReadRequest,
+        consistency: IndexConsistency,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<ReadResponse> {
+        self.validate_call_options(options)?;
         validate_read_input(&request)?;
         self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         self.apply_consistency(consistency, cancellation.clone())
             .await?;
-        self.read_cancellable(request, cancellation).await
+        self.read_cancellable_with_options(request, options, cancellation)
+            .await
     }
 
     pub async fn read_cancellable(
@@ -413,10 +483,21 @@ impl Services {
         request: ReadRequest,
         cancellation: CancellationToken,
     ) -> Result<ReadResponse> {
+        self.read_cancellable_with_options(request, ServiceCallOptions::new(), cancellation)
+            .await
+    }
+
+    async fn read_cancellable_with_options(
+        &self,
+        request: ReadRequest,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<ReadResponse> {
+        self.validate_call_options(options)?;
         let this = self.clone();
         self.blocking_executor
             .run(cancellation, move |cancellation| {
-                this.read_sync(request, cancellation)
+                this.read_sync(request, options, cancellation)
             })
             .await
     }
@@ -424,6 +505,7 @@ impl Services {
     fn outline_sync(
         &self,
         mut request: OutlineRequest,
+        options: ServiceCallOptions,
         cancellation: &CancellationToken,
     ) -> Result<OutlineResponse> {
         check_cancelled(cancellation)?;
@@ -602,6 +684,18 @@ impl Services {
                 baseline_source_tokens,
             ))
         })?;
+        let returned_entries = response
+            .returned_symbols
+            .saturating_add(response.returned_imports);
+        if !self.response_fits_with_receipt_reserve(&response, returned_entries, options)? {
+            return Err(Error::RequestLimitExceeded {
+                field: "max_response_tokens",
+                requested: self.finalized_response_tokens(&response)?,
+                limit: options
+                    .max_response_tokens()
+                    .expect("fitting only runs with a response limit"),
+            });
+        }
         let receipt_candidates = response
             .files
             .iter()
@@ -683,7 +777,7 @@ impl Services {
         response.meta.source_tokens = symbol_tokens.saturating_add(import_tokens);
         response.meta.emitted_tokens = response.meta.source_tokens;
         receipt.apply_meta(&mut response.meta);
-        self.finalize_response(&mut response)?;
+        self.finalize_bounded_response(&mut response, options)?;
         self.record_token_savings(
             TokenAccountingOperation::Outline,
             baseline_source_tokens,
@@ -695,6 +789,7 @@ impl Services {
     fn read_sync(
         &self,
         mut request: ReadRequest,
+        options: ServiceCallOptions,
         cancellation: &CancellationToken,
     ) -> Result<ReadResponse> {
         check_cancelled(cancellation)?;
@@ -703,9 +798,10 @@ impl Services {
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         let materialized = self.consistent(|session, generation| {
             check_cancelled(cancellation)?;
-            self.read_at_generation(session, &request, generation, max_tokens)
+            self.read_at_generation_with_options(session, &request, generation, max_tokens, options)
         })?;
         let mut response = materialized.response;
+        let direct_response = response.clone();
         if request.delta {
             let evaluation = self.read_deltas.evaluate(
                 &response.meta.repository_id,
@@ -733,6 +829,22 @@ impl Services {
                 materialized.current_tokens,
                 self.config.tokenizer,
             )?;
+        }
+        let mut returned_items = usize::from(!response.not_modified);
+        if !self.response_fits_with_receipt_reserve(&response, returned_items, options)?
+            && request.delta
+        {
+            response = direct_response;
+            returned_items = usize::from(!response.not_modified);
+        }
+        if !self.response_fits_with_receipt_reserve(&response, returned_items, options)? {
+            return Err(Error::RequestLimitExceeded {
+                field: "max_response_tokens",
+                requested: self.finalized_response_tokens(&response)?,
+                limit: options
+                    .max_response_tokens()
+                    .expect("fitting only runs with a response limit"),
+            });
         }
         let receipt_candidates = if response.not_modified {
             Vec::new()
@@ -769,13 +881,58 @@ impl Services {
             }
         }
         receipt.apply_meta(&mut response.meta);
-        self.finalize_response(&mut response)?;
+        self.finalize_bounded_response(&mut response, options)?;
         self.record_token_savings(
             TokenAccountingOperation::Read,
             Some(materialized.baseline_source_tokens),
             &response.meta,
         );
         Ok(response)
+    }
+
+    fn read_at_generation_with_options(
+        &self,
+        session: &ReadSession,
+        request: &ReadRequest,
+        generation: u64,
+        max_tokens: usize,
+        options: ServiceCallOptions,
+    ) -> Result<MaterializedRead> {
+        let materialized = self.read_at_generation(session, request, generation, max_tokens)?;
+        let returned_items = usize::from(!materialized.response.not_modified);
+        if self.response_fits_with_receipt_reserve(
+            &materialized.response,
+            returned_items,
+            options,
+        )? {
+            return Ok(materialized);
+        }
+
+        let max_response_tokens = options
+            .max_response_tokens()
+            .expect("fitting only runs with a response limit");
+        let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+        let keep = budget.largest_fitting_prefix(max_tokens, |candidate_limit| {
+            let candidate_limit = candidate_limit.max(1);
+            let candidate =
+                self.read_at_generation(session, request, generation, candidate_limit)?;
+            let returned_items = usize::from(!candidate.response.not_modified);
+            self.finalized_response_tokens_with_receipt_reserve(&candidate.response, returned_items)
+        })?;
+        if let Some(candidate_limit) = keep.filter(|keep| *keep > 0) {
+            return self.read_at_generation(session, request, generation, candidate_limit);
+        }
+
+        let minimum = self.read_at_generation(session, request, generation, 1)?;
+        let requested = self.finalized_response_tokens_with_receipt_reserve(
+            &minimum.response,
+            usize::from(!minimum.response.not_modified),
+        )?;
+        Err(Error::RequestLimitExceeded {
+            field: "max_response_tokens",
+            requested,
+            limit: max_response_tokens,
+        })
     }
 
     fn read_at_generation(

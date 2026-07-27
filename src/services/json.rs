@@ -6,13 +6,16 @@ use tokio_util::sync::CancellationToken;
 
 use super::read::open_live_file;
 use super::validation::{MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input};
-use super::{Services, validate_positive_request_limit, validate_request_limit};
+use super::{
+    ServiceCallOptions, Services, validate_positive_request_limit, validate_request_limit,
+};
 use crate::model::{
     JsonFieldDiff, JsonIncompleteReason, JsonNumericSummary, JsonOperation, JsonProjection,
     JsonRequest, JsonResponse, JsonSelector, JsonSource, TokenAccountingOperation,
 };
 use crate::repository::normalize_relative;
 use crate::text::CONTENT_FINGERPRINT_HEX_LEN;
+use crate::tokens::ResponseBudget;
 use crate::{Error, Result};
 
 const DEFAULT_JSON_TOKENS: usize = 8_000;
@@ -190,7 +193,17 @@ fn validate_json_request(request: &JsonRequest) -> Result<()> {
 impl Services {
     /// Query, summarize, or compare bounded live JSON structures.
     pub async fn json(&self, request: JsonRequest) -> Result<JsonResponse> {
-        self.json_cancellable(request, CancellationToken::new())
+        self.json_with_options(request, ServiceCallOptions::new())
+            .await
+    }
+
+    /// Query live JSON structures under serialized-response controls.
+    pub async fn json_with_options(
+        &self,
+        request: JsonRequest,
+        options: ServiceCallOptions,
+    ) -> Result<JsonResponse> {
+        self.json_cancellable_with_options(request, options, CancellationToken::new())
             .await
     }
 
@@ -200,11 +213,23 @@ impl Services {
         request: JsonRequest,
         cancellation: CancellationToken,
     ) -> Result<JsonResponse> {
+        self.json_cancellable_with_options(request, ServiceCallOptions::new(), cancellation)
+            .await
+    }
+
+    /// Query live JSON structures under response controls and cancellation.
+    pub async fn json_cancellable_with_options(
+        &self,
+        request: JsonRequest,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<JsonResponse> {
+        self.validate_call_options(options)?;
         validate_json_request(&request)?;
         let this = self.clone();
         self.blocking_executor
             .run(cancellation, move |cancellation| {
-                this.json_sync(request, cancellation)
+                this.json_sync(request, options, cancellation)
             })
             .await
     }
@@ -212,6 +237,7 @@ impl Services {
     fn json_sync(
         &self,
         request: JsonRequest,
+        options: ServiceCallOptions,
         cancellation: &CancellationToken,
     ) -> Result<JsonResponse> {
         check_cancelled(cancellation)?;
@@ -230,6 +256,7 @@ impl Services {
         let generation = self.storage.repository_generation()?;
         let mut projected_tokens = 0usize;
         let baseline_source_tokens;
+        let mut key_page_context = None;
         let mut response = match request.operation {
             JsonOperation::Query {
                 path,
@@ -244,6 +271,7 @@ impl Services {
                     reason: "did not match a JSON value",
                 })?;
                 if projection == JsonProjection::Keys {
+                    let offset = cursor.as_ref().map_or(0, |cursor| cursor.offset);
                     let page = project_key_page(
                         self,
                         &value,
@@ -253,6 +281,11 @@ impl Services {
                         &loaded.source.content_hash,
                         &query_hash,
                     )?;
+                    key_page_context = Some((
+                        loaded.source.content_hash.clone(),
+                        query_hash.clone(),
+                        offset,
+                    ));
                     projected_tokens = page.projected_tokens;
                     JsonResponse {
                         kind: "query".into(),
@@ -410,13 +443,95 @@ impl Services {
         }
         response.meta.source_tokens = projected_tokens;
         response.meta.emitted_tokens = projected_tokens;
-        self.finalize_response(&mut response)?;
+        self.fit_json_response(&mut response, key_page_context.as_ref(), options)?;
+        self.finalize_bounded_response(&mut response, options)?;
         self.record_token_savings(
             TokenAccountingOperation::Json,
             Some(baseline_source_tokens),
             &response.meta,
         );
         Ok(response)
+    }
+
+    fn fit_json_response(
+        &self,
+        response: &mut JsonResponse,
+        key_page_context: Option<&(String, String, usize)>,
+        options: ServiceCallOptions,
+    ) -> Result<()> {
+        if self.response_fits(response, options)? {
+            return Ok(());
+        }
+
+        if let (Some((source_hash, query_hash, offset)), Some(Value::Array(entries))) =
+            (key_page_context, response.value.as_ref())
+        {
+            let original = response.clone();
+            let max_response_tokens = options
+                .max_response_tokens()
+                .expect("fitting only runs with a response limit");
+            let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+            let keep = budget.largest_fitting_prefix(entries.len(), |keep| {
+                let mut candidate = original.clone();
+                let mut value = entries.clone();
+                value.truncate(keep);
+                candidate.value = Some(Value::Array(value));
+                let consumed = offset.saturating_add(keep);
+                let total = candidate.total_items.unwrap_or(consumed);
+                let remaining = total.saturating_sub(consumed);
+                candidate.returned_items = Some(keep);
+                candidate.remaining_items = Some(remaining);
+                candidate.result_complete = remaining == 0;
+                candidate.incomplete_reason =
+                    (remaining > 0).then_some(JsonIncompleteReason::MaxTokens);
+                candidate.meta.next_cursor =
+                    (remaining > 0).then(|| make_json_cursor(source_hash, query_hash, consumed));
+                let source_tokens = json_tokens(
+                    self,
+                    candidate
+                        .value
+                        .as_ref()
+                        .expect("keys projection keeps a value"),
+                )?;
+                candidate.meta.source_tokens = source_tokens;
+                candidate.meta.emitted_tokens = source_tokens;
+                self.finalized_response_tokens(&candidate)
+            })?;
+            if let Some(keep) = keep.filter(|keep| *keep > 0) {
+                let mut value = entries.clone();
+                value.truncate(keep);
+                response.value = Some(Value::Array(value));
+                let consumed = offset.saturating_add(keep);
+                let total = response.total_items.unwrap_or(consumed);
+                let remaining = total.saturating_sub(consumed);
+                response.returned_items = Some(keep);
+                response.remaining_items = Some(remaining);
+                response.result_complete = remaining == 0;
+                response.incomplete_reason =
+                    (remaining > 0).then_some(JsonIncompleteReason::MaxTokens);
+                response.meta.next_cursor =
+                    (remaining > 0).then(|| make_json_cursor(source_hash, query_hash, consumed));
+                let source_tokens = json_tokens(
+                    self,
+                    response
+                        .value
+                        .as_ref()
+                        .expect("keys projection keeps a value"),
+                )?;
+                response.meta.source_tokens = source_tokens;
+                response.meta.emitted_tokens = source_tokens;
+                return Ok(());
+            }
+        }
+
+        let requested = self.finalized_response_tokens(response)?;
+        Err(Error::RequestLimitExceeded {
+            field: "max_response_tokens",
+            requested,
+            limit: options
+                .max_response_tokens()
+                .expect("fitting only runs with a response limit"),
+        })
     }
 
     fn load_json(&self, path: &str) -> Result<LoadedJson> {
