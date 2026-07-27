@@ -34,8 +34,11 @@ const PRUNABLE_ARTIFACTS: &[&str] = &[
 ];
 const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
 const CACHE_LIST_CURSOR_PREFIX: &str = "cl1";
+const CACHE_LIST_V2_CURSOR_PREFIX: &str = "cl2";
 const CACHE_LIST_CURSOR_HASH_CHARS: usize = 16;
 const MAX_CACHE_LIST_CURSOR_BYTES: usize = 128;
+const MAX_CACHE_COMPATIBILITY_FILTERS: usize = 5;
+const MAX_CACHE_CONTENT_VERSION_FILTERS: usize = 32;
 
 /// Default number of cache entries returned by one list page.
 pub const DEFAULT_CACHE_LIST_LIMIT: usize = 20;
@@ -69,6 +72,22 @@ impl Default for CacheListRequest {
     }
 }
 
+/// Versioned compatibility filters layered over the stable cache-list request.
+///
+/// This separate options type preserves Rust struct-literal compatibility for
+/// [`CacheListRequest`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CacheListV2Request {
+    /// Existing metadata-state filters and response bounds.
+    pub request: CacheListRequest,
+    /// Keep entries in any of these content-compatibility classes.
+    pub compatibilities: Vec<CacheCompatibility>,
+    /// Keep entries with one of these exact versioned content identities.
+    pub index_content_versions: Vec<u32>,
+    /// Keep only safely classifiable older or legacy-unversioned content.
+    pub incompatible_with_current: bool,
+}
+
 /// Criteria and consent for one managed-cache prune operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CachePruneRequest {
@@ -82,6 +101,15 @@ pub struct CachePruneRequest {
     pub dry_run: bool,
     /// Confirm a non-dry-run deletion plan.
     pub yes: bool,
+}
+
+/// Versioned cache-prune criteria that preserve [`CachePruneRequest`] literals.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachePruneV2Request {
+    /// Existing age, storage, missing-root, and consent criteria.
+    pub request: CachePruneRequest,
+    /// Select inactive, recognizable older or legacy-unversioned caches.
+    pub incompatible_with_current: bool,
 }
 
 /// Metadata quality available for one cache directory.
@@ -100,6 +128,22 @@ pub enum CacheState {
     Unsupported,
     /// Unexpected content makes automatic deletion unsafe.
     Unrecognized,
+}
+
+/// Compatibility of indexed content with the current LeanToken build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheCompatibility {
+    /// Content was produced for the current index-content version.
+    CompatibleCurrent,
+    /// Content was produced by a known older index-content version.
+    ObsoleteOlder,
+    /// The legacy cache identity did not record an index-content version.
+    LegacyUnversioned,
+    /// Content was produced by a newer version this build must preserve.
+    NewerUnsupported,
+    /// Corrupt or unexpected metadata prevents a trustworthy classification.
+    Unknown,
 }
 
 /// Source used for the last-access value.
@@ -181,6 +225,65 @@ pub struct CacheListReport {
     pub next_cursor: Option<String>,
     /// Stable cache entries sorted by identifier and bounded to one page.
     pub entries: Vec<CacheEntry>,
+}
+
+/// Entry with explicit content compatibility for the versioned list report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CacheEntryV2 {
+    /// Existing auditable metadata fields, including the legacy `state` field.
+    #[serde(flatten)]
+    pub entry: CacheEntry,
+    /// Content compatibility independent from metadata/access state.
+    pub compatibility: CacheCompatibility,
+}
+
+/// Aggregate entry and byte counts for one compatibility class.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct CacheCompatibilitySummary {
+    /// Number of matched entries in this class.
+    pub entries: usize,
+    /// Managed artifact bytes in this class.
+    pub bytes: u64,
+}
+
+/// Versioned `cache list` report with content-compatibility diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CacheListV2Report {
+    /// Report schema version.
+    pub report_version: u32,
+    /// Platform-managed cache root inspected by the command.
+    pub cache_root: PathBuf,
+    /// Number of recognized caches before filters.
+    pub total_entries: usize,
+    /// Number of recognized caches after filters.
+    pub matched_entries: usize,
+    /// Number of entries included in this response page.
+    pub returned_entries: usize,
+    /// Sum of managed artifact bytes before filters.
+    pub total_bytes: u64,
+    /// Sum of managed artifact bytes after filters.
+    pub matched_bytes: u64,
+    /// Active leases among caches after filters.
+    pub active_entries: usize,
+    /// Recorded missing repository roots among caches after filters.
+    pub missing_root_entries: usize,
+    /// Counts by the existing metadata/access state after filters.
+    pub state_counts: BTreeMap<String, usize>,
+    /// Entry and byte totals by content compatibility after filters.
+    pub compatibility_counts: BTreeMap<String, CacheCompatibilitySummary>,
+    /// Inactive older or legacy entries whose metadata is safe to prune.
+    pub safely_reclaimable_incompatible_entries: usize,
+    /// Bytes in safely reclaimable incompatible entries.
+    pub safely_reclaimable_incompatible_bytes: u64,
+    /// Entries ignored because their names are not managed cache identities.
+    pub ignored_entries: usize,
+    /// Whether the request omitted per-cache entries.
+    pub summary_only: bool,
+    /// Cursor for the next stable identifier page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Stable cache entries sorted by identifier and bounded to one page.
+    pub entries: Vec<CacheEntryV2>,
 }
 
 /// Result action for one cache considered by prune.
@@ -271,6 +374,42 @@ impl CacheState {
     }
 }
 
+impl CacheCompatibility {
+    const ALL: [Self; 5] = [
+        Self::CompatibleCurrent,
+        Self::ObsoleteOlder,
+        Self::LegacyUnversioned,
+        Self::NewerUnsupported,
+        Self::Unknown,
+    ];
+
+    fn classify(entry: &CacheEntry) -> Self {
+        if matches!(entry.state, CacheState::Corrupt | CacheState::Unrecognized) {
+            return Self::Unknown;
+        }
+        match entry.index_content_version {
+            Some(version) if version == INDEX_CONTENT_VERSION => Self::CompatibleCurrent,
+            Some(version) if version < INDEX_CONTENT_VERSION => Self::ObsoleteOlder,
+            Some(_) => Self::NewerUnsupported,
+            None => Self::LegacyUnversioned,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::CompatibleCurrent => "compatible_current",
+            Self::ObsoleteOlder => "obsolete_older",
+            Self::LegacyUnversioned => "legacy_unversioned",
+            Self::NewerUnsupported => "newer_unsupported",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    fn safely_incompatible(self) -> bool {
+        matches!(self, Self::ObsoleteOlder | Self::LegacyUnversioned)
+    }
+}
+
 impl CachePruneAction {
     fn label(self) -> &'static str {
         match self {
@@ -293,6 +432,7 @@ struct CacheManager {
 #[derive(Debug)]
 struct InspectedCache {
     entry: CacheEntry,
+    compatibility: CacheCompatibility,
     safe_to_prune: bool,
 }
 
@@ -314,9 +454,19 @@ pub fn list_with(request: &CacheListRequest) -> Result<CacheListReport> {
     CacheManager::for_current_user()?.list_with(request)
 }
 
+/// List managed caches with explicit content-compatibility diagnostics.
+pub fn list_v2_with(request: &CacheListV2Request) -> Result<CacheListV2Report> {
+    CacheManager::for_current_user()?.list_v2_with(request)
+}
+
 /// Prune centrally managed repository caches using explicit criteria.
 pub fn prune(request: &CachePruneRequest) -> Result<CachePruneReport> {
     CacheManager::for_current_user()?.prune(request)
+}
+
+/// Prune caches with versioned compatibility criteria.
+pub fn prune_v2(request: &CachePruneV2Request) -> Result<CachePruneReport> {
+    CacheManager::for_current_user()?.prune_v2(request)
 }
 
 impl CacheManager {
@@ -417,18 +567,190 @@ impl CacheManager {
         })
     }
 
+    fn list_v2_with(&self, request: &CacheListV2Request) -> Result<CacheListV2Report> {
+        validate_list_request(&request.request)?;
+        if request.compatibilities.len() > MAX_CACHE_COMPATIBILITY_FILTERS {
+            return Err(Error::RequestLimitExceeded {
+                field: "cache compatibility filters",
+                requested: request.compatibilities.len(),
+                limit: MAX_CACHE_COMPATIBILITY_FILTERS,
+            });
+        }
+        if request.index_content_versions.len() > MAX_CACHE_CONTENT_VERSION_FILTERS {
+            return Err(Error::RequestLimitExceeded {
+                field: "cache content-version filters",
+                requested: request.index_content_versions.len(),
+                limit: MAX_CACHE_CONTENT_VERSION_FILTERS,
+            });
+        }
+        if request.index_content_versions.contains(&0) {
+            return Err(Error::InvalidInput {
+                field: "cache content-version filter",
+                reason: "must be positive",
+            });
+        }
+        let repository_root = request
+            .request
+            .repository_root
+            .as_deref()
+            .map(normalize_repository_root_filter);
+        let filter_hash = cache_list_v2_filter_hash(request, repository_root.as_deref());
+        let after_id = request
+            .request
+            .cursor
+            .as_deref()
+            .map(|cursor| {
+                decode_cache_list_cursor_with_prefix(
+                    cursor,
+                    CACHE_LIST_V2_CURSOR_PREFIX,
+                    &filter_hash,
+                )
+            })
+            .transpose()?;
+
+        let (entries, ignored_entries) = self.inspect_all()?;
+        let total_bytes = entries.iter().fold(0u64, |total, cache| {
+            total.saturating_add(cache.entry.size_bytes)
+        });
+        let matching = entries
+            .iter()
+            .filter(|cache| {
+                (request.request.states.is_empty()
+                    || request.request.states.contains(&cache.entry.state))
+                    && repository_root
+                        .as_ref()
+                        .is_none_or(|root| cache.entry.repository_root.as_ref() == Some(root))
+                    && (request.compatibilities.is_empty()
+                        || request.compatibilities.contains(&cache.compatibility))
+                    && (request.index_content_versions.is_empty()
+                        || cache.entry.index_content_version.is_some_and(|version| {
+                            request.index_content_versions.contains(&version)
+                        }))
+                    && (!request.incompatible_with_current
+                        || cache.compatibility.safely_incompatible())
+            })
+            .collect::<Vec<_>>();
+        let matched_bytes = matching.iter().fold(0u64, |total, cache| {
+            total.saturating_add(cache.entry.size_bytes)
+        });
+        let active_entries = matching.iter().filter(|cache| cache.entry.active).count();
+        let missing_root_entries = matching
+            .iter()
+            .filter(|cache| cache.entry.repository_available == Some(false))
+            .count();
+        let mut state_counts = CacheState::ALL
+            .into_iter()
+            .map(|state| (state.label().to_owned(), 0usize))
+            .collect::<BTreeMap<_, _>>();
+        let mut compatibility_counts = CacheCompatibility::ALL
+            .into_iter()
+            .map(|compatibility| {
+                (
+                    compatibility.label().to_owned(),
+                    CacheCompatibilitySummary::default(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut safely_reclaimable_incompatible_entries = 0usize;
+        let mut safely_reclaimable_incompatible_bytes = 0u64;
+        for cache in &matching {
+            *state_counts
+                .get_mut(cache.entry.state.label())
+                .expect("every cache state has a summary bucket") += 1;
+            let summary = compatibility_counts
+                .get_mut(cache.compatibility.label())
+                .expect("every compatibility has a summary bucket");
+            summary.entries = summary.entries.saturating_add(1);
+            summary.bytes = summary.bytes.saturating_add(cache.entry.size_bytes);
+            if cache.compatibility.safely_incompatible()
+                && cache.safe_to_prune
+                && !cache.entry.active
+            {
+                safely_reclaimable_incompatible_entries =
+                    safely_reclaimable_incompatible_entries.saturating_add(1);
+                safely_reclaimable_incompatible_bytes =
+                    safely_reclaimable_incompatible_bytes.saturating_add(cache.entry.size_bytes);
+            }
+        }
+
+        let start = after_id.as_deref().map_or(0, |after_id| {
+            matching.partition_point(|cache| cache.entry.id.as_str() <= after_id)
+        });
+        let end = if request.request.summary {
+            start
+        } else {
+            start
+                .saturating_add(request.request.limit)
+                .min(matching.len())
+        };
+        let page = matching[start..end]
+            .iter()
+            .map(|cache| CacheEntryV2 {
+                entry: cache.entry.clone(),
+                compatibility: cache.compatibility,
+            })
+            .collect::<Vec<_>>();
+        let next_cursor = if !request.request.summary && end < matching.len() {
+            page.last().map(|entry| {
+                encode_cache_list_cursor_with_prefix(
+                    CACHE_LIST_V2_CURSOR_PREFIX,
+                    &filter_hash,
+                    &entry.entry.id,
+                )
+            })
+        } else {
+            None
+        };
+        Ok(CacheListV2Report {
+            report_version: 2,
+            cache_root: self.root.clone(),
+            total_entries: entries.len(),
+            matched_entries: matching.len(),
+            returned_entries: page.len(),
+            total_bytes,
+            matched_bytes,
+            active_entries,
+            missing_root_entries,
+            state_counts,
+            compatibility_counts,
+            safely_reclaimable_incompatible_entries,
+            safely_reclaimable_incompatible_bytes,
+            ignored_entries,
+            summary_only: request.request.summary,
+            next_cursor,
+            entries: page,
+        })
+    }
+
     fn prune(&self, request: &CachePruneRequest) -> Result<CachePruneReport> {
-        validate_prune_request(request)?;
+        self.prune_with_compatibility(request, false)
+    }
+
+    fn prune_v2(&self, request: &CachePruneV2Request) -> Result<CachePruneReport> {
+        self.prune_with_compatibility(&request.request, request.incompatible_with_current)
+    }
+
+    fn prune_with_compatibility(
+        &self,
+        request: &CachePruneRequest,
+        incompatible_with_current: bool,
+    ) -> Result<CachePruneReport> {
+        validate_prune_request(request, incompatible_with_current)?;
         let (entries, _) = self.inspect_all()?;
         let total_bytes_before = entries.iter().fold(0u64, |total, cache| {
             total.saturating_add(cache.entry.size_bytes)
         });
-        let selected = select_prune_candidates(&entries, request, total_bytes_before);
+        let selected = select_prune_candidates(
+            &entries,
+            request,
+            total_bytes_before,
+            incompatible_with_current,
+        );
         let mut reclaimed_bytes = 0u64;
         let mut results = Vec::with_capacity(entries.len());
 
         for cache in entries {
-            let Some(reasons) = selected.get(&cache.entry.id).cloned() else {
+            let Some(mut reasons) = selected.get(&cache.entry.id).cloned() else {
                 results.push(prune_result(
                     &cache,
                     CachePruneAction::Kept,
@@ -471,6 +793,7 @@ impl CacheManager {
             let _lease = match coordination.try_acquire_prune_lease() {
                 Ok(Some(lease)) => lease,
                 Ok(None) => {
+                    reasons.push("prune_lease_unavailable".into());
                     results.push(prune_result(
                         &cache,
                         CachePruneAction::SkippedActive,
@@ -501,6 +824,25 @@ impl CacheManager {
                     continue;
                 }
             };
+            let selected_for_compatibility = reasons
+                .iter()
+                .any(|reason| reason.starts_with("incompatible_with_current:"));
+            if selected_for_compatibility && !current.compatibility.safely_incompatible() {
+                reasons.retain(|reason| !reason.starts_with("incompatible_with_current:"));
+                if reasons.is_empty() {
+                    reasons.push(format!(
+                        "incompatible_with_current_revalidated:{}",
+                        current.compatibility.label()
+                    ));
+                    results.push(prune_result(
+                        &current,
+                        CachePruneAction::Kept,
+                        reasons,
+                        None,
+                    ));
+                    continue;
+                }
+            }
             if !current.safe_to_prune {
                 results.push(prune_result(
                     &current,
@@ -654,6 +996,7 @@ impl CacheManager {
                     }
                 }
                 Err(error) => {
+                    metadata_safe = false;
                     entry.state = CacheState::Corrupt;
                     entry.detail = Some(error.to_string());
                 }
@@ -671,10 +1014,12 @@ impl CacheManager {
             entry.state = CacheState::Unrecognized;
             entry.detail = Some("cache directory contains unexpected entries".into());
         }
+        let compatibility = CacheCompatibility::classify(&entry);
 
         Ok(InspectedCache {
             safe_to_prune: final_scan.has_artifacts && !unexpected && metadata_safe,
             entry,
+            compatibility,
         })
     }
 }
@@ -841,11 +1186,56 @@ fn cache_list_filter_hash(request: &CacheListRequest, repository_root: Option<&P
     hasher.finalize().to_hex()[..CACHE_LIST_CURSOR_HASH_CHARS].to_owned()
 }
 
+fn cache_list_v2_filter_hash(
+    request: &CacheListV2Request,
+    repository_root: Option<&Path>,
+) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(cache_list_filter_hash(&request.request, repository_root).as_bytes());
+    hasher.update(b"\xffcompatibility\0");
+    if request.compatibilities.is_empty() {
+        hasher.update(b"all");
+    } else {
+        for compatibility in CacheCompatibility::ALL {
+            if request.compatibilities.contains(&compatibility) {
+                hasher.update(compatibility.label().as_bytes());
+                hasher.update(b"\0");
+            }
+        }
+    }
+    hasher.update(b"\xffcontent-versions\0");
+    let mut versions = request.index_content_versions.clone();
+    versions.sort_unstable();
+    versions.dedup();
+    if versions.is_empty() {
+        hasher.update(b"all");
+    } else {
+        for version in versions {
+            hasher.update(&version.to_le_bytes());
+        }
+    }
+    hasher.update(b"\xffincompatible\0");
+    hasher.update(&[u8::from(request.incompatible_with_current)]);
+    hasher.finalize().to_hex()[..CACHE_LIST_CURSOR_HASH_CHARS].to_owned()
+}
+
 fn encode_cache_list_cursor(filter_hash: &str, after_id: &str) -> String {
-    format!("{CACHE_LIST_CURSOR_PREFIX}:{filter_hash}:{after_id}")
+    encode_cache_list_cursor_with_prefix(CACHE_LIST_CURSOR_PREFIX, filter_hash, after_id)
+}
+
+fn encode_cache_list_cursor_with_prefix(prefix: &str, filter_hash: &str, after_id: &str) -> String {
+    format!("{prefix}:{filter_hash}:{after_id}")
 }
 
 fn decode_cache_list_cursor(cursor: &str, expected_filter_hash: &str) -> Result<String> {
+    decode_cache_list_cursor_with_prefix(cursor, CACHE_LIST_CURSOR_PREFIX, expected_filter_hash)
+}
+
+fn decode_cache_list_cursor_with_prefix(
+    cursor: &str,
+    expected_prefix: &str,
+    expected_filter_hash: &str,
+) -> Result<String> {
     if cursor.len() > MAX_CACHE_LIST_CURSOR_BYTES {
         return Err(Error::InputTooLong {
             field: "cache list cursor",
@@ -856,7 +1246,7 @@ fn decode_cache_list_cursor(cursor: &str, expected_filter_hash: &str) -> Result<
     let prefix = parts.next();
     let filter_hash = parts.next();
     let after_id = parts.next();
-    if prefix != Some(CACHE_LIST_CURSOR_PREFIX)
+    if prefix != Some(expected_prefix)
         || filter_hash.is_none_or(|hash| {
             hash.len() != CACHE_LIST_CURSOR_HASH_CHARS
                 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -877,13 +1267,18 @@ fn decode_cache_list_cursor(cursor: &str, expected_filter_hash: &str) -> Result<
     Ok(after_id.expect("validated cache cursor id").to_owned())
 }
 
-fn validate_prune_request(request: &CachePruneRequest) -> Result<()> {
+fn validate_prune_request(
+    request: &CachePruneRequest,
+    incompatible_with_current: bool,
+) -> Result<()> {
     if request.older_than_days.is_none()
         && request.max_total_bytes.is_none()
         && !request.remove_missing_roots
+        && !incompatible_with_current
     {
         return Err(Error::InvalidRequest(
-            "cache prune requires --older-than, --max-total-bytes, or --remove-missing-roots"
+            "cache prune requires --older-than, --max-total-bytes, \
+             --remove-missing-roots, or --incompatible-with-current"
                 .into(),
         ));
     }
@@ -904,12 +1299,22 @@ fn select_prune_candidates(
     entries: &[InspectedCache],
     request: &CachePruneRequest,
     total_bytes: u64,
+    incompatible_with_current: bool,
 ) -> BTreeMap<String, Vec<String>> {
     let mut selected = BTreeMap::<String, Vec<String>>::new();
     let minimum_age = request
         .older_than_days
         .map(|days| days.saturating_mul(SECONDS_PER_DAY));
     for cache in entries {
+        if incompatible_with_current && cache.compatibility.safely_incompatible() {
+            selected
+                .entry(cache.entry.id.clone())
+                .or_default()
+                .push(format!(
+                    "incompatible_with_current:{}",
+                    cache.compatibility.label()
+                ));
+        }
         if minimum_age.is_some_and(|age| cache.entry.age_seconds.is_some_and(|value| value >= age))
         {
             selected
@@ -1092,6 +1497,88 @@ pub fn print_list(report: &CacheListReport, json_output: bool) -> Result<()> {
     Ok(())
 }
 
+/// Print a versioned cache-list report as JSON or concise human-readable output.
+pub fn print_list_v2(report: &CacheListV2Report, json_output: bool) -> Result<()> {
+    let stdout = std::io::stdout();
+    let mut output = stdout.lock();
+    if json_output {
+        serde_json::to_writer(&mut output, report)?;
+        output.write_all(b"\n")?;
+        return Ok(());
+    }
+    writeln!(
+        output,
+        "Managed cache root: {}",
+        report.cache_root.display()
+    )?;
+    writeln!(
+        output,
+        "{} total cache(s), {} bytes; {} matched, {} bytes; {} returned",
+        report.total_entries,
+        report.total_bytes,
+        report.matched_entries,
+        report.matched_bytes,
+        report.returned_entries
+    )?;
+    let state_counts = report
+        .state_counts
+        .iter()
+        .map(|(state, count)| format!("{state}={count}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let compatibility_counts = report
+        .compatibility_counts
+        .iter()
+        .map(|(compatibility, summary)| {
+            format!("{compatibility}={}/{}B", summary.entries, summary.bytes)
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    writeln!(
+        output,
+        "states: {state_counts}; active={}; missing_roots={}; ignored={}",
+        report.active_entries, report.missing_root_entries, report.ignored_entries
+    )?;
+    writeln!(
+        output,
+        "compatibility: {compatibility_counts}; safely_reclaimable={}/{}B",
+        report.safely_reclaimable_incompatible_entries,
+        report.safely_reclaimable_incompatible_bytes
+    )?;
+    for entry in &report.entries {
+        writeln!(
+            output,
+            "{}  {} bytes  {}  {}  {}  last_access={}  root_available={}  {}",
+            entry.entry.id,
+            entry.entry.size_bytes,
+            if entry.entry.active {
+                "active"
+            } else {
+                "inactive"
+            },
+            entry.entry.state.label(),
+            entry.compatibility.label(),
+            entry
+                .entry
+                .last_access_unix_seconds
+                .map_or_else(|| "unknown".into(), |timestamp| timestamp.to_string()),
+            entry
+                .entry
+                .repository_available
+                .map_or("unknown", |available| if available { "yes" } else { "no" }),
+            entry
+                .entry
+                .repository_root
+                .as_deref()
+                .map_or_else(|| "unknown root".into(), |root| root.display().to_string())
+        )?;
+    }
+    if let Some(cursor) = &report.next_cursor {
+        writeln!(output, "next_cursor={cursor}")?;
+    }
+    Ok(())
+}
+
 /// Print a cache-prune report as JSON or concise human-readable output.
 pub fn print_prune(report: &CachePruneReport, json_output: bool) -> Result<()> {
     let stdout = std::io::stdout();
@@ -1166,6 +1653,27 @@ mod tests {
             )
             .expect("access timestamp");
         (id, database)
+    }
+
+    fn create_cache_with_content_identity(
+        manager: &CacheManager,
+        repository: &Path,
+        accessed_at: u64,
+        version: Option<u32>,
+    ) -> (String, PathBuf) {
+        let (current_id, database) = create_current_cache(manager, repository, accessed_at);
+        let root_hash = current_id
+            .split_once('-')
+            .expect("versioned cache identity")
+            .1;
+        let id = version.map_or_else(
+            || root_hash.to_owned(),
+            |version| format!("v{version}-{root_hash}"),
+        );
+        let directory = manager.root.join(&id);
+        fs::rename(database.parent().expect("cache directory"), &directory)
+            .expect("move cache identity");
+        (id, directory.join(DATABASE_NAME))
     }
 
     fn create_legacy_wal_cache(manager: &CacheManager, id: &str, accessed_at: u64) {
@@ -1265,6 +1773,199 @@ mod tests {
         );
         assert!(report.total_bytes > 0);
         assert_eq!(report.matched_bytes, report.total_bytes);
+    }
+
+    #[test]
+    fn list_v2_separates_metadata_state_from_content_compatibility() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let manager = CacheManager::new(temp.path().join("managed"), 10_000);
+        let repositories = (0..4)
+            .map(|index| {
+                let repository = temp.path().join(format!("repository-{index}"));
+                fs::create_dir(&repository).expect("repository");
+                repository
+            })
+            .collect::<Vec<_>>();
+        let (current_id, _) = create_current_cache(&manager, &repositories[0], 9_000);
+        let (older_id, _) = create_cache_with_content_identity(
+            &manager,
+            &repositories[1],
+            8_000,
+            Some(INDEX_CONTENT_VERSION - 1),
+        );
+        let (legacy_id, _) =
+            create_cache_with_content_identity(&manager, &repositories[2], 7_000, None);
+        let (future_id, _) = create_cache_with_content_identity(
+            &manager,
+            &repositories[3],
+            6_000,
+            Some(INDEX_CONTENT_VERSION + 1),
+        );
+        let corrupt_id = FIRST_ID;
+        let corrupt = manager.root.join(corrupt_id);
+        fs::create_dir_all(&corrupt).expect("corrupt cache directory");
+        fs::write(corrupt.join(DATABASE_NAME), b"not sqlite").expect("corrupt database");
+
+        let report = manager
+            .list_v2_with(&CacheListV2Request::default())
+            .expect("versioned cache list");
+
+        assert_eq!(report.report_version, 2);
+        assert_eq!(report.total_entries, 5);
+        assert_eq!(report.state_counts["current"], 3);
+        assert_eq!(report.state_counts["unsupported"], 1);
+        assert_eq!(report.state_counts["corrupt"], 1);
+        for compatibility in CacheCompatibility::ALL {
+            assert_eq!(
+                report.compatibility_counts[compatibility.label()].entries,
+                1,
+                "{compatibility:?}"
+            );
+        }
+        assert_eq!(report.safely_reclaimable_incompatible_entries, 2);
+        assert!(report.safely_reclaimable_incompatible_bytes > 0);
+        let project = |id: &str| {
+            report
+                .entries
+                .iter()
+                .find(|entry| entry.entry.id == id)
+                .map(|entry| (entry.entry.state, entry.compatibility))
+                .expect("listed cache")
+        };
+        assert_eq!(
+            project(&current_id),
+            (CacheState::Current, CacheCompatibility::CompatibleCurrent)
+        );
+        assert_eq!(
+            project(&older_id),
+            (CacheState::Current, CacheCompatibility::ObsoleteOlder)
+        );
+        assert_eq!(
+            project(&legacy_id),
+            (CacheState::Current, CacheCompatibility::LegacyUnversioned)
+        );
+        assert_eq!(
+            project(&future_id),
+            (
+                CacheState::Unsupported,
+                CacheCompatibility::NewerUnsupported
+            )
+        );
+        assert_eq!(
+            project(corrupt_id),
+            (CacheState::Corrupt, CacheCompatibility::Unknown)
+        );
+        let serialized = serde_json::to_value(&report).expect("serialize cache report");
+        assert!(
+            serialized["entries"]
+                .as_array()
+                .expect("entries")
+                .iter()
+                .any(|entry| {
+                    entry["id"] == legacy_id
+                        && entry["state"] == "current"
+                        && entry["compatibility"] == "legacy_unversioned"
+                })
+        );
+    }
+
+    #[test]
+    fn list_v2_filters_and_cursors_bind_every_compatibility_dimension() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let manager = CacheManager::new(temp.path().join("managed"), 10_000);
+        for (index, version) in [
+            INDEX_CONTENT_VERSION - 1,
+            INDEX_CONTENT_VERSION - 2,
+            INDEX_CONTENT_VERSION,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let repository = temp.path().join(format!("repository-{index}"));
+            fs::create_dir(&repository).expect("repository");
+            if version == INDEX_CONTENT_VERSION {
+                create_current_cache(&manager, &repository, 9_000);
+            } else {
+                create_cache_with_content_identity(&manager, &repository, 9_000, Some(version));
+            }
+        }
+
+        let first_request = CacheListV2Request {
+            request: CacheListRequest {
+                limit: 1,
+                ..CacheListRequest::default()
+            },
+            incompatible_with_current: true,
+            ..CacheListV2Request::default()
+        };
+        let first = manager
+            .list_v2_with(&first_request)
+            .expect("first incompatible page");
+        assert_eq!(first.matched_entries, 2);
+        assert_eq!(first.returned_entries, 1);
+        let cursor = first.next_cursor.expect("next cursor");
+        let second = manager
+            .list_v2_with(&CacheListV2Request {
+                request: CacheListRequest {
+                    limit: 1,
+                    cursor: Some(cursor.clone()),
+                    ..CacheListRequest::default()
+                },
+                incompatible_with_current: true,
+                ..CacheListV2Request::default()
+            })
+            .expect("second incompatible page");
+        assert_eq!(second.returned_entries, 1);
+        assert!(second.next_cursor.is_none());
+
+        for changed in [
+            CacheListV2Request {
+                request: CacheListRequest {
+                    cursor: Some(cursor.clone()),
+                    ..CacheListRequest::default()
+                },
+                compatibilities: vec![CacheCompatibility::ObsoleteOlder],
+                incompatible_with_current: true,
+                ..CacheListV2Request::default()
+            },
+            CacheListV2Request {
+                request: CacheListRequest {
+                    cursor: Some(cursor.clone()),
+                    ..CacheListRequest::default()
+                },
+                index_content_versions: vec![INDEX_CONTENT_VERSION - 1],
+                incompatible_with_current: true,
+                ..CacheListV2Request::default()
+            },
+            CacheListV2Request {
+                request: CacheListRequest {
+                    cursor: Some(cursor.clone()),
+                    ..CacheListRequest::default()
+                },
+                incompatible_with_current: false,
+                ..CacheListV2Request::default()
+            },
+        ] {
+            assert!(matches!(
+                manager.list_v2_with(&changed),
+                Err(Error::InvalidInput {
+                    field: "cache list cursor",
+                    reason: "does not match the active cache filters"
+                })
+            ));
+        }
+
+        let exact = manager
+            .list_v2_with(&CacheListV2Request {
+                index_content_versions: vec![INDEX_CONTENT_VERSION],
+                ..CacheListV2Request::default()
+            })
+            .expect("exact content-version filter");
+        assert_eq!(exact.matched_entries, 1);
+        assert_eq!(
+            exact.entries[0].compatibility,
+            CacheCompatibility::CompatibleCurrent
+        );
     }
 
     #[test]
@@ -1422,6 +2123,49 @@ mod tests {
                 field: "cache list cursor",
                 reason: "cannot be combined with summary mode"
             }
+        ));
+
+        let compatibility_limit = manager
+            .list_v2_with(&CacheListV2Request {
+                compatibilities: vec![
+                    CacheCompatibility::CompatibleCurrent;
+                    MAX_CACHE_COMPATIBILITY_FILTERS + 1
+                ],
+                ..CacheListV2Request::default()
+            })
+            .expect_err("compatibility filter fan-out");
+        assert!(matches!(
+            compatibility_limit,
+            Error::RequestLimitExceeded {
+                field: "cache compatibility filters",
+                ..
+            }
+        ));
+        let version_limit = manager
+            .list_v2_with(&CacheListV2Request {
+                index_content_versions: vec![
+                    INDEX_CONTENT_VERSION;
+                    MAX_CACHE_CONTENT_VERSION_FILTERS + 1
+                ],
+                ..CacheListV2Request::default()
+            })
+            .expect_err("content-version filter fan-out");
+        assert!(matches!(
+            version_limit,
+            Error::RequestLimitExceeded {
+                field: "cache content-version filters",
+                ..
+            }
+        ));
+        assert!(matches!(
+            manager.list_v2_with(&CacheListV2Request {
+                index_content_versions: vec![0],
+                ..CacheListV2Request::default()
+            }),
+            Err(Error::InvalidInput {
+                field: "cache content-version filter",
+                reason: "must be positive"
+            })
         ));
     }
 
@@ -1585,11 +2329,8 @@ mod tests {
         let mut prune = request();
         prune.max_total_bytes = Some(0);
         let plan = manager.prune(&prune).expect("prune plan");
-        assert!(
-            plan.results
-                .iter()
-                .all(|result| result.action == CachePruneAction::WouldDelete)
-        );
+        assert_eq!(plan.results[0].action, CachePruneAction::Kept);
+        assert_eq!(plan.results[1].action, CachePruneAction::WouldDelete);
         assert!(corrupt.join(DATABASE_NAME).exists());
         assert!(legacy.join(DATABASE_NAME).exists());
     }
@@ -1759,6 +2500,134 @@ mod tests {
         request.max_total_bytes = Some(0);
         let pruned = manager.prune(&request).expect("future cache prune plan");
         assert_eq!(pruned.results[0].action, CachePruneAction::Kept);
+        assert!(database.exists());
+    }
+
+    #[test]
+    fn incompatible_prune_is_dry_run_first_and_fail_closed() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let manager = CacheManager::new(temp.path().join("managed"), 10_000);
+        let repositories = (0..4)
+            .map(|index| {
+                let repository = temp.path().join(format!("repository-{index}"));
+                fs::create_dir(&repository).expect("repository");
+                repository
+            })
+            .collect::<Vec<_>>();
+        let (_, current_database) = create_current_cache(&manager, &repositories[0], 9_000);
+        let (older_id, older_database) = create_cache_with_content_identity(
+            &manager,
+            &repositories[1],
+            8_000,
+            Some(INDEX_CONTENT_VERSION - 1),
+        );
+        let (legacy_id, legacy_database) =
+            create_cache_with_content_identity(&manager, &repositories[2], 7_000, None);
+        let (_, future_database) = create_cache_with_content_identity(
+            &manager,
+            &repositories[3],
+            6_000,
+            Some(INDEX_CONTENT_VERSION + 1),
+        );
+        let corrupt = manager.root.join(FIRST_ID).join(DATABASE_NAME);
+        fs::create_dir_all(corrupt.parent().expect("corrupt directory"))
+            .expect("corrupt cache directory");
+        fs::write(&corrupt, b"not sqlite").expect("corrupt database");
+        let dry_run = CachePruneV2Request {
+            request: request(),
+            incompatible_with_current: true,
+        };
+
+        let plan = manager.prune_v2(&dry_run).expect("incompatible dry run");
+
+        for id in [&older_id, &legacy_id] {
+            let result = plan
+                .results
+                .iter()
+                .find(|result| &result.id == id)
+                .expect("incompatible result");
+            assert_eq!(result.action, CachePruneAction::WouldDelete);
+            assert_eq!(result.reasons.len(), 1);
+            assert!(result.reasons[0].starts_with("incompatible_with_current:"));
+        }
+        assert!(
+            plan.results
+                .iter()
+                .filter(|result| result.id != older_id && result.id != legacy_id)
+                .all(|result| result.action == CachePruneAction::Kept)
+        );
+        for database in [
+            &current_database,
+            &older_database,
+            &legacy_database,
+            &future_database,
+            &corrupt,
+        ] {
+            assert!(database.exists(), "dry run removed {}", database.display());
+        }
+
+        let applied = manager
+            .prune_v2(&CachePruneV2Request {
+                request: CachePruneRequest {
+                    dry_run: false,
+                    yes: true,
+                    ..request()
+                },
+                incompatible_with_current: true,
+            })
+            .expect("apply incompatible prune");
+        for id in [&older_id, &legacy_id] {
+            assert_eq!(
+                applied
+                    .results
+                    .iter()
+                    .find(|result| &result.id == id)
+                    .expect("deleted incompatible result")
+                    .action,
+                CachePruneAction::Deleted
+            );
+        }
+        assert!(!older_database.exists());
+        assert!(!legacy_database.exists());
+        assert!(current_database.exists());
+        assert!(future_database.exists());
+        assert!(corrupt.exists());
+    }
+
+    #[test]
+    fn incompatible_prune_never_projects_an_active_cache_as_reclaimable() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let repository = temp.path().join("repository");
+        fs::create_dir(&repository).expect("repository");
+        let manager = CacheManager::new(temp.path().join("managed"), 10_000);
+        let (_, database) = create_cache_with_content_identity(
+            &manager,
+            &repository,
+            9_000,
+            Some(INDEX_CONTENT_VERSION - 1),
+        );
+        let config =
+            Config::discover(&repository, Some(database.clone())).expect("active cache config");
+        let services = Services::open(config).expect("active cache service");
+        let request = CachePruneV2Request {
+            request: request(),
+            incompatible_with_current: true,
+        };
+
+        let listed = manager
+            .list_v2_with(&CacheListV2Request::default())
+            .expect("active compatibility summary");
+        assert_eq!(listed.compatibility_counts["obsolete_older"].entries, 1);
+        assert_eq!(listed.safely_reclaimable_incompatible_entries, 0);
+        assert_eq!(listed.safely_reclaimable_incompatible_bytes, 0);
+
+        let active = manager.prune_v2(&request).expect("active prune plan");
+        assert_eq!(active.results[0].action, CachePruneAction::SkippedActive);
+        assert!(database.exists());
+
+        drop(services);
+        let inactive = manager.prune_v2(&request).expect("inactive prune plan");
+        assert_eq!(inactive.results[0].action, CachePruneAction::WouldDelete);
         assert!(database.exists());
     }
 

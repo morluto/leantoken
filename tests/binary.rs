@@ -1270,6 +1270,20 @@ fn cache_list_and_prune_do_not_require_a_repository() {
     std::fs::create_dir_all(&cache).expect("cache directory");
     let database = cache.join("index.sqlite");
     std::fs::write(&database, b"corrupt managed cache").expect("cache fixture");
+    let legacy_cache = cache_root.join("0000000000000002");
+    std::fs::create_dir_all(&legacy_cache).expect("legacy cache directory");
+    let legacy_database = legacy_cache.join("index.sqlite");
+    rusqlite::Connection::open(&legacy_database)
+        .expect("legacy database")
+        .execute_batch(
+            "CREATE TABLE meta (
+                id INTEGER PRIMARY KEY,
+                schema_version INTEGER NOT NULL,
+                repository_root TEXT NOT NULL
+            );
+            INSERT INTO meta VALUES (1, 4, '');",
+        )
+        .expect("legacy metadata");
 
     let human_list = command()
         .args(["cache", "list"])
@@ -1295,7 +1309,7 @@ fn cache_list_and_prune_do_not_require_a_repository() {
     assert!(summary.status.success());
     let summary: serde_json::Value =
         serde_json::from_slice(&summary.stdout).expect("cache summary JSON");
-    assert_eq!(summary["total_entries"], 1);
+    assert_eq!(summary["total_entries"], 2);
     assert_eq!(summary["matched_entries"], 1);
     assert_eq!(summary["returned_entries"], 0);
     assert_eq!(summary["state_counts"]["corrupt"], 1);
@@ -1315,8 +1329,10 @@ fn cache_list_and_prune_do_not_require_a_repository() {
     assert!(dry_run.status.success());
     let dry_run: serde_json::Value =
         serde_json::from_slice(&dry_run.stdout).expect("prune JSON");
-    assert_eq!(dry_run["results"][0]["action"], "would_delete");
+    assert_eq!(dry_run["results"][0]["action"], "kept");
+    assert_eq!(dry_run["results"][1]["action"], "would_delete");
     assert!(database.exists());
+    assert!(legacy_database.exists());
 
     let human_prune = command()
         .args([
@@ -1349,8 +1365,10 @@ fn cache_list_and_prune_do_not_require_a_repository() {
     );
     let prune: serde_json::Value =
         serde_json::from_slice(&prune.stdout).expect("prune JSON");
-    assert_eq!(prune["results"][0]["action"], "deleted");
-    assert!(!database.exists());
+    assert_eq!(prune["results"][0]["action"], "kept");
+    assert_eq!(prune["results"][1]["action"], "deleted");
+    assert!(database.exists());
+    assert!(!legacy_database.exists());
 }
 
 #[test]
