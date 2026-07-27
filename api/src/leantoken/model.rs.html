@@ -68,7 +68,7 @@
 <a href=#68 id=68 data-nosnippet>68</a>    <span class="doccomment">/// Tokens attributed to paths, metadata values, and repeated result structure.
 <a href=#69 id=69 data-nosnippet>69</a>    </span><span class="attr">#[serde(default, skip_serializing_if = <span class="string">"is_zero"</span>)]
 <a href=#70 id=70 data-nosnippet>70</a>    </span><span class="kw">pub </span>path_and_metadata_tokens: usize,
-<a href=#71 id=71 data-nosnippet>71</a>    <span class="doccomment">/// Tokens in the compact serialized response, excluding accounting fields themselves.
+<a href=#71 id=71 data-nosnippet>71</a>    <span class="doccomment">/// Tokens in the final serialized service response, including accounting fields.
 <a href=#72 id=72 data-nosnippet>72</a>    </span><span class="attr">#[serde(default, skip_serializing_if = <span class="string">"is_zero"</span>)]
 <a href=#73 id=73 data-nosnippet>73</a>    </span><span class="kw">pub </span>total_response_tokens: usize,
 <a href=#74 id=74 data-nosnippet>74</a>    <span class="doccomment">/// Compatibility alias for `total_response_tokens`.
@@ -2023,7 +2023,7 @@
 <a href=#2023 id=2023 data-nosnippet>2023</a>    </span><span class="kw">pub </span>path_and_metadata_tokens: u64,
 <a href=#2024 id=2024 data-nosnippet>2024</a>    <span class="doccomment">/// Tokens attributed to the compact response envelope.
 <a href=#2025 id=2025 data-nosnippet>2025</a>    </span><span class="kw">pub </span>protocol_tokens: u64,
-<a href=#2026 id=2026 data-nosnippet>2026</a>    <span class="doccomment">/// Tokens in complete serialized responses, excluding accounting fields themselves.
+<a href=#2026 id=2026 data-nosnippet>2026</a>    <span class="doccomment">/// Tokens in complete serialized responses, including accounting fields.
 <a href=#2027 id=2027 data-nosnippet>2027</a>    </span><span class="kw">pub </span>total_response_tokens: u64,
 <a href=#2028 id=2028 data-nosnippet>2028</a>    <span class="doccomment">/// Baseline tokens minus complete response tokens; negative values are net cost.
 <a href=#2029 id=2029 data-nosnippet>2029</a>    </span><span class="kw">pub </span>estimated_net_tokens_saved: i64,
@@ -2052,7 +2052,7 @@
 <a href=#2052 id=2052 data-nosnippet>2052</a>    </span><span class="kw">pub </span>path_and_metadata_tokens: u64,
 <a href=#2053 id=2053 data-nosnippet>2053</a>    <span class="doccomment">/// Tokens attributed to compact response envelopes.
 <a href=#2054 id=2054 data-nosnippet>2054</a>    </span><span class="kw">pub </span>protocol_tokens: u64,
-<a href=#2055 id=2055 data-nosnippet>2055</a>    <span class="doccomment">/// Tokens in complete serialized responses, excluding accounting fields themselves.
+<a href=#2055 id=2055 data-nosnippet>2055</a>    <span class="doccomment">/// Tokens in complete serialized responses, including accounting fields.
 <a href=#2056 id=2056 data-nosnippet>2056</a>    </span><span class="kw">pub </span>total_response_tokens: u64,
 <a href=#2057 id=2057 data-nosnippet>2057</a>    <span class="doccomment">/// Baseline tokens minus complete response tokens; negative values are net cost.
 <a href=#2058 id=2058 data-nosnippet>2058</a>    </span><span class="kw">pub </span>estimated_net_tokens_saved: i64,

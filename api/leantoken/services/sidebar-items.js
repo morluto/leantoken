@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["Services"]};
+window.SIDEBAR_ITEMS = {"struct":["ServiceCallOptions","Services"]};
