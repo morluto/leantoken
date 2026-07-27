@@ -188,10 +188,7 @@ async fn benchmark_token_economy() {
             })
             .sum();
         assert!(
-            repeated
-                .omitted
-                .iter()
-                .any(|candidate| candidate.reason == "known hash"),
+            repeated.omission_summary.known_hash > 0,
             "known-hash omission should be visible in the bounded omission summary"
         );
 
