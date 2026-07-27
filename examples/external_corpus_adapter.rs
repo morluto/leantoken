@@ -54,6 +54,25 @@ enum AdapterCommand {
         #[arg(long, default_value_t = DEFAULT_TOKEN_BUDGET)]
         token_budget: usize,
     },
+    /// Convert the pinned ARB trace-to-code release.
+    ArbTrace2code {
+        /// Root containing the extracted pinned ARB release.
+        #[arg(long)]
+        source: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        /// Include only these upstream sample IDs.
+        #[arg(long)]
+        sample_id: Vec<String>,
+        /// Include only these `owner/repository` names.
+        #[arg(long)]
+        repository: Vec<String>,
+        /// Bound the total converted tasks for a smoke run.
+        #[arg(long)]
+        limit: Option<usize>,
+        #[arg(long, default_value_t = DEFAULT_TOKEN_BUDGET)]
+        token_budget: usize,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,6 +81,8 @@ struct CorpusLock {
     frozen_at: String,
     semble: SembleLock,
     sverklo: SverkloLock,
+    #[serde(default)]
+    arb: Option<ArbLock>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,6 +108,29 @@ struct SverkloLock {
     prompt_provenance: String,
     label_provenance: String,
     limitations: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArbLock {
+    dataset_url: String,
+    dataset_revision: String,
+    dataset_license: String,
+    release_id: String,
+    release_sha256: String,
+    samples_file: String,
+    samples_blake3: String,
+    supported_task_type: String,
+    repositories: Vec<ArbRepository>,
+    prompt_provenance: String,
+    label_provenance: String,
+    limitations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ArbRepository {
+    name: String,
+    url: String,
+    language: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -154,6 +198,31 @@ enum SverkloExpected {
 struct SverkloLocation {
     file: String,
     line: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArbSample {
+    id: String,
+    repo: String,
+    base_commit: String,
+    task_type: String,
+    query: serde_json::Value,
+    gold: ArbGold,
+    #[serde(default)]
+    gold_spans: Vec<ArbSpan>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArbGold {
+    #[serde(default)]
+    root_cause_files: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArbSpan {
+    path: String,
+    start_line: usize,
+    end_line: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -238,6 +307,30 @@ fn main() -> Result<(), Box<dyn Error>> {
             write_manifest(&output, &manifest)?;
             (manifest, skipped)
         }
+        AdapterCommand::ArbTrace2code {
+            source,
+            output,
+            sample_id,
+            repository,
+            limit,
+            token_budget,
+        } => {
+            let arb = lock
+                .arb
+                .as_ref()
+                .ok_or("external corpus lock does not define ARB")?;
+            let (manifest, skipped) = convert_arb_trace2code(
+                &source,
+                &lock,
+                arb,
+                &sample_id.into_iter().collect(),
+                &repository.into_iter().collect(),
+                limit,
+                token_budget,
+            )?;
+            write_manifest(&output, &manifest)?;
+            (manifest, skipped)
+        }
     };
 
     eprintln!(
@@ -299,6 +392,44 @@ fn validate_lock(lock: &CorpusLock) -> Result<(), Box<dyn Error>> {
         lock.sverklo.tasks_file.as_str(),
     ] {
         validate_relative_path(path)?;
+    }
+    if let Some(arb) = &lock.arb {
+        if [
+            arb.dataset_url.as_str(),
+            arb.dataset_license.as_str(),
+            arb.release_id.as_str(),
+            arb.supported_task_type.as_str(),
+            arb.prompt_provenance.as_str(),
+            arb.label_provenance.as_str(),
+        ]
+        .into_iter()
+        .any(str::is_empty)
+        {
+            return Err("ARB corpus lock has an empty required field".into());
+        }
+        validate_revision(&arb.dataset_revision)?;
+        validate_hex_digest(&arb.release_sha256, 64, "ARB release SHA-256")?;
+        validate_hex_digest(&arb.samples_blake3, 64, "ARB samples BLAKE3")?;
+        validate_relative_path(&arb.samples_file)?;
+        if arb.repositories.is_empty() || arb.limitations.is_empty() {
+            return Err("ARB corpus lock requires repositories and limitations".into());
+        }
+        let mut repository_names = HashSet::new();
+        for repository in &arb.repositories {
+            if [
+                repository.name.as_str(),
+                repository.url.as_str(),
+                repository.language.as_str(),
+            ]
+            .into_iter()
+            .any(str::is_empty)
+            {
+                return Err("ARB repository lock has an empty required field".into());
+            }
+            if !repository_names.insert(repository.name.as_str()) {
+                return Err(format!("duplicate ARB repository {}", repository.name).into());
+            }
+        }
     }
     Ok(())
 }
@@ -580,6 +711,156 @@ fn convert_sverklo_task(
     })
 }
 
+fn convert_arb_trace2code(
+    source: &Path,
+    lock: &CorpusLock,
+    arb: &ArbLock,
+    sample_ids: &HashSet<String>,
+    repositories: &HashSet<String>,
+    limit: Option<usize>,
+    token_budget: usize,
+) -> Result<(Manifest, usize), Box<dyn Error>> {
+    validate_budget(token_budget)?;
+    if arb.supported_task_type != "trace2code" {
+        return Err(format!(
+            "unsupported locked ARB task type {}",
+            arb.supported_task_type
+        )
+        .into());
+    }
+    let samples_path = source.join(&arb.samples_file);
+    verify_blake3(&samples_path, &arb.samples_blake3)?;
+    let repository_locks = arb
+        .repositories
+        .iter()
+        .map(|repository| (repository.name.as_str(), repository))
+        .collect::<BTreeMap<_, _>>();
+    let mut corpora = BTreeMap::<(String, String), Corpus>::new();
+    let mut converted = 0usize;
+    let mut skipped = 0usize;
+
+    for sample in read_jsonl::<ArbSample>(&samples_path)? {
+        if sample.task_type != arb.supported_task_type {
+            skipped += 1;
+            continue;
+        }
+        if !sample_ids.is_empty() && !sample_ids.contains(&sample.id) {
+            continue;
+        }
+        if !repositories.is_empty() && !repositories.contains(&sample.repo) {
+            continue;
+        }
+        if limit.is_some_and(|limit| converted >= limit) {
+            break;
+        }
+        let repository = repository_locks.get(sample.repo.as_str()).ok_or_else(|| {
+            format!(
+                "ARB sample {} uses unlocked repository {}",
+                sample.id, sample.repo
+            )
+        })?;
+        validate_revision(&sample.base_commit)?;
+        let task = convert_arb_trace2code_sample(&sample, repository, token_budget)?;
+        let key = (sample.repo.clone(), sample.base_commit.clone());
+        let corpus = corpora.entry(key).or_insert_with(|| Corpus {
+            name: format!("arb:{}:{}", sample.repo, &sample.base_commit[..12]),
+            url: repository.url.clone(),
+            directory: format!(
+                "arb-{}-{}",
+                sample.repo.replace('/', "__"),
+                &sample.base_commit[..12]
+            ),
+            base_revision: sample.base_commit.clone(),
+            fix_commit: None,
+            issue_url: None,
+            prompt_provenance: arb.prompt_provenance.clone(),
+            label_provenance: arb.label_provenance.clone(),
+            dataset_url: arb.dataset_url.clone(),
+            dataset_revision: arb.dataset_revision.clone(),
+            dataset_license: arb.dataset_license.clone(),
+            external_limitations: arb.limitations.clone(),
+            tasks: Vec::new(),
+        });
+        corpus.tasks.push(task);
+        converted += 1;
+    }
+    if converted == 0 {
+        return Err("ARB filters selected no trace2code samples".into());
+    }
+    let manifest = external_manifest(
+        &lock.frozen_at,
+        "Agent Retrieval Bench trace2code smoke",
+        &format!(
+            "{} deterministically selected task(s) from pinned release {} (archive SHA-256 {}). This is a bounded smoke baseline, not a complete ARB leaderboard run.",
+            converted, arb.release_id, arb.release_sha256
+        ),
+        corpora.into_values().collect(),
+    );
+    Ok((manifest, skipped))
+}
+
+fn convert_arb_trace2code_sample(
+    sample: &ArbSample,
+    repository: &ArbRepository,
+    token_budget: usize,
+) -> Result<Task, Box<dyn Error>> {
+    if sample.gold.root_cause_files.is_empty() {
+        return Err(format!(
+            "ARB trace2code sample {} has no root-cause files",
+            sample.id
+        )
+        .into());
+    }
+    let root_cause_files = sample
+        .gold
+        .root_cause_files
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let mut by_path = BTreeMap::<String, Vec<usize>>::new();
+    for path in &sample.gold.root_cause_files {
+        validate_relative_path(path)?;
+        by_path.entry(path.clone()).or_default();
+    }
+    for span in &sample.gold_spans {
+        if span.start_line == 0 || span.end_line < span.start_line {
+            return Err(format!(
+                "invalid ARB span {}:{}-{}",
+                span.path, span.start_line, span.end_line
+            )
+            .into());
+        }
+        validate_relative_path(&span.path)?;
+        if root_cause_files.contains(&span.path) {
+            by_path
+                .entry(span.path.clone())
+                .or_default()
+                .push(span.start_line);
+        }
+    }
+    let relevant_files = by_path
+        .into_iter()
+        .map(|(path, mut line_anchors)| {
+            line_anchors.sort_unstable();
+            line_anchors.dedup();
+            RelevantFile { path, line_anchors }
+        })
+        .collect();
+    let prompt = serde_json::to_string(&sample.query)?;
+    if prompt == "{}" || prompt == "null" {
+        return Err(format!("ARB sample {} has an empty query", sample.id).into());
+    }
+    Ok(Task {
+        id: format!("arb:{}", sample.id),
+        prompt,
+        languages: vec![repository.language.clone()],
+        task_shapes: vec!["failure_trace_root_cause".into()],
+        rg_queries: Vec::new(),
+        relevant_files,
+        token_budget,
+    })
+}
+
 fn external_manifest(
     frozen_at: &str,
     corpus_name: &str,
@@ -597,6 +878,18 @@ fn external_manifest(
         rg_max_lines_per_query: 200,
         corpora,
     }
+}
+
+fn verify_blake3(path: &Path, expected: &str) -> Result<(), Box<dyn Error>> {
+    let actual = blake3::hash(&fs::read(path)?).to_hex().to_string();
+    if actual != expected {
+        return Err(format!(
+            "BLAKE3 mismatch for {}: expected {expected}, got {actual}",
+            path.display()
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn validate_repository(repository: &LockedRepository) -> Result<(), Box<dyn Error>> {
@@ -629,6 +922,13 @@ fn validate_revision(revision: &str) -> Result<(), Box<dyn Error>> {
         return Err(
             format!("revision must be a full 40-character Git object ID: {revision}").into(),
         );
+    }
+    Ok(())
+}
+
+fn validate_hex_digest(value: &str, length: usize, name: &str) -> Result<(), Box<dyn Error>> {
+    if value.len() != length || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("{name} must be exactly {length} hexadecimal characters").into());
     }
     Ok(())
 }
@@ -778,10 +1078,60 @@ mod tests {
     }
 
     #[test]
+    fn arb_trace2code_preserves_query_and_root_cause_labels() {
+        let sample: ArbSample = serde_json::from_value(serde_json::json!({
+            "id": "arb-sample",
+            "repo": "demo/repository",
+            "base_commit": "0123456789abcdef0123456789abcdef01234567",
+            "task_type": "trace2code",
+            "query": {
+                "command": "cargo test",
+                "failure_excerpt": "src/lib.rs:12: missing method"
+            },
+            "gold": {
+                "root_cause_files": ["src/lib.rs"],
+                "related_tests": ["tests/regression.rs"]
+            },
+            "gold_spans": [
+                {
+                    "path": "src/lib.rs",
+                    "start_line": 10,
+                    "end_line": 20
+                },
+                {
+                    "path": "tests/regression.rs",
+                    "start_line": 1,
+                    "end_line": 5
+                }
+            ]
+        }))
+        .expect("sample");
+        let task = convert_arb_trace2code_sample(
+            &sample,
+            &ArbRepository {
+                name: "demo/repository".into(),
+                url: "https://example.invalid/repository.git".into(),
+                language: "rust".into(),
+            },
+            2_000,
+        )
+        .expect("convert");
+
+        assert!(task.prompt.contains("\"command\":\"cargo test\""));
+        assert!(task.prompt.contains("\"failure_excerpt\""));
+        assert_eq!(task.task_shapes, vec!["failure_trace_root_cause"]);
+        assert_eq!(task.relevant_files.len(), 1);
+        assert_eq!(task.relevant_files[0].path, "src/lib.rs");
+        assert_eq!(task.relevant_files[0].line_anchors, vec![10]);
+    }
+
+    #[test]
     fn invalid_paths_and_unpinned_revisions_are_rejected() {
         assert!(validate_relative_path("../secret").is_err());
         assert!(validate_relative_path(r"src\\lib.rs").is_err());
         assert!(validate_revision("main").is_err());
         assert!(validate_revision("0123456789abcdef0123456789abcdef01234567").is_ok());
+        assert!(validate_hex_digest(&"a".repeat(64), 64, "digest").is_ok());
+        assert!(validate_hex_digest(&"a".repeat(63), 64, "digest").is_err());
     }
 }

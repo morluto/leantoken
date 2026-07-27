@@ -1,6 +1,61 @@
 {
   "schema_version": 1,
-  "frozen_at": "2026-07-26",
+  "frozen_at": "2026-07-27",
+  "arb": {
+    "dataset_url": "https://huggingface.co/datasets/eyuansu71/agent_retrieval_bench",
+    "dataset_revision": "c50401f20c60a8c45da94f2ef785ac9a99a6eb55",
+    "dataset_license": "MIT benchmark metadata; redistributed source chunks retain upstream repository licenses",
+    "release_id": "v2_trace2code",
+    "release_sha256": "19b252e8cfff42107fedc74005dbb6972f2970af33651ce0c1571546819e41c4",
+    "samples_file": "benchmark/v2_trace2code/samples.jsonl",
+    "samples_blake3": "331bb5f0f8b4660eb9329494701439df98cf05ec0782b3812cb8126e3470eb71",
+    "supported_task_type": "trace2code",
+    "repositories": [
+      {
+        "name": "caddyserver/caddy",
+        "url": "https://github.com/caddyserver/caddy.git",
+        "language": "go"
+      },
+      {
+        "name": "clap-rs/clap",
+        "url": "https://github.com/clap-rs/clap.git",
+        "language": "rust"
+      },
+      {
+        "name": "etcd-io/etcd",
+        "url": "https://github.com/etcd-io/etcd.git",
+        "language": "go"
+      },
+      {
+        "name": "gin-gonic/gin",
+        "url": "https://github.com/gin-gonic/gin.git",
+        "language": "go"
+      },
+      {
+        "name": "pallets/click",
+        "url": "https://github.com/pallets/click.git",
+        "language": "python"
+      },
+      {
+        "name": "pytest-dev/pytest",
+        "url": "https://github.com/pytest-dev/pytest.git",
+        "language": "python"
+      },
+      {
+        "name": "tokio-rs/tokio",
+        "url": "https://github.com/tokio-rs/tokio.git",
+        "language": "rust"
+      }
+    ],
+    "prompt_provenance": "Exact JSON serialization of the public ARB query object from the pinned v2_trace2code release.",
+    "label_provenance": "ARB target_gold_files semantics for trace2code: public root_cause_files with public gold_spans supplying optional line anchors.",
+    "limitations": [
+      "The adapter intentionally supports only the pinned trace2code release; other ARB workflow schemas require separate evidence-aware adapters.",
+      "A filtered smoke manifest is not representative of the 101 trace2code tasks and must not be reported as an ARB leaderboard or scalability result.",
+      "Related tests and hard negatives are not promoted to trace2code gold files.",
+      "The generated manifest contains metadata and labels only; source snapshots remain upstream under their original licenses."
+    ]
+  },
   "semble": {
     "dataset_url": "https://github.com/MinishLab/semble",
     "dataset_revision": "906319556a46bca45d8809b4733e05dd51cd5ba2",

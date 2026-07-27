@@ -1355,10 +1355,7 @@ async fn run_task(
     let two_turn_context_json_tokens = leantoken_total_json_tokens
         .saturating_add(repeat_request_json_tokens)
         .saturating_add(repeat_total_json_tokens);
-    let known_hash_omission_visible = repeat
-        .omitted
-        .iter()
-        .any(|candidate| candidate.reason == "known hash");
+    let known_hash_omission_visible = reports_known_hash_omission(&repeat);
     if !known_set.is_empty() && !known_hash_omission_visible {
         return Err(format!("{} hid all known-hash omissions", task.id).into());
     }
@@ -1418,6 +1415,14 @@ async fn run_task(
         dead_end_source_tokens,
         concept_coverage,
     })
+}
+
+fn reports_known_hash_omission(response: &ContextResponse) -> bool {
+    response.omission_summary.known_hash > 0
+        || response
+            .omitted
+            .iter()
+            .any(|candidate| candidate.reason == "known hash")
 }
 
 fn run_rg<'a>(
@@ -1923,6 +1928,15 @@ mod tests {
                 next_cursor: None,
             },
         }
+    }
+
+    #[test]
+    fn compact_omission_summary_reports_known_hashes() {
+        let mut response = context_response("receipt");
+        assert!(!reports_known_hash_omission(&response));
+
+        response.omission_summary.known_hash = 1;
+        assert!(reports_known_hash_omission(&response));
     }
 
     fn candidate(path: &str, start_line: usize, end_line: usize) -> ContextCandidateEvaluation {

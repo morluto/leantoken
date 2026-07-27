@@ -613,6 +613,60 @@ and cannot by themselves promote a ranking change.
 The first clean, task-stratified run and adoption decision are recorded in
 [`reports/external-retrieval-corpora-v1-2026-07-26.md`](reports/external-retrieval-corpora-v1-2026-07-26.md).
 
+The same lock also pins Agent Retrieval Bench (ARB) dataset revision
+`c50401f20c60a8c45da94f2ef785ac9a99a6eb55`. The adapter intentionally accepts
+only the `v2_trace2code` release. The lock records its 39,295,446-byte archive
+SHA-256, and the adapter verifies the extracted `samples.jsonl` BLAKE3. A
+bounded Rust/Python smoke run can be prepared without downloading the complete
+benchmark:
+
+```bash
+huggingface-cli download eyuansu71/agent_retrieval_bench \
+  --repo-type dataset \
+  --revision c50401f20c60a8c45da94f2ef785ac9a99a6eb55 \
+  releases/v2_trace2code/agent_retrieval_bench_v2_trace2code.tar.zst \
+  releases/v2_trace2code/agent_retrieval_bench_v2_trace2code.tar.zst.sha256 \
+  --local-dir target/arb
+(cd target/arb && sha256sum --check \
+  releases/v2_trace2code/agent_retrieval_bench_v2_trace2code.tar.zst.sha256)
+tar --zstd -xf \
+  target/arb/releases/v2_trace2code/agent_retrieval_bench_v2_trace2code.tar.zst \
+  -C target/arb
+
+cargo run --release --example external_corpus_adapter -- \
+  --lock benchmarks/external_corpora.json \
+  arb-trace2code \
+  --source target/arb \
+  --sample-id 2d65eeb2c97d07f557b1ddb2 \
+  --sample-id 08d24e63e480c9447082ccfb \
+  --output target/external-corpora/arb-trace2code-smoke.json
+
+git clone --filter=blob:none https://github.com/clap-rs/clap.git \
+  target/arb-repos/arb-clap-rs__clap-e82e1edf76bc
+git -C target/arb-repos/arb-clap-rs__clap-e82e1edf76bc checkout \
+  e82e1edf76bcbddf5fe53428d297520d76a6a300
+git clone --filter=blob:none https://github.com/pallets/click.git \
+  target/arb-repos/arb-pallets__click-011b9f9d190c
+git -C target/arb-repos/arb-pallets__click-011b9f9d190c checkout \
+  011b9f9d190c71310264e6c54bae6259f5e38a9f
+
+cargo run --release --example representative_benchmark -- \
+  --manifest target/external-corpora/arb-trace2code-smoke.json \
+  --repos-root target/arb-repos \
+  --output target/external-corpora/arb-trace2code-smoke-report.json
+```
+
+Each repository directory under `target/arb-repos` must match the generated
+manifest's `directory` and exact `base_revision`. The adapter preserves the
+public ARB query object verbatim as JSON, promotes only `root_cause_files` to
+gold files, and uses root-cause spans as optional anchors. Related tests and
+hard negatives are not gold. A two-task smoke report is diagnostic only: it is
+not representative of all 101 trace2code tasks and must not be presented as an
+ARB leaderboard or scalability result.
+
+The frozen baseline and its exact provenance are recorded in
+[`reports/arb-trace2code-smoke-baseline-v1-2026-07-27.md`](reports/arb-trace2code-smoke-baseline-v1-2026-07-27.md).
+
 ## Measurements
 
 The synthetic `hot_path_bounds` report includes deterministic phase counters
