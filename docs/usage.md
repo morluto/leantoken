@@ -632,6 +632,10 @@ hard boundary: every returned source fragment must match at least one supplied
 pattern, while `focus_paths` remains a ranking boost unless
 `strict_focus_paths=true`. `minimum_fragments_per_focus_path` reserves the
 requested number of fragments for every focus pattern before ordinary ranking.
+Context accepts at most 32 focus patterns and a minimum of at most eight
+fragments per pattern. Required focus coverage receives bounded file-local
+candidates before global top-N truncation; broad globs that exceed the
+per-pattern file inspection bound report that limitation in `warnings`.
 `strict_changed_paths=true` restricts fragments to the resolved explicit paths,
 an immutable `BASE..HEAD` range, a base-revision-to-working-tree diff, or current
 Git working-tree changes when neither diff input is supplied. Include, strict

@@ -344,6 +344,11 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | --- | --- |
 | Context query terms | 12 (`MAX_CONTEXT_QUERIES`) |
 | Context hits per term/source | 20 symbols/refs, 30 FTS |
+| Focus patterns with local candidate generation | 32 |
+| Focused indexed files inspected per pattern | First 4 policy-eligible paths in lexical order |
+| File-local focused records inspected | 256 chunks and 128 symbols per file |
+| Focus-local candidates retained per pattern | 8 |
+| Focus-local storage lookups | At most 256 (32 patterns × 4 files × 2 record kinds) |
 | Regex matching chunks | `min(max_results × 20, 2000)` |
 | Trigram candidate chunks | 10000 |
 | Lightweight rows inspected for path-scoped trigram planning | 100000 |
@@ -351,6 +356,28 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | Full-scan fallback chunks per file | 256 |
 | File scan page size | 1000 for find/glob; tree queries `max_results + 1` projected paths |
 | Opt-in response-bounded read materializations | At most 18 within one pinned generation |
+
+Focus quotas do not depend on global per-query top-N channels. During the
+existing 512-row paged constraint scan, context counts every indexed focus
+match and retains the first four policy-eligible paths in lexical order. Before
+ranking it inspects bounded file-local chunks and symbols, prefers task-matching
+structural and lexical excerpts, and uses a deterministically task-scored chunk
+only when the focused files contain no semantic hit. At most eight candidates
+per pattern enter global deduplication and quota reservation.
+
+Requests above 32 focus patterns or a per-pattern minimum above eight fail with
+a typed limit error. A broad pattern resolving beyond four eligible files emits
+an explicit incomplete warning. Include/exclude, generated-artifact, strict
+focus, and strict changed-path policies apply before local generation, and a
+policy-empty focus scope is reported separately from a pattern that matches no
+indexed file.
+
+The 12-query context planner retains up to four early domain terms and two
+high-specificity terms selected from the remainder of the complete task.
+Natural-language tasks retain at most two deterministic bigrams; tasks with
+technical atoms retain one bigram while reserving up to four exact-atom slots.
+This reduces sentence-order sensitivity without making query fan-out depend on
+task length.
 
 Regex mode first parses a bounded HIR candidate plan. Mandatory case-sensitive
 ASCII word literals of at least three bytes become trigram `AND`/`OR`

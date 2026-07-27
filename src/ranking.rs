@@ -1966,6 +1966,7 @@ mod tests {
 
         let mut req = request_with_budget(10);
         req.known_hashes.push(hash);
+        req.verbose_diagnostics = true;
 
         let resp = select(vec![c], &req, 1);
 
@@ -1979,7 +1980,8 @@ mod tests {
         let kept = Candidate::new("src/lib.rs", 1, 2, "alpha").exact(1.0);
         let excluded = Candidate::new("test/ranking.rs", 1, 2, "beta").exact(1.0);
 
-        let req = request_excluding(10, "test");
+        let mut req = request_excluding(10, "test");
+        req.verbose_diagnostics = true;
         let resp = select(vec![kept, excluded], &req, 1);
 
         assert_eq!(resp.fragments.len(), 1);
@@ -2111,7 +2113,8 @@ mod tests {
         );
         assert_eq!(compact.coverage, verbose.coverage);
         assert_eq!(compact.warnings, verbose.warnings);
-        assert_eq!(compact.omitted.len(), verbose.omitted.len());
+        assert!(compact.omitted.is_empty());
+        assert_eq!(verbose.omitted.len(), MAX_OMITTED_DETAILS);
         let compact_counts = (
             compact.omission_summary.path_excluded,
             compact.omission_summary.known_hash,
@@ -2173,6 +2176,7 @@ mod tests {
         let unrelated = Candidate::new("src/managed/evidence.rs", 1, 2, "beta").exact(10.0);
         let mut request = request_with_budget(10);
         request.include_paths = vec!["src/browser/**".into()];
+        request.verbose_diagnostics = true;
 
         let response = select(vec![unrelated, included], &request, 1);
 
@@ -2333,7 +2337,8 @@ mod tests {
         )
         .exact(0.9);
 
-        let req = request_with_budget(5);
+        let mut req = request_with_budget(5);
+        req.verbose_diagnostics = true;
         let resp = select(vec![huge, tiny], &req, 1);
 
         // tiny should be selected; huge should not fit in a budget of 5 tokens.

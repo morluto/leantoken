@@ -44,6 +44,16 @@ pub(super) const MAX_CONTEXT_QUERIES: usize = 12;
 pub(super) const MAX_CONTEXT_HITS_PER_SOURCE: usize = 20;
 /// Per-term FTS candidate cap for context assembly.
 pub(super) const MAX_CONTEXT_LEXICAL_HITS: usize = 30;
+/// Maximum focus patterns eligible for per-scope candidate generation.
+pub(crate) const MAX_CONTEXT_FOCUS_PATTERNS: usize = 32;
+/// Indexed files inspected for task-relevant candidates per focus pattern.
+const MAX_CONTEXT_FOCUS_FILES_PER_PATTERN: usize = 4;
+/// File-local chunks inspected per focused file.
+const MAX_CONTEXT_FOCUS_CHUNKS_PER_FILE: usize = 256;
+/// File-local symbols inspected per focused file.
+const MAX_CONTEXT_FOCUS_SYMBOLS_PER_FILE: usize = 128;
+/// Candidates retained from each focus pattern before global ranking.
+pub(crate) const MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN: usize = 8;
 /// Per-import symbol scan cap for concept-corroborated structural expansion.
 const MAX_IMPORT_SYMBOLS: usize = 128;
 /// Exact constraint names retained per storage batch.
@@ -64,6 +74,80 @@ const MIN_OVERSIZED_PATH_GROUPS: usize = 3;
 const MAX_ROUTING_GROUPS: usize = 5;
 const MAX_ROUTING_SUGGESTIONS: usize = 3;
 const LEXICAL_OCCURRENCE_SATURATION: usize = 25;
+
+struct FocusPathResolution {
+    files: Vec<FileRecord>,
+    indexed_paths: usize,
+    eligible_paths: usize,
+}
+
+struct ContextConstraintExpansion {
+    coverage: ContextCoverageReceipt,
+    focus_paths: Vec<FocusPathResolution>,
+}
+
+struct FocusCandidate {
+    relevance: f64,
+    path: String,
+    start_line: usize,
+    end_line: usize,
+    candidate: Candidate,
+}
+
+struct FocusExpansion<'a> {
+    session: &'a ReadSession,
+    request: &'a ContextRequest,
+    queries: &'a [ContextQuery],
+    path_scorer: &'a ContextPathScorer,
+    resolutions: &'a [FocusPathResolution],
+    cancellation: &'a CancellationToken,
+}
+
+fn retain_focus_file(files: &mut Vec<FileRecord>, file: &FileRecord) {
+    let insertion = files
+        .binary_search_by(|candidate| candidate.path.cmp(&file.path))
+        .unwrap_or_else(|index| index);
+    if insertion < MAX_CONTEXT_FOCUS_FILES_PER_PATTERN {
+        files.insert(insertion, file.clone());
+        files.truncate(MAX_CONTEXT_FOCUS_FILES_PER_PATTERN);
+    }
+}
+
+fn focus_text_relevance(text: &str, queries: &[ContextQuery]) -> f64 {
+    let normalized = text.to_lowercase();
+    queries
+        .iter()
+        .filter(|query| !query.has_facet(FacetKind::TestIntent))
+        .filter_map(|query| {
+            normalized
+                .contains(&query.value.to_lowercase())
+                .then_some(query.weight)
+        })
+        .sum()
+}
+
+fn retain_ranked_focus_candidate(candidates: &mut Vec<FocusCandidate>, candidate: FocusCandidate) {
+    if let Some(existing) = candidates.iter_mut().find(|existing| {
+        existing.path == candidate.path
+            && existing.start_line == candidate.start_line
+            && existing.end_line == candidate.end_line
+    }) {
+        if candidate.relevance > existing.relevance {
+            *existing = candidate;
+        }
+    } else {
+        candidates.push(candidate);
+    }
+    candidates.sort_by(|left, right| {
+        right
+            .relevance
+            .total_cmp(&left.relevance)
+            .then_with(|| left.path.cmp(&right.path))
+            .then_with(|| left.start_line.cmp(&right.start_line))
+            .then_with(|| left.end_line.cmp(&right.end_line))
+    });
+    candidates.truncate(MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN);
+}
 
 fn parse_revision_range(revision: &str) -> Result<Option<(&str, &str)>> {
     let Some((base, head)) = revision.split_once("..") else {
@@ -911,6 +995,20 @@ impl Services {
         }
         if let Some(minimum) = request.minimum_fragments_per_focus_path {
             self.result_limit(Some(minimum))?;
+            if minimum > MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN {
+                return Err(Error::RequestLimitExceeded {
+                    field: "minimum_fragments_per_focus_path",
+                    requested: minimum,
+                    limit: MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN,
+                });
+            }
+        }
+        if request.focus_paths.len() > MAX_CONTEXT_FOCUS_PATTERNS {
+            return Err(Error::RequestLimitExceeded {
+                field: "focus_paths",
+                requested: request.focus_paths.len(),
+                limit: MAX_CONTEXT_FOCUS_PATTERNS,
+            });
         }
         if request.plan_only && request.receipt_id.is_some() {
             return Err(Error::InvalidInput {
@@ -1017,9 +1115,11 @@ impl Services {
         cancellation: &CancellationToken,
         candidates: &mut Vec<Candidate>,
         phases: &mut ContextPhaseTracker,
-    ) -> Result<ContextCoverageReceipt> {
+    ) -> Result<ContextConstraintExpansion> {
         let mut coverage = ContextCoverageReceipt::default();
         let mut focus_path_matches = vec![0usize; request.focus_paths.len()];
+        let mut focus_path_files = vec![Vec::new(); request.focus_paths.len()];
+        let mut focus_path_eligible = vec![0usize; request.focus_paths.len()];
         let mut include_path_matches = vec![false; request.include_paths.len()];
         let mut required_path_matches = vec![false; request.must_include_paths.len()];
         let mut required_path_files = vec![None::<FileRecord>; request.must_include_paths.len()];
@@ -1039,6 +1139,14 @@ impl Services {
             .map(|pattern| PathMatcher::new(std::slice::from_ref(pattern)))
             .collect::<Result<Vec<_>>>()?;
         let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
+        let context_exclude_paths = PathMatcher::new_lossy(&self.config.context_exclude_paths);
+        let strict_changed_paths = request.strict_changed_paths.then(|| {
+            request
+                .changed_paths
+                .iter()
+                .map(String::as_str)
+                .collect::<HashSet<_>>()
+        });
 
         if !request.focus_paths.is_empty()
             || !request.include_paths.is_empty()
@@ -1053,9 +1161,27 @@ impl Services {
                 };
                 cursor = Some(last.id);
                 for file in page {
+                    let focus_eligible = if focus_matchers.is_empty() {
+                        false
+                    } else {
+                        let explicitly_included = !request.include_paths.is_empty()
+                            && include_matchers
+                                .iter()
+                                .any(|matcher| matcher.is_match(&file.path));
+                        path_filter.allows(&file.path)
+                            && strict_changed_paths
+                                .as_ref()
+                                .is_none_or(|paths| paths.contains(file.path.as_str()))
+                            && (!context_exclude_paths.is_match(&file.path) || explicitly_included)
+                    };
                     for (index, matcher) in focus_matchers.iter().enumerate() {
                         if matcher.is_match(&file.path) {
                             focus_path_matches[index] = focus_path_matches[index].saturating_add(1);
+                            if focus_eligible {
+                                focus_path_eligible[index] =
+                                    focus_path_eligible[index].saturating_add(1);
+                                retain_focus_file(&mut focus_path_files[index], &file);
+                            }
                         }
                     }
                     for (index, matcher) in include_matchers.iter().enumerate() {
@@ -1086,10 +1212,10 @@ impl Services {
             coverage.focus_path_coverage = request
                 .focus_paths
                 .iter()
-                .zip(focus_path_matches)
+                .zip(&focus_path_matches)
                 .map(|(pattern, indexed_paths)| ContextFocusPathCoverage {
                     pattern: pattern.clone(),
-                    indexed_paths,
+                    indexed_paths: *indexed_paths,
                     minimum_fragments: minimum_focus_fragments,
                     selected_fragments: 0,
                     satisfied: false,
@@ -1253,7 +1379,221 @@ impl Services {
             );
         }
 
-        Ok(coverage)
+        Ok(ContextConstraintExpansion {
+            coverage,
+            focus_paths: focus_path_files
+                .into_iter()
+                .zip(focus_path_matches)
+                .zip(focus_path_eligible)
+                .map(
+                    |((files, indexed_paths), eligible_paths)| FocusPathResolution {
+                        files,
+                        indexed_paths,
+                        eligible_paths,
+                    },
+                )
+                .collect(),
+        })
+    }
+
+    fn append_focus_candidates(
+        &self,
+        expansion: FocusExpansion<'_>,
+        candidates: &mut Vec<Candidate>,
+        phases: &mut ContextPhaseTracker,
+    ) -> Result<Vec<String>> {
+        let FocusExpansion {
+            session,
+            request,
+            queries,
+            path_scorer,
+            resolutions,
+            cancellation,
+        } = expansion;
+        let mut warnings = Vec::new();
+        if !request.strict_focus_paths && request.minimum_fragments_per_focus_path.is_none() {
+            return Ok(warnings);
+        }
+        for ((pattern, resolution), pattern_index) in
+            request.focus_paths.iter().zip(resolutions).zip(0usize..)
+        {
+            check_cancelled(cancellation)?;
+            if resolution.eligible_paths > MAX_CONTEXT_FOCUS_FILES_PER_PATTERN {
+                warnings.push(format!(
+                    "focus pattern `{pattern}` matched {} eligible indexed paths; \
+                     candidate generation inspected the first {} paths",
+                    resolution.eligible_paths, MAX_CONTEXT_FOCUS_FILES_PER_PATTERN
+                ));
+            }
+            if resolution.files.is_empty() {
+                if resolution.indexed_paths > 0 {
+                    warnings.push(format!(
+                        "focus pattern `{pattern}` has no candidate-eligible indexed path after \
+                         include, exclude, generated-artifact, and strict changed-scope policy"
+                    ));
+                }
+                continue;
+            }
+
+            let mut semantic = Vec::new();
+            let mut fallback = Vec::new();
+            for file in &resolution.files {
+                check_cancelled(cancellation)?;
+                phases.record_primitive("focus_file_chunks", || {
+                    format!(
+                        "file_id:{}:limit:{MAX_CONTEXT_FOCUS_CHUNKS_PER_FILE}",
+                        file.id
+                    )
+                });
+                let chunks =
+                    session.get_chunks_for_file(file.id, MAX_CONTEXT_FOCUS_CHUNKS_PER_FILE)?;
+                phases.record_primitive("focus_file_symbols", || {
+                    format!(
+                        "file_id:{}:limit:{MAX_CONTEXT_FOCUS_SYMBOLS_PER_FILE}",
+                        file.id
+                    )
+                });
+                let symbols =
+                    session.get_symbols_for_file(file.id, MAX_CONTEXT_FOCUS_SYMBOLS_PER_FILE)?;
+
+                for symbol in symbols {
+                    let Some(chunk) = chunks.iter().find(|chunk| {
+                        chunk.start_line <= symbol.start_line && chunk.end_line >= symbol.start_line
+                    }) else {
+                        continue;
+                    };
+                    let symbol_start = symbol.start_line.saturating_sub(chunk.start_line);
+                    let symbol_lines = symbol
+                        .end_line
+                        .min(chunk.end_line)
+                        .saturating_sub(symbol.start_line)
+                        .saturating_add(1);
+                    let symbol_content = chunk
+                        .content
+                        .lines()
+                        .skip(symbol_start)
+                        .take(symbol_lines)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let searchable = format!(
+                        "{} {} {} {} {}",
+                        symbol.name,
+                        symbol.kind,
+                        symbol.parent.as_deref().unwrap_or_default(),
+                        symbol.signature.as_deref().unwrap_or_default(),
+                        symbol_content
+                    );
+                    let relevance = focus_text_relevance(&searchable, queries);
+                    if relevance == 0.0 {
+                        continue;
+                    }
+                    let candidate = Candidate::new(
+                        &file.path,
+                        chunk.start_line,
+                        chunk.end_line,
+                        &chunk.content,
+                    )
+                    .match_kind("focus_symbol")
+                    .concept(format!("focus:path:{pattern}"), 2.0)
+                    .representation("focus_symbol")
+                    .symbol_name(symbol.name)
+                    .target_range(symbol.start_line, symbol.end_line)
+                    .exact(relevance.min(4.0))
+                    .symbol(1.0)
+                    .path_score(path_scorer.score(&file.path))
+                    .focus_boost(2.0);
+                    retain_ranked_focus_candidate(
+                        &mut semantic,
+                        FocusCandidate {
+                            relevance: relevance + 1.0,
+                            path: file.path.clone(),
+                            start_line: chunk.start_line,
+                            end_line: chunk.end_line,
+                            candidate,
+                        },
+                    );
+                }
+
+                let mut file_fallback = None;
+                for chunk in chunks {
+                    let relevance = focus_text_relevance(&chunk.content, queries);
+                    let candidate =
+                        Candidate::new(&file.path, chunk.start_line, chunk.end_line, chunk.content)
+                            .match_kind(if relevance > 0.0 {
+                                "focus_text"
+                            } else {
+                                "focus_fallback"
+                            })
+                            .concept(format!("focus:path:{pattern}"), 2.0)
+                            .representation(if relevance > 0.0 {
+                                "focus_text"
+                            } else {
+                                "focus_fallback"
+                            })
+                            .exact(relevance.min(4.0))
+                            .path_score(path_scorer.score(&file.path))
+                            .focus_boost(2.0);
+                    let candidate = FocusCandidate {
+                        relevance,
+                        path: file.path.clone(),
+                        start_line: chunk.start_line,
+                        end_line: chunk.end_line,
+                        candidate,
+                    };
+                    if relevance > 0.0 {
+                        retain_ranked_focus_candidate(&mut semantic, candidate);
+                    } else if file_fallback
+                        .as_ref()
+                        .is_none_or(|best: &FocusCandidate| candidate.start_line < best.start_line)
+                    {
+                        file_fallback = Some(candidate);
+                    }
+                }
+                fallback.extend(file_fallback);
+            }
+
+            let selected = if semantic.is_empty() {
+                &mut fallback
+            } else {
+                &mut semantic
+            };
+            selected.sort_by(|left, right| {
+                right
+                    .relevance
+                    .total_cmp(&left.relevance)
+                    .then_with(|| left.path.cmp(&right.path))
+                    .then_with(|| left.start_line.cmp(&right.start_line))
+                    .then_with(|| left.end_line.cmp(&right.end_line))
+            });
+            let mut retained_ranges = BTreeSet::new();
+            let mut retained = 0usize;
+            for mut candidate in selected.drain(..) {
+                if !retained_ranges.insert((
+                    candidate.path.clone(),
+                    candidate.start_line,
+                    candidate.end_line,
+                )) {
+                    continue;
+                }
+                candidate.candidate = candidate.candidate.channel(
+                    "focus_local",
+                    pattern_index
+                        .saturating_mul(MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN)
+                        .saturating_add(retained),
+                );
+                candidates.push(candidate.candidate);
+                retained = retained.saturating_add(1);
+                if retained == MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN {
+                    break;
+                }
+            }
+            if retained == 0 {
+                warnings.push(format!(
+                    "focus pattern `{pattern}` matched indexed files without bounded chunk evidence"
+                ));
+            }
+        }
+        Ok(warnings)
     }
 
     fn finalize_strict_scope_coverage(
@@ -2490,10 +2830,23 @@ impl Services {
             let mut candidates = Vec::new();
             let mut path_excluded_candidates = Vec::new();
             let mut query_fusion = HashMap::<String, HashMap<String, f64>>::new();
-            let mut coverage = self.append_constraint_candidates(
+            let constraint_expansion = self.append_constraint_candidates(
                 session,
-                &request,
+                &scoped_request,
                 cancellation,
+                &mut candidates,
+                &mut phases,
+            )?;
+            let mut coverage = constraint_expansion.coverage;
+            let focus_generation_warnings = self.append_focus_candidates(
+                FocusExpansion {
+                    session,
+                    request: &scoped_request,
+                    queries: &queries,
+                    path_scorer: &path_scorer,
+                    resolutions: &constraint_expansion.focus_paths,
+                    cancellation,
+                },
                 &mut candidates,
                 &mut phases,
             )?;
@@ -2996,6 +3349,7 @@ impl Services {
                 &mut coverage,
             )?;
             response.coverage = coverage;
+            response.warnings.extend(focus_generation_warnings);
             let uncovered = response
                 .coverage
                 .uncovered_must_include_paths
@@ -3466,7 +3820,7 @@ mod tests {
             12,
         );
 
-        assert!(terms.len() <= 8);
+        assert!(terms.len() <= 10);
         assert!(terms.iter().any(|term| term.value == "index"));
         assert!(terms.iter().any(|term| term.value == "snapshot"));
         assert!(terms.iter().any(|term| term.value == "concurrent"));
@@ -3475,7 +3829,11 @@ mod tests {
                 .iter()
                 .any(|term| term.value == "snapshot consistency")
         );
-        assert!(terms.iter().any(|term| term.value == "concurrent readers"));
+        assert!(
+            terms
+                .iter()
+                .any(|term| term.value == "published atomically")
+        );
         assert!(!terms.iter().any(|term| term.value == "Trace"));
         assert!(!terms.iter().any(|term| term.value == "how"));
     }

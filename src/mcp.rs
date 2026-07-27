@@ -34,7 +34,8 @@ use crate::model::{
     JsonSelector, OutlineRequest, ReadRequest, SearchMode, SearchRequest,
 };
 use crate::services::{
-    ServiceCallOptions, Services, validate_positive_request_limit, validate_request_limit,
+    MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN, ServiceCallOptions, Services,
+    validate_positive_request_limit, validate_request_limit,
 };
 
 const DEFAULT_ACTIVE_TOOL_CALL_CAPACITY: usize = 16;
@@ -1098,14 +1099,14 @@ struct ContextMcpRequest {
     plan_only: bool,
     /// Boost matching paths without filtering other candidates.
     #[serde(default)]
-    #[schemars(length(max = 256), inner(length(max = 4096)))]
+    #[schemars(length(max = 32), inner(length(max = 4096)))]
     focus_paths: Vec<String>,
     /// Require every returned fragment to match at least one focus path.
     #[serde(default)]
     strict_focus_paths: bool,
-    /// Minimum returned fragments required for each focus path pattern.
+    /// Minimum returned fragments required per focus path (maximum 8).
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
-    #[schemars(schema_with = "context_fragment_limit_schema")]
+    #[schemars(schema_with = "context_focus_fragment_limit_schema")]
     minimum_fragments_per_focus_path: Option<usize>,
     /// Boost candidates for these exact symbol names.
     #[serde(default)]
@@ -1228,6 +1229,15 @@ fn context_fragment_limit_schema(_: &mut SchemaGenerator) -> Schema {
         "minimum": 1,
         "maximum": MAX_RESULTS,
         "default": DEFAULT_CONTEXT_FRAGMENTS
+    })
+}
+
+fn context_focus_fragment_limit_schema(_: &mut SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "type": "integer",
+        "minimum": 1,
+        "maximum": MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN,
+        "default": null
     })
 }
 
@@ -3878,6 +3888,24 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn context_focus_candidate_schema_exposes_generation_bounds() {
+        let context = LeanTokenMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|tool| tool.name == "context")
+            .expect("context tool");
+        let schema = serde_json::Value::Object((*context.input_schema).clone());
+        assert_eq!(
+            schema.pointer("/properties/focus_paths/maxItems"),
+            Some(&serde_json::json!(32))
+        );
+        assert_eq!(
+            schema.pointer("/properties/minimum_fragments_per_focus_path/maximum"),
+            Some(&serde_json::json!(8))
+        );
     }
 
     #[test]
