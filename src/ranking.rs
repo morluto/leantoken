@@ -25,13 +25,32 @@ use crate::config::{DEFAULT_CONTEXT_FRAGMENTS, default_context_exclude_paths};
 use crate::model::{
     ContextCoverageReceipt, ContextFragment, ContextOmissionFacet, ContextOmissionSummary,
     ContextPlanCandidate, ContextPlanFocusCoverage, ContextQueryPlan, ContextRequest,
-    ContextResponse, EvidenceReceipt, Freshness, OmittedCandidate, ResponseMeta,
+    ContextRequiredEvidenceCoverage, ContextResponse, EvidenceReceipt, Freshness, OmittedCandidate,
+    ResponseMeta,
 };
 use crate::services::validation::{PathMatcher, path_matches};
 use crate::tokens;
 
 const FACET_PREFIX: &str = "facet:";
 const CHANNEL_PREFIX: &str = "channel:";
+const REQUIRED_EVIDENCE_PREFIX: &str = "required_evidence:";
+
+pub(crate) fn required_evidence_marker(requirement: usize, query: usize) -> String {
+    format!("{REQUIRED_EVIDENCE_PREFIX}{requirement}:{query}")
+}
+
+fn required_evidence_query(candidate: &Candidate, requirement: usize, query: usize) -> bool {
+    let marker = required_evidence_marker(requirement, query);
+    candidate.match_kinds.iter().any(|kind| kind == &marker)
+}
+
+fn carries_required_evidence(candidate: &Candidate, requirement: usize) -> bool {
+    let prefix = format!("{REQUIRED_EVIDENCE_PREFIX}{requirement}:");
+    candidate
+        .match_kinds
+        .iter()
+        .any(|kind| kind.starts_with(&prefix))
+}
 
 /// Overlap ratio above which two candidates in the same file are considered
 /// duplicates.  Measured against the smaller candidate's line count.
@@ -875,6 +894,54 @@ fn select_with_options(
             coverage.uncovered_must_include_symbols.push(symbol.clone());
         }
     }
+    coverage.required_evidence = request
+        .required_evidence
+        .iter()
+        .enumerate()
+        .map(|(requirement_index, requirement)| {
+            let matched_queries = requirement
+                .queries
+                .iter()
+                .enumerate()
+                .filter(|(query_index, _)| {
+                    covered_candidates.clone().any(|candidate| {
+                        required_evidence_query(
+                            &candidate.candidate,
+                            requirement_index,
+                            *query_index,
+                        )
+                    })
+                })
+                .map(|(_, query)| query.clone())
+                .collect::<Vec<_>>();
+            let unmatched_queries = requirement
+                .queries
+                .iter()
+                .filter(|query| !matched_queries.contains(query))
+                .cloned()
+                .collect::<Vec<_>>();
+            let selected_fragments = covered_candidates
+                .clone()
+                .filter(|candidate| {
+                    carries_required_evidence(&candidate.candidate, requirement_index)
+                })
+                .count();
+            ContextRequiredEvidenceCoverage {
+                path: requirement.path.clone(),
+                indexed_paths: 0,
+                inspected_paths: 0,
+                minimum_query_matches: requirement.minimum_query_matches,
+                satisfied: matched_queries.len() >= requirement.minimum_query_matches,
+                matched_queries,
+                unmatched_queries,
+                selected_fragments,
+            }
+        })
+        .collect();
+    if !request.required_evidence.is_empty() {
+        coverage.evidence_scope_satisfied =
+            Some(coverage.required_evidence.iter().all(|item| item.satisfied));
+    }
 
     let estimated_source_tokens = selected.iter().map(|candidate| candidate.token_count).sum();
     let plan = request.plan_only.then(|| {
@@ -1064,6 +1131,41 @@ fn select_required_candidates(
 ) -> (Vec<ScoredCandidate>, Vec<ScoredCandidate>) {
     let mut selected = Vec::new();
     let mut used_tokens = 0usize;
+
+    for (requirement_index, requirement) in request.required_evidence.iter().enumerate() {
+        let mut matched_queries = HashSet::new();
+        loop {
+            for query_index in 0..requirement.queries.len() {
+                if selected.iter().any(|candidate: &ScoredCandidate| {
+                    required_evidence_query(&candidate.candidate, requirement_index, query_index)
+                }) {
+                    matched_queries.insert(query_index);
+                }
+            }
+            if matched_queries.len() >= requirement.minimum_query_matches
+                || selected.len() == max_fragments
+            {
+                break;
+            }
+            let remaining = budget.saturating_sub(used_tokens);
+            let Some(index) = candidates.iter().position(|candidate| {
+                candidate.token_count <= remaining
+                    && (0..requirement.queries.len()).any(|query_index| {
+                        !matched_queries.contains(&query_index)
+                            && required_evidence_query(
+                                &candidate.candidate,
+                                requirement_index,
+                                query_index,
+                            )
+                    })
+            }) else {
+                break;
+            };
+            let candidate = candidates.remove(index);
+            used_tokens = used_tokens.saturating_add(candidate.token_count);
+            selected.push(candidate);
+        }
+    }
 
     for pattern in &request.must_include_paths {
         if selected
@@ -1401,6 +1503,7 @@ mod tests {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -1425,6 +1528,7 @@ mod tests {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: vec![focus_path.into()],
@@ -1449,6 +1553,7 @@ mod tests {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -1783,6 +1888,39 @@ mod tests {
         );
         assert!(response.coverage.uncovered_must_include_paths.is_empty());
         assert!(response.coverage.uncovered_must_include_symbols.is_empty());
+    }
+
+    #[test]
+    fn required_evidence_selects_distinct_query_facets_before_general_evidence() {
+        let first = Candidate::new("paper.tex", 90, 95, "first evidence")
+            .match_kind(required_evidence_marker(0, 0))
+            .exact(1.0);
+        let second = Candidate::new("paper.tex", 140, 145, "second evidence")
+            .match_kind(required_evidence_marker(0, 1))
+            .exact(1.0);
+        let general = Candidate::new("general.rs", 1, 1, "general").exact(10.0);
+        let mut request = request_with_budget(100);
+        request.required_evidence = vec![crate::model::ContextRequiredEvidence {
+            path: "paper.tex".into(),
+            queries: vec!["first".into(), "second".into()],
+            minimum_query_matches: 2,
+        }];
+        request.max_fragments = Some(2);
+
+        let response = select(vec![general, first, second], &request, 1);
+
+        assert_eq!(response.fragments.len(), 2);
+        assert!(
+            response
+                .fragments
+                .iter()
+                .all(|fragment| fragment.path == "paper.tex")
+        );
+        assert_eq!(response.coverage.evidence_scope_satisfied, Some(true));
+        assert_eq!(
+            response.coverage.required_evidence[0].matched_queries,
+            ["first", "second"]
+        );
     }
 
     #[test]

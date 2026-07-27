@@ -772,6 +772,7 @@ fn context_request(constrained: bool) -> ContextRequest {
         include_paths: include_paths.clone(),
         must_include_paths,
         must_include_symbols: symbols.clone(),
+        required_evidence: Vec::new(),
         max_fragments: Some(12),
         plan_only: false,
         focus_paths: include_paths,

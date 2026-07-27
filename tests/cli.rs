@@ -726,6 +726,29 @@ fn cli_context_request() {
 }
 
 #[test]
+fn cli_context_parses_required_evidence_json() {
+    let cli = Cli::parse_from([
+        "leantoken",
+        "context",
+        "--task",
+        "find paper evidence",
+        "--required-evidence",
+        r#"{"path":"paper/**","queries":["failure boundary","disclosure"],"minimum_query_matches":2}"#,
+    ]);
+    let AppRequest::Context { request, .. } = cli.app_request() else {
+        panic!("expected context request");
+    };
+
+    assert_eq!(request.required_evidence.len(), 1);
+    assert_eq!(request.required_evidence[0].path, "paper/**");
+    assert_eq!(
+        request.required_evidence[0].queries,
+        ["failure boundary", "disclosure"]
+    );
+    assert_eq!(request.required_evidence[0].minimum_query_matches, 2);
+}
+
+#[test]
 fn cli_context_requires_task_and_defaults_budget() {
     let no_task = Cli::try_parse_from(["leantoken", "context", "--budget", "100"]);
     assert!(no_task.is_err());

@@ -60,6 +60,12 @@ const MAX_CONTEXT_FOCUS_CHUNKS_PER_FILE: usize = 256;
 const MAX_CONTEXT_FOCUS_SYMBOLS_PER_FILE: usize = 128;
 /// Candidates retained from each focus pattern before global ranking.
 pub(crate) const MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN: usize = 8;
+/// Maximum explicit path-scoped evidence contracts accepted per request.
+const MAX_CONTEXT_REQUIRED_EVIDENCE: usize = 32;
+/// Maximum alternative literal queries accepted in one evidence contract.
+const MAX_CONTEXT_EVIDENCE_QUERIES: usize = 16;
+/// Maximum UTF-8 bytes accepted across all explicit evidence queries.
+const MAX_CONTEXT_EVIDENCE_QUERY_BYTES: usize = 64 * 1024;
 /// Per-import symbol scan cap for concept-corroborated structural expansion.
 const MAX_IMPORT_SYMBOLS: usize = 128;
 /// Exact constraint names retained per storage batch.
@@ -92,12 +98,53 @@ struct ContextConstraintExpansion {
     focus_paths: Vec<FocusPathResolution>,
 }
 
+#[derive(Clone, Copy)]
+struct ConstraintCandidateExpansion<'a> {
+    session: &'a ReadSession,
+    request: &'a ContextRequest,
+    queries: &'a [ContextQuery],
+    path_scorer: &'a ContextPathScorer,
+    cancellation: &'a CancellationToken,
+}
+
 struct FocusCandidate {
     relevance: f64,
     path: String,
     start_line: usize,
     end_line: usize,
     candidate: Candidate,
+}
+
+struct RequiredEvidenceExcerptPlan {
+    relevance: f64,
+    path: String,
+    file_id: i64,
+    matched_line: usize,
+    requirement_index: usize,
+}
+
+fn retain_required_evidence_plan(
+    plans: &mut Vec<RequiredEvidenceExcerptPlan>,
+    plan: RequiredEvidenceExcerptPlan,
+) {
+    if plans
+        .iter()
+        .any(|existing| existing.path == plan.path && existing.matched_line == plan.matched_line)
+    {
+        return;
+    }
+    let insertion = plans
+        .binary_search_by(|existing| {
+            plan.relevance
+                .total_cmp(&existing.relevance)
+                .then_with(|| existing.path.cmp(&plan.path))
+                .then_with(|| existing.matched_line.cmp(&plan.matched_line))
+        })
+        .unwrap_or_else(|index| index);
+    if insertion < MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN {
+        plans.insert(insertion, plan);
+        plans.truncate(MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN);
+    }
 }
 
 struct FocusExpansion<'a> {
@@ -119,6 +166,31 @@ fn retain_focus_file(files: &mut Vec<FileRecord>, file: &FileRecord) {
     }
 }
 
+fn retain_required_evidence_files(
+    file: &FileRecord,
+    matchers: &[PathMatcher],
+    path_filter: &PathFilter,
+    strict_changed_paths: Option<&HashSet<&str>>,
+    path_matches: &mut [usize],
+    path_files: &mut [Vec<FileRecord>],
+) {
+    for ((matcher, matches), files) in matchers
+        .iter()
+        .zip(path_matches.iter_mut())
+        .zip(path_files.iter_mut())
+    {
+        if !matcher.is_match(&file.path) {
+            continue;
+        }
+        *matches = matches.saturating_add(1);
+        if path_filter.allows(&file.path)
+            && strict_changed_paths.is_none_or(|paths| paths.contains(file.path.as_str()))
+        {
+            retain_focus_file(files, file);
+        }
+    }
+}
+
 fn focus_text_relevance(text: &str, queries: &[ContextQuery]) -> f64 {
     let normalized = text.to_lowercase();
     queries
@@ -130,6 +202,15 @@ fn focus_text_relevance(text: &str, queries: &[ContextQuery]) -> f64 {
                 .then_some(query.weight)
         })
         .sum()
+}
+
+fn required_evidence_query_matches(text: &str, queries: &[String]) -> Vec<usize> {
+    let normalized = text.to_lowercase();
+    queries
+        .iter()
+        .enumerate()
+        .filter_map(|(index, query)| normalized.contains(&query.to_lowercase()).then_some(index))
+        .collect()
 }
 
 fn retain_ranked_focus_candidate(candidates: &mut Vec<FocusCandidate>, candidate: FocusCandidate) {
@@ -1123,6 +1204,61 @@ impl Services {
                 });
             }
         }
+        if request.required_evidence.len() > MAX_CONTEXT_REQUIRED_EVIDENCE {
+            return Err(Error::RequestLimitExceeded {
+                field: "required_evidence",
+                requested: request.required_evidence.len(),
+                limit: MAX_CONTEXT_REQUIRED_EVIDENCE,
+            });
+        }
+        let mut evidence_query_bytes = 0usize;
+        for requirement in &request.required_evidence {
+            validate_glob_patterns(std::slice::from_ref(&requirement.path))?;
+            if requirement.path.trim().is_empty() {
+                return Err(Error::InvalidInput {
+                    field: "required_evidence path",
+                    reason: "must not be empty",
+                });
+            }
+            if requirement.queries.is_empty() {
+                return Err(Error::InvalidInput {
+                    field: "required_evidence queries",
+                    reason: "must not be empty",
+                });
+            }
+            if requirement.queries.len() > MAX_CONTEXT_EVIDENCE_QUERIES {
+                return Err(Error::RequestLimitExceeded {
+                    field: "required_evidence queries",
+                    requested: requirement.queries.len(),
+                    limit: MAX_CONTEXT_EVIDENCE_QUERIES,
+                });
+            }
+            if requirement.minimum_query_matches == 0
+                || requirement.minimum_query_matches > requirement.queries.len()
+            {
+                return Err(Error::InvalidInput {
+                    field: "required_evidence minimum_query_matches",
+                    reason: "must be between one and the number of queries",
+                });
+            }
+            for query in &requirement.queries {
+                validate_input(query, "required_evidence query", MAX_PATTERN_BYTES)?;
+                if query.trim().is_empty() {
+                    return Err(Error::InvalidInput {
+                        field: "required_evidence queries",
+                        reason: "must not contain empty queries",
+                    });
+                }
+                evidence_query_bytes = evidence_query_bytes.saturating_add(query.len());
+            }
+        }
+        if evidence_query_bytes > MAX_CONTEXT_EVIDENCE_QUERY_BYTES {
+            return Err(Error::RequestLimitExceeded {
+                field: "required_evidence query bytes",
+                requested: evidence_query_bytes,
+                limit: MAX_CONTEXT_EVIDENCE_QUERY_BYTES,
+            });
+        }
         if request.known_hashes.len() > MAX_INPUT_ITEMS {
             return Err(Error::LimitExceeded);
         }
@@ -1156,12 +1292,17 @@ impl Services {
 
     fn append_constraint_candidates(
         &self,
-        session: &ReadSession,
-        request: &ContextRequest,
-        cancellation: &CancellationToken,
+        expansion: ConstraintCandidateExpansion<'_>,
         candidates: &mut Vec<Candidate>,
         phases: &mut ContextPhaseTracker,
     ) -> Result<ContextConstraintExpansion> {
+        let ConstraintCandidateExpansion {
+            session,
+            request,
+            queries: _,
+            path_scorer: _,
+            cancellation,
+        } = expansion;
         let mut coverage = ContextCoverageReceipt::default();
         let mut focus_path_matches = vec![0usize; request.focus_paths.len()];
         let mut focus_path_files = vec![Vec::new(); request.focus_paths.len()];
@@ -1169,6 +1310,8 @@ impl Services {
         let mut include_path_matches = vec![false; request.include_paths.len()];
         let mut required_path_matches = vec![false; request.must_include_paths.len()];
         let mut required_path_files = vec![None::<FileRecord>; request.must_include_paths.len()];
+        let mut evidence_path_matches = vec![0usize; request.required_evidence.len()];
+        let mut evidence_path_files = vec![Vec::new(); request.required_evidence.len()];
         let focus_matchers = request
             .focus_paths
             .iter()
@@ -1184,6 +1327,11 @@ impl Services {
             .iter()
             .map(|pattern| PathMatcher::new(std::slice::from_ref(pattern)))
             .collect::<Result<Vec<_>>>()?;
+        let evidence_matchers = request
+            .required_evidence
+            .iter()
+            .map(|requirement| PathMatcher::new(std::slice::from_ref(&requirement.path)))
+            .collect::<Result<Vec<_>>>()?;
         let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
         let context_exclude_paths = PathMatcher::new_lossy(&self.config.context_exclude_paths);
         let strict_changed_paths = request.strict_changed_paths.then(|| {
@@ -1197,6 +1345,7 @@ impl Services {
         if !request.focus_paths.is_empty()
             || !request.include_paths.is_empty()
             || !request.must_include_paths.is_empty()
+            || !request.required_evidence.is_empty()
         {
             let mut cursor = None;
             loop {
@@ -1242,6 +1391,14 @@ impl Services {
                             required_path_files[index] = Some(file.clone());
                         }
                     }
+                    retain_required_evidence_files(
+                        &file,
+                        &evidence_matchers,
+                        &path_filter,
+                        strict_changed_paths.as_ref(),
+                        &mut evidence_path_matches,
+                        &mut evidence_path_files,
+                    );
                 }
             }
         }
@@ -1282,45 +1439,26 @@ impl Services {
             .filter(|(_, matched)| !**matched)
             .map(|(pattern, _)| pattern.clone())
             .collect();
-
-        let path_excerpt_requests = required_path_files
+        coverage.required_evidence = request
+            .required_evidence
             .iter()
-            .flatten()
-            .map(|file| StoredExcerptRequest {
-                file_id: file.id,
-                desired_start_line: 1,
-                desired_end_line: 40,
-                required_start_line: 1,
-                required_end_line: 1,
-                max_lines: 40,
+            .zip(&evidence_path_matches)
+            .zip(&evidence_path_files)
+            .map(|((requirement, indexed_paths), inspected_files)| {
+                ContextRequiredEvidenceCoverage {
+                    path: requirement.path.clone(),
+                    indexed_paths: *indexed_paths,
+                    inspected_paths: inspected_files.len(),
+                    minimum_query_matches: requirement.minimum_query_matches,
+                    matched_queries: Vec::new(),
+                    unmatched_queries: requirement.queries.clone(),
+                    selected_fragments: 0,
+                    satisfied: false,
+                }
             })
-            .collect::<Vec<_>>();
-        phases.record_stored_excerpts(&path_excerpt_requests);
-        let path_excerpts = phases.measure(ContextTimedPhase::StoredExcerpt, || {
-            self.stored_excerpts(session, &path_excerpt_requests)
-        })?;
-        for ((pattern, file), excerpt) in request
-            .must_include_paths
-            .iter()
-            .zip(required_path_files)
-            .filter_map(|(pattern, file)| file.map(|file| (pattern, file)))
-            .zip(path_excerpts)
-        {
-            let Some(excerpt) = excerpt else { continue };
-            candidates.push(
-                Candidate::new(
-                    file.path,
-                    excerpt.start_line,
-                    excerpt.end_line,
-                    excerpt.content,
-                )
-                .match_kind("must_path")
-                .concept(format!("must:path:{pattern}"), 2.0)
-                .representation("required_path")
-                .exact(2.0)
-                .focus_boost(2.0),
-            );
-        }
+            .collect();
+
+        self.append_required_path_candidates(expansion, required_path_files, candidates, phases)?;
 
         let mut exact_names = Vec::new();
         let mut seen_exact_names = HashSet::new();
@@ -1425,6 +1563,13 @@ impl Services {
             );
         }
 
+        self.append_required_evidence_candidates(
+            expansion,
+            &evidence_path_files,
+            candidates,
+            phases,
+        )?;
+
         Ok(ContextConstraintExpansion {
             coverage,
             focus_paths: focus_path_files
@@ -1440,6 +1585,204 @@ impl Services {
                 )
                 .collect(),
         })
+    }
+
+    fn append_required_path_candidates(
+        &self,
+        expansion: ConstraintCandidateExpansion<'_>,
+        required_path_files: Vec<Option<FileRecord>>,
+        candidates: &mut Vec<Candidate>,
+        phases: &mut ContextPhaseTracker,
+    ) -> Result<()> {
+        let ConstraintCandidateExpansion {
+            session,
+            request,
+            queries,
+            path_scorer,
+            cancellation,
+        } = expansion;
+        let required_path_entries = request
+            .must_include_paths
+            .iter()
+            .zip(required_path_files)
+            .filter_map(|(pattern, file)| file.map(|file| (pattern, file)))
+            .collect::<Vec<_>>();
+        let mut fallback_path_entries = Vec::new();
+        for (pattern, file) in &required_path_entries {
+            check_cancelled(cancellation)?;
+            phases.record_primitive("required_path_chunks", || {
+                format!(
+                    "file_id:{}:limit:{MAX_CONTEXT_FOCUS_CHUNKS_PER_FILE}",
+                    file.id
+                )
+            });
+            let chunks = session.get_chunks_for_file(file.id, MAX_CONTEXT_FOCUS_CHUNKS_PER_FILE)?;
+            let best = chunks
+                .into_iter()
+                .filter_map(|chunk| {
+                    let relevance = focus_text_relevance(&chunk.content, queries);
+                    (relevance > 0.0).then_some((relevance, chunk))
+                })
+                .max_by(|(left_score, left), (right_score, right)| {
+                    left_score
+                        .total_cmp(right_score)
+                        .then_with(|| right.start_line.cmp(&left.start_line))
+                });
+            if let Some((relevance, chunk)) = best {
+                candidates.push(
+                    Candidate::new(&file.path, chunk.start_line, chunk.end_line, chunk.content)
+                        .match_kind("must_path")
+                        .concept(format!("must:path:{pattern}"), 2.0)
+                        .representation("required_path")
+                        .exact(relevance.min(4.0))
+                        .path_score(path_scorer.score(&file.path))
+                        .focus_boost(2.0),
+                );
+            } else {
+                fallback_path_entries.push((*pattern, file.clone()));
+            }
+        }
+        let path_excerpt_requests = fallback_path_entries
+            .iter()
+            .map(|(_, file)| StoredExcerptRequest {
+                file_id: file.id,
+                desired_start_line: 1,
+                desired_end_line: 40,
+                required_start_line: 1,
+                required_end_line: 1,
+                max_lines: 40,
+            })
+            .collect::<Vec<_>>();
+        phases.record_stored_excerpts(&path_excerpt_requests);
+        let path_excerpts = phases.measure(ContextTimedPhase::StoredExcerpt, || {
+            self.stored_excerpts(session, &path_excerpt_requests)
+        })?;
+        for ((pattern, file), excerpt) in fallback_path_entries.into_iter().zip(path_excerpts) {
+            let Some(excerpt) = excerpt else { continue };
+            candidates.push(
+                Candidate::new(
+                    file.path,
+                    excerpt.start_line,
+                    excerpt.end_line,
+                    excerpt.content,
+                )
+                .match_kind("must_path_fallback")
+                .concept(format!("must:path:{pattern}"), 2.0)
+                .representation("required_path_fallback")
+                .exact(2.0)
+                .focus_boost(2.0),
+            );
+        }
+        Ok(())
+    }
+
+    fn append_required_evidence_candidates(
+        &self,
+        expansion: ConstraintCandidateExpansion<'_>,
+        evidence_path_files: &[Vec<FileRecord>],
+        candidates: &mut Vec<Candidate>,
+        phases: &mut ContextPhaseTracker,
+    ) -> Result<()> {
+        let ConstraintCandidateExpansion {
+            session,
+            request,
+            queries: _,
+            path_scorer,
+            cancellation,
+        } = expansion;
+        for (requirement_index, (requirement, files)) in request
+            .required_evidence
+            .iter()
+            .zip(evidence_path_files)
+            .enumerate()
+        {
+            let mut retained = Vec::<RequiredEvidenceExcerptPlan>::new();
+            let normalized_queries = requirement
+                .queries
+                .iter()
+                .map(|query| query.to_lowercase())
+                .collect::<Vec<_>>();
+            for file in files {
+                check_cancelled(cancellation)?;
+                phases.record_primitive("required_evidence_chunks", || {
+                    format!(
+                        "file_id:{}:limit:{MAX_CONTEXT_FOCUS_CHUNKS_PER_FILE}",
+                        file.id
+                    )
+                });
+                for chunk in
+                    session.get_chunks_for_file(file.id, MAX_CONTEXT_FOCUS_CHUNKS_PER_FILE)?
+                {
+                    let relevance =
+                        required_evidence_query_matches(&chunk.content, &requirement.queries).len()
+                            as f64;
+                    for (line_offset, line) in chunk.content.lines().enumerate() {
+                        let normalized_line = line.to_lowercase();
+                        if !normalized_queries
+                            .iter()
+                            .any(|query| normalized_line.contains(query))
+                        {
+                            continue;
+                        }
+                        let matched_line = chunk.start_line.saturating_add(line_offset);
+                        retain_required_evidence_plan(
+                            &mut retained,
+                            RequiredEvidenceExcerptPlan {
+                                relevance,
+                                path: file.path.clone(),
+                                file_id: file.id,
+                                matched_line,
+                                requirement_index,
+                            },
+                        );
+                    }
+                }
+            }
+            let excerpt_requests = retained
+                .iter()
+                .map(|plan| StoredExcerptRequest {
+                    file_id: plan.file_id,
+                    desired_start_line: plan.matched_line.saturating_sub(19).max(1),
+                    desired_end_line: plan.matched_line.saturating_add(20),
+                    required_start_line: plan.matched_line,
+                    required_end_line: plan.matched_line,
+                    max_lines: 40,
+                })
+                .collect::<Vec<_>>();
+            phases.record_stored_excerpts(&excerpt_requests);
+            let excerpts = phases.measure(ContextTimedPhase::StoredExcerpt, || {
+                self.stored_excerpts(session, &excerpt_requests)
+            })?;
+            for (rank, (plan, excerpt)) in retained.into_iter().zip(excerpts).enumerate() {
+                let Some(excerpt) = excerpt else { continue };
+                let matched_queries =
+                    required_evidence_query_matches(&excerpt.content, &requirement.queries);
+                if matched_queries.is_empty() {
+                    continue;
+                }
+                let path_score = path_scorer.score(&plan.path);
+                let mut candidate = Candidate::new(
+                    plan.path,
+                    excerpt.start_line,
+                    excerpt.end_line,
+                    excerpt.content,
+                )
+                .match_kind("required_evidence")
+                .concept(format!("required:evidence:{}", plan.requirement_index), 2.0)
+                .representation("required_evidence")
+                .exact((matched_queries.len() as f64).min(4.0))
+                .path_score(path_score)
+                .focus_boost(2.0);
+                for query_index in matched_queries {
+                    candidate = candidate.match_kind(ranking::required_evidence_marker(
+                        plan.requirement_index,
+                        query_index,
+                    ));
+                }
+                candidates.push(candidate.channel("required_evidence", rank));
+            }
+        }
+        Ok(())
     }
 
     fn append_focus_candidates(
@@ -1686,17 +2029,17 @@ impl Services {
         let focus_coverage_is_required =
             request.strict_focus_paths || request.minimum_fragments_per_focus_path.is_some();
         if focus_coverage_is_required || request.strict_changed_paths {
-            coverage.strict_scope_satisfied = Some(
-                (!focus_coverage_is_required
-                    || coverage
-                        .focus_path_coverage
-                        .iter()
-                        .all(|focus| focus.satisfied))
-                    && coverage
-                        .changed_path_coverage
-                        .as_ref()
-                        .is_none_or(|changed| changed.satisfied),
-            );
+            let satisfied = (!focus_coverage_is_required
+                || coverage
+                    .focus_path_coverage
+                    .iter()
+                    .all(|focus| focus.satisfied))
+                && coverage
+                    .changed_path_coverage
+                    .as_ref()
+                    .is_none_or(|changed| changed.satisfied);
+            coverage.path_scope_satisfied = Some(satisfied);
+            coverage.strict_scope_satisfied = Some(satisfied);
         }
         Ok(())
     }
@@ -2887,6 +3230,7 @@ impl Services {
         let can_reduce_selected = request.include_paths.is_empty()
             && request.must_include_paths.is_empty()
             && request.must_include_symbols.is_empty()
+            && request.required_evidence.is_empty()
             && request.focus_paths.is_empty()
             && request.focus_symbols.is_empty()
             && !request.strict_focus_paths
@@ -3005,9 +3349,13 @@ impl Services {
             let mut path_excluded_candidates = Vec::new();
             let mut query_fusion = HashMap::<String, HashMap<String, f64>>::new();
             let constraint_expansion = self.append_constraint_candidates(
-                session,
-                &scoped_request,
-                cancellation,
+                ConstraintCandidateExpansion {
+                    session,
+                    request: &scoped_request,
+                    queries: &queries,
+                    path_scorer: &path_scorer,
+                    cancellation,
+                },
                 &mut candidates,
                 &mut phases,
             )?;
@@ -3495,6 +3843,20 @@ impl Services {
                 std::mem::take(&mut response.coverage.uncovered_must_include_paths);
             coverage.uncovered_must_include_symbols =
                 std::mem::take(&mut response.coverage.uncovered_must_include_symbols);
+            for (target, selected) in coverage
+                .required_evidence
+                .iter_mut()
+                .zip(std::mem::take(&mut response.coverage.required_evidence))
+            {
+                target.matched_queries = selected.matched_queries;
+                target.unmatched_queries = selected.unmatched_queries;
+                target.selected_fragments = selected.selected_fragments;
+                target.satisfied = target.indexed_paths > 0 && selected.satisfied;
+            }
+            if !coverage.required_evidence.is_empty() {
+                coverage.evidence_scope_satisfied =
+                    Some(coverage.required_evidence.iter().all(|item| item.satisfied));
+            }
             coverage
                 .uncovered_must_include_paths
                 .retain(|pattern| !coverage.unmatched_must_include_paths.contains(pattern));
@@ -3553,6 +3915,28 @@ impl Services {
             if unmatched > 0 {
                 response.warnings.push(format!(
                     "{unmatched} must-cover requirements matched no indexed evidence"
+                ));
+            }
+            let unsatisfied_evidence = response
+                .coverage
+                .required_evidence
+                .iter()
+                .filter(|item| !item.satisfied)
+                .count();
+            if unsatisfied_evidence > 0 {
+                response.warnings.push(format!(
+                    "{unsatisfied_evidence} required evidence contracts lacked matching selected evidence"
+                ));
+            }
+            let bounded_evidence_paths = response
+                .coverage
+                .required_evidence
+                .iter()
+                .filter(|item| item.indexed_paths > item.inspected_paths)
+                .count();
+            if bounded_evidence_paths > 0 {
+                response.warnings.push(format!(
+                    "{bounded_evidence_paths} required evidence contracts matched more indexed paths than the bounded local inspection covered"
                 ));
             }
             let unmatched_hints = response
@@ -3917,6 +4301,7 @@ mod tests {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),
@@ -4049,6 +4434,7 @@ mod tests {
             include_paths: Vec::new(),
             must_include_paths: Vec::new(),
             must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
             max_fragments: None,
             plan_only: false,
             focus_paths: Vec::new(),

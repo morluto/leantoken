@@ -29,10 +29,10 @@ use crate::config::{
     DEFAULT_RESULTS, MAX_CONTEXT_LINES, MAX_OUTPUT_TOKENS, MAX_RESULTS,
 };
 use crate::model::{
-    ContextRequest, ContextWorkflow, DiffSymbolsRequest, DiffSymbolsTarget, FileOperation,
-    FilesRequest, HandoffManifestRequest, HistoryOperation, HistoryRequest, IndexConsistency,
-    JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadRequest,
-    SearchMode, SearchRequest, WorkflowEvidence,
+    ContextRequest, ContextRequiredEvidence, ContextWorkflow, DiffSymbolsRequest,
+    DiffSymbolsTarget, FileOperation, FilesRequest, HandoffManifestRequest, HistoryOperation,
+    HistoryRequest, IndexConsistency, JsonOperation, JsonProjection, JsonRequest, JsonSelector,
+    OutlineRequest, ReadRequest, SearchMode, SearchRequest, WorkflowEvidence,
 };
 use crate::services::{
     JsonExecutionOptions, MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN, MAX_JSON_DEPTH,
@@ -1233,6 +1233,10 @@ struct ContextMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 4096)))]
     must_include_symbols: Vec<String>,
+    /// Require matching query evidence within each path-scoped contract.
+    #[serde(default)]
+    #[schemars(length(max = 32))]
+    required_evidence: Vec<ContextRequiredEvidence>,
     /// Maximum returned fragments (default 8, maximum 100).
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
     #[schemars(
@@ -1335,6 +1339,7 @@ impl ContextMcpRequest {
                 include_paths: self.include_paths,
                 must_include_paths: self.must_include_paths,
                 must_include_symbols: self.must_include_symbols,
+                required_evidence: self.required_evidence,
                 max_fragments: self.max_fragments,
                 plan_only: self.plan_only,
                 focus_paths: self.focus_paths,
@@ -2472,7 +2477,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "context",
-        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. For uncertain broad tasks, set plan_only=true to preview bounded ranked paths, ranges, reasons, token estimates, focus coverage, and generated-artifact warnings without source or receipt mutation; then repeat the same request with plan_only=false to materialize. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required evidence. When the caller has directly observed a failure, pass workflow_evidence with bounded failure_traces, symbols, paths, or test_intents; do not infer or copy gold labels into it. Compact omission counts preserve fail-loud coverage by default; set verbose_diagnostics=true only for full omission facets. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Set handoff for a compact provenance manifest without copied source. Example: {\"task\":\"Audit MCP tool discovery\"}."
+        description = "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. For uncertain broad tasks, set plan_only=true to preview bounded ranked paths, ranges, reasons, token estimates, focus coverage, and generated-artifact warnings without source or receipt mutation; then repeat the same request with plan_only=false to materialize. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required paths or symbols. When path presence is insufficient, pass required_evidence entries with a path and literal queries; path_scope_satisfied reports only path coverage, while evidence_scope_satisfied requires matching selected evidence. When the caller has directly observed a failure, pass workflow_evidence with bounded failure_traces, symbols, paths, or test_intents; do not infer or copy gold labels into it. Compact omission counts preserve fail-loud coverage by default; set verbose_diagnostics=true only for full omission facets. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Set handoff for a compact provenance manifest without copied source. Example: {\"task\":\"Audit MCP tool discovery\"}."
     )]
     async fn leantoken_context(
         &self,
@@ -3795,6 +3800,11 @@ mod tests {
             "focus_paths": ["src/**"],
             "strict_focus_paths": true,
             "minimum_fragments_per_focus_path": 2,
+            "required_evidence": [{
+                "path": "paper/**",
+                "queries": ["failure boundary", "disclosure"],
+                "minimum_query_matches": 2
+            }],
             "changed_paths": ["src/lib.rs"],
             "strict_changed_paths": true,
             "verbose_diagnostics": true,
@@ -3812,6 +3822,13 @@ mod tests {
         assert_eq!(request.focus_paths, ["src/**"]);
         assert!(request.strict_focus_paths);
         assert_eq!(request.minimum_fragments_per_focus_path, Some(2));
+        assert_eq!(request.required_evidence.len(), 1);
+        assert_eq!(request.required_evidence[0].path, "paper/**");
+        assert_eq!(
+            request.required_evidence[0].queries,
+            ["failure boundary", "disclosure"]
+        );
+        assert_eq!(request.required_evidence[0].minimum_query_matches, 2);
         assert_eq!(request.changed_paths, ["src/lib.rs"]);
         assert!(request.strict_changed_paths);
         assert!(request.verbose_diagnostics);

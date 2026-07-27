@@ -1232,6 +1232,26 @@ pub struct ReadDeltaReceipt {
     pub fallback_reason: Option<ReadDeltaFallback>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+/// One path-scoped evidence requirement for `leantoken.context`.
+pub struct ContextRequiredEvidence {
+    /// Repository-relative path pattern whose evidence must be represented.
+    #[schemars(length(min = 1, max = 4096))]
+    pub path: String,
+    /// Alternative literal queries; distinct matches contribute to the minimum.
+    #[schemars(length(min = 1, max = 16), inner(length(min = 1, max = 4096)))]
+    pub queries: Vec<String>,
+    /// Minimum number of distinct queries that selected evidence must match.
+    #[serde(default = "one")]
+    #[schemars(range(min = 1, max = 16), default = "one")]
+    pub minimum_query_matches: usize,
+}
+
+const fn one() -> usize {
+    1
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 /// Input for `leantoken.context`.
 pub struct ContextRequest {
@@ -1248,6 +1268,9 @@ pub struct ContextRequest {
     /// Require evidence for each exact symbol when indexed and within budget.
     #[serde(default)]
     pub must_include_symbols: Vec<String>,
+    /// Require task-relevant evidence for each path-scoped query contract.
+    #[serde(default)]
+    pub required_evidence: Vec<ContextRequiredEvidence>,
     /// Maximum number of returned fragments.
     #[serde(default)]
     pub max_fragments: Option<usize>,
@@ -1469,6 +1492,29 @@ pub struct ContextChangedPathCoverage {
     pub satisfied: bool,
 }
 
+/// Selected or planned coverage for one path-scoped evidence requirement.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ContextRequiredEvidenceCoverage {
+    /// Original repository-relative path pattern.
+    pub path: String,
+    /// Indexed files matched by the path pattern.
+    pub indexed_paths: usize,
+    /// Bounded indexed files inspected for matching evidence.
+    pub inspected_paths: usize,
+    /// Minimum number of distinct query matches required.
+    pub minimum_query_matches: usize,
+    /// Distinct caller queries matched by selected or already-held evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub matched_queries: Vec<String>,
+    /// Caller queries not represented by selected or already-held evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unmatched_queries: Vec<String>,
+    /// Selected or already-held fragments carrying matching evidence.
+    pub selected_fragments: usize,
+    /// Whether indexed evidence met the explicit query contract.
+    pub satisfied: bool,
+}
+
 /// Indexed and selected or planned evidence coverage for context constraints.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ContextCoverageReceipt {
@@ -1484,9 +1530,18 @@ pub struct ContextCoverageReceipt {
     /// Coverage of the resolved changed-path boundary when it is strict.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changed_path_coverage: Option<ContextChangedPathCoverage>,
-    /// Whether every requested strict or minimum focus/changed scope was satisfied.
+    /// Whether every requested strict or minimum path scope was satisfied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_scope_satisfied: Option<bool>,
+    /// Backward-compatible alias for `path_scope_satisfied`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strict_scope_satisfied: Option<bool>,
+    /// Per-contract coverage for explicit path-scoped evidence requirements.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_evidence: Vec<ContextRequiredEvidenceCoverage>,
+    /// Whether every explicit path-scoped evidence contract was satisfied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_scope_satisfied: Option<bool>,
     /// Hard include patterns that matched no indexed path.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmatched_include_paths: Vec<String>,
@@ -1519,7 +1574,10 @@ impl ContextCoverageReceipt {
             && self.unmatched_focus_symbols.is_empty()
             && self.focus_path_coverage.is_empty()
             && self.changed_path_coverage.is_none()
+            && self.path_scope_satisfied.is_none()
             && self.strict_scope_satisfied.is_none()
+            && self.required_evidence.is_empty()
+            && self.evidence_scope_satisfied.is_none()
             && self.unmatched_include_paths.is_empty()
             && self.covered_must_include_paths.is_empty()
             && self.covered_must_include_symbols.is_empty()

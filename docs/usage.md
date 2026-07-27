@@ -740,8 +740,23 @@ Git working-tree changes when neither diff input is supplied. Include, strict
 focus, strict changed, and exclude constraints are intersected; no constraint
 silently broadens another. `must_include_paths` and
 `must_include_symbols` generate and select required indexed evidence before
-focus minimums and ordinary ranking. `max_fragments` defaults to 8 and accepts
-values through 100.
+focus minimums and ordinary ranking. A required path guarantees path
+representation, not task relevance. Its candidate is the highest task-matching
+bounded chunk in the selected file; when no task query matches, context returns
+an explicit `required_path_fallback` excerpt from the start of the file.
+`max_fragments` defaults to 8 and accepts values through 100.
+
+Use `required_evidence` when path presence is insufficient. Each entry supplies
+a `path`, one to sixteen literal `queries`, and an optional
+`minimum_query_matches` (default one). Context selects matching excerpts before
+ordinary ranking and reports each contract under `coverage.required_evidence`.
+`evidence_scope_satisfied` is true only when every contract matches an indexed
+path and selected or already-held evidence covers the requested number of
+distinct queries. Up to 32 contracts and 64 KiB of query text are accepted.
+Matches are case-insensitive literals and are materialized as bounded 40-line
+excerpts centered on the evidence line. MCP accepts these objects directly;
+the CLI accepts the same object as repeatable JSON, for example
+`--required-evidence '{"path":"paper/**","queries":["claim boundary"]}'`.
 
 `workflow_evidence` is an opt-in object for facts the caller directly observed
 while executing the workflow. Its four arrays are `failure_traces`, `symbols`,
@@ -804,11 +819,15 @@ The `coverage` receipt distinguishes unmatched focus/include constraints,
 covered requirements, indexed requirements blocked by path or budget limits,
 and requirements absent from the index. Every focus path returns indexed and
 selected fragment counts with an implicit minimum of one; strict or explicit
-minimum requests additionally contribute to `strict_scope_satisfied`. Strict
-changed-path requests return resolved and selected changed-path counts. An empty
-strict scope therefore returns an explicit coverage failure rather than
-unrelated evidence. Already-held matching hashes satisfy a must-cover
-requirement without resending source.
+minimum requests contribute to `path_scope_satisfied`.
+`strict_scope_satisfied` remains as a backward-compatible alias with the same
+path-only meaning. Neither field claims task relevance. Explicit
+`required_evidence` contracts instead contribute to
+`evidence_scope_satisfied` and report matched and unmatched queries per path.
+Strict changed-path requests return resolved and selected changed-path counts.
+An empty strict scope therefore returns an explicit coverage failure rather
+than unrelated evidence. Already-held matching hashes satisfy a must-cover or
+evidence requirement without resending source.
 
 `omission_summary` distinguishes path filtering, known hashes, and budget or
 result limits with compact aggregate counts by default. Coverage, routing,

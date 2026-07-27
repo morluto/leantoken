@@ -350,6 +350,7 @@ fn context_request() -> ContextRequest {
             "tests/session_test.rs".into(),
         ],
         must_include_symbols: Vec::new(),
+        required_evidence: Vec::new(),
         max_fragments: Some(8),
         plan_only: false,
         focus_paths: vec!["src".into(), "tests".into()],
