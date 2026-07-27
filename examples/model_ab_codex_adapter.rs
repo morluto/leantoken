@@ -1099,10 +1099,11 @@ impl Analysis {
     fn record_command(&mut self, item: &Value) -> Result<(), Box<dyn Error>> {
         let command = required_str(item, "/command")?;
         let sequence = self.calls.len();
-        if is_native_retrieval_command(command) {
+        let skill_instruction_read = is_bounded_skill_instruction_read(command);
+        if !skill_instruction_read && is_native_retrieval_command(command) {
             self.native_retrieval_sequences.push(sequence);
         }
-        if !self.has_leantoken_call() && !is_preflight_command(command) {
+        if !self.has_leantoken_call() && !is_preflight_command(command) && !skill_instruction_read {
             self.pre_leantoken_substantive_sequences.push(sequence);
         }
         let output = item["aggregated_output"].as_str().unwrap_or_default();
@@ -1516,6 +1517,26 @@ fn is_native_retrieval_command(command: &str) -> bool {
         || interpreter_eval(&words, "php", "-r")
 }
 
+fn is_bounded_skill_instruction_read(command: &str) -> bool {
+    let words = command_words(command);
+    let is_skill_path = |path: &str| {
+        path.starts_with('/')
+            && path.ends_with("/skill.md")
+            && (path.contains("/skills/") || path.contains("/.agents/skills/"))
+    };
+    match words.as_slice() {
+        [reader, path] if reader == "cat" => is_skill_path(path),
+        [reader, flag, range, path] if reader == "sed" && flag == "-n" => {
+            !range.is_empty()
+                && range
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b',' | b'p'))
+                && is_skill_path(path)
+        }
+        _ => false,
+    }
+}
+
 fn is_preflight_command(command: &str) -> bool {
     let words = command_words(command);
     match words.as_slice() {
@@ -1916,6 +1937,18 @@ mod tests {
         assert!(is_preflight_command("/bin/bash -lc 'git rev-parse HEAD'"));
         assert!(!is_preflight_command(
             "/bin/bash -lc 'git status --short && cargo test'"
+        ));
+        assert!(is_bounded_skill_instruction_read(
+            "/bin/bash -lc \"sed -n '1,240p' /home/yann/.agents/skills/leantoken/SKILL.md\""
+        ));
+        assert!(is_bounded_skill_instruction_read(
+            "cat /home/yann/.agents/skills/leantoken/SKILL.md"
+        ));
+        assert!(!is_bounded_skill_instruction_read(
+            "/bin/bash -lc \"sed -n '1,240p' /home/yann/.agents/skills/leantoken/SKILL.md && cat src/lib.rs\""
+        ));
+        assert!(!is_bounded_skill_instruction_read(
+            "sed -n '1,240p' src/lib.rs"
         ));
     }
 
