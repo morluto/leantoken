@@ -621,6 +621,14 @@ pub(crate) struct GitLineCommit {
     pub subject: String,
 }
 
+/// Shared metadata for one exact immutable commit endpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GitCommitMetadata {
+    pub revision: String,
+    pub authored_at: String,
+    pub subject: String,
+}
+
 /// Load one bounded UTF-8 repository file from an immutable Git revision.
 pub(crate) fn git_blob_at_revision(
     root: &Path,
@@ -689,6 +697,23 @@ pub(crate) fn git_blobs_at_revision(
     let timeout = Duration::from_millis(2_000);
     let program = Path::new("git");
     let revision = resolve_revision_sha_for_field(root, program, revision, timeout, "revision")?;
+    git_blobs_at_resolved_revision(root, &revision, paths, max_file_bytes, max_total_bytes)
+}
+
+/// Load bounded UTF-8 blobs after the caller has resolved the immutable revision.
+///
+/// This executes one `ls-tree` subprocess and at most one `cat-file --batch`
+/// subprocess, independent of the number of requested paths.
+pub(crate) fn git_blobs_at_resolved_revision(
+    root: &Path,
+    revision: &str,
+    paths: &[String],
+    max_file_bytes: usize,
+    max_total_bytes: usize,
+) -> Result<GitBlobBatch> {
+    let timeout = Duration::from_millis(2_000);
+    let program = Path::new("git");
+    let revision = revision.to_owned();
     let prefix = git_worktree_prefix(root);
     let requested = paths.iter().cloned().collect::<BTreeSet<_>>();
     if requested.is_empty() {
@@ -883,6 +908,77 @@ pub(crate) fn git_blobs_at_revision(
         invalid_utf8_paths,
         unsupported_paths,
     })
+}
+
+/// Read metadata for resolved immutable endpoints in one bounded Git subprocess.
+pub(crate) fn git_commit_metadata(
+    root: &Path,
+    revisions: &[String],
+) -> Result<BTreeMap<String, GitCommitMetadata>> {
+    let requested = revisions.iter().cloned().collect::<BTreeSet<_>>();
+    if requested.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let mut args = vec![
+        "show".into(),
+        "-s".into(),
+        "--no-walk=unsorted".into(),
+        "--format=%H%x1f%aI%x1f%s%x00".into(),
+        "--end-of-options".into(),
+    ];
+    args.extend(requested.iter().cloned());
+    let output = run_git_capture(
+        root,
+        Path::new("git"),
+        &args,
+        GitCaptureOptions {
+            timeout: Duration::from_millis(1_000),
+            field: "revision",
+            timeout_reason: "git commit metadata timed out",
+            failure_reason: "could not read commit metadata",
+            max_output_bytes: requested.len().saturating_mul(1_024).max(2_048),
+        },
+    )?;
+    let mut metadata = BTreeMap::new();
+    for record in output.split(|byte| *byte == 0) {
+        let record = record.strip_prefix(b"\n").unwrap_or(record);
+        let record = record.strip_suffix(b"\n").unwrap_or(record);
+        if record.is_empty() {
+            continue;
+        }
+        let mut fields = record.splitn(3, |byte| *byte == 0x1f);
+        let revision = fields.next();
+        let authored_at = fields.next();
+        let subject = fields.next();
+        let (Some(revision), Some(authored_at), Some(subject)) = (revision, authored_at, subject)
+        else {
+            return Err(Error::InternalFailure(
+                "invalid git commit metadata record".into(),
+            ));
+        };
+        let revision = std::str::from_utf8(revision)
+            .map_err(|_| Error::InternalFailure("invalid git commit identity".into()))?;
+        if revision.len() < 12 || !revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(Error::InternalFailure("invalid git commit identity".into()));
+        }
+        let short_revision = revision[..12].to_ascii_lowercase();
+        metadata.insert(
+            short_revision.clone(),
+            GitCommitMetadata {
+                revision: short_revision,
+                authored_at: String::from_utf8_lossy(authored_at).into_owned(),
+                subject: String::from_utf8_lossy(subject).into_owned(),
+            },
+        );
+    }
+    for revision in requested {
+        if !metadata.contains_key(&revision) {
+            return Err(Error::InternalFailure(format!(
+                "missing commit metadata for resolved revision {revision}"
+            )));
+        }
+    }
+    Ok(metadata)
 }
 
 /// Return bounded commit metadata for one tracked historical line range.

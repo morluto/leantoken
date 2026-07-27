@@ -403,6 +403,12 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | File scan page size | 1000 for find/glob; tree queries `max_results + 1` projected paths |
 | Opt-in compact projection materialization | At most the 100 selected files, symbols, groups, or hits already admitted by `max_results`; no additional repository scan |
 | Opt-in response-bounded read materializations | At most 18 within one pinned generation |
+| Batched history targets / page | 64 requested / 32 returned |
+| Batched history distinct paths | 32 per revision endpoint |
+| Batched history blob bytes | 1 MiB per file, 8 MiB per revision endpoint |
+| Batched history parsed symbols | 1,024 per revision endpoint (2,048 total) |
+| Batched history retained diff | 1 MiB per response page |
+| Batched history Git subprocesses | At most 7, independent of target count |
 
 Focus quotas do not depend on global per-query top-N channels. During the
 existing 512-row paged constraint scan, context counts every indexed focus
@@ -475,6 +481,16 @@ committing receipt evidence. If their already source-bounded page does not fit,
 they return a typed limit error instead of manufacturing a cursor that could
 skip omitted evidence. Fixed-shape JSON projections use the same fail-loud
 rule; shallow schema degradation remains owned by the JSON projection stage.
+
+Batched symbol history resolves both revisions once, reads commit metadata in
+one command, performs one tree lookup per endpoint, and uses at most one
+`cat-file` batch per endpoint. Distinct blobs are parsed once and reused for all
+targets on that page. Endpoint parsing quotas are independent so a symbol-heavy
+base cannot starve head evidence. The cursor hashes resolved base/head commits
+and ordered normalized target pairings. Response fitting retains the largest
+ordered status skeleton before spending remaining capacity on diff prefixes;
+it never keeps a large early diff at the cost of otherwise representable symbol
+outcomes.
 
 Compact response projections are explicit and never replace the default DTO.
 `files=paths` maps the already selected entry page to ordered strings and keeps

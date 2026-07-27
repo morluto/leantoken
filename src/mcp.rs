@@ -29,9 +29,10 @@ use crate::config::{
     DEFAULT_RESULTS, MAX_CONTEXT_LINES, MAX_OUTPUT_TOKENS, MAX_RESULTS,
 };
 use crate::model::{
-    ContextRequest, ContextWorkflow, FileOperation, FilesRequest, HandoffManifestRequest,
-    HistoryOperation, HistoryRequest, IndexConsistency, JsonOperation, JsonProjection, JsonRequest,
-    JsonSelector, OutlineRequest, ReadRequest, SearchMode, SearchRequest,
+    ContextRequest, ContextWorkflow, DiffSymbolsRequest, DiffSymbolsTarget, FileOperation,
+    FilesRequest, HandoffManifestRequest, HistoryOperation, HistoryRequest, IndexConsistency,
+    JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadRequest,
+    SearchMode, SearchRequest,
 };
 use crate::services::{
     JsonExecutionOptions, MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN, MAX_JSON_DEPTH,
@@ -347,6 +348,7 @@ struct FilesMcpRequest {
     /// Maximum hierarchy depth below `path` for `tree`.
     #[serde(default)]
     depth: Option<usize>,
+    /// Response shape: `full` entries (default) or ordered `paths` only.
     #[serde(default)]
     projection: FilesMcpProjection,
 }
@@ -451,6 +453,7 @@ struct SearchMcpRequest {
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
+    /// Response shape: `full` hits (default) or compact `grouped` matches.
     #[serde(default)]
     projection: SearchMcpProjection,
 }
@@ -557,6 +560,7 @@ struct OutlineMcpRequest {
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     consistency: IndexConsistency,
+    /// Response shape: `full` definitions (default) or compact `signatures`.
     #[serde(default)]
     projection: OutlineMcpProjection,
 }
@@ -834,7 +838,7 @@ impl ReadMcpRequest {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct HistoryMcpRequest {
     /// Expected opaque repository identity from an earlier response.
@@ -843,7 +847,7 @@ struct HistoryMcpRequest {
     expected_repository_id: Option<String>,
     /// Git-backed symbol history operation.
     operation: HistoryMcpOperation,
-    /// Maximum commits returned by `symbol_log` (default 20, maximum 100).
+    /// Maximum results (default 20): 32 for `diff_symbols`, 100 for `symbol_log`.
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
     #[schemars(schema_with = "result_limit_schema", default = "default_result_option")]
     max_results: Option<usize>,
@@ -855,9 +859,13 @@ struct HistoryMcpRequest {
     #[serde(default)]
     #[schemars(schema_with = "response_token_limit_schema")]
     max_response_tokens: Option<usize>,
+    /// Opaque cursor returned by `diff_symbols`; reuse the exact operation.
+    #[serde(default)]
+    #[schemars(length(min = 1, max = 128))]
+    cursor: Option<String>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum HistoryMcpOperation {
     /// Read one parsed symbol, optionally qualified as `parent.name`, from an immutable revision.
@@ -880,6 +888,15 @@ enum HistoryMcpOperation {
         #[schemars(length(min = 1, max = 4096))]
         head_revision: String,
     },
+    /// Diff an ordered symbol set with shared revisions, metadata, and bounded Git work.
+    DiffSymbols {
+        #[schemars(length(min = 1, max = "crate::services::MAX_DIFF_SYMBOL_TARGETS"))]
+        targets: Vec<HistoryMcpTarget>,
+        #[schemars(length(min = 1, max = 4096))]
+        base_revision: String,
+        #[schemars(length(min = 1, max = 4096))]
+        head_revision: String,
+    },
     /// List commits that touched the symbol's tracked historical lines.
     SymbolLog {
         #[schemars(length(min = 1, max = 4096))]
@@ -890,6 +907,27 @@ enum HistoryMcpOperation {
         #[schemars(length(min = 1, max = 4096))]
         revision: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct HistoryMcpTarget {
+    #[schemars(length(min = 1, max = 4096))]
+    path: String,
+    #[schemars(length(min = 1, max = 4096))]
+    symbol: String,
+    #[serde(default)]
+    #[schemars(length(min = 1, max = 4096))]
+    head_path: Option<String>,
+    #[serde(default)]
+    #[schemars(length(min = 1, max = 4096))]
+    head_symbol: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum HistoryMcpCall {
+    Single(HistoryRequest),
+    DiffSymbols(DiffSymbolsRequest),
 }
 
 impl HistoryMcpRequest {
@@ -903,47 +941,83 @@ impl HistoryMcpRequest {
         )
     }
 
-    fn into_parts(self) -> (HistoryRequest, ServiceCallOptions, Option<String>) {
-        let operation = match self.operation {
+    fn into_parts(self) -> crate::Result<(HistoryMcpCall, ServiceCallOptions, Option<String>)> {
+        let has_cursor = self.cursor.is_some();
+        let cursor = self.cursor.clone();
+        let call = match self.operation {
             HistoryMcpOperation::ReadSymbol {
                 path,
                 symbol,
                 revision,
-            } => HistoryOperation::ReadSymbol {
-                path,
-                symbol,
-                revision,
-            },
+            } => HistoryMcpCall::Single(HistoryRequest {
+                operation: HistoryOperation::ReadSymbol {
+                    path,
+                    symbol,
+                    revision,
+                },
+                max_results: self.max_results,
+                max_tokens: self.max_tokens,
+            }),
             HistoryMcpOperation::DiffSymbol {
                 path,
                 symbol,
                 base_revision,
                 head_revision,
-            } => HistoryOperation::DiffSymbol {
-                path,
-                symbol,
+            } => HistoryMcpCall::Single(HistoryRequest {
+                operation: HistoryOperation::DiffSymbol {
+                    path,
+                    symbol,
+                    base_revision,
+                    head_revision,
+                },
+                max_results: self.max_results,
+                max_tokens: self.max_tokens,
+            }),
+            HistoryMcpOperation::DiffSymbols {
+                targets,
                 base_revision,
                 head_revision,
-            },
+            } => HistoryMcpCall::DiffSymbols(DiffSymbolsRequest {
+                targets: targets
+                    .into_iter()
+                    .map(|target| DiffSymbolsTarget {
+                        path: target.path,
+                        symbol: target.symbol,
+                        head_path: target.head_path,
+                        head_symbol: target.head_symbol,
+                    })
+                    .collect(),
+                base_revision,
+                head_revision,
+                max_results: self.max_results,
+                max_tokens: self.max_tokens,
+                cursor,
+            }),
             HistoryMcpOperation::SymbolLog {
                 path,
                 symbol,
                 revision,
-            } => HistoryOperation::SymbolLog {
-                path,
-                symbol,
-                revision,
-            },
-        };
-        (
-            HistoryRequest {
-                operation,
+            } => HistoryMcpCall::Single(HistoryRequest {
+                operation: HistoryOperation::SymbolLog {
+                    path,
+                    symbol,
+                    revision,
+                },
                 max_results: self.max_results,
                 max_tokens: self.max_tokens,
-            },
+            }),
+        };
+        if has_cursor && matches!(call, HistoryMcpCall::Single(_)) {
+            return Err(crate::Error::InvalidInput {
+                field: "cursor",
+                reason: "is only valid for diff_symbols",
+            });
+        }
+        Ok((
+            call,
             service_call_options(self.max_response_tokens),
             self.expected_repository_id,
-        )
+        ))
     }
 }
 
@@ -2272,7 +2346,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "history",
-        description = "Read, diff, or trace one parsed symbol across immutable Git revisions. Symbols may use parent.name qualification. diff_symbol returns bounded add/delete diffs when the symbol or file exists at only one endpoint; symbol_log traces tracked lines. For immutable range-scoped context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbol\",\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\",\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}."
+        description = "Read, diff, batch-diff, or trace parsed symbols across immutable Git revisions. Symbols may use parent.name qualification. diff_symbols resolves one shared range, loads each bounded path once per endpoint, and returns cursor-paged per-symbol outcomes without N Git subprocess chains. diff_symbol returns bounded add/delete diffs when one endpoint is absent; symbol_log traces tracked lines. For immutable range-scoped context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbols\",\"targets\":[{\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\"}],\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}."
     )]
     async fn leantoken_history(
         &self,
@@ -2294,7 +2368,7 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, options, expected_repository_id) = req.into_parts();
+        let (call, options, expected_repository_id) = req.into_parts().map_err(into_mcp_error)?;
         let cancellation = context.ct.clone();
         let mcp_services = self.services.clone();
         self.run_admitted(
@@ -2308,11 +2382,29 @@ impl LeanTokenMcp {
                     cancellation.clone(),
                     deadline,
                     || {
-                        services.history_cancellable_with_options(
-                            request.clone(),
-                            options,
-                            cancellation.clone(),
-                        )
+                        let call = call.clone();
+                        let services = services.clone();
+                        let cancellation = cancellation.clone();
+                        async move {
+                            match call {
+                                HistoryMcpCall::Single(request) => services
+                                    .history_cancellable_with_options(
+                                        request,
+                                        options,
+                                        cancellation,
+                                    )
+                                    .await
+                                    .and_then(serialized_response),
+                                HistoryMcpCall::DiffSymbols(request) => services
+                                    .history_diff_symbols_cancellable_with_options(
+                                        request,
+                                        options,
+                                        cancellation,
+                                    )
+                                    .await
+                                    .and_then(serialized_response),
+                            }
+                        }
                     },
                 )
                 .await
@@ -4111,7 +4203,10 @@ mod tests {
         request
             .validate_limits(McpLimitPolicy::DEFAULT)
             .expect("history limits");
-        let (request, _, _) = request.into_parts();
+        let (call, _, _) = request.into_parts().expect("history parts");
+        let HistoryMcpCall::Single(request) = call else {
+            panic!("expected single-symbol history call");
+        };
         assert_eq!(request.max_tokens, Some(500));
         assert!(matches!(
             request.operation,
@@ -4124,6 +4219,68 @@ mod tests {
                 && symbol == "Services"
                 && base_revision == "main~1"
                 && head_revision == "main"
+        ));
+    }
+
+    #[test]
+    fn diff_symbols_history_maps_targets_cursor_and_response_budget() {
+        let request = serde_json::from_value::<HistoryMcpRequest>(serde_json::json!({
+            "operation": {
+                "kind": "diff_symbols",
+                "targets": [
+                    {
+                        "path": "src/old.rs",
+                        "symbol": "old_name",
+                        "head_path": "src/new.rs",
+                        "head_symbol": "new_name"
+                    }
+                ],
+                "base_revision": "main~1",
+                "head_revision": "main"
+            },
+            "max_results": 1,
+            "max_tokens": 500,
+            "max_response_tokens": 900,
+            "cursor": "history-cursor"
+        }))
+        .expect("batched history request");
+        request
+            .validate_limits(McpLimitPolicy::DEFAULT)
+            .expect("batched history limits");
+        let (call, options, _) = request.into_parts().expect("batched history parts");
+        assert_eq!(options.max_response_tokens(), Some(900));
+        let HistoryMcpCall::DiffSymbols(request) = call else {
+            panic!("expected batched-symbol history call");
+        };
+        assert_eq!(request.base_revision, "main~1");
+        assert_eq!(request.head_revision, "main");
+        assert_eq!(request.max_results, Some(1));
+        assert_eq!(request.max_tokens, Some(500));
+        assert_eq!(request.cursor.as_deref(), Some("history-cursor"));
+        assert_eq!(request.targets.len(), 1);
+        assert_eq!(request.targets[0].path, "src/old.rs");
+        assert_eq!(request.targets[0].symbol, "old_name");
+        assert_eq!(request.targets[0].head_path.as_deref(), Some("src/new.rs"));
+        assert_eq!(request.targets[0].head_symbol.as_deref(), Some("new_name"));
+
+        let single_with_cursor = serde_json::from_value::<HistoryMcpRequest>(serde_json::json!({
+            "operation": {
+                "kind": "read_symbol",
+                "path": "src/lib.rs",
+                "symbol": "item",
+                "revision": "main"
+            },
+            "cursor": "not-valid-here"
+        }))
+        .expect("single history request");
+        assert!(matches!(
+            single_with_cursor
+                .into_parts()
+                .expect_err("cursor is exclusive to diff_symbols"),
+            crate::Error::InvalidInput {
+                field: "cursor",
+                reason: "is only valid for diff_symbols"
+            }
         ));
     }
 

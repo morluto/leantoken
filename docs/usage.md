@@ -662,6 +662,8 @@ working tree or index:
   "revision":"main~1"}` parses the historical blob and returns that symbol.
 - `operation: {"kind":"diff_symbol",...}` parses the symbol independently at
   `base_revision` and `head_revision`, then returns a bounded unified diff.
+- `operation: {"kind":"diff_symbols","targets":[...],...}` compares an ordered
+  symbol set over one shared revision range and returns cursor-paged outcomes.
 - `operation: {"kind":"symbol_log",...}` starts at `revision` (default `HEAD`)
   and uses Git line-history traversal for the resolved symbol range.
 
@@ -683,6 +685,26 @@ their private comparison buffers, so parser slices do not manufacture a
 whole-file no-newline marker and the returned content and hash remain unchanged.
 This tool deliberately has no index consistency mode because Git objects are
 immutable.
+
+`diff_symbols` accepts 1–64 targets and returns at most 32 per page. Each target
+contains `path` and `symbol`; supply `head_path` and `head_symbol` together to
+classify an explicit move or rename. Results preserve request order and include
+the original `request_index` plus one of `unchanged`, `added`, `removed`,
+`renamed`, `modified`, `not_found`, or `unavailable`. Base/head commit metadata
+is shared by the page. A continuation cursor binds the resolved revisions,
+ordered normalized target pairings, and next offset, so changing any of them
+returns `stale_cursor`.
+
+The batch operation parses each distinct file once per endpoint and performs at
+most seven Git subprocesses regardless of target count. It accepts at most 32
+distinct paths per endpoint, 1 MiB per blob, 8 MiB of blobs per endpoint, 1,024
+parsed symbols per endpoint, and 1 MiB of retained unified diff per page.
+`max_tokens` is shared across all diffs. If `max_response_tokens` requires
+fitting, LeanToken first preserves the largest ordered prefix of symbol status
+records, then fills their diffs in request order; `incomplete_reason` identifies
+the source-token, diff-byte, or final-response bound. The public Rust service
+exposes this as `Services::history_diff_symbols`; the existing `HistoryOperation`
+enum remains source-compatible.
 
 `diff_symbol` also returns `semantic_change` when the matched symbol content
 differs. The receipt classifies the change as `modified`, distinguishes

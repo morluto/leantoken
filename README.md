@@ -183,7 +183,7 @@ and MCP transport wrappers are not part of this source-token budget; see
 | `leantoken.files` | Prefer over find/ls/glob for compact, ignore-aware path discovery. |
 | `leantoken.outline` | Inspect definitions, signatures, imports, and ranges without whole-file reads. |
 | `leantoken.read` | Prefer over cat/head/sed for one exact symbol or inclusive line range. |
-| `leantoken.history` | Read, diff, or trace one parsed symbol across immutable Git revisions. |
+| `leantoken.history` | Read, batch-diff, or trace parsed symbols across immutable Git revisions. |
 | `leantoken.json` | Query, summarize, or compare bounded live JSON with paged keys and typed diagnostics. |
 | `leantoken.savings` | Report observed response accounting, hash suppression, failures, and explicit observation limits. |
 

@@ -163,6 +163,30 @@ pub(super) fn classify_historical_symbol_change(
     })
 }
 
+pub(super) struct HistoricalSymbolChangeEndpoint<'a> {
+    pub path: &'a str,
+    pub symbol: &'a HistoricalSymbol,
+    pub signature: Option<&'a str>,
+    pub content: &'a str,
+}
+
+pub(super) fn classify_historical_symbol_rename(
+    before: HistoricalSymbolChangeEndpoint<'_>,
+    after: HistoricalSymbolChangeEndpoint<'_>,
+) -> DiffSymbolChange {
+    let content_changed = before.content != after.content;
+    let modification = content_changed.then(|| modification(before.signature, after.signature));
+    let public_contract_changed =
+        explicitly_public(before.signature) || explicitly_public(after.signature);
+    DiffSymbolChange {
+        kind: DiffSymbolChangeKind::Renamed,
+        before: Some(historical_evidence(before.path, before.symbol)),
+        after: Some(historical_evidence(after.path, after.symbol)),
+        modification,
+        public_contract_changed,
+    }
+}
+
 pub(super) fn classify_historical_symbol_added(
     path: &str,
     after: &HistoricalSymbol,
