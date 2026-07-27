@@ -986,6 +986,9 @@ fn select_with_options(
         reason: "budget or result limit".to_string(),
     }));
 
+    if !request.verbose_diagnostics {
+        omitted_dto.clear();
+    }
     let omitted_count = omission_summary
         .path_excluded
         .saturating_add(omission_summary.known_hash)
@@ -2000,8 +2003,23 @@ mod tests {
         request.known_hashes = vec![known_hash];
         request.verbose_diagnostics = true;
 
+        let candidates = vec![selected, limited, known, excluded];
+        let mut compact_request = request.clone();
+        compact_request.verbose_diagnostics = false;
+        let compact = select_with_tokenizer_and_context_exclusions(
+            candidates.clone(),
+            &compact_request,
+            1,
+            tokens::Tokenizer::default(),
+            &[],
+            &["generated/tool.js".into()],
+        );
+        assert!(compact.omitted.is_empty());
+        assert!(compact.omission_summary.by_reason.is_empty());
+        assert_eq!(compact.omission_summary.path_excluded, 2);
+
         let response = select_with_tokenizer_and_context_exclusions(
-            vec![selected, limited, known, excluded],
+            candidates,
             &request,
             1,
             tokens::Tokenizer::default(),
@@ -2009,6 +2027,7 @@ mod tests {
             &["generated/tool.js".into()],
         );
 
+        assert_eq!(response.omitted.len(), MAX_OMITTED_DETAILS);
         let summary = response.omission_summary;
         assert_eq!(summary.path_excluded, 2);
         assert_eq!(summary.known_hash, 1);

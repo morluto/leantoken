@@ -803,18 +803,20 @@ overhead:
   values neutralized and result arrays emptied.
 - `path_and_metadata_tokens` counts the remaining non-source response cost,
   including paths, metadata values, and repeated result structure.
-- `total_response_tokens` counts the compact JSON response DTO after the four
-  accounting totals are set to zero.
+- `total_response_tokens` counts the final compact JSON service response,
+  including the nonzero accounting fields themselves.
 - `payload_tokens` is a compatibility alias for `total_response_tokens`.
 - `tokenizer` identifies the tokenizer used for every count.
 
-The accounting fields themselves are zeroed before counting, which avoids a
-self-referential total. For current responses,
+Accounting is filled repeatedly to a deterministic fixed point. Therefore
 `source_tokens + protocol_tokens + path_and_metadata_tokens` equals
-`total_response_tokens`. The final serialization containing the nonzero
-accounting values can therefore be slightly larger than the reported total.
-Current source limits do not impose a hard ceiling on that final serialization.
-These counts describe the service response DTO, not MCP
+`total_response_tokens`, and tokenizing the final compact DTO produces that
+exact total. Source limits remain independent and do not by themselves impose a
+hard ceiling on the final serialization. Context callers can opt into that
+second boundary with `ServiceCallOptions`, MCP `max_response_tokens`, or CLI
+`--max-response-tokens`; a mandatory correctness skeleton that cannot fit
+returns a typed limit error. These counts and limits describe the service
+response DTO, not MCP
 text/structured-content duplication, tool schemas, provider framing, or JSON-RPC
 envelopes. In the default `dual` mode, MCP serializes the structured payload in
 both text and `structuredContent`; use the wire-cost harness when that boundary

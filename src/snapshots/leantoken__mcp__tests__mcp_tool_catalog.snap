@@ -264,6 +264,14 @@ expression: tools
           "minimum": 1,
           "type": "integer"
         },
+        "max_response_tokens": {
+          "default": null,
+          "description": "Maximum tokens in the final serialized service response.",
+          "format": "uint",
+          "maximum": 32000,
+          "minimum": 1,
+          "type": "integer"
+        },
         "minimum_fragments_per_focus_path": {
           "default": null,
           "description": "Minimum returned fragments required for each focus path pattern.",

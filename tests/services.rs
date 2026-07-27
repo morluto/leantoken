@@ -7,7 +7,8 @@ use leantoken::{
     JsonIncompleteReason, JsonOperation, JsonProjection, JsonRequest, JsonSelector, OutlineRequest,
     ReadDeltaFallback, ReadDeltaOutcome, ReadRequest, ReadStatus, SearchMode, SearchRequest,
     TokenAccountingOperation, TokenSavingsOperation, coordination::IndexCoordination,
-    services::Services, tokens::Tokenizer,
+    services::{ServiceCallOptions, Services},
+    tokens::Tokenizer,
 };
 use leantoken::{
     DiffConfigurationChangeKind, DiffOwnerTestStatus, DiffSymbolChangeKind, DiffSymbolModification,
@@ -34,21 +35,12 @@ macro_rules! assert_response_token_accounting {
         );
         assert!(response.meta.payload_tokens > 0);
 
-        let mut countable = response.clone();
-        countable.meta.protocol_tokens = 0;
-        countable.meta.path_and_metadata_tokens = 0;
-        countable.meta.total_response_tokens = 0;
-        countable.meta.payload_tokens = 0;
-        let payload = serde_json::to_string(&countable).expect("serialize counted payload");
-        assert_eq!(
-            response.meta.total_response_tokens,
-            tokenizer.count(&payload)
-        );
         let final_payload =
             serde_json::to_string(response).expect("serialize final response payload");
-        assert!(
-            tokenizer.count(&final_payload) >= response.meta.total_response_tokens,
-            "final serialization cannot be smaller than the zeroed accounting DTO"
+        assert_eq!(
+            tokenizer.count(&final_payload),
+            response.meta.total_response_tokens,
+            "accounting must include its own serialized fields"
         );
     }};
 }
@@ -1605,6 +1597,198 @@ async fn context_plan_previews_materialization_without_receipt_or_source() {
         plan.estimated_source_tokens,
         materialized.meta.source_tokens
     );
+    assert!(
+        preview.meta.total_response_tokens <= materialized.meta.total_response_tokens,
+        "a non-empty metadata plan should not exceed its materialized response"
+    );
+}
+
+#[tokio::test]
+async fn context_options_enforce_the_final_serialized_service_response_budget() {
+    let (root, services) = fixture().await;
+    for index in 0..6 {
+        let body = (0..80)
+            .map(|line| format!("    let greet_value_{line} = \"hello {index} {line}\";\n"))
+            .collect::<String>();
+        std::fs::write(
+            root.path().join(format!("src/greet_{index}.rs")),
+            format!("pub fn greet_{index}() {{\n{body}}}\n"),
+        )
+        .expect("write context budget fixture");
+    }
+    services.index(false).await.expect("reindex budget fixture");
+    let request = context_limit_request(1_000);
+    let source_budget = request.token_budget;
+    let unrestricted = services
+        .context(request.clone())
+        .await
+        .expect("unrestricted context");
+    let removable_tokens = unrestricted
+        .fragments
+        .last()
+        .map_or(1, |fragment| fragment.token_count.max(1));
+    let max_response_tokens = unrestricted
+        .meta
+        .total_response_tokens
+        .saturating_sub(removable_tokens);
+
+    let bounded = services
+        .context_with_options(
+            request.clone(),
+            ServiceCallOptions::new().with_max_response_tokens(max_response_tokens),
+        )
+        .await
+        .expect("bounded context");
+    let repeated = services
+        .context_with_options(
+            request,
+            ServiceCallOptions::new().with_max_response_tokens(max_response_tokens),
+        )
+        .await
+        .expect("repeated bounded context");
+
+    assert!(bounded.meta.total_response_tokens <= max_response_tokens);
+    assert!(repeated.meta.total_response_tokens <= max_response_tokens);
+    assert!(bounded.meta.source_tokens <= source_budget);
+    assert!(
+        bounded.fragments.len() < unrestricted.fragments.len(),
+        "a tighter total ceiling must remove the lowest-ranked optional source"
+    );
+    assert_response_token_accounting!(bounded, Tokenizer::Cl100kBase);
+    assert_response_token_accounting!(repeated, Tokenizer::Cl100kBase);
+    assert_eq!(
+        bounded
+            .fragments
+            .iter()
+            .map(|fragment| (&fragment.path, fragment.start_line, fragment.end_line))
+            .collect::<Vec<_>>(),
+        repeated
+            .fragments
+            .iter()
+            .map(|fragment| (&fragment.path, fragment.start_line, fragment.end_line))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn context_response_budget_fails_loudly_when_the_mandatory_skeleton_cannot_fit() {
+    let (root, services) = fixture().await;
+    let generation = services
+        .status()
+        .await
+        .expect("status before invalid limit")
+        .repository_generation;
+    std::fs::write(
+        root.path().join("src/pending.rs"),
+        "pub fn pending_response_budget_change() {}\n",
+    )
+    .expect("write pending change");
+    let invalid = services
+        .context_with_options_workflow_consistency_cancellable(
+            context_limit_request(100),
+            None,
+            ContextWorkflow::Auto,
+            IndexConsistency::ReconcileWorkingTree,
+            ServiceCallOptions::new().with_max_response_tokens(0),
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("zero response limit must fail before reconciliation");
+    assert!(matches!(
+        invalid,
+        Error::InvalidInput {
+            field: "max_response_tokens",
+            ..
+        }
+    ));
+    assert_eq!(
+        services
+            .status()
+            .await
+            .expect("status after invalid limit")
+            .repository_generation,
+        generation
+    );
+
+    let mut request = context_limit_request(100);
+    request.focus_paths = vec!["src/**".into()];
+    request.strict_focus_paths = true;
+
+    let error = services
+        .context_with_options(
+            request,
+            ServiceCallOptions::new().with_max_response_tokens(1),
+        )
+        .await
+        .expect_err("one token cannot fit the correctness skeleton");
+
+    assert!(matches!(
+        error,
+        Error::RequestLimitExceeded {
+            field: "max_response_tokens",
+            requested,
+            limit: 1,
+        } if requested > 1
+    ));
+}
+
+#[tokio::test]
+async fn context_plan_diff_evidence_is_opt_in_and_never_smaller_when_expanded() {
+    let (_root, services) = fixture().await;
+    let mut request = context_limit_request(200);
+    request.plan_only = true;
+    request.changed_paths = vec!["src/lib.rs".into()];
+
+    let compact = services
+        .context(request.clone())
+        .await
+        .expect("compact diff plan");
+    assert!(
+        compact
+            .diff_scope
+            .as_ref()
+            .expect("diff scope")
+            .evidence
+            .is_none()
+    );
+
+    request.verbose_diagnostics = true;
+    let expanded = services.context(request).await.expect("expanded diff plan");
+    assert!(
+        expanded
+            .diff_scope
+            .as_ref()
+            .expect("diff scope")
+            .evidence
+            .is_some()
+    );
+    assert!(expanded.meta.total_response_tokens >= compact.meta.total_response_tokens);
+}
+
+#[tokio::test]
+async fn context_plan_only_respects_the_serialized_response_budget() {
+    let (_root, services) = fixture().await;
+    let mut request = context_limit_request(200);
+    request.plan_only = true;
+    let unrestricted = services
+        .context(request.clone())
+        .await
+        .expect("unrestricted plan");
+    let max_response_tokens = unrestricted.meta.total_response_tokens.saturating_sub(1);
+
+    let bounded = services
+        .context_with_options(
+            request,
+            ServiceCallOptions::new().with_max_response_tokens(max_response_tokens),
+        )
+        .await
+        .expect("bounded plan");
+
+    assert!(bounded.plan.is_some());
+    assert!(bounded.fragments.is_empty());
+    assert!(bounded.meta.receipt_id.is_none());
+    assert!(bounded.meta.total_response_tokens <= max_response_tokens);
+    assert_response_token_accounting!(bounded, Tokenizer::Cl100kBase);
 }
 
 #[tokio::test]
@@ -1671,6 +1855,15 @@ async fn context_include_paths_constrain_fragments_and_report_path_omissions() {
     let mut request = context_limit_request(200);
     request.task = "find shared_capture_target".into();
     request.include_paths = vec!["src/browser/**".into()];
+    let compact = services
+        .context(request.clone())
+        .await
+        .expect("compact constrained context");
+    assert!(compact.omitted.is_empty());
+    assert!(compact.omission_summary.path_excluded > 0);
+    assert!(compact.omission_summary.by_path.is_empty());
+    assert!(compact.omission_summary.by_reason.is_empty());
+
     request.verbose_diagnostics = true;
 
     let response = services.context(request).await.expect("constrained context");

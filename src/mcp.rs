@@ -33,7 +33,9 @@ use crate::model::{
     HistoryOperation, HistoryRequest, IndexConsistency, JsonOperation, JsonProjection, JsonRequest,
     JsonSelector, OutlineRequest, ReadRequest, SearchMode, SearchRequest,
 };
-use crate::services::{Services, validate_positive_request_limit, validate_request_limit};
+use crate::services::{
+    ServiceCallOptions, Services, validate_positive_request_limit, validate_request_limit,
+};
 
 const DEFAULT_ACTIVE_TOOL_CALL_CAPACITY: usize = 16;
 const DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY: usize = DEFAULT_ACTIVE_TOOL_CALL_CAPACITY;
@@ -974,6 +976,10 @@ struct ContextMcpRequest {
         default = "default_context_token_option"
     )]
     token_budget: Option<usize>,
+    /// Maximum tokens in the final serialized service response.
+    #[serde(default)]
+    #[schemars(schema_with = "response_token_limit_schema")]
+    max_response_tokens: Option<usize>,
     /// Require every returned source fragment to match one of these path patterns.
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 4096)))]
@@ -1056,6 +1062,11 @@ impl ContextMcpRequest {
             self.token_budget,
             limits.max_output_tokens,
         )?;
+        validate_optional_positive_limit(
+            "max_response_tokens",
+            self.max_response_tokens,
+            limits.max_response_tokens,
+        )?;
         validate_optional_positive_limit("max_fragments", self.max_fragments, limits.max_results)?;
         validate_optional_positive_limit(
             "minimum_fragments_per_focus_path",
@@ -1071,6 +1082,7 @@ impl ContextMcpRequest {
         ContextRequest,
         ContextWorkflow,
         IndexConsistency,
+        ServiceCallOptions,
         Option<String>,
         Option<HandoffManifestRequest>,
     ) {
@@ -1098,6 +1110,10 @@ impl ContextMcpRequest {
             },
             self.workflow,
             self.consistency,
+            self.max_response_tokens
+                .map_or_else(ServiceCallOptions::new, |limit| {
+                    ServiceCallOptions::new().with_max_response_tokens(limit)
+                }),
             self.expected_repository_id,
             self.handoff,
         )
@@ -1164,6 +1180,15 @@ fn context_token_limit_schema(_: &mut SchemaGenerator) -> Schema {
         "minimum": 1,
         "maximum": MAX_OUTPUT_TOKENS,
         "default": DEFAULT_CONTEXT_TOKENS
+    })
+}
+
+fn response_token_limit_schema(_: &mut SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "type": "integer",
+        "format": "uint",
+        "minimum": 1,
+        "maximum": MAX_OUTPUT_TOKENS
     })
 }
 
@@ -1319,6 +1344,7 @@ impl RequestAdmission {
 struct McpLimitPolicy {
     max_results: usize,
     max_output_tokens: usize,
+    max_response_tokens: usize,
     max_context_lines: usize,
     default_context_tokens: usize,
 }
@@ -1327,6 +1353,7 @@ impl McpLimitPolicy {
     const DEFAULT: Self = Self {
         max_results: MAX_RESULTS,
         max_output_tokens: MAX_OUTPUT_TOKENS,
+        max_response_tokens: MAX_OUTPUT_TOKENS,
         max_context_lines: MAX_CONTEXT_LINES,
         default_context_tokens: DEFAULT_CONTEXT_TOKENS,
     };
@@ -1336,6 +1363,7 @@ impl McpLimitPolicy {
         Ok(Self {
             max_results: config.max_results,
             max_output_tokens: config.max_output_tokens,
+            max_response_tokens: MAX_OUTPUT_TOKENS,
             max_context_lines: MAX_CONTEXT_LINES,
             default_context_tokens: config.default_context_tokens,
         })
@@ -2125,7 +2153,7 @@ impl LeanTokenMcp {
             Ok(services) => services,
             Err(result) => return Ok(result),
         };
-        let (request, workflow, consistency, expected_repository_id, handoff) =
+        let (request, workflow, consistency, options, expected_repository_id, handoff) =
             req.into_parts(limits.default_context_tokens);
         let cancellation = context.ct.clone();
         let mcp_services = self.services.clone();
@@ -2133,42 +2161,24 @@ impl LeanTokenMcp {
             services,
             expected_repository_id,
             move |services| async move {
-                if let Some(handoff) = &handoff {
-                    retry_after_initial_index(
-                        "context",
-                        &mcp_services,
-                        &services,
-                        cancellation.clone(),
-                        deadline,
-                        || {
-                            services.context_with_handoff_workflow_consistency_cancellable(
-                                request.clone(),
-                                handoff.clone(),
-                                workflow,
-                                consistency,
-                                cancellation.clone(),
-                            )
-                        },
-                    )
-                    .await
-                } else {
-                    retry_after_initial_index(
-                        "context",
-                        &mcp_services,
-                        &services,
-                        cancellation.clone(),
-                        deadline,
-                        || {
-                            services.context_with_workflow_consistency_cancellable(
-                                request.clone(),
-                                workflow,
-                                consistency,
-                                cancellation.clone(),
-                            )
-                        },
-                    )
-                    .await
-                }
+                retry_after_initial_index(
+                    "context",
+                    &mcp_services,
+                    &services,
+                    cancellation.clone(),
+                    deadline,
+                    || {
+                        services.context_with_options_workflow_consistency_cancellable(
+                            request.clone(),
+                            handoff.clone(),
+                            workflow,
+                            consistency,
+                            options,
+                            cancellation.clone(),
+                        )
+                    },
+                )
+                .await
             },
         )
         .await
@@ -3418,13 +3428,21 @@ mod tests {
             "task": "find answer"
         }))
         .expect("context request without a budget");
-        let (request, _, _, _, _) = request.into_parts(37);
+        let (request, _, _, _, _, _) = request.into_parts(37);
         assert_eq!(request.token_budget, 37);
         assert!(!request.verbose_diagnostics);
+        let null_limit = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+            "task": "find answer",
+            "max_response_tokens": null
+        }))
+        .expect("null response limit is equivalent to omission");
+        let (_, _, _, options, _, _) = null_limit.into_parts(37);
+        assert_eq!(options.max_response_tokens(), None);
 
         let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
             "task": "find answer",
             "token_budget": 23,
+            "max_response_tokens": 47,
             "focus_paths": ["src/**"],
             "strict_focus_paths": true,
             "minimum_fragments_per_focus_path": 2,
@@ -3433,14 +3451,31 @@ mod tests {
             "verbose_diagnostics": true
         }))
         .expect("context request with a budget");
-        let (request, _, _, _, _) = request.into_parts(37);
+        let (request, _, _, options, _, _) = request.into_parts(37);
         assert_eq!(request.token_budget, 23);
+        assert_eq!(options.max_response_tokens(), Some(47));
         assert_eq!(request.focus_paths, ["src/**"]);
         assert!(request.strict_focus_paths);
         assert_eq!(request.minimum_fragments_per_focus_path, Some(2));
         assert_eq!(request.changed_paths, ["src/lib.rs"]);
         assert!(request.strict_changed_paths);
         assert!(request.verbose_diagnostics);
+
+        for invalid in [0, MAX_OUTPUT_TOKENS + 1] {
+            let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+                "task": "find answer",
+                "max_response_tokens": invalid
+            }))
+            .expect("syntactically valid context response limit");
+            assert!(request.validate_limits(McpLimitPolicy::DEFAULT).is_err());
+        }
+        assert!(
+            serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+                "task": "find answer",
+                "max_response_tokens": -1
+            }))
+            .is_err()
+        );
     }
 
     #[test]
@@ -3461,7 +3496,7 @@ mod tests {
             }
         }))
         .expect("context handoff request");
-        let (_, _, _, _, handoff) = request.into_parts(37);
+        let (_, _, _, _, _, handoff) = request.into_parts(37);
         let handoff = handoff.expect("handoff");
         assert_eq!(handoff.summary.as_deref(), Some("executor state"));
         assert_eq!(handoff.validations.len(), 1);
@@ -3704,6 +3739,28 @@ mod tests {
         assert!(continuation.heading_occurrence.is_none());
         assert!(continuation.start_line.is_none());
         assert!(continuation.end_line.is_none());
+    }
+
+    #[test]
+    fn context_response_budget_schema_is_optional_and_bounded() {
+        let context = LeanTokenMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|tool| tool.name == "context")
+            .expect("context tool");
+        let schema = serde_json::Value::Object((*context.input_schema).clone());
+        assert_eq!(
+            schema.pointer("/properties/max_response_tokens/minimum"),
+            Some(&serde_json::json!(1))
+        );
+        assert_eq!(
+            schema.pointer("/properties/max_response_tokens/maximum"),
+            Some(&serde_json::json!(32_000))
+        );
+        assert_eq!(
+            schema.pointer("/properties/max_response_tokens/default"),
+            Some(&serde_json::Value::Null)
+        );
     }
 
     #[test]

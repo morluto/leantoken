@@ -68,7 +68,7 @@ pub struct ResponseMeta {
     /// Tokens attributed to paths, metadata values, and repeated result structure.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub path_and_metadata_tokens: usize,
-    /// Tokens in the compact serialized response, excluding accounting fields themselves.
+    /// Tokens in the final serialized service response, including accounting fields.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub total_response_tokens: usize,
     /// Compatibility alias for `total_response_tokens`.
@@ -2023,7 +2023,7 @@ pub struct ResponseTokenAccountingByOperation {
     pub path_and_metadata_tokens: u64,
     /// Tokens attributed to the compact response envelope.
     pub protocol_tokens: u64,
-    /// Tokens in complete serialized responses, excluding accounting fields themselves.
+    /// Tokens in complete serialized responses, including accounting fields.
     pub total_response_tokens: u64,
     /// Baseline tokens minus complete response tokens; negative values are net cost.
     pub estimated_net_tokens_saved: i64,
@@ -2052,7 +2052,7 @@ pub struct ResponseTokenAccounting {
     pub path_and_metadata_tokens: u64,
     /// Tokens attributed to compact response envelopes.
     pub protocol_tokens: u64,
-    /// Tokens in complete serialized responses, excluding accounting fields themselves.
+    /// Tokens in complete serialized responses, including accounting fields.
     pub total_response_tokens: u64,
     /// Baseline tokens minus complete response tokens; negative values are net cost.
     pub estimated_net_tokens_saved: i64,

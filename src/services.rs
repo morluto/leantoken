@@ -125,6 +125,38 @@ pub struct Services {
     reconciliation: reconciliation::ReconciliationCoordinator,
 }
 
+/// Per-call response controls that preserve request-struct source compatibility.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ServiceCallOptions {
+    max_response_tokens: Option<usize>,
+}
+
+impl ServiceCallOptions {
+    /// Construct call options without a serialized-response ceiling.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            max_response_tokens: None,
+        }
+    }
+
+    /// Set the inclusive serialized service-response token ceiling.
+    ///
+    /// Services reject zero before retrieval or consistency work begins.
+    #[must_use]
+    pub const fn with_max_response_tokens(mut self, max_response_tokens: usize) -> Self {
+        self.max_response_tokens = Some(max_response_tokens);
+        self
+    }
+
+    /// Return the configured serialized service-response ceiling.
+    #[must_use]
+    pub const fn max_response_tokens(self) -> Option<usize> {
+        self.max_response_tokens
+    }
+}
+
 trait RetrievalResponse: Serialize {
     fn meta_mut(&mut self) -> &mut ResponseMeta;
 }
@@ -264,14 +296,26 @@ impl Services {
             meta.payload_tokens = 0;
             meta.source_tokens
         };
-        let accounting =
-            response_token_accounting(&*response, source_tokens, &self.config.tokenizer)?;
-        let meta = response.meta_mut();
-        meta.protocol_tokens = accounting.protocol_tokens;
-        meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
-        meta.total_response_tokens = accounting.total_response_tokens;
-        meta.payload_tokens = accounting.total_response_tokens;
-        Ok(())
+        const MAX_ACCOUNTING_PASSES: usize = 32;
+        for _ in 0..MAX_ACCOUNTING_PASSES {
+            let accounting =
+                response_token_accounting(&*response, source_tokens, &self.config.tokenizer)?;
+            let meta = response.meta_mut();
+            if meta.protocol_tokens == accounting.protocol_tokens
+                && meta.path_and_metadata_tokens == accounting.path_and_metadata_tokens
+                && meta.total_response_tokens == accounting.total_response_tokens
+                && meta.payload_tokens == accounting.total_response_tokens
+            {
+                return Ok(());
+            }
+            meta.protocol_tokens = accounting.protocol_tokens;
+            meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
+            meta.total_response_tokens = accounting.total_response_tokens;
+            meta.payload_tokens = accounting.total_response_tokens;
+        }
+        Err(Error::InternalFailure(
+            "serialized response accounting did not reach a fixed point".into(),
+        ))
     }
 
     /// Reconcile repository files into one committed index generation.
@@ -996,6 +1040,40 @@ mod tests {
         services.index(false).await.expect("initial index");
         services.reconciliation.reset_diagnostics();
         (root, services)
+    }
+
+    #[tokio::test]
+    async fn response_accounting_reaches_an_inclusive_fixed_point_across_digit_boundaries() {
+        let (_root, services) = indexed_services().await;
+        let mut digit_widths = Vec::new();
+
+        for repository_id_bytes in [1, 400, 4_000] {
+            let mut response = FilesResponse {
+                entries: Vec::new(),
+                meta: services.meta(1, 0, None),
+            };
+            response.meta.repository_id = "r".repeat(repository_id_bytes);
+            services
+                .finalize_response(&mut response)
+                .expect("fixed-point accounting");
+
+            let serialized = serde_json::to_string(&response).expect("serialize response");
+            assert_eq!(
+                services.config.tokenizer.count(&serialized),
+                response.meta.total_response_tokens
+            );
+            assert_eq!(
+                response.meta.payload_tokens,
+                response.meta.total_response_tokens
+            );
+            digit_widths.push(response.meta.total_response_tokens.to_string().len());
+        }
+
+        digit_widths.dedup();
+        assert!(
+            digit_widths.len() >= 2,
+            "fixture must cross at least one accounting digit boundary"
+        );
     }
 
     #[tokio::test]

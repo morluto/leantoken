@@ -367,6 +367,31 @@ retain the matching-chunk limit, while the fallback retains its file and
 per-file chunk limits. Compiled regex size and DFA cache are also limited so
 pathological patterns fail closed.
 
+Context accepts an optional serialized service-response ceiling through
+`ServiceCallOptions`, MCP `max_response_tokens`, or CLI
+`--max-response-tokens`. This boundary counts the final compact service DTO,
+including paths, diagnostics, receipts, metadata, and the accounting fields
+themselves. It does not count MCP `CallToolResult` duplication, JSON-RPC
+framing, or human CLI rendering. `token_budget`/`--budget` remains the
+independent source-content ceiling.
+
+Fitting is deterministic and happens inside `Services`, after candidate
+generation but before receipt evidence is committed. It first removes bounded
+omission facets, detailed diff evidence, routing detail, and ranking reasons.
+Only requests without include, must-cover, focus, diff, strict-scope, or
+handoff constraints may then drop lowest-ranked selected fragments. Constrained
+requests return a typed `RequestLimitExceeded` error when their correctness
+skeleton cannot fit; fitting never weakens their coverage contract. Default
+plan-only diff context omits detailed diff evidence unless
+`verbose_diagnostics` is requested. Receipt sizing reserves the exact
+request/generated receipt identifier plus conservative counter and warning
+shapes, and the final postcondition is checked after receipt application.
+Accounting converges to a fixed point and
+`meta.total_response_tokens` is the exact inclusive serialized DTO count.
+The shared `ResponseBudget` counter provides a logarithmic largest-prefix
+primitive; operation services supply the response-shaped projection and
+correctness skeleton rather than applying generic JSON truncation.
+
 Run the reproducible hot-path profile with, for example,
 `cargo run --example hot_path_bounds --release -- --files 10000 --iterations 20`.
 It reports warm p50/p95 wall time plus deterministic regex and context phase
