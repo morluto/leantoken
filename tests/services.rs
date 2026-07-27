@@ -2557,6 +2557,206 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
 }
 
 #[tokio::test]
+async fn strict_focus_paths_generate_candidates_before_global_top_n_truncation() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir_all(root.path().join("aaa_noise")).expect("noise directory");
+    std::fs::create_dir_all(root.path().join("focus")).expect("focus directory");
+    for index in 0..64 {
+        std::fs::write(
+            root.path().join(format!("aaa_noise/noise_{index:02}.rs")),
+            format!("pub fn buried_focus_target() -> usize {{ {index} }}\n"),
+        )
+        .expect("noise source");
+    }
+    let focus_paths = (0..9)
+        .map(|index| format!("focus/owner_{index}.rs"))
+        .collect::<Vec<_>>();
+    for (index, path) in focus_paths.iter().enumerate() {
+        std::fs::write(
+            root.path().join(path),
+            format!("pub fn buried_focus_target_owner_{index}() -> usize {{ {index} }}\n"),
+        )
+        .expect("focus source");
+    }
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let request = {
+        let mut request = context_limit_request(4_000);
+        request.task = "change buried_focus_target".into();
+        request.focus_paths.clone_from(&focus_paths);
+        request.strict_focus_paths = true;
+        request.minimum_fragments_per_focus_path = Some(1);
+        request.max_fragments = Some(focus_paths.len());
+        request
+    };
+    let first = services
+        .context(request.clone())
+        .await
+        .expect("focused context");
+    let second = services
+        .context(request.clone())
+        .await
+        .expect("deterministic focused context");
+
+    assert_eq!(first.fragments.len(), focus_paths.len());
+    assert_eq!(first.coverage.strict_scope_satisfied, Some(true));
+    assert!(first.coverage.focus_path_coverage.iter().all(
+        |focus| focus.indexed_paths == 1
+            && focus.selected_fragments == 1
+            && focus.satisfied
+    ));
+    assert_eq!(
+        first
+            .fragments
+            .iter()
+            .map(|fragment| (&fragment.path, &fragment.content_hash))
+            .collect::<Vec<_>>(),
+        second
+            .fragments
+            .iter()
+            .map(|fragment| (&fragment.path, &fragment.content_hash))
+            .collect::<Vec<_>>()
+    );
+
+    let evaluation = services
+        .context_evaluation(request.clone())
+        .await
+        .expect("focus candidate evaluation");
+    assert_eq!(
+        evaluation
+            .primitive_keys
+            .iter()
+            .filter(|primitive| {
+                matches!(
+                    primitive.kind.as_str(),
+                    "focus_file_chunks" | "focus_file_symbols"
+                )
+            })
+            .count(),
+        focus_paths.len() * 2
+    );
+
+    let mut plan_request = request;
+    plan_request.plan_only = true;
+    let plan = services
+        .context(plan_request)
+        .await
+        .expect("focused plan")
+        .plan
+        .expect("plan");
+    assert_eq!(
+        plan.candidates
+            .iter()
+            .map(|candidate| candidate.path.as_str())
+            .collect::<Vec<_>>(),
+        first
+            .fragments
+            .iter()
+            .map(|fragment| fragment.path.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    let mut overlapping = context_limit_request(1_000);
+    overlapping.task = "change buried_focus_target".into();
+    overlapping.focus_paths =
+        vec!["focus/owner_0.rs".into(), "focus/owner_*.rs".into()];
+    overlapping.strict_focus_paths = true;
+    overlapping.max_fragments = Some(1);
+    let overlapping = services
+        .context(overlapping)
+        .await
+        .expect("overlapping exact and glob focus");
+    assert_eq!(overlapping.fragments.len(), 1);
+    assert_eq!(overlapping.fragments[0].path, "focus/owner_0.rs");
+    assert!(overlapping.coverage.focus_path_coverage.iter().all(
+        |focus| focus.selected_fragments == 1 && focus.satisfied
+    ));
+
+    let mut broad = context_limit_request(2_000);
+    broad.task = "change buried_focus_target".into();
+    broad.focus_paths = vec!["focus/**".into()];
+    broad.strict_focus_paths = true;
+    broad.max_fragments = Some(4);
+    broad.plan_only = true;
+    let broad = services.context(broad).await.expect("bounded broad focus");
+    assert_eq!(broad.coverage.focus_path_coverage[0].indexed_paths, 9);
+    assert!(broad.warnings.iter().any(|warning| {
+        warning.contains("matched 9 eligible indexed paths")
+            && warning.contains("inspected the first 4 paths")
+    }));
+    assert_eq!(
+        broad
+            .plan
+            .expect("broad plan")
+            .candidates
+            .iter()
+            .map(|candidate| candidate.path.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "focus/owner_0.rs",
+            "focus/owner_1.rs",
+            "focus/owner_2.rs",
+            "focus/owner_3.rs",
+        ]
+    );
+
+    let mut excluded = context_limit_request(1_000);
+    excluded.task = "change buried_focus_target".into();
+    excluded.focus_paths = vec!["focus/owner_0.rs".into()];
+    excluded.exclude_paths = vec!["focus/owner_0.rs".into()];
+    excluded.strict_focus_paths = true;
+    let excluded = services
+        .context(excluded)
+        .await
+        .expect("policy-empty focus scope");
+    assert!(excluded.fragments.is_empty());
+    assert_eq!(excluded.coverage.focus_path_coverage[0].indexed_paths, 1);
+    assert!(excluded.warnings.iter().any(|warning| {
+        warning.contains("focus pattern `focus/owner_0.rs`")
+            && warning.contains("no candidate-eligible indexed path")
+    }));
+
+    let mut too_many_patterns = context_limit_request(1_000);
+    too_many_patterns.task = "change buried_focus_target".into();
+    too_many_patterns.focus_paths = (0..33)
+        .map(|index| format!("focus/owner_{index}.rs"))
+        .collect();
+    let error = services
+        .context(too_many_patterns)
+        .await
+        .expect_err("focus pattern fan-out must be bounded");
+    assert!(matches!(
+        error,
+        Error::RequestLimitExceeded {
+            field: "focus_paths",
+            requested: 33,
+            limit: 32
+        }
+    ));
+
+    let mut excessive_minimum = context_limit_request(1_000);
+    excessive_minimum.task = "change buried_focus_target".into();
+    excessive_minimum.focus_paths = vec!["focus/**".into()];
+    excessive_minimum.minimum_fragments_per_focus_path = Some(9);
+    let error = services
+        .context(excessive_minimum)
+        .await
+        .expect_err("per-pattern candidate fan-out must be bounded");
+    assert!(matches!(
+        error,
+        Error::RequestLimitExceeded {
+            field: "minimum_fragments_per_focus_path",
+            requested: 9,
+            limit: 8
+        }
+    ));
+}
+
+#[tokio::test]
 async fn strict_changed_paths_are_a_hard_boundary_and_intersect_focus_scope() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::create_dir_all(root.path().join("src")).expect("source directory");

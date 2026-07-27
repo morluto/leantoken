@@ -36,6 +36,8 @@ mod reconciliation;
 mod search;
 pub(crate) mod validation;
 
+pub(crate) use context::MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN;
+
 const STARTUP_BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 const STARTUP_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(25);
 const STARTUP_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);

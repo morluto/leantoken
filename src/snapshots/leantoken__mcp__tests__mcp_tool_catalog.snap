@@ -1,6 +1,6 @@
 ---
 source: src/mcp.rs
-assertion_line: 3971
+assertion_line: 4056
 expression: tools
 ---
 [
@@ -212,7 +212,7 @@ expression: tools
             "maxLength": 4096,
             "type": "string"
           },
-          "maxItems": 256,
+          "maxItems": 32,
           "type": "array"
         },
         "focus_symbols": {
@@ -274,8 +274,8 @@ expression: tools
         },
         "minimum_fragments_per_focus_path": {
           "default": null,
-          "description": "Minimum returned fragments required for each focus path pattern.",
-          "maximum": 100,
+          "description": "Minimum returned fragments required per focus path (maximum 8).",
+          "maximum": 8,
           "minimum": 1,
           "type": "integer"
         },

@@ -126,6 +126,7 @@ fn select_omits_known_hashes_and_reports_them() {
 
     let mut request = request_with_budget(50);
     request.known_hashes = vec![known_hash];
+    request.verbose_diagnostics = true;
     let response = select(candidates, &request, 2);
 
     assert!(response.fragments.iter().all(|f| f.path != "known.rs"));

@@ -5,7 +5,7 @@ use crate::text::{expand_identifier, expand_terms, identifier_words};
 const MAX_ATOMS: usize = 16;
 const MAX_FACET_VARIANTS: usize = 4;
 const MAX_QUOTED_PHRASES: usize = 4;
-const MAX_BEHAVIOR_TERMS: usize = 4;
+const MAX_BEHAVIOR_TERMS: usize = 6;
 const MAX_NATURAL_PHRASES: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -124,27 +124,28 @@ pub(super) fn plan(task: &str, limit: usize) -> FacetPlan {
         );
     }
 
-    let behavior_terms = terms
-        .iter()
-        .filter(|term| {
-            !is_test_term(term)
-                && !is_stop_word(term)
-                && !atom_parts.contains(&term.to_ascii_lowercase())
-        })
-        .take(MAX_BEHAVIOR_TERMS)
-        .cloned()
-        .collect::<Vec<_>>();
+    let behavior_terms = select_behavior_terms(
+        terms
+            .iter()
+            .filter(|term| {
+                !is_test_term(term)
+                    && !is_stop_word(term)
+                    && !atom_parts.contains(&term.to_ascii_lowercase())
+            })
+            .cloned()
+            .collect(),
+        MAX_BEHAVIOR_TERMS,
+    );
     let quoted_phrases = quoted_phrases(task)
         .into_iter()
         .take(MAX_QUOTED_PHRASES)
         .collect::<Vec<_>>();
-    // Technical tasks already have a bounded exact/expansion lane. Keep the
-    // natural-language tail lane from displacing those stronger queries.
-    let natural_phrases = if atoms.is_empty() {
-        natural_phrases(task, &atom_parts, &behavior_terms, MAX_NATURAL_PHRASES)
+    let natural_phrase_limit = if atoms.is_empty() {
+        MAX_NATURAL_PHRASES
     } else {
-        Vec::new()
+        1
     };
+    let natural_phrases = natural_phrases(task, &atom_parts, natural_phrase_limit);
 
     for phrase in quoted_phrases.iter().chain(&natural_phrases) {
         push_facet(
@@ -183,7 +184,14 @@ pub(super) fn plan(task: &str, limit: usize) -> FacetPlan {
         );
     }
 
-    let queries = build_queries(task, &facets, &natural_phrases, limit, wants_tests);
+    let queries = build_queries(
+        task,
+        &facets,
+        &behavior_terms,
+        &natural_phrases,
+        limit,
+        wants_tests,
+    );
     FacetPlan {
         #[cfg(test)]
         facets,
@@ -194,6 +202,7 @@ pub(super) fn plan(task: &str, limit: usize) -> FacetPlan {
 fn build_queries(
     task: &str,
     facets: &[TaskFacet],
+    behavior_terms: &[String],
     natural_phrases: &[String],
     limit: usize,
     wants_tests: bool,
@@ -202,27 +211,31 @@ fn build_queries(
     let mut queries = Vec::new();
     let mut positions = HashMap::<String, usize>::new();
     let code_terms = legacy_code_tokens(task);
-    let code_parts = code_terms
+    let exact_terms = facets
         .iter()
-        .flat_map(|term| std::iter::once(term.clone()).chain(expand_terms(term)))
-        .map(|term| term.to_ascii_lowercase())
-        .collect::<HashSet<_>>();
-    let prose = task_terms(task)
-        .into_iter()
-        .filter(|value| {
-            !is_test_term(value)
-                && !is_stop_word(value)
-                && !code_parts.contains(&value.to_ascii_lowercase())
-        })
+        .filter(|facet| facet.kind == FacetKind::ExactAtom)
+        .map(|facet| facet.original.as_str())
         .collect::<Vec<_>>();
-    let prose_reserve = prose.len().min(MAX_BEHAVIOR_TERMS).min(available);
-    let phrase_reserve = natural_phrases
+    let exact_limit = if exact_terms.is_empty() {
+        0
+    } else {
+        exact_terms.len().min(available.min(4))
+    };
+    let remaining = available.saturating_sub(exact_limit);
+    let phrase_count = natural_phrases
         .len()
-        .saturating_mul(2)
-        .min(available.saturating_sub(prose_reserve));
-    let exact_limit = available.saturating_sub(prose_reserve + phrase_reserve);
+        .min(if code_terms.is_empty() {
+            MAX_NATURAL_PHRASES
+        } else {
+            1
+        })
+        .min(remaining / 2);
+    let phrase_slots = phrase_count.saturating_mul(2);
+    let prose_reserve = behavior_terms
+        .len()
+        .min(available.saturating_sub(exact_limit + phrase_slots));
 
-    for value in code_terms.iter().take(exact_limit) {
+    for value in exact_terms.into_iter().take(exact_limit) {
         push_fusion_query(
             facets,
             &mut queries,
@@ -238,7 +251,7 @@ fn build_queries(
             exact_limit,
         );
     }
-    for value in prose.iter().take(prose_reserve) {
+    for value in behavior_terms.iter().take(prose_reserve) {
         push_fusion_query(
             facets,
             &mut queries,
@@ -255,7 +268,7 @@ fn build_queries(
         );
     }
 
-    for phrase in natural_phrases.iter().take(phrase_reserve) {
+    for phrase in natural_phrases.iter().take(phrase_count) {
         push_fusion_query(
             facets,
             &mut queries,
@@ -273,7 +286,7 @@ fn build_queries(
     }
     // One component per phrase finds code-style occurrences without expanding
     // every phrase into a second unbounded prose lane.
-    for phrase in natural_phrases {
+    for phrase in natural_phrases.iter().take(phrase_count) {
         let Some(component) = task_terms(phrase).into_iter().next() else {
             continue;
         };
@@ -617,19 +630,33 @@ fn phrase_variants(phrase: &str) -> Vec<String> {
         .collect()
 }
 
-fn natural_phrases(
-    task: &str,
-    excluded_terms: &HashSet<String>,
-    covered_terms: &[String],
-    limit: usize,
-) -> Vec<String> {
+fn select_behavior_terms(terms: Vec<String>, limit: usize) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let candidates = terms
+        .into_iter()
+        .enumerate()
+        .filter(|(_, term)| seen.insert(term.to_ascii_lowercase()))
+        .collect::<Vec<_>>();
+    let prefix = candidates.len().min(limit.min(4));
+    let mut selected = candidates.iter().take(prefix).cloned().collect::<Vec<_>>();
+    let mut remaining = candidates.into_iter().skip(prefix).collect::<Vec<_>>();
+    remaining.sort_by(|(left_position, left), (right_position, right)| {
+        right
+            .chars()
+            .count()
+            .cmp(&left.chars().count())
+            .then_with(|| left_position.cmp(right_position))
+            .then_with(|| left.cmp(right))
+    });
+    selected.extend(remaining.into_iter().take(limit.saturating_sub(prefix)));
+    selected.sort_by_key(|(position, _)| *position);
+    selected.into_iter().map(|(_, term)| term).collect()
+}
+
+fn natural_phrases(task: &str, excluded_terms: &HashSet<String>, limit: usize) -> Vec<String> {
     if limit == 0 {
         return Vec::new();
     }
-    let covered_terms = covered_terms
-        .iter()
-        .map(|term| term.to_ascii_lowercase())
-        .collect::<HashSet<_>>();
     let terms = task_terms(task);
     let mut seen = HashSet::new();
     let mut candidates = terms
@@ -644,19 +671,30 @@ fn natural_phrases(
                 is_test_term(term)
                     || is_stop_word(term)
                     || excluded_terms.contains(&term.to_ascii_lowercase())
-            }) || lower.iter().all(|term| covered_terms.contains(term))
-            {
+            }) {
                 return None;
             }
             let phrase = pair.join(" ");
             let normalized = phrase.to_ascii_lowercase();
-            seen.insert(normalized).then_some((position, phrase))
+            let specificity = lower.iter().map(|term| term.chars().count()).sum::<usize>();
+            seen.insert(normalized)
+                .then_some((position, specificity, phrase))
         })
         .collect::<Vec<_>>();
-    candidates.reverse();
+    candidates.sort_by(
+        |(left_position, left_specificity, left), (right_position, right_specificity, right)| {
+            right_specificity
+                .cmp(left_specificity)
+                .then_with(|| left_position.cmp(right_position))
+                .then_with(|| left.cmp(right))
+        },
+    );
     candidates.truncate(limit);
     candidates.sort_by_key(|candidate| candidate.0);
-    candidates.into_iter().map(|(_, phrase)| phrase).collect()
+    candidates
+        .into_iter()
+        .map(|(_, _, phrase)| phrase)
+        .collect()
 }
 
 fn task_terms(task: &str) -> Vec<String> {
@@ -708,9 +746,13 @@ fn is_stop_word(term: &str) -> bool {
             | "by"
             | "calling"
             | "can"
+            | "callback"
             | "change"
             | "does"
             | "each"
+            | "ensure"
+            | "every"
+            | "fail"
             | "find"
             | "fix"
             | "for"
@@ -722,7 +764,9 @@ fn is_stop_word(term: &str) -> bool {
             | "is"
             | "it"
             | "its"
+            | "keep"
             | "locate"
+            | "loudly"
             | "make"
             | "must"
             | "not"
@@ -731,6 +775,7 @@ fn is_stop_word(term: &str) -> bool {
             | "one"
             | "only"
             | "or"
+            | "preserve"
             | "same"
             | "so"
             | "than"
@@ -847,7 +892,7 @@ mod tests {
         );
         assert_eq!(first.queries, second.queries);
         assert!(first.queries.len() <= 8);
-        assert!(first.queries.len() > 3);
+        assert!(first.queries.len() > 3, "{first:?}");
         assert_eq!(
             first.queries.last().map(|query| query.value.as_str()),
             Some("test")
@@ -855,7 +900,7 @@ mod tests {
     }
 
     #[test]
-    fn natural_phrases_do_not_displace_the_technical_query_lane() {
+    fn technical_tasks_keep_exact_and_bounded_natural_query_lanes() {
         let plan = plan(
             "Trace render.AsciiJSON while snapshot consistency protects concurrent readers",
             8,
@@ -866,12 +911,29 @@ mod tests {
                 .iter()
                 .any(|query| query.value == "render.AsciiJSON" && query.exact_variant)
         );
+        assert!(plan.queries.iter().any(|query| {
+            query.value == "snapshot consistency" || query.value == "concurrent readers"
+        }));
+    }
+
+    #[test]
+    fn natural_language_terms_are_selected_across_the_complete_task() {
+        let plan = plan(
+            "Ensure ordinary behavior before bounded candidate generation and deterministic selection",
+            12,
+        );
+
         assert!(
             plan.queries
                 .iter()
-                .all(|query| query.value != "snapshot consistency"
-                    && query.value != "concurrent readers")
+                .any(|query| query.value == "candidate generation")
         );
+        assert!(
+            plan.queries
+                .iter()
+                .any(|query| query.value == "deterministic selection")
+        );
+        assert!(plan.queries.len() <= 12);
     }
 
     #[test]
