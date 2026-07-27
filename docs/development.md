@@ -101,7 +101,8 @@ Linux, macOS, and Windows it runs library and binary unit tests, ordinary
 integration behavior, and executable/MCP process behavior as separately timed
 phases. The process-heavy phase uses two test workers because each test can
 start several child processes; ordinary tests retain the runner's default
-parallelism. Rust changes also run the instrumented coverage gate in parallel.
+parallelism. Rust changes also run the instrumented coverage gate in parallel
+(50% line floor; the opt-in `concurrency_profile` harness is excluded).
 The token-economy contract runs separately on all three operating systems.
 A pull request is not ready to merge until its required CI checks pass.
 

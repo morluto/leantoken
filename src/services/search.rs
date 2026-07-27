@@ -1455,7 +1455,12 @@ impl Services {
                     phases = scan.phases;
                     scan.hits
                 }
-                SearchMode::Text | SearchMode::Auto if request.query.chars().count() < 3 => {
+                SearchMode::Text | SearchMode::Auto | SearchMode::Identifier
+                    if request.query.chars().count() < 3 =>
+                {
+                    // Word FTS cannot match substrings shorter than three
+                    // characters; reuse the literal regex lexical path so
+                    // Identifier stays aligned with Text/Auto short queries.
                     let short_literal_regex = compile_occurrence_literal_regex(&request)?;
                     let scan = self.regex_hits(
                         session,
@@ -1767,6 +1772,8 @@ impl Services {
                 cancellation,
                 path_filter,
                 has_path_filters,
+                &request.include_paths,
+                &request.exclude_paths,
                 file_count,
                 plan,
             );
@@ -1830,6 +1837,8 @@ impl Services {
         cancellation: &CancellationToken,
         path_filter: PathFilter,
         has_path_filters: bool,
+        include_paths: &[String],
+        exclude_paths: &[String],
         files_considered: usize,
         plan: RegexCandidatePlan,
     ) -> Result<RegexScan> {
@@ -1845,6 +1854,8 @@ impl Services {
                 &query,
                 MAX_SCOPED_REGEX_ROWS_SCANNED,
                 MAX_REGEX_CANDIDATE_CHUNKS,
+                include_paths,
+                exclude_paths,
                 |path| path_filter.allows(path),
             )?;
             phases.regex_candidate_chunks = candidate_ids.len();

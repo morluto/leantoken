@@ -552,6 +552,25 @@ fn hot_relational_projections_use_their_indexes() {
         tree_plan.contains("sqlite_autoindex_path_entries_1"),
         "unexpected tree keyset plan: {tree_plan}"
     );
+
+    let glob_plan = query_plan(
+        &connection,
+        "EXPLAIN QUERY PLAN
+         SELECT path_entries.path, files.language, files.size_bytes
+         FROM path_entries
+         JOIN files ON files.id = path_entries.file_id
+         WHERE path_entries.kind = 1
+           AND (path_entries.path GLOB ?1
+                OR (?2 IS NOT NULL AND path_entries.path GLOB ?2))
+           AND (?3 IS NULL OR path_entries.path > ?3)
+         ORDER BY path_entries.path
+         LIMIT ?4",
+        &[&"*.rs", &Option::<&str>::None, &Option::<&str>::None, &10_i64],
+    );
+    assert!(
+        glob_plan.contains("path_entries"),
+        "unexpected glob keyset plan: {glob_plan}"
+    );
 }
 
 #[test]

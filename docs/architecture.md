@@ -394,10 +394,13 @@ change whether an explicit value is accepted. Zero is valid only for
 
 These limits cap context fan-out, regex work, and file-list memory. A request
 returns `LimitExceeded` instead of silently returning incomplete regex results
-when a scan boundary is reached. Tree pages use the indexed `path_entries`
-projection and a path keyset cursor. Find and glob retain bounded page state but
-still scan indexed files because their application matchers do not map to tree
-ordering. The numbers are safety limits, not monorepo performance claims.
+when a scan boundary is reached. Tree and glob pages use the indexed
+`path_entries` projection with a path keyset cursor; glob filters file rows with
+SQLite `GLOB` (patterns that cannot map, such as brace expansion, fall back to a
+bounded globset scan). Find still scans indexed files with a lean path-only
+projection (`id`, `path`, `language`, `size_bytes`) because fuzzy nucleo scoring
+does not map to SQL. The numbers are safety limits, not monorepo performance
+claims.
 
 | Path | Bound |
 | --- | --- |
@@ -418,7 +421,7 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | Lightweight rows inspected for path-scoped trigram planning | 100000 |
 | Full-scan fallback files | 10000 |
 | Full-scan fallback chunks per file | 256 |
-| File scan page size | 1000 for find/glob; tree queries `max_results + 1` projected paths |
+| File scan page size | 1000 for find (path projection) and globset fallback; tree/glob SQL-page `max_results + 1` projected paths |
 | Opt-in compact projection materialization | At most the 100 selected files, symbols, groups, or hits already admitted by `max_results`; no additional repository scan |
 | Exhaustive occurrence grouping | At most 100 selected occurrence coordinates and 100 group-map entries per response page; the existing 100,000-occurrence fail-closed scan cap is unchanged |
 | Opt-in response-bounded read materializations | At most 18 within one pinned generation |

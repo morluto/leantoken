@@ -6219,6 +6219,44 @@ async fn file_operations_page_without_duplicates() {
 }
 
 #[tokio::test]
+async fn files_glob_selective_pattern_returns_only_matching_paths() {
+    let root = tempfile::tempdir().expect("root");
+    for (name, body) in [
+        ("alpha.rs", "fn alpha() {}\n"),
+        ("bravo.rs", "fn bravo() {}\n"),
+        ("target_one.rs", "fn target_one() {}\n"),
+        ("target_two.rs", "fn target_two() {}\n"),
+        ("other.txt", "plain text\n"),
+    ] {
+        std::fs::write(root.path().join(name), body).expect("source");
+    }
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index");
+
+    let response = services
+        .files(FilesRequest {
+            operation: FileOperation::Glob,
+            path: None,
+            query: None,
+            pattern: Some("target_*.rs".into()),
+            max_results: Some(10),
+            cursor: None,
+            depth: None,
+        })
+        .await
+        .expect("selective glob");
+    let paths = response
+        .entries
+        .into_iter()
+        .map(|entry| entry.path)
+        .collect::<Vec<_>>();
+    assert_eq!(paths, vec!["target_one.rs", "target_two.rs"]);
+}
+
+#[tokio::test]
 async fn file_tree_projection_respects_root_depth_and_removes_empty_directories() {
     let root = tempfile::tempdir().expect("root");
     std::fs::create_dir_all(root.path().join("src/deep")).expect("directories");
@@ -6490,6 +6528,36 @@ async fn short_text_queries_match_inside_longer_tokens() {
             assert!(hit.excerpt.contains("prefixfnordsuffix"));
         }
     }
+}
+
+#[tokio::test]
+async fn short_identifier_queries_match_inside_longer_tokens() {
+    let source = b"alpha prefixfnordsuffix omega\n";
+    let (_root, services) = indexed_source("short.txt", source).await;
+
+    let response = services
+        .search(SearchRequest {
+            query: "fn".into(),
+            mode: SearchMode::Identifier,
+            include_paths: vec!["short.txt".into()],
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(1),
+            max_tokens: Some(1_000),
+            context_lines: Some(1),
+            case_sensitive: true,
+            all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect("short identifier search");
+
+    let hit = response.hits.first().expect("embedded substring hit");
+    assert_eq!(hit.path, "short.txt");
+    assert_eq!(hit.match_kind, "text");
+    assert!(hit.excerpt.contains("prefixfnordsuffix"));
 }
 
 #[tokio::test]

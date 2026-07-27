@@ -15,11 +15,11 @@ use super::validation::{
 use super::{ServiceCallOptions, Services};
 use crate::model::*;
 use crate::repository::{slash_path, validate_relative};
-use crate::storage::{FileRecord, ReadSession};
+use crate::storage::{FilePathRecord, ReadSession};
 use crate::tokens::ResponseBudget;
 use crate::{Error, Result};
 
-/// Page size for bounded scans over the indexed file table.
+/// Page size for bounded lean scans over the indexed file table (find / glob fallback).
 pub(super) const FILE_LIST_PAGE_SIZE: usize = 1_000;
 
 struct FilePage {
@@ -139,7 +139,7 @@ fn fuzzy_entries(
     };
     let capacity = limit.saturating_add(1);
     let mut entries = BTreeMap::new();
-    for_each_file(session, cancellation, |file| {
+    for_each_file_path(session, cancellation, |file| {
         let Some(score) = pattern.score(Utf32Str::new(&file.path, &mut unicode_buf), &mut matcher)
         else {
             return Ok(());
@@ -191,11 +191,44 @@ fn glob_entries(
             reason: "is required for glob",
         })?;
     let normalized_pattern = pattern.replace('\\', "/");
+    // Validate with globset even when SQL owns matching, so invalid patterns fail
+    // the same way as before.
     let matcher = Glob::new(&normalized_pattern)?.compile_matcher();
     let after = cursor_path(cursor)?;
+    if let Some((primary, alternate)) = sql_glob_patterns(&normalized_pattern) {
+        check_cancelled(cancellation)?;
+        let projected = session.list_glob_paths(
+            &primary,
+            alternate.as_deref(),
+            after.as_deref(),
+            limit.saturating_add(1),
+        )?;
+        let has_more = projected.len() > limit;
+        let entries = projected
+            .into_iter()
+            .take(limit)
+            .map(|entry| FileEntry {
+                path: entry.path,
+                kind: FileEntryKind::File,
+                language: entry.language,
+                size_bytes: entry.size_bytes,
+                score: None,
+            })
+            .collect::<Vec<_>>();
+        let next = has_more
+            .then(|| entries.last())
+            .flatten()
+            .map(|entry| FileCursor::Path {
+                operation: PathOperation::Glob,
+                path: entry.path.clone(),
+            });
+        return Ok(FilePage { entries, next });
+    }
+
+    // Fallback: brace expansion and other forms SQL GLOB cannot express.
     let capacity = limit.saturating_add(1);
     let mut entries = BTreeMap::new();
-    for_each_file(session, cancellation, |file| {
+    for_each_file_path(session, cancellation, |file| {
         if matcher.is_match(&file.path) {
             retain_path_entry(
                 &mut entries,
@@ -213,6 +246,49 @@ fn glob_entries(
         Ok(())
     })?;
     Ok(finish_path_page(entries, limit, PathOperation::Glob))
+}
+
+/// Map a globset-style pattern to one or two SQLite `GLOB` patterns.
+///
+/// Default globset matching already lets `*` and `?` cross `/`, matching SQLite
+/// `GLOB`. The only structural rewrite is collapsing a single `**` form. Brace
+/// expansion and multiple `**` segments cannot be expressed as SQL `GLOB`, so
+/// those return `None` and the caller keeps the globset scan fallback.
+fn sql_glob_patterns(pattern: &str) -> Option<(String, Option<String>)> {
+    if pattern.contains(['{', '}']) {
+        return None;
+    }
+    if !pattern.contains("**") {
+        return Some((pattern.to_owned(), None));
+    }
+    if pattern.matches("**").count() != 1 {
+        return None;
+    }
+    if let Some(rest) = pattern.strip_prefix("**/") {
+        if rest.contains("**") {
+            return None;
+        }
+        if rest.starts_with('*') {
+            return Some((rest.to_owned(), None));
+        }
+        return Some((rest.to_owned(), Some(format!("*/{rest}"))));
+    }
+    if let Some(prefix) = pattern.strip_suffix("/**") {
+        if prefix.is_empty() || prefix.contains("**") {
+            return None;
+        }
+        return Some((format!("{prefix}/*"), None));
+    }
+    if let Some((left, right)) = pattern.split_once("/**/") {
+        if left.is_empty() || left.contains("**") || right.contains("**") {
+            return None;
+        }
+        if right.starts_with('*') {
+            return Some((format!("{left}/{right}"), None));
+        }
+        return Some((format!("{left}/{right}"), Some(format!("{left}/*/{right}"))));
+    }
+    None
 }
 
 fn validate_files_input(request: &FilesRequest) -> Result<()> {
@@ -249,15 +325,15 @@ fn validate_files_input(request: &FilesRequest) -> Result<()> {
     Ok(())
 }
 
-fn for_each_file(
+fn for_each_file_path(
     session: &ReadSession,
     cancellation: &CancellationToken,
-    mut visitor: impl FnMut(FileRecord) -> Result<()>,
+    mut visitor: impl FnMut(FilePathRecord) -> Result<()>,
 ) -> Result<()> {
     let mut cursor = None;
     loop {
         check_cancelled(cancellation)?;
-        let page = session.list_files(FILE_LIST_PAGE_SIZE, cursor)?;
+        let page = session.list_file_paths(FILE_LIST_PAGE_SIZE, cursor)?;
         if page.is_empty() {
             return Ok(());
         }
@@ -756,5 +832,36 @@ fn files_cursor_for_entry(operation: &FileOperation, entry: &FileEntry) -> FileC
                 .expect("fuzzy results retain their cursor score") as u32,
             path: entry.path.clone(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sql_glob_patterns;
+
+    #[test]
+    fn sql_glob_patterns_map_common_double_star_forms() {
+        assert_eq!(sql_glob_patterns("*.rs"), Some(("*.rs".into(), None)));
+        assert_eq!(sql_glob_patterns("**/*.rs"), Some(("*.rs".into(), None)));
+        assert_eq!(
+            sql_glob_patterns("src/**/*.rs"),
+            Some(("src/*.rs".into(), None))
+        );
+        assert_eq!(sql_glob_patterns("src/**"), Some(("src/*".into(), None)));
+        assert_eq!(
+            sql_glob_patterns("**/lib.rs"),
+            Some(("lib.rs".into(), Some("*/lib.rs".into())))
+        );
+        assert_eq!(
+            sql_glob_patterns("src/**/lib.rs"),
+            Some(("src/lib.rs".into(), Some("src/*/lib.rs".into())))
+        );
+    }
+
+    #[test]
+    fn sql_glob_patterns_fall_back_for_unexpressible_forms() {
+        assert_eq!(sql_glob_patterns("{a,b}.rs"), None);
+        assert_eq!(sql_glob_patterns("a/**/b/**/c"), None);
+        assert_eq!(sql_glob_patterns("**"), None);
     }
 }
