@@ -386,11 +386,14 @@ Native shell output has exact local source-token counts but does not expose
 reliable repository range identities, so native reread and dead-end metrics are
 lower bounds.
 
-An agent may first read the externally installed LeanToken `SKILL.md` required
-by its host instructions. The adapter exempts only a single absolute
-`/skills/.../SKILL.md` bounded `sed` or `cat` command from repository-retrieval
-classification; it still records and charges the shell call. Chained commands,
-relative paths, and every repository source read remain forbidden.
+An agent may first locate and read the externally installed LeanToken
+`SKILL.md` required by its host instructions. The adapter exempts only a
+single absolute `/skills/.../SKILL.md` bounded `sed` or `cat`, or an exact
+`rg --files -g SKILL.md` over that absolute skill root, from
+repository-retrieval classification; it still records and charges the shell
+call. It also accepts a compound Git preflight only when every `&&`-separated
+segment is independently allowlisted. Relative paths, alternate connectors,
+extra chained commands, and every repository source read remain forbidden.
 
 The adapter also enforces the retrieval arm from the completed tool trajectory.
 Progressive runs must call LeanToken before any substantive command or edit,

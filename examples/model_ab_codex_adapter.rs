@@ -1099,11 +1099,14 @@ impl Analysis {
     fn record_command(&mut self, item: &Value) -> Result<(), Box<dyn Error>> {
         let command = required_str(item, "/command")?;
         let sequence = self.calls.len();
-        let skill_instruction_read = is_bounded_skill_instruction_read(command);
-        if !skill_instruction_read && is_native_retrieval_command(command) {
+        let skill_instruction_command = is_bounded_skill_instruction_command(command);
+        if !skill_instruction_command && is_native_retrieval_command(command) {
             self.native_retrieval_sequences.push(sequence);
         }
-        if !self.has_leantoken_call() && !is_preflight_command(command) && !skill_instruction_read {
+        if !self.has_leantoken_call()
+            && !is_preflight_command(command)
+            && !skill_instruction_command
+        {
             self.pre_leantoken_substantive_sequences.push(sequence);
         }
         let output = item["aggregated_output"].as_str().unwrap_or_default();
@@ -1517,12 +1520,28 @@ fn is_native_retrieval_command(command: &str) -> bool {
         || interpreter_eval(&words, "php", "-r")
 }
 
-fn is_bounded_skill_instruction_read(command: &str) -> bool {
+fn is_bounded_skill_instruction_command(command: &str) -> bool {
     let words = command_words(command);
     let is_skill_path = |path: &str| {
         path.starts_with('/')
             && path.ends_with("/skill.md")
             && (path.contains("/skills/") || path.contains("/.agents/skills/"))
+    };
+    let is_skill_root = |path: &str| {
+        path.starts_with('/')
+            && (path.contains("/skills/") || path.contains("/.agents/skills/"))
+            && !path.ends_with("/skill.md")
+    };
+    let is_bounded_discovery = |words: &[String]| {
+        matches!(
+            words,
+            [reader, files, glob, name, path]
+                if reader == "rg"
+                    && files == "--files"
+                    && glob == "-g"
+                    && name == "skill.md"
+                    && is_skill_root(path)
+        )
     };
     match words.as_slice() {
         [reader, path] if reader == "cat" => is_skill_path(path),
@@ -1533,13 +1552,25 @@ fn is_bounded_skill_instruction_read(command: &str) -> bool {
                     .all(|byte| byte.is_ascii_digit() || matches!(byte, b',' | b'p'))
                 && is_skill_path(path)
         }
+        [pwd, connector, discovery @ ..] if pwd == "pwd" && connector == "&&" => {
+            is_bounded_discovery(discovery)
+        }
+        discovery if is_bounded_discovery(discovery) => true,
         _ => false,
     }
 }
 
 fn is_preflight_command(command: &str) -> bool {
     let words = command_words(command);
-    match words.as_slice() {
+    let mut segments = words.split(|word| word == "&&");
+    let Some(first) = segments.next() else {
+        return false;
+    };
+    is_preflight_words(first) && segments.all(is_preflight_words)
+}
+
+fn is_preflight_words(words: &[String]) -> bool {
+    match words {
         [command] if command == "pwd" => true,
         [git, subcommand, arguments @ ..] if git == "git" && subcommand == "status" => {
             arguments.iter().all(|argument| argument.starts_with('-'))
@@ -1549,6 +1580,9 @@ fn is_preflight_command(command: &str) -> bool {
                 && arguments
                     .iter()
                     .all(|argument| argument == "head" || argument.starts_with('-'))
+        }
+        [git, subcommand, check] if git == "git" && subcommand == "diff" && check == "--check" => {
+            true
         }
         _ => false,
     }
@@ -1938,17 +1972,26 @@ mod tests {
         assert!(!is_preflight_command(
             "/bin/bash -lc 'git status --short && cargo test'"
         ));
-        assert!(is_bounded_skill_instruction_read(
+        assert!(is_bounded_skill_instruction_command(
             "/bin/bash -lc \"sed -n '1,240p' /home/yann/.agents/skills/leantoken/SKILL.md\""
         ));
-        assert!(is_bounded_skill_instruction_read(
+        assert!(is_bounded_skill_instruction_command(
             "cat /home/yann/.agents/skills/leantoken/SKILL.md"
         ));
-        assert!(!is_bounded_skill_instruction_read(
+        assert!(is_bounded_skill_instruction_command(
+            "/bin/bash -lc \"pwd && rg --files -g 'SKILL.md' /home/yann/.agents/skills/leantoken\""
+        ));
+        assert!(!is_bounded_skill_instruction_command(
             "/bin/bash -lc \"sed -n '1,240p' /home/yann/.agents/skills/leantoken/SKILL.md && cat src/lib.rs\""
         ));
-        assert!(!is_bounded_skill_instruction_read(
+        assert!(!is_bounded_skill_instruction_command(
             "sed -n '1,240p' src/lib.rs"
+        ));
+        assert!(is_preflight_command(
+            "/bin/bash -lc 'git status --short && git diff --check'"
+        ));
+        assert!(!is_preflight_command(
+            "/bin/bash -lc 'git status --short || cat src/lib.rs'"
         ));
     }
 
