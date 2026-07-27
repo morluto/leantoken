@@ -126,11 +126,11 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
             format!("MCP identified itself as {server_name:?}, expected \"leantoken\""),
         ));
     }
-    if server_version != env!("CARGO_PKG_VERSION") {
+    if !server_version_matches_current_runtime(&server_version) {
         return Err(doctor_error(
             "handshake",
             format!(
-                "MCP reported version {server_version}, expected {}",
+                "MCP reported version {server_version}, expected {}+schema.<32 hex characters>",
                 env!("CARGO_PKG_VERSION")
             ),
         ));
@@ -288,6 +288,14 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
             repository_generation,
         },
     })
+}
+
+fn server_version_matches_current_runtime(version: &str) -> bool {
+    version
+        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+schema."))
+        .is_some_and(|fingerprint| {
+            fingerprint.len() == 32 && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
 }
 
 /// Print a doctor report as JSON or Context Distillery terminal output.
@@ -662,6 +670,25 @@ mod tests {
         assert!(sanitized.contains("<redacted-path>"));
         assert!(!sanitized.contains(path));
         assert_eq!(sanitized.chars().count(), MAX_DIAGNOSTIC_LINE_CHARS);
+    }
+
+    #[test]
+    fn runtime_version_requires_the_current_semver_and_bounded_schema_fingerprint() {
+        let current = concat!(
+            env!("CARGO_PKG_VERSION"),
+            "+schema.0123456789abcdef0123456789abcdef"
+        );
+        assert!(server_version_matches_current_runtime(current));
+        assert!(!server_version_matches_current_runtime(env!(
+            "CARGO_PKG_VERSION"
+        )));
+        assert!(!server_version_matches_current_runtime(concat!(
+            env!("CARGO_PKG_VERSION"),
+            "+schema.short"
+        )));
+        assert!(!server_version_matches_current_runtime(
+            "999.0.0+schema.0123456789abcdef0123456789abcdef"
+        ));
     }
 
     #[test]
