@@ -9,7 +9,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use clap::Parser;
 use leantoken::{
     Config, ContextCandidateEvaluation, ContextFragment, ContextRequest, ContextResponse,
-    WorkflowEvidence, services::Services, tokens,
+    SearchMode, SearchRequest, WorkflowEvidence, parser, services::Services, tokens,
 };
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +17,12 @@ const HISTORY_LANE_MAX_COMMITS: usize = 256;
 const HISTORY_LANE_MAX_OUTPUT_LINES: usize = 4_096;
 const HISTORY_LANE_MAX_LINE_BYTES: usize = 32 * 1024;
 const HISTORY_LANE_MAX_PATHS: usize = 4;
+const AST_LANE_MAX_TRACE_BYTES: usize = 16 * 1024;
+const AST_LANE_MAX_LANGUAGES: usize = 2;
+const AST_LANE_MAX_TERMS: usize = 8;
+const AST_LANE_MAX_RESULTS_PER_TERM: usize = 16;
+const AST_LANE_MAX_TOKENS_PER_TERM: usize = 1_024;
+const AST_LANE_MAX_PATHS: usize = 2;
 
 #[derive(Debug, Parser)]
 #[command(about = "Run a pinned LeanToken context-retrieval benchmark")]
@@ -43,8 +49,15 @@ struct Args {
     #[arg(long)]
     workflow_evidence: bool,
     /// Add a bounded Git-history path lane derived from workflow-evidence symbols.
-    #[arg(long, requires = "workflow_evidence")]
+    #[arg(
+        long,
+        requires = "workflow_evidence",
+        conflicts_with = "ast_structural_lane"
+    )]
     history_lane: bool,
+    /// Add bounded AST-derived structural path candidates from failure traces.
+    #[arg(long, requires = "workflow_evidence", conflicts_with = "history_lane")]
+    ast_structural_lane: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,6 +193,7 @@ struct Report {
     diagnostic_only: bool,
     workflow_evidence_enabled: bool,
     history_lane_enabled: bool,
+    ast_structural_lane_enabled: bool,
     host_os: &'static str,
     host_arch: &'static str,
     rustc_version: String,
@@ -271,6 +285,7 @@ struct TaskReport {
     token_budget: usize,
     workflow_evidence: WorkflowEvidenceCounts,
     history_lane: HistoryLaneReport,
+    ast_structural_lane: AstStructuralLaneReport,
     relevant_files: Vec<String>,
     returned_files: Vec<String>,
     returned_evidence: Vec<EvidenceSummary>,
@@ -334,6 +349,19 @@ struct HistoryLaneReport {
     commit_window_complete: bool,
     matching_commits: usize,
     output_truncated: bool,
+    candidate_paths: Vec<String>,
+    relevant_candidate_paths: usize,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct AstStructuralLaneReport {
+    enabled: bool,
+    trace_bytes_examined: usize,
+    languages_attempted: Vec<String>,
+    structurally_complete_languages: usize,
+    terms: Vec<String>,
+    searches: usize,
+    structural_hits: usize,
     candidate_paths: Vec<String>,
     relevant_candidate_paths: usize,
 }
@@ -434,6 +462,7 @@ struct RunTaskOptions<'a> {
     concept_labels: Option<&'a ConceptTaskLabels>,
     workflow_evidence_enabled: bool,
     history_lane_enabled: bool,
+    ast_structural_lane_enabled: bool,
     base_revision: &'a str,
 }
 
@@ -489,6 +518,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 "diagnostic_only": args.consumed_diagnostic,
                 "workflow_evidence_enabled": args.workflow_evidence,
                 "history_lane_enabled": args.history_lane,
+                "ast_structural_lane_enabled": args.ast_structural_lane,
                 "concept_labels_blake3": concept_labels.as_ref().map(|labels| &labels.blake3),
                 "concept_count": concept_labels.as_ref().map(|labels| {
                     labels.tasks.values().map(|task| task.concepts.len()).sum::<usize>()
@@ -529,6 +559,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     concept_labels: labels.as_ref(),
                     workflow_evidence_enabled: args.workflow_evidence,
                     history_lane_enabled: args.history_lane,
+                    ast_structural_lane_enabled: args.ast_structural_lane,
                     base_revision: &corpus.base_revision,
                 },
             )
@@ -615,6 +646,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         diagnostic_only: args.consumed_diagnostic,
         workflow_evidence_enabled: args.workflow_evidence,
         history_lane_enabled: args.history_lane,
+        ast_structural_lane_enabled: args.ast_structural_lane,
         host_os: std::env::consts::OS,
         host_arch: std::env::consts::ARCH,
         rustc_version: command_version("rustc")?,
@@ -637,6 +669,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             args.consumed_diagnostic,
             args.concept_labels.is_some(),
             args.history_lane,
+            args.ast_structural_lane,
         ),
     };
     let json = serde_json::to_string_pretty(&report)?;
@@ -1141,6 +1174,7 @@ fn benchmark_limitations(
     consumed_diagnostic: bool,
     concept_labels: bool,
     history_lane: bool,
+    ast_structural_lane: bool,
 ) -> Vec<&'static str> {
     let mut limitations = vec![
         "The oracle baseline assumes perfect file selection and reads whole files rather than exact decisive ranges.",
@@ -1199,6 +1233,14 @@ fn benchmark_limitations(
         );
         limitations.push(
             "Pickaxe path matches are a retrieval proxy, not proof that historical changes explain the current failure.",
+        );
+    }
+    if ast_structural_lane {
+        limitations.push(
+            "The AST structural lane parses at most 16 KiB of observed failure traces, retains eight structural terms, and focuses at most two paths; omitted syntax is not evidence that no structural route exists.",
+        );
+        limitations.push(
+            "Tolerant parsing of terminal output can recover incomplete code fragments; a structural hit is a path-discovery proxy, not proof that the file owns the failure.",
         );
     }
     limitations
@@ -1357,6 +1399,127 @@ struct HistoryPathStats {
 struct BoundedGitLines {
     lines: Vec<String>,
     truncated: bool,
+}
+
+#[derive(Debug, Default)]
+struct AstPathStats {
+    terms: BTreeSet<String>,
+    structural_hits: usize,
+    best_score: f64,
+}
+
+async fn discover_ast_structural_lane(
+    services: &Services,
+    languages: &[String],
+    failure_traces: &[String],
+) -> Result<AstStructuralLaneReport, Box<dyn Error>> {
+    let trace = utf8_tail(&failure_traces.join("\n"), AST_LANE_MAX_TRACE_BYTES);
+    let mut report = AstStructuralLaneReport {
+        enabled: true,
+        trace_bytes_examined: trace.len(),
+        ..AstStructuralLaneReport::default()
+    };
+    if trace.is_empty() {
+        return Ok(report);
+    }
+
+    let mut terms = Vec::new();
+    let mut seen_terms = HashSet::new();
+    for language in languages
+        .iter()
+        .map(|language| language.to_ascii_lowercase())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .take(AST_LANE_MAX_LANGUAGES)
+    {
+        let parsed = parser::parse_language(&language, &trace)?;
+        report.languages_attempted.push(language);
+        report.structurally_complete_languages += usize::from(parsed.structurally_complete);
+        for reference in parsed.references {
+            let Some(term) = normalize_ast_search_term(&reference.name) else {
+                continue;
+            };
+            if seen_terms.insert(term.clone()) {
+                terms.push(term);
+                if terms.len() == AST_LANE_MAX_TERMS {
+                    break;
+                }
+            }
+        }
+        if terms.len() == AST_LANE_MAX_TERMS {
+            break;
+        }
+    }
+    report.terms = terms.clone();
+
+    let mut paths = BTreeMap::<String, AstPathStats>::new();
+    for term in &terms {
+        let response = services
+            .search(SearchRequest {
+                query: term.clone(),
+                mode: SearchMode::Symbol,
+                include_paths: Vec::new(),
+                exclude_paths: Vec::new(),
+                focus_paths: Vec::new(),
+                max_results: Some(AST_LANE_MAX_RESULTS_PER_TERM),
+                max_tokens: Some(AST_LANE_MAX_TOKENS_PER_TERM),
+                context_lines: Some(0),
+                case_sensitive: false,
+                all_occurrences: false,
+                prefer_structural: false,
+                receipt_id: None,
+                cursor: None,
+            })
+            .await?;
+        report.searches += 1;
+        for hit in response.hits {
+            let definition =
+                hit.match_kind == "symbol" || hit.match_kinds.iter().any(|kind| kind == "symbol");
+            if !definition {
+                continue;
+            }
+            report.structural_hits += 1;
+            let stats = paths.entry(hit.path).or_default();
+            stats.terms.insert(term.clone());
+            stats.structural_hits += 1;
+            stats.best_score = stats.best_score.max(hit.normalized_score);
+        }
+    }
+
+    let mut ranked = paths.into_iter().collect::<Vec<_>>();
+    ranked.sort_by(|(left_path, left), (right_path, right)| {
+        right
+            .terms
+            .len()
+            .cmp(&left.terms.len())
+            .then_with(|| right.structural_hits.cmp(&left.structural_hits))
+            .then_with(|| right.best_score.total_cmp(&left.best_score))
+            .then_with(|| left_path.cmp(right_path))
+    });
+    report.candidate_paths = ranked
+        .into_iter()
+        .map(|(path, _)| path)
+        .take(AST_LANE_MAX_PATHS)
+        .collect();
+    Ok(report)
+}
+
+fn normalize_ast_search_term(value: &str) -> Option<String> {
+    let value = value
+        .rsplit(['.', ':'])
+        .find(|component| !component.is_empty())?
+        .trim_matches(|character: char| !character.is_alphanumeric() && character != '_');
+    let normalized = value.to_ascii_lowercase();
+    if !(3..=128).contains(&normalized.len())
+        || !normalized.chars().any(char::is_alphabetic)
+        || matches!(
+            normalized.as_str(),
+            "assert" | "false" | "none" | "print" | "self" | "true" | "type" | "value"
+        )
+    {
+        return None;
+    }
+    Some(normalized)
 }
 
 fn discover_history_lane(
@@ -1614,7 +1777,18 @@ async fn run_task(
     } else {
         HistoryLaneReport::default()
     };
+    let mut ast_structural_lane = if options.ast_structural_lane_enabled {
+        discover_ast_structural_lane(services, &task.languages, &workflow_evidence.failure_traces)
+            .await?
+    } else {
+        AstStructuralLaneReport::default()
+    };
     history_lane.relevant_candidate_paths = history_lane
+        .candidate_paths
+        .iter()
+        .filter(|path| relevant_paths.contains(*path))
+        .count();
+    ast_structural_lane.relevant_candidate_paths = ast_structural_lane
         .candidate_paths
         .iter()
         .filter(|path| relevant_paths.contains(*path))
@@ -1622,6 +1796,8 @@ async fn run_task(
     if !history_lane.candidate_paths.is_empty() {
         request.focus_paths = history_lane.candidate_paths.clone();
         request.minimum_fragments_per_focus_path = Some(1);
+    } else if !ast_structural_lane.candidate_paths.is_empty() {
+        request.focus_paths = ast_structural_lane.candidate_paths.clone();
     }
     let started = Instant::now();
     let evaluation = services
@@ -1797,6 +1973,7 @@ async fn run_task(
         token_budget: task.token_budget,
         workflow_evidence: workflow_evidence_counts,
         history_lane,
+        ast_structural_lane,
         relevant_files: task
             .relevant_files
             .into_iter()
@@ -2352,6 +2529,62 @@ mod tests {
                 .any(|value| value.contains("default_values_regression"))
         );
         assert!(workflow_evidence_counts(&evidence).total_bytes <= 32 * 1024);
+    }
+
+    #[tokio::test]
+    async fn ast_structural_lane_prefers_definition_owners_from_trace_calls() {
+        let root = tempfile::tempdir().expect("repository");
+        fs::create_dir_all(root.path().join("src/click")).expect("source directory");
+        fs::create_dir(root.path().join("tests")).expect("tests directory");
+        fs::write(
+            root.path().join("src/click/core.py"),
+            concat!(
+                "class Command:\n",
+                "    def invoke(self, ctx):\n",
+                "        return ctx\n\n",
+                "class Option:\n",
+                "    def handle_parse_result(self, ctx, opts, args):\n",
+                "        return opts\n",
+            ),
+        )
+        .expect("owner");
+        fs::write(
+            root.path().join("tests/test_options.py"),
+            concat!(
+                "@click.command()\n",
+                "@click.option(\"--foo\", is_flag=True)\n",
+                "def cmd(foo):\n",
+                "    click.echo(foo)\n",
+                "runner.invoke(cmd, [\"--foo\"])\n",
+            ),
+        )
+        .expect("test");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        let services = Services::open(config).expect("services");
+        services.index(true).await.expect("index");
+        let trace = concat!(
+            "FAILED tests/test_options.py::test_flag_value\n",
+            "@click.command()\n",
+            "@click.option(\"--foo\", is_flag=True)\n",
+            "def cmd(foo):\n",
+            "    click.echo(foo)\n",
+            "result = runner.invoke(cmd, [\"--foo\"])\n",
+        );
+
+        let report =
+            discover_ast_structural_lane(&services, &[String::from("python")], &[trace.into()])
+                .await
+                .expect("AST structural lane");
+
+        assert_eq!(report.languages_attempted, ["python"]);
+        assert!(report.terms.iter().any(|term| term == "option"));
+        assert!(report.searches <= AST_LANE_MAX_TERMS);
+        assert!(report.candidate_paths.len() <= AST_LANE_MAX_PATHS);
+        assert_eq!(
+            report.candidate_paths.first().map(String::as_str),
+            Some("src/click/core.py")
+        );
     }
 
     #[test]
