@@ -1019,6 +1019,8 @@ async fn exhaustive_text_search_returns_each_occurrence_with_exact_total_and_pag
     );
     assert_eq!(occurrence.start_line, 2);
     assert_eq!(occurrence.end_line, 2);
+    assert_eq!(occurrence.start_column, 16);
+    assert_eq!(occurrence.end_column, 25);
 
     let mut short_query = search_limit_request(Some(10), Some(1_000), Some(0));
     short_query.query = "it".into();
@@ -1032,6 +1034,114 @@ async fn exhaustive_text_search_returns_each_occurrence_with_exact_total_and_pag
         .expect("short substring occurrence search");
     assert_eq!(short.occurrences_total, Some(3));
     assert_eq!(short.occurrences_returned, 3);
+}
+
+#[tokio::test]
+async fn exhaustive_occurrence_groups_preserve_probe_e_coordinates_without_repeated_excerpts() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let line =
+        "F4-P 0-RTT forbidden-phase early-data Handshake handshake completion\n";
+    let source = line.repeat(10);
+    std::fs::write(root.path().join("probe-e.tex"), &source).expect("write source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+    let request = SearchRequest {
+        query: "F4-P|0-RTT|forbidden-phase|early-data|Handshake|handshake completion".into(),
+        mode: SearchMode::Regex,
+        include_paths: vec!["probe-e.tex".into()],
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(100),
+        max_tokens: Some(6_000),
+        context_lines: Some(1),
+        case_sensitive: true,
+        all_occurrences: true,
+        prefer_structural: false,
+        receipt_id: None,
+        cursor: None,
+    };
+
+    let full = services
+        .search(request.clone())
+        .await
+        .expect("legacy exhaustive response");
+    assert_eq!(full.occurrences_total, Some(60));
+    assert_eq!(full.occurrences_returned, 60);
+    assert_eq!(full.hits.len(), 60);
+
+    let grouped = services
+        .search_occurrences(request.clone(), false)
+        .await
+        .expect("grouped occurrence response");
+    assert_eq!(grouped.occurrences_total, 60);
+    assert_eq!(grouped.occurrences_returned, 60);
+    assert_eq!(grouped.groups_returned, 10);
+    assert!(grouped.groups.iter().all(|group| {
+        group.excerpt.is_some()
+            && group.content_hash.is_some()
+            && group.occurrences.len() == 6
+    }));
+    let coordinates = grouped
+        .groups
+        .iter()
+        .flat_map(|group| &group.occurrences)
+        .collect::<Vec<_>>();
+    assert_eq!(coordinates.len(), 60);
+    assert!(coordinates.iter().all(|coordinate| {
+        coordinate.end_line.is_none()
+            && coordinate.start_column < coordinate.end_column
+            && (1..=10).contains(&coordinate.line)
+    }));
+    assert!(
+        grouped.meta.total_response_tokens < 10_941,
+        "Probe E grouped response used {} tokens",
+        grouped.meta.total_response_tokens
+    );
+    assert!(
+        grouped.meta.total_response_tokens * 2 < full.meta.total_response_tokens,
+        "grouped={} full={}",
+        grouped.meta.total_response_tokens,
+        full.meta.total_response_tokens
+    );
+    assert_response_token_accounting!(grouped, Tokenizer::default());
+
+    let response_limit = grouped.meta.total_response_tokens.saturating_sub(1);
+    let error = services
+        .search_occurrences_with_options(
+            request.clone(),
+            false,
+            ServiceCallOptions::new().with_max_response_tokens(response_limit),
+        )
+        .await
+        .expect_err("grouped coordinates must honor the serialized response bound");
+    assert!(matches!(
+        error,
+        Error::RequestLimitExceeded {
+            field: "max_response_tokens",
+            limit,
+            ..
+        } if limit == response_limit
+    ));
+
+    let mut coordinate_request = request;
+    coordinate_request.max_tokens = Some(1);
+    let coordinate_only = services
+        .search_occurrences(coordinate_request, true)
+        .await
+        .expect("coordinate-only exhaustive response");
+    assert_eq!(coordinate_only.occurrences_total, 60);
+    assert_eq!(coordinate_only.occurrences_returned, 60);
+    assert_eq!(coordinate_only.groups_returned, 1);
+    assert_eq!(coordinate_only.groups[0].occurrences.len(), 60);
+    assert!(coordinate_only.groups[0].excerpt.is_none());
+    assert!(coordinate_only.groups[0].content_hash.is_none());
+    assert_eq!(coordinate_only.meta.source_tokens, 0);
+    assert!(
+        coordinate_only.meta.total_response_tokens < grouped.meta.total_response_tokens
+    );
+    assert_response_token_accounting!(coordinate_only, Tokenizer::default());
 }
 
 #[tokio::test]

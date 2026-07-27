@@ -407,6 +407,7 @@ ordering. The numbers are safety limits, not monorepo performance claims.
 | Full-scan fallback chunks per file | 256 |
 | File scan page size | 1000 for find/glob; tree queries `max_results + 1` projected paths |
 | Opt-in compact projection materialization | At most the 100 selected files, symbols, groups, or hits already admitted by `max_results`; no additional repository scan |
+| Exhaustive occurrence grouping | At most 100 selected occurrence coordinates and 100 group-map entries per response page; the existing 100,000-occurrence fail-closed scan cap is unchanged |
 | Opt-in response-bounded read materializations | At most 18 within one pinned generation |
 | Batched history targets / page | 64 requested / 32 returned |
 | Batched history distinct paths | 32 per revision endpoint |
@@ -521,6 +522,17 @@ explicitly if more than 100,000 FTS rows would need inspection. Both paths
 retain the matching-chunk limit, while the fallback retains its file and
 per-file chunk limits. Compiled regex size and DFA cache are also limited so
 pathological patterns fail closed.
+
+Occurrence grouping is a response projection over the already ranked and
+paginated exhaustive page; it performs no additional repository or SQLite
+scan. A bounded hash map shares identical path/range/content-hash excerpts, and
+coordinates-only mode shares one group per selected path. Unique excerpts,
+rather than repeated hits, consume the source-token budget. Coordinates-only
+mode consumes zero source tokens, but its complete coordinate arrays still
+count against `max_results`, `max_response_tokens`, and the final serialized
+response accounting. The MCP initialize version hashes the deterministic
+runtime tool catalog; computing that fingerprint adds no storage or retrieval
+fan-out.
 
 Every retrieval operation accepts an optional serialized service-response
 ceiling through `ServiceCallOptions`, MCP `max_response_tokens`, or CLI

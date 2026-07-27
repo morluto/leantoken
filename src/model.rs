@@ -311,6 +311,12 @@ pub struct SearchOccurrence {
     pub start_line: usize,
     /// One-based line containing the end of the match.
     pub end_line: usize,
+    /// Zero-based UTF-8 byte column of the match start on `start_line`.
+    #[serde(default)]
+    pub start_column: usize,
+    /// Zero-based exclusive UTF-8 byte column of the match end on `end_line`.
+    #[serde(default)]
+    pub end_column: usize,
     /// Zero-based UTF-8 byte offset of the match start in the indexed file.
     pub start_byte: usize,
     /// Zero-based exclusive UTF-8 byte offset of the match end in the indexed file.
@@ -378,6 +384,47 @@ pub struct SearchResponse {
     /// Exact filtered occurrence count when `all_occurrences` is enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occurrences_total: Option<usize>,
+    pub meta: ResponseMeta,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Compact line/column coordinates for one exhaustive lexical occurrence.
+pub struct SearchOccurrenceCoordinate {
+    /// One-based line containing the start of the match.
+    pub line: usize,
+    /// One-based end line when a regular expression spans multiple lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<usize>,
+    /// Zero-based UTF-8 byte column on `line`.
+    pub start_column: usize,
+    /// Zero-based exclusive UTF-8 byte column on `end_line`, or `line` for a single-line match.
+    pub end_column: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// One excerpt shared by every exhaustive occurrence it contains.
+pub struct SearchOccurrenceGroup {
+    pub path: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    /// Omitted by `coordinates_only` responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excerpt: Option<String>,
+    /// Hash of `excerpt`; omitted by `coordinates_only` responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    pub occurrences: Vec<SearchOccurrenceCoordinate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Exhaustive lexical matches without repeated excerpts or ranked-hit metadata.
+pub struct SearchOccurrencesResponse {
+    pub groups: Vec<SearchOccurrenceGroup>,
+    pub groups_returned: usize,
+    pub occurrences_returned: usize,
+    pub occurrences_total: usize,
+    pub coordinates_only: bool,
+    pub coverage: SearchCoverage,
     pub meta: ResponseMeta,
 }
 

@@ -25,7 +25,7 @@ fn cli_indexes_statuses_and_searches_as_json() {
 
     let status = run(root.path(), &database, &["status"]);
     assert_eq!(status["file_count"], 1);
-    assert_eq!(status["index_content_version"], 12);
+    assert_eq!(status["index_content_version"], 13);
     assert_eq!(
         status["indexed_source_bytes"],
         "pub fn answer() -> u8 { 42 }\n".len()
@@ -444,7 +444,7 @@ fn doctor_verifies_identity_catalog_and_first_retrieval() {
     assert_eq!(report["status"], "ready");
     assert_eq!(report["server_name"], "leantoken");
     assert_eq!(report["server_version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(report["index_content_version"], 12);
+    assert_eq!(report["index_content_version"], 13);
     assert_eq!(report["instructions_loaded"], true);
     assert_eq!(report["tools"].as_array().map(Vec::len), Some(8));
     assert!(

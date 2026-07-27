@@ -476,16 +476,30 @@ filtering. Each group retains an explicit definition when available, otherwise
 one representative path/range/excerpt/content hash; references are summarized
 by file with their count, covered line span, and roles. `coverage`,
 `occurrences_total`, repository freshness, exact token accounting, and the
-normal continuation cursor remain available. The default `full` projection is
-unchanged. Use `leantoken.read` with a returned path/range to expand source, or
-repeat a narrowed `full` search when individual reference excerpts are needed.
+normal continuation cursor remain available. Non-exhaustive searches still
+default to `full`. Use `leantoken.read` with a returned path/range to expand
+source, or repeat a narrowed `full` search when individual reference excerpts
+are needed.
 
-Set `all_occurrences` in `text` or `regex` mode to return one hit for every
-non-overlapping match, including repeated matches in one indexed chunk or line.
-Those hits include exact line and UTF-8 byte coordinates. The response reports
-`occurrences_returned` for the current page and an exact `occurrences_total`
-across the filtered index. Exhaustive pagination applies `max_results` and
-`max_tokens` without changing the total; follow `next_cursor` until absent.
+Set `all_occurrences` in `text` or `regex` mode for every non-overlapping match,
+including repeated alternatives on one line. MCP defaults these requests to
+`projection="occurrences"`: one path/range/excerpt/content hash per unique
+excerpt plus an array of every exact `{line, start_column, end_column}` span.
+Columns are zero-based UTF-8 byte columns; a multi-line regular expression also
+reports `end_line`. Set `coordinates_only=true` to group only by path and omit
+source and hashes, or explicitly request `projection="full"` for legacy
+per-occurrence ranked hits and global byte offsets.
+
+Both shapes report `occurrences_returned` for the current page and an exact
+`occurrences_total` across the filtered index. Grouped excerpt token charging
+counts each unique excerpt once; coordinates-only calls charge no source
+tokens. Exhaustive pagination still applies `max_results` without changing the
+total; follow `next_cursor` until absent.
+
+The MCP initialize response appends `+schema.<fingerprint>` to the runtime
+version. The fingerprint is computed from the running tool catalog, so clients
+can distinguish a stale server binary or cached schema from the feature set
+that accepted the request.
 
 Each page examines at most `max_results` ranked candidates. `max_tokens` may
 filter some or all of those candidates, so a page can contain fewer hits or be
