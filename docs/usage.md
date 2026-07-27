@@ -381,6 +381,12 @@ comparable baseline counts, source/path-metadata/protocol/total response tokens,
 signed net tokens saved, receipt-suppression counts, and fixed rows for all
 eight retrieval operations.
 
+The report is a represented-source comparison over successful recorded
+responses. It does not observe failed calls, retry chains, whether returned
+evidence was used, superseded calls, provider framing, or task success. Treat
+the signed net value as local response accounting, not as a correctness-adjusted
+claim about an agent's full workflow.
+
 This is a read-only observation: calling `leantoken.savings` does not update
 the tracker. Ask the host agent how many tokens LeanToken saved or request
 LeanToken usage statistics to route directly to this tool.
@@ -797,16 +803,22 @@ overhead:
   values neutralized and result arrays emptied.
 - `path_and_metadata_tokens` counts the remaining non-source response cost,
   including paths, metadata values, and repeated result structure.
-- `total_response_tokens` counts the complete compact JSON response DTO.
+- `total_response_tokens` counts the compact JSON response DTO after the four
+  accounting totals are set to zero.
 - `payload_tokens` is a compatibility alias for `total_response_tokens`.
 - `tokenizer` identifies the tokenizer used for every count.
 
 The accounting fields themselves are zeroed before counting, which avoids a
 self-referential total. For current responses,
 `source_tokens + protocol_tokens + path_and_metadata_tokens` equals
-`total_response_tokens`. These counts describe the service response DTO, not
-MCP text/structured-content duplication, tool schemas, provider framing, or
-JSON-RPC envelopes.
+`total_response_tokens`. The final serialization containing the nonzero
+accounting values can therefore be slightly larger than the reported total.
+Current source limits do not impose a hard ceiling on that final serialization.
+These counts describe the service response DTO, not MCP
+text/structured-content duplication, tool schemas, provider framing, or JSON-RPC
+envelopes. In the default `dual` mode, MCP serializes the structured payload in
+both text and `structuredContent`; use the wire-cost harness when that boundary
+matters.
 - `emitted_tokens` remains a compatibility alias for `source_tokens`.
 
 The default tokenizer is `cl100k_base`. Exact built-in modes are `cl100k_base`,
@@ -823,6 +835,8 @@ saturating per-request source-only difference. The signed
 `response_accounting.estimated_net_tokens_saved` instead subtracts every
 recorded complete response from the represented-source baseline, so metadata,
 protocol, plan-only, discovery, and history costs can reduce the net result.
+Only successful recorded responses contribute; failures, retries, evidence use,
+and task outcomes are outside this report.
 
 Source limits do not include JSON keys, paths, scores, hashes, receipts, tool
 schemas, or JSON-RPC envelopes. `payload_tokens` captures the compact response

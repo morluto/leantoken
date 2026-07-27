@@ -147,7 +147,7 @@ that work in stages:
 | Scan broad directory listings | Find relevant paths in a compact tree |
 | Read whole files to find structure | See definitions and imports without loading the entire file |
 | Send the same code again after each turn | Avoid repeating unchanged evidence |
-| Let large files fill the request | Keep every retrieval within a token budget |
+| Let large files fill the request | Keep returned source within an exact source-token budget and report response overhead separately |
 | Guess which files matter | Rank likely relevant code for the task |
 
 Your coding agent still handles editing, commands, tests, and conversation.
@@ -167,10 +167,12 @@ Budget: 1,200 source tokens
 Selected evidence:
   src/services/executor.rs        lines 137-147, 251-259
   src/services/reconciliation.rs lines 148-175, 257-272
+```
 
 The agent receives these ranges instead of both full files. If the budget is too
-small, the response also says what was left out.
-```
+small, the response also says what was left out. Paths, scores, receipts, JSON,
+and MCP transport wrappers are not part of this source-token budget; see
+[token accounting](docs/usage.md#token-accounting) for the measured boundaries.
 
 ## Available tools
 
