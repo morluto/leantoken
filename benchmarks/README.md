@@ -721,7 +721,9 @@ cargo run --release --example benchmark_ablation -- \
 
 This lane never reads ARB root-cause labels during discovery. The paired report
 must distinguish owner-path discovery from selected evidence: a relevant soft
-focus path is not itself a retrieval-quality gain.
+focus path is not itself a retrieval-quality gain. The frozen decision is
+recorded in
+[`reports/arb-ast-structural-v1-2026-07-27.md`](reports/arb-ast-structural-v1-2026-07-27.md).
 
 Each repository directory under `target/arb-repos` must match the generated
 manifest's `directory` and exact `base_revision`. The adapter preserves the
