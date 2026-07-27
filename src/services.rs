@@ -211,6 +211,7 @@ impl_retrieval_response!(
     JsonResponse,
     SearchResponse,
     SearchGroupedResponse,
+    SearchOccurrencesResponse,
     OutlineResponse,
     OutlineSignaturesResponse,
     ReadResponse,

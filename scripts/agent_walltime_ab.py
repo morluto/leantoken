@@ -302,15 +302,50 @@ def line_start_offsets(path: Path) -> list[int]:
 def parse_leantoken_occurrences(
     response: dict[str, Any], root: Path
 ) -> list[Occurrence]:
-    hits = response.get("hits")
-    if not isinstance(hits, list):
-        raise InvalidEvidence("LeanToken search response omitted hits")
     total = response.get("occurrences_total")
     returned = response.get("occurrences_returned")
-    if not isinstance(total, int) or returned != total or total != len(hits):
+    if not isinstance(total, int) or returned != total:
         raise InvalidEvidence(
             "LeanToken exhaustive search did not return every occurrence"
         )
+    groups = response.get("groups")
+    if isinstance(groups, list):
+        occurrences: list[Occurrence] = []
+        for group in groups:
+            if not isinstance(group, dict) or not isinstance(
+                group.get("occurrences"), list
+            ):
+                raise InvalidEvidence("LeanToken occurrence group omitted coordinates")
+            path = normalize_path(str(group["path"]))
+            validate_relative_path(path)
+            if not (root / path).is_file():
+                raise InvalidEvidence(f"LeanToken occurrence path is absent: {path}")
+            for coordinate in group["occurrences"]:
+                if not isinstance(coordinate, dict):
+                    raise InvalidEvidence(f"invalid LeanToken coordinate in {path}")
+                line = coordinate.get("line")
+                end_line = coordinate.get("end_line", line)
+                start_column = coordinate.get("start_column")
+                end_column = coordinate.get("end_column")
+                if (
+                    not isinstance(line, int)
+                    or end_line != line
+                    or not isinstance(start_column, int)
+                    or not isinstance(end_column, int)
+                ):
+                    raise InvalidEvidence(f"invalid LeanToken coordinate in {path}")
+                occurrences.append(
+                    Occurrence(path, line, start_column, end_column)
+                )
+        if len(occurrences) != total:
+            raise InvalidEvidence(
+                "LeanToken exhaustive search did not return every occurrence"
+            )
+        return sorted(occurrences)
+
+    hits = response.get("hits")
+    if not isinstance(hits, list) or total != len(hits):
+        raise InvalidEvidence("LeanToken search response omitted occurrence evidence")
     offsets: dict[str, list[int]] = {}
     occurrences: list[Occurrence] = []
     for hit in hits:

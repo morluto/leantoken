@@ -1530,12 +1530,17 @@ expression: tools
   },
   {
     "name": "search",
-    "description": "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Set projection=grouped for opt-in symbol/file summaries that retain one verifiable excerpt, reference counts, coverage, freshness, and continuation without repeated scores or excerpts. Set all_occurrences in text or regex mode for exact occurrence coordinates and returned/total counts; exhaustive scans fail instead of silently truncating at internal scan limits. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}.",
+    "description": "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Set projection=grouped for opt-in symbol/file summaries. Exhaustive text or regex searches default to projection=occurrences: one excerpt plus every exact line/column coordinate; set coordinates_only=true to omit excerpts and hashes. Use explicit projection=full for legacy per-occurrence hits. Exhaustive scans keep exact returned/total counts and fail instead of silently truncating at internal scan limits. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}.",
     "inputSchema": {
       "$defs": {
         "SearchMcpProjection": {
           "description": "Response projection for indexed search.",
           "oneOf": [
+            {
+              "const": "auto",
+              "description": "Select `occurrences` for exhaustive lexical search and `full` otherwise.",
+              "type": "string"
+            },
             {
               "const": "full",
               "description": "Preserve the complete ranked-hit response.",
@@ -1544,6 +1549,11 @@ expression: tools
             {
               "const": "grouped",
               "description": "Group the selected page into symbol or file summaries.",
+              "type": "string"
+            },
+            {
+              "const": "occurrences",
+              "description": "Share each exhaustive lexical excerpt across its exact occurrence coordinates.",
               "type": "string"
             }
           ]
@@ -1613,6 +1623,11 @@ expression: tools
           "maximum": 20,
           "minimum": 0,
           "type": "integer"
+        },
+        "coordinates_only": {
+          "default": false,
+          "description": "Omit excerpts and hashes from an exhaustive occurrence response.",
+          "type": "boolean"
         },
         "cursor": {
           "default": null,
@@ -1698,8 +1713,8 @@ expression: tools
         },
         "projection": {
           "$ref": "#/$defs/SearchMcpProjection",
-          "default": "full",
-          "description": "Response shape: `full` hits (default) or compact `grouped` matches."
+          "default": "auto",
+          "description": "Response shape. Exhaustive searches default to `occurrences`; others default to `full`."
         },
         "query": {
           "description": "Non-empty text, identifier, symbol, or Rust regular expression to find.",
