@@ -443,11 +443,14 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<FilesResponse> {
-        self.validate_call_options(options)?;
-        validate_files_input(&request)?;
-        self.result_limit(request.max_results)?;
-        self.apply_consistency(consistency, cancellation.clone())
-            .await?;
+        let operation = TokenAccountingOperation::Files;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, validate_files_input(&request))?;
+        self.observe_service_result(operation, self.result_limit(request.max_results))?;
+        let consistency_result = self
+            .apply_consistency(consistency, cancellation.clone())
+            .await;
+        self.observe_service_result(operation, consistency_result)?;
         self.files_cancellable_with_options(request, options, cancellation)
             .await
     }
@@ -485,11 +488,14 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<FilesPathsResponse> {
-        self.validate_call_options(options)?;
-        validate_files_input(&request)?;
-        self.result_limit(request.max_results)?;
-        self.apply_consistency(consistency, cancellation.clone())
-            .await?;
+        let operation = TokenAccountingOperation::Files;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, validate_files_input(&request))?;
+        self.observe_service_result(operation, self.result_limit(request.max_results))?;
+        let consistency_result = self
+            .apply_consistency(consistency, cancellation.clone())
+            .await;
+        self.observe_service_result(operation, consistency_result)?;
         self.files_paths_cancellable_with_options(request, options, cancellation)
             .await
     }
@@ -500,13 +506,16 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<FilesPathsResponse> {
-        self.validate_call_options(options)?;
+        let operation = TokenAccountingOperation::Files;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
         let this = self.clone();
-        self.blocking_executor
+        let result = self
+            .blocking_executor
             .run(cancellation, move |cancellation| {
                 this.files_paths_sync(request, options, cancellation)
             })
-            .await
+            .await;
+        self.observe_service_result(operation, result)
     }
 
     async fn files_cancellable_with_options(
@@ -515,13 +524,16 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<FilesResponse> {
-        self.validate_call_options(options)?;
+        let operation = TokenAccountingOperation::Files;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
         let this = self.clone();
-        self.blocking_executor
+        let result = self
+            .blocking_executor
             .run(cancellation, move |cancellation| {
                 this.files_sync(request, options, cancellation)
             })
-            .await
+            .await;
+        self.observe_service_result(operation, result)
     }
 
     fn files_sync(

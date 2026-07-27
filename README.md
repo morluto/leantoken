@@ -68,7 +68,7 @@ Try a broad task such as: *Find the code related to request cancellation before
 editing.* LeanToken helps the agent start with `leantoken.context`, while its
 normal tools remain available for edits, builds, and tests.
 
-Check how many tokens LeanToken has saved:
+Inspect LeanToken's observed repository-local token accounting:
 
 ```bash
 npx leantoken savings
@@ -185,7 +185,7 @@ and MCP transport wrappers are not part of this source-token budget; see
 | `leantoken.read` | Prefer over cat/head/sed for one exact symbol or inclusive line range. |
 | `leantoken.history` | Read, diff, or trace one parsed symbol across immutable Git revisions. |
 | `leantoken.json` | Query, summarize, or compare bounded live JSON with paged keys and typed diagnostics. |
-| `leantoken.savings` | Report source compression and cumulative full-response token accounting. |
+| `leantoken.savings` | Report observed response accounting, hash suppression, failures, and explicit observation limits. |
 
 <details>
 <summary><strong>Advanced retrieval controls</strong></summary>

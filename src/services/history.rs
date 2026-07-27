@@ -156,14 +156,17 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<HistoryResponse> {
-        self.validate_call_options(options)?;
-        validate_history_request(&request)?;
+        let operation = TokenAccountingOperation::History;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, validate_history_request(&request))?;
         let this = self.clone();
-        self.blocking_executor
+        let result = self
+            .blocking_executor
             .run(cancellation, move |cancellation| {
                 this.history_sync(request, options, cancellation)
             })
-            .await
+            .await;
+        self.observe_service_result(operation, result)
     }
 
     fn history_sync(

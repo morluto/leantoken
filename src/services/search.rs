@@ -803,13 +803,19 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<SearchResponse> {
-        self.validate_call_options(options)?;
-        validate_search_input(&request)?;
-        self.result_limit(request.max_results)?;
-        self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
-        self.context_line_limit(request.context_lines)?;
-        self.apply_consistency(consistency, cancellation.clone())
-            .await?;
+        let operation = TokenAccountingOperation::Search;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, validate_search_input(&request))?;
+        self.observe_service_result(operation, self.result_limit(request.max_results))?;
+        self.observe_service_result(
+            operation,
+            self.token_limit(request.max_tokens, self.config.default_read_tokens),
+        )?;
+        self.observe_service_result(operation, self.context_line_limit(request.context_lines))?;
+        let consistency_result = self
+            .apply_consistency(consistency, cancellation.clone())
+            .await;
+        self.observe_service_result(operation, consistency_result)?;
         self.search_cancellable_with_options(request, options, cancellation)
             .await
     }
@@ -829,9 +835,11 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<SearchResponse> {
-        self.validate_call_options(options)?;
+        let operation = TokenAccountingOperation::Search;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
         let this = self.clone();
-        self.blocking_executor
+        let result = self
+            .blocking_executor
             .run(cancellation, move |cancellation| {
                 this.search_sync(
                     request,
@@ -843,7 +851,8 @@ impl Services {
                 )
                 .map(|evaluation| evaluation.response)
             })
-            .await
+            .await;
+        self.observe_service_result(operation, result)
     }
 
     /// Search with hits grouped by matched symbol or enclosing scope.
@@ -870,13 +879,19 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<SearchGroupedResponse> {
-        self.validate_call_options(options)?;
-        validate_search_input(&request)?;
-        self.result_limit(request.max_results)?;
-        self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
-        self.context_line_limit(request.context_lines)?;
-        self.apply_consistency(consistency, cancellation.clone())
-            .await?;
+        let operation = TokenAccountingOperation::Search;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, validate_search_input(&request))?;
+        self.observe_service_result(operation, self.result_limit(request.max_results))?;
+        self.observe_service_result(
+            operation,
+            self.token_limit(request.max_tokens, self.config.default_read_tokens),
+        )?;
+        self.observe_service_result(operation, self.context_line_limit(request.context_lines))?;
+        let consistency_result = self
+            .apply_consistency(consistency, cancellation.clone())
+            .await;
+        self.observe_service_result(operation, consistency_result)?;
         self.search_grouped_cancellable_with_options(request, options, cancellation)
             .await
     }
@@ -887,9 +902,11 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<SearchGroupedResponse> {
-        self.validate_call_options(options)?;
+        let operation = TokenAccountingOperation::Search;
+        self.observe_service_result(operation, self.validate_call_options(options))?;
         let this = self.clone();
-        self.blocking_executor
+        let result = self
+            .blocking_executor
             .run(cancellation, move |cancellation| {
                 let response = this
                     .search_sync(
@@ -924,7 +941,8 @@ impl Services {
                 this.record_token_savings(TokenAccountingOperation::Search, None, &compact.meta);
                 Ok(compact)
             })
-            .await
+            .await;
+        self.observe_service_result(operation, result)
     }
 
     /// Search and expose deterministic candidate-phase counts for evaluation.

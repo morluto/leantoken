@@ -75,9 +75,9 @@ snapshot, so edits completed before the command are visible atomically. Use
 completed snapshot is intentional. Changes written concurrently may require a
 later request.
 
-`leantoken savings` reports persistent repository-local source compression and
-full-response accounting. The backward-compatible source-only fields cover
-successful `search`, `outline`, `read`, and materialized `context` responses.
+`leantoken savings` reports persistent repository-local observed token
+accounting. The backward-compatible source-only fields cover successful
+`search`, `outline`, `read`, and materialized `context` responses.
 Search, outline, and context compare emitted source with whole-file reads of
 the unique represented files. Read compares the emitted range with the
 requested live range before truncation or suppression.
@@ -93,18 +93,28 @@ silently disappearing. Counts are stored separately per configured tokenizer.
 The default terminal view presents an aligned summary and per-operation table,
 using color when stdout is a terminal. `NO_COLOR` or `CLICOLOR=0` disables
 color, while `CLICOLOR_FORCE=1` enables it for compatible redirected output.
-Pass `--json` for the stable compact JSON representation used by scripts.
+Pass `--json` for the stable compact JSON representation used by scripts. The
+legacy top-level fields remain unchanged; the additive `observations` object
+reports persisted successful and failed service records, exact
+`expected_hash` not-modified responses, their suppressed represented-source
+tokens, and a fixed-order failure breakdown with non-sensitive categories.
 
 Full-response counts include the compact structured response but not tool
 discovery, JSON-RPC transport envelopes, provider billing/cache behavior,
-pre-response failures, native-tool costs, or task/evidence success. Successful
-retries are counted as separate requests but are not grouped into tasks.
+native-tool costs, or task/evidence success. Instrumented service failures are
+counted separately and never assigned a fabricated token cost. Calls cannot be
+grouped into retry chains or tasks because LeanToken receives no host
+task/outcome identifier. It also cannot know whether evidence was unused,
+irrelevant, or superseded, nor whether a task completed successfully; these
+limits are returned explicitly in `observations.unobserved`.
+
 Accounting is best effort: a busy repository writer skips telemetry rather
-than delaying or failing retrieval. Whole-file baselines are also unavailable
-when the selected tokenizer does not match the indexed tokenizer until
-reconciliation completes. Source-only counters from older caches remain
-visible, but cannot be reconstructed as historical full-response costs and are
-therefore excluded from `response_accounting`. This is not an audit ledger.
+than delaying or failing retrieval, so persisted counts are lower bounds.
+Whole-file baselines are also unavailable when the selected tokenizer does not
+match the indexed tokenizer until reconciliation completes. Source-only
+counters from older caches remain visible, but cannot be reconstructed as
+historical full-response costs and are therefore excluded from
+`response_accounting`. This is not an audit ledger.
 
 Current index responses retain the aggregate `files_skipped` count and explain
 it with the bounded `skip_reasons` object: `binary`,
@@ -395,18 +405,27 @@ Returns cumulative repository-local token accounting with no input fields.
 Existing top-level fields retain the source-only estimate and its four
 operation rows. `response_accounting` reports successful response counts,
 comparable baseline counts, source/path-metadata/protocol/total response tokens,
-signed net tokens saved, receipt-suppression counts, and fixed rows for all
+signed response deltas, receipt-suppression counts, and fixed rows for all
 eight retrieval operations.
 
+The additive `observations` object reports best-effort persisted successes,
+failures by operation and stable error category, and exact `expected_hash`
+matches. `expected_hash_suppressed_source_tokens` measures the requested source
+omitted by those matches. This is distinct from
+`response_accounting.receipt_suppressed_exact` and
+`receipt_suppressed_overlap`, which describe receipt-based duplicate
+suppression.
+
 The report is a represented-source comparison over successful recorded
-responses. It does not observe failed calls, retry chains, whether returned
-evidence was used, superseded calls, provider framing, or task success. Treat
-the signed net value as local response accounting, not as a correctness-adjusted
-claim about an agent's full workflow.
+responses plus separately observed failure counts. It does not infer retry
+chains, whether returned evidence was used, superseded calls, provider framing,
+or task success. Those limits are returned in `observations.unobserved`. Treat
+the signed response delta as local response accounting, not as a
+correctness-adjusted claim about an agent's full workflow.
 
 This is a read-only observation: calling `leantoken.savings` does not update
-the tracker. Ask the host agent how many tokens LeanToken saved or request
-LeanToken usage statistics to route directly to this tool.
+the tracker. Accounting writes never delay retrieval: local writer contention
+skips the record, so every count is a persisted lower bound.
 
 ## `leantoken.files`
 
@@ -897,12 +916,16 @@ at the reported budget; responses mark this with `token_count_exact: false`.
 
 `savings` uses the same tokenizer and marks whether its local counts are exact.
 The backward-compatible `estimated_source_tokens_saved` total still sums a
-saturating per-request source-only difference. The signed
+saturating per-request represented-source difference; the field name is
+retained for JSON compatibility. The signed
 `response_accounting.estimated_net_tokens_saved` instead subtracts every
 recorded complete response from the represented-source baseline, so metadata,
 protocol, plan-only, discovery, and history costs can reduce the net result.
-Only successful recorded responses contribute; failures, retries, evidence use,
-and task outcomes are outside this report.
+Its field name is likewise retained for compatibility and does not establish
+task-level savings. Only successful persisted responses contribute token
+deltas. `observations` separately counts persisted service failures and exact
+expected-hash suppression. Retry chains, evidence use, superseded calls, and
+task outcomes remain explicitly unobserved.
 
 Source limits do not include JSON keys, paths, scores, hashes, receipts, tool
 schemas, or JSON-RPC envelopes. `payload_tokens` captures the compact response

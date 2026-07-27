@@ -1961,9 +1961,12 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
-        self.validate_context_request(&request)?;
-        self.apply_consistency(consistency, cancellation.clone())
-            .await?;
+        let operation = context_accounting_operation(&request);
+        self.observe_service_result(operation, self.validate_context_request(&request))?;
+        let consistency_result = self
+            .apply_consistency(consistency, cancellation.clone())
+            .await;
+        self.observe_service_result(operation, consistency_result)?;
         let accounted = self
             .context_cancellable_with_workflow(
                 request,
@@ -1974,7 +1977,8 @@ impl Services {
             .await?;
         let mut response = accounted.response;
         set_routing_consistency(&mut response, consistency);
-        self.finalize_response(&mut response)?;
+        let finalize_result = self.finalize_response(&mut response);
+        self.observe_service_result(operation, finalize_result)?;
         self.record_token_savings(
             accounted.operation,
             accounted.baseline_source_tokens,
@@ -1991,9 +1995,12 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
-        self.validate_context_request(&request)?;
-        self.apply_consistency(consistency, cancellation.clone())
-            .await?;
+        let operation = context_accounting_operation(&request);
+        self.observe_service_result(operation, self.validate_context_request(&request))?;
+        let consistency_result = self
+            .apply_consistency(consistency, cancellation.clone())
+            .await;
+        self.observe_service_result(operation, consistency_result)?;
         let accounted = self
             .context_cancellable_with_workflow(
                 request,
@@ -2004,7 +2011,8 @@ impl Services {
             .await?;
         let mut response = accounted.response;
         set_routing_consistency(&mut response, consistency);
-        self.finalize_response(&mut response)?;
+        let finalize_result = self.finalize_response(&mut response);
+        self.observe_service_result(operation, finalize_result)?;
         self.record_token_savings(
             accounted.operation,
             accounted.baseline_source_tokens,
@@ -2022,10 +2030,16 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
-        self.validate_context_request(&request)?;
-        validate_handoff_context_request(&request, &handoff)?;
-        self.apply_consistency(consistency, cancellation.clone())
-            .await?;
+        let operation = context_accounting_operation(&request);
+        self.observe_service_result(operation, self.validate_context_request(&request))?;
+        self.observe_service_result(
+            operation,
+            validate_handoff_context_request(&request, &handoff),
+        )?;
+        let consistency_result = self
+            .apply_consistency(consistency, cancellation.clone())
+            .await;
+        self.observe_service_result(operation, consistency_result)?;
         let accounted = self
             .context_cancellable_with_workflow_and_handoff(
                 request,
@@ -2037,7 +2051,8 @@ impl Services {
             .await?;
         let mut response = accounted.response;
         set_routing_consistency(&mut response, consistency);
-        self.finalize_response(&mut response)?;
+        let finalize_result = self.finalize_response(&mut response);
+        self.observe_service_result(operation, finalize_result)?;
         self.record_token_savings(
             accounted.operation,
             accounted.baseline_source_tokens,
@@ -2073,13 +2088,19 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
-        self.validate_call_options(options)?;
-        self.validate_context_request(&request)?;
+        let operation = context_accounting_operation(&request);
+        self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, self.validate_context_request(&request))?;
         if let Some(handoff) = &handoff {
-            validate_handoff_context_request(&request, handoff)?;
+            self.observe_service_result(
+                operation,
+                validate_handoff_context_request(&request, handoff),
+            )?;
         }
-        self.apply_consistency(consistency, cancellation.clone())
-            .await?;
+        let consistency_result = self
+            .apply_consistency(consistency, cancellation.clone())
+            .await;
+        self.observe_service_result(operation, consistency_result)?;
         let accounted = self
             .context_cancellable_with_workflow_and_handoff(
                 request,
@@ -2091,15 +2112,19 @@ impl Services {
             .await?;
         let mut response = accounted.response;
         set_routing_consistency(&mut response, consistency);
-        self.finalize_response(&mut response)?;
+        let finalize_result = self.finalize_response(&mut response);
+        self.observe_service_result(operation, finalize_result)?;
         if let Some(max_response_tokens) = options.max_response_tokens()
             && response.meta.total_response_tokens > max_response_tokens
         {
-            return Err(Error::RequestLimitExceeded {
-                field: "max_response_tokens",
-                requested: response.meta.total_response_tokens,
-                limit: max_response_tokens,
-            });
+            return self.observe_service_result(
+                operation,
+                Err(Error::RequestLimitExceeded {
+                    field: "max_response_tokens",
+                    requested: response.meta.total_response_tokens,
+                    limit: max_response_tokens,
+                }),
+            );
         }
         self.record_token_savings(
             accounted.operation,
@@ -2134,14 +2159,15 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<AccountedContextResponse> {
+        let operation = if request.plan_only {
+            TokenAccountingOperation::ContextPlan
+        } else {
+            TokenAccountingOperation::Context
+        };
         let this = self.clone();
-        self.blocking_executor
+        let result = self
+            .blocking_executor
             .run(cancellation, move |cancellation| {
-                let operation = if request.plan_only {
-                    TokenAccountingOperation::ContextPlan
-                } else {
-                    TokenAccountingOperation::Context
-                };
                 let (evaluation, baseline_source_tokens) = this.context_sync(
                     request,
                     workflow,
@@ -2157,7 +2183,8 @@ impl Services {
                     operation,
                 })
             })
-            .await
+            .await;
+        self.observe_service_result(operation, result)
     }
 
     fn record_context_response(&self, accounted: AccountedContextResponse) -> ContextResponse {
@@ -3622,6 +3649,14 @@ fn validate_handoff_context_request(
         });
     }
     Ok(())
+}
+
+fn context_accounting_operation(request: &ContextRequest) -> TokenAccountingOperation {
+    if request.plan_only {
+        TokenAccountingOperation::ContextPlan
+    } else {
+        TokenAccountingOperation::Context
+    }
 }
 
 fn set_routing_consistency(response: &mut ContextResponse, consistency: IndexConsistency) {

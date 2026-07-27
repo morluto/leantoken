@@ -4,7 +4,8 @@ use std::{
 };
 
 use leantoken::{
-    ResponseTokenAccountingByOperation, Result, TokenAccountingOperation, TokenSavingsReport,
+    ObservedTokenSavingsReport, ResponseTokenAccountingByOperation, Result,
+    TokenAccountingOperation,
 };
 
 const RESET: &str = "\x1b[0m";
@@ -43,7 +44,7 @@ impl Palette {
     }
 }
 
-pub(crate) fn print_report(report: &TokenSavingsReport, json_output: bool) -> Result<()> {
+pub(crate) fn print_report(report: &ObservedTokenSavingsReport, json_output: bool) -> Result<()> {
     let stdout = std::io::stdout();
     let color = color_enabled(stdout.is_terminal());
     let mut output = stdout.lock();
@@ -57,22 +58,23 @@ pub(crate) fn print_report(report: &TokenSavingsReport, json_output: bool) -> Re
 
 fn write_human_report(
     output: &mut impl Write,
-    report: &TokenSavingsReport,
+    report: &ObservedTokenSavingsReport,
     color: bool,
 ) -> Result<()> {
     let palette = Palette { enabled: color };
-    let source = &report.source_savings;
-    let accounting = &report.response_accounting;
+    let source = &report.report.source_savings;
+    let accounting = &report.report.response_accounting;
+    let observations = &report.observations;
     let net = format_signed_count(accounting.estimated_net_tokens_saved);
     let net_summary = if accounting.estimated_net_tokens_saved > 0 {
-        format!("{net} net response tokens saved")
+        format!("{net} fewer response tokens than represented source")
     } else if accounting.estimated_net_tokens_saved < 0 {
         format!(
-            "{} net response token cost",
+            "{} more response tokens than represented source",
             format_count(accounting.estimated_net_tokens_saved.unsigned_abs())
         )
     } else {
-        "0 net response tokens".into()
+        "response tokens equal represented source".into()
     };
     let net_style = match accounting.estimated_net_tokens_saved.cmp(&0) {
         std::cmp::Ordering::Greater => BOLD_GREEN,
@@ -85,11 +87,19 @@ fn write_human_report(
         palette.paint(YELLOW, "estimated token count")
     };
 
-    writeln!(output, "{}", palette.paint(BOLD_CYAN, "LeanToken Savings"))?;
-    writeln!(output, "{}", palette.paint(DIM, "================="))?;
     writeln!(
         output,
-        "{}  ({} vs represented source)",
+        "{}",
+        palette.paint(BOLD_CYAN, "LeanToken Observed Token Accounting")
+    )?;
+    writeln!(
+        output,
+        "{}",
+        palette.paint(DIM, "===================================")
+    )?;
+    writeln!(
+        output,
+        "{}  ({} response delta)",
         palette.paint(net_style, &net_summary),
         format_net_reduction(
             accounting.estimated_net_tokens_saved,
@@ -118,7 +128,7 @@ fn write_human_report(
     )?;
     writeln!(
         output,
-        "Source compression: {} baseline -> {} emitted ({} source tokens saved, {} Reduction)",
+        "Represented-source compression: {} baseline -> {} emitted ({} fewer source tokens, {} reduction)",
         format_count(source.baseline_source_tokens),
         format_count(source.emitted_source_tokens),
         format_count(source.estimated_source_tokens_saved),
@@ -127,6 +137,27 @@ fn write_human_report(
             source.baseline_source_tokens
         )
     )?;
+    writeln!(
+        output,
+        "Persisted observations: {} successful  |  {} failed  |  {} expected-hash not-modified",
+        format_count(observations.successful_response_records),
+        format_count(observations.failed_service_requests),
+        format_count(observations.expected_hash_not_modified_responses)
+    )?;
+    writeln!(
+        output,
+        "Expected-hash suppression: {} represented-source tokens",
+        format_count(observations.expected_hash_suppressed_source_tokens)
+    )?;
+    for failure in &observations.failed_by_operation_and_category {
+        writeln!(
+            output,
+            "Observed failure: {} / {} = {}",
+            operation_label(failure.operation),
+            failure.error_category,
+            format_count(failure.failed_requests)
+        )?;
+    }
     writeln!(output)?;
 
     let rows = accounting
@@ -145,7 +176,7 @@ fn write_human_report(
     let metadata_width = column_width("Metadata", rows.iter().map(|row| row.metadata.as_str()));
     let protocol_width = column_width("Protocol", rows.iter().map(|row| row.protocol.as_str()));
     let total_width = column_width("Total", rows.iter().map(|row| row.total.as_str()));
-    let net_width = column_width("Net", rows.iter().map(|row| row.net.as_str()));
+    let net_width = column_width("Delta", rows.iter().map(|row| row.net.as_str()));
 
     let header = format!(
         "{:<operation_width$}  {:>requests_width$}  {:>baseline_requests_width$}  {:>baseline_width$}  {:>source_width$}  {:>metadata_width$}  {:>protocol_width$}  {:>total_width$}  {:>net_width$}",
@@ -157,7 +188,7 @@ fn write_human_report(
         "Metadata",
         "Protocol",
         "Total",
-        "Net"
+        "Delta"
     );
     let rule = format!(
         "{}  {}  {}  {}  {}  {}  {}  {}  {}",
@@ -201,12 +232,34 @@ fn write_human_report(
     writeln!(
         output,
         "{}",
-        palette.paint(DIM, &format!("Net basis: {}", accounting.estimate_basis))
+        palette.paint(
+            DIM,
+            &format!("Response-delta basis: {}", accounting.estimate_basis)
+        )
     )?;
     writeln!(
         output,
         "{}",
         palette.paint(DIM, &format!("Scope: {}", accounting.accounting_scope))
+    )?;
+    writeln!(
+        output,
+        "{}",
+        palette.paint(
+            DIM,
+            &format!("Observation scope: {}", observations.observation_scope)
+        )
+    )?;
+    writeln!(
+        output,
+        "{}",
+        palette.paint(
+            DIM,
+            &format!(
+                "Unobserved task outcomes: {}",
+                observations.unobserved.join("; ")
+            )
+        )
     )?;
     Ok(())
 }
@@ -304,71 +357,93 @@ fn color_enabled(is_terminal: bool) -> bool {
 mod tests {
     use super::*;
     use leantoken::{
-        ResponseTokenAccounting, TokenSavingsByOperation, TokenSavingsOperation,
-        TokenSavingsResponse,
+        ResponseTokenAccounting, ServiceFailureObservation, TokenSavingsByOperation,
+        TokenSavingsObservations, TokenSavingsOperation, TokenSavingsReport, TokenSavingsResponse,
     };
 
-    fn report() -> TokenSavingsReport {
-        TokenSavingsReport {
-            source_savings: TokenSavingsResponse {
-                tokenizer: "o200k_base".into(),
-                token_count_exact: true,
-                estimate_basis:
-                    "requested read ranges or whole source files represented in each response"
-                        .into(),
-                tracked_requests: 24,
-                baseline_source_tokens: 324_656,
-                emitted_source_tokens: 9_263,
-                estimated_source_tokens_saved: 315_393,
-                by_operation: vec![TokenSavingsByOperation {
-                    operation: TokenSavingsOperation::Search,
-                    tracked_requests: 9,
-                    baseline_source_tokens: 224_396,
-                    emitted_source_tokens: 3_513,
-                    estimated_source_tokens_saved: 220_883,
-                }],
-            },
-            response_accounting: ResponseTokenAccounting {
-                accounting_scope: "successful responses; excludes pre-response failures".into(),
-                estimate_basis:
-                    "represented-source baseline minus complete serialized response tokens".into(),
-                tracked_requests: 27,
-                baseline_requests: 24,
-                baseline_source_tokens: 324_656,
-                response_source_tokens: 9_263,
-                path_and_metadata_tokens: 12_000,
-                protocol_tokens: 2_400,
-                total_response_tokens: 23_663,
-                estimated_net_tokens_saved: 300_993,
-                receipt_suppressed_exact: 2,
-                receipt_suppressed_overlap: 1,
-                by_operation: vec![
-                    ResponseTokenAccountingByOperation {
-                        operation: TokenAccountingOperation::Search,
+    fn report() -> ObservedTokenSavingsReport {
+        ObservedTokenSavingsReport {
+            report: TokenSavingsReport {
+                source_savings: TokenSavingsResponse {
+                    tokenizer: "o200k_base".into(),
+                    token_count_exact: true,
+                    estimate_basis:
+                        "requested read ranges or whole source files represented in each response"
+                            .into(),
+                    tracked_requests: 24,
+                    baseline_source_tokens: 324_656,
+                    emitted_source_tokens: 9_263,
+                    estimated_source_tokens_saved: 315_393,
+                    by_operation: vec![TokenSavingsByOperation {
+                        operation: TokenSavingsOperation::Search,
                         tracked_requests: 9,
-                        baseline_requests: 9,
                         baseline_source_tokens: 224_396,
-                        response_source_tokens: 3_513,
-                        path_and_metadata_tokens: 2_000,
-                        protocol_tokens: 487,
-                        total_response_tokens: 6_000,
-                        estimated_net_tokens_saved: 218_396,
-                        receipt_suppressed_exact: 1,
-                        receipt_suppressed_overlap: 0,
-                    },
-                    ResponseTokenAccountingByOperation {
-                        operation: TokenAccountingOperation::Files,
-                        tracked_requests: 1,
-                        baseline_requests: 0,
-                        baseline_source_tokens: 0,
-                        response_source_tokens: 0,
-                        path_and_metadata_tokens: 400,
-                        protocol_tokens: 100,
-                        total_response_tokens: 500,
-                        estimated_net_tokens_saved: -500,
-                        receipt_suppressed_exact: 0,
-                        receipt_suppressed_overlap: 0,
-                    },
+                        emitted_source_tokens: 3_513,
+                        estimated_source_tokens_saved: 220_883,
+                    }],
+                },
+                response_accounting: ResponseTokenAccounting {
+                    accounting_scope: "successful responses; excludes pre-response failures".into(),
+                    estimate_basis:
+                        "represented-source baseline minus complete serialized response tokens"
+                            .into(),
+                    tracked_requests: 27,
+                    baseline_requests: 24,
+                    baseline_source_tokens: 324_656,
+                    response_source_tokens: 9_263,
+                    path_and_metadata_tokens: 12_000,
+                    protocol_tokens: 2_400,
+                    total_response_tokens: 23_663,
+                    estimated_net_tokens_saved: 300_993,
+                    receipt_suppressed_exact: 2,
+                    receipt_suppressed_overlap: 1,
+                    by_operation: vec![
+                        ResponseTokenAccountingByOperation {
+                            operation: TokenAccountingOperation::Search,
+                            tracked_requests: 9,
+                            baseline_requests: 9,
+                            baseline_source_tokens: 224_396,
+                            response_source_tokens: 3_513,
+                            path_and_metadata_tokens: 2_000,
+                            protocol_tokens: 487,
+                            total_response_tokens: 6_000,
+                            estimated_net_tokens_saved: 218_396,
+                            receipt_suppressed_exact: 1,
+                            receipt_suppressed_overlap: 0,
+                        },
+                        ResponseTokenAccountingByOperation {
+                            operation: TokenAccountingOperation::Files,
+                            tracked_requests: 1,
+                            baseline_requests: 0,
+                            baseline_source_tokens: 0,
+                            response_source_tokens: 0,
+                            path_and_metadata_tokens: 400,
+                            protocol_tokens: 100,
+                            total_response_tokens: 500,
+                            estimated_net_tokens_saved: -500,
+                            receipt_suppressed_exact: 0,
+                            receipt_suppressed_overlap: 0,
+                        },
+                    ],
+                },
+            },
+            observations: TokenSavingsObservations {
+                observation_scope:
+                    "best-effort service records; local writer contention skips accounting".into(),
+                successful_response_records: 27,
+                responses_with_baseline: 24,
+                source_compression_requests: 24,
+                failed_service_requests: 3,
+                expected_hash_not_modified_responses: 2,
+                expected_hash_suppressed_source_tokens: 8_192,
+                failed_by_operation_and_category: vec![ServiceFailureObservation {
+                    operation: TokenAccountingOperation::Search,
+                    error_category: "invalid_input".into(),
+                    failed_requests: 3,
+                }],
+                unobserved: vec![
+                    "retry chains without a host task/outcome identifier".into(),
+                    "unused or irrelevant evidence".into(),
                 ],
             },
         }
@@ -380,22 +455,33 @@ mod tests {
         write_human_report(&mut output, &report(), false).expect("human report");
         let output = String::from_utf8(output).expect("UTF-8 report");
 
-        assert!(output.starts_with("LeanToken Savings\n=================\n"));
-        assert!(
-            output.contains("300,993 net response tokens saved  (92.7% vs represented source)")
-        );
+        assert!(output.starts_with(
+            "LeanToken Observed Token Accounting\n===================================\n"
+        ));
+        assert!(output.contains(
+            "300,993 fewer response tokens than represented source  (92.7% response delta)"
+        ));
         assert!(output.contains("324,656 baseline  ->  23,663 total response"));
         assert!(output.contains("9,263 source + 12,000 metadata + 2,400 protocol"));
         assert!(output.contains(
             "27 successful responses  |  24 with baselines  |  o200k_base (exact token count)"
         ));
-        assert!(output.contains("Source compression: 324,656 baseline -> 9,263 emitted"));
+        assert!(
+            output.contains("Represented-source compression: 324,656 baseline -> 9,263 emitted")
+        );
+        assert!(output.contains(
+            "Persisted observations: 27 successful  |  3 failed  |  2 expected-hash not-modified"
+        ));
+        assert!(output.contains("Expected-hash suppression: 8,192 represented-source tokens"));
+        assert!(output.contains("Observed failure: Search / invalid_input = 3"));
         assert!(output.contains("Operation  Requests  Compared"));
         assert!(output.contains("Search"));
         assert!(output.contains("218,396"));
         assert!(output.contains("Files"));
         assert!(output.contains("-500"));
         assert!(output.contains("Scope: successful responses; excludes pre-response failures"));
+        assert!(output.contains("Observation scope: best-effort service records"));
+        assert!(output.contains("Unobserved task outcomes: retry chains"));
         assert!(!output.contains("\x1b["));
     }
 

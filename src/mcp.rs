@@ -2430,7 +2430,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "savings",
-        description = "Report repository-local source compression and full successful-response token accounting. Use when asked how many tokens LeanToken saved. Example: {}.",
+        description = "Report repository-local observed response accounting, expected-hash suppression, service failures, and explicitly unobserved task outcomes. Source and response deltas are comparisons against represented source, not claims about task success. Example: {}.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn leantoken_savings(
@@ -2443,7 +2443,7 @@ impl LeanTokenMcp {
             Err(result) => return Ok(result),
         };
         self.run_admitted(services, None, |services| async move {
-            services.token_savings_report().await
+            services.observed_token_savings_report().await
         })
         .await
     }
@@ -3874,7 +3874,8 @@ mod tests {
         assert!(descriptions["read"].contains("expected_hash"));
         assert!(descriptions["read"].contains("instead of cat"));
         assert!(descriptions["context"].contains("DEFAULT FIRST CALL"));
-        assert!(descriptions["savings"].contains("how many tokens LeanToken saved"));
+        assert!(descriptions["savings"].contains("explicitly unobserved task outcomes"));
+        assert!(descriptions["savings"].contains("not claims about task success"));
         assert!(
             descriptions
                 .values()

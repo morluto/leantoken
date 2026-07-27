@@ -257,6 +257,57 @@ pub enum Error {
 }
 
 impl Error {
+    /// Stable, non-sensitive category for repository-local service observations.
+    pub(crate) fn observation_category(&self) -> &'static str {
+        match self.reconciliation_cause() {
+            Self::RootNotFound(_) => "root_not_found",
+            Self::UnsafeRepositoryRoot(_) => "unsafe_repository_root",
+            Self::IndexLimitExceeded { .. } => "index_limit_exceeded",
+            Self::PathOutsideRoot(_) => "path_outside_root",
+            Self::UnsupportedPathEncoding(_) => "unsupported_path_encoding",
+            Self::RepositoryTraversal(_) => "repository_traversal",
+            Self::NotIndexed(_) => "not_indexed",
+            Self::SymbolNotFound { .. } => "symbol_not_found",
+            Self::HeadingNotFound { .. } => "heading_not_found",
+            Self::LimitExceeded => "limit_exceeded",
+            Self::RequestLimitExceeded { .. } => "request_limit_exceeded",
+            Self::UnsupportedLanguage(_) => "unsupported_language",
+            Self::InvalidInput { .. } => "invalid_input",
+            Self::InvalidJson { .. } => "invalid_json",
+            Self::InvalidJsonSelector { .. } => "invalid_json_selector",
+            Self::InputTooLong { .. } => "input_too_long",
+            Self::InvalidRequest(_) => "invalid_request",
+            Self::InternalFailure(_) => "internal_failure",
+            Self::DoctorFailure { .. } => "doctor_failure",
+            Self::InvalidConfiguration(_) => "invalid_configuration",
+            Self::RepositoryMismatch { .. } => "repository_mismatch",
+            Self::RepositoryIdentityMismatch { .. } => "repository_identity_mismatch",
+            Self::StaleCursor => "stale_cursor",
+            Self::UnknownReceipt(_) => "unknown_receipt",
+            Self::StaleReceipt { .. } => "stale_receipt",
+            Self::Cancelled => "cancelled",
+            Self::RetrievalOverloaded => "retrieval_overloaded",
+            Self::RetrievalQueueTimeout => "retrieval_queue_timeout",
+            Self::IndexNotReady => "index_not_ready",
+            Self::StaleReconciliation { .. } => "stale_reconciliation",
+            Self::ReconciliationFailed(_) => "reconciliation_failed",
+            Self::RetryableConflict(_) => "retryable_conflict",
+            Self::McpRuntimeStopped => "mcp_runtime_stopped",
+            Self::RuntimeCapabilityUnavailable { .. } => "runtime_capability_unavailable",
+            Self::Io(_) => "io",
+            Self::Sqlite(_) => "sqlite",
+            Self::Migration(_) => "migration",
+            Self::ConnectionPool(_) => "connection_pool",
+            Self::TreeSitterLanguage(_) => "tree_sitter_language",
+            Self::TreeSitterQuery(_) => "tree_sitter_query",
+            Self::Regex(_) => "regex",
+            Self::Glob(_) => "glob",
+            Self::Json(_) => "serialization",
+            Self::Join(_) => "join",
+            Self::ThreadPoolBuild(_) => "thread_pool_build",
+        }
+    }
+
     /// Return the original typed failure for a shared reconciliation wave.
     ///
     /// Adapters can use this to preserve their existing retry and error

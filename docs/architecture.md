@@ -45,14 +45,38 @@ the official Rust MCP SDK.
 
 SQLite stores repository metadata, files, text chunks, definitions, syntactic
 references, imports, reverse import candidates, an ordinary relational path
-projection, source-compression estimates, and cumulative successful-response
-token accounting. External-content
+projection, represented-source response comparisons, and cumulative observed
+service accounting. External-content
 FTS5 tables provide word and trigram indexes over chunks.
 
 Savings data uses additive tables and file columns without advancing the core
 cache schema version. Older LeanToken releases ignore those fields and can
 still open or rebuild the cache; the current release repopulates exact
 whole-file token metadata on its next reconciliation.
+
+Successful retrieval accounting has one row per tokenizer and each of the
+eight fixed retrieval operations. A finalized response performs at most one
+best-effort saturating upsert. Exact read `expected_hash` matches add their
+not-modified count and represented-source tokens omitted to that same row;
+receipt suppression remains a separate counter.
+
+Observed service failures use `service_failures`, keyed by tokenizer, operation,
+and a finite, non-sensitive error-variant category. No request source, path,
+query, or error message is stored. Its cardinality is bounded by configured
+tokenizer names × eight operations × the finite error category set. An
+instrumented service boundary performs at most one best-effort saturating
+upsert only when the call fails, so successful retrievals do no failure-table
+I/O. Evaluation-only APIs outside CLI/MCP are not part of this observation
+boundary.
+
+Both accounting writes use a zero-timeout local writer attempt. A busy or
+locked writer skips the observation and never delays or fails retrieval. The
+combined savings report reads success and failure tables through one pinned
+`ReadSession`, preserving request snapshot consistency. Failure reporting is a
+primary-key range query on tokenizer, ordered by operation and category; a
+checked query-plan test prevents a table scan or temporary sort from entering
+this path. These properties make the counters persisted lower bounds rather
+than an audit ledger.
 
 LeanToken does not serialize a separate in-memory index snapshot. In this
 document, a request snapshot means a SQLite read transaction pinned to one
