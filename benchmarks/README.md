@@ -853,6 +853,22 @@ turn-bounded v2 context-bundle profile passes every frozen gate. See the
 [v2](reports/multi-agent-context-suite-v2-codex-0.144.1.json) reports and the
 measurement guide for the result table and limitations.
 
+## Stdio MCP multi-process resource profile
+
+The Linux-only release experiment starts 1, 2, and 4 stdio MCP processes
+against one fresh synthetic Rust repository and SQLite cache. It observes the
+kernel lock owner and inotify descriptors, samples per-process resources, runs
+concurrent cold and warm `files` queries, then kills the leader and requires a
+follower to publish generation 2 with exactly one replacement watcher.
+
+Reproduce it with the command in
+[`../docs/development.md`](../docs/development.md#benchmarks). The committed
+[raw JSON report](reports/mcp-multiprocess-resource-v1-2026-07-27.json) and
+[decision note](reports/mcp-multiprocess-resource-v1-2026-07-27.md) bind the
+release binary hash, fixture size, host observations, and predeclared decision
+thresholds. The profile is bounded to 16 processes, 10,000 files, 1,000
+functions per file, 1,000 warm rounds, and a 300-second operation timeout.
+
 ## Interpretation limits
 
 - Eight hand-selected fixes are too few for a general performance or quality claim.

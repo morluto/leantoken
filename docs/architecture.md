@@ -629,7 +629,19 @@ at generation zero.
   same root share it; a different root cannot reuse that database explicitly.
 - Connection capacity remains per process/repository. The bounded established
   pool reuses read-only connections and prepared statements; it is not a global
-  multi-repository coordination mechanism.
+  multi-repository coordination mechanism. Each process establishes at most
+  eight read connections, so the aggregate bound grows linearly with the
+  number of processes sharing a cache.
+- Response token accounting is best-effort telemetry. Its zero-timeout SQLite
+  write can be skipped under cross-process writer contention; retrieval
+  correctness and generation publication never wait for that observation.
+- The Linux release-mode multi-process profile verifies the OS lock owner,
+  inotify watcher owner, per-process connection bound, WAL growth, and follower
+  takeover for 1, 2, and 4 stdio MCP processes. Its committed decision report
+  is linked from `benchmarks/README.md`; exceeding its predeclared RSS,
+  startup, latency, write-amplification, connection, or takeover thresholds is
+  evidence to investigate a shared daemon, not permission to weaken these
+  invariants.
 - MCP request admission and Services blocking execution are instance-local
   within one process. Another workspace or agent affects these limits only
   when it shares that same server or `Services` instance; a separate MCP
