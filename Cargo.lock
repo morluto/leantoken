@@ -988,6 +988,7 @@ name = "leantoken"
 version = "0.1.16"
 dependencies = [
  "assert_cmd",
+ "base64",
  "blake3",
  "cap-std",
  "clap",

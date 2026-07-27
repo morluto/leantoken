@@ -118,6 +118,38 @@ struct MaterializedRead {
     current_tokens: usize,
 }
 
+fn outline_request_class(response: &OutlineResponse) -> TokenSavingsRequestClass {
+    let empty_latex_outline = response.total_symbols == 0
+        && response
+            .files
+            .iter()
+            .any(|file| file.language.as_deref() == Some("latex"));
+    if !response.parse_complete || empty_latex_outline {
+        TokenSavingsRequestClass::Unsupported
+    } else if !response.result_complete {
+        TokenSavingsRequestClass::Incomplete
+    } else {
+        TokenSavingsRequestClass::Useful
+    }
+}
+
+fn outline_signatures_request_class(
+    response: &OutlineSignaturesResponse,
+) -> TokenSavingsRequestClass {
+    let empty_latex_outline = response.total_symbols == 0
+        && response
+            .files
+            .iter()
+            .any(|file| file.language.as_deref() == Some("latex"));
+    if !response.parse_complete || empty_latex_outline {
+        TokenSavingsRequestClass::Unsupported
+    } else if !response.result_complete {
+        TokenSavingsRequestClass::Incomplete
+    } else {
+        TokenSavingsRequestClass::Useful
+    }
+}
+
 #[derive(Debug)]
 struct ReadCursor {
     generation: u64,
@@ -547,7 +579,12 @@ impl Services {
                     meta: response.meta,
                 };
                 this.finalize_bounded_response(&mut compact, options)?;
-                this.record_token_savings(TokenAccountingOperation::Outline, None, &compact.meta);
+                this.record_token_savings_classified(
+                    TokenAccountingOperation::Outline,
+                    None,
+                    &compact.meta,
+                    outline_signatures_request_class(&compact),
+                );
                 Ok(compact)
             })
             .await;
@@ -925,10 +962,11 @@ impl Services {
         receipt.apply_meta(&mut response.meta);
         self.finalize_bounded_response(&mut response, options)?;
         if record_savings {
-            self.record_token_savings(
+            self.record_token_savings_classified(
                 TokenAccountingOperation::Outline,
                 baseline_source_tokens,
                 &response.meta,
+                outline_request_class(&response),
             );
         }
         Ok(response)
@@ -1035,7 +1073,16 @@ impl Services {
             TokenAccountingOperation::Read,
             Some(materialized.baseline_source_tokens),
             &response.meta,
-            expected_hash_not_modified,
+            if expected_hash_not_modified {
+                TokenSavingsRequestClass::HashSuppressed
+            } else if matches!(
+                &response.status,
+                ReadStatus::Truncated | ReadStatus::ReceiptSuppressed
+            ) {
+                TokenSavingsRequestClass::Incomplete
+            } else {
+                TokenSavingsRequestClass::Useful
+            },
             if expected_hash_not_modified {
                 materialized.baseline_source_tokens
             } else {

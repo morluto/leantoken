@@ -308,7 +308,12 @@ impl Transport<RoleServer> for BoundedStdioTransport {
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct SavingsMcpRequest {}
+struct SavingsMcpRequest {
+    /// Opaque snapshot from an earlier savings response; returns aggregate deltas.
+    #[serde(default)]
+    #[schemars(length(max = 32768))]
+    snapshot: Option<String>,
+}
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -2607,12 +2612,12 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "savings",
-        description = "Report repository-local observed response accounting, expected-hash suppression, service failures, and explicitly unobserved task outcomes. Source and response deltas are comparisons against represented source, not claims about task success. Example: {}.",
+        description = "Report repository-local observed response accounting, request classifications, expected-hash suppression, service failures, and explicitly unobserved task outcomes. Returns an opaque snapshot; supply it later for a bounded aggregate delta. Source compression and full-response net cost are separate comparisons against represented source, not claims about task success or complete session savings. Example: {}.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn leantoken_savings(
         &self,
-        Parameters(_req): Parameters<SavingsMcpRequest>,
+        Parameters(req): Parameters<SavingsMcpRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let state = self.services.get();
         let services = match self.services(&state) {
@@ -2620,7 +2625,7 @@ impl LeanTokenMcp {
             Err(result) => return Ok(result),
         };
         self.run_admitted(services, None, |services| async move {
-            services.observed_token_savings_report().await
+            services.observed_token_savings_snapshot(req.snapshot).await
         })
         .await
     }
@@ -3253,7 +3258,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let result = server
-            .leantoken_savings(Parameters(SavingsMcpRequest {}))
+            .leantoken_savings(Parameters(SavingsMcpRequest { snapshot: None }))
             .await
             .expect("retryable savings response");
         assert_eq!(
