@@ -2612,6 +2612,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temporary directory");
         let repository = temp.path().join("repository");
         fs::create_dir(&repository).expect("repository");
+        let repository = repository.canonicalize().expect("canonical repository");
         let manager = CacheManager::new(temp.path().join("managed"), 10_000);
         let (_, database) = create_cache_with_content_identity(
             &manager,

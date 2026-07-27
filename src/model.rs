@@ -56,7 +56,7 @@ pub enum ContextWorkflow {
 /// Caller-observed workflow signals kept separate from the natural-language task.
 ///
 /// Use the builder methods instead of constructing this non-exhaustive type
-/// directly. Values are validated by [`crate::Services`] before retrieval.
+/// directly. Values are validated by [`crate::services::Services`] before retrieval.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[non_exhaustive]
 #[serde(default, deny_unknown_fields)]
