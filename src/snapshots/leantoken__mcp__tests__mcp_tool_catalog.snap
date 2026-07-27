@@ -191,7 +191,7 @@ expression: tools
         },
         "WorkflowEvidence": {
           "additionalProperties": false,
-          "description": "Caller-observed workflow signals kept separate from the natural-language task.\n\nUse the builder methods instead of constructing this non-exhaustive type\ndirectly. Values are validated by [`crate::services::Services`] before retrieval.",
+          "description": "Caller-observed workflow signals kept separate from the natural-language task.\n\nUse the builder methods instead of constructing this non-exhaustive type\ndirectly. Values are validated by [`crate::Services`] before retrieval.",
           "properties": {
             "failure_traces": {
               "default": [],
