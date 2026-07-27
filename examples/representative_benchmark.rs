@@ -1237,7 +1237,7 @@ fn benchmark_limitations(
     }
     if ast_structural_lane {
         limitations.push(
-            "The AST structural lane parses at most 16 KiB of observed failure traces, retains eight structural terms, and focuses at most four paths; omitted syntax is not evidence that no structural route exists.",
+            "The AST structural lane parses at most 16 KiB of observed failure traces, retains eight structural terms, and focuses at most two paths; omitted syntax is not evidence that no structural route exists.",
         );
         limitations.push(
             "Tolerant parsing of terminal output can recover incomplete code fragments; a structural hit is a path-discovery proxy, not proof that the file owns the failure.",
