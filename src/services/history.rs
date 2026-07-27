@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use similar::TextDiff;
 use tokio_util::sync::CancellationToken;
 
@@ -34,6 +36,14 @@ fn char_boundaries(value: &str) -> Vec<usize> {
         .collect::<Vec<_>>();
     boundaries.push(value.len());
     boundaries
+}
+
+fn symbol_diff_buffer(content: &str) -> Cow<'_, str> {
+    if content.is_empty() || content.ends_with('\n') {
+        Cow::Borrowed(content)
+    } else {
+        Cow::Owned(format!("{content}\n"))
+    }
 }
 
 fn validate_history_request(request: &HistoryRequest) -> Result<()> {
@@ -226,7 +236,9 @@ impl Services {
                 let after_content = after
                     .as_ref()
                     .map_or("", |resolved| resolved.content.as_str());
-                let full_diff = TextDiff::from_lines(before_content, after_content)
+                let before_diff = symbol_diff_buffer(before_content);
+                let after_diff = symbol_diff_buffer(after_content);
+                let full_diff = TextDiff::from_lines(&before_diff, &after_diff)
                     .unified_diff()
                     .context_radius(3)
                     .header(

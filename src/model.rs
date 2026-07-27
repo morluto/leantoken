@@ -624,7 +624,9 @@ pub struct HistoricalSymbol {
     pub target_start_line: usize,
     /// Last line of the complete historical symbol.
     pub target_end_line: usize,
-    /// Last line represented by `content`, or zero when source is omitted.
+    /// Last line represented by `content`; omitted from serialized metadata when
+    /// source is absent.
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub returned_end_line: usize,
     /// Whether source remains after `content`.
     pub truncated: bool,
