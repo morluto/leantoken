@@ -44,6 +44,12 @@ macro_rules! assert_response_token_accounting {
             response.meta.total_response_tokens,
             tokenizer.count(&payload)
         );
+        let final_payload =
+            serde_json::to_string(response).expect("serialize final response payload");
+        assert!(
+            tokenizer.count(&final_payload) >= response.meta.total_response_tokens,
+            "final serialization cannot be smaller than the zeroed accounting DTO"
+        );
     }};
 }
 
@@ -1520,6 +1526,7 @@ fn context_limit_request(token_budget: usize) -> ContextRequest {
 async fn context_plan_previews_materialization_without_receipt_or_source() {
     let (_root, services) = fixture().await;
     let mut request = context_limit_request(100);
+    let source_budget = request.token_budget;
     request.focus_paths = vec!["src/**".into()];
     request.strict_focus_paths = true;
     request.plan_only = true;
@@ -1538,6 +1545,10 @@ async fn context_plan_previews_materialization_without_receipt_or_source() {
     assert!(preview.meta.receipt_id.is_none());
     assert!(!plan.candidates.is_empty());
     assert!(plan.focus_coverage[0].satisfied);
+    assert!(
+        preview.meta.total_response_tokens > source_budget,
+        "the current source-only budget must not be mistaken for a full response ceiling"
+    );
     assert!(
         preview
             .coverage

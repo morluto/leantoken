@@ -2117,6 +2117,104 @@ mod tests {
     }
 
     #[test]
+    fn context_feedback_regressions_freeze_paired_tasks_and_role_facets() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("benchmarks/context_feedback_regressions.json");
+        let fixture: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&path).expect("read feedback regression fixture"),
+        )
+        .expect("parse feedback regression fixture");
+
+        assert_eq!(fixture["schema_version"], 1);
+        let revision = fixture["repository_revision"]
+            .as_str()
+            .expect("repository revision");
+        assert_eq!(revision.len(), 40);
+        assert!(revision.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        let tasks = fixture["tasks"].as_array().expect("tasks");
+        assert!(!tasks.is_empty());
+
+        for task in tasks {
+            assert!(
+                task["token_budget"]
+                    .as_u64()
+                    .is_some_and(|budget| budget > 0),
+                "task requires a positive source budget"
+            );
+            assert!(
+                task["minimum_fragments_per_focus_path"]
+                    .as_u64()
+                    .is_some_and(|minimum| minimum > 0),
+                "task requires a positive per-focus minimum"
+            );
+            let focus_paths = task["focus_paths"].as_array().expect("focus paths");
+            assert!(focus_paths.len() >= 3);
+            for path in focus_paths {
+                let path = path.as_str().expect("focus path");
+                validate_benchmark_path(path).expect("valid focus path");
+                assert!(
+                    Path::new(env!("CARGO_MANIFEST_DIR")).join(path).exists(),
+                    "focus path must exist: {path}"
+                );
+            }
+
+            let variants = task["variants"].as_array().expect("task variants");
+            assert_eq!(variants.len(), 2);
+            let styles = variants
+                .iter()
+                .map(|variant| variant["style"].as_str().expect("variant style"))
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                styles,
+                BTreeSet::from(["keyword_heavy", "natural_language"])
+            );
+            let prompts = variants
+                .iter()
+                .map(|variant| variant["task"].as_str().expect("variant task").trim())
+                .collect::<BTreeSet<_>>();
+            assert_eq!(prompts.len(), 2);
+            assert!(prompts.iter().all(|prompt| !prompt.is_empty()));
+
+            let concepts = task["concepts"].as_array().expect("task concepts");
+            assert_eq!(concepts.len(), 3);
+            let roles = concepts
+                .iter()
+                .map(|concept| concept["role"].as_str().expect("concept role"))
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                roles,
+                BTreeSet::from([
+                    "architecture_documentation",
+                    "behavioral_test",
+                    "owner_implementation"
+                ])
+            );
+            for concept in concepts {
+                let evidence = &concept["evidence"];
+                let path = evidence["path"].as_str().expect("evidence path");
+                validate_benchmark_path(path).expect("valid evidence path");
+                assert!(
+                    Path::new(env!("CARGO_MANIFEST_DIR")).join(path).exists(),
+                    "evidence path must exist: {path}"
+                );
+                assert!(
+                    matches!(
+                        evidence["target"]["kind"].as_str(),
+                        Some("symbol" | "heading")
+                    ),
+                    "evidence target must be a symbol or heading"
+                );
+                assert!(
+                    evidence["target"]["name"]
+                        .as_str()
+                        .is_some_and(|name| !name.trim().is_empty()),
+                    "evidence target requires a name"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn context_concept_labels_reject_an_incomplete_anchor_partition() {
         let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("benchmarks/validation.json");
         let source_json = fs::read_to_string(&source_path).expect("read source manifest");

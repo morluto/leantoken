@@ -207,6 +207,16 @@ The first checked run and decision record are
 and
 [`reports/context-concept-coverage-v1-2026-07-26.md`](reports/context-concept-coverage-v1-2026-07-26.md).
 
+[`context_feedback_regressions.json`](context_feedback_regressions.json) freezes
+self-hosted natural-language and keyword-heavy formulations for the response
+accounting and focus-candidate problems. Each task names one owner
+implementation, one behavioral test, and one architecture or contract document
+before ranking changes are attempted. The fixture is a versioned retrieval
+quality input, not part of the published validation aggregate and not evidence
+of model task success. A candidate must report its fixture revision and evaluate
+both formulations; do not tune either prompt or its concepts after observing
+candidate output without creating a new fixture version.
+
 ## Handoff manifest crossover
 
 `handoff_manifest_benchmark` validates the opt-in handoff contract on a

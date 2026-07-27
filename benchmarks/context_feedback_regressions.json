@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "dataset_kind": "context_feedback_regressions",
+  "frozen_at": "2026-07-27",
+  "repository_revision": "3c9ce649ac356401607124e83e05ca338da138d0",
+  "methodology": "Self-hosted paired maintenance tasks freeze natural-language and keyword-heavy formulations before response-budget or focus-ranking changes. Every task labels one owner implementation, one behavioral test, and one architecture or contract document. These labels are retrieval-quality proxies, not model task-success evidence.",
+  "tasks": [
+    {
+      "id": "context-response-accounting-boundary",
+      "token_budget": 5000,
+      "focus_paths": [
+        "src/services.rs",
+        "src/tokens.rs",
+        "tests/services.rs",
+        "docs/usage.md"
+      ],
+      "minimum_fragments_per_focus_path": 1,
+      "variants": [
+        {
+          "id": "natural-language",
+          "style": "natural_language",
+          "task": "Make context responses obey a clearly defined complete serialized token boundary without weakening source limits, freshness, strict coverage, or deterministic accounting. Preserve compatibility while distinguishing service payload cost from MCP transport duplication."
+        },
+        {
+          "id": "keyword-heavy",
+          "style": "keyword_heavy",
+          "task": "ContextRequest token_budget source-only; Services::finalize_response; response_token_accounting zeroed meta fields; ResponseMeta total_response_tokens; MCP Dual text structuredContent duplication; exact deterministic hard response bound."
+        }
+      ],
+      "concepts": [
+        {
+          "id": "response-finalizer-owner",
+          "role": "owner_implementation",
+          "evidence": {
+            "path": "src/services.rs",
+            "target": {
+              "kind": "symbol",
+              "name": "finalize_response"
+            }
+          }
+        },
+        {
+          "id": "response-accounting-contract-test",
+          "role": "behavioral_test",
+          "evidence": {
+            "path": "tests/services.rs",
+            "target": {
+              "kind": "symbol",
+              "name": "context_plan_previews_materialization_without_receipt_or_source"
+            }
+          }
+        },
+        {
+          "id": "response-accounting-contract-docs",
+          "role": "architecture_documentation",
+          "evidence": {
+            "path": "docs/usage.md",
+            "target": {
+              "kind": "heading",
+              "name": "## Token accounting"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "context-focus-candidate-coverage",
+      "token_budget": 5000,
+      "focus_paths": [
+        "src/services/context.rs",
+        "src/ranking.rs",
+        "tests/services.rs",
+        "docs/architecture.md"
+      ],
+      "minimum_fragments_per_focus_path": 1,
+      "variants": [
+        {
+          "id": "natural-language",
+          "style": "natural_language",
+          "task": "Ensure every satisfiable focus path contributes its required evidence before global ranking fills already covered paths. Keep candidate generation and fan-out bounded, preserve deterministic selection, and fail loudly when source, response, or fragment limits make coverage impossible."
+        },
+        {
+          "id": "keyword-heavy",
+          "style": "keyword_heavy",
+          "task": "focus_paths minimum_fragments_per_focus_path strict_focus_paths; append_constraint_candidates; select_required_candidates; global lexical structural top-N candidate loss; bounded per-focus retrieval; deterministic coverage failure reasons."
+        }
+      ],
+      "concepts": [
+        {
+          "id": "focus-candidate-owner",
+          "role": "owner_implementation",
+          "evidence": {
+            "path": "src/services/context.rs",
+            "target": {
+              "kind": "symbol",
+              "name": "append_constraint_candidates"
+            }
+          }
+        },
+        {
+          "id": "focus-coverage-contract-test",
+          "role": "behavioral_test",
+          "evidence": {
+            "path": "tests/services.rs",
+            "target": {
+              "kind": "symbol",
+              "name": "strict_focus_paths_enforce_minimum_coverage_and_fail_loud"
+            }
+          }
+        },
+        {
+          "id": "focus-bounds-architecture",
+          "role": "architecture_documentation",
+          "evidence": {
+            "path": "docs/architecture.md",
+            "target": {
+              "kind": "heading",
+              "name": "## Retrieval hot-path bounds"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
