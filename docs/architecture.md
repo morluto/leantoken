@@ -128,6 +128,39 @@ database. One operation can inspect at most 128 headers and 16,384 cascading
 evidence rows during worst-case quota cleanup; there is no filesystem scan,
 subprocess, network access, or concurrency fan-out.
 
+Opt-in read deltas persist a narrower safe subset of their bases in the same
+repository SQLite cache. A base is eligible only when the returned target is
+complete, at most 512 KiB, and the complete live file hash equals the indexed
+file hash from the same pinned repository generation. Dirty or otherwise
+live-diverged content remains process-local. Truncated and oversized targets
+are not persisted, and ignored or unindexed paths fail before delta capture.
+The response receipt reports whether the selected base came from process-local
+or persistent state, whether the current head was persisted, and the bounded
+fallback reason. Persisted rows contain the exact eligible target content;
+computed unified deltas remain process-local because they are cheap to
+recompute and can contain removed lines.
+
+The persistent target key hashes repository identity, normalized path, target
+kind, and target selector. Raw paths and request text are not duplicated into
+the delta table. The content stays in the existing index database, so it has
+the same file ownership, permissions, cache lifecycle, repository binding, and
+whole-cache prune behavior as indexed chunks; no additional source-bearing
+sidecar is created. Content hashes are verified on load and duplicate insert,
+and clock rollback or corruption fails closed.
+
+Persistent read-delta state retains at most 128 bases, 512 KiB per base, and
+8 MiB of logical base data in total, with a sliding 30-minute wall-clock TTL.
+An access sequence gives deterministic LRU eviction; automatic base selection
+orders by newest repository generation independently of LRU recency. Exact
+unchanged metadata refreshes are debounced for 60 seconds. Lookup, lazy expiry,
+refresh, insertion, and quota eviction use one `IMMEDIATE` transaction, so
+independent processes observe a serial writer order without lost updates. One
+operation can evict at most the 128 retained rows and performs no filesystem
+scan, subprocess, network access, or concurrency fan-out. Checked query plans
+use the `(target_key, content_hash)` primary key, target/generation index,
+expiry index, and LRU index; the LRU plan scans only the covering index to its
+first row.
+
 LeanToken does not serialize a separate in-memory index snapshot. In this
 document, a request snapshot means a SQLite read transaction pinned to one
 committed generation. Persisted SQLite generations are disposable derived state
