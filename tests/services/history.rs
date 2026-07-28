@@ -1040,4 +1040,3 @@ async fn symbol_history_resolves_qualified_names_and_absent_diff_endpoints() {
         .expect_err("both absent symbol endpoints must fail");
     assert!(matches!(missing, Error::SymbolNotFound { .. }));
 }
-

@@ -175,4 +175,3 @@ async fn database_artifact_notifications_do_not_publish_a_generation() {
         before
     );
 }
-

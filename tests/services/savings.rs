@@ -380,4 +380,3 @@ async fn savings_excludes_incomplete_and_zero_symbol_latex_outlines_from_source_
     );
     assert_eq!(delta.observed.observations.failed_service_requests, 0);
 }
-

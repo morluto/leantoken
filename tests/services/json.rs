@@ -974,4 +974,3 @@ async fn json_cursors_and_incomplete_results_fail_loud_with_typed_diagnostics() 
         }
     ));
 }
-

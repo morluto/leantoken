@@ -750,4 +750,3 @@ async fn regex_candidate_plan_bypasses_only_the_full_scan_file_bound() {
         .expect_err("planned candidate query remains bounded");
     assert!(matches!(candidate_overflow, Error::LimitExceeded));
 }
-

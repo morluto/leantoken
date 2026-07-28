@@ -397,4 +397,3 @@ async fn text_search_preserves_multiline_matches_without_a_single_matching_line(
     assert!(hit.excerpt.contains("first_line();\n    second_line();"));
     assert_eq!(hit.enclosing_symbol.as_deref(), Some("multiline_owner"));
 }
-

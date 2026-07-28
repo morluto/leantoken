@@ -672,4 +672,3 @@ async fn reconcile_working_tree_generation_checks_run_after_reconciliation() {
         .expect("committed lookup");
     assert_eq!(committed.entries.len(), 1);
 }
-

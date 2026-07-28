@@ -242,4 +242,3 @@ async fn first_index_reports_uninitialized_while_reconciling() {
     assert_eq!(after.index_state, IndexState::Ready);
     assert_eq!(after.freshness, Freshness::Current);
 }
-

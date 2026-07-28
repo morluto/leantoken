@@ -514,4 +514,3 @@ async fn read_response_budget_reduces_source_without_skipping_continuation() {
         .expect("continue bounded read");
     assert_eq!(continuation.returned_start_line, next_start_line);
 }
-

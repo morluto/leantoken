@@ -234,4 +234,3 @@ async fn file_tree_rejects_unsafe_roots() {
             .expect_err("unsafe tree root must fail");
     }
 }
-

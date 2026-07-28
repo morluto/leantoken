@@ -369,4 +369,3 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
     assert_eq!(scope.changed_paths, vec!["src/lib.rs"]);
     assert_eq!(scope.indexed_changed_paths, 1);
 }
-

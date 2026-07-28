@@ -630,4 +630,3 @@ fn read_only_status_does_not_wait_for_an_active_writer() {
         .execute_batch("ROLLBACK")
         .expect("release writer transaction");
 }
-

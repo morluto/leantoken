@@ -171,4 +171,3 @@ async fn repository_identity_distinguishes_linked_worktrees_before_empty_search_
     assert_eq!(response.meta.repository_id, linked_id);
     assert_eq!(response.hits.len(), 1);
 }
-

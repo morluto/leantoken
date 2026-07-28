@@ -105,4 +105,3 @@ async fn contribution_context_routes_to_guidance_validation_and_owner_tests() {
     assert!(paths.contains(".github/workflows/ci.yml"));
     assert!(paths.contains("tests/parser.rs"));
 }
-

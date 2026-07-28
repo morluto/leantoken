@@ -1325,4 +1325,3 @@ async fn symbol_reads_and_outline_filters_search_beyond_result_caps() {
     assert_eq!(outline.returned_symbols, 1);
     assert_eq!(outline.symbol_counts_by_kind.get("function"), Some(&1));
 }
-

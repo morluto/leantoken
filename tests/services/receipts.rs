@@ -441,4 +441,3 @@ async fn server_managed_receipt_rejects_unknown_and_stale_generations() {
             && repository_generation == indexed.repository_generation
     ));
 }
-

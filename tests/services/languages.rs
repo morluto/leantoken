@@ -824,4 +824,3 @@ async fn latex_outline_and_read_share_exact_section_label_and_bibliography_struc
         );
     }
 }
-
