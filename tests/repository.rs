@@ -175,6 +175,8 @@ fn leantokenignore_has_precedence_over_gitignore_and_applies_when_nested() {
 fn discovery_policy_case_behavior_matches_the_host_platform() {
     let policy = DiscoveryPolicy::default();
     assert!(!policy.includes_path("node_modules/pkg/index.js", false));
+    assert!(!policy.includes_path(".git/objects/aa/object", false));
+    assert!(!DiscoveryPolicy::new(true).includes_path("nested/.git", true));
     assert!(policy.includes_path("target", false));
     assert_eq!(
         policy.includes_path("NODE_MODULES/pkg/index.js", false),
@@ -218,6 +220,45 @@ fn discover_files_excludes_nested_git_metadata() {
         .collect::<Vec<_>>();
 
     assert_eq!(paths, vec!["nested/source.rs"]);
+}
+
+#[test]
+fn discovery_prunes_git_metadata_before_walking_its_contents() {
+    let root = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(root.path().join(".git/objects/aa")).expect("git objects");
+    for index in 0..100 {
+        fs::write(
+            root.path().join(format!(".git/objects/aa/{index:038x}")),
+            "object",
+        )
+        .expect("git object");
+    }
+    fs::write(root.path().join("source.rs"), "fn source() {}\n").expect("source");
+
+    for policy in [
+        DiscoveryPolicy::default(),
+        DiscoveryPolicy::new(true),
+    ] {
+        let discovery = discover_files_with_limits_and_policy(
+            root.path(),
+            DiscoveryLimits::default(),
+            policy,
+        )
+        .expect("discovery");
+
+        assert_eq!(
+            discovery
+                .files
+                .iter()
+                .map(|file| file.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["source.rs"]
+        );
+        assert_eq!(
+            discovery.stats.walk_entries, 2,
+            "the walker should yield only the root and visible source file"
+        );
+    }
 }
 
 #[test]

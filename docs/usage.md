@@ -313,8 +313,9 @@ Discovery keeps useful hidden repository content, including `.github`,
 `.devcontainer`, root dotfiles, and `.cargo/config.toml`. It skips known
 generated and cache trees such as `node_modules`, `target`, `.venv`, `venv`,
 `.tox`, `.cache`, package-manager caches, Python caches, `.gradle`, and
-`.rustup`. Use `--include-generated` only when those trees are intentional
-source inputs.
+`.rustup`, and always prunes `.git` metadata before descending. Use
+`--include-generated` only when generated trees are intentional source inputs;
+it never admits `.git`.
 
 Place `.leantokenignore` files at the repository root or in nested directories
 to add gitignore-style rules. They have higher precedence than `.gitignore` and
