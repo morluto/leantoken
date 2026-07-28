@@ -333,6 +333,15 @@ exact MCP wire proxy are documented in [`measurement.md`](measurement.md).
 The same guide documents the synthetic indexing and file-read profile used to
 gate targeted reconciliation and any future hot-file cache.
 
+For a generation-one dependency-heavy decision, build
+`indexing_profile` in release mode and use its `cold-matrix` subcommand against
+the pinned clean TileLang checkout documented in the benchmark guide. The lane
+runs 1/2/4-worker samples and cancellation/restart probes in isolated
+subprocesses, validates complete logical/retrieval parity, and writes the raw
+report under `target/` by default. It is manual evidence and is not part of
+`cargo test-extras` or normal pull-request CI; the small in-process contract
+test remains in the example test target.
+
 On Linux, reproduce the stdio MCP ownership and resource profile after building
 the product binary in release mode:
 

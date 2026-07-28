@@ -430,6 +430,19 @@ only at relational, FTS, and commit boundaries, so progress reporting adds
 neither per-file locking nor SQLite writes. Readers copy the small snapshot
 under its own mutex and never acquire the operation or writer lock.
 
+The benchmark-only dependency-heavy cold-index lane reads that same bounded
+snapshot to attribute sampled process resources to phases. Each matrix arm uses
+one fresh process and one fresh database; no more than 16 arms or 64 preparation
+workers can be requested. The parent launches arms serially, retains no source
+content, and kills a child that exceeds its cooperative timeout plus the
+ten-minute cancellation grace and a fixed launch allowance. Within a child,
+resource sampling is bounded to one observation every 1–1,000 milliseconds and
+reads only `/proc/self/{stat,status,io}` plus metadata for the configured SQLite
+main, WAL, and SHM files. At most 16 retrieval-parity queries of 256 bytes each
+are replayed. This profiler-only fan-out does not alter MCP worker policy,
+discovery membership, preparation batch bounds, publication atomicity, or the
+retrieval hot path.
+
 The process performing the initial index exposes detailed phases for discovery,
 hash-and-plan, preparation, relational staging, the four FTS builds, and
 commit/checkpoint. `files_staged` remains explicitly unpublished until the

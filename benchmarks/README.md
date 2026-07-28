@@ -1329,6 +1329,74 @@ macOS, and Windows before making a cross-platform indexing decision. Keep
 negative results: if full discovery is not a material p50 or p95 cost, do not
 add an incremental journal or directory invalidation layer.
 
+### Dependency-heavy cold-index matrix
+
+The `cold-matrix` lane measures generation-one construction rather than warm
+reconciliation. Every worker sample runs in a fresh subprocess and a fresh
+SQLite cache so tokenizer/parser initialization, process RSS, and CPU are not
+silently inherited from an earlier arm. The parent uses the mirrored default
+order `1,2,4,4,2,1` on one snapshot and one host. It also enforces a hard
+subprocess deadline beyond the child's cooperative timeout and cancellation
+grace.
+
+Prepare the pinned TileLang corpus, including its recorded dependency
+submodules:
+
+```bash
+git clone --filter=blob:none --no-checkout \
+  https://github.com/tile-ai/TileLang.git \
+  target/profile-repos/TileLang
+git -C target/profile-repos/TileLang checkout --detach \
+  eb31994ad782108d8754b19603b428eca9c1e19d
+git -C target/profile-repos/TileLang submodule update \
+  --init --recursive --depth 1
+```
+
+Commit the profiler first, leave the LeanToken and corpus worktrees clean, and
+run the already-built release binary:
+
+```bash
+cargo build --release --example indexing_profile
+target/release/examples/indexing_profile cold-matrix \
+  --repository target/profile-repos/TileLang \
+  --repository-label https://github.com/tile-ai/TileLang.git \
+  --expected-revision eb31994ad782108d8754b19603b428eca9c1e19d \
+  --worker-order 1,2,4,4,2,1 \
+  --parity-query TODO,class,matmul,kernel,tvm,TileLang \
+  --sample-interval-ms 25 \
+  --timeout-seconds 7200 \
+  --output target/dependency-heavy-cold-index-v1.json
+```
+
+The schema-v1 report binds the LeanToken source revision, executable digest,
+release/debug state, toolchain, kernel, host parallelism, corpus revision and
+shape. It records exact phase wall times, process user/system/total CPU,
+process writes, sampled RSS and main/WAL/SHM high-water, discovery admission,
+per-language preparation work, relational insertion, all four FTS rebuilds,
+commit/checkpoint, final index shape, and final footprint. Logical-table and
+retrieval digests must match across every worker arm. Separate fresh-process
+probes request cancellation during preparation, relational publication, each
+FTS build, and commit/checkpoint, then rebuild the same cache and require the
+complete baseline digest.
+
+The decision policy is frozen in the report before execution: preparation must
+own at least 35% of leaf-phase time; a candidate must reduce median wall time by
+at least 20% without increasing CPU or peak RSS by more than 25%, writes by more
+than 5%, or final footprint by more than 5%. Missing Linux resource fields,
+missed cancellation phases, timeout, parity differences, or restart differences
+fail a decision run. A passing arm is only a follow-up candidate; this lane
+never changes the production worker default. The corpus is manual because its
+dependency tree is too expensive for ordinary pull-request CI.
+
+The completed
+[TileLang Linux x86-64 decision](reports/dependency-heavy-cold-index-tilelang-linux-x86_64-2026-07-28.md)
+and its
+[raw schema-v1 report](reports/dependency-heavy-cold-index-tilelang-linux-x86_64-2026-07-28.json)
+select two workers only as a follow-up candidate. Four workers failed the CPU
+and RSS limits. The run used fresh processes and databases, but did not evict
+the corpus from the operating-system page cache, so it is not cold-disk
+evidence.
+
 The repository includes one transparent [Tokio Linux x86-64 profile](reports/indexing-tokio-linux-x86_64-2026-07-16.json).
 It is a single-host measurement, not a cross-platform conclusion. On that run,
 full no-op reconciliation was 28.4 ms p50 / 30.1 ms p95, targeted modification

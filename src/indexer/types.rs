@@ -16,7 +16,7 @@ pub struct Indexer {
 }
 
 /// Phase and batch high-water diagnostics for one full reconciliation.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IndexingDiagnostics {
     /// End-to-end reconciliation time, including storage commit.
     pub total_ms: f64,
@@ -31,6 +31,10 @@ pub struct IndexingDiagnostics {
     /// These durations overlap across Rayon workers and therefore describe
     /// aggregate work, not additional wall time.
     pub preparation_detail: PreparationDiagnostics,
+    /// Profiled worker time grouped by the prepared file's detected language.
+    ///
+    /// Only successfully prepared searchable files have a language owner.
+    pub preparation_by_language: BTreeMap<String, PreparationDiagnostics>,
     /// Import resolution and SQLite insertion time inside batch callbacks.
     pub insertion_ms: f64,
     /// Total lifetime of the generation publication transaction.
@@ -52,7 +56,7 @@ pub struct IndexingDiagnostics {
 }
 
 /// Diagnostic-only worker-time attribution for parallel file preparation.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct PreparationDiagnostics {
     /// Files for which subphase measurements were collected.
     pub files_profiled: usize,
@@ -96,6 +100,7 @@ pub struct ProfiledIndexReport {
 struct PreparationMetrics {
     preparation: Duration,
     detail: FilePreparationDiagnostics,
+    detail_by_language: BTreeMap<String, FilePreparationDiagnostics>,
     insertion: Duration,
     insertion_write_bytes: Option<u64>,
     batches: usize,
@@ -117,7 +122,7 @@ struct FilePreparationDiagnostics {
 }
 
 impl FilePreparationDiagnostics {
-    fn add(&mut self, other: Self) {
+    fn add(&mut self, other: &Self) {
         self.files_profiled = self.files_profiled.saturating_add(other.files_profiled);
         self.total += other.total;
         self.read += other.read;

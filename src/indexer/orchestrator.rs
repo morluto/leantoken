@@ -20,7 +20,12 @@ impl Indexer {
         Arc::clone(&self.repository_root)
     }
 
-    pub(crate) fn progress_snapshot(&self) -> Option<IndexProgressSnapshot> {
+    /// Return the latest bounded process-local initial-index progress snapshot.
+    ///
+    /// This read uses only the indexer's small progress registry and never
+    /// acquires the SQLite writer or repository operation lock.
+    #[must_use]
+    pub fn progress_snapshot(&self) -> Option<IndexProgressSnapshot> {
         self.progress.snapshot()
     }
 
@@ -381,6 +386,11 @@ impl Indexer {
             hash_and_plan_ms: duration_ms(planning_elapsed),
             preparation_ms: duration_ms(preparation.preparation),
             preparation_detail: preparation.detail.report(),
+            preparation_by_language: preparation
+                .detail_by_language
+                .iter()
+                .map(|(language, detail)| (language.clone(), detail.report()))
+                .collect(),
             insertion_ms: duration_ms(preparation.insertion),
             publication_ms: duration_ms(publication_elapsed),
             publication_detail,

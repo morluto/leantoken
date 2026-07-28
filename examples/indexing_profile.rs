@@ -8,22 +8,28 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use leantoken::Config;
 use leantoken::indexer::{Indexer, IndexingDiagnostics};
 use leantoken::model::{IndexReport, IndexResponse};
 use leantoken::repository::{DiscoveredFile, discover_files};
 use leantoken::storage::Storage;
 use leantoken::watcher::{RepositoryWatcher, WatcherMessage};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 type AnyResult<T> = Result<T, Box<dyn Error>>;
 
+#[path = "indexing_profile/cold.rs"]
+mod cold;
+
 #[derive(Debug, Parser)]
 #[command(about = "Profile full and changed-path indexing plus warm file reads")]
 struct Args {
+    /// Run a specialized measurement lane instead of the legacy mixed profile.
+    #[command(subcommand)]
+    command: Option<ProfileCommand>,
     /// Existing clean Git checkout to profile through a disposable snapshot.
     #[arg(long, value_name = "PATH")]
     repository: Option<PathBuf>,
@@ -51,6 +57,15 @@ struct Args {
     /// JSON report destination.
     #[arg(long, default_value = "target/indexing_profile_report.json")]
     output: PathBuf,
+}
+
+#[derive(Debug, Subcommand)]
+enum ProfileCommand {
+    /// Profile fresh generation-one builds across a counterbalanced worker matrix.
+    ColdMatrix(cold::ColdMatrixArgs),
+    /// Execute one isolated cold-index sample for the parent profiler.
+    #[command(hide = true)]
+    ColdWorker(cold::ColdWorkerArgs),
 }
 
 #[derive(Debug, Serialize)]
@@ -109,7 +124,7 @@ struct IndexSample {
     storage_footprint: StorageFootprint,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct StorageFootprint {
     database_bytes: u64,
     wal_bytes: u64,
@@ -176,6 +191,13 @@ struct TimingStats {
 
 fn main() -> AnyResult<()> {
     let args = Args::parse();
+    match &args.command {
+        Some(ProfileCommand::ColdMatrix(cold_args)) => return cold::run(cold_args),
+        Some(ProfileCommand::ColdWorker(worker_args)) => {
+            return cold::run_worker(worker_args);
+        }
+        None => {}
+    }
     validate_args(&args)?;
     let report = run_profile(&args)?;
     let json = serde_json::to_string_pretty(&report)?;
@@ -1144,6 +1166,7 @@ mod tests {
     fn small_profile_exercises_each_measurement() {
         let output = tempfile::tempdir().expect("output");
         let args = Args {
+            command: None,
             repository: None,
             repository_label: None,
             files: 6,
@@ -1218,6 +1241,7 @@ mod tests {
         let original = fs::read_to_string(&first).expect("original source");
         let output = tempfile::tempdir().expect("output");
         let args = Args {
+            command: None,
             repository: Some(repository.path().to_path_buf()),
             repository_label: None,
             files: 2,
