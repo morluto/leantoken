@@ -144,9 +144,10 @@ npx --yes leantoken@0.1.8 setup --refresh --yes --allow-outdated
 LeanToken works best as a small evidence loop rather than a one-shot repository
 dump:
 
-1. **Orient before editing.** Start an uncertain task with `context` and
-   `plan_only: true`. Check ranked paths, focus coverage, and warnings, then
-   repeat with `plan_only: false` to materialize only the selected source.
+1. **Orient autonomous triage in one call.** Start an uncertain broad task with
+   `context` and `plan_only: false`, then use the materialized evidence
+   directly. Make at most one focused follow-up only when coverage identifies a
+   concrete missing implementation or regression-test owner.
 2. **Continue without resending source.** Pass the prior `receipt_id` on the
    next context call, or pass returned fragment hashes as `known_hashes`. The
    response reports exact and overlapping omissions instead of silently
@@ -159,6 +160,15 @@ dump:
    `BASE..HEAD` and `strict_changed_paths: true`. Request a `handoff` when
    another agent needs a compact manifest of selected hashes, changed paths,
    assumptions, and completed validations without copied source bodies.
+
+This one-call contract is for autonomous repository triage, not a limit on
+implementation agents. Human review and control-plane flows can still preview
+expensive or high-risk retrieval with `plan_only: true` before materializing.
+The [repeated multi-agent context suite](docs/measurement.md#repeated-multi-agent-context-suite)
+found that an iterative LeanToken profile used 50.9% more total input than thin
+native, while the frozen one-context-plus-optional-one-search profile saved
+20.1% and had 15/20 path-set successes. Those results cover four pinned triage
+tasks; they do not prove a universal implementation workflow.
 
 Explicit focus constraints are contracts. When a request supplies
 `focus_paths`, exact `focus_symbols`, and
@@ -207,7 +217,7 @@ and MCP transport wrappers are not part of this source-token budget; see
 
 | Tool | Purpose |
 | --- | --- |
-| `leantoken.context` | Default first call for broad tasks; preview or materialize ranked evidence under a token budget. |
+| `leantoken.context` | Default materialized first call for autonomous broad triage; optional preview for human or control-plane review. |
 | `leantoken.search` | Prefer over grep/rg for ranked text, regex, identifier, symbol, or reference search. |
 | `leantoken.files` | Prefer over find/ls/glob for compact, ignore-aware path discovery. |
 | `leantoken.outline` | Inspect definitions, signatures, imports, and ranges without whole-file reads. |
@@ -228,11 +238,12 @@ live files, so neither accepts an index consistency mode. To constrain context
 to immutable history, pass `BASE..HEAD` as `leantoken.context.base_revision`
 with `strict_changed_paths: true`.
 
-For an uncertain broad task, set `plan_only: true` to receive bounded ranked
-candidate metadata without source fragments or receipt mutation. Confirm the
-paths and coverage, then repeat the same request with `plan_only: false` to
-materialize the selected source. Set `response_profile: "compact"` for the
-smallest fail-loud response, keep the default `"balanced"` shape, or use
+For autonomous broad triage, set `plan_only: false` and use the materialized
+evidence directly. Reserve `plan_only: true` for human or control-plane review
+before expensive or high-risk retrieval: it returns bounded ranked candidate
+metadata without source fragments or receipt mutation. After approval, repeat
+the same request with `plan_only: false`. Set `response_profile: "compact"` for
+the smallest fail-loud response, keep the default `"balanced"` shape, or use
 `"explain"` for bounded individual omissions, facets, and diff evidence. The
 response reports the resolved choice as `effective_response_profile`. Legacy
 `verbose_diagnostics: true` maps to `"explain"` and conflicts with an explicit

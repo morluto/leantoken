@@ -89,8 +89,10 @@ npx leantoken remove
 
 LeanToken 最适合作为一个小型证据循环，而不是一次性转储整个代码库：
 
-1. **编辑前定位。** 对不确定的任务，先使用 `context` 和 `plan_only: true`。
-   检查排序后的路径、覆盖情况和警告，再以 `plan_only: false` 获取选中的源代码。
+1. **用一次调用完成自主定位。** 对不确定的广泛任务，先使用 `context` 和
+   `plan_only: false`，并直接使用返回的源码。只有覆盖结果明确指出缺少实现或
+   回归测试归属时，才进行至多一次定向后续调用。人工审查昂贵或高风险的检索时，
+   仍可先用 `plan_only: true` 预览。
 2. **继续工作而不重复发送源码。** 在下一次 context 调用中传入之前的
    `receipt_id`，或将返回的片段哈希作为 `known_hashes` 传入。
 3. **调查已观察到的故障。** 使用 `investigation` 工作流，并在

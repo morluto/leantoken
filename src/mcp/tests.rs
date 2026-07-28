@@ -1137,6 +1137,9 @@ fn tool_descriptions_route_native_discovery_workflows() {
     assert!(descriptions["read"].contains("expected_hash"));
     assert!(descriptions["read"].contains("instead of cat"));
     assert!(descriptions["context"].contains("DEFAULT FIRST CALL"));
+    assert!(descriptions["context"].contains("plan_only=false"));
+    assert!(descriptions["context"].contains("at most one focused follow-up"));
+    assert!(descriptions["context"].contains("human or control-plane"));
     assert!(descriptions["savings"].contains("explicitly unobserved task outcomes"));
     assert!(descriptions["savings"].contains("not claims about task success"));
     assert!(

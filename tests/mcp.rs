@@ -521,8 +521,10 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .expect("server instructions");
     assert!(instructions.contains("preferred repository discovery"));
     assert!(instructions.contains("call leantoken.savings directly"));
-    assert!(instructions.contains("call leantoken.context first"));
-    assert!(instructions.contains("context plan_only=true"));
+    assert!(instructions.contains("call leantoken.context once"));
+    assert!(instructions.contains("plan_only=false"));
+    assert!(instructions.contains("at most one focused follow-up"));
+    assert!(instructions.contains("Reserve plan_only=true"));
     assert!(instructions.contains("leantoken.search over grep or rg"));
     assert!(instructions.contains("leantoken.history over git show"));
     assert!(instructions.contains("consistency=reconcile_working_tree"));

@@ -799,6 +799,14 @@ the hard boundary explicit.
 Turns a task into a ranked set of source evidence. `task` is the only required
 input; `token_budget` defaults to 3,000 and accepts values through 32,000.
 
+For autonomous broad triage, make one materialized call with `plan_only=false`
+and use the evidence directly. Make at most one focused follow-up only when the
+returned coverage identifies a concrete missing implementation or
+regression-test owner. This is a host usage contract, not service session state
+or a restriction on implementation agents. The
+[repeated multi-agent context suite](measurement.md#repeated-multi-agent-context-suite)
+records the four-task, 60-run evidence and its limits.
+
 Optional inputs focus or exclude paths and symbols, provide hashes already held
 by the caller, and identify a prior repository generation. `include_paths` is a
 hard boundary: every returned source fragment must match at least one supplied
@@ -859,16 +867,17 @@ candidate report `truncated: true` together with the complete
 `target_start_line` and `target_end_line`; coverage reports the name under
 `partial_must_include_symbols` instead of claiming complete coverage.
 
-Set `plan_only=true` to run the same hard scopes, ranking, must-cover selection,
-token budget, and fragment limit without returning source. The response has an
-empty `fragments` array and no server-managed receipt mutation; `plan` contains
-bounded paths and ranges, final scores and reasons, exact source-token
-estimates, focus coverage, completeness, and a generated-artifact warning.
-`receipt_id` is rejected in plan mode; use `known_hashes` for stateless
-suppression that must apply to both preview and materialization.
-After confirming a broad plan, repeat the same request with `plan_only=false`
-to materialize those candidates against the selected index consistency
-boundary.
+For human review or control-plane inspection before expensive or high-risk
+materialization, set `plan_only=true` to run the same hard scopes, ranking,
+must-cover selection, token budget, and fragment limit without returning
+source. The response has an empty `fragments` array and no server-managed
+receipt mutation; `plan` contains bounded paths and ranges, final scores and
+reasons, exact source-token estimates, focus coverage, completeness, and a
+generated-artifact warning. `receipt_id` is rejected in plan mode; use
+`known_hashes` for stateless suppression that must apply to both preview and
+materialization. After approval, repeat the same request with
+`plan_only=false` to materialize those candidates against the selected index
+consistency boundary.
 
 Context ranking excludes known generated report trees by default:
 `artifacts/runtime_reports/**`, `artifacts/viability_audit/**`,

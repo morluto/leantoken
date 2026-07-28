@@ -1237,6 +1237,14 @@ savings claim: the source receipt has partial cumulative provider usage and no
 per-result provider request frame. Claude Code, Cursor, Gemini CLI, and OpenCode
 remain explicitly unavailable rather than receiving guessed rows.
 
+The 2026-07-28 one-call contract update changed only the context tool
+description. The reviewed catalog snapshot confirms that tool names, input
+schemas, and result projections did not change, so the existing real-host
+structured-consumption proof carries to catalog digest
+`374b1eb87963c5cfc914ca8b1db6fd83`. The registry records this review
+separately: its historical runtime A/B receipt still binds the prior catalog
+digest and is not presented as a new host run or provider-saving result.
+
 A same-host, same-task
 [A/B/B/A runtime receipt](../benchmarks/reports/mcp-result-mode-auto-codex-0.144.1-2026-07-28.json)
 also captures the exact initialize tuple and local JSON-RPC wire shapes. Both
