@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use regex_syntax::hir::{Hir, HirKind};
 use tokio_util::sync::CancellationToken;
 
+use super::execution_options::RetrievalExecution;
 use super::read::{StoredExcerpt, StoredExcerptRequest};
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
@@ -942,6 +943,34 @@ impl Services {
         })
     }
 
+    async fn apply_search_consistency(
+        &self,
+        request: &SearchRequest,
+        occurrence_groups: bool,
+        consistency: Option<IndexConsistency>,
+        cancellation: &CancellationToken,
+    ) -> Result<()> {
+        let Some(consistency) = consistency else {
+            return Ok(());
+        };
+        let operation = TokenAccountingOperation::Search;
+        if occurrence_groups {
+            self.observe_service_result(operation, validate_occurrence_group_input(request))?;
+        } else {
+            self.observe_service_result(operation, validate_search_input(request))?;
+        }
+        self.observe_service_result(operation, self.result_limit(request.max_results))?;
+        self.observe_service_result(
+            operation,
+            self.token_limit(request.max_tokens, self.config.default_read_tokens),
+        )?;
+        self.observe_service_result(operation, self.context_line_limit(request.context_lines))?;
+        let consistency_result = self
+            .apply_consistency(consistency, cancellation.clone())
+            .await;
+        self.observe_service_result(operation, consistency_result)
+    }
+
     /// Search indexed lexical and structural evidence.
     pub async fn search(&self, request: SearchRequest) -> Result<SearchResponse> {
         self.search_with_options(request, ServiceCallOptions::new())
@@ -954,8 +983,11 @@ impl Services {
         request: SearchRequest,
         options: ServiceCallOptions,
     ) -> Result<SearchResponse> {
-        self.search_cancellable_with_options(request, options, CancellationToken::new())
-            .await
+        self.search_execute(
+            request,
+            RetrievalExecution::direct(options, CancellationToken::new()),
+        )
+        .await
     }
 
     /// Search after applying a cancellable index consistency boundary.
@@ -965,11 +997,9 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<SearchResponse> {
-        self.search_with_options_consistency_cancellable(
+        self.search_execute(
             request,
-            consistency,
-            ServiceCallOptions::new(),
-            cancellation,
+            RetrievalExecution::consistent(consistency, ServiceCallOptions::new(), cancellation),
         )
         .await
     }
@@ -982,21 +1012,11 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<SearchResponse> {
-        let operation = TokenAccountingOperation::Search;
-        self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.observe_service_result(operation, validate_search_input(&request))?;
-        self.observe_service_result(operation, self.result_limit(request.max_results))?;
-        self.observe_service_result(
-            operation,
-            self.token_limit(request.max_tokens, self.config.default_read_tokens),
-        )?;
-        self.observe_service_result(operation, self.context_line_limit(request.context_lines))?;
-        let consistency_result = self
-            .apply_consistency(consistency, cancellation.clone())
-            .await;
-        self.observe_service_result(operation, consistency_result)?;
-        self.search_cancellable_with_options(request, options, cancellation)
-            .await
+        self.search_execute(
+            request,
+            RetrievalExecution::consistent(consistency, options, cancellation),
+        )
+        .await
     }
 
     pub async fn search_cancellable(
@@ -1004,18 +1024,27 @@ impl Services {
         request: SearchRequest,
         cancellation: CancellationToken,
     ) -> Result<SearchResponse> {
-        self.search_cancellable_with_options(request, ServiceCallOptions::new(), cancellation)
-            .await
+        self.search_execute(
+            request,
+            RetrievalExecution::direct(ServiceCallOptions::new(), cancellation),
+        )
+        .await
     }
 
-    async fn search_cancellable_with_options(
+    async fn search_execute(
         &self,
         request: SearchRequest,
-        options: ServiceCallOptions,
-        cancellation: CancellationToken,
+        execution: RetrievalExecution,
     ) -> Result<SearchResponse> {
         let operation = TokenAccountingOperation::Search;
+        let RetrievalExecution {
+            consistency,
+            options,
+            cancellation,
+        } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.apply_search_consistency(&request, false, consistency, &cancellation)
+            .await?;
         let this = self.clone();
         let result = self
             .blocking_executor
@@ -1049,8 +1078,11 @@ impl Services {
         request: SearchRequest,
         options: ServiceCallOptions,
     ) -> Result<SearchGroupedResponse> {
-        self.search_grouped_cancellable_with_options(request, options, CancellationToken::new())
-            .await
+        self.search_grouped_execute(
+            request,
+            RetrievalExecution::direct(options, CancellationToken::new()),
+        )
+        .await
     }
 
     /// Search with grouped output after applying the requested consistency boundary.
@@ -1061,31 +1093,27 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<SearchGroupedResponse> {
-        let operation = TokenAccountingOperation::Search;
-        self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.observe_service_result(operation, validate_search_input(&request))?;
-        self.observe_service_result(operation, self.result_limit(request.max_results))?;
-        self.observe_service_result(
-            operation,
-            self.token_limit(request.max_tokens, self.config.default_read_tokens),
-        )?;
-        self.observe_service_result(operation, self.context_line_limit(request.context_lines))?;
-        let consistency_result = self
-            .apply_consistency(consistency, cancellation.clone())
-            .await;
-        self.observe_service_result(operation, consistency_result)?;
-        self.search_grouped_cancellable_with_options(request, options, cancellation)
-            .await
+        self.search_grouped_execute(
+            request,
+            RetrievalExecution::consistent(consistency, options, cancellation),
+        )
+        .await
     }
 
-    async fn search_grouped_cancellable_with_options(
+    async fn search_grouped_execute(
         &self,
         request: SearchRequest,
-        options: ServiceCallOptions,
-        cancellation: CancellationToken,
+        execution: RetrievalExecution,
     ) -> Result<SearchGroupedResponse> {
         let operation = TokenAccountingOperation::Search;
+        let RetrievalExecution {
+            consistency,
+            options,
+            cancellation,
+        } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.apply_search_consistency(&request, false, consistency, &cancellation)
+            .await?;
         let this = self.clone();
         let result = self
             .blocking_executor
@@ -1147,11 +1175,10 @@ impl Services {
         coordinates_only: bool,
         options: ServiceCallOptions,
     ) -> Result<SearchOccurrencesResponse> {
-        self.search_occurrences_cancellable_with_options(
+        self.search_occurrences_execute(
             request,
             coordinates_only,
-            options,
-            CancellationToken::new(),
+            RetrievalExecution::direct(options, CancellationToken::new()),
         )
         .await
     }
@@ -1165,38 +1192,32 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<SearchOccurrencesResponse> {
-        let operation = TokenAccountingOperation::Search;
-        self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.observe_service_result(operation, validate_occurrence_group_input(&request))?;
-        self.observe_service_result(operation, self.result_limit(request.max_results))?;
-        self.observe_service_result(
-            operation,
-            self.token_limit(request.max_tokens, self.config.default_read_tokens),
-        )?;
-        self.observe_service_result(operation, self.context_line_limit(request.context_lines))?;
-        let consistency_result = self
-            .apply_consistency(consistency, cancellation.clone())
-            .await;
-        self.observe_service_result(operation, consistency_result)?;
-        self.search_occurrences_cancellable_with_options(
+        self.search_occurrences_execute(
             request,
             coordinates_only,
-            options,
-            cancellation,
+            RetrievalExecution::consistent(consistency, options, cancellation),
         )
         .await
     }
 
-    async fn search_occurrences_cancellable_with_options(
+    async fn search_occurrences_execute(
         &self,
         request: SearchRequest,
         coordinates_only: bool,
-        options: ServiceCallOptions,
-        cancellation: CancellationToken,
+        execution: RetrievalExecution,
     ) -> Result<SearchOccurrencesResponse> {
         let operation = TokenAccountingOperation::Search;
+        let RetrievalExecution {
+            consistency,
+            options,
+            cancellation,
+        } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.observe_service_result(operation, validate_occurrence_group_input(&request))?;
+        self.apply_search_consistency(&request, true, consistency, &cancellation)
+            .await?;
+        if consistency.is_none() {
+            self.observe_service_result(operation, validate_occurrence_group_input(&request))?;
+        }
         let this = self.clone();
         let result = self
             .blocking_executor

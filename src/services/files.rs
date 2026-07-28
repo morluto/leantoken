@@ -9,6 +9,7 @@ use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config as MatcherConfig, Matcher};
 use tokio_util::sync::CancellationToken;
 
+use super::execution_options::RetrievalExecution;
 use super::validation::{
     MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, check_cancelled, validate_optional_input,
 };
@@ -491,8 +492,11 @@ impl Services {
         request: FilesRequest,
         options: ServiceCallOptions,
     ) -> Result<FilesResponse> {
-        self.files_cancellable_with_options(request, options, CancellationToken::new())
-            .await
+        self.files_execute(
+            request,
+            RetrievalExecution::direct(options, CancellationToken::new()),
+        )
+        .await
     }
 
     /// Discover paths after applying the requested index consistency boundary.
@@ -502,11 +506,9 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<FilesResponse> {
-        self.files_with_options_consistency_cancellable(
+        self.files_execute(
             request,
-            consistency,
-            ServiceCallOptions::new(),
-            cancellation,
+            RetrievalExecution::consistent(consistency, ServiceCallOptions::new(), cancellation),
         )
         .await
     }
@@ -519,16 +521,11 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<FilesResponse> {
-        let operation = TokenAccountingOperation::Files;
-        self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.observe_service_result(operation, validate_files_input(&request))?;
-        self.observe_service_result(operation, self.result_limit(request.max_results))?;
-        let consistency_result = self
-            .apply_consistency(consistency, cancellation.clone())
-            .await;
-        self.observe_service_result(operation, consistency_result)?;
-        self.files_cancellable_with_options(request, options, cancellation)
-            .await
+        self.files_execute(
+            request,
+            RetrievalExecution::consistent(consistency, options, cancellation),
+        )
+        .await
     }
 
     pub async fn files_cancellable(
@@ -536,8 +533,11 @@ impl Services {
         request: FilesRequest,
         cancellation: CancellationToken,
     ) -> Result<FilesResponse> {
-        self.files_cancellable_with_options(request, ServiceCallOptions::new(), cancellation)
-            .await
+        self.files_execute(
+            request,
+            RetrievalExecution::direct(ServiceCallOptions::new(), cancellation),
+        )
+        .await
     }
 
     /// Discover repository paths without per-entry kind, language, size, or score metadata.
@@ -552,8 +552,11 @@ impl Services {
         request: FilesRequest,
         options: ServiceCallOptions,
     ) -> Result<FilesPathsResponse> {
-        self.files_paths_cancellable_with_options(request, options, CancellationToken::new())
-            .await
+        self.files_paths_execute(
+            request,
+            RetrievalExecution::direct(options, CancellationToken::new()),
+        )
+        .await
     }
 
     /// Discover path-only results after applying the requested consistency boundary.
@@ -564,26 +567,33 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<FilesPathsResponse> {
-        let operation = TokenAccountingOperation::Files;
-        self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.observe_service_result(operation, validate_files_input(&request))?;
-        self.observe_service_result(operation, self.result_limit(request.max_results))?;
-        let consistency_result = self
-            .apply_consistency(consistency, cancellation.clone())
-            .await;
-        self.observe_service_result(operation, consistency_result)?;
-        self.files_paths_cancellable_with_options(request, options, cancellation)
-            .await
+        self.files_paths_execute(
+            request,
+            RetrievalExecution::consistent(consistency, options, cancellation),
+        )
+        .await
     }
 
-    async fn files_paths_cancellable_with_options(
+    async fn files_paths_execute(
         &self,
         request: FilesRequest,
-        options: ServiceCallOptions,
-        cancellation: CancellationToken,
+        execution: RetrievalExecution,
     ) -> Result<FilesPathsResponse> {
         let operation = TokenAccountingOperation::Files;
+        let RetrievalExecution {
+            consistency,
+            options,
+            cancellation,
+        } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
+        if let Some(consistency) = consistency {
+            self.observe_service_result(operation, validate_files_input(&request))?;
+            self.observe_service_result(operation, self.result_limit(request.max_results))?;
+            let consistency_result = self
+                .apply_consistency(consistency, cancellation.clone())
+                .await;
+            self.observe_service_result(operation, consistency_result)?;
+        }
         let this = self.clone();
         let result = self
             .blocking_executor
@@ -594,14 +604,26 @@ impl Services {
         self.observe_service_result(operation, result)
     }
 
-    async fn files_cancellable_with_options(
+    async fn files_execute(
         &self,
         request: FilesRequest,
-        options: ServiceCallOptions,
-        cancellation: CancellationToken,
+        execution: RetrievalExecution,
     ) -> Result<FilesResponse> {
         let operation = TokenAccountingOperation::Files;
+        let RetrievalExecution {
+            consistency,
+            options,
+            cancellation,
+        } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
+        if let Some(consistency) = consistency {
+            self.observe_service_result(operation, validate_files_input(&request))?;
+            self.observe_service_result(operation, self.result_limit(request.max_results))?;
+            let consistency_result = self
+                .apply_consistency(consistency, cancellation.clone())
+                .await;
+            self.observe_service_result(operation, consistency_result)?;
+        }
         let this = self.clone();
         let result = self
             .blocking_executor

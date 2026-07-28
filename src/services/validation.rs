@@ -182,6 +182,10 @@ pub(super) fn make_cursor(generation: u64, offset: usize) -> String {
     format!("{generation}:{offset}")
 }
 
+pub(super) fn is_lower_hex(byte: u8) -> bool {
+    byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

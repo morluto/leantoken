@@ -28,11 +28,13 @@ mod change_receipt;
 #[cfg(test)]
 mod concurrency_profile;
 mod context;
+mod execution_options;
 mod executor;
 mod files;
 mod handoff;
 mod history;
 mod json;
+mod outline;
 mod read;
 mod read_delta;
 mod receipts;

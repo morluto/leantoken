@@ -11,15 +11,12 @@ impl Services {
         request: ContextRequest,
         options: ServiceCallOptions,
     ) -> Result<ContextResponse> {
-        let accounted = self
-            .context_cancellable_with_workflow(
-                request,
-                ContextWorkflow::Auto,
-                options,
-                CancellationToken::new(),
-            )
-            .await?;
-        Ok(self.record_context_response(accounted))
+        self.context_execute(
+            request,
+            ContextExecution::new(ContextWorkflow::Auto),
+            RetrievalExecution::direct(options, CancellationToken::new()),
+        )
+        .await
     }
 
     /// Select ranked task evidence using typed caller-observed workflow signals.
@@ -28,17 +25,16 @@ impl Services {
         request: ContextRequest,
         workflow_evidence: WorkflowEvidence,
     ) -> Result<ContextResponse> {
-        let accounted = self
-            .context_cancellable_with_workflow_evidence_and_handoff(
-                request,
-                ContextWorkflow::Auto,
-                None,
+        self.context_execute(
+            request,
+            ContextExecution::new(ContextWorkflow::Auto)
+                .with_workflow_evidence(workflow_evidence),
+            RetrievalExecution::direct(
                 ServiceCallOptions::default(),
-                workflow_evidence,
                 CancellationToken::new(),
-            )
-            .await?;
-        Ok(self.record_context_response(accounted))
+            ),
+        )
+        .await
     }
 
     /// Select context and attach compact provenance for a host-triggered handoff.
@@ -47,16 +43,15 @@ impl Services {
         request: ContextRequest,
         handoff: HandoffManifestRequest,
     ) -> Result<ContextResponse> {
-        let accounted = self
-            .context_cancellable_with_workflow_and_handoff(
-                request,
-                ContextWorkflow::Auto,
-                Some(handoff),
+        self.context_execute(
+            request,
+            ContextExecution::new(ContextWorkflow::Auto).with_handoff(handoff),
+            RetrievalExecution::direct(
                 ServiceCallOptions::default(),
                 CancellationToken::new(),
-            )
-            .await?;
-        Ok(self.record_context_response(accounted))
+            ),
+        )
+        .await
     }
 
     /// Retrieve context after applying the requested index consistency boundary.
@@ -66,30 +61,16 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
-        let operation = context_accounting_operation(&request);
-        self.observe_service_result(operation, self.validate_context_request(&request, None))?;
-        let consistency_result = self
-            .apply_consistency(consistency, cancellation.clone())
-            .await;
-        self.observe_service_result(operation, consistency_result)?;
-        let accounted = self
-            .context_cancellable_with_workflow(
-                request,
-                ContextWorkflow::Auto,
+        self.context_execute(
+            request,
+            ContextExecution::new(ContextWorkflow::Auto),
+            RetrievalExecution::consistent(
+                consistency,
                 ServiceCallOptions::default(),
                 cancellation,
-            )
-            .await?;
-        let mut response = accounted.response;
-        set_routing_consistency(&mut response, consistency);
-        let finalize_result = self.finalize_response(&mut response);
-        self.observe_service_result(operation, finalize_result)?;
-        self.record_token_savings(
-            accounted.operation,
-            accounted.baseline_source_tokens,
-            &response.meta,
-        );
-        Ok(response)
+            ),
+        )
+        .await
     }
 
     /// Retrieve context under an explicit or auto-detected workflow.
@@ -100,30 +81,16 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
-        let operation = context_accounting_operation(&request);
-        self.observe_service_result(operation, self.validate_context_request(&request, None))?;
-        let consistency_result = self
-            .apply_consistency(consistency, cancellation.clone())
-            .await;
-        self.observe_service_result(operation, consistency_result)?;
-        let accounted = self
-            .context_cancellable_with_workflow(
-                request,
-                workflow,
+        self.context_execute(
+            request,
+            ContextExecution::new(workflow),
+            RetrievalExecution::consistent(
+                consistency,
                 ServiceCallOptions::default(),
                 cancellation,
-            )
-            .await?;
-        let mut response = accounted.response;
-        set_routing_consistency(&mut response, consistency);
-        let finalize_result = self.finalize_response(&mut response);
-        self.observe_service_result(operation, finalize_result)?;
-        self.record_token_savings(
-            accounted.operation,
-            accounted.baseline_source_tokens,
-            &response.meta,
-        );
-        Ok(response)
+            ),
+        )
+        .await
     }
 
     /// Retrieve context with an opt-in handoff manifest under explicit adapter policy.
@@ -135,34 +102,16 @@ impl Services {
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
-        let operation = context_accounting_operation(&request);
-        self.observe_service_result(
-            operation,
-            self.validate_context_request(&request, Some(&handoff)),
-        )?;
-        let consistency_result = self
-            .apply_consistency(consistency, cancellation.clone())
-            .await;
-        self.observe_service_result(operation, consistency_result)?;
-        let accounted = self
-            .context_cancellable_with_workflow_and_handoff(
-                request,
-                workflow,
-                Some(handoff),
+        self.context_execute(
+            request,
+            ContextExecution::new(workflow).with_handoff(handoff),
+            RetrievalExecution::consistent(
+                consistency,
                 ServiceCallOptions::default(),
                 cancellation,
-            )
-            .await?;
-        let mut response = accounted.response;
-        set_routing_consistency(&mut response, consistency);
-        let finalize_result = self.finalize_response(&mut response);
-        self.observe_service_result(operation, finalize_result)?;
-        self.record_token_savings(
-            accounted.operation,
-            accounted.baseline_source_tokens,
-            &response.meta,
-        );
-        Ok(response)
+            ),
+        )
+        .await
     }
 
     pub async fn context_cancellable(
@@ -170,15 +119,12 @@ impl Services {
         request: ContextRequest,
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
-        let accounted = self
-            .context_cancellable_with_workflow(
-                request,
-                ContextWorkflow::Auto,
-                ServiceCallOptions::default(),
-                cancellation,
-            )
-            .await?;
-        Ok(self.record_context_response(accounted))
+        self.context_execute(
+            request,
+            ContextExecution::new(ContextWorkflow::Auto),
+            RetrievalExecution::direct(ServiceCallOptions::default(), cancellation),
+        )
+        .await
     }
 
     /// Retrieve context under adapter policy and explicit response controls.
@@ -216,22 +162,54 @@ impl Services {
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
+        self.context_execute(
+            request,
+            ContextExecution {
+                handoff,
+                workflow,
+                workflow_evidence,
+            },
+            RetrievalExecution::consistent(consistency, options, cancellation),
+        )
+        .await
+    }
+
+    async fn context_execute(
+        &self,
+        request: ContextRequest,
+        context: ContextExecution,
+        execution: RetrievalExecution,
+    ) -> Result<ContextResponse> {
         let operation = context_accounting_operation(&request);
-        self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.observe_service_result(
-            operation,
-            self.validate_context_request(&request, handoff.as_ref()),
-        )?;
-        self.observe_service_result(
-            operation,
-            self.validate_workflow_evidence(&workflow_evidence),
-        )?;
-        let consistency_result = self
-            .apply_consistency(consistency, cancellation.clone())
-            .await;
-        self.observe_service_result(operation, consistency_result)?;
+        let ContextExecution {
+            handoff,
+            workflow,
+            workflow_evidence,
+        } = context;
+        let RetrievalExecution {
+            consistency,
+            options,
+            cancellation,
+        } = execution;
+
+        if let Some(consistency) = consistency {
+            self.observe_service_result(operation, self.validate_call_options(options))?;
+            self.observe_service_result(
+                operation,
+                self.validate_context_request(&request, handoff.as_ref()),
+            )?;
+            self.observe_service_result(
+                operation,
+                self.validate_workflow_evidence(&workflow_evidence),
+            )?;
+            let consistency_result = self
+                .apply_consistency(consistency, cancellation.clone())
+                .await;
+            self.observe_service_result(operation, consistency_result)?;
+        }
+
         let accounted = self
-            .context_cancellable_with_workflow_evidence_and_handoff(
+            .context_run(
                 request,
                 workflow,
                 handoff,
@@ -241,20 +219,22 @@ impl Services {
             )
             .await?;
         let mut response = accounted.response;
-        set_routing_consistency(&mut response, consistency);
-        let finalize_result = self.finalize_response(&mut response);
-        self.observe_service_result(operation, finalize_result)?;
-        if let Some(max_response_tokens) = options.max_response_tokens()
-            && response.meta.total_response_tokens > max_response_tokens
-        {
-            return self.observe_service_result(
-                operation,
-                Err(Error::RequestLimitExceeded {
-                    field: "max_response_tokens",
-                    requested: response.meta.total_response_tokens,
-                    limit: max_response_tokens,
-                }),
-            );
+        if let Some(consistency) = consistency {
+            set_routing_consistency(&mut response, consistency);
+            let finalize_result = self.finalize_response(&mut response);
+            self.observe_service_result(operation, finalize_result)?;
+            if let Some(max_response_tokens) = options.max_response_tokens()
+                && response.meta.total_response_tokens > max_response_tokens
+            {
+                return self.observe_service_result(
+                    operation,
+                    Err(Error::RequestLimitExceeded {
+                        field: "max_response_tokens",
+                        requested: response.meta.total_response_tokens,
+                        limit: max_response_tokens,
+                    }),
+                );
+            }
         }
         self.record_token_savings(
             accounted.operation,
@@ -264,43 +244,7 @@ impl Services {
         Ok(response)
     }
 
-    async fn context_cancellable_with_workflow(
-        &self,
-        request: ContextRequest,
-        workflow: ContextWorkflow,
-        options: ServiceCallOptions,
-        cancellation: CancellationToken,
-    ) -> Result<AccountedContextResponse> {
-        self.context_cancellable_with_workflow_and_handoff(
-            request,
-            workflow,
-            None,
-            options,
-            cancellation,
-        )
-        .await
-    }
-
-    async fn context_cancellable_with_workflow_and_handoff(
-        &self,
-        request: ContextRequest,
-        workflow: ContextWorkflow,
-        handoff: Option<HandoffManifestRequest>,
-        options: ServiceCallOptions,
-        cancellation: CancellationToken,
-    ) -> Result<AccountedContextResponse> {
-        self.context_cancellable_with_workflow_evidence_and_handoff(
-            request,
-            workflow,
-            handoff,
-            options,
-            WorkflowEvidence::default(),
-            cancellation,
-        )
-        .await
-    }
-
-    async fn context_cancellable_with_workflow_evidence_and_handoff(
+    async fn context_run(
         &self,
         request: ContextRequest,
         workflow: ContextWorkflow,
@@ -309,11 +253,7 @@ impl Services {
         workflow_evidence: WorkflowEvidence,
         cancellation: CancellationToken,
     ) -> Result<AccountedContextResponse> {
-        let operation = if request.plan_only {
-            TokenAccountingOperation::ContextPlan
-        } else {
-            TokenAccountingOperation::Context
-        };
+        let operation = context_accounting_operation(&request);
         let this = self.clone();
         let result = self
             .blocking_executor
@@ -336,15 +276,6 @@ impl Services {
             })
             .await;
         self.observe_service_result(operation, result)
-    }
-
-    fn record_context_response(&self, accounted: AccountedContextResponse) -> ContextResponse {
-        self.record_token_savings(
-            accounted.operation,
-            accounted.baseline_source_tokens,
-            &accounted.response.meta,
-        );
-        accounted.response
     }
 
     /// Retrieve context and expose pre-selection candidate paths for evaluation.

@@ -13,6 +13,7 @@ mod facets;
 mod response;
 
 use super::change_receipt::{classify_revision_changes, owner_test_coverage};
+use super::execution_options::RetrievalExecution;
 use super::handoff::{self, HandoffProvenance};
 use super::read::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
 use super::search::{chunk_search_hit_for_range, compile_literal_regex, fts_quote};

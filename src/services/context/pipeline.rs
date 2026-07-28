@@ -49,6 +49,32 @@ struct AccountedContextResponse {
     operation: TokenAccountingOperation,
 }
 
+struct ContextExecution {
+    handoff: Option<HandoffManifestRequest>,
+    workflow: ContextWorkflow,
+    workflow_evidence: WorkflowEvidence,
+}
+
+impl ContextExecution {
+    fn new(workflow: ContextWorkflow) -> Self {
+        Self {
+            handoff: None,
+            workflow,
+            workflow_evidence: WorkflowEvidence::default(),
+        }
+    }
+
+    fn with_handoff(mut self, handoff: HandoffManifestRequest) -> Self {
+        self.handoff = Some(handoff);
+        self
+    }
+
+    fn with_workflow_evidence(mut self, workflow_evidence: WorkflowEvidence) -> Self {
+        self.workflow_evidence = workflow_evidence;
+        self
+    }
+}
+
 impl ContextSignals {
     const PRODUCTION: Self = Self {
         import_neighbor: true,
