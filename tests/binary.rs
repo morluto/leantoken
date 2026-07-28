@@ -890,7 +890,8 @@ fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
             .as_str()
             .is_some_and(|instructions| {
                 instructions.contains("call leantoken.savings directly")
-                    && instructions.contains("call leantoken.context first")
+                    && instructions.contains("call leantoken.context once")
+                    && instructions.contains("plan_only=false")
             })
     );
     process.send_initialized();

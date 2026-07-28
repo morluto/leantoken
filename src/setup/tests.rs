@@ -908,7 +908,10 @@ fn setup_manages_compact_discovery_skills_without_overwriting_unowned_content() 
         let skill = fs::read_to_string(&effect.path).unwrap();
         assert!(skill.contains(DISCOVERY_SKILL_MARKER));
         assert!(skill.contains("leantoken.context"));
-        assert!(skill.contains("plan_only=true"));
+        assert!(skill.contains("once with `plan_only=false`"));
+        assert!(skill.contains("at most one focused follow-up"));
+        assert!(skill.contains("human review or control-plane inspection"));
+        assert!(!skill.contains("first set `plan_only=true`"));
         assert!(skill.contains("leantoken.savings"));
         assert!(skill.contains("audits and code archaeology"));
         assert!(skill.contains("runtime probes"));

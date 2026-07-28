@@ -145,7 +145,9 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
         .and_then(Value::as_str)
         .is_some_and(|instructions| {
             instructions.contains("call leantoken.savings directly")
-                && instructions.contains("call leantoken.context first")
+                && instructions.contains("call leantoken.context once")
+                && instructions.contains("plan_only=false")
+                && instructions.contains("Reserve plan_only=true")
                 && instructions.contains("leantoken.search over grep or rg")
         });
     if !instructions_loaded {

@@ -7,8 +7,9 @@ Handle only repository ownership and evidence-triage tasks. Do not edit files or
 expand into implementation. Use the inherited LeanToken MCP server as the only
 repository discovery mechanism; do not use native shell search or reads.
 
-Make exactly one leantoken_context call first with no more than 1600 source
-tokens. If and only if the returned bundle lacks a directly required
+Make exactly one materialized leantoken_context call first with
+`plan_only=false` and no more than 1600 source tokens. Do not spend that call on
+a preview. If and only if the returned coverage lacks a directly required
 implementation or regression-test file, make at most one focused
 leantoken_search call with no more than 1200 source tokens. Do not call
 leantoken_read, leantoken_outline, or leantoken_files in this role. Infer the
