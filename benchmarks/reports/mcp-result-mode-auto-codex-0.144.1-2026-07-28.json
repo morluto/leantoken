@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-07-28",
+  "host": {
+    "name": "codex-cli",
+    "version": "0.144.1",
+    "initialize_client_name": "codex-mcp-client",
+    "initialize_client_version": "0.144.1",
+    "protocol_version": "2025-06-18"
+  },
+  "server": {
+    "tool_catalog_digest": "ffd5662e0731d265f561a5c10a891097",
+    "transport": "stdio",
+    "tool": "savings"
+  },
+  "task": {
+    "prompt_sha256": "c6f761c6ed3ecdbcc9a51a1751c888e8259a5f31034402f2bc014c80b6f0d6a7",
+    "tool_calls": 1
+  },
+  "run_order": [
+    {
+      "label": "A1",
+      "requested_mode": "auto",
+      "resolved_mode": "dual",
+      "resolution_reason": "protocol_version_miss",
+      "control": "fail-closed registry miss observed before correcting the reviewed protocol tuple",
+      "trace_file_blake3": "b999a3982615d02dca74d1d14d364d872160270d67da4202b7996ffb9c8f5cbf",
+      "trace_content_blake3": "3f9be8b97e33f867af7b5108c04718d9d36d52f23a647318313216a77dcb52a9",
+      "total_serialized_json_tokens": 13103,
+      "tool_result_mode": "dual",
+      "exact_text_structured_duplicates": 1,
+      "duplicated_result_tokens": 2216,
+      "codex_turn_usage": {
+        "input_tokens": 46355,
+        "cached_input_tokens": 15104,
+        "output_tokens": 103,
+        "reasoning_output_tokens": 52
+      }
+    },
+    {
+      "label": "B1",
+      "requested_mode": "auto",
+      "resolved_mode": "structured",
+      "resolution_reason": "exact_registry_match",
+      "trace_file_blake3": "8b137ade6a4963d2904cb8c9680f1b3cef81c070b1dba023fe01e23b1960d988",
+      "trace_content_blake3": "88c2161b9e4e6bc26f18b3dc20b35b9c670d457a3faf43c0bb9ff6139b5983df",
+      "total_serialized_json_tokens": 10837,
+      "tool_result_mode": "structured",
+      "exact_text_structured_duplicates": 0,
+      "duplicated_result_tokens": 0,
+      "codex_turn_usage": {
+        "input_tokens": 45931,
+        "cached_input_tokens": 26112,
+        "output_tokens": 86,
+        "reasoning_output_tokens": 31
+      }
+    },
+    {
+      "label": "B2",
+      "requested_mode": "auto",
+      "resolved_mode": "structured",
+      "resolution_reason": "exact_registry_match",
+      "trace_file_blake3": "cee0601be31d994e3cabbcd5ed6cb59dc3ded52e5fda75e20ad372633c1f22e0",
+      "trace_content_blake3": "9e49551795691ae22436f4b1ad7e0ccde2c655b7005de0919016cb6faa60bb8d",
+      "total_serialized_json_tokens": 10835,
+      "tool_result_mode": "structured",
+      "exact_text_structured_duplicates": 0,
+      "duplicated_result_tokens": 0,
+      "codex_turn_usage": {
+        "input_tokens": 46351,
+        "cached_input_tokens": 26112,
+        "output_tokens": 101,
+        "reasoning_output_tokens": 50
+      }
+    },
+    {
+      "label": "A2",
+      "requested_mode": "dual",
+      "resolved_mode": "dual",
+      "resolution_reason": "explicit_override",
+      "trace_file_blake3": "57fe8da2f71d6427ee52bba649a13460ddb5b37489c5445b757eb1340f0f7904",
+      "trace_content_blake3": "cd87998f28e44a683f2d035f71aeb9e5ffc420661069324f95777a8f1065dc3f",
+      "total_serialized_json_tokens": 13105,
+      "tool_result_mode": "dual",
+      "exact_text_structured_duplicates": 1,
+      "duplicated_result_tokens": 2216,
+      "codex_turn_usage": {
+        "input_tokens": 56121,
+        "cached_input_tokens": 33280,
+        "output_tokens": 105,
+        "reasoning_output_tokens": 54
+      }
+    }
+  ],
+  "conclusions": [
+    "The exact reviewed initialize tuple resolved auto to structured in both repeated B runs.",
+    "Both dual controls emitted one exact text/structured duplicate; both structured runs emitted none.",
+    "Structured removed 2216 duplicated result tokens and about 2268 serialized JSON tokens from these local wire traces."
+  ],
+  "limitations": [
+    "Raw traces contain repository-local savings data and remain local; their BLAKE3 identities are recorded here.",
+    "Codex turn usage covers the complete model turn, not just the MCP result, and cache state varied by run order.",
+    "Provider framing and per-result provider input attribution were unavailable, so no provider-token savings conclusion is made.",
+    "A1 records the fail-closed mismatch that exposed the originally reviewed protocol constant; B1, B2, and A2 use the corrected exact tuple."
+  ]
+}

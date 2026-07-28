@@ -40,7 +40,7 @@ fn serialized_response<T: Serialize>(response: T) -> crate::Result<serde_json::V
     serde_json::to_value(response).map_err(|error| crate::Error::InternalFailure(error.to_string()))
 }
 
-fn mcp_schema_fingerprint() -> String {
+pub(crate) fn mcp_schema_fingerprint() -> String {
     let catalog = LeanTokenMcp::tool_router().list_all();
     let encoded = serde_json::to_vec(&catalog).expect("MCP tool catalog is serializable");
     crate::text::hash_bytes(&encoded)
@@ -65,12 +65,16 @@ mod requests;
 use requests::*;
 
 mod admission;
+mod compatibility;
 mod result;
 mod runtime;
 mod server;
 mod state;
 
 use admission::RequestAdmission;
+use compatibility::McpResultModeState;
+pub(crate) use compatibility::resolve_auto_result_mode;
+pub use compatibility::{McpResultModeResolution, McpResultModeResolutionReason};
 pub use result::{McpResultMode, tool_result};
 use result::{RetryableToolResponse, retryable_tool_result};
 use runtime::RetrievalPreparation;
@@ -102,7 +106,8 @@ pub async fn serve_stdio(services: Arc<Services>, result_mode: McpResultMode) ->
 /// Run a prepared MCP server over stdio.
 pub async fn serve_stdio_server(server: LeanTokenMcp) -> crate::Result<()> {
     let token = CancellationToken::new();
-    let transport = BoundedStdioTransport::new(server.request_dispatch.clone(), server.result_mode);
+    let transport =
+        BoundedStdioTransport::new(server.request_dispatch.clone(), server.result_mode.clone());
 
     let signal_task = tokio::spawn({
         let token = token.clone();

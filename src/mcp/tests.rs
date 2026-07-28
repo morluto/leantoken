@@ -288,10 +288,13 @@ fn tools_have_input_schemas_without_redundant_output_schemas() {
 #[test]
 fn result_modes_emit_only_the_selected_representations() {
     let value = serde_json::json!({"answer": 42});
+    let auto = tool_result(value.clone(), McpResultMode::Auto).expect("unresolved auto");
     let dual = tool_result(value.clone(), McpResultMode::Dual).expect("dual");
     let text = tool_result(value.clone(), McpResultMode::Text).expect("text");
     let structured = tool_result(value, McpResultMode::Structured).expect("structured");
 
+    assert!(!auto.content.is_empty());
+    assert!(auto.structured_content.is_some());
     assert!(!dual.content.is_empty());
     assert!(dual.structured_content.is_some());
     assert!(!text.content.is_empty());

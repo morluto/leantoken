@@ -1177,6 +1177,24 @@ integration test covers the default dual mode. Fixture serialization is not
 real-host evidence. Keep `dual` globally until captured compatibility is broad
 enough to justify a smaller mode per host/version.
 
+The explicit opt-in `auto` registry is a narrower policy than a global default.
+Its checked [machine-readable receipt](../benchmarks/reports/mcp-result-mode-registry-v1.json)
+binds one exact Codex CLI 0.144.1 initialize tuple and the current LeanToken
+catalog digest to the frozen structured-only owner-tracing receipt. Runtime
+matching is exact and fail-closed; patch/minor version, protocol, or catalog
+changes resolve to dual. This is compatibility evidence, not a provider-input
+savings claim: the source receipt has partial cumulative provider usage and no
+per-result provider request frame. Claude Code, Cursor, Gemini CLI, and OpenCode
+remain explicitly unavailable rather than receiving guessed rows.
+
+A same-host, same-task
+[A/B/B/A runtime receipt](../benchmarks/reports/mcp-result-mode-auto-codex-0.144.1-2026-07-28.json)
+also captures the exact initialize tuple and local JSON-RPC wire shapes. Both
+structured runs removed one 2,216-token exact text/structured duplicate; both
+dual controls retained it. Codex's turn-level usage varied with cache state and
+cannot attribute provider input to the result projection, so the receipt makes
+only the local-wire and compatibility conclusions supported by the capture.
+
 ## Frozen MCP response ablation
 
 The checked
