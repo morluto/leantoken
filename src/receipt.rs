@@ -1,5 +1,3 @@
-use std::hash::{Hash, Hasher};
-
 use crate::model::ResponseMeta;
 
 pub(crate) const MAX_RECEIPTS: usize = 128;
@@ -158,9 +156,8 @@ fn semantic_signature(content: &str) -> Option<u64> {
     }
     let mut weights = [0i32; 64];
     for token in tokens {
-        let mut hasher = StableTokenHasher::default();
-        token.hash(&mut hasher);
-        let hash = hasher.finish();
+        let digest = blake3::hash(token.as_bytes());
+        let hash = u64::from_le_bytes(digest.as_bytes()[..8].try_into().expect("eight hash bytes"));
         for (bit, weight) in weights.iter_mut().enumerate() {
             if hash & (1u64 << bit) == 0 {
                 *weight -= 1;
@@ -177,20 +174,6 @@ fn semantic_signature(content: &str) -> Option<u64> {
                 signature | (u64::from(*weight >= 0) << bit)
             }),
     )
-}
-
-#[derive(Default)]
-struct StableTokenHasher(blake3::Hasher);
-
-impl Hasher for StableTokenHasher {
-    fn finish(&self) -> u64 {
-        let bytes = self.0.finalize();
-        u64::from_le_bytes(bytes.as_bytes()[..8].try_into().expect("eight hash bytes"))
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        self.0.update(bytes);
-    }
 }
 
 #[cfg(test)]
@@ -215,7 +198,7 @@ mod tests {
                 1,
                 2,
                 "third",
-                Some("alpha beta gamma delta epsilon zeta"),
+                Some("epsilon delta gamma beta alpha"),
             ),
         ];
         assert_eq!(
@@ -246,5 +229,13 @@ mod tests {
             None
         );
         assert_eq!(parse_receipt_id("r1", namespace), None);
+    }
+
+    #[test]
+    fn semantic_signatures_are_stable_across_processes_and_toolchains() {
+        assert_eq!(
+            semantic_signature("alpha beta gamma delta epsilon"),
+            Some(7_562_433_588_066_552_642)
+        );
     }
 }
