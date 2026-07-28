@@ -82,11 +82,7 @@ fn relative_path(
     }
     let rel = path.strip_prefix(root).map_err(|_| ())?;
     let s = checked_slash_path(rel).map_err(|_| ())?;
-    if s.is_empty()
-        || s.starts_with(".git/")
-        || s == ".git"
-        || !policy.includes_path(&s, directory_hint || path.is_dir())
-    {
+    if s.is_empty() || !policy.includes_path(&s, directory_hint || path.is_dir()) {
         Ok(None)
     } else {
         Ok(Some(s))

@@ -47,10 +47,12 @@ impl DiscoveryPolicy {
     ///
     /// `path_is_directory` distinguishes a directory named `target` from an
     /// ordinary file with that name. Paths must use the slash-normalized form
-    /// returned by [`slash_path`].
+    /// returned by [`slash_path`]. Git metadata is never visible, including
+    /// when generated trees are explicitly included.
     #[must_use]
     pub fn includes_path(self, relative_path: &str, path_is_directory: bool) -> bool {
-        self.include_generated || !is_generated_path(relative_path, path_is_directory)
+        !is_git_metadata_path(relative_path)
+            && (self.include_generated || !is_generated_path(relative_path, path_is_directory))
     }
 
     pub(crate) fn is_ignore_control_path(self, relative_path: &str) -> bool {
@@ -201,19 +203,17 @@ pub(crate) fn discover_files_with_limits_policy_filter_and_progress(
         .git_exclude(true)
         .parents(true)
         .add_custom_ignore_filename(LEANTOKEN_IGNORE_FILE);
-    if !policy.includes_generated() {
-        let filter_root = root.to_path_buf();
-        builder.filter_entry(move |entry| {
-            let Ok(relative) = entry.path().strip_prefix(&filter_root) else {
-                return false;
-            };
-            let Ok(relative_path) = checked_slash_path(relative) else {
-                return true;
-            };
-            let is_directory = entry.file_type().is_some_and(|kind| kind.is_dir());
-            policy.includes_path(&relative_path, is_directory)
-        });
-    }
+    let filter_root = root.to_path_buf();
+    builder.filter_entry(move |entry| {
+        let Ok(relative) = entry.path().strip_prefix(&filter_root) else {
+            return false;
+        };
+        let Ok(relative_path) = checked_slash_path(relative) else {
+            return true;
+        };
+        let is_directory = entry.file_type().is_some_and(|kind| kind.is_dir());
+        policy.includes_path(&relative_path, is_directory)
+    });
     let walker = builder.build();
 
     for entry in walker {

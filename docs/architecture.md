@@ -310,11 +310,12 @@ reconciliation before the new policy is recorded.
 One repository-owned discovery policy configures full walks, visibility
 fallbacks, and watcher intake. It retains hidden source/configuration paths,
 loads nested `.leantokenignore` files above `.gitignore` and `.ignore` in rule
-precedence, and prunes a conservative set of generated and package-cache
-directories before descending. The explicit include-generated setting disables
-only that built-in pruning and participates in the index configuration hash.
-Watcher callbacks apply the same built-in policy before enqueueing raw events,
-while ignore-control changes remain visible and trigger bounded full discovery.
+precedence, and prunes `.git` metadata plus a conservative set of generated and
+package-cache directories before descending. The explicit include-generated
+setting disables only generated-tree pruning; `.git` remains excluded, and the
+setting participates in the index configuration hash. Watcher callbacks apply
+the same built-in policy before enqueueing raw events, while ignore-control
+changes remain visible and trigger bounded full discovery.
 Recursive-watcher admission examines at most 100,000 total filesystem entries
 while proving the 50,000-directory registration bound. The admission walk runs
 as cancellable blocking work; entry overflow, cancellation, or traversal error
