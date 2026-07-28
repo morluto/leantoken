@@ -353,11 +353,14 @@ mod tests {
         assert_eq!(row["observed_on"], runtime.observed_on);
         assert_eq!(row["evidence"]["blake3"], runtime.evidence_blake3);
 
-        let evidence = include_bytes!(
+        let evidence = include_str!(
             "../../benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-thin-leantoken-structured-owner.json"
         );
+        let repository_canonical_evidence = evidence.replace("\r\n", "\n");
         assert_eq!(
-            blake3::hash(evidence).to_hex().as_str(),
+            blake3::hash(repository_canonical_evidence.as_bytes())
+                .to_hex()
+                .as_str(),
             runtime.evidence_blake3
         );
     }
