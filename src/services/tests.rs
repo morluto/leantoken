@@ -502,12 +502,6 @@ async fn generation_zero_reconciliation_deadline_returns_without_stale_retrieval
         call.await.expect("join timed-out retrieval"),
         Err(Error::IndexNotReady)
     ));
-    wait_until(|| services.reconciliation.diagnostics().active_waves == 0).await;
-    let diagnostics = services.reconciliation.diagnostics();
-    assert_eq!(diagnostics.pending_waiters, 0);
-    assert_eq!(diagnostics.timed_out_waiters, 1);
-    assert_eq!(diagnostics.cancelled_waiters, 0);
-    assert_eq!(diagnostics.waves_cancelled_before_start, 1);
     assert_eq!(
         services
             .storage
@@ -516,7 +510,14 @@ async fn generation_zero_reconciliation_deadline_returns_without_stale_retrieval
         0
     );
 
+    tokio::time::resume();
     held_operation.release().expect("release operation lock");
+    wait_until_with_timer(|| services.reconciliation.diagnostics().active_waves == 0).await;
+    let diagnostics = services.reconciliation.diagnostics();
+    assert_eq!(diagnostics.pending_waiters, 0);
+    assert_eq!(diagnostics.timed_out_waiters, 1);
+    assert_eq!(diagnostics.cancelled_waiters, 0);
+    assert_eq!(diagnostics.waves_cancelled_before_start, 1);
 }
 
 #[tokio::test]
@@ -613,13 +614,12 @@ async fn cancellation_precedes_initial_reconciliation_deadline_and_removes_waite
         call.await.expect("join cancelled reconciliation"),
         Err(Error::Cancelled)
     ));
-    wait_until(|| services.reconciliation.diagnostics().active_waves == 0).await;
+    held_operation.release().expect("release operation lock");
+    wait_until_with_timer(|| services.reconciliation.diagnostics().active_waves == 0).await;
     let diagnostics = services.reconciliation.diagnostics();
     assert_eq!(diagnostics.pending_waiters, 0);
     assert_eq!(diagnostics.cancelled_waiters, 1);
     assert_eq!(diagnostics.timed_out_waiters, 0);
-
-    held_operation.release().expect("release operation lock");
 }
 
 #[tokio::test]
