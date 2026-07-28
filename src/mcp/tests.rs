@@ -851,6 +851,7 @@ fn omitted_context_budget_uses_the_runtime_default() {
     .expect("null response limit is equivalent to omission");
     let (_, _, _, _, options, _, _) = null_limit.into_parts(37);
     assert_eq!(options.max_response_tokens(), None);
+    assert_eq!(options.context_response_profile(), None);
 
     let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
         "task": "find answer",
@@ -866,6 +867,7 @@ fn omitted_context_budget_uses_the_runtime_default() {
         }],
         "changed_paths": ["src/lib.rs"],
         "strict_changed_paths": true,
+        "response_profile": "explain",
         "verbose_diagnostics": true,
         "workflow_evidence": {
             "failure_traces": ["error[E0001]"],
@@ -878,6 +880,10 @@ fn omitted_context_budget_uses_the_runtime_default() {
     let (request, _, workflow_evidence, _, options, _, _) = request.into_parts(37);
     assert_eq!(request.token_budget, 23);
     assert_eq!(options.max_response_tokens(), Some(47));
+    assert_eq!(
+        options.context_response_profile(),
+        Some(ContextResponseProfile::Explain)
+    );
     assert_eq!(request.focus_paths, ["src/**"]);
     assert!(request.strict_focus_paths);
     assert_eq!(request.minimum_fragments_per_focus_path, Some(2));
@@ -911,6 +917,15 @@ fn omitted_context_budget_uses_the_runtime_default() {
         }))
         .is_err()
     );
+}
+
+#[test]
+fn context_mcp_rejects_unknown_response_profiles() {
+    let result = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+        "task": "find answer",
+        "response_profile": "verbose"
+    }));
+    assert!(result.is_err());
 }
 
 #[test]

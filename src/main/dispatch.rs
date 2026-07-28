@@ -237,7 +237,12 @@ async fn dispatch_repository_request(
             workflow_evidence,
             handoff,
             max_response_tokens,
+            response_profile,
         } => {
+            let mut options = service_call_options(max_response_tokens);
+            if let Some(profile) = response_profile {
+                options = options.with_context_response_profile(profile);
+            }
             let response = services
                 .context_with_workflow_evidence_options_consistency_cancellable(
                     request,
@@ -245,7 +250,7 @@ async fn dispatch_repository_request(
                     workflow,
                     workflow_evidence,
                     consistency,
-                    service_call_options(max_response_tokens),
+                    options,
                     CancellationToken::new(),
                 )
                 .await?;

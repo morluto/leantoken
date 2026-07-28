@@ -122,6 +122,7 @@ pub struct Services {
 #[non_exhaustive]
 pub struct ServiceCallOptions {
     max_response_tokens: Option<usize>,
+    context_response_profile: Option<ContextResponseProfile>,
 }
 
 impl ServiceCallOptions {
@@ -130,6 +131,7 @@ impl ServiceCallOptions {
     pub const fn new() -> Self {
         Self {
             max_response_tokens: None,
+            context_response_profile: None,
         }
     }
 
@@ -147,6 +149,21 @@ impl ServiceCallOptions {
     #[must_use]
     pub const fn max_response_tokens(self) -> Option<usize> {
         self.max_response_tokens
+    }
+
+    /// Select the presentation depth for a context response.
+    ///
+    /// This option has no effect on non-context retrieval services.
+    #[must_use]
+    pub const fn with_context_response_profile(mut self, profile: ContextResponseProfile) -> Self {
+        self.context_response_profile = Some(profile);
+        self
+    }
+
+    /// Return the explicitly configured context response profile.
+    #[must_use]
+    pub const fn context_response_profile(self) -> Option<ContextResponseProfile> {
+        self.context_response_profile
     }
 }
 

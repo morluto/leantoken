@@ -99,7 +99,12 @@ pub(in crate::mcp) struct ContextMcpRequest {
     /// Require every returned fragment to belong to the resolved changed paths.
     #[serde(default)]
     pub(in crate::mcp) strict_changed_paths: bool,
-    /// Include full path, file-type, reason, score-band, focus, and change omission facets.
+    /// Response presentation depth; defaults to `balanced`. `compact` removes
+    /// optional diff and omission detail, while `explain` includes bounded detail.
+    #[serde(default)]
+    pub(in crate::mcp) response_profile: Option<ContextResponseProfile>,
+    /// Legacy alias for `response_profile=explain`; conflicts with an explicit
+    /// `compact` or `balanced` profile.
     #[serde(default)]
     pub(in crate::mcp) verbose_diagnostics: bool,
     /// Attach a compact provenance manifest for a host-triggered executor handoff;
@@ -144,6 +149,14 @@ impl ContextMcpRequest {
         Option<String>,
         Option<HandoffManifestRequest>,
     ) {
+        let options = self
+            .max_response_tokens
+            .map_or_else(ServiceCallOptions::new, |limit| {
+                ServiceCallOptions::new().with_max_response_tokens(limit)
+            });
+        let options = self.response_profile.map_or(options, |profile| {
+            options.with_context_response_profile(profile)
+        });
         (
             ContextRequest {
                 task: self.task,
@@ -170,10 +183,7 @@ impl ContextMcpRequest {
             self.workflow,
             self.workflow_evidence,
             self.consistency,
-            self.max_response_tokens
-                .map_or_else(ServiceCallOptions::new, |limit| {
-                    ServiceCallOptions::new().with_max_response_tokens(limit)
-                }),
+            options,
             self.expected_repository_id,
             self.handoff,
         )

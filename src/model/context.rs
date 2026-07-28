@@ -20,6 +20,33 @@ const fn one() -> usize {
     1
 }
 
+/// Presentation depth for a context response.
+///
+/// Profiles never change candidate generation, ranking, selected fragment
+/// membership or order, source-token budgets, hard constraints, or receipt
+/// suppression.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextResponseProfile {
+    /// Preserve fail-loud coverage and routing while omitting optional detail.
+    Compact,
+    /// Preserve the historical default response shape and diagnostics.
+    #[default]
+    Balanced,
+    /// Include the complete bounded omission and diff diagnostics.
+    Explain,
+}
+
+impl ContextResponseProfile {
+    pub(crate) const fn from_legacy_verbose(verbose_diagnostics: bool) -> Self {
+        if verbose_diagnostics {
+            Self::Explain
+        } else {
+            Self::Balanced
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 /// Input for `leantoken.context`.
 pub struct ContextRequest {
@@ -78,7 +105,7 @@ pub struct ContextRequest {
     /// Require every returned fragment to belong to the resolved changed paths.
     #[serde(default)]
     pub strict_changed_paths: bool,
-    /// Include full omission facets instead of compact aggregate diagnostics.
+    /// Legacy alias for the explain response profile.
     #[serde(default, skip_serializing_if = "is_false")]
     pub verbose_diagnostics: bool,
 }
@@ -733,6 +760,9 @@ pub struct DiffRelatedPath {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ContextResponse {
+    /// Effective presentation profile after compatibility normalization.
+    #[serde(default)]
+    pub effective_response_profile: ContextResponseProfile,
     /// Workflow selected by the context router.
     pub workflow: ContextWorkflow,
     /// Bounded routing evidence for specialized workflows.

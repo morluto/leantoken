@@ -672,6 +672,8 @@ fn cli_context_request() {
         "--prior-generation",
         "7",
         "--strict-changed-paths",
+        "--response-profile",
+        "explain",
         "--verbose-diagnostics",
         "--workflow",
         "contribution",
@@ -690,6 +692,7 @@ fn cli_context_request() {
         workflow_evidence,
         handoff,
         max_response_tokens,
+        response_profile,
     } = cli.app_request()
     else {
         panic!("expected context request");
@@ -701,6 +704,10 @@ fn cli_context_request() {
     assert_eq!(workflow_evidence.paths, vec!["src/owner.rs"]);
     assert_eq!(workflow_evidence.test_intents, vec!["owner regression"]);
     assert_eq!(max_response_tokens, Some(2048));
+    assert_eq!(
+        response_profile,
+        Some(leantoken::ContextResponseProfile::Explain)
+    );
     assert_eq!(request.task, "fix the bug");
     assert_eq!(request.token_budget, 1024);
     assert_eq!(request.include_paths, vec!["src/**".to_string()]);

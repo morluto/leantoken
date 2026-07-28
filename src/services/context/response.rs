@@ -6,9 +6,28 @@ use super::super::{
 };
 use crate::{
     Error, Result,
-    model::{ContextCoverageReceipt, ContextRequest, ContextResponse},
+    model::{ContextCoverageReceipt, ContextRequest, ContextResponse, ContextResponseProfile},
     storage::ReadSession,
 };
+
+pub(super) fn effective_context_response_profile(
+    request: &ContextRequest,
+    options: ServiceCallOptions,
+) -> Result<ContextResponseProfile> {
+    match (
+        options.context_response_profile(),
+        request.verbose_diagnostics,
+    ) {
+        (Some(ContextResponseProfile::Compact | ContextResponseProfile::Balanced), true) => {
+            Err(Error::InvalidInput {
+                field: "response_profile",
+                reason: "verbose_diagnostics=true requires response_profile=explain",
+            })
+        }
+        (Some(profile), _) => Ok(profile),
+        (None, verbose) => Ok(ContextResponseProfile::from_legacy_verbose(verbose)),
+    }
+}
 
 pub(super) struct ContextResponseFinalization<'a> {
     pub(super) session: &'a ReadSession,

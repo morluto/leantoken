@@ -215,6 +215,7 @@ impl Services {
             scoped_request,
             handoff,
             options,
+            response_profile,
             cancellation,
             diagnostics,
             generation,
@@ -276,6 +277,7 @@ impl Services {
             &self.config.context_exclude_paths,
             &path_excluded_candidates,
         );
+        response.effective_response_profile = response_profile;
         let mut coverage = response::merge_selected_coverage(coverage, &mut response);
         let selected_paths = response::selected_paths(&response);
         self.finalize_strict_scope_coverage(
@@ -300,7 +302,8 @@ impl Services {
                 }
             }
             scope.indexed_changed_paths = indexed;
-            scope.evidence = (!request.plan_only || request.verbose_diagnostics)
+            scope.evidence = (response_profile != ContextResponseProfile::Compact
+                && (!request.plan_only || request.verbose_diagnostics))
                 .then(|| {
                     self.build_diff_evidence(
                         session,

@@ -25,8 +25,8 @@ use crate::config::{DEFAULT_CONTEXT_FRAGMENTS, default_context_exclude_paths};
 use crate::model::{
     ContextCoverageReceipt, ContextFragment, ContextOmissionFacet, ContextOmissionSummary,
     ContextPlanCandidate, ContextPlanFocusCoverage, ContextQueryPlan, ContextRequest,
-    ContextRequiredEvidenceCoverage, ContextResponse, EvidenceReceipt, Freshness, OmittedCandidate,
-    ResponseMeta,
+    ContextRequiredEvidenceCoverage, ContextResponse, ContextResponseProfile, EvidenceReceipt,
+    Freshness, OmittedCandidate, ResponseMeta,
 };
 use crate::services::validation::{PathMatcher, path_matches};
 use crate::tokens;

@@ -106,7 +106,11 @@ pub struct ContextArgs {
     #[arg(long)]
     pub strict_changed_paths: bool,
 
-    /// Include full omission facet diagnostics.
+    /// Response presentation depth; balanced preserves the historical default.
+    #[arg(long, value_enum)]
+    pub response_profile: Option<ContextResponseProfileArg>,
+
+    /// Legacy alias for --response-profile explain.
     #[arg(long)]
     pub verbose_diagnostics: bool,
 
@@ -145,6 +149,23 @@ pub enum ContextWorkflowArg {
     Contribution,
     Review,
     Investigation,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum ContextResponseProfileArg {
+    Compact,
+    Balanced,
+    Explain,
+}
+
+impl From<ContextResponseProfileArg> for crate::model::ContextResponseProfile {
+    fn from(value: ContextResponseProfileArg) -> Self {
+        match value {
+            ContextResponseProfileArg::Compact => Self::Compact,
+            ContextResponseProfileArg::Balanced => Self::Balanced,
+            ContextResponseProfileArg::Explain => Self::Explain,
+        }
+    }
 }
 
 impl From<ContextWorkflowArg> for crate::model::ContextWorkflow {

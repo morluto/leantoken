@@ -161,6 +161,7 @@ mod tests {
             workflow: ContextWorkflow::Implementation,
             workflow_receipt: None,
             plan: None,
+            effective_response_profile: ContextResponseProfile::Balanced,
             fragments: vec![ContextFragment {
                 path: "src/lib.rs".into(),
                 start_line: 1,
@@ -253,6 +254,7 @@ mod tests {
             workflow: ContextWorkflow::Implementation,
             workflow_receipt: None,
             plan: None,
+            effective_response_profile: ContextResponseProfile::Balanced,
             fragments: vec![ContextFragment {
                 path: "src/lib.rs".into(),
                 start_line: 4,
