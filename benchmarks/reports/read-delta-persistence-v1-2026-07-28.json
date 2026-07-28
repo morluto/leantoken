@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "feature": "safe_persistent_read_delta_bases",
+  "recorded_at": "2026-07-28",
+  "revisions": {
+    "base_product_commit": "5329a577d6bb12990d766d37492bdf8f0ac3bf7b",
+    "benchmark_source_commit": "4899094b419cad7c4c7850616f16edcc17a68950",
+    "base_benchmark_commit": "62a8c9b0f2a0bedc959937b5a3fcd500ff44379d",
+    "candidate_commit": "3c0dcdfab6ea3920112e4e8a48264ebb8735f1cf",
+    "benchmark_source_sha256": "6eb013300a4a6d3358ecfba2907d4c4dbce315e2be39c54cf9354dbc0219deb3"
+  },
+  "environment": {
+    "kernel": "Linux 6.1.0-50-cloud-amd64",
+    "architecture": "x86_64",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "arm_order": ["base", "candidate", "candidate", "base"],
+    "iterations_per_reuse_phase": 100,
+    "generated_source_lines": 1200,
+    "generated_source_bytes": 43386
+  },
+  "arms": [
+    {
+      "label": "A1",
+      "variant": "base",
+      "seed": {
+        "p50_micros": 42009,
+        "p95_micros": 42009,
+        "process_write_bytes_delta": 77824,
+        "total_response_tokens": 13914
+      },
+      "unchanged_restart_reuse": {
+        "p50_micros": 39874,
+        "p95_micros": 42979,
+        "process_write_bytes_delta": 7053312,
+        "total_response_tokens": 1391436,
+        "full_responses": 100,
+        "not_modified_responses": 0
+      },
+      "edited_restart_reuse": {
+        "p50_micros": 40049,
+        "p95_micros": 42631,
+        "process_write_bytes_delta": 8278016,
+        "total_response_tokens": 1395154,
+        "full_responses": 100,
+        "delta_responses": 0
+      },
+      "final_database_bytes": 561152,
+      "final_wal_bytes": 4124152,
+      "peak_rss_kib": 51056
+    },
+    {
+      "label": "B1",
+      "variant": "candidate",
+      "seed": {
+        "p50_micros": 44644,
+        "p95_micros": 44644,
+        "process_write_bytes_delta": 147456,
+        "total_response_tokens": 13930
+      },
+      "unchanged_restart_reuse": {
+        "p50_micros": 20500,
+        "p95_micros": 22889,
+        "process_write_bytes_delta": 6189056,
+        "total_response_tokens": 35300,
+        "receipt_avoided_tokens": 1240200,
+        "full_responses": 0,
+        "not_modified_responses": 100
+      },
+      "edited_restart_reuse": {
+        "p50_micros": 35466,
+        "p95_micros": 39276,
+        "process_write_bytes_delta": 8019968,
+        "total_response_tokens": 50330,
+        "receipt_avoided_tokens": 1229000,
+        "full_responses": 0,
+        "delta_responses": 100
+      },
+      "final_database_bytes": 626688,
+      "final_wal_bytes": 4144752,
+      "peak_rss_kib": 50568
+    },
+    {
+      "label": "B2",
+      "variant": "candidate",
+      "seed": {
+        "p50_micros": 45315,
+        "p95_micros": 45315,
+        "process_write_bytes_delta": 147456,
+        "total_response_tokens": 13924
+      },
+      "unchanged_restart_reuse": {
+        "p50_micros": 20352,
+        "p95_micros": 22516,
+        "process_write_bytes_delta": 6189056,
+        "total_response_tokens": 34736,
+        "receipt_avoided_tokens": 1240200,
+        "full_responses": 0,
+        "not_modified_responses": 100
+      },
+      "edited_restart_reuse": {
+        "p50_micros": 35325,
+        "p95_micros": 37997,
+        "process_write_bytes_delta": 8019968,
+        "total_response_tokens": 49754,
+        "receipt_avoided_tokens": 1229000,
+        "full_responses": 0,
+        "delta_responses": 100
+      },
+      "final_database_bytes": 626688,
+      "final_wal_bytes": 4144752,
+      "peak_rss_kib": 52880
+    },
+    {
+      "label": "A2",
+      "variant": "base",
+      "seed": {
+        "p50_micros": 38835,
+        "p95_micros": 38835,
+        "process_write_bytes_delta": 77824,
+        "total_response_tokens": 13922
+      },
+      "unchanged_restart_reuse": {
+        "p50_micros": 40650,
+        "p95_micros": 43352,
+        "process_write_bytes_delta": 7053312,
+        "total_response_tokens": 1392200,
+        "full_responses": 100,
+        "not_modified_responses": 0
+      },
+      "edited_restart_reuse": {
+        "p50_micros": 39738,
+        "p95_micros": 42541,
+        "process_write_bytes_delta": 8278016,
+        "total_response_tokens": 1395930,
+        "full_responses": 100,
+        "delta_responses": 0
+      },
+      "final_database_bytes": 561152,
+      "final_wal_bytes": 4124152,
+      "peak_rss_kib": 49612
+    }
+  ],
+  "candidate_over_base_ratios": {
+    "seed_p50": 1.11275,
+    "seed_process_write_bytes": 1.89474,
+    "unchanged_reuse_p50": 0.50733,
+    "unchanged_reuse_p95": 0.52594,
+    "unchanged_reuse_total_response_tokens": 0.02516,
+    "unchanged_reuse_process_write_bytes": 0.87747,
+    "edited_reuse_p50": 0.88725,
+    "edited_reuse_p95": 0.90726,
+    "edited_reuse_total_response_tokens": 0.03586,
+    "edited_reuse_process_write_bytes": 0.96883,
+    "final_database_plus_wal_bytes": 1.01838,
+    "peak_rss": 1.02762
+  },
+  "invariants": {
+    "explicit_delta_opt_in_only": true,
+    "same_generation_index_hash_required": true,
+    "dirty_live_diverged_process_local_only": true,
+    "ignored_and_unindexed_never_persisted": true,
+    "truncated_and_oversized_never_persisted": true,
+    "computed_unified_deltas_process_local_only": true,
+    "cross_restart_matches_process_local_oracle": true,
+    "content_hash_verified_on_load_and_duplicate": true,
+    "deterministic_lru": true,
+    "latest_base_prefers_repository_generation_over_access_recency": true,
+    "transactional_migration_and_failure_rollback": true,
+    "independent_writers_no_lost_update": true,
+    "same_index_database_permissions_and_ownership": true,
+    "additional_source_sidecar_files": 0,
+    "max_bases": 128,
+    "max_base_bytes": 524288,
+    "max_total_logical_bytes": 8388608,
+    "ttl_millis": 1800000,
+    "touch_debounce_millis": 60000
+  },
+  "query_plans": [
+    {
+      "operation": "exact_lookup",
+      "detail": "SEARCH read_delta_bases USING INDEX sqlite_autoindex_read_delta_bases_1 (target_key=? AND content_hash=?)"
+    },
+    {
+      "operation": "latest_generation_lookup",
+      "detail": "SEARCH read_delta_bases USING COVERING INDEX read_delta_bases_target_latest_idx (target_key=?)"
+    },
+    {
+      "operation": "expiry_prune",
+      "detail": "SEARCH read_delta_bases USING COVERING INDEX read_delta_bases_expiry_idx (expires_unix_millis<?)"
+    },
+    {
+      "operation": "deterministic_lru_head",
+      "detail": "SCAN read_delta_bases USING COVERING INDEX read_delta_bases_lru_idx",
+      "bounded_by": "LIMIT 1 over at most 128 retained rows"
+    }
+  ],
+  "decision": {
+    "status": "accepted_for_existing_opt_in_path",
+    "reason": "Cross-restart correctness and all storage bounds passed. Unchanged response tokens fell 97.48% and edited response tokens fell 96.41%; p50 latency fell 49.27% and 11.28%, respectively. The one-time seed write cost rose 89.47%, final DB plus WAL footprint rose 1.84%, and peak RSS rose 2.76%, so persistence remains scoped to explicit delta=true requests rather than becoming a default read behavior."
+  },
+  "limitations": [
+    "Fresh Services instances model restart isolation inside one benchmark process.",
+    "Phase latency includes complete Services::read work, not only delta-base storage.",
+    "Linux process write_bytes includes every write by the benchmark process.",
+    "SQLite DB and WAL deltas are physical artifacts, not logical base bytes.",
+    "The generated one-line edit proves response equivalence and token economics, not model task success."
+  ]
+}

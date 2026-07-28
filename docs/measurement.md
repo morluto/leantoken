@@ -1259,6 +1259,28 @@ need a repeated edit-fix-test model evaluation. The first clean run and
 adoption decision are recorded in
 [`../benchmarks/reports/read-receipt-delta-v1-2026-07-26.md`](../benchmarks/reports/read-receipt-delta-v1-2026-07-26.md).
 
+Cross-restart persistence has a separate release profile so its storage cost is
+not confused with the in-process protocol gate:
+
+```bash
+cargo run --release --example read_delta_persistence_profile -- \
+  --iterations 100 --lines 1200
+```
+
+Each measured request opens a fresh `Services` instance. The seed phase records
+the one-time clean-base write, the unchanged phase tests automatic base reuse,
+and the edited phase tests an explicit prior hash after a one-line live edit.
+Run the identical harness and arguments in A/B/B/A order at the base and
+candidate revisions. Record p50/p95 end-to-end latency, complete response
+tokens, avoided source tokens, process writes, DB/WAL size, and peak RSS.
+
+The 2026-07-28 run accepted persistence for the already opt-in `delta=true`
+path: unchanged restart response tokens fell to 2.52% of base and edited
+restart tokens to 3.59%; p50 latency ratios were 0.507 and 0.887. The one-time
+seed write bytes rose 1.89x, while final DB plus WAL size rose 1.84%. Exact
+arms, revisions, query plans, invariants, and limitations are in
+[`../benchmarks/reports/read-delta-persistence-v1-2026-07-28.json`](../benchmarks/reports/read-delta-persistence-v1-2026-07-28.json).
+
 ## Persistent retrieval receipts
 
 `receipt_persistence_profile` compares receipt creation and repeated suppression

@@ -25,6 +25,7 @@ pub mod model;
 pub mod parser;
 /// Deterministic evidence ranking, deduplication, and selection.
 pub mod ranking;
+mod read_delta;
 mod receipt;
 /// Ignore-aware file discovery and repository path containment.
 pub mod repository;

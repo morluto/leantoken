@@ -32,6 +32,7 @@ include!("storage/schema.rs");
 include!("storage/models.rs");
 include!("storage/writer.rs");
 include!("storage/receipts.rs");
+include!("storage/read_delta.rs");
 include!("storage/runtime.rs");
 include!("storage/open.rs");
 include!("storage/publication.rs");

@@ -7,6 +7,7 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use tokio_util::sync::CancellationToken;
 
 use super::execution_options::RetrievalExecution;
+use super::read_delta::ReadDeltaInput;
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
     MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, is_lower_hex, validate_input,
@@ -223,14 +224,15 @@ impl Services {
         let mut response = materialized.response;
         let direct_response = response.clone();
         if request.delta {
-            let evaluation = self.read_deltas.evaluate(
-                &response.meta.repository_id,
-                &request,
-                &response,
-                &materialized.current_content,
-                materialized.current_tokens,
-                self.config.tokenizer,
-            )?;
+            let evaluation = self.read_deltas.evaluate(ReadDeltaInput {
+                repository_id: &response.meta.repository_id,
+                storage: &self.storage,
+                request: &request,
+                response: &response,
+                current_content: &materialized.current_content,
+                full_tokens: materialized.current_tokens,
+                tokenizer: self.config.tokenizer,
+            })?;
             if evaluation.receipt.outcome == ReadDeltaOutcome::NotModified {
                 response.status = ReadStatus::NotModified;
                 response.not_modified = true;

@@ -5,14 +5,18 @@ use std::time::{Duration, Instant};
 use similar::TextDiff;
 
 use crate::model::{
-    ReadDeltaFallback, ReadDeltaOutcome, ReadDeltaReceipt, ReadRequest, ReadResponse,
+    ReadDeltaBaseSource, ReadDeltaFallback, ReadDeltaOutcome, ReadDeltaPersistenceFallback,
+    ReadDeltaReceipt, ReadRequest, ReadResponse,
 };
+use crate::read_delta::{
+    MAX_READ_DELTA_BASE_BYTES as MAX_READ_DELTA_ENTRY_BYTES,
+    MAX_READ_DELTA_BASES as MAX_READ_DELTA_ENTRIES,
+    MAX_TOTAL_READ_DELTA_BASE_BYTES as MAX_READ_DELTA_TOTAL_BYTES, ReadDeltaBase,
+};
+use crate::storage::Storage;
 use crate::tokens::Tokenizer;
 use crate::{Error, Result};
 
-const MAX_READ_DELTA_ENTRIES: usize = 128;
-const MAX_READ_DELTA_ENTRY_BYTES: usize = 512 * 1024;
-const MAX_READ_DELTA_TOTAL_BYTES: usize = 8 * 1024 * 1024;
 const READ_DELTA_TTL: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -65,19 +69,31 @@ pub(super) struct ReadDeltaEvaluation {
     pub receipt: ReadDeltaReceipt,
 }
 
+pub(super) struct ReadDeltaInput<'a> {
+    pub repository_id: &'a str,
+    pub storage: &'a Storage,
+    pub request: &'a ReadRequest,
+    pub response: &'a ReadResponse,
+    pub current_content: &'a str,
+    pub full_tokens: usize,
+    pub tokenizer: Tokenizer,
+}
+
 impl ReadDeltaRegistry {
-    pub(super) fn evaluate(
-        &self,
-        repository_id: &str,
-        request: &ReadRequest,
-        response: &ReadResponse,
-        current_content: &str,
-        full_tokens: usize,
-        tokenizer: Tokenizer,
-    ) -> Result<ReadDeltaEvaluation> {
+    pub(super) fn evaluate(&self, input: ReadDeltaInput<'_>) -> Result<ReadDeltaEvaluation> {
+        let ReadDeltaInput {
+            repository_id,
+            storage,
+            request,
+            response,
+            current_content,
+            full_tokens,
+            tokenizer,
+        } = input;
         let target_key = target_key(repository_id, request);
         let mut base_hash = request.expected_hash.clone();
         let mut base_generation = None;
+        let mut base_source = None;
         let mut delta = None;
         let mut outcome = ReadDeltaOutcome::Full;
         let mut delta_tokens = None;
@@ -94,14 +110,53 @@ impl ReadDeltaRegistry {
             fallback_reason = Some(ReadDeltaFallback::ContentTooLarge);
         } else {
             let base = if let Some(expected_hash) = request.expected_hash.as_deref() {
-                self.lookup(&target_key, expected_hash)?
-                    .map(|entry| (expected_hash.to_owned(), entry))
+                if let Some(entry) = self.lookup(&target_key, expected_hash)? {
+                    Some((
+                        expected_hash.to_owned(),
+                        entry,
+                        ReadDeltaBaseSource::ProcessLocal,
+                    ))
+                } else {
+                    storage
+                        .read_delta_base(&target_key, expected_hash)?
+                        .map(|base| {
+                            (
+                                expected_hash.to_owned(),
+                                CacheEntry::from_persistent(base),
+                                ReadDeltaBaseSource::Persistent,
+                            )
+                        })
+                }
             } else {
-                self.lookup_latest(&target_key)?
+                let local = self.lookup_latest(&target_key)?;
+                let persistent = storage.latest_read_delta_base(&target_key)?;
+                match (local, persistent) {
+                    (Some((hash, entry)), Some((persistent_hash, persistent))) => {
+                        if entry.generation >= persistent.generation {
+                            Some((hash, entry, ReadDeltaBaseSource::ProcessLocal))
+                        } else {
+                            Some((
+                                persistent_hash,
+                                CacheEntry::from_persistent(persistent),
+                                ReadDeltaBaseSource::Persistent,
+                            ))
+                        }
+                    }
+                    (Some((hash, entry)), None) => {
+                        Some((hash, entry, ReadDeltaBaseSource::ProcessLocal))
+                    }
+                    (None, Some((hash, persistent))) => Some((
+                        hash,
+                        CacheEntry::from_persistent(persistent),
+                        ReadDeltaBaseSource::Persistent,
+                    )),
+                    (None, None) => None,
+                }
             };
-            if let Some((selected_hash, base)) = base {
+            if let Some((selected_hash, base, selected_source)) = base {
                 base_hash = Some(selected_hash.clone());
                 base_generation = Some(base.generation);
+                base_source = Some(selected_source);
                 if base_hash.as_deref() == Some(response.content_hash.as_str()) {
                     outcome = ReadDeltaOutcome::NotModified;
                     delta_tokens = Some(0);
@@ -157,6 +212,14 @@ impl ReadDeltaRegistry {
             }
         }
 
+        let persistent_base = ReadDeltaBase {
+            content: current_content.to_owned(),
+            generation: response.meta.repository_generation,
+            target_start_line: response.target_start_line,
+            target_end_line: response.target_end_line,
+            returned_start_line: response.returned_start_line,
+            returned_end_line: response.returned_end_line,
+        };
         if !response.truncated && current_content.len() <= MAX_READ_DELTA_ENTRY_BYTES {
             self.insert(
                 CacheKey {
@@ -174,6 +237,30 @@ impl ReadDeltaRegistry {
                 },
             )?;
         }
+        let mut persistence_fallback_reason = if response.truncated {
+            Some(ReadDeltaPersistenceFallback::CurrentTruncated)
+        } else if current_content.len() > MAX_READ_DELTA_ENTRY_BYTES {
+            Some(ReadDeltaPersistenceFallback::ContentTooLarge)
+        } else if response.index_stale {
+            Some(ReadDeltaPersistenceFallback::LiveDiffersFromIndex)
+        } else if response.indexed_hash.is_none() {
+            Some(ReadDeltaPersistenceFallback::IndexedHashUnavailable)
+        } else {
+            None
+        };
+        let head_persisted = if persistence_fallback_reason.is_none() {
+            let persisted = storage.persist_read_delta_base(
+                &target_key,
+                &response.content_hash,
+                &persistent_base,
+            )?;
+            if !persisted {
+                persistence_fallback_reason = Some(ReadDeltaPersistenceFallback::StorageCapacity);
+            }
+            persisted
+        } else {
+            false
+        };
 
         Ok(ReadDeltaEvaluation {
             delta,
@@ -182,11 +269,14 @@ impl ReadDeltaRegistry {
                 base_hash,
                 head_hash: response.content_hash.clone(),
                 base_generation,
+                base_source,
                 head_generation: response.meta.repository_generation,
                 outcome,
                 full_tokens,
                 delta_tokens,
                 avoided_tokens,
+                head_persisted,
+                persistence_fallback_reason,
                 fallback_reason,
             },
         })
@@ -313,6 +403,20 @@ impl ReadDeltaRegistry {
     }
 }
 
+impl CacheEntry {
+    fn from_persistent(base: ReadDeltaBase) -> Self {
+        Self {
+            content: base.content,
+            generation: base.generation,
+            target_start_line: base.target_start_line,
+            target_end_line: base.target_end_line,
+            returned_start_line: base.returned_start_line,
+            returned_end_line: base.returned_end_line,
+            inserted_at: Instant::now(),
+        }
+    }
+}
+
 fn target_key(repository_id: &str, request: &ReadRequest) -> String {
     let mut hasher = blake3::Hasher::new();
     for value in [repository_id, request.path.as_str()] {
@@ -402,6 +506,7 @@ fn evict_oldest_delta(state: &mut RegistryState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{Freshness, ResponseMeta};
 
     fn entry(content: &str, inserted_at: Instant) -> CacheEntry {
         CacheEntry {
@@ -637,5 +742,84 @@ mod tests {
         assert!(state.deltas.is_empty());
         assert!(state.delta_order.is_empty());
         assert_eq!(state.delta_bytes, 0);
+    }
+
+    #[test]
+    fn oversized_complete_base_reports_both_process_and_persistence_fallbacks() {
+        let directory = tempfile::tempdir().expect("directory");
+        let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+        let content = "x".repeat(MAX_READ_DELTA_ENTRY_BYTES + 1);
+        let content_hash = crate::text::hash(&content);
+        let request = ReadRequest {
+            path: "oversized.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(32_000),
+            expected_hash: None,
+            delta: true,
+            receipt_id: None,
+        };
+        let response = ReadResponse {
+            path: request.path.clone(),
+            status: crate::model::ReadStatus::Content,
+            target_start_line: 1,
+            target_end_line: 1,
+            returned_start_line: 1,
+            returned_end_line: 1,
+            start_line: 1,
+            end_line: 1,
+            truncated: false,
+            next_start_line: None,
+            continuation_cursor: None,
+            not_modified: false,
+            content: Some(content.clone()),
+            delta: None,
+            delta_receipt: None,
+            content_hash,
+            indexed_hash: Some("indexed".into()),
+            index_stale: false,
+            meta: ResponseMeta {
+                repository_id: "repository".into(),
+                repository_generation: 1,
+                freshness: Freshness::Current,
+                source_tokens: 0,
+                protocol_tokens: 0,
+                path_and_metadata_tokens: 0,
+                total_response_tokens: 0,
+                payload_tokens: 0,
+                tokenizer: "cl100k_base".into(),
+                emitted_tokens: 0,
+                token_count_exact: true,
+                receipt_id: None,
+                receipt_suppressed_exact: 0,
+                receipt_suppressed_overlap: 0,
+                receipt_near_duplicates: 0,
+                next_cursor: None,
+            },
+        };
+        let evaluation = ReadDeltaRegistry::default()
+            .evaluate(ReadDeltaInput {
+                repository_id: "repository",
+                storage: &storage,
+                request: &request,
+                response: &response,
+                current_content: &content,
+                full_tokens: 1,
+                tokenizer: Tokenizer::Cl100kBase,
+            })
+            .expect("evaluate oversized base");
+        assert_eq!(
+            evaluation.receipt.fallback_reason,
+            Some(ReadDeltaFallback::ContentTooLarge)
+        );
+        assert_eq!(
+            evaluation.receipt.persistence_fallback_reason,
+            Some(ReadDeltaPersistenceFallback::ContentTooLarge)
+        );
+        assert!(!evaluation.receipt.head_persisted);
     }
 }
