@@ -121,7 +121,7 @@
 <a href=#121 id=121 data-nosnippet>121</a>}
 <a href=#122 id=122 data-nosnippet>122</a>
 <a href=#123 id=123 data-nosnippet>123</a><span class="doccomment">/// Logical on-disk bytes owned by each FTS5 search index.
-<a href=#124 id=124 data-nosnippet>124</a></span><span class="attr">#[derive(Debug, Clone, Default, serde::Serialize)]
+<a href=#124 id=124 data-nosnippet>124</a></span><span class="attr">#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 <a href=#125 id=125 data-nosnippet>125</a></span><span class="kw">pub struct </span>FtsStorageFootprint {
 <a href=#126 id=126 data-nosnippet>126</a>    <span class="doccomment">/// Word-tokenized chunk index bytes.
 <a href=#127 id=127 data-nosnippet>127</a>    </span><span class="kw">pub </span>chunk_word_bytes: u64,
@@ -134,7 +134,7 @@
 <a href=#134 id=134 data-nosnippet>134</a>}
 <a href=#135 id=135 data-nosnippet>135</a>
 <a href=#136 id=136 data-nosnippet>136</a><span class="doccomment">/// Storage phases and footprint captured only by profiled reconciliation.
-<a href=#137 id=137 data-nosnippet>137</a></span><span class="attr">#[derive(Debug, Clone, Default, serde::Serialize)]
+<a href=#137 id=137 data-nosnippet>137</a></span><span class="attr">#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 <a href=#138 id=138 data-nosnippet>138</a></span><span class="kw">pub struct </span>PublicationDiagnostics {
 <a href=#139 id=139 data-nosnippet>139</a>    <span class="doccomment">/// Import resolution and relational insertion time supplied by the indexer.
 <a href=#140 id=140 data-nosnippet>140</a>    </span><span class="kw">pub </span>relational_write_ms: f64,
