@@ -1278,9 +1278,9 @@ concurrent duplicate and distinct appends, oracle parity, deterministic
 eviction, TTL, count/byte quotas, and indexed query plans are correctness gates;
 latency or write results cannot compensate for failure in one of those gates.
 
-In the accepted run, candidate/base ratios were 1.002 for reuse p50, 1.076 for
-reuse p95, 1.017 for peak RSS, and 1.004 for final database plus WAL bytes.
-Creating a durable receipt is intentionally not free: create p50 was 1.156×
+In the accepted run, candidate/base ratios were 0.990 for reuse p50, 1.036 for
+reuse p95, 0.986 for peak RSS, and 1.004 for final database plus WAL bytes.
+Creating a durable receipt is intentionally not free: create p50 was 1.157×
 baseline and process write bytes were 5.90× baseline. Empty reuse is
 touch-debounced, but the reuse phase still measured 1.30× process write bytes
 because SQLite checkpointed receipt pages created before that phase. These are

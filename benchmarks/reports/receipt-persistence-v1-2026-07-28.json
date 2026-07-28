@@ -4,12 +4,12 @@
   "recorded_at": "2026-07-28",
   "decision": {
     "status": "accepted",
-    "reason": "Cross-process suppression and all correctness bounds passed. Reuse p50 was neutral, reuse p95 increased 7.6%, peak RSS increased 1.7%, and final DB plus WAL footprint increased 0.44%. Receipt creation deliberately adds durable metadata writes; its p50 increased 15.6% and process write bytes were 5.90x baseline, so the absolute write cost remains a documented tradeoff rather than a latency optimization claim."
+    "reason": "Cross-process suppression and all correctness bounds passed. Reuse p50 decreased 1.0%, reuse p95 increased 3.6%, peak RSS decreased 1.4%, and final DB plus WAL footprint increased 0.44%. Receipt creation deliberately adds durable metadata writes; its p50 increased 15.7% and process write bytes were 5.90x baseline, so the absolute write cost remains a documented tradeoff rather than a latency optimization claim."
   },
   "revisions": {
     "base_product_commit": "47e93d9d29a3bc1f05c56f57f688f14d7dc8ec79",
     "base_benchmark_commit": "bd466e82cab6dc76467cb6446263c3f77a06b6fb",
-    "candidate_commit": "7d1c6aaddb3846e13d690d299e31e2e614e915c4",
+    "candidate_commit": "920b00dfcf82fdcaf027f20d85573e0677b175d9",
     "benchmark_source_sha256": "adbfab6e35c219e33570945a3be90be2fc20f18c079ce5ab8ce5bdbe0be9dfcf"
   },
   "environment": {
@@ -67,24 +67,24 @@
     {
       "label": "A1",
       "variant": "base",
-      "real_seconds": 7.88,
-      "user_seconds": 10.21,
-      "system_seconds": 0.82,
-      "database_bytes_after_index": 38158336,
-      "wal_bytes_after_index": 38546752,
-      "database_bytes_after_run": 38158336,
+      "real_seconds": 8.20,
+      "user_seconds": 10.66,
+      "system_seconds": 0.81,
+      "database_bytes_after_index": 38215680,
+      "wal_bytes_after_index": 38604432,
+      "database_bytes_after_run": 38215680,
       "wal_bytes_after_run": 16777216,
-      "peak_rss_kib": 69592,
+      "peak_rss_kib": 70520,
       "create": {
-        "p50_micros": 25156,
-        "p95_micros": 31771,
-        "mean_micros": 25952,
+        "p50_micros": 23868,
+        "p95_micros": 28107,
+        "mean_micros": 24377,
         "process_write_bytes_delta": 827392
       },
       "reuse": {
-        "p50_micros": 18211,
-        "p95_micros": 21287,
-        "mean_micros": 18417,
+        "p50_micros": 18460,
+        "p95_micros": 21862,
+        "mean_micros": 18622,
         "process_write_bytes_delta": 823296,
         "suppressed_exact": 2000,
         "returned_hits": 0
@@ -93,24 +93,24 @@
     {
       "label": "B1",
       "variant": "candidate",
-      "real_seconds": 8.17,
-      "user_seconds": 10.63,
-      "system_seconds": 0.73,
-      "database_bytes_after_index": 38191104,
-      "wal_bytes_after_index": 38583832,
-      "database_bytes_after_run": 38400000,
+      "real_seconds": 8.37,
+      "user_seconds": 10.56,
+      "system_seconds": 0.80,
+      "database_bytes_after_index": 38248448,
+      "wal_bytes_after_index": 38641512,
+      "database_bytes_after_run": 38457344,
       "wal_bytes_after_run": 16777216,
-      "peak_rss_kib": 69344,
+      "peak_rss_kib": 69564,
       "create": {
-        "p50_micros": 28326,
-        "p95_micros": 33941,
-        "mean_micros": 28864,
+        "p50_micros": 27934,
+        "p95_micros": 32032,
+        "mean_micros": 28148,
         "process_write_bytes_delta": 4878336
       },
       "reuse": {
-        "p50_micros": 17840,
-        "p95_micros": 20735,
-        "mean_micros": 18305,
+        "p50_micros": 17955,
+        "p95_micros": 21064,
+        "mean_micros": 18217,
         "process_write_bytes_delta": 1073152,
         "suppressed_exact": 2000,
         "returned_hits": 0
@@ -119,24 +119,24 @@
     {
       "label": "B2",
       "variant": "candidate",
-      "real_seconds": 7.92,
-      "user_seconds": 9.99,
-      "system_seconds": 0.79,
-      "database_bytes_after_index": 38191104,
-      "wal_bytes_after_index": 38583832,
-      "database_bytes_after_run": 38400000,
+      "real_seconds": 8.28,
+      "user_seconds": 10.64,
+      "system_seconds": 0.73,
+      "database_bytes_after_index": 38248448,
+      "wal_bytes_after_index": 38641512,
+      "database_bytes_after_run": 38457344,
       "wal_bytes_after_run": 16777216,
-      "peak_rss_kib": 70176,
+      "peak_rss_kib": 68852,
       "create": {
-        "p50_micros": 28279,
-        "p95_micros": 31739,
-        "mean_micros": 28381,
+        "p50_micros": 26779,
+        "p95_micros": 32409,
+        "mean_micros": 27337,
         "process_write_bytes_delta": 4878336
       },
       "reuse": {
-        "p50_micros": 18189,
-        "p95_micros": 22921,
-        "mean_micros": 18637,
+        "p50_micros": 17611,
+        "p95_micros": 22231,
+        "mean_micros": 17993,
         "process_write_bytes_delta": 1073152,
         "suppressed_exact": 2000,
         "returned_hits": 0
@@ -145,24 +145,24 @@
     {
       "label": "A2",
       "variant": "base",
-      "real_seconds": 7.52,
-      "user_seconds": 10.06,
-      "system_seconds": 0.75,
-      "database_bytes_after_index": 38158336,
-      "wal_bytes_after_index": 38546752,
-      "database_bytes_after_run": 38158336,
+      "real_seconds": 7.82,
+      "user_seconds": 10.34,
+      "system_seconds": 0.73,
+      "database_bytes_after_index": 38215680,
+      "wal_bytes_after_index": 38604432,
+      "database_bytes_after_run": 38215680,
       "wal_bytes_after_run": 16777216,
-      "peak_rss_kib": 67568,
+      "peak_rss_kib": 69908,
       "create": {
-        "p50_micros": 23822,
-        "p95_micros": 27360,
-        "mean_micros": 24185,
+        "p50_micros": 23408,
+        "p95_micros": 28034,
+        "mean_micros": 24007,
         "process_write_bytes_delta": 827392
       },
       "reuse": {
-        "p50_micros": 17744,
-        "p95_micros": 19296,
-        "mean_micros": 17709,
+        "p50_micros": 17478,
+        "p95_micros": 19920,
+        "mean_micros": 17676,
         "process_write_bytes_delta": 823296,
         "suppressed_exact": 2000,
         "returned_hits": 0
@@ -170,14 +170,14 @@
     }
   ],
   "candidate_over_base_ratios": {
-    "create_p50": 1.15572,
-    "create_p95": 1.11075,
+    "create_p50": 1.15731,
+    "create_p95": 1.14784,
     "create_process_write_bytes": 5.89604,
-    "reuse_p50": 1.00206,
-    "reuse_p95": 1.07572,
+    "reuse_p50": 0.98965,
+    "reuse_p95": 1.03621,
     "reuse_process_write_bytes": 1.30348,
-    "peak_rss": 1.01721,
-    "final_database_plus_wal_bytes": 1.00440
+    "peak_rss": 0.98567,
+    "final_database_plus_wal_bytes": 1.00439
   },
   "limitations": [
     "Indexing is excluded from phase timing, but each arm builds a fresh disposable index before measurement.",
