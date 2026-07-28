@@ -52,6 +52,7 @@ jobs:
               - 'benchmarks/**/*.jsonl'
               - 'benchmarks/run_paired_performance.sh'
               - 'scripts/paired_performance.py'
+              - 'scripts/test_agent_walltime_ab.py'
               - 'scripts/test_paired_performance.py'
               - 'README.md'
               - 'docs/usage.md'
@@ -314,8 +315,11 @@ jobs:
           cargo test --all-features --examples
           cargo test --all-features --doc
 
-      - name: Test paired performance comparator
-        run: python3 -m unittest scripts/test_paired_performance.py
+      - name: Test performance support scripts
+        run: |
+          python3 -m unittest \
+            scripts/test_agent_walltime_ab.py \
+            scripts/test_paired_performance.py
 
   required:
     name: Required checks
