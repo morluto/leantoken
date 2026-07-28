@@ -135,3 +135,70 @@ fn summarize_omissions(
         not_changed: total.saturating_sub(changed),
     }
 }
+
+#[allow(clippy::too_many_arguments)]
+fn build_context_omissions(
+    request: &ContextRequest,
+    path_omitted: Vec<ScoredCandidate>,
+    known_omitted: Vec<ScoredCandidate>,
+    mut limit_omitted: Vec<ScoredCandidate>,
+    prefiltered_path_omissions: &[String],
+    focus_paths: &PathMatcher,
+    changed_paths: &HashSet<&str>,
+    generated_artifact_warning: bool,
+) -> (
+    ContextOmissionSummary,
+    Vec<OmittedCandidate>,
+    Vec<String>,
+) {
+    let omission_summary = summarize_omissions(
+        &path_omitted,
+        &known_omitted,
+        &limit_omitted,
+        prefiltered_path_omissions,
+        focus_paths,
+        changed_paths,
+        request.verbose_diagnostics,
+    );
+    let mut omitted = path_omitted
+        .into_iter()
+        .map(|scored| OmittedCandidate {
+            path: scored.candidate.path,
+            start_line: scored.candidate.start_line,
+            end_line: scored.candidate.end_line,
+            reason: "path excluded".to_string(),
+        })
+        .chain(known_omitted.into_iter().map(|scored| OmittedCandidate {
+            path: scored.candidate.path,
+            start_line: scored.candidate.start_line,
+            end_line: scored.candidate.end_line,
+            reason: "known hash".to_string(),
+        }))
+        .collect::<Vec<_>>();
+    omitted.extend(limit_omitted.drain(..).map(|scored| OmittedCandidate {
+        path: scored.candidate.path,
+        start_line: scored.candidate.start_line,
+        end_line: scored.candidate.end_line,
+        reason: "budget or result limit".to_string(),
+    }));
+    if !request.verbose_diagnostics {
+        omitted.clear();
+    }
+    omitted.truncate(MAX_OMITTED_DETAILS);
+
+    let omitted_count = omission_summary
+        .path_excluded
+        .saturating_add(omission_summary.known_hash)
+        .saturating_add(omission_summary.budget_or_result_limit);
+    let mut warnings = Vec::new();
+    if omitted_count > 0 {
+        warnings.push(format!("{omitted_count} omitted"));
+    }
+    if request.plan_only && generated_artifact_warning {
+        warnings.push(
+            "generated-artifact candidates matched context exclusion defaults; review their explicit inclusion before materializing source"
+                .into(),
+        );
+    }
+    (omission_summary, omitted, warnings)
+}

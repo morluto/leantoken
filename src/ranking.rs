@@ -41,6 +41,8 @@ include!("ranking/dedup.rs");
 include!("ranking/selection.rs");
 include!("ranking/requirements.rs");
 include!("ranking/greedy.rs");
+include!("ranking/coverage.rs");
+include!("ranking/response.rs");
 
 #[cfg(test)]
 mod tests;
