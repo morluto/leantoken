@@ -6,6 +6,41 @@ use std::time::Instant;
 use super::*;
 
 #[test]
+fn discovery_progress_is_aggregate_monotonic_and_reports_completion() {
+    let directory = tempfile::tempdir().expect("directory");
+    for index in 0..(DISCOVERY_PROGRESS_INTERVAL_ENTRIES + 10) {
+        fs::write(
+            directory.path().join(format!("file-{index:03}.rs")),
+            "fn fixture() {}\n",
+        )
+        .expect("fixture");
+    }
+    let mut snapshots = Vec::new();
+
+    let result = discover_files_with_limits_policy_filter_and_progress(
+        directory.path(),
+        DiscoveryLimits::default(),
+        DiscoveryPolicy::default(),
+        &CancellationToken::new(),
+        |_| true,
+        |stats| snapshots.push(stats),
+    )
+    .expect("discovery");
+
+    assert!(
+        snapshots
+            .windows(2)
+            .all(|pair| pair[0].walk_entries <= pair[1].walk_entries)
+    );
+    assert_eq!(snapshots.last(), Some(&result.stats));
+    assert!(
+        snapshots
+            .iter()
+            .any(|stats| stats.walk_entries == DISCOVERY_PROGRESS_INTERVAL_ENTRIES)
+    );
+}
+
+#[test]
 fn discovery_reports_walker_errors_instead_of_returning_partial_results() {
     let directory = tempfile::tempdir().expect("directory");
     let missing = directory.path().join("missing");

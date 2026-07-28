@@ -197,6 +197,12 @@ async fn empty_index_reports_status_but_retrieval_is_not_ready() {
     assert_eq!(status.index_state, IndexState::Uninitialized);
     assert_eq!(status.freshness, Freshness::Current);
     assert_eq!(status.file_count, 0);
+    let progress = status.index_progress.expect("uninitialized progress");
+    assert!(!progress.detail_available);
+    assert!(!progress.active);
+    assert_eq!(progress.current_generation, 0);
+    assert_eq!(progress.phase, None);
+    assert_eq!(progress.files_discovered, None);
 
     let error = services
         .files(FilesRequest {
@@ -234,6 +240,10 @@ async fn first_index_reports_uninitialized_while_reconciling() {
     assert_eq!(during.repository_generation, 0);
     assert_eq!(during.index_state, IndexState::Uninitialized);
     assert_eq!(during.freshness, Freshness::Reconciling);
+    let progress = during.index_progress.expect("follower progress");
+    assert!(!progress.detail_available);
+    assert!(progress.active);
+    assert_eq!(progress.files_discovered, None);
 
     drop(operation);
     indexing.await.expect("join index").expect("complete index");
@@ -241,4 +251,5 @@ async fn first_index_reports_uninitialized_while_reconciling() {
     assert!(after.repository_generation > 0);
     assert_eq!(after.index_state, IndexState::Ready);
     assert_eq!(after.freshness, Freshness::Current);
+    assert_eq!(after.index_progress, None);
 }

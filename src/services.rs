@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{INDEX_CONTENT_VERSION, MAX_OUTPUT_TOKENS};
 use crate::coordination::{CacheLease, IndexCoordination, IndexLeadership};
 use crate::error::RetryableOperation;
-use crate::indexer::Indexer;
+use crate::indexer::{Indexer, index_progress_cache_namespace};
 use crate::model::*;
 use crate::receipt::RECEIPT_ID_RESPONSE_RESERVE;
 use crate::storage::{

@@ -8,6 +8,23 @@ impl Indexer {
         candidates: &[DiscoveredFile],
         cancellation: &CancellationToken,
         profiling: StorageProfiling,
+        consume: impl FnMut(Vec<PreparedFile>) -> Result<()>,
+    ) -> Result<PreparationMetrics> {
+        self.prepare_candidate_batches_with_progress(
+            candidates,
+            cancellation,
+            profiling,
+            || {},
+            consume,
+        )
+    }
+
+    fn prepare_candidate_batches_with_progress(
+        &self,
+        candidates: &[DiscoveredFile],
+        cancellation: &CancellationToken,
+        profiling: StorageProfiling,
+        mut before_batch: impl FnMut(),
         mut consume: impl FnMut(Vec<PreparedFile>) -> Result<()>,
     ) -> Result<PreparationMetrics> {
         check_cancelled(cancellation)?;
@@ -28,6 +45,7 @@ impl Indexer {
         let mut start = 0usize;
         while start < candidates.len() {
             check_cancelled(cancellation)?;
+            before_batch();
             let end = prepare_batch_end(candidates, start, limits);
             if end <= start {
                 return Err(Error::InternalFailure(

@@ -23,8 +23,9 @@ use crate::config::{
 use crate::model::{
     ContextRequest, ContextRequiredEvidence, ContextResponseProfile, ContextWorkflow,
     DiffSymbolsRequest, DiffSymbolsTarget, FileOperation, FilesRequest, HandoffManifestRequest,
-    HistoryOperation, HistoryRequest, IndexConsistency, JsonOperation, JsonProjection, JsonRequest,
-    JsonSelector, OutlineRequest, ReadRequest, SearchMode, SearchRequest, WorkflowEvidence,
+    HistoryOperation, HistoryRequest, IndexConsistency, IndexProgressSnapshot, JsonOperation,
+    JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadRequest, SearchMode,
+    SearchRequest, WorkflowEvidence,
 };
 use crate::services::{
     JsonExecutionOptions, MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN, MAX_JSON_DEPTH,

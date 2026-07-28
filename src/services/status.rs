@@ -26,28 +26,63 @@ impl Services {
             operation.release()?;
         }
         let snapshot = snapshot?;
+        let freshness = if freshness {
+            Freshness::Reconciling
+        } else {
+            Freshness::Current
+        };
+        let index_progress = (snapshot.generation == 0)
+            .then(|| unavailable_index_progress(&config, snapshot.generation, &freshness));
         Ok(status_response(
             &config,
             snapshot.generation,
             snapshot.counts,
-            if freshness {
-                Freshness::Reconciling
-            } else {
-                Freshness::Current
-            },
+            freshness,
+            index_progress,
         ))
     }
 
     fn status_sync(&self) -> Result<StatusResponse> {
         self.consistent_allow_empty(|session, generation| {
             let counts = session.counts()?;
+            let freshness = self.freshness();
+            let index_progress = self.initial_index_progress(generation, &freshness);
             Ok(status_response(
                 &self.config,
                 generation,
                 counts,
-                self.freshness(),
+                freshness,
+                index_progress,
             ))
         })
+    }
+
+    pub(crate) fn index_progress_for_retry(&self) -> IndexProgressSnapshot {
+        let freshness = self.freshness();
+        self.initial_index_progress(0, &freshness)
+            .unwrap_or_else(|| unavailable_index_progress(&self.config, 0, &freshness))
+    }
+
+    fn initial_index_progress(
+        &self,
+        generation: u64,
+        freshness: &Freshness,
+    ) -> Option<IndexProgressSnapshot> {
+        if generation > 0 {
+            return None;
+        }
+        if let Some(local) = self.indexer.progress_snapshot()
+            && (local.active
+                || *freshness == Freshness::Current
+                || local.current_generation > generation)
+        {
+            return Some(local);
+        }
+        Some(unavailable_index_progress(
+            &self.config,
+            generation,
+            freshness,
+        ))
     }
 }
 
@@ -56,6 +91,7 @@ fn status_response(
     generation: u64,
     counts: StorageCounts,
     freshness: Freshness,
+    index_progress: Option<IndexProgressSnapshot>,
 ) -> StatusResponse {
     let index_storage_bytes = sqlite_storage_bytes(&config.database_path);
     let index_amplification_ratio =
@@ -79,12 +115,38 @@ fn status_response(
         indexed_source_bytes: counts.source_bytes,
         index_amplification_ratio,
         process_rss_bytes: process_rss_bytes(),
+        index_progress,
         languages: counts
             .languages
             .into_iter()
             .map(|(language, files)| LanguageCount { language, files })
             .collect(),
         warnings: Vec::new(),
+    }
+}
+
+fn unavailable_index_progress(
+    config: &Config,
+    current_generation: u64,
+    freshness: &Freshness,
+) -> IndexProgressSnapshot {
+    IndexProgressSnapshot {
+        cache_namespace: index_progress_cache_namespace(config),
+        detail_available: false,
+        active: *freshness == Freshness::Reconciling,
+        current_generation,
+        attempt_id: None,
+        phase: None,
+        started_unix_ms: None,
+        elapsed_ms: None,
+        last_progress_unix_ms: None,
+        update_sequence: None,
+        walk_entries: None,
+        files_discovered: None,
+        discovered_source_bytes: None,
+        files_prepared: None,
+        files_staged: None,
+        preparation_batches: None,
     }
 }
 

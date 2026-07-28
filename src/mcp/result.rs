@@ -6,6 +6,8 @@ pub(in crate::mcp) struct RetryableToolResponse {
     pub(in crate::mcp) reason: &'static str,
     pub(in crate::mcp) message: &'static str,
     pub(in crate::mcp) retry_after_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(in crate::mcp) index_progress: Option<IndexProgressSnapshot>,
 }
 
 impl RetryableToolResponse {
@@ -19,7 +21,16 @@ impl RetryableToolResponse {
             reason,
             message,
             retry_after_ms,
+            index_progress: None,
         }
+    }
+
+    pub(in crate::mcp) fn with_index_progress(
+        mut self,
+        index_progress: Option<IndexProgressSnapshot>,
+    ) -> Self {
+        self.index_progress = index_progress;
+        self
     }
 }
 

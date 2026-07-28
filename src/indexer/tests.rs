@@ -1,5 +1,152 @@
 use super::*;
 
+#[test]
+fn initial_index_progress_counters_and_phases_are_monotonic() {
+    let registry = IndexProgressRegistry::new("cache-namespace".into());
+    let first = registry.start(0, &CancellationToken::new());
+    let initial = registry.snapshot().expect("initial progress");
+    assert_eq!(initial.phase, Some(IndexProgressPhase::Discovery));
+    assert_eq!(initial.update_sequence, Some(1));
+    assert_eq!(initial.files_prepared, Some(0));
+
+    first.discovered(12, 7, 4_096);
+    first.phase(IndexProgressPhase::HashAndPlan);
+    first.phase(IndexProgressPhase::Preparation);
+    first.prepared_batch(4);
+    first.phase(IndexProgressPhase::RelationalWrite);
+    first.staged(3);
+    for phase in [
+        IndexProgressPhase::ChunkWordFts,
+        IndexProgressPhase::ChunkTrigramFts,
+        IndexProgressPhase::SymbolFts,
+        IndexProgressPhase::ReferenceFts,
+        IndexProgressPhase::CommitAndCheckpoint,
+    ] {
+        first.phase(phase);
+        assert_eq!(
+            registry.snapshot().expect("phase progress").phase,
+            Some(phase)
+        );
+    }
+    let advanced = registry.snapshot().expect("advanced progress");
+    assert_eq!(advanced.walk_entries, Some(12));
+    assert_eq!(advanced.files_discovered, Some(7));
+    assert_eq!(advanced.discovered_source_bytes, Some(4_096));
+    assert_eq!(advanced.files_prepared, Some(4));
+    assert_eq!(advanced.files_staged, Some(3));
+    assert_eq!(advanced.preparation_batches, Some(1));
+    assert!(
+        advanced.update_sequence.expect("advanced sequence")
+            > initial.update_sequence.expect("initial sequence")
+    );
+}
+
+#[test]
+fn new_index_progress_attempt_resets_counters_and_rejects_stale_guards() {
+    let registry = IndexProgressRegistry::new("cache-namespace".into());
+    let first = registry.start(0, &CancellationToken::new());
+    first.prepared_batch(4);
+    first.staged(3);
+    let first_id = registry.snapshot().expect("first attempt").attempt_id;
+
+    let second = registry.start(0, &CancellationToken::new());
+    let reset = registry.snapshot().expect("replacement attempt");
+    assert_ne!(reset.attempt_id, first_id);
+    assert_eq!(reset.phase, Some(IndexProgressPhase::Discovery));
+    assert_eq!(reset.files_prepared, Some(0));
+    assert_eq!(reset.files_staged, Some(0));
+
+    drop(first);
+    assert_eq!(
+        registry.snapshot().expect("current attempt").attempt_id,
+        reset.attempt_id,
+        "an old attempt guard must not overwrite its replacement"
+    );
+    drop(second);
+}
+
+#[test]
+fn index_progress_terminal_states_and_takeover_are_attempt_scoped() {
+    let registry = IndexProgressRegistry::new("cache-namespace".into());
+    let second_cancellation = CancellationToken::new();
+    let second = registry.start(0, &second_cancellation);
+    second_cancellation.cancel();
+    drop(second);
+    let cancelled = registry.snapshot().expect("cancelled attempt");
+    assert!(!cancelled.active);
+    assert_eq!(cancelled.phase, Some(IndexProgressPhase::Cancelled));
+
+    let failed = registry.start(0, &CancellationToken::new());
+    drop(failed);
+    let failed = registry.snapshot().expect("failed attempt");
+    assert!(!failed.active);
+    assert_eq!(failed.phase, Some(IndexProgressPhase::Failed));
+
+    let mut completed = registry.start(0, &CancellationToken::new());
+    completed.phase(IndexProgressPhase::CommitAndCheckpoint);
+    completed.complete(1);
+    let published = registry.snapshot().expect("completed attempt");
+    assert!(!published.active);
+    assert_eq!(published.current_generation, 1);
+    assert_eq!(published.phase, Some(IndexProgressPhase::Completed));
+
+    let takeover = IndexProgressRegistry::new("cache-namespace".into());
+    assert_eq!(
+        takeover.snapshot(),
+        None,
+        "a replacement process or leader must not inherit stale process-local counters"
+    );
+    let takeover_attempt = takeover.start(0, &CancellationToken::new());
+    assert_ne!(
+        takeover.snapshot().expect("takeover progress").attempt_id,
+        published.attempt_id
+    );
+    drop(takeover_attempt);
+}
+
+#[test]
+fn initial_reconcile_reports_completed_aggregate_progress() {
+    let root = tempfile::tempdir().expect("root");
+    fs::write(root.path().join("one.rs"), "fn one() {}\n").expect("first source");
+    fs::write(root.path().join("two.rs"), "fn two() {}\n").expect("second source");
+    let mut config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    config.max_prepare_batch_files = 1;
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(Arc::new(config), storage).expect("indexer");
+
+    let response = indexer.reconcile(false).expect("initial reconcile");
+    let progress = indexer.progress_snapshot().expect("completed progress");
+
+    assert_eq!(progress.phase, Some(IndexProgressPhase::Completed));
+    assert!(!progress.active);
+    assert_eq!(progress.current_generation, response.repository_generation);
+    assert_eq!(progress.files_discovered, Some(2));
+    assert_eq!(progress.files_prepared, Some(2));
+    assert_eq!(progress.files_staged, Some(2));
+    assert_eq!(progress.preparation_batches, Some(2));
+}
+
+#[test]
+fn cancelled_initial_reconcile_reports_cancelled_terminal_progress() {
+    let root = tempfile::tempdir().expect("root");
+    fs::write(root.path().join("lib.rs"), "fn pending() {}\n").expect("source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(Arc::new(config), storage).expect("indexer");
+    let cancellation = CancellationToken::new();
+
+    let error = indexer
+        .reconcile_once_with_preparation_hook(false, &cancellation, || cancellation.cancel())
+        .expect_err("cancelled reconcile");
+    assert!(matches!(error, Error::Cancelled));
+    let progress = indexer.progress_snapshot().expect("cancelled progress");
+    assert!(!progress.active);
+    assert_eq!(progress.phase, Some(IndexProgressPhase::Cancelled));
+    assert_eq!(progress.current_generation, 0);
+}
+
 fn assert_skip_reasons(
     response: &IndexReport,
     binary: usize,

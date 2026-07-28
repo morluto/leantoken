@@ -4,6 +4,47 @@ mod read_delta;
 mod receipts;
 
 #[test]
+fn cold_publication_reports_ordered_bounded_phases() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    let baseline = storage.meta().expect("baseline");
+    let mut phases = Vec::new();
+
+    let (generation, ()) = storage
+        .publish_reconciliation_at_with_progress(
+            &baseline,
+            "config",
+            false,
+            |phase| phases.push(phase),
+            |writer| {
+                writer.replace(sample_file("lib.rs", "fn answer() -> u8 { 42 }\n"))?;
+                let unpublished =
+                    Storage::read_only_status(&database, root.path()).expect("concurrent status");
+                assert_eq!(unpublished.generation, 0);
+                assert_eq!(unpublished.counts.files, 0);
+                Ok(())
+            },
+        )
+        .expect("cold publication");
+
+    assert_eq!(generation, 1);
+    let published = Storage::read_only_status(&database, root.path()).expect("published status");
+    assert_eq!(published.generation, 1);
+    assert_eq!(published.counts.files, 1);
+    assert_eq!(
+        phases,
+        [
+            ReconciliationPublicationPhase::ChunkWordFts,
+            ReconciliationPublicationPhase::ChunkTrigramFts,
+            ReconciliationPublicationPhase::SymbolFts,
+            ReconciliationPublicationPhase::ReferenceFts,
+            ReconciliationPublicationPhase::CommitAndCheckpoint,
+        ]
+    );
+}
+
+#[test]
 fn writer_bounds_recycled_wal_size() {
     let root = tempfile::tempdir().expect("root");
     let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");

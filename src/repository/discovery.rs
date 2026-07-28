@@ -169,6 +169,26 @@ pub(crate) fn discover_files_with_limits_policy_and_filter(
     cancellation: &CancellationToken,
     include: impl Fn(&Path) -> bool,
 ) -> Result<DiscoveryResult> {
+    discover_files_with_limits_policy_filter_and_progress(
+        root,
+        limits,
+        policy,
+        cancellation,
+        include,
+        |_| {},
+    )
+}
+
+const DISCOVERY_PROGRESS_INTERVAL_ENTRIES: u64 = 256;
+
+pub(crate) fn discover_files_with_limits_policy_filter_and_progress(
+    root: &Path,
+    limits: DiscoveryLimits,
+    policy: DiscoveryPolicy,
+    cancellation: &CancellationToken,
+    include: impl Fn(&Path) -> bool,
+    mut observe: impl FnMut(DiscoveryStats),
+) -> Result<DiscoveryResult> {
     limits.validate()?;
     let mut files = Vec::new();
     let mut stats = DiscoveryStats::default();
@@ -205,6 +225,9 @@ pub(crate) fn discover_files_with_limits_policy_and_filter(
             limits.max_walk_entries,
             IndexLimitKind::WalkEntries,
         )?;
+        if stats.walk_entries % DISCOVERY_PROGRESS_INTERVAL_ENTRIES == 0 {
+            observe(stats);
+        }
         let entry = entry.map_err(Error::RepositoryTraversal)?;
         stats.max_depth = stats.max_depth.max(entry.depth());
         enforce_limit(
@@ -252,6 +275,7 @@ pub(crate) fn discover_files_with_limits_policy_and_filter(
             modified_ns,
         });
     }
+    observe(stats);
     files.sort_unstable_by(|left, right| left.relative_path.cmp(&right.relative_path));
     Ok(DiscoveryResult { files, stats })
 }

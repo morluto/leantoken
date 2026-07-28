@@ -1,5 +1,14 @@
 pub(crate) const MAX_READ_CONNECTIONS: u32 = 8;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReconciliationPublicationPhase {
+    ChunkWordFts,
+    ChunkTrigramFts,
+    SymbolFts,
+    ReferenceFts,
+    CommitAndCheckpoint,
+}
+
 // SQLite normally recycles a completed WAL without shrinking it. Retain four
 // default auto-checkpoint windows for reuse while bounding the steady-state
 // disk footprint after a large initial publication.
