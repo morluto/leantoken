@@ -1,0 +1,158 @@
+use super::*;
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Input for `leantoken.read`.
+pub struct ReadRequest {
+    /// Repository-relative file path.
+    pub path: String,
+    /// First one-based line; defaults to the start of the file.
+    #[serde(default)]
+    pub start_line: Option<usize>,
+    /// Last one-based line; defaults to the end of the file.
+    #[serde(default)]
+    pub end_line: Option<usize>,
+    /// Indexed symbol to read; cannot be combined with line fields.
+    #[serde(default)]
+    pub symbol: Option<String>,
+    /// Indexed Markdown or LaTeX section title or outline signature to read.
+    #[serde(default)]
+    pub heading: Option<String>,
+    /// One-based occurrence of a duplicate document heading; defaults to 1.
+    #[serde(default)]
+    pub heading_occurrence: Option<usize>,
+    /// Opaque cursor returned by a truncated read; cannot be combined with a new target.
+    #[serde(default)]
+    pub continuation_cursor: Option<String>,
+    /// Maximum source tokens to return.
+    #[serde(default)]
+    pub max_tokens: Option<usize>,
+    /// Hash from the same prior range; matching content returns `not_modified`.
+    #[serde(default)]
+    pub expected_hash: Option<String>,
+    /// Record a bounded base and prefer a cheaper changed follow-up. Without
+    /// `expected_hash`, select the latest compatible base for this exact target.
+    #[serde(default)]
+    pub delta: bool,
+    /// Server-managed receipt whose previously returned evidence should be suppressed.
+    #[serde(default)]
+    pub receipt_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ReadResponse {
+    pub path: String,
+    pub status: ReadStatus,
+    /// First line in the complete resolved target.
+    #[serde(default)]
+    pub target_start_line: usize,
+    /// Last line in the complete resolved target.
+    #[serde(default)]
+    pub target_end_line: usize,
+    /// First line represented by this response page.
+    #[serde(default)]
+    pub returned_start_line: usize,
+    /// Last line represented by this response page.
+    #[serde(default)]
+    pub returned_end_line: usize,
+    /// Compatibility alias for `returned_start_line`.
+    pub start_line: usize,
+    /// Compatibility alias for `returned_end_line`.
+    pub end_line: usize,
+    /// Whether source remains after this response page.
+    #[serde(default)]
+    pub truncated: bool,
+    /// First line represented by the next response page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_start_line: Option<usize>,
+    /// Opaque continuation bound to this repository generation and live file content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_cursor: Option<String>,
+    /// Whether an explicit or automatically selected base matched this response page.
+    #[serde(default)]
+    pub not_modified: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    /// Unified diff from the requested base hash to `content_hash`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta: Option<String>,
+    /// Bounded delta decision and accounting metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta_receipt: Option<ReadDeltaReceipt>,
+    pub content_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indexed_hash: Option<String>,
+    pub index_stale: bool,
+    pub meta: ResponseMeta,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadStatus {
+    Content,
+    /// The response contains only part of the resolved target.
+    Truncated,
+    NotModified,
+    /// A complete unified diff is returned instead of full current content.
+    Delta,
+    /// A server-managed evidence receipt already contained the exact current content.
+    ReceiptSuppressed,
+}
+
+/// Result selected by an opt-in read delta request.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadDeltaOutcome {
+    /// Full current content was returned.
+    Full,
+    /// A complete unified diff was returned.
+    Delta,
+    /// The requested or automatically selected base already identifies current content.
+    NotModified,
+    /// A general evidence receipt already contained the exact current content.
+    ReceiptSuppressed,
+}
+
+/// Why an opt-in read delta attempt returned full content.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadDeltaFallback {
+    /// No bounded base matched the exact target and optional requested hash.
+    BaseUnavailable,
+    /// The resolved target or returned coordinates changed.
+    TargetChanged,
+    /// The current response is truncated and cannot be a complete delta target.
+    CurrentTruncated,
+    /// The current page exceeds the per-entry delta-state bound.
+    ContentTooLarge,
+    /// The complete delta response was not smaller than a full-content response.
+    DeltaNotSmaller,
+}
+
+/// Provenance and token accounting for one opt-in read delta decision.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ReadDeltaReceipt {
+    /// Stable hash of the repository and caller-selected target.
+    pub target_key: String,
+    /// Requested or automatically selected prior content hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_hash: Option<String>,
+    /// Hash of the complete current response page.
+    pub head_hash: String,
+    /// Repository generation observed when the bounded base was captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_generation: Option<u64>,
+    /// Repository generation used to resolve the current target.
+    pub head_generation: u64,
+    /// Selected response form.
+    pub outcome: ReadDeltaOutcome,
+    /// Tokens required by full current content.
+    pub full_tokens: usize,
+    /// Tokens in the returned delta, or zero for `not_modified`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta_tokens: Option<usize>,
+    /// Full-content tokens avoided by the selected response.
+    pub avoided_tokens: usize,
+    /// Explicit reason full content was retained after a delta attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<ReadDeltaFallback>,
+}
