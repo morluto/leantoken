@@ -17,6 +17,7 @@ use crate::coordination::{CacheLease, IndexCoordination, IndexLeadership};
 use crate::error::RetryableOperation;
 use crate::indexer::Indexer;
 use crate::model::*;
+use crate::receipt::RECEIPT_ID_RESPONSE_RESERVE;
 use crate::storage::{
     ReadSession, ServiceFailureRecord, Storage, StorageCounts, TokenSavingsObservation,
     TokenSavingsRecord,
@@ -296,7 +297,7 @@ impl Services {
             meta.receipt_id = Some(
                 meta.receipt_id
                     .clone()
-                    .unwrap_or_else(|| "rffffffffffffffff".into()),
+                    .unwrap_or_else(|| RECEIPT_ID_RESPONSE_RESERVE.into()),
             );
             meta.receipt_suppressed_exact = returned_items;
             meta.receipt_suppressed_overlap = returned_items;

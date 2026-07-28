@@ -11,8 +11,16 @@ pub(crate) const RECEIPT_TTL_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 pub(crate) const RECEIPT_TOUCH_INTERVAL_MILLIS: i64 = 60 * 1_000;
 const RECEIPT_ID_NAMESPACE_HEX_BYTES: usize = 32;
 const RECEIPT_ID_ROW_HEX_BYTES: usize = 16;
+// A valid, high-token-density ID used before storage assigns the exact opaque
+// value. Keep the generated length assertion and tokenizer coverage together.
+pub(crate) const RECEIPT_ID_RESPONSE_RESERVE: &str =
+    "r0a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f708";
 const NEAR_DUPLICATE_HAMMING_DISTANCE: u32 = 8;
 const RECEIPT_EVIDENCE_FIXED_LOGICAL_BYTES: usize = 6 * size_of::<u64>();
+const _: () = assert!(
+    RECEIPT_ID_RESPONSE_RESERVE.len()
+        == 1 + RECEIPT_ID_NAMESPACE_HEX_BYTES + RECEIPT_ID_ROW_HEX_BYTES
+);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ReceiptEvidence {
@@ -237,5 +245,35 @@ mod tests {
             semantic_signature("alpha beta gamma delta epsilon"),
             Some(7_562_433_588_066_552_642)
         );
+    }
+
+    #[test]
+    fn response_reserve_covers_generated_ids_across_tokenizers() {
+        use crate::tokens::Tokenizer;
+
+        let tokenizers = [
+            Tokenizer::Cl100kBase,
+            Tokenizer::O200kBase,
+            Tokenizer::O200kHarmony,
+            Tokenizer::P50kBase,
+            Tokenizer::R50kBase,
+            Tokenizer::Gpt2,
+            Tokenizer::P50kEdit,
+            Tokenizer::Estimate,
+        ];
+        for seed in 0u64..4_096 {
+            let namespace = blake3::hash(&seed.to_le_bytes()).to_hex();
+            let id = format_receipt_id(
+                &namespace.as_str()[..RECEIPT_ID_NAMESPACE_HEX_BYTES],
+                i64::try_from(seed + 1).expect("bounded row id"),
+            );
+            for tokenizer in tokenizers {
+                assert!(
+                    tokenizer.count(&id) <= tokenizer.count(RECEIPT_ID_RESPONSE_RESERVE),
+                    "{} under-reserved generated receipt {id}",
+                    tokenizer.name()
+                );
+            }
+        }
     }
 }

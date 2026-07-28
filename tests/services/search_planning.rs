@@ -472,10 +472,18 @@ async fn regex_candidate_plans_match_full_scan_and_report_fallback_selection() {
             .await
             .expect("full-scan regex");
 
+        // Opaque IDs intentionally affect serialized accounting; this
+        // assertion compares retrieval strategy output.
         let mut optimized_response = optimized.response.clone();
         optimized_response.meta.receipt_id = None;
+        optimized_response.meta.path_and_metadata_tokens = 0;
+        optimized_response.meta.payload_tokens = 0;
+        optimized_response.meta.total_response_tokens = 0;
         let mut full_scan_response = full_scan.response.clone();
         full_scan_response.meta.receipt_id = None;
+        full_scan_response.meta.path_and_metadata_tokens = 0;
+        full_scan_response.meta.payload_tokens = 0;
+        full_scan_response.meta.total_response_tokens = 0;
         assert_eq!(
             serde_json::to_value(optimized_response).expect("optimized JSON"),
             serde_json::to_value(full_scan_response).expect("full scan JSON"),
@@ -613,10 +621,18 @@ async fn regex_candidate_plan_applies_path_scope_before_candidate_limit() {
         .await
         .expect("scoped full scan");
 
+    // Opaque IDs intentionally affect serialized accounting; this assertion
+    // compares retrieval strategy output.
     let mut optimized_response = optimized.response.clone();
     optimized_response.meta.receipt_id = None;
+    optimized_response.meta.path_and_metadata_tokens = 0;
+    optimized_response.meta.payload_tokens = 0;
+    optimized_response.meta.total_response_tokens = 0;
     let mut full_scan_response = full_scan.response.clone();
     full_scan_response.meta.receipt_id = None;
+    full_scan_response.meta.path_and_metadata_tokens = 0;
+    full_scan_response.meta.payload_tokens = 0;
+    full_scan_response.meta.total_response_tokens = 0;
     assert_eq!(
         serde_json::to_value(optimized_response).expect("optimized JSON"),
         serde_json::to_value(full_scan_response).expect("full-scan JSON")
