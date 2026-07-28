@@ -1647,6 +1647,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn poisoned_reconciliation_state_returns_a_typed_error() {
+        let (_root, services) = indexed_services().await;
+        services.reconciliation.poison_state_for_test();
+
+        let result = services
+            .reconciliation
+            .reconcile(CancellationToken::new())
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(Error::InternalFailure(message))
+                if message == "reconciliation coordinator state poisoned"
+        ));
+    }
+
+    #[tokio::test]
     async fn response_accounting_reaches_an_inclusive_fixed_point_across_digit_boundaries() {
         let (_root, services) = indexed_services().await;
         let mut digit_widths = Vec::new();

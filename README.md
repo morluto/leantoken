@@ -137,6 +137,33 @@ npx --yes leantoken@0.1.8 setup --refresh --yes --allow-outdated
 
 </details>
 
+## Common agent workflows
+
+LeanToken works best as a small evidence loop rather than a one-shot repository
+dump:
+
+1. **Orient before editing.** Start an uncertain task with `context` and
+   `plan_only: true`. Check ranked paths, focus coverage, and warnings, then
+   repeat with `plan_only: false` to materialize only the selected source.
+2. **Continue without resending source.** Pass the prior `receipt_id` on the
+   next context call, or pass returned fragment hashes as `known_hashes`. The
+   response reports exact and overlapping omissions instead of silently
+   charging the same evidence again.
+3. **Investigate an observed failure.** Use the `investigation` workflow and
+   provide only directly observed `failure_traces`, paths, symbols, or test
+   intent in `workflow_evidence`. Follow with exact `search`, `outline`, or
+   `read` calls for the owners the evidence identifies.
+4. **Review a change.** Use the `review` workflow with `base_revision` set to
+   `BASE..HEAD` and `strict_changed_paths: true`. Request a `handoff` when
+   another agent needs a compact manifest of selected hashes, changed paths,
+   assumptions, and completed validations without copied source bodies.
+
+Explicit focus constraints are contracts. When a request supplies
+`focus_paths`, exact `focus_symbols`, and
+`minimum_fragments_per_focus_path`, LeanToken generates candidates within the
+documented per-file bounds and reports a coverage failure when distinct ranges
+cannot satisfy the minimum.
+
 ## Why LeanToken
 
 Most agents start by searching widely and reading whole files. LeanToken narrows

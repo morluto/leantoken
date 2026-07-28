@@ -166,6 +166,58 @@ cargo run --release --example benchmark_ablation -- \
 The command rejects different manifest hashes so an apparent improvement cannot
 come from changing tasks or labels.
 
+## Retrieval promotion gate
+
+Retrieval changes must produce reports from the same frozen manifest and a
+machine-readable promotion receipt. New schema-v5 manifests assign every task a
+nonempty `task_family`; existing frozen manifests retain their bytes and derive
+the family deterministically from the first `task_shape`. Reports aggregate
+recall, response cost, and warm latency globally and by family so an aggregate
+win cannot hide a family regression. Index time, database footprint, and
+process RSS are reported globally because they are corpus/process measurements.
+
+Use the quality track when paired agent evaluation shows a task-success gain:
+
+```bash
+cargo run --release --example benchmark_ablation -- \
+  --baseline target/baseline.json \
+  --candidate target/candidate.json \
+  --promotion-track quality \
+  --baseline-task-success-rate 0.70 \
+  --candidate-task-success-rate 0.74 \
+  --baseline-two-turn-provider-input-tokens 120000 \
+  --candidate-two-turn-provider-input-tokens 121000 \
+  --baseline-follow-up-native-reads 24 \
+  --candidate-follow-up-native-reads 20 \
+  --baseline-tool-calls 90 \
+  --candidate-tool-calls 84 \
+  --output target/promotion-receipt.json
+```
+
+Use `--promotion-track cost` when success and recall are preserved and the
+feature is intended to reduce complete response cost or warm p95 latency. The
+gate fails closed unless:
+
+- candidate, returned-file, and line-anchor recall do not regress globally or
+  in any task family;
+- paired task success satisfies the selected quality or cost rule;
+- dead-end fragments, dead-end source, repeated ranges, and exact-hash resends
+  do not increase;
+- paired follow-up native reads do not increase;
+- warm p95 latency, cold indexing, database footprint, and available process
+  RSS stay within the predeclared resource envelope; and
+- the selected track meets its predeclared task-success and complete provider
+  cost/tool-call/latency threshold.
+
+The JSON is emitted and optionally written even when the command exits
+nonzero, so CI can always publish the failed scorecard for diagnosis. Baseline
+and candidate task-success, complete provider-input, native-read, and tool-call
+values must come from the same paired agent evaluation; the retrieval harness
+does not invent agent-success or provider-cost proxies. The paired evaluation
+owns its sampling and statistical-confidence policy. Promotion thresholds are
+repository policy recorded in the receipt, not CLI overrides; changing them
+requires a reviewed code change.
+
 ## Context concept coverage
 
 [`context_concept_coverage.json`](context_concept_coverage.json) is an

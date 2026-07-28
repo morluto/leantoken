@@ -256,6 +256,15 @@ implementation details. When changing them:
 - record every new fan-out or scan bound in `docs/architecture.md`; and
 - collect timing evidence with a release build on a representative corpus.
 
+Any change that alters candidate generation, ranking, context allocation, or
+default retrieval signals must also run the
+[retrieval promotion gate](../benchmarks/README.md#retrieval-promotion-gate).
+Attach its machine-readable receipt to the pull request. A development-set win
+is not sufficient: use one frozen manifest for both arms, use explicit task
+families for new manifests (legacy frozen inputs derive them from
+`task_shape`), supply paired task-success/provider-cost/tool-use metrics, and do
+not enable the feature by default when the gate exits nonzero.
+
 Prefer query-plan evidence (`EXPLAIN QUERY PLAN`) and focused integration tests
 for storage changes. A faster microbenchmark is insufficient if it weakens
 atomic publication, stale-plan rejection, bounded memory, or deterministic

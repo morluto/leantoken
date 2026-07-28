@@ -98,10 +98,10 @@ fn fts_storage_footprint(conn: &Connection) -> Result<FtsStorageFootprint> {
         },
     )?;
     Ok(FtsStorageFootprint {
-        chunk_word_bytes: i64_to_u64(chunk_word),
-        chunk_trigram_bytes: i64_to_u64(chunk_trigram),
-        symbol_bytes: i64_to_u64(symbol),
-        reference_bytes: i64_to_u64(reference),
+        chunk_word_bytes: i64_to_u64(chunk_word)?,
+        chunk_trigram_bytes: i64_to_u64(chunk_trigram)?,
+        symbol_bytes: i64_to_u64(symbol)?,
+        reference_bytes: i64_to_u64(reference)?,
     })
 }
 
@@ -1098,7 +1098,7 @@ impl Storage {
                 "SELECT repository_generation FROM meta WHERE id = 1",
                 [],
                 |row| row.get::<_, i64>(0),
-            )?)
+            )?)?
         } else {
             0
         };
@@ -1111,7 +1111,7 @@ impl Storage {
                     "SELECT coalesce(sum(size_bytes), 0) FROM files",
                     [],
                     |row| row.get::<_, i64>(0),
-                )?)
+                )?)?
             } else {
                 0
             };
@@ -1120,7 +1120,7 @@ impl Storage {
                 "SELECT language, count(*) FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY language",
             )?;
             statement
-                .query_map([], |row| Ok((row.get(0)?, i64_to_usize(row.get(1)?))))?
+                .query_map([], |row| Ok((row.get(0)?, i64_to_usize(row.get(1)?)?)))?
                 .collect::<std::result::Result<Vec<_>, _>>()?
         } else {
             Vec::new()
@@ -1628,7 +1628,7 @@ impl Storage {
                 diagnostics.post_commit_diagnostics_complete =
                     populate_post_commit_diagnostics(conn, &self.path, &mut diagnostics).is_ok();
             }
-            Ok((i64_to_u64(published_generation), output, diagnostics))
+            Ok((i64_to_u64(published_generation)?, output, diagnostics))
         })()
     }
 
@@ -2208,10 +2208,10 @@ impl Storage {
             id: row.get(0)?,
             path: row.get(1)?,
             language: row.get(2)?,
-            size_bytes: i64_to_u64(row.get(3)?),
-            modified_ns: row.get::<_, Option<i64>>(4)?.map(i64_to_u128),
+            size_bytes: i64_to_u64(row.get(3)?)?,
+            modified_ns: row.get::<_, Option<i64>>(4)?.map(i64_to_u128).transpose()?,
             content_hash: row.get(5)?,
-            generation: i64_to_u64(row.get(6)?),
+            generation: i64_to_u64(row.get(6)?)?,
             structurally_complete: row.get(7)?,
         })
     }
@@ -2221,11 +2221,11 @@ impl Storage {
             id: row.get(0)?,
             file_id: row.get(1)?,
             content: row.get(2)?,
-            start_line: i64_to_usize(row.get(3)?),
-            end_line: i64_to_usize(row.get(4)?),
-            start_byte: i64_to_usize(row.get(5)?),
-            end_byte: i64_to_usize(row.get(6)?),
-            token_count: i64_to_usize(row.get(7)?),
+            start_line: i64_to_usize(row.get(3)?)?,
+            end_line: i64_to_usize(row.get(4)?)?,
+            start_byte: i64_to_usize(row.get(5)?)?,
+            end_byte: i64_to_usize(row.get(6)?)?,
+            token_count: i64_to_usize(row.get(7)?)?,
         })
     }
 
@@ -2237,10 +2237,10 @@ impl Storage {
             kind: row.get(3)?,
             parent: row.get(4)?,
             signature: row.get(5)?,
-            start_line: i64_to_usize(row.get(6)?),
-            end_line: i64_to_usize(row.get(7)?),
-            start_byte: i64_to_usize(row.get(8)?),
-            end_byte: i64_to_usize(row.get(9)?),
+            start_line: i64_to_usize(row.get(6)?)?,
+            end_line: i64_to_usize(row.get(7)?)?,
+            start_byte: i64_to_usize(row.get(8)?)?,
+            end_byte: i64_to_usize(row.get(9)?)?,
         })
     }
 
@@ -2252,10 +2252,10 @@ impl Storage {
             kind: row.get(3)?,
             role: role_from_str(&row.get::<_, String>(4)?),
             enclosing_symbol: row.get(5)?,
-            start_line: i64_to_usize(row.get(6)?),
-            end_line: i64_to_usize(row.get(7)?),
-            start_byte: i64_to_usize(row.get(8)?),
-            end_byte: i64_to_usize(row.get(9)?),
+            start_line: i64_to_usize(row.get(6)?)?,
+            end_line: i64_to_usize(row.get(7)?)?,
+            start_byte: i64_to_usize(row.get(8)?)?,
+            end_byte: i64_to_usize(row.get(9)?)?,
         })
     }
 
@@ -2265,7 +2265,7 @@ impl Storage {
             file_id: row.get(1)?,
             raw_target: row.get(2)?,
             resolved_path: row.get(3)?,
-            line: i64_to_usize(row.get(4)?),
+            line: i64_to_usize(row.get(4)?)?,
         })
     }
 
@@ -2275,12 +2275,12 @@ impl Storage {
             file_id: row.get(1)?,
             path: row.get(2)?,
             content: row.get(3)?,
-            start_line: i64_to_usize(row.get(4)?),
-            end_line: i64_to_usize(row.get(5)?),
-            start_byte: i64_to_usize(row.get(6)?),
-            end_byte: i64_to_usize(row.get(7)?),
-            token_count: i64_to_usize(row.get(8)?),
-            generation: i64_to_u64(row.get(9)?),
+            start_line: i64_to_usize(row.get(4)?)?,
+            end_line: i64_to_usize(row.get(5)?)?,
+            start_byte: i64_to_usize(row.get(6)?)?,
+            end_byte: i64_to_usize(row.get(7)?)?,
+            token_count: i64_to_usize(row.get(8)?)?,
+            generation: i64_to_u64(row.get(9)?)?,
             score: row.get::<_, f64>(10)?,
         })
     }
@@ -2289,7 +2289,7 @@ impl Storage {
         Ok(SymbolHit {
             path: row.get(0)?,
             content_hash: row.get(1)?,
-            generation: i64_to_u64(row.get(2)?),
+            generation: i64_to_u64(row.get(2)?)?,
             symbol: SymbolRecord {
                 id: row.get(3)?,
                 file_id: row.get(4)?,
@@ -2297,10 +2297,10 @@ impl Storage {
                 kind: row.get(6)?,
                 parent: row.get(7)?,
                 signature: row.get(8)?,
-                start_line: i64_to_usize(row.get(9)?),
-                end_line: i64_to_usize(row.get(10)?),
-                start_byte: i64_to_usize(row.get(11)?),
-                end_byte: i64_to_usize(row.get(12)?),
+                start_line: i64_to_usize(row.get(9)?)?,
+                end_line: i64_to_usize(row.get(10)?)?,
+                start_byte: i64_to_usize(row.get(11)?)?,
+                end_byte: i64_to_usize(row.get(12)?)?,
             },
         })
     }
@@ -2309,7 +2309,7 @@ impl Storage {
         Ok(ReferenceHit {
             path: row.get(0)?,
             content_hash: row.get(1)?,
-            generation: i64_to_u64(row.get(2)?),
+            generation: i64_to_u64(row.get(2)?)?,
             reference: ReferenceRecord {
                 id: row.get(3)?,
                 file_id: row.get(4)?,
@@ -2317,10 +2317,10 @@ impl Storage {
                 kind: row.get(6)?,
                 role: role_from_str(&row.get::<_, String>(7)?),
                 enclosing_symbol: row.get(8)?,
-                start_line: i64_to_usize(row.get(9)?),
-                end_line: i64_to_usize(row.get(10)?),
-                start_byte: i64_to_usize(row.get(11)?),
-                end_byte: i64_to_usize(row.get(12)?),
+                start_line: i64_to_usize(row.get(9)?)?,
+                end_line: i64_to_usize(row.get(10)?)?,
+                start_byte: i64_to_usize(row.get(11)?)?,
+                end_byte: i64_to_usize(row.get(12)?)?,
             },
         })
     }
@@ -2345,7 +2345,7 @@ impl ReadSession {
                         schema_version: row.get(0)?,
                         index_version: row.get(1)?,
                         config_hash: row.get(2)?,
-                        repository_generation: i64_to_u64(row.get(3)?),
+                        repository_generation: i64_to_u64(row.get(3)?)?,
                     })
                 },
             )
@@ -2359,7 +2359,7 @@ impl ReadSession {
             [],
             |row| row.get(0),
         )?;
-        Ok(i64_to_u64(generation))
+        Ok(i64_to_u64(generation)?)
     }
 
     pub(crate) fn file_count(&self) -> Result<usize> {
@@ -2367,7 +2367,7 @@ impl ReadSession {
             "SELECT COUNT(*) FROM files",
             [],
             |row| row.get(0),
-        )?))
+        )?)?)
     }
 
     pub(crate) fn whole_file_source_tokens(
@@ -2393,7 +2393,7 @@ impl ReadSession {
             params![input, tokenizer],
             |row| row.get(0),
         )?;
-        Ok(tokens.map(i64_to_usize))
+        Ok(tokens.map(i64_to_usize).transpose()?)
     }
 
     pub(crate) fn token_savings(
@@ -2420,25 +2420,25 @@ impl ReadSession {
             Ok((
                 row.get::<_, String>(0)?,
                 TokenSavingsRecord {
-                    tracked_requests: i64_to_u64(row.get(1)?),
-                    response_tracked_requests: i64_to_u64(row.get(2)?),
-                    response_baseline_requests: i64_to_u64(row.get(3)?),
-                    baseline_source_tokens: i64_to_u64(row.get(4)?),
-                    response_baseline_source_tokens: i64_to_u64(row.get(5)?),
-                    emitted_source_tokens: i64_to_u64(row.get(6)?),
-                    estimated_source_tokens_saved: i64_to_u64(row.get(7)?),
-                    response_source_tokens: i64_to_u64(row.get(8)?),
-                    path_and_metadata_tokens: i64_to_u64(row.get(9)?),
-                    protocol_tokens: i64_to_u64(row.get(10)?),
-                    total_response_tokens: i64_to_u64(row.get(11)?),
-                    receipt_suppressed_exact: i64_to_u64(row.get(12)?),
-                    receipt_suppressed_overlap: i64_to_u64(row.get(13)?),
-                    expected_hash_not_modified_responses: i64_to_u64(row.get(14)?),
-                    expected_hash_suppressed_source_tokens: i64_to_u64(row.get(15)?),
-                    useful_requests: i64_to_u64(row.get(16)?),
-                    incomplete_requests: i64_to_u64(row.get(17)?),
-                    unsupported_requests: i64_to_u64(row.get(18)?),
-                    hash_suppressed_requests: i64_to_u64(row.get(19)?),
+                    tracked_requests: i64_to_u64(row.get(1)?)?,
+                    response_tracked_requests: i64_to_u64(row.get(2)?)?,
+                    response_baseline_requests: i64_to_u64(row.get(3)?)?,
+                    baseline_source_tokens: i64_to_u64(row.get(4)?)?,
+                    response_baseline_source_tokens: i64_to_u64(row.get(5)?)?,
+                    emitted_source_tokens: i64_to_u64(row.get(6)?)?,
+                    estimated_source_tokens_saved: i64_to_u64(row.get(7)?)?,
+                    response_source_tokens: i64_to_u64(row.get(8)?)?,
+                    path_and_metadata_tokens: i64_to_u64(row.get(9)?)?,
+                    protocol_tokens: i64_to_u64(row.get(10)?)?,
+                    total_response_tokens: i64_to_u64(row.get(11)?)?,
+                    receipt_suppressed_exact: i64_to_u64(row.get(12)?)?,
+                    receipt_suppressed_overlap: i64_to_u64(row.get(13)?)?,
+                    expected_hash_not_modified_responses: i64_to_u64(row.get(14)?)?,
+                    expected_hash_suppressed_source_tokens: i64_to_u64(row.get(15)?)?,
+                    useful_requests: i64_to_u64(row.get(16)?)?,
+                    incomplete_requests: i64_to_u64(row.get(17)?)?,
+                    unsupported_requests: i64_to_u64(row.get(18)?)?,
+                    hash_suppressed_requests: i64_to_u64(row.get(19)?)?,
                 },
             ))
         })?;
@@ -2456,7 +2456,7 @@ impl ReadSession {
             Ok(ServiceFailureRecord {
                 operation: row.get(0)?,
                 error_category: row.get(1)?,
-                failed_requests: i64_to_u64(row.get(2)?),
+                failed_requests: i64_to_u64(row.get(2)?)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -2501,7 +2501,7 @@ impl ReadSession {
                 id: row.get(0)?,
                 path: row.get(1)?,
                 language: row.get(2)?,
-                size_bytes: i64_to_u64(row.get(3)?),
+                size_bytes: i64_to_u64(row.get(3)?)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -2537,7 +2537,7 @@ impl ReadSession {
                     path: row.get(0)?,
                     is_directory: false,
                     language: row.get(1)?,
-                    size_bytes: row.get::<_, Option<i64>>(2)?.map(i64_to_u64),
+                    size_bytes: row.get::<_, Option<i64>>(2)?.map(i64_to_u64).transpose()?,
                 })
             },
         )?;
@@ -2557,7 +2557,10 @@ impl ReadSession {
              LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit], |row| {
-            Ok((Storage::map_file(row)?, i64_to_usize(row.get::<_, i64>(8)?)))
+            Ok((
+                Storage::map_file(row)?,
+                i64_to_usize(row.get::<_, i64>(8)?)?,
+            ))
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
@@ -2591,7 +2594,7 @@ impl ReadSession {
                     path: row.get(0)?,
                     is_directory: kind == 0,
                     language: row.get(2)?,
-                    size_bytes: row.get::<_, Option<i64>>(3)?.map(i64_to_u64),
+                    size_bytes: row.get::<_, Option<i64>>(3)?.map(i64_to_u64).transpose()?,
                 })
             },
         )?;
@@ -2706,16 +2709,16 @@ impl ReadSession {
                 bounded_limit(max_symbols_per_target)
             ],
             |row| {
-                let seed_index = i64_to_usize(row.get(0)?);
+                let seed_index = i64_to_usize(row.get(0)?)?;
                 let import_rank: i64 = row.get(1)?;
                 let target_file = FileRecord {
                     id: row.get(2)?,
                     path: row.get(3)?,
                     language: row.get(4)?,
-                    size_bytes: i64_to_u64(row.get(5)?),
-                    modified_ns: row.get::<_, Option<i64>>(6)?.map(i64_to_u128),
+                    size_bytes: i64_to_u64(row.get(5)?)?,
+                    modified_ns: row.get::<_, Option<i64>>(6)?.map(i64_to_u128).transpose()?,
                     content_hash: row.get(7)?,
-                    generation: i64_to_u64(row.get(8)?),
+                    generation: i64_to_u64(row.get(8)?)?,
                     structurally_complete: row.get(9)?,
                 };
                 let symbol = SymbolRecord {
@@ -2725,10 +2728,10 @@ impl ReadSession {
                     kind: row.get(13)?,
                     parent: row.get(14)?,
                     signature: row.get(15)?,
-                    start_line: i64_to_usize(row.get(16)?),
-                    end_line: i64_to_usize(row.get(17)?),
-                    start_byte: i64_to_usize(row.get(18)?),
-                    end_byte: i64_to_usize(row.get(19)?),
+                    start_line: i64_to_usize(row.get(16)?)?,
+                    end_line: i64_to_usize(row.get(17)?)?,
+                    start_byte: i64_to_usize(row.get(18)?)?,
+                    end_byte: i64_to_usize(row.get(19)?)?,
                 };
                 Ok((seed_index, import_rank, target_file, symbol))
             },
@@ -2791,7 +2794,9 @@ impl ReadSession {
         let rows = stmt.query_map(params![input], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
-                row.get::<_, Option<i64>>(1)?.map(i64_to_usize),
+                row.get::<_, Option<i64>>(1)?
+                    .map(i64_to_usize)
+                    .transpose()?,
             ))
         })?;
         let end_lines = rows.collect::<std::result::Result<HashMap<_, _>, _>>()?;
@@ -2843,16 +2848,16 @@ impl ReadSession {
              ORDER BY requested.request_index, chunks.start_line",
         )?;
         let rows = stmt.query_map(params![input], |row| {
-            let request_index = i64_to_usize(row.get(0)?);
+            let request_index = i64_to_usize(row.get(0)?)?;
             let chunk = ChunkRecord {
                 id: row.get(1)?,
                 file_id: row.get(2)?,
                 content: row.get(3)?,
-                start_line: i64_to_usize(row.get(4)?),
-                end_line: i64_to_usize(row.get(5)?),
-                start_byte: i64_to_usize(row.get(6)?),
-                end_byte: i64_to_usize(row.get(7)?),
-                token_count: i64_to_usize(row.get(8)?),
+                start_line: i64_to_usize(row.get(4)?)?,
+                end_line: i64_to_usize(row.get(5)?)?,
+                start_byte: i64_to_usize(row.get(6)?)?,
+                end_byte: i64_to_usize(row.get(7)?)?,
+                token_count: i64_to_usize(row.get(8)?)?,
             };
             Ok((request_index, chunk))
         })?;
@@ -2921,7 +2926,7 @@ impl ReadSession {
                  ORDER BY kind",
         )?;
         let rows = stmt.query_map(params![file_id, name, kind], |row| {
-            Ok((row.get(0)?, i64_to_usize(row.get(1)?)))
+            Ok((row.get(0)?, i64_to_usize(row.get(1)?)?))
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
@@ -3045,7 +3050,7 @@ impl ReadSession {
              ORDER BY requested.request_index",
         )?;
         let rows = stmt.query_map(params![input], |row| {
-            let request_index = i64_to_usize(row.get(0)?);
+            let request_index = i64_to_usize(row.get(0)?)?;
             let symbol = SymbolRecord {
                 id: row.get(1)?,
                 file_id: row.get(2)?,
@@ -3053,10 +3058,10 @@ impl ReadSession {
                 kind: row.get(4)?,
                 parent: row.get(5)?,
                 signature: row.get(6)?,
-                start_line: i64_to_usize(row.get(7)?),
-                end_line: i64_to_usize(row.get(8)?),
-                start_byte: i64_to_usize(row.get(9)?),
-                end_byte: i64_to_usize(row.get(10)?),
+                start_line: i64_to_usize(row.get(7)?)?,
+                end_line: i64_to_usize(row.get(8)?)?,
+                start_byte: i64_to_usize(row.get(9)?)?,
+                end_byte: i64_to_usize(row.get(10)?)?,
             };
             Ok((request_index, symbol))
         })?;
@@ -3118,7 +3123,7 @@ impl ReadSession {
             .query_row(
                 "SELECT COUNT(*) FROM imports WHERE file_id = ?1",
                 params![file_id],
-                |row| Ok(i64_to_usize(row.get(0)?)),
+                |row| i64_to_usize(row.get(0)?),
             )
             .map_err(Into::into)
     }
@@ -3263,7 +3268,7 @@ impl ReadSession {
             params![query, limit],
             |row| row.get::<_, i64>(0),
         )?;
-        Ok(i64_to_usize(count))
+        Ok(i64_to_usize(count)?)
     }
 
     pub fn search_symbols(
@@ -3347,11 +3352,11 @@ impl ReadSession {
              ORDER BY requested.request_index, f.path, s.start_byte, s.id",
         )?;
         let rows = stmt.query_map(params![input, limit], |row| {
-            let request_index = i64_to_usize(row.get(0)?);
+            let request_index = i64_to_usize(row.get(0)?)?;
             let hit = SymbolHit {
                 path: row.get(1)?,
                 content_hash: row.get(2)?,
-                generation: i64_to_u64(row.get(3)?),
+                generation: i64_to_u64(row.get(3)?)?,
                 symbol: SymbolRecord {
                     id: row.get(4)?,
                     file_id: row.get(5)?,
@@ -3359,10 +3364,10 @@ impl ReadSession {
                     kind: row.get(7)?,
                     parent: row.get(8)?,
                     signature: row.get(9)?,
-                    start_line: i64_to_usize(row.get(10)?),
-                    end_line: i64_to_usize(row.get(11)?),
-                    start_byte: i64_to_usize(row.get(12)?),
-                    end_byte: i64_to_usize(row.get(13)?),
+                    start_line: i64_to_usize(row.get(10)?)?,
+                    end_line: i64_to_usize(row.get(11)?)?,
+                    start_byte: i64_to_usize(row.get(12)?)?,
+                    end_byte: i64_to_usize(row.get(13)?)?,
                 },
             };
             Ok((request_index, hit))
@@ -3425,30 +3430,31 @@ impl ReadSession {
     }
 
     pub fn counts(&self) -> Result<StorageCounts> {
-        let files = i64_to_usize(
-            self.conn
-                .query_row("SELECT count(*) FROM files", [], |row| row.get(0))?,
-        );
+        let files = i64_to_usize(self.conn.query_row(
+            "SELECT count(*) FROM files",
+            [],
+            |row| row.get(0),
+        )?)?;
         let chunks = i64_to_usize(self.conn.query_row(
             "SELECT count(*) FROM chunks",
             [],
             |row| row.get(0),
-        )?);
+        )?)?;
         let symbols = i64_to_usize(self.conn.query_row(
             "SELECT count(*) FROM symbols",
             [],
             |row| row.get(0),
-        )?);
+        )?)?;
         let source_bytes = i64_to_u64(self.conn.query_row(
             "SELECT coalesce(sum(size_bytes), 0) FROM files",
             [],
             |row| row.get::<_, i64>(0),
-        )?);
+        )?)?;
         let mut stmt = self.conn.prepare_cached(
             "SELECT language, count(*) FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY language",
         )?;
         let languages = stmt
-            .query_map([], |row| Ok((row.get(0)?, i64_to_usize(row.get(1)?))))?
+            .query_map([], |row| Ok((row.get(0)?, i64_to_usize(row.get(1)?)?)))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(StorageCounts {
             files,
@@ -3489,7 +3495,7 @@ fn verify_baseline(
     current_generation: i64,
     current_config: &str,
 ) -> Result<()> {
-    let actual = i64_to_u64(current_generation);
+    let actual = i64_to_u64(current_generation)?;
     if actual != baseline.repository_generation || current_config != baseline.config_hash {
         return Err(Error::StaleReconciliation {
             expected: baseline.repository_generation,
@@ -3671,7 +3677,7 @@ fn count_table_rows(conn: &Connection, table: &str) -> Result<usize> {
         return Ok(0);
     }
     let sql = format!("SELECT count(*) FROM {table}");
-    Ok(i64_to_usize(conn.query_row(&sql, [], |row| row.get(0))?))
+    Ok(i64_to_usize(conn.query_row(&sql, [], |row| row.get(0))?)?)
 }
 
 fn repository_identity(path: &Path) -> String {
@@ -3708,16 +3714,16 @@ fn u128_to_i64(value: u128) -> Result<i64> {
         .map_err(|_| Error::InternalFailure("value exceeds storage integer range".into()))
 }
 
-fn i64_to_u64(value: i64) -> u64 {
-    u64::try_from(value).unwrap_or(0)
+fn i64_to_u64(value: i64) -> rusqlite::Result<u64> {
+    u64::try_from(value).map_err(|_| rusqlite::types::FromSqlError::OutOfRange(value).into())
 }
 
-fn i64_to_usize(value: i64) -> usize {
-    usize::try_from(value).unwrap_or(0)
+fn i64_to_usize(value: i64) -> rusqlite::Result<usize> {
+    usize::try_from(value).map_err(|_| rusqlite::types::FromSqlError::OutOfRange(value).into())
 }
 
-fn i64_to_u128(value: i64) -> u128 {
-    u128::try_from(value).unwrap_or(0)
+fn i64_to_u128(value: i64) -> rusqlite::Result<u128> {
+    u128::try_from(value).map_err(|_| rusqlite::types::FromSqlError::OutOfRange(value).into())
 }
 
 fn role_to_str(role: ReferenceRole) -> &'static str {

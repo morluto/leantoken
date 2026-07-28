@@ -2224,6 +2224,27 @@ async fn context_options_enforce_the_final_serialized_service_response_budget() 
             .map(|fragment| (&fragment.path, fragment.start_line, fragment.end_line))
             .collect::<Vec<_>>()
     );
+
+    let mut underfilled = context_limit_request(4_000);
+    underfilled.task = "perform the requested audit".into();
+    underfilled.focus_paths = vec!["src/lib.rs".into()];
+    underfilled.focus_symbols = vec!["greet".into()];
+    underfilled.strict_focus_paths = true;
+    underfilled.minimum_fragments_per_focus_path = Some(2);
+    underfilled.plan_only = true;
+    let underfilled = services
+        .context(underfilled)
+        .await
+        .expect("underfilled focus plan");
+    assert!(!underfilled.coverage.focus_path_coverage[0].satisfied);
+    assert!(
+        underfilled.warnings.iter().any(|warning| {
+            warning.contains("generated 1 distinct bounded candidates")
+                && warning.contains("requested minimum 2")
+        }),
+        "unexpected underfilled warnings: {:#?}",
+        underfilled.warnings
+    );
 }
 
 #[tokio::test]
@@ -2943,6 +2964,96 @@ async fn strict_focus_paths_generate_candidates_before_global_top_n_truncation()
             limit: 8
         }
     ));
+}
+
+#[tokio::test]
+async fn exact_focus_symbols_satisfy_multi_fragment_minimum_after_reconciliation() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir_all(root.path().join("focus")).expect("focus directory");
+    let source_path = root.path().join("focus/owner.rs");
+    std::fs::write(&source_path, "pub fn placeholder() {}\n").expect("initial source");
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("initial index");
+
+    let focus_symbols = ["focus_alpha", "focus_beta", "focus_gamma"];
+    let mut updated_source = String::new();
+    for symbol in focus_symbols {
+        updated_source.push_str(&format!("pub fn {symbol}() -> usize {{\n"));
+        for index in 0..80 {
+            updated_source.push_str(&format!("    let value_{index:02} = {index}usize;\n"));
+        }
+        updated_source.push_str("    value_00\n}\n\n");
+    }
+    std::fs::write(&source_path, updated_source).expect("updated source");
+
+    let request = {
+        let mut request = context_limit_request(4_000);
+        request.task = "perform the requested audit".into();
+        request.focus_paths = vec!["focus/owner.rs".into()];
+        request.focus_symbols = focus_symbols.into_iter().map(str::to_owned).collect();
+        request.strict_focus_paths = true;
+        request.minimum_fragments_per_focus_path = Some(2);
+        request.max_fragments = Some(3);
+        request
+    };
+    let mut plan_request = request.clone();
+    plan_request.plan_only = true;
+    let preview = services
+        .context_with_consistency_cancellable(
+            plan_request,
+            IndexConsistency::ReconcileWorkingTree,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("reconciled focus plan");
+    let plan = preview.plan.expect("plan");
+
+    assert!(plan.focus_coverage[0].satisfied);
+    assert!(plan.focus_coverage[0].candidate_fragments >= 2);
+    assert!(
+        plan.candidates
+            .iter()
+            .filter(|candidate| candidate.representation == "focus_symbol")
+            .count()
+            >= 2
+    );
+
+    let first = services
+        .context(request.clone())
+        .await
+        .expect("focused context");
+    let second = services
+        .context(request)
+        .await
+        .expect("deterministic focused context");
+    assert!(first.coverage.focus_path_coverage[0].satisfied);
+    assert!(first.coverage.focus_path_coverage[0].selected_fragments >= 2);
+    assert!(first.meta.source_tokens <= 4_000);
+    assert_eq!(
+        first
+            .fragments
+            .iter()
+            .map(|fragment| (
+                fragment.path.as_str(),
+                fragment.start_line,
+                fragment.end_line,
+                fragment.content_hash.as_str(),
+            ))
+            .collect::<Vec<_>>(),
+        second
+            .fragments
+            .iter()
+            .map(|fragment| (
+                fragment.path.as_str(),
+                fragment.start_line,
+                fragment.end_line,
+                fragment.content_hash.as_str(),
+            ))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]

@@ -92,6 +92,36 @@ fn storage_reopen_uses_existing_index() {
 }
 
 #[test]
+fn negative_persisted_unsigned_values_fail_decoding() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("index.sqlite");
+    let storage = Storage::open(&db).expect("open");
+    storage
+        .full_reconcile(
+            "hash",
+            vec![sample_file("src/lib.rs", "fn corrupted() {}\n")],
+        )
+        .expect("reconcile");
+
+    let connection = rusqlite::Connection::open(&db).expect("raw connection");
+    connection
+        .execute(
+            "UPDATE files SET size_bytes = -1 WHERE path = 'src/lib.rs'",
+            [],
+        )
+        .expect("inject invalid persisted value");
+    drop(connection);
+
+    let error = storage
+        .find_file("src/lib.rs")
+        .expect_err("negative unsigned field must not be coerced to zero");
+    assert!(
+        error.to_string().contains("Integer -1 out of range"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn pooled_read_sessions_serve_concurrent_snapshot_queries() {
     let dir = tempfile::tempdir().expect("tempdir");
     let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");

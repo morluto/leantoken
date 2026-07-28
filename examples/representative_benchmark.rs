@@ -135,6 +135,8 @@ struct TaskSpec {
     id: String,
     prompt: String,
     #[serde(default)]
+    task_family: Option<String>,
+    #[serde(default)]
     languages: Vec<String>,
     #[serde(default)]
     task_shapes: Vec<String>,
@@ -233,6 +235,7 @@ struct Report {
     #[serde(skip_serializing_if = "Option::is_none")]
     concept_coverage: Option<ConceptCoverageDecision>,
     aggregate: AggregateReport,
+    task_families: BTreeMap<String, AggregateReport>,
     corpora: Vec<CorpusReport>,
     limitations: Vec<&'static str>,
 }
@@ -265,6 +268,14 @@ struct AggregateReport {
     scripted_baseline_total_json_tokens: usize,
     leantoken_source_tokens: usize,
     leantoken_total_json_tokens: usize,
+    warm_context_median_ms: f64,
+    warm_context_p95_ms: f64,
+    cold_index_ms: f64,
+    database_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    process_rss_bytes: Option<u64>,
+    #[serde(skip)]
+    warm_context_ms_samples: Vec<f64>,
     source_savings_against_oracle_fraction: f64,
     total_json_savings_against_scripted_fraction: f64,
     known_fragments_resent: usize,
@@ -309,6 +320,8 @@ struct CorpusReport {
     index_warnings: Vec<String>,
     cold_index_ms: f64,
     database_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    process_rss_bytes: Option<u64>,
     tasks: Vec<TaskReport>,
 }
 
@@ -316,6 +329,7 @@ struct CorpusReport {
 struct TaskReport {
     id: String,
     prompt: String,
+    task_family: String,
     languages: Vec<String>,
     task_shapes: Vec<String>,
     token_budget: usize,
@@ -615,6 +629,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let scratch = tempfile::tempdir()?;
     let mut corpora = Vec::new();
     let mut aggregate = AggregateReport::default();
+    let mut task_families = BTreeMap::<String, AggregateReport>::new();
     for corpus in manifest.corpora {
         let root = args.repos_root.join(&corpus.directory);
         verify_revision(&root, &corpus.base_revision)?;
@@ -625,7 +640,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let started = Instant::now();
         let indexed = services.index(true).await?;
         let cold_index_ms = elapsed_ms(started);
-        let status = services.status().await?;
         let mut tasks = Vec::new();
         for task in corpus.tasks {
             let labels = concept_labels
@@ -648,8 +662,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
             )
             .await?;
             accumulate(&mut aggregate, &report);
+            accumulate(
+                task_families.entry(report.task_family.clone()).or_default(),
+                &report,
+            );
             tasks.push(report);
         }
+        let status = services.status().await?;
+        let database_bytes = database_footprint(&database_path)?;
+        aggregate.cold_index_ms += cold_index_ms;
+        aggregate.database_bytes = aggregate.database_bytes.saturating_add(database_bytes);
+        aggregate.process_rss_bytes = match (aggregate.process_rss_bytes, status.process_rss_bytes)
+        {
+            (Some(left), Some(right)) => Some(left.max(right)),
+            (value @ Some(_), None) | (None, value @ Some(_)) => value,
+            (None, None) => None,
+        };
         corpora.push(CorpusReport {
             name: corpus.name,
             url: corpus.url,
@@ -666,41 +694,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
             indexed_chunks: status.chunk_count,
             index_warnings: indexed.warnings,
             cold_index_ms,
-            database_bytes: database_footprint(&database_path)?,
+            database_bytes,
+            process_rss_bytes: status.process_rss_bytes,
             tasks,
         });
     }
     aggregate.corpus_count = corpora.len();
-    aggregate.relevant_file_recall =
-        ratio(aggregate.relevant_files_found, aggregate.relevant_files);
-    aggregate.candidate_relevant_file_recall = ratio(
-        aggregate.candidate_relevant_files_found,
-        aggregate.relevant_files,
-    );
-    aggregate.labeled_file_precision =
-        ratio(aggregate.relevant_files_found, aggregate.returned_files);
-    aggregate.line_anchor_recall =
-        optional_ratio(aggregate.line_anchors_found, aggregate.line_anchors);
-    aggregate.orientation_capsule_path_recall = optional_ratio(
-        aggregate.orientation_capsule_relevant_paths,
-        aggregate.orientation_capsule_paths,
-    );
-    aggregate.candidate_concept_recall =
-        optional_ratio(aggregate.candidate_concepts_found, aggregate.concepts);
-    aggregate.selected_concept_recall =
-        optional_ratio(aggregate.selected_concepts_found, aggregate.concepts);
-    aggregate.concept_selection_retention = optional_ratio(
-        aggregate.selected_concepts_found,
-        aggregate.candidate_concepts_found,
-    );
-    aggregate.source_savings_against_oracle_fraction = savings(
-        aggregate.oracle_source_tokens,
-        aggregate.leantoken_source_tokens,
-    );
-    aggregate.total_json_savings_against_scripted_fraction = savings(
-        aggregate.scripted_baseline_total_json_tokens,
-        aggregate.leantoken_total_json_tokens,
-    );
+    finalize_aggregate(&mut aggregate);
+    for family in task_families.values_mut() {
+        finalize_aggregate(family);
+    }
     if let Some(labels) = &concept_labels
         && !labels.tasks.is_empty()
     {
@@ -752,6 +755,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         },
         concept_coverage,
         aggregate,
+        task_families,
         corpora,
         limitations: benchmark_limitations(
             &manifest.dataset_kind,
@@ -784,6 +788,19 @@ fn default_dataset_kind() -> String {
 }
 
 fn validate_manifest(manifest: &Manifest) -> Result<(), Box<dyn Error>> {
+    if manifest.schema_version >= 5 {
+        for task in manifest.corpora.iter().flat_map(|corpus| &corpus.tasks) {
+            if task
+                .task_family
+                .as_deref()
+                .is_none_or(|family| family.trim().is_empty())
+            {
+                return Err(
+                    format!("manifest schema v5+ task {} requires task_family", task.id).into(),
+                );
+            }
+        }
+    }
     if manifest.dataset_kind == "external_retrieval_corpus" {
         if manifest.schema_version < 4 {
             return Err("external retrieval corpora require manifest schema v4".into());
@@ -2977,10 +2994,19 @@ async fn run_task(
     let owner_known_hash_omission_visible = owner_evidence
         .as_ref()
         .is_some_and(|evidence| known_set.contains(&evidence.report.content_hash));
+    let task_family = task
+        .task_family
+        .as_deref()
+        .map(str::trim)
+        .filter(|family| !family.is_empty())
+        .map(str::to_owned)
+        .or_else(|| task.task_shapes.first().cloned())
+        .unwrap_or_else(|| "unclassified".into());
 
     Ok(TaskReport {
         id: task.id,
         prompt: task.prompt,
+        task_family,
         languages: task.languages,
         task_shapes: task.task_shapes,
         token_budget: task.token_budget,
@@ -3468,6 +3494,9 @@ fn accumulate(aggregate: &mut AggregateReport, task: &TaskReport) {
     aggregate.scripted_baseline_total_json_tokens += task.scripted_baseline_total_json_tokens;
     aggregate.leantoken_source_tokens += task.leantoken_source_tokens;
     aggregate.leantoken_total_json_tokens += task.leantoken_total_json_tokens;
+    aggregate
+        .warm_context_ms_samples
+        .extend_from_slice(&task.warm_context_ms_samples);
     aggregate.known_fragments_resent += task.known_fragments_resent;
     aggregate.dead_end_fragments += task.dead_end_fragments;
     aggregate.dead_end_source_tokens += task.dead_end_source_tokens;
@@ -3490,6 +3519,41 @@ fn accumulate(aggregate: &mut AggregateReport, task: &TaskReport) {
         aggregate.candidate_concepts_found += coverage.candidate_concepts_found;
         aggregate.selected_concepts_found += coverage.selected_concepts_found;
     }
+}
+
+fn finalize_aggregate(aggregate: &mut AggregateReport) {
+    aggregate.warm_context_median_ms = percentile(&aggregate.warm_context_ms_samples, 0.50);
+    aggregate.warm_context_p95_ms = percentile(&aggregate.warm_context_ms_samples, 0.95);
+    aggregate.relevant_file_recall =
+        ratio(aggregate.relevant_files_found, aggregate.relevant_files);
+    aggregate.candidate_relevant_file_recall = ratio(
+        aggregate.candidate_relevant_files_found,
+        aggregate.relevant_files,
+    );
+    aggregate.labeled_file_precision =
+        ratio(aggregate.relevant_files_found, aggregate.returned_files);
+    aggregate.line_anchor_recall =
+        optional_ratio(aggregate.line_anchors_found, aggregate.line_anchors);
+    aggregate.orientation_capsule_path_recall = optional_ratio(
+        aggregate.orientation_capsule_relevant_paths,
+        aggregate.orientation_capsule_paths,
+    );
+    aggregate.candidate_concept_recall =
+        optional_ratio(aggregate.candidate_concepts_found, aggregate.concepts);
+    aggregate.selected_concept_recall =
+        optional_ratio(aggregate.selected_concepts_found, aggregate.concepts);
+    aggregate.concept_selection_retention = optional_ratio(
+        aggregate.selected_concepts_found,
+        aggregate.candidate_concepts_found,
+    );
+    aggregate.source_savings_against_oracle_fraction = savings(
+        aggregate.oracle_source_tokens,
+        aggregate.leantoken_source_tokens,
+    );
+    aggregate.total_json_savings_against_scripted_fraction = savings(
+        aggregate.scripted_baseline_total_json_tokens,
+        aggregate.leantoken_total_json_tokens,
+    );
 }
 
 #[cfg(test)]
@@ -4143,6 +4207,21 @@ mod tests {
                 .to_string()
                 .contains("language and task-shape strata")
         );
+    }
+
+    #[test]
+    fn schema_five_requires_explicit_task_families() {
+        let mut manifest = external_manifest();
+        manifest.schema_version = 5;
+        assert!(
+            validate_manifest(&manifest)
+                .expect_err("schema five without task family")
+                .to_string()
+                .contains("requires task_family")
+        );
+
+        manifest.corpora[0].tasks[0].task_family = Some("failure_trace_owner".into());
+        validate_manifest(&manifest).expect("schema five with explicit task family");
     }
 
     #[test]

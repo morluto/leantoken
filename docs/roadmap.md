@@ -3,8 +3,32 @@
 LeanToken's roadmap is evidence-driven. A feature should reduce wasted model
 reads or improve relevant-range recall before it expands the MCP tool surface.
 
+## Promotion order
+
+Work proceeds in this order:
+
+1. reliability, storage integrity, and explicit-constraint correctness;
+2. retrieval changes that pass the frozen promotion gate globally and for every
+   declared task family;
+3. productizing existing bounded workflows and diagnostics;
+4. persistent cross-process evidence reuse and repository/workspace
+   orientation; and
+5. optional experimental lanes only after separate frozen evidence.
+
+Daemon transport, embeddings, LSP-derived graphs, and provider-cache
+integration do not enter the default path merely because they are useful in
+other products. They remain experiments until they demonstrate task success or
+material cost improvement without recall, determinism, freshness, or resource
+regressions.
+
 ## Retrieval quality
 
+- Require candidate/returned-file and line-anchor recall, paired task success,
+  complete first-response and two-turn provider input, follow-up native reads,
+  tool calls, dead-end and repeated evidence, warm p50/p95 latency, index
+  footprint, and available process RSS in promotion scorecards. The
+  machine-readable gate rejects global or task-family recall regressions,
+  bounds resource regressions, and emits its receipt even on failure.
 - Keep the eight future-fix tasks and the four prospective open-issue tasks as
   visible development sets. Create a new unseen holdout before making
   generalization claims; once used for tuning, a dataset is no longer blind.
@@ -201,6 +225,9 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 
 ## Reliability
 
+- Persisted non-negative counters now fail decoding on negative SQLite values
+  instead of silently becoming zero. A poisoned reconciliation coordinator
+  returns a typed internal failure instead of panicking.
 - Keep exercising concurrent reads during reconciliation, queue overflow,
   rename ambiguity, large bounded requests, cancellation, EOF, corrupt-cache
   recovery, generation consistency, and Windows startup/shutdown in CI.
@@ -212,6 +239,11 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 Editing, command execution, persistent sessions, subagents, model routing,
 embeddings, remote indexing, and a frontend are not planned for the retrieval
 MVP. They should not be added merely to match a broader agent platform.
+
+A long-running daemon, LSP graph ingestion, and provider-owned cache control are
+also outside the default retrieval path. Cross-process receipts may share
+generation-bound evidence state without turning LeanToken into a session host
+or model gateway.
 
 If editing is ever added, it needs expected hashes, unique replacements,
 dry-run support, atomic writes, and synchronous index invalidation. If agent
