@@ -46,7 +46,8 @@ the official Rust MCP SDK.
 SQLite stores repository metadata, files, text chunks, definitions, syntactic
 references, imports, reverse import candidates, an ordinary relational path
 projection, represented-source response comparisons, and cumulative observed
-service accounting. External-content
+service accounting. It also stores bounded retrieval receipt headers and
+evidence metadata for cross-process suppression. External-content
 FTS5 tables provide word and trigram indexes over chunks.
 
 Savings data uses additive tables and file columns without advancing the core
@@ -90,6 +91,42 @@ cross-tokenizer, reset, or future counters. Snapshot input and output are each
 bounded to 32 KiB; current rows remain bounded by eight operations and failures
 by the finite category matrix. These properties make the counters persisted
 lower bounds rather than an audit ledger.
+
+Retrieval receipts persist evidence metadata, never task/query text or raw
+source. An opaque ID combines a random 128-bit database-incarnation namespace
+with a SQLite `AUTOINCREMENT` row, so concurrent processes, cache recreation,
+and different repository databases cannot reuse an ID. Each evaluate loads the
+requested header and at most 2,048 ordered evidence rows, computes the same
+exact/overlap/near-duplicate decisions as the former process-local oracle, and
+appends only returned evidence. Header lookup, evidence lookup, expiry pruning,
+and LRU selection have checked primary-key/range-index query plans.
+
+Receipt evaluation uses one `IMMEDIATE` transaction for lookup, generation and
+clock validation, decisions, append, counters, expiry, and quota eviction.
+The process-local writer mutex and SQLite's database writer lock therefore make
+two processes using one receipt observe a serial order: a duplicate concurrent
+call is returned once and suppressed by the follower, and distinct appends
+cannot lose one another. A receipt remains bound to the generation of the read
+snapshot that produced it even if a newer generation publishes before the
+receipt transaction. A later request on the new generation fails with
+`StaleReceipt`; it never silently creates a new session.
+
+The hard receipt bounds are 128 headers, 64 KiB of logical header data, 2,048
+evidence rows and 1 MiB of logical evidence per receipt, and 16,384 evidence
+rows or 8 MiB of logical evidence globally. Logical bytes include persisted
+field values and fixed-width scalar fields, not SQLite page overhead. A
+monotonic database access sequence makes LRU ties deterministic. Appending new
+evidence refreshes access immediately; an access that appends nothing refreshes
+LRU and the sliding 24-hour wall-clock expiry at most once per 60 seconds,
+bounding write amplification without allowing an actively reused receipt to
+expire. Expiry and observed clock rollback fail closed. Lazy pruning runs
+inside receipt evaluation. Capacity eviction and expiry deliberately become
+`UnknownReceipt`, while generation-stale headers remain available until expiry
+or capacity pressure so callers normally receive the more specific
+`StaleReceipt`. Whole-cache prune removes receipts with the same disposable
+database. One operation can inspect at most 128 headers and 16,384 cascading
+evidence rows during worst-case quota cleanup; there is no filesystem scan,
+subprocess, network access, or concurrency fan-out.
 
 LeanToken does not serialize a separate in-memory index snapshot. In this
 document, a request snapshot means a SQLite read transaction pinned to one

@@ -352,13 +352,21 @@ optional output schemas; repeating full response DTOs in every `tools/list`
 result costs model context without changing tool behavior.
 
 Search, outline, read, and context responses return an opaque
-`meta.receipt_id`. Within one live MCP or programmatic service session, pass
-that ID to a later retrieval to suppress exact content and overlapping source
-ranges already returned. Near-duplicate evidence remains visible and increments
-`meta.receipt_near_duplicates`. Receipts are bounded, server-managed, and tied
-to one repository generation; unknown, evicted, and stale receipts fail
-explicitly. Context `fragment_hashes` and `known_hashes` remain available for
-stateless compatibility.
+`meta.receipt_id`. Pass that ID to a later retrieval to suppress exact content
+and overlapping source ranges already returned. Receipt metadata persists in
+the repository cache, so the same ID works across MCP processes and
+programmatic service restarts while that cache, generation, and the sliding
+24-hour lifetime remain valid. Near-duplicate evidence remains visible and increments
+`meta.receipt_near_duplicates`.
+
+Receipts are bounded, server-managed, and tied to one repository generation.
+An old-generation receipt returns `stale_receipt`; malformed, expired,
+capacity-evicted, cross-cache, and unknown IDs return `unknown_receipt`.
+Deleting/pruning the repository cache also deletes its receipts. Receipts store
+only repository identity, generation, paths, line ranges, content hashes, and
+semantic signatures—not task/query text or raw source. Context
+`fragment_hashes` and `known_hashes` remain available for stateless
+compatibility.
 
 Prefer LeanToken over shell discovery and whole-file reads. For a broad coding,
 debugging, review, or architecture task, start with `leantoken.context`. Use the

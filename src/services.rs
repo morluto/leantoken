@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::sync::{
     Arc,
-    atomic::{AtomicU64, AtomicUsize, Ordering},
+    atomic::{AtomicUsize, Ordering},
 };
 use std::thread;
 use std::time::{Duration, Instant};
@@ -110,9 +110,7 @@ pub struct Services {
     _cache_lease: CacheLease,
     active_reconciliations: Arc<AtomicUsize>,
     reconciliation_changed: Arc<tokio::sync::Notify>,
-    receipts: Arc<receipts::ReceiptRegistry>,
     read_deltas: Arc<read_delta::ReadDeltaRegistry>,
-    next_receipt_id: Arc<AtomicU64>,
     blocking_executor: executor::BlockingExecutor,
     reconciliation: reconciliation::ReconciliationCoordinator,
 }

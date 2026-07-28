@@ -1,5 +1,7 @@
 use super::*;
 
+mod receipts;
+
 #[test]
 fn writer_bounds_recycled_wal_size() {
     let root = tempfile::tempdir().expect("root");

@@ -241,6 +241,74 @@ INSERT INTO symbol_refs_fts_trigram(symbol_refs_fts_trigram) VALUES('rebuild');
 UPDATE meta SET schema_version = 6 WHERE id = 1;
 "#;
 
+const RETRIEVAL_RECEIPTS_SQL: &str = r#"
+CREATE TABLE retrieval_receipt_usage (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    namespace TEXT NOT NULL CHECK (length(namespace) = 32),
+    next_access_sequence INTEGER NOT NULL DEFAULT 0 CHECK (next_access_sequence >= 0),
+    receipt_count INTEGER NOT NULL DEFAULT 0 CHECK (receipt_count >= 0),
+    receipt_bytes INTEGER NOT NULL DEFAULT 0 CHECK (receipt_bytes >= 0),
+    evidence_count INTEGER NOT NULL DEFAULT 0 CHECK (evidence_count >= 0),
+    evidence_bytes INTEGER NOT NULL DEFAULT 0 CHECK (evidence_bytes >= 0)
+);
+
+INSERT INTO retrieval_receipt_usage(id, namespace)
+VALUES (1, lower(hex(randomblob(16))));
+
+CREATE TABLE retrieval_receipts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repository_identity TEXT NOT NULL,
+    repository_generation INTEGER NOT NULL CHECK (repository_generation >= 0),
+    created_unix_millis INTEGER NOT NULL CHECK (created_unix_millis >= 0),
+    last_access_unix_millis INTEGER NOT NULL CHECK (last_access_unix_millis >= 0),
+    expires_unix_millis INTEGER NOT NULL CHECK (expires_unix_millis >= 0),
+    access_sequence INTEGER NOT NULL CHECK (access_sequence > 0),
+    logical_bytes INTEGER NOT NULL CHECK (logical_bytes >= 0),
+    evidence_count INTEGER NOT NULL DEFAULT 0 CHECK (evidence_count >= 0),
+    evidence_bytes INTEGER NOT NULL DEFAULT 0 CHECK (evidence_bytes >= 0)
+);
+
+CREATE INDEX retrieval_receipts_expiry_idx
+ON retrieval_receipts(expires_unix_millis, id);
+CREATE INDEX retrieval_receipts_lru_idx
+ON retrieval_receipts(access_sequence, id);
+
+CREATE TABLE retrieval_receipt_evidence (
+    receipt_id INTEGER NOT NULL
+        REFERENCES retrieval_receipts(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    path TEXT NOT NULL,
+    start_line INTEGER NOT NULL CHECK (start_line >= 0),
+    end_line INTEGER NOT NULL CHECK (end_line >= start_line),
+    content_hash TEXT NOT NULL,
+    semantic_signature INTEGER,
+    logical_bytes INTEGER NOT NULL CHECK (logical_bytes >= 0),
+    PRIMARY KEY(receipt_id, ordinal)
+);
+
+CREATE TRIGGER retrieval_receipts_ai
+AFTER INSERT ON retrieval_receipts
+BEGIN
+    UPDATE retrieval_receipt_usage
+    SET receipt_count = receipt_count + 1,
+        receipt_bytes = receipt_bytes + new.logical_bytes
+    WHERE id = 1;
+END;
+
+CREATE TRIGGER retrieval_receipts_ad
+AFTER DELETE ON retrieval_receipts
+BEGIN
+    UPDATE retrieval_receipt_usage
+    SET receipt_count = receipt_count - 1,
+        receipt_bytes = receipt_bytes - old.logical_bytes,
+        evidence_count = evidence_count - old.evidence_count,
+        evidence_bytes = evidence_bytes - old.evidence_bytes
+    WHERE id = 1;
+END;
+
+UPDATE meta SET schema_version = 7 WHERE id = 1;
+"#;
+
 const TOKEN_SAVINGS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS token_savings (
     tokenizer TEXT NOT NULL,
@@ -286,7 +354,8 @@ const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(PATH_PROJECTION_SQL),
     M::up(CACHE_ACCESS_SQL),
     M::up(STRUCTURAL_SEARCH_SQL),
+    M::up(RETRIEVAL_RECEIPTS_SQL).foreign_key_check(),
 ];
-pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 7;
+pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 8;
 const _: () = assert!(MIGRATIONS_SLICE.len() == CURRENT_MIGRATION_VERSION as usize);
 const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
