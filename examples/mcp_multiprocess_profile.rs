@@ -9,12 +9,13 @@
 //! ```
 
 use std::{
+    collections::HashMap,
     error::Error,
     fs,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, Stdio},
-    sync::mpsc,
+    process::{Child, ChildStderr, ChildStdin, Stdio},
+    sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -27,15 +28,25 @@ const MAX_PROCESSES: usize = 16;
 const MAX_FIXTURE_FILES: usize = 10_000;
 const MAX_FUNCTIONS_PER_FILE: usize = 1_000;
 const MAX_WARM_ITERATIONS: usize = 1_000;
+const MAX_IDLE_SECONDS: u64 = 60;
+const MAX_POLLING_DIRECTORIES: usize = 60_000;
+const MAX_POLLING_OBSERVATION_SECONDS: u64 = 120;
+const MAX_PARITY_MISMATCH_PATHS: usize = 32;
+const WORKLOADS: [Workload; 4] = [
+    Workload::Files,
+    Workload::Search,
+    Workload::Read,
+    Workload::Context,
+];
 
 #[derive(Debug, Parser)]
-#[command(about = "Measure 1/2/4 stdio MCP processes against one cache")]
+#[command(about = "Measure 1/4/8 stdio MCP processes across cache topologies")]
 struct Args {
     /// Release-mode LeanToken executable to launch.
     #[arg(long, default_value = "target/release/leantoken")]
     binary: PathBuf,
-    /// Comma-separated process counts. Include 1 and 4 for a decision.
-    #[arg(long, default_value = "1,2,4")]
+    /// Comma-separated process counts. Include 1, 4, and 8 for a decision.
+    #[arg(long, default_value = "1,4,8")]
     process_counts: String,
     /// Deterministic Rust fixture files generated per run.
     #[arg(long, default_value_t = 200)]
@@ -46,12 +57,68 @@ struct Args {
     /// Concurrent warm query rounds per process.
     #[arg(long, default_value_t = 10)]
     warm_iterations: usize,
+    /// Idle CPU observation window after retrieval rounds.
+    #[arg(long, default_value_t = 5)]
+    idle_seconds: u64,
+    /// Empty directories used to force the bounded periodic-polling fallback.
+    #[arg(long, default_value_t = 50_001)]
+    polling_directories: usize,
+    /// CPU and reconciliation observation window for the polling fallback.
+    #[arg(long, default_value_t = 31)]
+    polling_observation_seconds: u64,
+    /// Skip the dedicated periodic-polling process probe.
+    #[arg(long)]
+    skip_polling_probe: bool,
     /// Per-operation timeout.
     #[arg(long, default_value_t = 20)]
     timeout_seconds: u64,
     /// Write pretty JSON here in addition to stdout.
     #[arg(long)]
     output: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RunConfig<'a> {
+    binary: &'a Path,
+    files: usize,
+    functions_per_file: usize,
+    warm_iterations: usize,
+    idle_duration: Duration,
+    timeout: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum Topology {
+    SharedCache,
+    IndependentCaches,
+}
+
+impl Topology {
+    fn run_order() -> [Self; 4] {
+        [
+            Self::SharedCache,
+            Self::IndependentCaches,
+            Self::IndependentCaches,
+            Self::SharedCache,
+        ]
+    }
+
+    fn expected_leaders(self, process_count: usize) -> usize {
+        match self {
+            Self::SharedCache => 1,
+            Self::IndependentCaches => process_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum Workload {
+    Files,
+    Search,
+    Read,
+    Context,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -62,6 +129,8 @@ struct DecisionThresholds {
     max_normalized_wal_bytes_per_query_ratio: f64,
     max_established_read_connections_per_process: usize,
     max_takeover_ms: f64,
+    max_eight_process_cpu_per_query_ratio: f64,
+    max_independent_cold_cpu_per_repository_ratio: f64,
 }
 
 impl Default for DecisionThresholds {
@@ -73,6 +142,8 @@ impl Default for DecisionThresholds {
             max_normalized_wal_bytes_per_query_ratio: 3.0,
             max_established_read_connections_per_process: 8,
             max_takeover_ms: 5_000.0,
+            max_eight_process_cpu_per_query_ratio: 2.0,
+            max_independent_cold_cpu_per_repository_ratio: 2.0,
         }
     }
 }
@@ -110,12 +181,67 @@ struct ProcessResources {
     inotify_file_descriptors: usize,
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
+struct CpuSummary {
+    cpu_milliseconds: f64,
+    wall_milliseconds: f64,
+    average_utilization_percent: f64,
+    cpu_milliseconds_per_operation: Option<f64>,
+}
+
+impl CpuSummary {
+    fn from_measurement(cpu_milliseconds: f64, wall: Duration, operations: usize) -> Self {
+        let wall_milliseconds = wall.as_secs_f64() * 1_000.0;
+        Self {
+            cpu_milliseconds,
+            wall_milliseconds,
+            average_utilization_percent: safe_ratio(cpu_milliseconds, wall_milliseconds) * 100.0,
+            cpu_milliseconds_per_operation: (operations > 0)
+                .then(|| cpu_milliseconds / operations as f64),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WorkloadMeasurement {
+    workload: Workload,
+    requests: usize,
+    complete_request: LatencySummary,
+    cpu: CpuSummary,
+    baseline_response_blake3: Vec<String>,
+    parity_checked: usize,
+    parity_mismatches: usize,
+    parity_mismatch_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WatcherObservation {
+    pid: u32,
+    backend: &'static str,
+    admission_entries: Option<usize>,
+    admission_directories: Option<usize>,
+    admission_complete: Option<bool>,
+    fallback_reason: Option<String>,
+    poll_ticks: Option<u64>,
+    changed_path_deliveries: Option<u64>,
+    full_reconciliation_deliveries: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PeriodicPollMeasurement {
+    directories_created: usize,
+    watcher: WatcherObservation,
+    reconciliations_at_ready: usize,
+    reconciliations_during_observation: usize,
+    cpu: CpuSummary,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct ProcessMeasurement {
     resources: ProcessResources,
     startup_to_ready_ms: f64,
     cold_query_ms: f64,
-    warm_query: LatencySummary,
+    watcher: WatcherObservation,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -139,8 +265,11 @@ struct TakeoverMeasurement {
 
 #[derive(Debug, Clone, Serialize)]
 struct RunMeasurement {
+    topology: Topology,
+    order_index: usize,
     process_count: usize,
-    leader_pid: u32,
+    repository_count: usize,
+    leader_pids: Vec<u32>,
     leader_lock_owners: usize,
     watcher_processes: usize,
     aggregate_rss_kib: usize,
@@ -149,15 +278,22 @@ struct RunMeasurement {
     aggregate_file_descriptors: usize,
     aggregate_estimated_read_connections: usize,
     startup_to_ready: LatencySummary,
+    cold_startup_cpu: CpuSummary,
     cold_query: LatencySummary,
     warm_query: LatencySummary,
+    workloads: Vec<WorkloadMeasurement>,
+    idle_cpu: CpuSummary,
     storage_before_queries: StorageSnapshot,
     storage_after_queries: StorageSnapshot,
     generation_publications: i64,
     expected_response_accounting_updates: usize,
     observed_response_accounting_updates: i64,
+    parity_checked: usize,
+    parity_mismatches: usize,
     processes: Vec<ProcessMeasurement>,
     takeover: Option<TakeoverMeasurement>,
+    #[serde(skip)]
+    parity_responses: HashMap<Workload, Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -168,6 +304,8 @@ struct Decision {
     startup_p95_ratio: Option<f64>,
     warm_p95_ratio: Option<f64>,
     normalized_wal_bytes_per_query_ratio: Option<f64>,
+    eight_process_cpu_per_query_ratio: Option<f64>,
+    independent_cold_cpu_per_repository_ratio: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -182,8 +320,11 @@ struct Report {
     fixture_files: usize,
     functions_per_file: usize,
     warm_iterations_per_process: usize,
+    idle_seconds: u64,
+    topology_order: [Topology; 4],
     thresholds: DecisionThresholds,
     runs: Vec<RunMeasurement>,
+    periodic_poll: Option<PeriodicPollMeasurement>,
     decision: Decision,
     observation_limits: Vec<&'static str>,
 }
@@ -192,6 +333,8 @@ struct McpProcess {
     child: Child,
     stdin: Option<ChildStdin>,
     lines: mpsc::Receiver<String>,
+    diagnostics: Arc<Mutex<Vec<String>>>,
+    diagnostics_thread: Option<std::thread::JoinHandle<()>>,
     next_id: u64,
     stopped: bool,
 }
@@ -201,12 +344,14 @@ impl McpProcess {
         let mut child = std::process::Command::new(binary)
             .args(["--root", path_str(root)?, "--database", path_str(database)?])
             .arg("mcp")
+            .env("RUST_LOG", "leantoken=info")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()?;
         let stdin = child.stdin.take().ok_or("MCP stdin unavailable")?;
         let stdout = child.stdout.take().ok_or("MCP stdout unavailable")?;
+        let stderr = child.stderr.take().ok_or("MCP stderr unavailable")?;
         let (sender, lines) = mpsc::channel();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
@@ -216,10 +361,14 @@ impl McpProcess {
                 }
             }
         });
+        let diagnostics = Arc::new(Mutex::new(Vec::new()));
+        let diagnostics_thread = collect_diagnostics(stderr, Arc::clone(&diagnostics));
         Ok(Self {
             child,
             stdin: Some(stdin),
             lines,
+            diagnostics,
+            diagnostics_thread: Some(diagnostics_thread),
             next_id: 1,
             stopped: false,
         })
@@ -255,18 +404,23 @@ impl McpProcess {
     }
 
     fn send_files_query(&mut self) -> Result<(u64, Instant), Box<dyn Error>> {
+        self.send_workload_query(Workload::Files)
+    }
+
+    fn send_workload_query(
+        &mut self,
+        workload: Workload,
+    ) -> Result<(u64, Instant), Box<dyn Error>> {
         let id = self.take_id();
         let started = Instant::now();
+        let (name, arguments) = workload_request(workload);
         self.send(&json!({
             "jsonrpc": "2.0",
             "id": id,
             "method": "tools/call",
             "params": {
-                "name": "files",
-                "arguments": {
-                    "operation": {"kind": "tree"},
-                    "max_results": 10
-                }
+                "name": name,
+                "arguments": arguments
             }
         }))?;
         Ok((id, started))
@@ -306,6 +460,7 @@ impl McpProcess {
             self.child.kill()?;
             self.child.wait()?;
             self.stopped = true;
+            self.join_diagnostics();
         }
         Ok(())
     }
@@ -319,6 +474,7 @@ impl McpProcess {
         while Instant::now() < deadline {
             if self.child.try_wait().ok().flatten().is_some() {
                 self.stopped = true;
+                self.join_diagnostics();
                 return;
             }
             std::thread::sleep(Duration::from_millis(20));
@@ -326,6 +482,7 @@ impl McpProcess {
         let _ = self.child.kill();
         let _ = self.child.wait();
         self.stopped = true;
+        self.join_diagnostics();
     }
 
     fn send(&mut self, message: &Value) -> Result<(), Box<dyn Error>> {
@@ -341,6 +498,35 @@ impl McpProcess {
         self.next_id += 1;
         id
     }
+
+    fn diagnostic_lines(&self) -> Vec<String> {
+        self.diagnostics
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn join_diagnostics(&mut self) {
+        if let Some(thread) = self.diagnostics_thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn collect_diagnostics(
+    stderr: ChildStderr,
+    diagnostics: Arc<Mutex<Vec<String>>>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if line.contains("watcher") {
+                diagnostics
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push(line);
+            }
+        }
+    })
 }
 
 impl Drop for McpProcess {
@@ -359,20 +545,39 @@ fn main() -> Result<(), Box<dyn Error>> {
     let binary = fs::canonicalize(&args.binary)?;
     let timeout = Duration::from_secs(args.timeout_seconds);
     let thresholds = DecisionThresholds::default();
-    let mut runs = Vec::with_capacity(process_counts.len());
+    let run_config = RunConfig {
+        binary: &binary,
+        files: args.files,
+        functions_per_file: args.functions_per_file,
+        warm_iterations: args.warm_iterations,
+        idle_duration: Duration::from_secs(args.idle_seconds),
+        timeout,
+    };
+    let mut runs = Vec::with_capacity(process_counts.len() * Topology::run_order().len());
     for process_count in process_counts {
-        runs.push(run_measurement(
-            &binary,
-            process_count,
-            args.files,
-            args.functions_per_file,
-            args.warm_iterations,
-            timeout,
-        )?);
+        for (order_index, topology) in Topology::run_order().into_iter().enumerate() {
+            runs.push(run_measurement(
+                &run_config,
+                topology,
+                order_index,
+                process_count,
+            )?);
+        }
     }
+    apply_cross_run_response_parity(&mut runs);
+    let periodic_poll = if args.skip_polling_probe {
+        None
+    } else {
+        Some(run_periodic_poll_probe(
+            &binary,
+            args.polling_directories,
+            Duration::from_secs(args.polling_observation_seconds),
+            timeout,
+        )?)
+    };
     let decision = make_decision(&runs, thresholds);
     let report = Report {
-        schema_version: 1,
+        schema_version: 2,
         generated_at_unix_seconds: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         platform: "linux-procfs",
         kernel_release: fs::read_to_string("/proc/sys/kernel/osrelease")?
@@ -384,8 +589,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         fixture_files: args.files,
         functions_per_file: args.functions_per_file,
         warm_iterations_per_process: args.warm_iterations,
+        idle_seconds: args.idle_seconds,
+        topology_order: Topology::run_order(),
         thresholds,
         runs,
+        periodic_poll,
         decision,
         observation_limits: vec![
             "RSS, HWM, threads, file descriptors, lock ownership, and watcher ownership require Linux /proc.",
@@ -393,6 +601,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             "SQLite does not expose cross-process statement counts; successful response-accounting updates and generation publications are reported as observed writes.",
             "Latency is host-local wall time from one orchestrator and is comparable only on the same host and release build.",
             "Startup readiness and concurrent-query responses are observed by one orchestrator in process order, so later processes can include bounded client-side receipt delay.",
+            "Watcher backend is confirmed with Linux inotify descriptors; admission counters are parsed from the product's structured tracing fields.",
+            "Complete response parity removes only JSON-RPC request ids, generated receipt_id/repository_id values, instantaneous freshness, and their derived path_and_metadata_tokens/payload_tokens/total_response_tokens accounting (the independent topology uses distinct canonical roots and concurrent freshness is a liveness observation), then compares every other observable result field across processes, workloads, topologies, and ABBA repetitions.",
         ],
     };
     let serialized = serde_json::to_string_pretty(&report)?;
@@ -420,6 +630,23 @@ fn validate_args(args: &Args) -> Result<(), Box<dyn Error>> {
     if args.warm_iterations == 0 || args.warm_iterations > MAX_WARM_ITERATIONS {
         return Err(format!("--warm-iterations must be within 1..={MAX_WARM_ITERATIONS}").into());
     }
+    if args.idle_seconds == 0 || args.idle_seconds > MAX_IDLE_SECONDS {
+        return Err(format!("--idle-seconds must be within 1..={MAX_IDLE_SECONDS}").into());
+    }
+    if args.polling_directories <= 50_000 || args.polling_directories > MAX_POLLING_DIRECTORIES {
+        return Err(format!(
+            "--polling-directories must be within 50001..={MAX_POLLING_DIRECTORIES}"
+        )
+        .into());
+    }
+    if args.polling_observation_seconds < 31
+        || args.polling_observation_seconds > MAX_POLLING_OBSERVATION_SECONDS
+    {
+        return Err(format!(
+            "--polling-observation-seconds must be within 31..={MAX_POLLING_OBSERVATION_SECONDS}"
+        )
+        .into());
+    }
     if args.timeout_seconds == 0 || args.timeout_seconds > 300 {
         return Err("--timeout-seconds must be within 1..=300".into());
     }
@@ -443,25 +670,128 @@ fn parse_process_counts(value: &str) -> Result<Vec<usize>, Box<dyn Error>> {
     Ok(counts)
 }
 
-fn run_measurement(
+fn run_periodic_poll_probe(
     binary: &Path,
-    process_count: usize,
-    files: usize,
-    functions_per_file: usize,
-    warm_iterations: usize,
+    directories: usize,
+    observation: Duration,
     timeout: Duration,
-) -> Result<RunMeasurement, Box<dyn Error>> {
+) -> Result<PeriodicPollMeasurement, Box<dyn Error>> {
     let workspace = tempfile::tempdir()?;
-    let repository = workspace.path().join("repository");
+    let repository = workspace.path().join("polling-repository");
     fs::create_dir(&repository)?;
-    write_fixture(&repository, files, functions_per_file)?;
-    let database = workspace.path().join("cache").join("index.sqlite");
+    write_fixture(&repository, 1, 1)?;
+    for index in 0..directories {
+        fs::create_dir(repository.join(format!("poll-{index:05}")))?;
+    }
+    let database = workspace.path().join("polling-cache").join("index.sqlite");
     fs::create_dir_all(database.parent().ok_or("database parent missing")?)?;
+    let mut process = McpProcess::spawn(binary, &repository, &database)?;
+    let initialize = process.send_initialize()?;
+    let response = process.receive(initialize, timeout)?;
+    if response.get("result").is_none() {
+        return Err(format!("MCP polling-probe initialize failed: {response}").into());
+    }
+    process.send_initialized()?;
+    process.wait_until_ready(timeout)?;
+    wait_for_generation(&database, 1, timeout)?;
+    let reconciliations_at_ready = count_full_reconciliations(&process.diagnostic_lines());
+    if reconciliations_at_ready != 0 {
+        return Err("periodic polling reconciled before its first interval".into());
+    }
+
+    let cpu_before = aggregate_cpu_ticks(std::slice::from_ref(&process))?;
+    let started = Instant::now();
+    std::thread::sleep(observation);
+    let cpu = CpuSummary::from_measurement(
+        cpu_milliseconds(
+            cpu_before,
+            aggregate_cpu_ticks(std::slice::from_ref(&process))?,
+        ),
+        started.elapsed(),
+        1,
+    );
+    let resources = sample_process(process.pid(), &database, true)?;
+    process.stop();
+    let lines = process.diagnostic_lines();
+    let reconciliations_during_observation =
+        count_full_reconciliations(&lines).saturating_sub(reconciliations_at_ready);
+    if reconciliations_during_observation == 0 {
+        return Err("periodic polling did not reconcile after its interval".into());
+    }
+    let watcher = parse_watcher_observation(process.pid(), &resources, &lines);
+    if watcher.backend != "periodic_polling" {
+        return Err(format!(
+            "polling probe did not select periodic polling: {:?}",
+            watcher.backend
+        )
+        .into());
+    }
+    Ok(PeriodicPollMeasurement {
+        directories_created: directories,
+        watcher,
+        reconciliations_at_ready,
+        reconciliations_during_observation,
+        cpu,
+    })
+}
+
+fn count_full_reconciliations(lines: &[String]) -> usize {
+    lines
+        .iter()
+        .filter(|line| line.contains("watcher scheduled bounded full reconciliation"))
+        .count()
+}
+
+fn run_measurement(
+    config: &RunConfig<'_>,
+    topology: Topology,
+    order_index: usize,
+    process_count: usize,
+) -> Result<RunMeasurement, Box<dyn Error>> {
+    let RunConfig {
+        binary,
+        files,
+        functions_per_file,
+        warm_iterations,
+        idle_duration,
+        timeout,
+    } = *config;
+    let workspace = tempfile::tempdir()?;
+    let mut repositories = Vec::with_capacity(process_count);
+    let mut databases = Vec::with_capacity(process_count);
+    match topology {
+        Topology::SharedCache => {
+            let repository = workspace.path().join("repository");
+            fs::create_dir(&repository)?;
+            write_fixture(&repository, files, functions_per_file)?;
+            let database = workspace.path().join("cache").join("index.sqlite");
+            fs::create_dir_all(database.parent().ok_or("database parent missing")?)?;
+            repositories.resize(process_count, repository);
+            databases.resize(process_count, database);
+        }
+        Topology::IndependentCaches => {
+            for index in 0..process_count {
+                let repository = workspace.path().join(format!("repository-{index:02}"));
+                fs::create_dir(&repository)?;
+                write_fixture(&repository, files, functions_per_file)?;
+                let database = workspace
+                    .path()
+                    .join(format!("cache-{index:02}"))
+                    .join("index.sqlite");
+                fs::create_dir_all(database.parent().ok_or("database parent missing")?)?;
+                repositories.push(repository);
+                databases.push(database);
+            }
+        }
+    }
 
     let started = Instant::now();
-    let mut processes = (0..process_count)
-        .map(|_| McpProcess::spawn(binary, &repository, &database))
+    let mut processes = repositories
+        .iter()
+        .zip(&databases)
+        .map(|(repository, database)| McpProcess::spawn(binary, repository, database))
         .collect::<Result<Vec<_>, _>>()?;
+    let startup_cpu_before = aggregate_cpu_ticks(&processes)?;
     let initialize_ids = processes
         .iter_mut()
         .map(McpProcess::send_initialize)
@@ -481,47 +811,85 @@ fn run_measurement(
         process.wait_until_ready(timeout)?;
         startup_ms.push(started.elapsed().as_secs_f64() * 1_000.0);
     }
-    wait_for_generation(&database, 1, timeout)?;
-    let storage_before_queries = storage_snapshot(&database)?;
+    for database in unique_paths(&databases) {
+        wait_for_generation(database, 1, timeout)?;
+    }
+    let cold_startup_cpu = CpuSummary::from_measurement(
+        cpu_milliseconds(startup_cpu_before, aggregate_cpu_ticks(&processes)?),
+        started.elapsed(),
+        process_count,
+    );
+    let storage_before_queries = aggregate_storage_snapshot(&databases)?;
 
     let cold_values = measure_query_round(&mut processes, timeout)?;
-    let mut warm_by_process = vec![Vec::with_capacity(warm_iterations); process_count];
-    for _ in 0..warm_iterations {
-        for (index, latency) in measure_query_round(&mut processes, timeout)?
-            .into_iter()
-            .enumerate()
-        {
-            warm_by_process[index].push(latency);
+    let mut baselines = vec![HashMap::new(); process_count];
+    for workload in WORKLOADS {
+        for (index, process) in processes.iter_mut().enumerate() {
+            let (id, _) = process.send_workload_query(workload)?;
+            let response = process.receive(id, timeout)?;
+            if !successful_tool_response(&response) {
+                return Err(format!("MCP baseline query did not succeed: {response}").into());
+            }
+            baselines[index].insert(workload, normalize_response(response));
         }
     }
+    let mut workloads = Vec::with_capacity(WORKLOADS.len());
+    for workload in WORKLOADS {
+        workloads.push(measure_workload(
+            &mut processes,
+            workload,
+            &baselines,
+            warm_iterations,
+            timeout,
+        )?);
+    }
     std::thread::sleep(Duration::from_millis(100));
+    let idle_cpu_before = aggregate_cpu_ticks(&processes)?;
+    let idle_started = Instant::now();
+    std::thread::sleep(idle_duration);
+    let idle_cpu = CpuSummary::from_measurement(
+        cpu_milliseconds(idle_cpu_before, aggregate_cpu_ticks(&processes)?),
+        idle_started.elapsed(),
+        0,
+    );
 
     let pids = processes.iter().map(McpProcess::pid).collect::<Vec<_>>();
-    let leadership_path = PathBuf::from(format!("{}.leader.lock", database.display()));
-    let lock_owners = lock_owner_pids(&leadership_path, &pids)?;
-    if lock_owners.len() != 1 {
-        return Err(format!("expected one leadership lock owner, found {lock_owners:?}").into());
-    }
-    let leader_pid = lock_owners[0];
+    let leader_pids = match topology {
+        Topology::SharedCache => {
+            let leadership_path = PathBuf::from(format!("{}.leader.lock", databases[0].display()));
+            let owners = lock_owner_pids(&leadership_path, &pids)?;
+            if owners.len() != 1 {
+                return Err(format!("expected one leadership lock owner, found {owners:?}").into());
+            }
+            owners
+        }
+        Topology::IndependentCaches => {
+            let mut owners = Vec::with_capacity(process_count);
+            for (pid, database) in pids.iter().zip(&databases) {
+                let leadership_path = PathBuf::from(format!("{}.leader.lock", database.display()));
+                let owner = lock_owner_pids(&leadership_path, &[*pid])?;
+                if owner != [*pid] {
+                    return Err(format!(
+                        "independent cache {} did not retain leader {pid}: {owner:?}",
+                        database.display()
+                    )
+                    .into());
+                }
+                owners.push(*pid);
+            }
+            owners
+        }
+    };
     let mut resources = pids
         .iter()
-        .map(|pid| sample_process(*pid, &database, *pid == leader_pid))
+        .zip(&databases)
+        .map(|(pid, database)| sample_process(*pid, database, leader_pids.contains(pid)))
         .collect::<Result<Vec<_>, _>>()?;
     resources.sort_by_key(|sample| sample.pid);
     let watcher_processes = resources
         .iter()
         .filter(|sample| sample.inotify_file_descriptors > 0)
         .count();
-    if watcher_processes != 1
-        || resources
-            .iter()
-            .find(|sample| sample.pid == leader_pid)
-            .is_none_or(|sample| sample.inotify_file_descriptors == 0)
-    {
-        return Err(
-            format!("watcher ownership did not match leader {leader_pid}: {resources:?}").into(),
-        );
-    }
 
     let mut process_measurements = Vec::with_capacity(process_count);
     for resource in resources.iter().cloned() {
@@ -530,32 +898,39 @@ fn run_measurement(
             .position(|pid| *pid == resource.pid)
             .ok_or("sampled PID was not launched")?;
         process_measurements.push(ProcessMeasurement {
+            watcher: parse_watcher_observation(
+                resource.pid,
+                &resource,
+                &processes[source_index].diagnostic_lines(),
+            ),
             resources: resource,
             startup_to_ready_ms: startup_ms[source_index],
             cold_query_ms: cold_values[source_index],
-            warm_query: LatencySummary::from_values(&warm_by_process[source_index]),
         });
     }
-    let warm_values = warm_by_process
+    let warm_query = workloads
         .iter()
-        .flatten()
-        .copied()
-        .collect::<Vec<_>>();
-    let storage_after_queries = storage_snapshot(&database)?;
-    if storage_after_queries.repository_generation != 1 {
+        .find(|measurement| measurement.workload == Workload::Files)
+        .map_or_else(
+            || LatencySummary::from_values(&[]),
+            |measurement| measurement.complete_request,
+        );
+    let storage_after_queries = aggregate_storage_snapshot(&databases)?;
+    let expected_generations = topology.expected_leaders(process_count) as i64;
+    if storage_after_queries.repository_generation != expected_generations {
         return Err(format!(
-            "cold startup published {} generations instead of one",
-            storage_after_queries.repository_generation
+            "cold startup published {} aggregate generations instead of {expected_generations}",
+            storage_after_queries.repository_generation,
         )
         .into());
     }
 
-    let takeover = if process_count > 1 {
+    let takeover = if topology == Topology::SharedCache && process_count > 1 {
         Some(measure_takeover(
-            &repository,
-            &database,
+            &repositories[0],
+            &databases[0],
             &mut processes,
-            leader_pid,
+            leader_pids[0],
             timeout,
         )?)
     } else {
@@ -564,11 +939,32 @@ fn run_measurement(
     for process in &mut processes {
         process.stop();
     }
+    std::thread::sleep(Duration::from_millis(20));
+    for (measurement, process) in process_measurements.iter_mut().zip(&processes) {
+        measurement.watcher = parse_watcher_observation(
+            measurement.resources.pid,
+            &measurement.resources,
+            &process.diagnostic_lines(),
+        );
+    }
+    let parity_checked = workloads
+        .iter()
+        .map(|measurement| measurement.parity_checked)
+        .sum();
+    let parity_mismatches = workloads
+        .iter()
+        .map(|measurement| measurement.parity_mismatches)
+        .sum();
+    let expected_response_accounting_updates =
+        process_count * (1 + WORKLOADS.len() * (1 + warm_iterations));
 
     Ok(RunMeasurement {
+        topology,
+        order_index,
         process_count,
-        leader_pid,
-        leader_lock_owners: lock_owners.len(),
+        repository_count: topology.expected_leaders(process_count),
+        leader_pids: leader_pids.clone(),
+        leader_lock_owners: leader_pids.len(),
         watcher_processes,
         aggregate_rss_kib: resources.iter().map(|sample| sample.rss_kib).sum(),
         aggregate_peak_rss_kib: resources.iter().map(|sample| sample.peak_rss_kib).sum(),
@@ -579,17 +975,23 @@ fn run_measurement(
             .map(|sample| sample.estimated_established_read_connections)
             .sum(),
         startup_to_ready: LatencySummary::from_values(&startup_ms),
+        cold_startup_cpu,
         cold_query: LatencySummary::from_values(&cold_values),
-        warm_query: LatencySummary::from_values(&warm_values),
+        warm_query,
+        workloads,
+        idle_cpu,
         storage_before_queries,
         storage_after_queries,
-        generation_publications: storage_after_queries.repository_generation,
-        expected_response_accounting_updates: process_count * (warm_iterations + 1),
+        generation_publications: expected_generations,
+        expected_response_accounting_updates,
         observed_response_accounting_updates: storage_after_queries
             .response_accounting_updates
             .saturating_sub(storage_before_queries.response_accounting_updates),
+        parity_checked,
+        parity_mismatches,
         processes: process_measurements,
         takeover,
+        parity_responses: baselines[0].clone(),
     })
 }
 
@@ -612,10 +1014,425 @@ fn measure_query_round(
     Ok(latencies)
 }
 
+fn measure_workload(
+    processes: &mut [McpProcess],
+    workload: Workload,
+    baselines: &[HashMap<Workload, Value>],
+    iterations: usize,
+    timeout: Duration,
+) -> Result<WorkloadMeasurement, Box<dyn Error>> {
+    let cpu_before = aggregate_cpu_ticks(processes)?;
+    let started = Instant::now();
+    let mut latencies = Vec::with_capacity(processes.len() * iterations);
+    let reference = &baselines[0][&workload];
+    let mut parity_checked = 0usize;
+    let mut parity_mismatches = 0usize;
+    let mut parity_mismatch_paths = Vec::new();
+    for (index, baseline) in baselines.iter().enumerate().skip(1) {
+        compare_response_parity(
+            reference,
+            &baseline[&workload],
+            &format!("cross_process_{index}"),
+            &mut parity_checked,
+            &mut parity_mismatches,
+            &mut parity_mismatch_paths,
+        );
+    }
+    for _ in 0..iterations {
+        let tickets = processes
+            .iter_mut()
+            .map(|process| process.send_workload_query(workload))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (index, (process, (id, query_started))) in processes.iter().zip(tickets).enumerate() {
+            let response = process.receive(id, timeout)?;
+            if !successful_tool_response(&response) {
+                return Err(format!("MCP {workload:?} query did not succeed: {response}").into());
+            }
+            compare_response_parity(
+                &baselines[index][&workload],
+                &normalize_response(response),
+                &format!("warm_process_{index}"),
+                &mut parity_checked,
+                &mut parity_mismatches,
+                &mut parity_mismatch_paths,
+            );
+            latencies.push(query_started.elapsed().as_secs_f64() * 1_000.0);
+        }
+    }
+    let requests = processes.len() * iterations;
+    let elapsed = started.elapsed();
+    let cpu = CpuSummary::from_measurement(
+        cpu_milliseconds(cpu_before, aggregate_cpu_ticks(processes)?),
+        elapsed,
+        requests,
+    );
+    Ok(WorkloadMeasurement {
+        workload,
+        requests,
+        complete_request: LatencySummary::from_values(&latencies),
+        cpu,
+        baseline_response_blake3: baselines
+            .iter()
+            .map(|baseline| response_fingerprint(&baseline[&workload]))
+            .collect(),
+        parity_checked,
+        parity_mismatches,
+        parity_mismatch_paths,
+    })
+}
+
+fn apply_cross_run_response_parity(runs: &mut [RunMeasurement]) {
+    let Some(reference) = runs.first().map(|run| run.parity_responses.clone()) else {
+        return;
+    };
+    for (run_index, run) in runs.iter_mut().enumerate().skip(1) {
+        for measurement in &mut run.workloads {
+            compare_response_parity(
+                &reference[&measurement.workload],
+                &run.parity_responses[&measurement.workload],
+                &format!("cross_run_{run_index}"),
+                &mut measurement.parity_checked,
+                &mut measurement.parity_mismatches,
+                &mut measurement.parity_mismatch_paths,
+            );
+        }
+    }
+    for run in runs {
+        run.parity_checked = run
+            .workloads
+            .iter()
+            .map(|measurement| measurement.parity_checked)
+            .sum();
+        run.parity_mismatches = run
+            .workloads
+            .iter()
+            .map(|measurement| measurement.parity_mismatches)
+            .sum();
+    }
+}
+
+fn compare_response_parity(
+    expected: &Value,
+    actual: &Value,
+    scope: &str,
+    checked: &mut usize,
+    mismatches: &mut usize,
+    mismatch_paths: &mut Vec<String>,
+) {
+    *checked += 1;
+    if expected == actual {
+        return;
+    }
+    *mismatches += 1;
+    let mut paths = Vec::new();
+    collect_json_diff_paths(expected, actual, "", &mut paths);
+    for path in paths {
+        let scoped = format!("{scope}:{path}");
+        if !mismatch_paths.contains(&scoped) {
+            mismatch_paths.push(scoped);
+            if mismatch_paths.len() == MAX_PARITY_MISMATCH_PATHS {
+                break;
+            }
+        }
+    }
+}
+
+fn collect_json_diff_paths(expected: &Value, actual: &Value, path: &str, paths: &mut Vec<String>) {
+    if expected == actual || paths.len() == MAX_PARITY_MISMATCH_PATHS {
+        return;
+    }
+    match (expected, actual) {
+        (Value::Object(expected), Value::Object(actual)) => {
+            let mut keys = expected.keys().chain(actual.keys()).collect::<Vec<_>>();
+            keys.sort_unstable();
+            keys.dedup();
+            for key in keys {
+                let child_path = format!("{path}/{}", json_pointer_segment(key));
+                match (expected.get(key), actual.get(key)) {
+                    (Some(expected), Some(actual)) => {
+                        collect_json_diff_paths(expected, actual, &child_path, paths);
+                    }
+                    _ => paths.push(child_path),
+                }
+                if paths.len() == MAX_PARITY_MISMATCH_PATHS {
+                    break;
+                }
+            }
+        }
+        (Value::Array(expected), Value::Array(actual)) => {
+            for index in 0..expected.len().max(actual.len()) {
+                let child_path = format!("{path}/{index}");
+                match (expected.get(index), actual.get(index)) {
+                    (Some(expected), Some(actual)) => {
+                        collect_json_diff_paths(expected, actual, &child_path, paths);
+                    }
+                    _ => paths.push(child_path),
+                }
+                if paths.len() == MAX_PARITY_MISMATCH_PATHS {
+                    break;
+                }
+            }
+        }
+        _ => paths.push(if path.is_empty() {
+            "/".into()
+        } else {
+            path.into()
+        }),
+    }
+}
+
+fn json_pointer_segment(value: &str) -> String {
+    value.replace('~', "~0").replace('/', "~1")
+}
+
 fn successful_tool_response(response: &Value) -> bool {
     response["result"]["isError"] != true
         && response["result"]["structuredContent"]["status"] != "retryable"
         && response.get("error").is_none()
+}
+
+fn workload_request(workload: Workload) -> (&'static str, Value) {
+    match workload {
+        Workload::Files => (
+            "files",
+            json!({
+                "operation": {"kind": "tree"},
+                "max_results": 10
+            }),
+        ),
+        Workload::Search => (
+            "search",
+            json!({
+                "query": "item_00010_1",
+                "mode": "auto",
+                "max_results": 20,
+                "max_tokens": 1_000
+            }),
+        ),
+        Workload::Read => (
+            "read",
+            json!({
+                "path": "file_00000.rs",
+                "target": {"kind": "lines", "start": 1, "end": 80},
+                "max_tokens": 1_000
+            }),
+        ),
+        Workload::Context => (
+            "context",
+            json!({
+                "task": "Investigate item_00010_1 handling and relevant tests",
+                "token_budget": 1_000,
+                "max_fragments": 8,
+                "plan_only": false
+            }),
+        ),
+    }
+}
+
+fn normalize_response(mut response: Value) -> Value {
+    if let Value::Object(object) = &mut response {
+        object.remove("id");
+    }
+    remove_generated_identifiers(&mut response);
+    response
+}
+
+fn response_fingerprint(response: &Value) -> String {
+    let canonical = canonicalize_json(response);
+    let encoded = serde_json::to_vec(&canonical).expect("JSON values are serializable");
+    blake3::hash(&encoded).to_hex().to_string()
+}
+
+fn canonicalize_json(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => {
+            let mut keys = object.keys().collect::<Vec<_>>();
+            keys.sort_unstable();
+            let mut canonical = serde_json::Map::new();
+            for key in keys {
+                canonical.insert(key.clone(), canonicalize_json(&object[key]));
+            }
+            Value::Object(canonical)
+        }
+        Value::Array(values) => Value::Array(values.iter().map(canonicalize_json).collect()),
+        value => value.clone(),
+    }
+}
+
+fn remove_generated_identifiers(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            object.remove("receipt_id");
+            object.remove("repository_id");
+            object.remove("freshness");
+            object.remove("path_and_metadata_tokens");
+            object.remove("payload_tokens");
+            object.remove("total_response_tokens");
+            for value in object.values_mut() {
+                remove_generated_identifiers(value);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                remove_generated_identifiers(value);
+            }
+        }
+        Value::String(text) if text.starts_with('{') => {
+            if let Ok(mut nested) = serde_json::from_str::<Value>(text) {
+                remove_generated_identifiers(&mut nested);
+                if let Ok(normalized) = serde_json::to_string(&nested) {
+                    *text = normalized;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn aggregate_cpu_ticks(processes: &[McpProcess]) -> Result<u64, Box<dyn Error>> {
+    processes.iter().try_fold(0u64, |total, process| {
+        Ok(total.saturating_add(process_cpu_ticks(process.pid())?))
+    })
+}
+
+fn process_cpu_ticks(pid: u32) -> Result<u64, Box<dyn Error>> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
+    let fields = stat
+        .rsplit_once(") ")
+        .ok_or("malformed /proc stat")?
+        .1
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    let user = fields
+        .get(11)
+        .ok_or("user CPU ticks missing")?
+        .parse::<u64>()?;
+    let system = fields
+        .get(12)
+        .ok_or("system CPU ticks missing")?
+        .parse::<u64>()?;
+    Ok(user.saturating_add(system))
+}
+
+fn cpu_milliseconds(before: u64, after: u64) -> f64 {
+    let ticks_per_second = std::process::Command::new("getconf")
+        .arg("CLK_TCK")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(100);
+    after.saturating_sub(before) as f64 * 1_000.0 / ticks_per_second as f64
+}
+
+fn unique_paths(paths: &[PathBuf]) -> Vec<&Path> {
+    let mut unique = Vec::new();
+    for path in paths {
+        if !unique.contains(&path.as_path()) {
+            unique.push(path.as_path());
+        }
+    }
+    unique
+}
+
+fn aggregate_storage_snapshot(paths: &[PathBuf]) -> Result<StorageSnapshot, Box<dyn Error>> {
+    unique_paths(paths).into_iter().try_fold(
+        StorageSnapshot {
+            repository_generation: 0,
+            response_accounting_updates: 0,
+            tracked_baseline_requests: 0,
+            database_bytes: 0,
+            wal_bytes: 0,
+            shm_bytes: 0,
+        },
+        |mut aggregate, path| {
+            let snapshot = storage_snapshot(path)?;
+            aggregate.repository_generation += snapshot.repository_generation;
+            aggregate.response_accounting_updates += snapshot.response_accounting_updates;
+            aggregate.tracked_baseline_requests += snapshot.tracked_baseline_requests;
+            aggregate.database_bytes = aggregate
+                .database_bytes
+                .saturating_add(snapshot.database_bytes);
+            aggregate.wal_bytes = aggregate.wal_bytes.saturating_add(snapshot.wal_bytes);
+            aggregate.shm_bytes = aggregate.shm_bytes.saturating_add(snapshot.shm_bytes);
+            Ok(aggregate)
+        },
+    )
+}
+
+fn parse_watcher_observation(
+    pid: u32,
+    resources: &ProcessResources,
+    lines: &[String],
+) -> WatcherObservation {
+    let initialized = lines
+        .iter()
+        .find(|line| line.contains("repository watcher initialized"));
+    let stopped = lines
+        .iter()
+        .find(|line| line.contains("repository watcher stopped"));
+    let backend = if initialized.is_some_and(|line| line.contains("backend=PeriodicPolling")) {
+        "periodic_polling"
+    } else if initialized.is_some_and(|line| line.contains("backend=Native"))
+        || resources.inotify_file_descriptors > 0
+    {
+        "native"
+    } else {
+        "unobserved"
+    };
+    WatcherObservation {
+        pid,
+        backend,
+        admission_entries: initialized.and_then(|line| diagnostic_usize(line, "admission_entries")),
+        admission_directories: initialized
+            .and_then(|line| diagnostic_usize(line, "admission_directories")),
+        admission_complete: initialized
+            .and_then(|line| diagnostic_bool(line, "admission_complete")),
+        fallback_reason: initialized
+            .and_then(|line| diagnostic_field(line, "fallback_reason"))
+            .and_then(|value| normalize_fallback_reason(&value)),
+        poll_ticks: stopped.and_then(|line| diagnostic_u64(line, "poll_ticks")),
+        changed_path_deliveries: stopped
+            .and_then(|line| diagnostic_u64(line, "changed_path_deliveries")),
+        full_reconciliation_deliveries: stopped
+            .and_then(|line| diagnostic_u64(line, "full_reconciliation_deliveries")),
+    }
+}
+
+fn diagnostic_usize(line: &str, field: &str) -> Option<usize> {
+    diagnostic_field(line, field)?.parse().ok()
+}
+
+fn diagnostic_u64(line: &str, field: &str) -> Option<u64> {
+    diagnostic_field(line, field)?.parse().ok()
+}
+
+fn diagnostic_bool(line: &str, field: &str) -> Option<bool> {
+    diagnostic_field(line, field)?.parse().ok()
+}
+
+fn diagnostic_field(line: &str, field: &str) -> Option<String> {
+    let prefix = format!("{field}=");
+    line.split_whitespace()
+        .find_map(|part| part.strip_prefix(&prefix))
+        .map(|value| value.trim_matches(',').to_owned())
+}
+
+fn normalize_fallback_reason(value: &str) -> Option<String> {
+    let value = value.strip_prefix("Some(")?.strip_suffix(')')?;
+    let mut normalized = String::with_capacity(value.len() + 4);
+    for (index, character) in value.chars().enumerate() {
+        if character.is_ascii_uppercase() {
+            if index > 0 {
+                normalized.push('_');
+            }
+            normalized.push(character.to_ascii_lowercase());
+        } else {
+            normalized.push(character);
+        }
+    }
+    Some(normalized)
 }
 
 fn measure_takeover(
@@ -843,19 +1660,53 @@ fn file_size(path: impl AsRef<Path>) -> u64 {
 }
 
 fn make_decision(runs: &[RunMeasurement], thresholds: DecisionThresholds) -> Decision {
-    let Some(one) = runs.iter().find(|run| run.process_count == 1) else {
+    let one_runs = runs
+        .iter()
+        .filter(|run| run.process_count == 1 && run.topology == Topology::SharedCache)
+        .collect::<Vec<_>>();
+    if one_runs.is_empty() {
         return insufficient_decision("missing one-process baseline");
-    };
-    let Some(four) = runs.iter().find(|run| run.process_count == 4) else {
+    }
+    let four_runs = runs
+        .iter()
+        .filter(|run| run.process_count == 4 && run.topology == Topology::SharedCache)
+        .collect::<Vec<_>>();
+    if four_runs.is_empty() {
         return insufficient_decision("missing four-process comparison");
-    };
-    let incremental_rss =
-        four.aggregate_rss_kib.saturating_sub(one.aggregate_rss_kib) as f64 / 3.0 / 1_024.0;
-    let startup_ratio = safe_ratio(four.startup_to_ready.p95_ms, one.startup_to_ready.p95_ms);
-    let warm_ratio = safe_ratio(four.warm_query.p95_ms, one.warm_query.p95_ms);
-    let one_wal_per_query = wal_bytes_per_query(one);
-    let four_wal_per_query = wal_bytes_per_query(four);
+    }
+    if !runs
+        .iter()
+        .any(|run| run.process_count == 8 && run.topology == Topology::SharedCache)
+    {
+        return insufficient_decision("missing eight-process shared-cache comparison");
+    }
+    if !runs
+        .iter()
+        .any(|run| run.process_count == 1 && run.topology == Topology::IndependentCaches)
+        || !runs
+            .iter()
+            .any(|run| run.process_count == 8 && run.topology == Topology::IndependentCaches)
+    {
+        return insufficient_decision("missing independent-cache CPU comparison");
+    }
+    let one_rss = average_by(&one_runs, |run| run.aggregate_rss_kib as f64);
+    let four_rss = average_by(&four_runs, |run| run.aggregate_rss_kib as f64);
+    let incremental_rss = (four_rss - one_rss).max(0.0) / 3.0 / 1_024.0;
+    let startup_ratio = safe_ratio(
+        average_by(&four_runs, |run| run.startup_to_ready.p95_ms),
+        average_by(&one_runs, |run| run.startup_to_ready.p95_ms),
+    );
+    let warm_ratio = safe_ratio(
+        average_by(&four_runs, |run| run.warm_query.p95_ms),
+        average_by(&one_runs, |run| run.warm_query.p95_ms),
+    );
+    let one_wal_per_query = average_by(&one_runs, wal_bytes_per_query);
+    let four_wal_per_query = average_by(&four_runs, wal_bytes_per_query);
     let wal_ratio = safe_ratio(four_wal_per_query, one_wal_per_query);
+    let eight_process_cpu_ratio =
+        workload_cpu_ratio(runs, Topology::SharedCache, Workload::Context, 8, 1);
+    let independent_cold_cpu_ratio =
+        cold_cpu_per_repository_ratio(runs, Topology::IndependentCaches, 8, 1);
     let mut reasons = Vec::new();
     if incremental_rss > thresholds.max_incremental_rss_mib_per_follower {
         reasons.push(format!(
@@ -881,14 +1732,38 @@ fn make_decision(runs: &[RunMeasurement], thresholds: DecisionThresholds) -> Dec
             thresholds.max_normalized_wal_bytes_per_query_ratio
         ));
     }
+    if eight_process_cpu_ratio
+        .is_some_and(|ratio| ratio > thresholds.max_eight_process_cpu_per_query_ratio)
+    {
+        reasons.push(format!(
+            "eight-process context CPU/query ratio {:.2} exceeded {:.2}",
+            eight_process_cpu_ratio.unwrap_or_default(),
+            thresholds.max_eight_process_cpu_per_query_ratio
+        ));
+    }
+    if independent_cold_cpu_ratio
+        .is_some_and(|ratio| ratio > thresholds.max_independent_cold_cpu_per_repository_ratio)
+    {
+        reasons.push(format!(
+            "independent cold CPU/repository ratio {:.2} exceeded {:.2}",
+            independent_cold_cpu_ratio.unwrap_or_default(),
+            thresholds.max_independent_cold_cpu_per_repository_ratio
+        ));
+    }
+    let parity_mismatches = runs.iter().map(|run| run.parity_mismatches).sum::<usize>();
+    if parity_mismatches > 0 {
+        reasons.push(format!(
+            "complete observable response parity had {parity_mismatches} mismatches"
+        ));
+    }
     for run in runs {
-        if run.leader_lock_owners != 1
-            || run.watcher_processes != 1
-            || run.generation_publications != 1
+        let expected_owners = run.topology.expected_leaders(run.process_count);
+        if run.leader_lock_owners != expected_owners
+            || run.generation_publications != expected_owners as i64
         {
             reasons.push(format!(
-                "{} processes violated single-owner publication invariants",
-                run.process_count
+                "{:?} with {} processes violated repository-owner publication invariants",
+                run.topology, run.process_count
             ));
         }
         if run.processes.iter().any(|process| {
@@ -906,23 +1781,34 @@ fn make_decision(runs: &[RunMeasurement], thresholds: DecisionThresholds) -> Dec
             .is_some_and(|takeover| takeover.takeover_ms > thresholds.max_takeover_ms)
         {
             reasons.push(format!(
-                "{}-process takeover exceeded {:.0} ms",
-                run.process_count, thresholds.max_takeover_ms
+                "{}-process {:?} order {} takeover exceeded {:.0} ms",
+                run.process_count, run.topology, run.order_index, thresholds.max_takeover_ms
             ));
         }
     }
     Decision {
-        recommendation: if reasons.is_empty() {
+        recommendation: if parity_mismatches > 0 {
+            "invalid_measurement"
+        } else if reasons.is_empty() {
             "retain_stdio"
         } else {
-            "investigate_shared_daemon"
+            "investigate_host_wide_admission"
         },
         reasons,
         incremental_rss_mib_per_follower: Some(incremental_rss),
         startup_p95_ratio: Some(startup_ratio),
         warm_p95_ratio: Some(warm_ratio),
         normalized_wal_bytes_per_query_ratio: Some(wal_ratio),
+        eight_process_cpu_per_query_ratio: eight_process_cpu_ratio,
+        independent_cold_cpu_per_repository_ratio: independent_cold_cpu_ratio,
     }
+}
+
+fn average_by<F>(runs: &[&RunMeasurement], value: F) -> f64
+where
+    F: Fn(&RunMeasurement) -> f64,
+{
+    runs.iter().map(|run| value(run)).sum::<f64>() / runs.len() as f64
 }
 
 fn insufficient_decision(reason: &str) -> Decision {
@@ -933,7 +1819,55 @@ fn insufficient_decision(reason: &str) -> Decision {
         startup_p95_ratio: None,
         warm_p95_ratio: None,
         normalized_wal_bytes_per_query_ratio: None,
+        eight_process_cpu_per_query_ratio: None,
+        independent_cold_cpu_per_repository_ratio: None,
     }
+}
+
+fn workload_cpu_ratio(
+    runs: &[RunMeasurement],
+    topology: Topology,
+    workload: Workload,
+    numerator_processes: usize,
+    denominator_processes: usize,
+) -> Option<f64> {
+    let average = |process_count| {
+        let samples = runs
+            .iter()
+            .filter(|run| run.topology == topology && run.process_count == process_count)
+            .filter_map(|run| {
+                run.workloads
+                    .iter()
+                    .find(|measurement| measurement.workload == workload)
+                    .and_then(|measurement| measurement.cpu.cpu_milliseconds_per_operation)
+            })
+            .collect::<Vec<_>>();
+        (!samples.is_empty()).then(|| samples.iter().sum::<f64>() / samples.len() as f64)
+    };
+    Some(safe_ratio(
+        average(numerator_processes)?,
+        average(denominator_processes)?,
+    ))
+}
+
+fn cold_cpu_per_repository_ratio(
+    runs: &[RunMeasurement],
+    topology: Topology,
+    numerator_processes: usize,
+    denominator_processes: usize,
+) -> Option<f64> {
+    let average = |process_count| {
+        let samples = runs
+            .iter()
+            .filter(|run| run.topology == topology && run.process_count == process_count)
+            .map(|run| run.cold_startup_cpu.cpu_milliseconds / run.repository_count.max(1) as f64)
+            .collect::<Vec<_>>();
+        (!samples.is_empty()).then(|| samples.iter().sum::<f64>() / samples.len() as f64)
+    };
+    Some(safe_ratio(
+        average(numerator_processes)?,
+        average(denominator_processes)?,
+    ))
 }
 
 fn wal_bytes_per_query(run: &RunMeasurement) -> f64 {
@@ -1006,6 +1940,139 @@ mod tests {
         assert_eq!(parse_process_counts("4, 1,2,4").unwrap(), vec![1, 2, 4]);
         assert!(parse_process_counts("0,1").is_err());
         assert!(parse_process_counts("1,17").is_err());
+    }
+
+    #[test]
+    fn topology_order_is_abba() {
+        assert_eq!(
+            Topology::run_order(),
+            [
+                Topology::SharedCache,
+                Topology::IndependentCaches,
+                Topology::IndependentCaches,
+                Topology::SharedCache,
+            ]
+        );
+    }
+
+    #[test]
+    fn response_parity_ignores_only_generated_identifiers() {
+        let first = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "structuredContent": {
+                    "receipt_id": "first",
+                    "meta": {
+                        "repository_id": "repository-first",
+                        "freshness": "current",
+                        "path_and_metadata_tokens": 10,
+                        "payload_tokens": 20,
+                        "total_response_tokens": 30
+                    },
+                    "files": ["src/lib.rs"]
+                },
+                "content": [{
+                    "type": "text",
+                    "text": "{\"receipt_id\":\"nested-first\",\"repository_id\":\"repository-first\",\"count\":1}"
+                }]
+            }
+        });
+        let second = json!({
+            "jsonrpc": "2.0",
+            "id": 99,
+            "result": {
+                "structuredContent": {
+                    "receipt_id": "second",
+                    "meta": {
+                        "repository_id": "repository-second",
+                        "freshness": "reconciling",
+                        "path_and_metadata_tokens": 11,
+                        "payload_tokens": 21,
+                        "total_response_tokens": 32
+                    },
+                    "files": ["src/lib.rs"]
+                },
+                "content": [{
+                    "type": "text",
+                    "text": "{\"receipt_id\":\"nested-second\",\"repository_id\":\"repository-second\",\"count\":1}"
+                }]
+            }
+        });
+        let drifted = json!({
+            "jsonrpc": "2.0",
+            "id": 100,
+            "result": {
+                "structuredContent": {
+                    "receipt_id": "third",
+                    "meta": {"repository_id": "repository-third"},
+                    "files": ["src/main.rs"]
+                },
+                "content": [{
+                    "type": "text",
+                    "text": "{\"receipt_id\":\"nested-third\",\"repository_id\":\"repository-third\",\"count\":1}"
+                }]
+            }
+        });
+
+        assert_eq!(
+            normalize_response(first.clone()),
+            normalize_response(second)
+        );
+        assert_ne!(normalize_response(first), normalize_response(drifted));
+    }
+
+    #[test]
+    fn watcher_diagnostics_include_backend_admission_and_delivery_counts() {
+        let resources = ProcessResources {
+            pid: 42,
+            role: "leader",
+            rss_kib: 1,
+            peak_rss_kib: 1,
+            threads: 1,
+            file_descriptors: 1,
+            database_file_descriptors: 1,
+            sqlite_artifact_file_descriptors: 1,
+            estimated_established_read_connections: 0,
+            inotify_file_descriptors: 0,
+        };
+        let lines = vec![
+            "repository watcher initialized backend=PeriodicPolling \
+             fallback_reason=Some(AdmissionDirectoryLimit) admission_entries=50002 \
+             admission_directories=50001 admission_complete=false"
+                .to_owned(),
+            "repository watcher stopped backend=PeriodicPolling poll_ticks=1 \
+             changed_path_deliveries=0 full_reconciliation_deliveries=1"
+                .to_owned(),
+        ];
+
+        let observation = parse_watcher_observation(42, &resources, &lines);
+        assert_eq!(observation.backend, "periodic_polling");
+        assert_eq!(
+            observation.fallback_reason.as_deref(),
+            Some("admission_directory_limit")
+        );
+        assert_eq!(observation.admission_entries, Some(50_002));
+        assert_eq!(observation.admission_directories, Some(50_001));
+        assert_eq!(observation.admission_complete, Some(false));
+        assert_eq!(observation.poll_ticks, Some(1));
+        assert_eq!(observation.changed_path_deliveries, Some(0));
+        assert_eq!(observation.full_reconciliation_deliveries, Some(1));
+    }
+
+    #[test]
+    fn parity_fingerprints_are_canonical_and_diffs_are_bounded_paths() {
+        let first: Value = serde_json::from_str(r#"{"b":1,"a":{"x":1}}"#).unwrap();
+        let reordered: Value = serde_json::from_str(r#"{"a":{"x":1},"b":1}"#).unwrap();
+        let changed: Value = serde_json::from_str(r#"{"a":{"x":2},"b":1}"#).unwrap();
+
+        assert_eq!(
+            response_fingerprint(&first),
+            response_fingerprint(&reordered)
+        );
+        let mut paths = Vec::new();
+        collect_json_diff_paths(&first, &changed, "", &mut paths);
+        assert_eq!(paths, ["/a/x"]);
     }
 
     #[test]
