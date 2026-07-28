@@ -270,7 +270,7 @@ impl Services {
         };
         let mut response = ranking::select_with_tokenizer_and_context_exclusions(
             candidates,
-            &scoped_request,
+            scoped_request,
             generation,
             self.config.tokenizer,
             &self.config.context_exclude_paths,
@@ -280,7 +280,7 @@ impl Services {
         let selected_paths = response::selected_paths(&response);
         self.finalize_strict_scope_coverage(
             session,
-            &scoped_request,
+            scoped_request,
             &selected_paths,
             &mut coverage,
         )?;
@@ -304,7 +304,7 @@ impl Services {
                 .then(|| {
                     self.build_diff_evidence(
                         session,
-                        &scoped_request,
+                        scoped_request,
                         &scope,
                         resolved_workflow,
                         cancellation,
@@ -312,7 +312,7 @@ impl Services {
                 })
                 .transpose()?;
             response.routing =
-                build_context_routing(&request, &scope, candidate_path_count, &selected_paths);
+                build_context_routing(request, &scope, candidate_path_count, &selected_paths);
             if let Some(routing) = &response.routing {
                 let concentration = if routing.weakly_concentrated {
                     "; selected evidence is weakly concentrated"
@@ -353,7 +353,7 @@ impl Services {
                 }
             };
             response.handoff_manifest = Some(handoff::build(
-                &request,
+                request,
                 handoff,
                 &response,
                 evidence,
@@ -373,7 +373,7 @@ impl Services {
             &mut response,
             response::ContextResponseFinalization {
                 session,
-                request: &request,
+                request,
                 options,
                 generation,
             },

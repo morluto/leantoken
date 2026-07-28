@@ -84,7 +84,7 @@ impl Services {
             let change_boost = Self::file_change_boost(
                 Some(hit.generation),
                 &hit.path,
-                &changed_paths,
+                changed_paths,
                 request.prior_repository_generation,
             );
             let candidate = Candidate::new(
@@ -213,7 +213,7 @@ impl Services {
             let change_boost = Self::file_change_boost(
                 Some(hit.generation),
                 &hit.path,
-                &changed_paths,
+                changed_paths,
                 request.prior_repository_generation,
             );
             let candidate = Candidate::new(
@@ -323,7 +323,7 @@ impl Services {
             let change_boost = Self::file_change_boost(
                 Some(hit.generation),
                 &facts.search_hit.path,
-                &changed_paths,
+                changed_paths,
                 request.prior_repository_generation,
             );
             let candidate = Candidate::new(
