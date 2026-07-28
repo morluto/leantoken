@@ -95,74 +95,28 @@ fn cli_parse_error_response(error: &clap::Error) -> CliErrorResponse {
 
 fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
     let error = error.reconciliation_cause();
-    let (category, stage, field, requested, limit) = match error {
+    let category = error.public_category();
+    let (stage, field, requested, limit) = match error {
         leantoken::Error::DoctorFailure { stage, .. } => {
-            ("doctor_failure", Some(*stage), None, None, None)
+            (Some(*stage), None, None, None)
         }
-        leantoken::Error::InvalidInput { field, .. } => {
-            ("invalid_input", None, Some(*field), None, None)
-        }
-        leantoken::Error::InvalidInputConstraints(_) => ("invalid_input", None, None, None, None),
-        leantoken::Error::InvalidJson { .. } => ("invalid_json", None, Some("path"), None, None),
+        leantoken::Error::InvalidInput { field, .. } => (None, Some(*field), None, None),
+        leantoken::Error::InvalidJson { .. } => (None, Some("path"), None, None),
         leantoken::Error::InvalidJsonSelector { stage, .. } => (
-            "invalid_json_selector",
             Some(*stage),
             Some("JMESPath expression"),
             None,
             None,
         ),
         leantoken::Error::InputTooLong { field, max_bytes } => {
-            ("input_too_long", None, Some(*field), None, Some(*max_bytes))
+            (None, Some(*field), None, Some(*max_bytes))
         }
         leantoken::Error::RequestLimitExceeded {
             field,
             requested,
             limit,
-        } => (
-            "request_limit_exceeded",
-            None,
-            Some(*field),
-            Some(*requested),
-            Some(*limit),
-        ),
-        leantoken::Error::LimitExceeded => ("request_limit_exceeded", None, None, None, None),
-        leantoken::Error::NotIndexed(_) => ("not_indexed", None, None, None, None),
-        leantoken::Error::SymbolNotFound { .. } => ("symbol_not_found", None, None, None, None),
-        leantoken::Error::HeadingNotFound { .. } => ("heading_not_found", None, None, None, None),
-        leantoken::Error::IndexNotReady => ("index_not_ready", None, None, None, None),
-        leantoken::Error::StaleCursor => ("stale_cursor", None, None, None, None),
-        leantoken::Error::UnknownReceipt(_) => ("unknown_receipt", None, None, None, None),
-        leantoken::Error::StaleReceipt { .. } => ("stale_receipt", None, None, None, None),
-        leantoken::Error::Cancelled => ("request_cancelled", None, None, None, None),
-        leantoken::Error::PathOutsideRoot(_) => ("path_outside_root", None, None, None, None),
-        leantoken::Error::UnsupportedPathEncoding(_) => {
-            ("unsupported_path_encoding", None, None, None, None)
-        }
-        leantoken::Error::UnsupportedLanguage(_) => {
-            ("unsupported_language", None, None, None, None)
-        }
-        leantoken::Error::InvalidRequest(_) => ("invalid_request", None, None, None, None),
-        leantoken::Error::Regex(_) => ("invalid_regex", None, None, None, None),
-        leantoken::Error::Glob(_) => ("invalid_glob", None, None, None, None),
-        leantoken::Error::RootNotFound(_)
-        | leantoken::Error::UnsafeRepositoryRoot(_)
-        | leantoken::Error::RepositoryMismatch { .. }
-        | leantoken::Error::InvalidConfiguration(_) => {
-            ("repository_configuration", None, None, None, None)
-        }
-        leantoken::Error::IndexLimitExceeded { .. } => {
-            ("repository_index_limit", None, None, None, None)
-        }
-        leantoken::Error::RepositoryTraversal(_) => {
-            ("repository_traversal", None, None, None, None)
-        }
-        leantoken::Error::RuntimeCapabilityUnavailable { .. } => {
-            ("runtime_unavailable", None, None, None, None)
-        }
-        leantoken::Error::StaleReconciliation { .. } | leantoken::Error::RetryableConflict(_) => {
-            ("retryable_conflict", None, None, None, None)
-        }
-        _ => ("internal_error", None, None, None, None),
+        } => (None, Some(*field), Some(*requested), Some(*limit)),
+        _ => (None, None, None, None),
     };
     let (reason, syntax_category, offset, byte_offset, line, column) = match error {
         leantoken::Error::InvalidJson {

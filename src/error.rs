@@ -306,6 +306,59 @@ pub enum Error {
 }
 
 impl Error {
+    /// Stable, non-sensitive category exposed by public adapters.
+    ///
+    /// CLI and MCP envelopes may attach different transport metadata, but this
+    /// allowlisted classification remains adapter-neutral.
+    #[must_use]
+    pub fn public_category(&self) -> &'static str {
+        match self.reconciliation_cause() {
+            Self::DoctorFailure { .. } => "doctor_failure",
+            Self::InvalidInput { .. } | Self::InvalidInputConstraints(_) => "invalid_input",
+            Self::InvalidJson { .. } => "invalid_json",
+            Self::InvalidJsonSelector { .. } => "invalid_json_selector",
+            Self::InputTooLong { .. } => "input_too_long",
+            Self::RequestLimitExceeded { .. } | Self::LimitExceeded => "request_limit_exceeded",
+            Self::NotIndexed(_) => "not_indexed",
+            Self::SymbolNotFound { .. } => "symbol_not_found",
+            Self::HeadingNotFound { .. } => "heading_not_found",
+            Self::IndexNotReady => "index_not_ready",
+            Self::StaleCursor => "stale_cursor",
+            Self::UnknownReceipt(_) => "unknown_receipt",
+            Self::StaleReceipt { .. } => "stale_receipt",
+            Self::Cancelled => "request_cancelled",
+            Self::PathOutsideRoot(_) => "path_outside_root",
+            Self::UnsupportedPathEncoding(_) => "unsupported_path_encoding",
+            Self::UnsupportedLanguage(_) => "unsupported_language",
+            Self::InvalidRequest(_) => "invalid_request",
+            Self::Regex(_) => "invalid_regex",
+            Self::Glob(_) => "invalid_glob",
+            Self::RootNotFound(_)
+            | Self::UnsafeRepositoryRoot(_)
+            | Self::RepositoryMismatch { .. }
+            | Self::InvalidConfiguration(_) => "repository_configuration",
+            Self::IndexLimitExceeded { .. } => "repository_index_limit",
+            Self::RepositoryTraversal(_) => "repository_traversal",
+            Self::RuntimeCapabilityUnavailable { .. } => "runtime_unavailable",
+            Self::StaleReconciliation { .. } | Self::RetryableConflict(_) => "retryable_conflict",
+            Self::RepositoryIdentityMismatch { .. }
+            | Self::InternalFailure(_)
+            | Self::RetrievalOverloaded
+            | Self::RetrievalQueueTimeout
+            | Self::ReconciliationFailed(_)
+            | Self::McpRuntimeStopped
+            | Self::Io(_)
+            | Self::Sqlite(_)
+            | Self::Migration(_)
+            | Self::ConnectionPool(_)
+            | Self::TreeSitterLanguage(_)
+            | Self::TreeSitterQuery(_)
+            | Self::Json(_)
+            | Self::Join(_)
+            | Self::ThreadPoolBuild(_) => "internal_error",
+        }
+    }
+
     /// Stable, non-sensitive category for repository-local service observations.
     pub(crate) fn observation_category(&self) -> &'static str {
         match self.reconciliation_cause() {

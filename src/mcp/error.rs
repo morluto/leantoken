@@ -7,30 +7,30 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
     let cause = error.reconciliation_cause();
     match cause {
         crate::Error::Cancelled => {
-            ErrorData::invalid_request("request cancelled", mcp_error_data("request_cancelled"))
+            ErrorData::invalid_request("request cancelled", mcp_error_data(cause.public_category()))
         }
         crate::Error::PathOutsideRoot(_) => {
             tracing::debug!(%cause, "MCP path rejected outside repository root");
             ErrorData::invalid_params(
                 "path must stay within the repository root",
-                mcp_error_data("path_outside_root"),
+                mcp_error_data(cause.public_category()),
             )
         }
         crate::Error::UnsupportedPathEncoding(_) => ErrorData::invalid_params(
             "repository path is not valid UTF-8",
-            mcp_error_data("unsupported_path_encoding"),
+            mcp_error_data(cause.public_category()),
         ),
         crate::Error::NotIndexed(_) => ErrorData::invalid_params(
             "requested path is not indexed",
-            mcp_error_data("not_indexed"),
+            mcp_error_data(cause.public_category()),
         ),
         crate::Error::SymbolNotFound { .. } => ErrorData::invalid_params(
             "requested symbol is not indexed",
-            mcp_error_data("symbol_not_found"),
+            mcp_error_data(cause.public_category()),
         ),
         crate::Error::HeadingNotFound { .. } => ErrorData::invalid_params(
             "requested document heading occurrence is not indexed",
-            mcp_error_data("heading_not_found"),
+            mcp_error_data(cause.public_category()),
         ),
         crate::Error::RepositoryIdentityMismatch { expected, actual } => ErrorData::invalid_params(
             "repository identity does not match this server",
@@ -42,7 +42,7 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
         ),
         crate::Error::LimitExceeded => ErrorData::invalid_params(
             "request exceeds a configured limit",
-            mcp_error_data("request_limit_exceeded"),
+            mcp_error_data(cause.public_category()),
         ),
         crate::Error::RequestLimitExceeded {
             field,
@@ -51,7 +51,7 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
         } => ErrorData::invalid_params(
             format!("{field} exceeds its configured limit"),
             Some(serde_json::json!({
-                "category": "request_limit_exceeded",
+                "category": cause.public_category(),
                 "field": field,
                 "requested": requested,
                 "limit": limit,
@@ -59,7 +59,7 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
         ),
         crate::Error::UnsupportedLanguage(_) => ErrorData::invalid_params(
             "requested structured language is unsupported",
-            mcp_error_data("unsupported_language"),
+            mcp_error_data(cause.public_category()),
         ),
         crate::Error::InvalidJson {
             syntax_category,
@@ -70,7 +70,7 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
         } => ErrorData::invalid_params(
             format!("file is not valid JSON at line {line}, column {column}"),
             Some(serde_json::json!({
-                "category": "invalid_json",
+                "category": cause.public_category(),
                 "field": "path",
                 "syntax_category": syntax_category,
                 "byte_offset": byte_offset,
@@ -88,7 +88,7 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
         } => ErrorData::invalid_params(
             format!("JMESPath {stage} failed at line {line}, column {column}"),
             Some(serde_json::json!({
-                "category": "invalid_json_selector",
+                "category": cause.public_category(),
                 "field": "JMESPath expression",
                 "stage": stage,
                 "offset": offset,
@@ -100,47 +100,49 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
         crate::Error::InvalidInput { field, reason } => ErrorData::invalid_params(
             format!("invalid {field}: {reason}"),
             Some(serde_json::json!({
-                "category": "invalid_input",
+                "category": cause.public_category(),
                 "field": field,
             })),
         ),
         crate::Error::InvalidInputConstraints(violations) => ErrorData::invalid_params(
             cause.to_string(),
             Some(serde_json::json!({
-                "category": "invalid_input",
+                "category": cause.public_category(),
                 "violations": violations,
             })),
         ),
         crate::Error::InputTooLong { field, max_bytes } => ErrorData::invalid_params(
             "request input exceeds its byte limit",
             Some(serde_json::json!({
-                "category": "input_too_long",
+                "category": cause.public_category(),
                 "field": field,
                 "limit": max_bytes,
             })),
         ),
         crate::Error::InvalidRequest(_) => ErrorData::invalid_params(
             "request parameters are invalid",
-            mcp_error_data("invalid_request"),
+            mcp_error_data(cause.public_category()),
         ),
-        crate::Error::StaleCursor => {
-            ErrorData::invalid_params("cursor is stale or invalid", mcp_error_data("stale_cursor"))
-        }
+        crate::Error::StaleCursor => ErrorData::invalid_params(
+            "cursor is stale or invalid",
+            mcp_error_data(cause.public_category()),
+        ),
         crate::Error::UnknownReceipt(_) => ErrorData::invalid_params(
             "retrieval receipt is unknown or expired",
-            mcp_error_data("unknown_receipt"),
+            mcp_error_data(cause.public_category()),
         ),
         crate::Error::StaleReceipt { .. } => ErrorData::invalid_params(
             "retrieval receipt belongs to a stale repository generation",
-            mcp_error_data("stale_receipt"),
+            mcp_error_data(cause.public_category()),
         ),
         crate::Error::Regex(_) => ErrorData::invalid_params(
             "regular expression is invalid",
-            mcp_error_data("invalid_regex"),
+            mcp_error_data(cause.public_category()),
         ),
-        crate::Error::Glob(_) => {
-            ErrorData::invalid_params("glob pattern is invalid", mcp_error_data("invalid_glob"))
-        }
+        crate::Error::Glob(_) => ErrorData::invalid_params(
+            "glob pattern is invalid",
+            mcp_error_data(cause.public_category()),
+        ),
         crate::Error::RootNotFound(_)
         | crate::Error::UnsafeRepositoryRoot(_)
         | crate::Error::RepositoryMismatch { .. }
@@ -148,37 +150,37 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
             tracing::error!(%cause, "repository configuration is invalid");
             ErrorData::internal_error(
                 "repository configuration is invalid",
-                mcp_error_data("repository_configuration"),
+                mcp_error_data(cause.public_category()),
             )
         }
         crate::Error::IndexLimitExceeded { .. } => {
             tracing::error!(%cause, "repository indexing limit exceeded");
             ErrorData::internal_error(
                 "repository indexing limit exceeded",
-                mcp_error_data("repository_index_limit"),
+                mcp_error_data(cause.public_category()),
             )
         }
         crate::Error::RepositoryTraversal(_) => {
             tracing::error!(%cause, "repository traversal failed");
             ErrorData::internal_error(
                 "repository traversal failed",
-                mcp_error_data("repository_traversal"),
+                mcp_error_data(cause.public_category()),
             )
         }
         crate::Error::RuntimeCapabilityUnavailable { .. } => {
             tracing::error!(%cause, "repository runtime is unavailable");
             ErrorData::internal_error(
                 "repository runtime is unavailable",
-                mcp_error_data("runtime_unavailable"),
+                mcp_error_data(cause.public_category()),
             )
         }
         crate::Error::IndexNotReady => ErrorData::internal_error(
             "repository index is not ready",
-            mcp_error_data("index_not_ready"),
+            mcp_error_data(cause.public_category()),
         ),
         crate::Error::RetryableConflict(_) => ErrorData::internal_error(
             "repository operation should be retried",
-            mcp_error_data("retryable_conflict"),
+            mcp_error_data(cause.public_category()),
         ),
         _ => {
             tracing::error!(%cause, "MCP tool failed");
