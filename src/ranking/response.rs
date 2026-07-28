@@ -126,6 +126,9 @@ fn finalize_context_response(
         next_cursor: None,
     };
     let mut response = ContextResponse {
+        effective_response_profile: ContextResponseProfile::from_legacy_verbose(
+            request.verbose_diagnostics,
+        ),
         workflow: crate::model::ContextWorkflow::Implementation,
         workflow_receipt: None,
         plan,

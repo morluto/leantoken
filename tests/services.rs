@@ -1,14 +1,14 @@
 use std::time::Instant;
 
 use leantoken::{
-    Config, ContextRequest, ContextRequiredEvidence, ContextSignalPolicy, ContextWorkflow,
-    DiffSymbolsIncompleteReason, DiffSymbolsRequest, DiffSymbolsStatus, DiffSymbolsTarget, Error,
-    FileOperation, FilesRequest, Freshness, HandoffManifestRequest, HandoffValidation,
-    HandoffValidationStatus, HandoffWorkingTreeState, HistoryOperation, HistoryRequest,
-    IndexConsistency, IndexState, JsonIncompleteReason, JsonOperation, JsonProjection, JsonRequest,
-    JsonSelector, OutlineRequest, ReadDeltaFallback, ReadDeltaOutcome, ReadRequest, ReadStatus,
-    ReferenceRole, SearchMode, SearchRequest, TokenAccountingOperation, TokenSavingsOperation,
-    TokenSavingsWindow, WorkflowEvidence,
+    Config, ContextRequest, ContextRequiredEvidence, ContextResponseProfile, ContextSignalPolicy,
+    ContextWorkflow, DiffSymbolsIncompleteReason, DiffSymbolsRequest, DiffSymbolsStatus,
+    DiffSymbolsTarget, Error, FileOperation, FilesRequest, Freshness, HandoffManifestRequest,
+    HandoffValidation, HandoffValidationStatus, HandoffWorkingTreeState, HistoryOperation,
+    HistoryRequest, IndexConsistency, IndexState, JsonIncompleteReason, JsonOperation,
+    JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadDeltaFallback, ReadDeltaOutcome,
+    ReadRequest, ReadStatus, ReferenceRole, SearchMode, SearchRequest, TokenAccountingOperation,
+    TokenSavingsOperation, TokenSavingsWindow, WorkflowEvidence,
     coordination::IndexCoordination,
     services::{ServiceCallOptions, Services},
     tokens::Tokenizer,

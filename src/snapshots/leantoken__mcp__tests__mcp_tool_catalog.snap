@@ -1,11 +1,11 @@
 ---
-source: src/mcp.rs
+source: src/mcp/tests.rs
 expression: tools
 ---
 [
   {
     "name": "context",
-    "description": "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. For uncertain broad tasks, set plan_only=true to preview bounded ranked paths, ranges, reasons, token estimates, focus coverage, and generated-artifact warnings without source or receipt mutation; then repeat the same request with plan_only=false to materialize. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required paths or symbols. When path presence is insufficient, pass required_evidence entries with a path and literal queries; path_scope_satisfied reports only path coverage, while evidence_scope_satisfied requires matching selected evidence. When the caller has directly observed a failure, pass workflow_evidence with bounded failure_traces, symbols, paths, or test_intents; do not infer or copy gold labels into it. Compact omission counts preserve fail-loud coverage by default; set verbose_diagnostics=true only for full omission facets. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Set handoff for a compact provenance manifest without copied source. Example: {\"task\":\"Audit MCP tool discovery\"}.",
+    "description": "DEFAULT FIRST CALL for broad coding, debugging, review, and architecture tasks. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. For uncertain broad tasks, set plan_only=true to preview bounded ranked paths, ranges, reasons, token estimates, focus coverage, and generated-artifact warnings without source or receipt mutation; then repeat the same request with plan_only=false to materialize. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required paths or symbols. When path presence is insufficient, pass required_evidence entries with a path and literal queries; path_scope_satisfied reports only path coverage, while evidence_scope_satisfied requires matching selected evidence. When the caller has directly observed a failure, pass workflow_evidence with bounded failure_traces, symbols, paths, or test_intents; do not infer or copy gold labels into it. Use response_profile=compact for the smallest fail-loud presentation, balanced for the historical default, or explain for bounded omission and diff detail. Legacy verbose_diagnostics=true maps to explain and conflicts with an explicit compact or balanced profile. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Set handoff for a compact provenance manifest without copied source. Example: {\"task\":\"Audit MCP tool discovery\"}.",
     "inputSchema": {
       "$defs": {
         "ContextRequiredEvidence": {
@@ -43,6 +43,26 @@ expression: tools
             "queries"
           ],
           "type": "object"
+        },
+        "ContextResponseProfile": {
+          "description": "Presentation depth for a context response.\n\nProfiles never change candidate generation, ranking, selected fragment\nmembership or order, source-token budgets, hard constraints, or receipt\nsuppression.",
+          "oneOf": [
+            {
+              "const": "compact",
+              "description": "Preserve fail-loud coverage and routing while omitting optional detail.",
+              "type": "string"
+            },
+            {
+              "const": "balanced",
+              "description": "Preserve the historical default response shape and diagnostics.",
+              "type": "string"
+            },
+            {
+              "const": "explain",
+              "description": "Include the complete bounded omission and diff diagnostics.",
+              "type": "string"
+            }
+          ]
         },
         "ContextWorkflow": {
           "description": "Requested or resolved evidence workflow for context retrieval.",
@@ -488,6 +508,18 @@ expression: tools
           "maxItems": 32,
           "type": "array"
         },
+        "response_profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContextResponseProfile"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Response presentation depth; defaults to `balanced`. `compact` removes\noptional diff and omission detail, while `explain` includes bounded detail."
+        },
         "strict_changed_paths": {
           "default": false,
           "description": "Require every returned fragment to belong to the resolved changed paths.",
@@ -514,7 +546,7 @@ expression: tools
         },
         "verbose_diagnostics": {
           "default": false,
-          "description": "Include full path, file-type, reason, score-band, focus, and change omission facets.",
+          "description": "Legacy alias for `response_profile=explain`; conflicts with an explicit\n`compact` or `balanced` profile.",
           "type": "boolean"
         },
         "workflow": {

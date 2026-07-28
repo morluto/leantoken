@@ -870,17 +870,48 @@ than unrelated evidence. Already-held matching hashes satisfy a must-cover or
 evidence requirement without resending source.
 
 `omission_summary` distinguishes path filtering, known hashes, and budget or
-result limits with compact aggregate counts by default. Coverage, routing,
-truncation warnings, and the bounded individual omission detail remain present,
-so compact diagnostics do not weaken hard-scope or must-cover reporting. Set
-`verbose_diagnostics=true` (`--verbose-diagnostics` in the CLI) to additionally
-group omitted candidates by path, language or file type, reason, score band,
-focus membership, and changed-path membership. Verbose facet lists are
+result limits with aggregate counts in both `compact` and `balanced` responses.
+Choose the MCP `response_profile` field or CLI `--response-profile` flag:
+
+- `compact` preserves fragments, receipts, hard-constraint coverage, warnings,
+  aggregate omission counts, and retry routing, but removes individual
+  omissions, verbose facets, and optional diff evidence.
+- `balanced` is the default and preserves the historical non-verbose response.
+- `explain` adds bounded individual omissions, path, language or file-type,
+  reason, score-band, focus and changed-path facets, plus available diff
+  evidence.
+
+Every response reports `effective_response_profile`. Profiles do not change
+candidate generation, ranking, fragment membership or order, source-token
+budgets, hard constraints, or receipt suppression. They only change the
+serialized presentation cost. Legacy `verbose_diagnostics=true`
+(`--verbose-diagnostics` in the CLI) maps to `explain`; combining it with an
+explicit `compact` or `balanced` profile is rejected. Facet lists are
 deterministic and bounded to 12 values; longer path or file-type tails are
 combined into `[other]`. Candidates rejected before scoring use the `not scored`
 band. The selector merges overlapping candidates, suppresses duplicate or known
 content, preserves file diversity, and returns short reasons for each chosen
 fragment.
+
+A compact immutable review journey can first preview and then materialize the
+same request:
+
+```json
+{
+  "task": "review the change for correctness regressions",
+  "workflow": "review",
+  "base_revision": "origin/main..HEAD",
+  "strict_changed_paths": true,
+  "response_profile": "compact",
+  "plan_only": true
+}
+```
+
+Check `coverage.changed_path_coverage` and `path_scope_satisfied` for the hard
+range boundary, and inspect `workflow_receipt.owner_test_candidates` plus
+`missing_families` for bounded owner-test evidence and gaps. Then repeat it with
+`plan_only=false`. Use `response_profile="explain"` only when the omitted or
+semantic diff diagnostics are needed.
 
 `workflow` accepts `auto`, `implementation`, `contribution`, `review`, or
 `investigation`. Contribution and review modes add bounded repository guidance,

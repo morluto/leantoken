@@ -6,8 +6,8 @@ use std::{error::Error, fs, path::PathBuf};
 use clap::Parser;
 use leantoken::mcp::{McpResultMode, tool_catalog_json, tool_result};
 use leantoken::model::{
-    ContextFragment, ContextRequest, ContextResponse, ContextWorkflow, EvidenceReceipt, Freshness,
-    ResponseMeta,
+    ContextFragment, ContextRequest, ContextResponse, ContextResponseProfile, ContextWorkflow,
+    EvidenceReceipt, Freshness, ResponseMeta,
 };
 use wire_trace::{Direction, Event, RangeIdentity, RepositoryIdentity, TRACE_SCHEMA_V2, Trace};
 
@@ -62,6 +62,7 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
         workflow: ContextWorkflow::Implementation,
         workflow_receipt: None,
         plan: None,
+        effective_response_profile: ContextResponseProfile::Balanced,
         fragments: vec![ContextFragment {
             path: "src/mcp.rs".into(),
             start_line: 298,

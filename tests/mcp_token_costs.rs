@@ -1,9 +1,9 @@
 use std::{fs, path::Path, path::PathBuf, sync::Arc, time::Instant};
 
 use leantoken::{
-    Config, ContextRequest,
+    Config, ContextRequest, ContextResponseProfile,
     mcp::{LeanTokenMcp, McpResultMode, tool_catalog_json, tool_result},
-    services::Services,
+    services::{ServiceCallOptions, Services},
 };
 use rmcp::{ServerHandler, model::ProtocolVersion};
 use serde::Serialize;
@@ -22,6 +22,8 @@ struct Report {
     call_request_tokens: usize,
     baseline_response_json_tokens: usize,
     response_json_tokens: usize,
+    compact_response_json_tokens: usize,
+    explain_response_json_tokens: usize,
     baseline_dual_result_tokens: usize,
     dual_result_tokens: usize,
     text_result_tokens: usize,
@@ -92,12 +94,37 @@ async fn mcp_handoff_token_costs() {
         receipt_id: None,
         prior_repository_generation: None,
     base_revision: None,
-    changed_paths: Vec::new(),
+    changed_paths: vec!["src/rust/math.rs".into()],
     strict_changed_paths: false,
     verbose_diagnostics: false,
     };
-    let context = services.context(context_request).await.expect("context");
+    let compact_context = services
+        .context_with_options(
+            context_request.clone(),
+            ServiceCallOptions::new()
+                .with_context_response_profile(ContextResponseProfile::Compact),
+        )
+        .await
+        .expect("compact context");
+    let context = services
+        .context(context_request.clone())
+        .await
+        .expect("balanced context");
+    let explain_context = services
+        .context_with_options(
+            context_request,
+            ServiceCallOptions::new()
+                .with_context_response_profile(ContextResponseProfile::Explain),
+        )
+        .await
+        .expect("explain context");
     let context_value = serde_json::to_value(&context).expect("context JSON");
+    let compact_response_json_tokens = tokenizer.count(
+        &serde_json::to_string(&compact_context).expect("compact context JSON"),
+    );
+    let explain_response_json_tokens = tokenizer.count(
+        &serde_json::to_string(&explain_context).expect("explain context JSON"),
+    );
     let mut baseline_context_value = context_value.clone();
     baseline_context_value["receipt"]
         .as_object_mut()
@@ -122,7 +149,8 @@ async fn mcp_handoff_token_costs() {
                 "focus_symbols": [],
                 "exclude_paths": [],
                 "known_hashes": [],
-                "prior_repository_generation": null
+                "prior_repository_generation": null,
+                "changed_paths": ["src/rust/math.rs"]
             }
         }
     });
@@ -187,6 +215,8 @@ async fn mcp_handoff_token_costs() {
         call_request_tokens,
         baseline_response_json_tokens,
         response_json_tokens,
+        compact_response_json_tokens,
+        explain_response_json_tokens,
         baseline_dual_result_tokens,
         dual_result_tokens,
         text_result_tokens,
@@ -199,6 +229,7 @@ async fn mcp_handoff_token_costs() {
             "The modeled trace serializes initialize, notifications/initialized, tools/list, and tools/call messages but excludes transport framing outside JSON-RPC.",
             "Absolute fixture counts may vary with platform-specific retrieval paths; the same-platform pre-change reconstruction freezes the representation delta.",
             "Catalog token counts are measurements, not pass/fail limits; schema changes require explicit snapshot review because capability and routing clarity cannot be judged from length alone.",
+            "Context response-profile counts compare the serialized service DTO only; source selection identity and complete MCP framing are validated separately.",
             "No model consumes the handoff, so practical sufficiency is not measured here.",
         ],
     };
@@ -211,6 +242,14 @@ async fn mcp_handoff_token_costs() {
     assert!(handoff_tokens > schema_tokens + dual_result_tokens);
     assert!(structured_result_tokens < dual_result_tokens);
     assert!(text_result_tokens < dual_result_tokens);
+    assert!(
+        compact_response_json_tokens < response_json_tokens,
+        "compact={compact_response_json_tokens} balanced={response_json_tokens}"
+    );
+    assert!(
+        response_json_tokens <= explain_response_json_tokens,
+        "balanced={response_json_tokens} explain={explain_response_json_tokens}"
+    );
     assert_eq!(
         response_json_tokens.checked_add(18),
         Some(baseline_response_json_tokens),

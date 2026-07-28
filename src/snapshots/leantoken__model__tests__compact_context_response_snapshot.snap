@@ -1,9 +1,9 @@
 ---
 source: src/model.rs
-assertion_line: 832
 expression: response
 ---
 {
+  "effective_response_profile": "balanced",
   "workflow": "implementation",
   "fragments": [
     {

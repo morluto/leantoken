@@ -3560,8 +3560,8 @@ fn finalize_aggregate(aggregate: &mut AggregateReport) {
 mod tests {
     use super::*;
     use leantoken::{
-        ContextCoverageReceipt, ContextOmissionSummary, ContextWorkflow, EvidenceReceipt,
-        Freshness, ResponseMeta,
+        ContextCoverageReceipt, ContextOmissionSummary, ContextResponseProfile, ContextWorkflow,
+        EvidenceReceipt, Freshness, ResponseMeta,
     };
 
     fn external_manifest() -> Manifest {
@@ -4016,6 +4016,7 @@ mod tests {
             workflow: ContextWorkflow::Implementation,
             workflow_receipt: None,
             plan: None,
+            effective_response_profile: ContextResponseProfile::Balanced,
             fragments: Vec::new(),
             receipt: EvidenceReceipt {
                 task_fingerprint: "task".into(),

@@ -558,17 +558,28 @@ themselves. It does not count MCP `CallToolResult` duplication, JSON-RPC
 framing, or human CLI rendering. `token_budget`/`--budget` remains the
 independent source-content ceiling.
 
+Context response profiles are presentation projections owned by `Services` and
+passed through `ServiceCallOptions`; they are not retrieval modes. `compact`,
+`balanced`, and `explain` share candidate generation, ranking, selected
+fragment identity and order, source budgets, hard constraints, and receipt
+suppression. Compact removes optional individual omission, facet, and diff
+detail while retaining fail-loud coverage, warnings, routing, aggregate
+omission counts, and receipt evidence. The selected profile starts no scan,
+query, storage write, or concurrency fan-out. Legacy
+`verbose_diagnostics=true` normalizes to `explain`.
+
 Fitting is deterministic and happens inside `Services`, after candidate
 generation but before receipt evidence is committed. It first removes bounded
 omission facets, detailed diff evidence, routing detail, and ranking reasons.
 Only requests without include, must-cover, focus, diff, strict-scope, or
 handoff constraints may then drop lowest-ranked selected fragments. Constrained
 requests return a typed `RequestLimitExceeded` error when their correctness
-skeleton cannot fit; fitting never weakens their coverage contract. Default
-plan-only diff context omits detailed diff evidence unless
-`verbose_diagnostics` is requested. Receipt sizing reserves the exact
-request/generated receipt identifier plus conservative counter and warning
-shapes, and the final postcondition is checked after receipt application.
+skeleton cannot fit; fitting never weakens their coverage contract. Balanced
+plan-only diff context omits detailed diff evidence; compact always omits
+optional diff evidence and explain includes it when available. Receipt sizing
+reserves the exact request/generated receipt identifier plus conservative
+counter and warning shapes, and the final postcondition is checked after
+receipt application.
 Accounting converges to a fixed point and
 `meta.total_response_tokens` is the exact inclusive serialized DTO count.
 The shared `ResponseBudget` counter provides a logarithmic largest-prefix

@@ -13,6 +13,8 @@ impl Services {
     ) -> Result<(ContextEvaluation, Option<usize>)> {
         check_cancelled(cancellation)?;
         self.validate_call_options(options)?;
+        let response_profile = response::effective_context_response_profile(&request, options)?;
+        request.verbose_diagnostics = response_profile == ContextResponseProfile::Explain;
         self.validate_context_request(&request, handoff.as_ref())?;
         self.validate_workflow_evidence(&workflow_evidence)?;
         request.changed_paths = request
@@ -173,6 +175,7 @@ impl Services {
                     scoped_request: &scoped_request,
                     handoff: handoff.as_ref(),
                     options,
+                    response_profile,
                     cancellation,
                     diagnostics,
                     generation,

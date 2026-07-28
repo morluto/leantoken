@@ -428,12 +428,14 @@ impl Cli {
                 let handoff = args.handoff_request();
                 let workflow_evidence = args.workflow_evidence();
                 let max_response_tokens = args.max_response_tokens;
+                let response_profile = args.response_profile.map(Into::into);
                 AppRequest::Context {
                     request: args.into(),
                     workflow,
                     workflow_evidence,
                     handoff: handoff.map(Box::new),
                     max_response_tokens,
+                    response_profile,
                 }
             }
             Commands::Doctor => AppRequest::Doctor,
@@ -503,6 +505,7 @@ pub enum AppRequest {
         workflow_evidence: WorkflowEvidence,
         handoff: Option<Box<HandoffManifestRequest>>,
         max_response_tokens: Option<usize>,
+        response_profile: Option<crate::model::ContextResponseProfile>,
     },
     Doctor,
     Mcp {

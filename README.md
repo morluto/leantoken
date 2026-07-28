@@ -229,9 +229,12 @@ with `strict_changed_paths: true`.
 For an uncertain broad task, set `plan_only: true` to receive bounded ranked
 candidate metadata without source fragments or receipt mutation. Confirm the
 paths and coverage, then repeat the same request with `plan_only: false` to
-materialize the selected source. Context omission diagnostics are compact by
-default; set `verbose_diagnostics: true` only when full path, file-type, reason,
-score-band, focus, and changed-path facets are needed.
+materialize the selected source. Set `response_profile: "compact"` for the
+smallest fail-loud response, keep the default `"balanced"` shape, or use
+`"explain"` for bounded individual omissions, facets, and diff evidence. The
+response reports the resolved choice as `effective_response_profile`. Legacy
+`verbose_diagnostics: true` maps to `"explain"` and conflicts with an explicit
+`"compact"` or `"balanced"` profile.
 
 </details>
 

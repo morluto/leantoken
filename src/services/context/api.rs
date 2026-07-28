@@ -196,6 +196,10 @@ impl Services {
             self.observe_service_result(operation, self.validate_call_options(options))?;
             self.observe_service_result(
                 operation,
+                response::effective_context_response_profile(&request, options).map(|_| ()),
+            )?;
+            self.observe_service_result(
+                operation,
                 self.validate_context_request(&request, handoff.as_ref()),
             )?;
             self.observe_service_result(

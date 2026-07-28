@@ -232,6 +232,36 @@ async fn context_response_budget_fails_loudly_when_the_mandatory_skeleton_cannot
         "pub fn pending_response_budget_change() {}\n",
     )
     .expect("write pending change");
+    let mut conflicting_profile = context_limit_request(100);
+    conflicting_profile.verbose_diagnostics = true;
+    let invalid = services
+        .context_with_options_workflow_consistency_cancellable(
+            conflicting_profile,
+            None,
+            ContextWorkflow::Auto,
+            IndexConsistency::ReconcileWorkingTree,
+            ServiceCallOptions::new()
+                .with_context_response_profile(ContextResponseProfile::Balanced),
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("explicit balanced profile must reject legacy verbose diagnostics");
+    assert!(matches!(
+        invalid,
+        Error::InvalidInput {
+            field: "response_profile",
+            reason: "verbose_diagnostics=true requires response_profile=explain",
+        }
+    ));
+    assert_eq!(
+        services
+            .status()
+            .await
+            .expect("status after conflicting response profile")
+            .repository_generation,
+        generation
+    );
+
     let invalid = services
         .context_with_options_workflow_consistency_cancellable(
             context_limit_request(100),
@@ -292,6 +322,10 @@ async fn context_plan_diff_evidence_is_opt_in_and_never_smaller_when_expanded() 
         .context(request.clone())
         .await
         .expect("compact diff plan");
+    assert_eq!(
+        compact.effective_response_profile,
+        ContextResponseProfile::Balanced
+    );
     assert!(
         compact
             .diff_scope
@@ -303,6 +337,10 @@ async fn context_plan_diff_evidence_is_opt_in_and_never_smaller_when_expanded() 
 
     request.verbose_diagnostics = true;
     let expanded = services.context(request).await.expect("expanded diff plan");
+    assert_eq!(
+        expanded.effective_response_profile,
+        ContextResponseProfile::Explain
+    );
     assert!(
         expanded
             .diff_scope
@@ -312,6 +350,210 @@ async fn context_plan_diff_evidence_is_opt_in_and_never_smaller_when_expanded() 
             .is_some()
     );
     assert!(expanded.meta.total_response_tokens >= compact.meta.total_response_tokens);
+}
+
+#[tokio::test]
+async fn context_response_profiles_only_change_bounded_presentation() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir_all(root.path().join("src/browser")).expect("browser directory");
+    std::fs::create_dir_all(root.path().join("src/managed")).expect("managed directory");
+    let source = "pub fn shared_capture_target() -> bool { true }\n";
+    std::fs::write(root.path().join("src/browser/capture.rs"), source)
+        .expect("browser source");
+    std::fs::write(
+        root.path().join("src/browser/secondary.rs"),
+        "pub fn shared_capture_target_secondary() -> bool { true }\n",
+    )
+    .expect("secondary browser source");
+    std::fs::write(root.path().join("src/managed/evidence.rs"), source)
+        .expect("managed source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let mut request = context_limit_request(200);
+    request.task = "find shared_capture_target".into();
+    request.include_paths = vec!["src/browser/**".into()];
+    request.changed_paths = vec!["src/browser/capture.rs".into()];
+    request.max_fragments = Some(1);
+
+    let balanced = services
+        .context_with_options(
+            request.clone(),
+            ServiceCallOptions::new()
+                .with_context_response_profile(ContextResponseProfile::Balanced),
+        )
+        .await
+        .expect("balanced response");
+    let compact = services
+        .context_with_options(
+            request.clone(),
+            ServiceCallOptions::new()
+                .with_context_response_profile(ContextResponseProfile::Compact),
+        )
+        .await
+        .expect("compact response");
+    let explain = services
+        .context_with_options(
+            request.clone(),
+            ServiceCallOptions::new()
+                .with_context_response_profile(ContextResponseProfile::Explain),
+        )
+        .await
+        .expect("explain response");
+    let default = services
+        .context(request.clone())
+        .await
+        .expect("default balanced response");
+    request.verbose_diagnostics = true;
+    let explicit_legacy_explain = services
+        .context_with_options(
+            request.clone(),
+            ServiceCallOptions::new()
+                .with_context_response_profile(ContextResponseProfile::Explain),
+        )
+        .await
+        .expect("explicit explain accepts legacy verbose diagnostics");
+    let legacy_explain = services
+        .context(request)
+        .await
+        .expect("legacy verbose response");
+
+    assert_eq!(
+        balanced.effective_response_profile,
+        ContextResponseProfile::Balanced
+    );
+    assert_eq!(
+        compact.effective_response_profile,
+        ContextResponseProfile::Compact
+    );
+    assert_eq!(
+        explain.effective_response_profile,
+        ContextResponseProfile::Explain
+    );
+    assert_eq!(
+        default.effective_response_profile,
+        ContextResponseProfile::Balanced
+    );
+    assert_eq!(
+        legacy_explain.effective_response_profile,
+        ContextResponseProfile::Explain
+    );
+    assert_eq!(
+        explicit_legacy_explain.effective_response_profile,
+        ContextResponseProfile::Explain
+    );
+
+    let identities = |response: &leantoken::ContextResponse| {
+        response
+            .fragments
+            .iter()
+            .map(|fragment| {
+                (
+                    fragment.path.clone(),
+                    fragment.start_line,
+                    fragment.end_line,
+                    fragment.content_hash.clone(),
+                    fragment.score.to_bits(),
+                    fragment.reason.clone(),
+                    fragment.token_count,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let balanced_identities = identities(&balanced);
+    for response in [
+        &compact,
+        &explain,
+        &default,
+        &legacy_explain,
+        &explicit_legacy_explain,
+    ] {
+        assert_eq!(identities(response), balanced_identities);
+        assert_eq!(
+            response.receipt.task_fingerprint,
+            balanced.receipt.task_fingerprint
+        );
+        assert_eq!(
+            response.receipt.fragment_hashes,
+            balanced.receipt.fragment_hashes
+        );
+        assert_eq!(response.meta.source_tokens, balanced.meta.source_tokens);
+        assert_eq!(response.coverage, balanced.coverage);
+        assert_eq!(response.workflow, balanced.workflow);
+        assert_eq!(response.routing, balanced.routing);
+        assert_eq!(response.warnings, balanced.warnings);
+        assert_eq!(
+            response.omission_summary.path_excluded,
+            balanced.omission_summary.path_excluded
+        );
+        assert_eq!(
+            response.omission_summary.known_hash,
+            balanced.omission_summary.known_hash
+        );
+        assert_eq!(
+            response.omission_summary.budget_or_result_limit,
+            balanced.omission_summary.budget_or_result_limit
+        );
+    }
+
+    assert!(!balanced.fragments.is_empty());
+    assert!(balanced.omission_summary.path_excluded > 0);
+    assert!(compact.omitted.is_empty());
+    assert!(compact.omission_summary.by_path.is_empty());
+    assert!(compact.omission_summary.by_reason.is_empty());
+    assert!(
+        compact
+            .diff_scope
+            .as_ref()
+            .expect("compact diff scope")
+            .evidence
+            .is_none()
+    );
+    assert!(
+        balanced
+            .diff_scope
+            .as_ref()
+            .expect("balanced diff scope")
+            .evidence
+            .is_some()
+    );
+    assert!(!explain.omitted.is_empty());
+    assert!(!explain.omission_summary.by_path.is_empty());
+    assert!(!explain.omission_summary.by_reason.is_empty());
+    assert!(
+        explain
+            .diff_scope
+            .as_ref()
+            .expect("explain diff scope")
+            .evidence
+            .is_some()
+    );
+    assert_eq!(
+        serde_json::to_value(&legacy_explain.omitted).expect("legacy omission details"),
+        serde_json::to_value(&explain.omitted).expect("explicit omission details")
+    );
+    assert_eq!(
+        legacy_explain.omission_summary,
+        explain.omission_summary
+    );
+
+    assert!(
+        compact.meta.total_response_tokens < balanced.meta.total_response_tokens,
+        "compact={} balanced={}",
+        compact.meta.total_response_tokens,
+        balanced.meta.total_response_tokens
+    );
+    assert!(
+        compact.meta.total_response_tokens < explain.meta.total_response_tokens,
+        "compact={} explain={}",
+        compact.meta.total_response_tokens,
+        explain.meta.total_response_tokens
+    );
+    assert_response_token_accounting!(compact, Tokenizer::Cl100kBase);
+    assert_response_token_accounting!(balanced, Tokenizer::Cl100kBase);
+    assert_response_token_accounting!(explain, Tokenizer::Cl100kBase);
 }
 
 #[tokio::test]

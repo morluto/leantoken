@@ -34,6 +34,7 @@ struct ContextFinalization<'a> {
     scoped_request: &'a ContextRequest,
     handoff: Option<&'a HandoffManifestRequest>,
     options: ServiceCallOptions,
+    response_profile: ContextResponseProfile,
     cancellation: &'a CancellationToken,
     diagnostics: CandidateDiagnostics,
     generation: u64,
