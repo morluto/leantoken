@@ -19,6 +19,7 @@ jobs:
   release-please:
     name: Create or update release PR
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     concurrency:
       group: release-please-plan
       cancel-in-progress: true
@@ -171,6 +172,7 @@ jobs:
   create-tag:
     name: Create release tag
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: |
       github.event_name == 'pull_request' &&
       github.event.action == 'closed' &&

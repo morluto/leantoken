@@ -15,6 +15,7 @@ jobs:
   prepare:
     name: Freeze live-read matrix
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       matrix: ${{ steps.matrix.outputs.value }}
     steps:
@@ -32,6 +33,7 @@ jobs:
     name: ${{ matrix.os }} / ${{ matrix.corpus }}
     needs: prepare
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
@@ -172,6 +174,7 @@ jobs:
     name: Validate live-read matrix and decide
     needs: profile
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:

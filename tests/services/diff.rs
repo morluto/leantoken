@@ -54,9 +54,7 @@ async fn diff_scoped_context_with_explicit_changed_paths_reports_receipt() {
 
 #[tokio::test]
 async fn strict_explicit_changed_paths_do_not_expand_to_working_tree_changes() {
-    if !git_available() {
-        return;
-    }
+    require_git();
 
     let root = tempfile::tempdir().expect("root");
     let database = tempfile::tempdir().expect("database");
@@ -170,9 +168,7 @@ async fn strict_explicit_changed_paths_do_not_expand_to_working_tree_changes() {
 
 #[tokio::test]
 async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracked_owner_tests() {
-    if !git_available() {
-        return;
-    }
+    require_git();
 
     let root = tempfile::tempdir().expect("root");
     let database = tempfile::tempdir().expect("database");
@@ -373,9 +369,7 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
 
 #[tokio::test]
 async fn review_context_classifies_semantic_changes_without_exposing_configuration_values() {
-    if !git_available() {
-        return;
-    }
+    require_git();
 
     let root = tempfile::tempdir().expect("root");
     let database = tempfile::tempdir().expect("database");

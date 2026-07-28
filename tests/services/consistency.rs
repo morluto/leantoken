@@ -2,9 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn working_tree_diff_boosts_changed_files() {
-    if !git_available() {
-        return;
-    }
+    require_git();
 
     let root = tempfile::tempdir().expect("root");
     std::fs::create_dir(root.path().join("src")).unwrap();

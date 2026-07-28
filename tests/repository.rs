@@ -493,11 +493,16 @@ fn resolve_existing_accepts_contained_file() {
     assert!(resolved.exists());
 }
 
-fn git_available() -> bool {
-    std::process::Command::new("git")
+fn require_git() {
+    let output = std::process::Command::new("git")
         .arg("--version")
         .output()
-        .is_ok()
+        .expect("git is required to run git-dependent integration tests");
+    assert!(
+        output.status.success(),
+        "git is required to run git-dependent integration tests: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 fn run_git(root: &std::path::Path, args: &[&str]) {
@@ -523,9 +528,7 @@ fn git_changed_paths_is_empty_outside_git_repo() {
 
 #[test]
 fn git_changed_paths_detects_modified_and_untracked_files() {
-    if !git_available() {
-        return;
-    }
+    require_git();
 
     let root = tempfile::tempdir().expect("root");
     init_git_repo(root.path());
@@ -546,9 +549,7 @@ fn git_changed_paths_detects_modified_and_untracked_files() {
 
 #[test]
 fn git_changed_paths_are_relative_to_a_nested_index_root() {
-    if !git_available() {
-        return;
-    }
+    require_git();
 
     let root = tempfile::tempdir().expect("root");
     let nested = root.path().join("packages/core");
@@ -572,9 +573,7 @@ fn git_changed_paths_are_relative_to_a_nested_index_root() {
 fn git_changed_paths_does_not_run_repository_fsmonitor() {
     use std::os::unix::fs::PermissionsExt;
 
-    if !git_available() {
-        return;
-    }
+    require_git();
 
     let root = tempfile::tempdir().expect("root");
     init_git_repo(root.path());
@@ -615,9 +614,7 @@ fn git_diff_paths_rejects_empty_base_revision() {
 
 #[test]
 fn git_diff_paths_returns_error_for_unresolvable_revision() {
-    if !git_available() {
-        return;
-    }
+    require_git();
     let root = tempfile::tempdir().expect("root");
     init_git_repo(root.path());
     let error = git_diff_paths(root.path(), "nonexistent-branch", 64)
@@ -630,9 +627,7 @@ fn git_diff_paths_returns_error_for_unresolvable_revision() {
 
 #[test]
 fn git_diff_paths_detects_committed_changes_relative_to_base() {
-    if !git_available() {
-        return;
-    }
+    require_git();
     let root = tempfile::tempdir().expect("root");
     init_git_repo(root.path());
     fs::write(root.path().join("base.rs"), "fn base() {}
@@ -661,9 +656,7 @@ fn git_diff_paths_detects_committed_changes_relative_to_base() {
 
 #[test]
 fn git_diff_paths_includes_working_tree_changes() {
-    if !git_available() {
-        return;
-    }
+    require_git();
     let root = tempfile::tempdir().expect("root");
     init_git_repo(root.path());
     fs::write(root.path().join("committed.rs"), "fn committed() {}
@@ -687,9 +680,7 @@ fn git_diff_paths_includes_working_tree_changes() {
 
 #[test]
 fn git_diff_hunks_reports_target_line_ranges() {
-    if !git_available() {
-        return;
-    }
+    require_git();
     let root = tempfile::tempdir().expect("root");
     init_git_repo(root.path());
     fs::write(root.path().join("changed.rs"), "fn changed() {\n    one();\n}\n")
@@ -711,9 +702,7 @@ fn git_diff_hunks_reports_target_line_ranges() {
 
 #[test]
 fn git_diff_hunks_reports_first_line_deletion_as_empty_target_range() {
-    if !git_available() {
-        return;
-    }
+    require_git();
     let root = tempfile::tempdir().expect("root");
     init_git_repo(root.path());
     fs::write(root.path().join("changed.rs"), "removed\n").expect("write");
@@ -730,9 +719,7 @@ fn git_diff_hunks_reports_first_line_deletion_as_empty_target_range() {
 
 #[test]
 fn git_diff_paths_resolves_origin_main_ref_name() {
-    if !git_available() {
-        return;
-    }
+    require_git();
     let root = tempfile::tempdir().expect("root");
     init_git_repo(root.path());
     fs::write(root.path().join("base.rs"), "fn base() {}

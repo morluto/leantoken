@@ -296,4 +296,6 @@ pub struct SearchPhaseCounters {
     pub regex_candidate_chunks: usize,
     /// Candidate chunks verified with the compiled regex.
     pub regex_chunks_verified: usize,
+    /// Matching chunks retained for occurrence hydration.
+    pub regex_retained_chunks: usize,
 }

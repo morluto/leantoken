@@ -9,6 +9,9 @@ cargo-dist-version = "0.32.0"
 ci = "github"
 # PRs validate release configuration through the path-aware CI release-plan job.
 pr-run-mode = "skip"
+# Keep explicit job timeouts in the generated workflow; dist 0.32 does not
+# expose a timeout setting for its built-in release jobs.
+allow-dirty = ["ci"]
 # Release Please creates tags with GITHUB_TOKEN, so explicitly dispatch the
 # generated release workflow instead of relying on a suppressed tag-push event.
 dispatch-releases = true

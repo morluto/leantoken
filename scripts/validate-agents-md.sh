@@ -29,13 +29,13 @@ while IFS= read -r cmd; do
   # Validate cargo subcommand exists
   subcmd=$(echo "$bare_cmd" | awk '{print $2}')
   if ! cargo help "$subcmd" &>/dev/null; then
-    echo "::warning::Unknown cargo subcommand in AGENTS.md: '$subcmd' (from: $bare_cmd)"
+    echo "::error::Unknown cargo subcommand in AGENTS.md: '$subcmd' (from: $bare_cmd)"
     failures=$((failures + 1))
   fi
 
   # Validate flags parse (dry-run via cargo help)
   if ! cargo "$subcmd" --help &>/dev/null; then
-    echo "::warning::Command in AGENTS.md may have invalid flags: $bare_cmd"
+    echo "::error::Command in AGENTS.md may have invalid flags: $bare_cmd"
     failures=$((failures + 1))
   fi
 done < <(grep -E '^cargo ' "$AGENTS_FILE" | sort -u)
@@ -43,13 +43,14 @@ done < <(grep -E '^cargo ' "$AGENTS_FILE" | sort -u)
 # Check that referenced files and directories exist
 for ref in src/ tests/ benchmarks/ docs/ scripts/ .github/; do
   if [ ! -e "$ref" ]; then
-    echo "::warning::AGENTS.md references '$ref' which does not exist"
+    echo "::error::AGENTS.md references '$ref' which does not exist"
     failures=$((failures + 1))
   fi
 done
 
 if [ "$failures" -gt 0 ]; then
-  echo "::warning::AGENTS.md validation found ${failures} issue(s)"
+  echo "::error::AGENTS.md validation found ${failures} issue(s)"
+  exit 1
 else
   echo "AGENTS.md validation passed."
 fi

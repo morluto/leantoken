@@ -256,11 +256,16 @@ async fn indexed_source(path: &str, content: &[u8]) -> (tempfile::TempDir, Servi
     (root, services)
 }
 
-fn git_available() -> bool {
-    std::process::Command::new("git")
+fn require_git() {
+    let output = std::process::Command::new("git")
         .arg("--version")
         .output()
-        .is_ok()
+        .expect("git is required to run git-dependent integration tests");
+    assert!(
+        output.status.success(),
+        "git is required to run git-dependent integration tests: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 fn init_git_repo(root: &std::path::Path) {

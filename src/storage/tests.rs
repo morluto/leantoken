@@ -17,6 +17,82 @@ fn writer_bounds_recycled_wal_size() {
     assert_eq!(limit, WAL_JOURNAL_SIZE_LIMIT_BYTES);
 }
 
+#[test]
+fn incremental_reconciliation_recycles_wal_after_long_lived_reader_drops() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    storage
+        .full_reconcile("config", vec![sample_file("pinned.rs", "old snapshot\n")])
+        .expect("initial generation");
+
+    let reader = storage.begin_read().expect("long-lived reader");
+    assert_eq!(reader.repository_generation().expect("pin snapshot"), 1);
+    assert!(
+        reader
+            .find_file("pinned.rs")
+            .expect("pinned lookup")
+            .is_some()
+    );
+
+    let payload = "x".repeat(512 * 1024);
+    for round in 0..4 {
+        let replacements = (0..8)
+            .map(|file| {
+                sample_file(
+                    &format!("large-{file}.rs"),
+                    &format!("round_{round}_file_{file}\n{payload}"),
+                )
+            })
+            .collect();
+        storage
+            .reconcile_files("config", replacements, &[])
+            .expect("large incremental reconciliation");
+    }
+
+    assert_eq!(
+        reader.repository_generation().expect("stable snapshot"),
+        1,
+        "the reader must retain its original generation while the WAL grows"
+    );
+    let retained_wal_bytes = fs::metadata(wal_path(&database))
+        .expect("retained WAL")
+        .len();
+    assert!(
+        retained_wal_bytes > WAL_JOURNAL_SIZE_LIMIT_BYTES as u64,
+        "a pinned reader should prevent recycling the large WAL: {retained_wal_bytes} bytes"
+    );
+
+    let blocked_baseline = storage.meta().expect("blocked checkpoint baseline");
+    let (_, (), blocked_checkpoint) = storage
+        .publish_reconciliation_profiled_at(&blocked_baseline, "config", false, |writer| {
+            writer.replace(sample_file("while-pinned.rs", "still pinned\n"))?;
+            Ok(())
+        })
+        .expect("profiled reconciliation with pinned reader");
+    assert!(blocked_checkpoint.post_commit_diagnostics_complete);
+    assert_eq!(blocked_checkpoint.checkpoint_busy, 1);
+    assert!(blocked_checkpoint.wal_bytes >= retained_wal_bytes);
+
+    drop(reader);
+    let checkpoint_baseline = storage.meta().expect("checkpoint baseline");
+    let (_, (), completed_checkpoint) = storage
+        .publish_reconciliation_profiled_at(&checkpoint_baseline, "config", false, |writer| {
+            writer.replace(sample_file("checkpoint-trigger.rs", "latest\n"))?;
+            Ok(())
+        })
+        .expect("post-reader reconciliation");
+
+    assert!(completed_checkpoint.post_commit_diagnostics_complete);
+    assert_eq!(completed_checkpoint.checkpoint_busy, 0);
+    assert_eq!(completed_checkpoint.checkpoint_log_frames, 0);
+    assert_eq!(completed_checkpoint.checkpointed_frames, 0);
+    assert_eq!(
+        completed_checkpoint.wal_bytes, 0,
+        "the explicit post-commit checkpoint should truncate the WAL after the reader drops"
+    );
+}
+
 fn sample_file(path: &str, content: &str) -> IndexedFile {
     IndexedFile {
         path: path.to_string(),

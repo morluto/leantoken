@@ -104,9 +104,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
 
 #[tokio::test]
 async fn repository_identity_distinguishes_linked_worktrees_before_empty_search_is_evidence() {
-    if !git_available() {
-        return;
-    }
+    require_git();
 
     let parent = tempfile::tempdir().expect("parent");
     let base = parent.path().join("base");
