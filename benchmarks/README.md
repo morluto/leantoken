@@ -46,6 +46,57 @@ Its 36% labeled-file recall and 9% line-anchor recall are negative evidence, not
 a savings claim; do not tune against it while continuing to describe it as
 unseen.
 
+### Frozen holdout vNext
+
+[`frozen_holdout_vnext_policy.json`](frozen_holdout_vnext_policy.json)
+pre-registers the next blind promotion boundary before task selection or label
+inspection. It freezes the baseline revision, tokenizer, executor and validation
+policy, call/time/source budgets, statistical policy, resource envelopes, and
+eleven task families. A valid sealed set has at least 60 tasks; every family
+must contain multiple tasks, repositories, languages, and task shapes. The
+feature candidate revision is bound separately when the evaluator seals the
+artifacts.
+
+The evaluator keeps two JSONL artifacts outside the repository:
+
+- public tasks contain prompts, pinned repositories, family/language/shape
+  strata, budgets, provenance, and task-specific success-validator commands;
+- owner-readable labels contain only task-bound relevant paths and line
+  regions.
+
+`frozen_holdout_vnext seal` validates both artifacts, requires owner-only label
+permissions on Unix, and writes a publishable receipt containing hashes and
+aggregate strata only. It never copies prompts, gold paths, regions, or source
+into the receipt. The output is immutable and a changed/missing task, label,
+family, binding, provenance field, or policy fails closed:
+
+```bash
+cargo build --release --example frozen_holdout_vnext
+
+target/release/examples/frozen_holdout_vnext seal \
+  --policy benchmarks/frozen_holdout_vnext_policy.json \
+  --tasks target/frozen-holdout-vnext/tasks.public.jsonl \
+  --labels target/frozen-holdout-vnext/labels.private.jsonl \
+  --host target/frozen-holdout-vnext/host.json \
+  --candidate-revision CANDIDATE_GIT_REVISION \
+  --harness-revision "$(git rev-parse HEAD)" \
+  --evaluator-revision EVALUATOR_GIT_REVISION \
+  --toolchain "$(rustc --version)" \
+  --output target/frozen-holdout-vnext/seal-receipt.json
+
+target/release/examples/frozen_holdout_vnext verify-public \
+  --policy benchmarks/frozen_holdout_vnext_policy.json \
+  --tasks target/frozen-holdout-vnext/tasks.public.jsonl \
+  --host target/frozen-holdout-vnext/host.json \
+  --receipt target/frozen-holdout-vnext/seal-receipt.json
+```
+
+Sealing is evidence infrastructure, not a score. Baseline/candidate execution
+and the existing retrieval promotion gate remain separate and must bind the
+same sealed receipt. Feature implementers must not receive private labels or
+per-task gold-derived diagnostics. Once that access occurs, the entire batch is
+consumed diagnostic data and cannot support a blind promotion claim.
+
 ## Agent wall-time A/B
 
 [`agent_walltime_ab.json`](agent_walltime_ab.json) freezes a local retrieval

@@ -68,6 +68,37 @@ It also reports sorted pre-selection candidate paths and signal summaries for
 labeled files. Candidate recall separates query/index generation failures from
 deduplication, ranking, and allocation failures without adding diagnostics to
 the MCP response schema.
+
+`benchmarks/frozen_holdout_vnext_policy.json` is the pre-registration contract
+for the next blind promotion set. It intentionally contains neither task
+prompts nor labels. An independent evaluator supplies public task JSONL and a
+separately access-controlled label JSONL, then uses the
+`frozen_holdout_vnext` example to create a path-free seal receipt. Public CI may
+revalidate policy, task/host commitments, family coverage, and receipt
+aggregates with `verify-public`; it cannot claim label validity or blind access
+control without the evaluator-owned artifact.
+
+The vNext policy freezes the baseline revision; the feature candidate revision
+is supplied and bound only when the candidate, harness, and evaluator are
+frozen for sealing. The two revisions must differ. The contract otherwise
+fails closed unless there are at least 60 tasks and every
+pre-registered family spans the configured minimum tasks, repositories,
+languages, and task shapes. Each task freezes its repository revision, prompt,
+source budget, executor policy, provenance, and success-validator commands.
+The policy separately freezes attempts, tool-call/time bounds, tokenizer,
+promotion thresholds, bootstrap sampling, provider cost, latency, RSS, and
+database-size envelopes. Labels bind to the canonical public task hash and
+must cover every task exactly once with safe relative files and valid line
+regions. The seal receipt retains only exact artifact hashes and aggregate
+counts; it contains no prompts, paths, regions, or source.
+
+This separation is operational, not cryptographic. The independent evaluator
+or human escrow owns label access and evaluator identity. Any batch whose gold
+labels or per-task gold-derived diagnostics are shown to a feature implementer
+is reclassified in full as consumed diagnostic data. The checked-in policy and
+harness therefore establish the runway but do not, by themselves, assert a
+baseline score or authorize production promotion.
+
 Evaluation candidate `match_kinds` also include bounded internal provenance in
 the forms `facet:<kind>:<fusion-key>` and `channel:<source>:<rank>`. Facets
 preserve exact technical atoms and classify symbol, path, behavior, test-intent,

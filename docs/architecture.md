@@ -909,6 +909,14 @@ The index contains local source text in SQLite. Users should place an explicit
 database path only where its filesystem permissions and retention policy are
 appropriate for that repository.
 
+Evaluation-only frozen-holdout tooling is outside the application hot path. It
+reads at most 32 MiB per policy, task, label, host, or receipt artifact and at
+most 1,000 JSONL records. It performs no network requests, repository scans, or
+task execution while sealing. Public receipts contain artifact commitments and
+aggregate strata only; private labels must use safe relative paths, and Unix
+sealing rejects label files readable by group or other users. Output uses
+create-new semantics so a previous seal cannot be overwritten.
+
 ## Failure behavior
 
 - Request validation failures are typed and do not terminate MCP.
