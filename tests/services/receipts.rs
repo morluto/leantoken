@@ -116,6 +116,28 @@ async fn server_managed_receipt_suppresses_repeated_search_and_context_evidence(
 }
 
 #[tokio::test]
+async fn server_managed_receipt_survives_service_restart() {
+    let (_root, services) = fixture().await;
+    let config = services.config().clone();
+    let first = services
+        .search(search_limit_request(Some(100), Some(2_000), Some(1)))
+        .await
+        .expect("first search");
+    let receipt_id = first.meta.receipt_id.expect("receipt");
+    drop(services);
+
+    let reopened = Services::open(config).expect("reopen services");
+    let mut request = search_limit_request(Some(100), Some(2_000), Some(1));
+    request.receipt_id = Some(receipt_id.clone());
+    let repeated = reopened.search(request).await.expect("reuse after restart");
+    assert_eq!(repeated.meta.receipt_id.as_deref(), Some(receipt_id.as_str()));
+    assert!(repeated.hits.is_empty());
+    assert!(
+        repeated.meta.receipt_suppressed_exact + repeated.meta.receipt_suppressed_overlap > 0
+    );
+}
+
+#[tokio::test]
 async fn context_handoff_preserves_coordinates_provenance_and_host_state_without_source() {
     let (_root, services) = fixture().await;
     let mut request = context_limit_request(1_000);

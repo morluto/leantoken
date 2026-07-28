@@ -749,6 +749,88 @@ fn mcp_result_modes_and_auto_resolution_project_exact_wire_shapes() {
 }
 
 #[test]
+fn mcp_receipt_created_by_one_process_is_reused_by_another() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "pub fn persistent_receipt_answer() -> u8 { 42 }\n",
+    )
+    .expect("write fixture");
+    let database = root.path().join("index.sqlite");
+
+    let mut first = McpProcess::spawn(root.path(), &database);
+    first.initialize();
+    first.send_initialized();
+    first.wait_until_ready(Duration::from_secs(30));
+    first.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 901,
+        "method": "tools/call",
+        "params": {
+            "name": "search",
+            "arguments": {
+                "query": "persistent_receipt_answer",
+                "mode": "identifier",
+                "max_results": 5,
+                "max_tokens": 1_000
+            }
+        }
+    }));
+    let first_response = first.response(Duration::from_secs(10));
+    let first_result = &first_response["result"]["structuredContent"];
+    assert!(
+        first_result["hits"]
+            .as_array()
+            .is_some_and(|hits| !hits.is_empty()),
+        "{first_response}"
+    );
+    let receipt_id = first_result["meta"]["receipt_id"]
+        .as_str()
+        .expect("receipt id")
+        .to_owned();
+    first.stop();
+
+    let mut second = McpProcess::spawn(root.path(), &database);
+    second.initialize();
+    second.send_initialized();
+    second.wait_until_ready(Duration::from_secs(30));
+    second.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 902,
+        "method": "tools/call",
+        "params": {
+            "name": "search",
+            "arguments": {
+                "query": "persistent_receipt_answer",
+                "mode": "identifier",
+                "max_results": 5,
+                "max_tokens": 1_000,
+                "receipt_id": receipt_id
+            }
+        }
+    }));
+    let second_response = second.response(Duration::from_secs(10));
+    let second_result = &second_response["result"]["structuredContent"];
+    assert!(
+        second_result["hits"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "{second_response}"
+    );
+    assert!(
+        second_result["meta"]["receipt_suppressed_exact"]
+            .as_u64()
+            .unwrap_or_default()
+            + second_result["meta"]["receipt_suppressed_overlap"]
+                .as_u64()
+                .unwrap_or_default()
+            > 0,
+        "{second_response}"
+    );
+    assert_eq!(second_result["meta"]["receipt_id"], receipt_id);
+}
+
+#[test]
 fn mcp_initialize_precedes_storage_open() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn answer() {}\n").expect("write fixture");

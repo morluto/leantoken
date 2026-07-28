@@ -69,7 +69,7 @@ fn storage_opens_and_validates_fts5_support() {
     let db = dir.path().join("index.sqlite");
     let storage = Storage::open(&db).expect("open");
     let meta = storage.meta().expect("meta");
-    assert_eq!(meta.schema_version, 6);
+    assert_eq!(meta.schema_version, 7);
     assert_eq!(meta.repository_generation, 0);
     assert!(db.exists());
 }
@@ -152,6 +152,9 @@ fn storage_applies_lookup_index_migration_to_existing_databases() {
     connection
         .execute_batch(
             "DROP INDEX chunks_file_line_idx;
+             DROP TABLE retrieval_receipt_evidence;
+             DROP TABLE retrieval_receipts;
+             DROP TABLE retrieval_receipt_usage;
              DROP TABLE path_entries;
              DROP TABLE import_candidates;
              DROP TABLE token_savings;
@@ -187,7 +190,10 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
     let connection = rusqlite::Connection::open(&db).expect("raw connection");
     connection
         .execute_batch(
-            "DROP TABLE token_savings;
+            "DROP TABLE retrieval_receipt_evidence;
+             DROP TABLE retrieval_receipts;
+             DROP TABLE retrieval_receipt_usage;
+             DROP TABLE token_savings;
              ALTER TABLE files DROP COLUMN source_tokenizer;
              ALTER TABLE files DROP COLUMN source_token_count;
              ALTER TABLE meta DROP COLUMN last_access_unix_seconds;
@@ -198,7 +204,7 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
     drop(connection);
 
     let storage = Storage::open(&db).expect("migrate");
-    assert_eq!(storage.meta().expect("metadata").schema_version, 6);
+    assert_eq!(storage.meta().expect("metadata").schema_version, 7);
     let connection = rusqlite::Connection::open(&db).expect("inspect");
     let last_access: i64 = connection
         .query_row(
@@ -235,7 +241,7 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
     let migration_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("migration version");
-    assert_eq!(migration_version, 7);
+    assert_eq!(migration_version, 8);
 }
 
 #[test]
@@ -464,6 +470,9 @@ fn structural_search_migration_rebuilds_existing_rows() {
              DROP TRIGGER symbol_refs_ai_trigram;
              DROP TRIGGER symbol_refs_ad_trigram;
              DROP TRIGGER symbol_refs_au_trigram;
+             DROP TABLE retrieval_receipt_evidence;
+             DROP TABLE retrieval_receipts;
+             DROP TABLE retrieval_receipt_usage;
              DROP TABLE symbols_fts_trigram;
              DROP TABLE symbol_refs_fts_trigram;
              UPDATE meta SET schema_version = 5 WHERE id = 1;

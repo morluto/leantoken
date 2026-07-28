@@ -9,7 +9,7 @@ impl Services {
             let receipt_id = request
                 .receipt_id
                 .clone()
-                .unwrap_or_else(|| "rffffffffffffffff".into());
+                .unwrap_or_else(|| crate::receipt::RECEIPT_ID_RESPONSE_RESERVE.into());
             let selected = sized.fragments.len();
             sized.meta.receipt_id = Some(receipt_id.clone());
             sized.meta.receipt_suppressed_exact = selected;

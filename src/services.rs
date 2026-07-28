@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::sync::{
     Arc,
-    atomic::{AtomicU64, AtomicUsize, Ordering},
+    atomic::{AtomicUsize, Ordering},
 };
 use std::thread;
 use std::time::{Duration, Instant};
@@ -17,6 +17,7 @@ use crate::coordination::{CacheLease, IndexCoordination, IndexLeadership};
 use crate::error::RetryableOperation;
 use crate::indexer::Indexer;
 use crate::model::*;
+use crate::receipt::RECEIPT_ID_RESPONSE_RESERVE;
 use crate::storage::{
     ReadSession, ServiceFailureRecord, Storage, StorageCounts, TokenSavingsObservation,
     TokenSavingsRecord,
@@ -110,9 +111,7 @@ pub struct Services {
     _cache_lease: CacheLease,
     active_reconciliations: Arc<AtomicUsize>,
     reconciliation_changed: Arc<tokio::sync::Notify>,
-    receipts: Arc<receipts::ReceiptRegistry>,
     read_deltas: Arc<read_delta::ReadDeltaRegistry>,
-    next_receipt_id: Arc<AtomicU64>,
     blocking_executor: executor::BlockingExecutor,
     reconciliation: reconciliation::ReconciliationCoordinator,
 }
@@ -298,7 +297,7 @@ impl Services {
             meta.receipt_id = Some(
                 meta.receipt_id
                     .clone()
-                    .unwrap_or_else(|| "rffffffffffffffff".into()),
+                    .unwrap_or_else(|| RECEIPT_ID_RESPONSE_RESERVE.into()),
             );
             meta.receipt_suppressed_exact = returned_items;
             meta.receipt_suppressed_overlap = returned_items;

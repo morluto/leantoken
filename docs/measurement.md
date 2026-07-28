@@ -1258,3 +1258,35 @@ feature remains opt-in even when the gate passes; an agent-policy change would
 need a repeated edit-fix-test model evaluation. The first clean run and
 adoption decision are recorded in
 [`../benchmarks/reports/read-receipt-delta-v1-2026-07-26.md`](../benchmarks/reports/read-receipt-delta-v1-2026-07-26.md).
+
+## Persistent retrieval receipts
+
+`receipt_persistence_profile` compares receipt creation and repeated suppression
+on one existing repository. It builds the index before either timed phase, then
+runs 100 independent creates and 100 reuses of one seeded receipt:
+
+```bash
+cargo run --release --example receipt_persistence_profile -- \
+  --repository . \
+  --database /tmp/leantoken-receipt-profile.sqlite \
+  --iterations 100
+```
+
+The checked A/B/B/A result uses the same benchmark source at the base and
+candidate revisions. Cross-process suppression, transaction/migration rollback,
+concurrent duplicate and distinct appends, oracle parity, deterministic
+eviction, TTL, count/byte quotas, and indexed query plans are correctness gates;
+latency or write results cannot compensate for failure in one of those gates.
+
+In the accepted run, candidate/base ratios were 0.988 for reuse p50, 0.974 for
+reuse p95, 0.999 for peak RSS, and 1.004 for final database plus WAL bytes.
+Creating a durable receipt is intentionally not free: create p50 was 1.185×
+baseline and process write bytes were 5.90× baseline. Empty reuse is
+touch-debounced, but the reuse phase still measured 1.30× process write bytes
+because SQLite checkpointed receipt pages created before that phase. These are
+storage-cost measurements, not a claim that persistence improves retrieval
+latency or model task success.
+
+The exact revisions, four raw arms, physical byte deltas, logical bounds, query
+plans, limitations, and decision are recorded in
+[`../benchmarks/reports/receipt-persistence-v1-2026-07-28.json`](../benchmarks/reports/receipt-persistence-v1-2026-07-28.json).

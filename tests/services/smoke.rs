@@ -160,10 +160,18 @@ async fn five_services_return_bounded_grounded_responses() {
         })
         .await
         .expect("repeated context");
+    // Opaque IDs intentionally affect serialized accounting; compare the
+    // deterministic retrieval payload separately.
     let mut deterministic_context = context.clone();
     deterministic_context.meta.receipt_id = None;
+    deterministic_context.meta.path_and_metadata_tokens = 0;
+    deterministic_context.meta.payload_tokens = 0;
+    deterministic_context.meta.total_response_tokens = 0;
     let mut deterministic_repeat = repeated_context.clone();
     deterministic_repeat.meta.receipt_id = None;
+    deterministic_repeat.meta.path_and_metadata_tokens = 0;
+    deterministic_repeat.meta.payload_tokens = 0;
+    deterministic_repeat.meta.total_response_tokens = 0;
     assert_eq!(
         serde_json::to_string(&deterministic_repeat).expect("serialize repeated context"),
         serde_json::to_string(&deterministic_context).expect("serialize context"),

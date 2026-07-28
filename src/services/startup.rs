@@ -94,9 +94,7 @@ impl Services {
             _cache_lease: cache_lease,
             active_reconciliations,
             reconciliation_changed,
-            receipts: Arc::new(receipts::ReceiptRegistry::default()),
             read_deltas: Arc::new(read_delta::ReadDeltaRegistry::default()),
-            next_receipt_id: Arc::new(AtomicU64::new(1)),
             blocking_executor: executor::BlockingExecutor::default(),
             reconciliation,
         })

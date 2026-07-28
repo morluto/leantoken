@@ -1,0 +1,189 @@
+{
+  "schema_version": 1,
+  "feature": "persistent_retrieval_receipts",
+  "recorded_at": "2026-07-28",
+  "decision": {
+    "status": "accepted",
+    "reason": "Cross-process suppression and all correctness bounds passed. Reuse p50 decreased 1.2%, reuse p95 decreased 2.6%, peak RSS was neutral, and final DB plus WAL footprint increased 0.44%. Receipt creation deliberately adds durable metadata writes; its p50 increased 18.5% and process write bytes were 5.90x baseline, so the absolute write cost remains a documented tradeoff rather than a latency optimization claim."
+  },
+  "revisions": {
+    "base_product_commit": "47e93d9d29a3bc1f05c56f57f688f14d7dc8ec79",
+    "base_benchmark_commit": "bd466e82cab6dc76467cb6446263c3f77a06b6fb",
+    "candidate_commit": "fd8facd8532b77627b980bf3f8ebdfd485c3d08b",
+    "benchmark_source_sha256": "adbfab6e35c219e33570945a3be90be2fc20f18c079ce5ab8ce5bdbe0be9dfcf"
+  },
+  "environment": {
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "kernel": "Linux 6.1.0-50-cloud-amd64",
+    "architecture": "x86_64",
+    "repository": "/home/yann/yann/leantoken",
+    "query": "Services",
+    "iterations_per_phase": 100,
+    "arm_order": [
+      "base",
+      "candidate",
+      "candidate",
+      "base"
+    ]
+  },
+  "invariants": {
+    "exact_overlap_near_duplicate_oracle_parity": true,
+    "cross_process_reuse": true,
+    "concurrent_duplicate_returned_once": true,
+    "concurrent_distinct_append_no_lost_update": true,
+    "generation_and_repository_bound": true,
+    "unknown_and_stale_fail_loud": true,
+    "metadata_only_no_task_query_or_source": true,
+    "transactional_migration_and_failure_rollback": true,
+    "deterministic_lru": true,
+    "ttl_millis": 86400000,
+    "empty_reuse_touch_debounce_millis": 60000,
+    "max_receipts": 128,
+    "max_receipt_header_logical_bytes": 65536,
+    "max_evidence_per_receipt": 2048,
+    "max_evidence_logical_bytes_per_receipt": 1048576,
+    "max_evidence_global": 16384,
+    "max_evidence_logical_bytes_global": 8388608
+  },
+  "query_plans": [
+    {
+      "operation": "header_lookup",
+      "detail": "SEARCH retrieval_receipts USING INTEGER PRIMARY KEY (rowid=?)"
+    },
+    {
+      "operation": "ordered_evidence_lookup",
+      "detail": "SEARCH retrieval_receipt_evidence USING INDEX sqlite_autoindex_retrieval_receipt_evidence_1 (receipt_id=?)"
+    },
+    {
+      "operation": "expiry_prune",
+      "detail": "SEARCH retrieval_receipts USING COVERING INDEX retrieval_receipts_expiry_idx (expires_unix_millis<?)"
+    },
+    {
+      "operation": "lru_evict",
+      "detail": "SEARCH retrieval_receipts USING COVERING INDEX retrieval_receipts_lru_idx (access_sequence>?)"
+    }
+  ],
+  "arms": [
+    {
+      "label": "A1",
+      "variant": "base",
+      "real_seconds": 7.18,
+      "user_seconds": 9.50,
+      "system_seconds": 0.66,
+      "database_bytes_after_index": 38252544,
+      "wal_bytes_after_index": 38641512,
+      "database_bytes_after_run": 38252544,
+      "wal_bytes_after_run": 16777216,
+      "peak_rss_kib": 69072,
+      "create": {
+        "p50_micros": 22649,
+        "p95_micros": 28086,
+        "mean_micros": 23493,
+        "process_write_bytes_delta": 827392
+      },
+      "reuse": {
+        "p50_micros": 17076,
+        "p95_micros": 18919,
+        "mean_micros": 17222,
+        "process_write_bytes_delta": 823296,
+        "suppressed_exact": 2000,
+        "returned_hits": 0
+      }
+    },
+    {
+      "label": "B1",
+      "variant": "candidate",
+      "real_seconds": 7.52,
+      "user_seconds": 9.52,
+      "system_seconds": 0.73,
+      "database_bytes_after_index": 38285312,
+      "wal_bytes_after_index": 38678592,
+      "database_bytes_after_run": 38494208,
+      "wal_bytes_after_run": 16777216,
+      "peak_rss_kib": 70220,
+      "create": {
+        "p50_micros": 26450,
+        "p95_micros": 28547,
+        "mean_micros": 26368,
+        "process_write_bytes_delta": 4878336
+      },
+      "reuse": {
+        "p50_micros": 17050,
+        "p95_micros": 18464,
+        "mean_micros": 17100,
+        "process_write_bytes_delta": 1073152,
+        "suppressed_exact": 2000,
+        "returned_hits": 0
+      }
+    },
+    {
+      "label": "B2",
+      "variant": "candidate",
+      "real_seconds": 7.52,
+      "user_seconds": 9.62,
+      "system_seconds": 0.63,
+      "database_bytes_after_index": 38285312,
+      "wal_bytes_after_index": 38678592,
+      "database_bytes_after_run": 38494208,
+      "wal_bytes_after_run": 16777216,
+      "peak_rss_kib": 68384,
+      "create": {
+        "p50_micros": 26364,
+        "p95_micros": 29139,
+        "mean_micros": 26866,
+        "process_write_bytes_delta": 4878336
+      },
+      "reuse": {
+        "p50_micros": 16597,
+        "p95_micros": 18495,
+        "mean_micros": 16757,
+        "process_write_bytes_delta": 1073152,
+        "suppressed_exact": 2000,
+        "returned_hits": 0
+      }
+    },
+    {
+      "label": "A2",
+      "variant": "base",
+      "real_seconds": 7.33,
+      "user_seconds": 9.68,
+      "system_seconds": 0.92,
+      "database_bytes_after_index": 38252544,
+      "wal_bytes_after_index": 38641512,
+      "database_bytes_after_run": 38252544,
+      "wal_bytes_after_run": 16777216,
+      "peak_rss_kib": 69664,
+      "create": {
+        "p50_micros": 21913,
+        "p95_micros": 24435,
+        "mean_micros": 22145,
+        "process_write_bytes_delta": 827392
+      },
+      "reuse": {
+        "p50_micros": 16980,
+        "p95_micros": 19042,
+        "mean_micros": 17039,
+        "process_write_bytes_delta": 823296,
+        "suppressed_exact": 2000,
+        "returned_hits": 0
+      }
+    }
+  ],
+  "candidate_over_base_ratios": {
+    "create_p50": 1.18518,
+    "create_p95": 1.09834,
+    "create_process_write_bytes": 5.89604,
+    "reuse_p50": 0.98799,
+    "reuse_p95": 0.97360,
+    "reuse_process_write_bytes": 1.30348,
+    "peak_rss": 0.99905,
+    "final_database_plus_wal_bytes": 1.00439
+  },
+  "limitations": [
+    "Indexing is excluded from phase timing, but each arm builds a fresh disposable index before measurement.",
+    "Phase latency includes the complete Services::search path, not only receipt storage.",
+    "Linux process write_bytes includes SQLite accounting and checkpoint writes by the whole process.",
+    "The 208896-byte candidate database growth during reuse is a checkpoint of receipt pages written during create and seed; empty receipt reuse is touch-debounced.",
+    "This local profile proves protocol behavior and resource costs, not downstream model task success or provider-visible token savings."
+  ]
+}
