@@ -122,6 +122,7 @@ pub struct Services {
 pub struct ServiceCallOptions {
     max_response_tokens: Option<usize>,
     context_response_profile: Option<ContextResponseProfile>,
+    initial_reconciliation_deadline: Option<tokio::time::Instant>,
 }
 
 impl ServiceCallOptions {
@@ -131,6 +132,7 @@ impl ServiceCallOptions {
         Self {
             max_response_tokens: None,
             context_response_profile: None,
+            initial_reconciliation_deadline: None,
         }
     }
 
@@ -163,6 +165,18 @@ impl ServiceCallOptions {
     #[must_use]
     pub const fn context_response_profile(self) -> Option<ContextResponseProfile> {
         self.context_response_profile
+    }
+
+    pub(crate) fn with_initial_reconciliation_deadline(
+        mut self,
+        deadline: tokio::time::Instant,
+    ) -> Self {
+        self.initial_reconciliation_deadline = Some(deadline);
+        self
+    }
+
+    const fn initial_reconciliation_deadline(self) -> Option<tokio::time::Instant> {
+        self.initial_reconciliation_deadline
     }
 }
 
@@ -403,13 +417,41 @@ impl Services {
         )
     }
 
+    #[cfg(test)]
     pub(super) async fn apply_consistency(
         &self,
         consistency: IndexConsistency,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        self.apply_consistency_with_initial_deadline(consistency, cancellation, None)
+            .await
+    }
+
+    async fn apply_consistency_with_initial_deadline(
+        &self,
+        consistency: IndexConsistency,
+        cancellation: CancellationToken,
+        deadline: Option<tokio::time::Instant>,
+    ) -> Result<()> {
         if consistency == IndexConsistency::ReconcileWorkingTree {
-            self.reconciliation.reconcile(cancellation).await?;
+            let deadline = if let Some(deadline) = deadline {
+                let storage = self.storage.clone();
+                let generation =
+                    tokio::task::spawn_blocking(move || storage.repository_generation());
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => return Err(Error::Cancelled),
+                    result = generation => {
+                        (result?? == 0).then_some(deadline)
+                    }
+                    _ = tokio::time::sleep_until(deadline) => return Err(Error::IndexNotReady),
+                }
+            } else {
+                None
+            };
+            self.reconciliation
+                .reconcile(cancellation, deadline)
+                .await?;
         }
         Ok(())
     }

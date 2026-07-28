@@ -80,7 +80,7 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData>
     where
         T: Serialize,
-        F: FnMut(Arc<Services>, CancellationToken) -> Fut,
+        F: FnMut(Arc<Services>, CancellationToken, tokio::time::Instant) -> Fut,
         Fut: Future<Output = crate::Result<T>>,
     {
         let PreparedRetrievalCall {
@@ -100,7 +100,7 @@ impl LeanTokenMcp {
                     &services,
                     cancellation.clone(),
                     deadline,
-                    || operation(Arc::clone(&services), cancellation.clone()),
+                    || operation(Arc::clone(&services), cancellation.clone(), deadline),
                 )
                 .await
             },
@@ -224,13 +224,13 @@ where
     W: FnOnce(CancellationToken) -> WaitFut,
     WaitFut: Future<Output = crate::Result<()>>,
 {
+    let started = Instant::now();
+    let deadline = tokio::time::Instant::now() + wait;
     let result = operation().await;
     if !matches!(result, Err(crate::Error::IndexNotReady)) {
         return result;
     }
 
-    let started = Instant::now();
-    let deadline = tokio::time::Instant::now() + wait;
     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
     if remaining.is_zero() {
         tracing::debug!(

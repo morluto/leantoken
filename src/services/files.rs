@@ -590,7 +590,11 @@ impl Services {
             self.observe_service_result(operation, validate_files_input(&request))?;
             self.observe_service_result(operation, self.result_limit(request.max_results))?;
             let consistency_result = self
-                .apply_consistency(consistency, cancellation.clone())
+                .apply_consistency_with_initial_deadline(
+                    consistency,
+                    cancellation.clone(),
+                    options.initial_reconciliation_deadline(),
+                )
                 .await;
             self.observe_service_result(operation, consistency_result)?;
         }
@@ -620,7 +624,11 @@ impl Services {
             self.observe_service_result(operation, validate_files_input(&request))?;
             self.observe_service_result(operation, self.result_limit(request.max_results))?;
             let consistency_result = self
-                .apply_consistency(consistency, cancellation.clone())
+                .apply_consistency_with_initial_deadline(
+                    consistency,
+                    cancellation.clone(),
+                    options.initial_reconciliation_deadline(),
+                )
                 .await;
             self.observe_service_result(operation, consistency_result)?;
         }

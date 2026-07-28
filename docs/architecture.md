@@ -408,6 +408,16 @@ stable followers stop opening the lock file twice per second while an
 operating-system lock release after process exit still provides bounded
 failover without a PID lease or stale-lock cleanup.
 
+MCP retrieval preparation gives generation-zero `reconcile_working_tree`
+waiters the same absolute 30-second cold-index deadline as readiness waiting.
+The service probes the committed generation before applying that deadline, so
+reconciliation against an existing generation retains its historical behavior.
+If a cold waiter reaches the deadline, it is removed from the coalesced wave;
+an otherwise empty wave waiting for the operation lock is cancelled before it
+can scan. The adapter returns the existing `index_building` structured retry
+instead of reading generation zero or waiting for the host timeout. CLI and
+library calls do not set this MCP-owned deadline.
+
 The leader registers its watcher before the initial reconciliation, preserving
 the startup event-gap guarantee. The automatic-indexing runtime uses a
 single-slot public queue; raw events, retained paths, and incomplete rename

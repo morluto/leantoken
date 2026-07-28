@@ -21,8 +21,9 @@ impl LeanTokenMcp {
             "files",
             prepared,
             expected_repository_id,
-            move |services, cancellation| {
+            move |services, cancellation, deadline| {
                 let request = request.clone();
+                let options = options.with_initial_reconciliation_deadline(deadline);
                 async move {
                     match projection {
                         FilesMcpProjection::Full => services
@@ -72,8 +73,9 @@ impl LeanTokenMcp {
             "search",
             prepared,
             expected_repository_id,
-            move |services, cancellation| {
+            move |services, cancellation, deadline| {
                 let request = request.clone();
+                let options = options.with_initial_reconciliation_deadline(deadline);
                 async move {
                     match projection {
                         SearchMcpProjection::Auto => {
@@ -135,8 +137,9 @@ impl LeanTokenMcp {
             "outline",
             prepared,
             expected_repository_id,
-            move |services, cancellation| {
+            move |services, cancellation, deadline| {
                 let request = request.clone();
+                let options = options.with_initial_reconciliation_deadline(deadline);
                 async move {
                     match projection {
                         OutlineMcpProjection::Full => services
@@ -185,8 +188,9 @@ impl LeanTokenMcp {
             "read",
             prepared,
             expected_repository_id,
-            move |services, cancellation| {
+            move |services, cancellation, deadline| {
                 let request = request.clone();
+                let options = options.with_initial_reconciliation_deadline(deadline);
                 async move {
                     services
                         .read_with_options_consistency_cancellable(
@@ -223,7 +227,7 @@ impl LeanTokenMcp {
             "history",
             prepared,
             expected_repository_id,
-            move |services, cancellation| {
+            move |services, cancellation, _deadline| {
                 let call = call.clone();
                 async move {
                     match call {
@@ -267,7 +271,7 @@ impl LeanTokenMcp {
             "json",
             prepared,
             expected_repository_id,
-            move |services, cancellation| {
+            move |services, cancellation, _deadline| {
                 let request = request.clone();
                 async move {
                     services
@@ -313,10 +317,11 @@ impl LeanTokenMcp {
             "context",
             prepared,
             expected_repository_id,
-            move |services, cancellation| {
+            move |services, cancellation, deadline| {
                 let request = request.clone();
                 let handoff = handoff.clone();
                 let workflow_evidence = workflow_evidence.clone();
+                let options = options.with_initial_reconciliation_deadline(deadline);
                 async move {
                     services
                         .context_with_workflow_evidence_options_consistency_cancellable(

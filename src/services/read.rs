@@ -193,7 +193,11 @@ impl Services {
                 self.token_limit(request.max_tokens, self.config.default_read_tokens),
             )?;
             let consistency_result = self
-                .apply_consistency(consistency, cancellation.clone())
+                .apply_consistency_with_initial_deadline(
+                    consistency,
+                    cancellation.clone(),
+                    options.initial_reconciliation_deadline(),
+                )
                 .await;
             self.observe_service_result(operation, consistency_result)?;
         }
