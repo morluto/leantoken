@@ -3,9 +3,7 @@ use super::*;
 
 #[tokio::test]
 async fn csharp_qualified_symbols_support_historical_reads_and_diffs() {
-    if !git_available() {
-        return;
-    }
+    require_git();
 
     let root = tempfile::tempdir().expect("root");
     std::fs::write(
@@ -107,9 +105,7 @@ async fn csharp_qualified_symbols_support_historical_reads_and_diffs() {
 
 #[tokio::test]
 async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
-    if !git_available() {
-        return;
-    }
+    require_git();
 
     let root = tempfile::tempdir().expect("root");
     std::fs::create_dir(root.path().join("src")).expect("source directory");
@@ -483,9 +479,7 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
 
 #[tokio::test]
 async fn batched_symbol_history_classifies_endpoints_renames_and_request_bounds() {
-    if !git_available() {
-        return;
-    }
+    require_git();
 
     let root = tempfile::tempdir().expect("root");
     std::fs::create_dir(root.path().join("src")).expect("source directory");
@@ -708,9 +702,7 @@ async fn batched_symbol_history_classifies_endpoints_renames_and_request_bounds(
 
 #[tokio::test]
 async fn symbol_history_resolves_qualified_names_and_absent_diff_endpoints() {
-    if !git_available() {
-        return;
-    }
+    require_git();
 
     let root = tempfile::tempdir().expect("root");
     std::fs::create_dir(root.path().join("src")).expect("source directory");

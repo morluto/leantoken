@@ -363,9 +363,7 @@ async fn context_handoff_rejects_plan_previews_and_unbounded_host_state() {
 
 #[tokio::test]
 async fn context_handoff_reports_clean_git_head_identity() {
-    if !git_available() {
-        return;
-    }
+    require_git();
     let (root, services) = fixture().await;
     std::fs::write(root.path().join(".gitignore"), "index.sqlite*\n").expect("write ignore");
     init_git_repo(root.path());

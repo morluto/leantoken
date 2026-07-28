@@ -54,6 +54,15 @@
             DiscoveryPolicy::default(),
         ));
 
+        let git_config = root.path().join(".git/config");
+        std::fs::create_dir_all(git_config.parent().unwrap()).unwrap();
+        std::fs::write(&git_config, "[core]\n").unwrap();
+        assert!(!raw_event_is_relevant(
+            &Ok(Event::new(EventKind::Any).add_path(git_config)),
+            root.path(),
+            DiscoveryPolicy::default(),
+        ));
+
         let rescan = Event::new(EventKind::Other)
             .add_path(root.path().join("node_modules"))
             .set_flag(notify::event::Flag::Rescan);

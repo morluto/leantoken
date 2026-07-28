@@ -87,10 +87,12 @@ fn deduplicate_keeps_overlapping_higher_scored_same_file() {
     let c2 = candidate("a.rs", "fn low() {}\nfn high() {}\n", 1.0).exact(1.0);
     let scored = rank(vec![c1, c2], &Weights::default());
     let deduped = deduplicate(scored);
-    assert!(!deduped.is_empty());
-    // The higher-scored larger range should dominate if it covers the smaller one.
-    let high = deduped.iter().find(|s| s.candidate.path == "a.rs");
-    assert!(high.is_some());
+    assert_eq!(deduped.len(), 1);
+    assert_eq!(
+        deduped[0].candidate.content,
+        "fn low() {}\nfn high() {}\n",
+        "the higher-scored covering range should dominate"
+    );
 }
 
 #[test]
@@ -191,9 +193,10 @@ fn select_boosts_focus_paths_and_symbols() {
     request.focus_symbols = vec!["Alpha".into()];
     let response = select(candidates, &request, 1);
 
-    if let Some(first) = response.fragments.first() {
-        assert_eq!(first.path, "src/a.rs");
-    }
+    assert_eq!(
+        response.fragments.first().map(|fragment| fragment.path.as_str()),
+        Some("src/a.rs")
+    );
 }
 
 #[test]

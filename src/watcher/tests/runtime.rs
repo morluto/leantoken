@@ -41,14 +41,25 @@
                         return Some(paths);
                     }
                     WatcherMessage::Changed { .. } => {}
-                    WatcherMessage::ReconcileRequired => return None,
+                    WatcherMessage::ReconcileRequired => {
+                        #[cfg(target_os = "macos")]
+                        return None;
+                        #[cfg(not(target_os = "macos"))]
+                        panic!("ordinary file updates should not require reconciliation");
+                    }
                 }
             }
         })
         .await
         .unwrap();
-        if let Some(paths) = paths {
-            assert_eq!(paths.iter().filter(|path| *path == "a.txt").count(), 1);
+        match paths {
+            Some(paths) => {
+                assert_eq!(paths.iter().filter(|path| *path == "a.txt").count(), 1);
+            }
+            None => {
+                #[cfg(not(target_os = "macos"))]
+                unreachable!("only the FSEvents backend may require reconciliation here");
+            }
         }
 
         assert_eq!(
@@ -69,7 +80,7 @@
     #[tokio::test]
     async fn filters_git_directory() {
         let root = tempfile::tempdir().unwrap();
-        let (watcher, _rx) = RepositoryWatcher::start(
+        let (watcher, mut rx) = RepositoryWatcher::start(
             root.path(),
             64,
             Duration::from_millis(50),
@@ -84,9 +95,35 @@
         tokio::fs::write(root.path().join(".git/config"), "x")
             .await
             .unwrap();
+        tokio::fs::write(root.path().join("visible.txt"), "visible")
+            .await
+            .unwrap();
 
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        // No public receiver access needed beyond the channel being scoped.
+        timeout(Duration::from_secs(5), async {
+            loop {
+                match rx.recv().await.unwrap() {
+                    WatcherMessage::Changed { paths } => {
+                        assert!(
+                            paths.iter().all(|path| path != ".git"
+                                && !path.starts_with(".git/")),
+                            "watcher exposed ignored .git paths: {paths:?}"
+                        );
+                        if paths.iter().any(|path| path == "visible.txt") {
+                            break;
+                        }
+                    }
+                    WatcherMessage::ReconcileRequired => {
+                        #[cfg(target_os = "macos")]
+                        break;
+                        #[cfg(not(target_os = "macos"))]
+                        panic!("ordinary file creation should not require reconciliation");
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+
         watcher.shutdown().await.unwrap();
     }
 
