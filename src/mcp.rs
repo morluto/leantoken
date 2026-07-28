@@ -1009,6 +1009,7 @@ fn service_call_options(max_response_tokens: Option<usize>) -> ServiceCallOption
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = add_context_option_constraints)]
 struct ContextMcpRequest {
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
@@ -1057,17 +1058,20 @@ struct ContextMcpRequest {
         default = "default_context_fragment_option"
     )]
     max_fragments: Option<usize>,
-    /// Preview ranked candidates without source or receipt mutation; omit `receipt_id`.
+    /// Preview ranked candidates without source or receipt mutation; omit `receipt_id`
+    /// and `handoff`.
     #[serde(default)]
     plan_only: bool,
     /// Boost matching paths without filtering other candidates.
     #[serde(default)]
     #[schemars(length(max = 32), inner(length(max = 4096)))]
     focus_paths: Vec<String>,
-    /// Require every returned fragment to match at least one focus path.
+    /// Require every returned fragment to match at least one focus path; requires
+    /// non-empty `focus_paths`.
     #[serde(default)]
     strict_focus_paths: bool,
-    /// Minimum returned fragments required per focus path (maximum 8).
+    /// Minimum returned fragments required per focus path (maximum 8); requires
+    /// non-empty `focus_paths`.
     #[serde(default, deserialize_with = "deserialize_optional_limit")]
     #[schemars(schema_with = "context_focus_fragment_limit_schema")]
     minimum_fragments_per_focus_path: Option<usize>,
@@ -1083,7 +1087,8 @@ struct ContextMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 128)))]
     known_hashes: Vec<String>,
-    /// Suppress evidence already returned under this server-managed receipt.
+    /// Suppress evidence already returned under this server-managed receipt; omit
+    /// when `plan_only` is true.
     #[serde(default)]
     #[schemars(length(max = 128))]
     receipt_id: Option<String>,
@@ -1104,7 +1109,8 @@ struct ContextMcpRequest {
     /// Include full path, file-type, reason, score-band, focus, and change omission facets.
     #[serde(default)]
     verbose_diagnostics: bool,
-    /// Attach a compact provenance manifest for a host-triggered executor handoff.
+    /// Attach a compact provenance manifest for a host-triggered executor handoff;
+    /// cannot be combined with `plan_only`.
     #[serde(default)]
     handoff: Option<HandoffManifestRequest>,
     /// Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.
@@ -1317,6 +1323,48 @@ fn add_files_operation_constraints(schema: &mut Schema) {
                     {"required": ["query"]},
                     {"required": ["depth"]}
                 ]}
+            }
+        ]),
+    );
+}
+
+fn add_context_option_constraints(schema: &mut Schema) {
+    schema.insert(
+        "allOf".into(),
+        serde_json::json!([
+            {
+                "if": {
+                    "properties": {"strict_focus_paths": {"const": true}},
+                    "required": ["strict_focus_paths"]
+                },
+                "then": {
+                    "properties": {"focus_paths": {"minItems": 1}},
+                    "required": ["focus_paths"]
+                }
+            },
+            {
+                "if": {
+                    "properties": {
+                        "minimum_fragments_per_focus_path": {"not": {"type": "null"}}
+                    },
+                    "required": ["minimum_fragments_per_focus_path"]
+                },
+                "then": {
+                    "properties": {"focus_paths": {"minItems": 1}},
+                    "required": ["focus_paths"]
+                }
+            },
+            {
+                "if": {
+                    "properties": {"plan_only": {"const": true}},
+                    "required": ["plan_only"]
+                },
+                "then": {
+                    "properties": {
+                        "receipt_id": {"type": "null"},
+                        "handoff": {"type": "null"}
+                    }
+                }
             }
         ]),
     );

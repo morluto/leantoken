@@ -43,7 +43,7 @@ pub mod upgrade;
 pub mod watcher;
 
 pub use config::{Config, DiscoveryLimits};
-pub use error::{Error, IndexLimitKind, Result};
+pub use error::{Error, IndexLimitKind, InputViolation, InputViolations, Result};
 pub use model::*;
 pub use repository::DiscoveryPolicy;
 pub use repository::GitDiffResult;

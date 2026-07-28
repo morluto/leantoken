@@ -841,6 +841,8 @@ async fn context_handoff_rejects_plan_previews_and_unbounded_host_state() {
         .repository_generation;
     let mut plan_request = context_limit_request(1_000);
     plan_request.plan_only = true;
+    plan_request.minimum_fragments_per_focus_path = Some(2);
+    plan_request.receipt_id = Some("existing".into());
     let error = services
         .context_with_handoff_workflow_consistency_cancellable(
             plan_request,
@@ -851,13 +853,26 @@ async fn context_handoff_rejects_plan_previews_and_unbounded_host_state() {
         )
         .await
         .expect_err("plan handoff must fail");
-    assert!(matches!(
-        error,
-        Error::InvalidInput {
-            field: "plan_only",
-            ..
-        }
-    ));
+    let Error::InvalidInputConstraints(violations) = error else {
+        panic!("expected aggregated context constraints, got {error:?}");
+    };
+    assert_eq!(
+        violations.as_slice(),
+        &[
+            leantoken::InputViolation {
+                field: "focus paths",
+                reason: "must not be empty when focus path constraints are enabled",
+            },
+            leantoken::InputViolation {
+                field: "receipt_id",
+                reason: "must be omitted when plan_only is true",
+            },
+            leantoken::InputViolation {
+                field: "plan_only",
+                reason: "cannot be combined with a handoff manifest",
+            },
+        ]
+    );
     assert_eq!(
         services
             .status()
@@ -867,6 +882,20 @@ async fn context_handoff_rejects_plan_previews_and_unbounded_host_state() {
         generation,
         "static handoff errors must not reconcile the index"
     );
+
+    let mut plan_request = context_limit_request(1_000);
+    plan_request.plan_only = true;
+    let error = services
+        .context_with_handoff(plan_request, HandoffManifestRequest::default())
+        .await
+        .expect_err("one plan handoff conflict must preserve the single-field error");
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "plan_only",
+            reason: "cannot be combined with a handoff manifest"
+        }
+    ));
 
     let error = services
         .context_with_handoff(

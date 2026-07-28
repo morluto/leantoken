@@ -1573,7 +1573,8 @@ pub struct ContextArgs {
     #[arg(long, value_parser = parse_positive_usize)]
     pub max_fragments: Option<usize>,
 
-    /// Preview ranked candidates without returning source fragments.
+    /// Preview ranked candidates without returning source fragments; cannot be
+    /// combined with --handoff.
     #[arg(long)]
     pub plan_only: bool,
 
@@ -1581,11 +1582,11 @@ pub struct ContextArgs {
     #[arg(long = "focus")]
     pub focus_paths: Vec<String>,
 
-    /// Restrict returned fragments to focus paths.
+    /// Restrict returned fragments to focus paths; requires --focus.
     #[arg(long)]
     pub strict_focus_paths: bool,
 
-    /// Minimum fragments to return for each focus path.
+    /// Minimum fragments to return for each focus path; requires --focus.
     #[arg(long, value_parser = parse_positive_usize)]
     pub minimum_fragments_per_focus_path: Option<usize>,
 
@@ -1621,7 +1622,8 @@ pub struct ContextArgs {
     #[arg(long)]
     pub verbose_diagnostics: bool,
 
-    /// Attach compact provenance for a host-triggered executor handoff.
+    /// Attach compact provenance for a host-triggered executor handoff; cannot be
+    /// combined with --plan-only.
     #[arg(long)]
     pub handoff: bool,
 

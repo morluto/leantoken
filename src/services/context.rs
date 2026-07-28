@@ -1109,7 +1109,12 @@ impl Services {
         Ok(())
     }
 
-    fn validate_context_request(&self, request: &ContextRequest) -> Result<()> {
+    fn validate_context_request(
+        &self,
+        request: &ContextRequest,
+        handoff: Option<&HandoffManifestRequest>,
+    ) -> Result<()> {
+        validate_context_option_constraints(request, handoff)?;
         if request.task.trim().is_empty() {
             return Err(Error::InvalidInput {
                 field: "task",
@@ -1135,12 +1140,6 @@ impl Services {
                 field: "focus_paths",
                 requested: request.focus_paths.len(),
                 limit: MAX_CONTEXT_FOCUS_PATTERNS,
-            });
-        }
-        if request.plan_only && request.receipt_id.is_some() {
-            return Err(Error::InvalidInput {
-                field: "receipt_id",
-                reason: "must be omitted when plan_only is true",
             });
         }
         validate_input(&request.task, "task", MAX_QUERY_BYTES)?;
@@ -1175,14 +1174,6 @@ impl Services {
             return Err(Error::InvalidInput {
                 field: "focus paths",
                 reason: "must not contain empty patterns",
-            });
-        }
-        if (request.strict_focus_paths || request.minimum_fragments_per_focus_path.is_some())
-            && request.focus_paths.is_empty()
-        {
-            return Err(Error::InvalidInput {
-                field: "focus paths",
-                reason: "must not be empty when focus path constraints are enabled",
             });
         }
         validate_glob_patterns(&request.exclude_paths)?;
@@ -1302,6 +1293,9 @@ impl Services {
             .filter(|query| !query.has_facet(FacetKind::TestIntent))
         {
             compile_literal_regex(&query.value, false)?;
+        }
+        if let Some(handoff) = handoff {
+            handoff::validate_request(handoff)?;
         }
         Ok(())
     }
@@ -2403,7 +2397,7 @@ impl Services {
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
         let operation = context_accounting_operation(&request);
-        self.observe_service_result(operation, self.validate_context_request(&request))?;
+        self.observe_service_result(operation, self.validate_context_request(&request, None))?;
         let consistency_result = self
             .apply_consistency(consistency, cancellation.clone())
             .await;
@@ -2437,7 +2431,7 @@ impl Services {
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
         let operation = context_accounting_operation(&request);
-        self.observe_service_result(operation, self.validate_context_request(&request))?;
+        self.observe_service_result(operation, self.validate_context_request(&request, None))?;
         let consistency_result = self
             .apply_consistency(consistency, cancellation.clone())
             .await;
@@ -2472,10 +2466,9 @@ impl Services {
         cancellation: CancellationToken,
     ) -> Result<ContextResponse> {
         let operation = context_accounting_operation(&request);
-        self.observe_service_result(operation, self.validate_context_request(&request))?;
         self.observe_service_result(
             operation,
-            validate_handoff_context_request(&request, &handoff),
+            self.validate_context_request(&request, Some(&handoff)),
         )?;
         let consistency_result = self
             .apply_consistency(consistency, cancellation.clone())
@@ -2555,17 +2548,14 @@ impl Services {
     ) -> Result<ContextResponse> {
         let operation = context_accounting_operation(&request);
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.observe_service_result(operation, self.validate_context_request(&request))?;
+        self.observe_service_result(
+            operation,
+            self.validate_context_request(&request, handoff.as_ref()),
+        )?;
         self.observe_service_result(
             operation,
             self.validate_workflow_evidence(&workflow_evidence),
         )?;
-        if let Some(handoff) = &handoff {
-            self.observe_service_result(
-                operation,
-                validate_handoff_context_request(&request, handoff),
-            )?;
-        }
         let consistency_result = self
             .apply_consistency(consistency, cancellation.clone())
             .await;
@@ -3324,11 +3314,8 @@ impl Services {
     ) -> Result<(ContextEvaluation, Option<usize>)> {
         check_cancelled(cancellation)?;
         self.validate_call_options(options)?;
-        self.validate_context_request(&request)?;
+        self.validate_context_request(&request, handoff.as_ref())?;
         self.validate_workflow_evidence(&workflow_evidence)?;
-        if let Some(handoff) = &handoff {
-            validate_handoff_context_request(&request, handoff)?;
-        }
         request.changed_paths = request
             .changed_paths
             .iter()
@@ -3961,18 +3948,44 @@ impl Services {
     }
 }
 
-fn validate_handoff_context_request(
+fn validate_context_option_constraints(
     request: &ContextRequest,
-    handoff: &HandoffManifestRequest,
+    handoff: Option<&HandoffManifestRequest>,
 ) -> Result<()> {
-    handoff::validate_request(handoff)?;
-    if request.plan_only {
-        return Err(Error::InvalidInput {
-            field: "plan_only",
-            reason: "cannot be combined with a handoff manifest",
-        });
+    let mut violations = Vec::with_capacity(3);
+    if (request.strict_focus_paths || request.minimum_fragments_per_focus_path.is_some())
+        && request.focus_paths.is_empty()
+    {
+        violations.push(crate::InputViolation::new(
+            "focus paths",
+            "must not be empty when focus path constraints are enabled",
+        ));
     }
-    Ok(())
+    if request.plan_only && request.receipt_id.is_some() {
+        violations.push(crate::InputViolation::new(
+            "receipt_id",
+            "must be omitted when plan_only is true",
+        ));
+    }
+    if request.plan_only && handoff.is_some() {
+        violations.push(crate::InputViolation::new(
+            "plan_only",
+            "cannot be combined with a handoff manifest",
+        ));
+    }
+    match violations.len() {
+        0 => Ok(()),
+        1 => {
+            let violation = violations[0];
+            Err(Error::InvalidInput {
+                field: violation.field,
+                reason: violation.reason,
+            })
+        }
+        _ => Err(Error::InvalidInputConstraints(crate::InputViolations::new(
+            violations,
+        ))),
+    }
 }
 
 fn context_accounting_operation(request: &ContextRequest) -> TokenAccountingOperation {
