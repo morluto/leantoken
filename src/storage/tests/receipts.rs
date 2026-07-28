@@ -589,7 +589,9 @@ fn downgrade_receipt_schema(database: &Path, conflicting_table: bool) {
     let connection = Connection::open(database).expect("downgrade connection");
     connection
         .execute_batch(
-            "DROP TABLE IF EXISTS retrieval_receipt_evidence;
+            "DROP TABLE IF EXISTS read_delta_bases;
+             DROP TABLE IF EXISTS read_delta_base_usage;
+             DROP TABLE IF EXISTS retrieval_receipt_evidence;
              DROP TABLE IF EXISTS retrieval_receipts;
              DROP TABLE IF EXISTS retrieval_receipt_usage;
              UPDATE meta SET schema_version = 6 WHERE id = 1;

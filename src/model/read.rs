@@ -128,6 +128,32 @@ pub enum ReadDeltaFallback {
     DeltaNotSmaller,
 }
 
+/// Where the selected delta base was recovered.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadDeltaBaseSource {
+    /// The base existed only in the current service process.
+    ProcessLocal,
+    /// The base was recovered from the bounded repository cache.
+    Persistent,
+}
+
+/// Why a complete current base remained process-local.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadDeltaPersistenceFallback {
+    /// A partial page cannot prove the complete target content.
+    CurrentTruncated,
+    /// The complete target exceeds the per-base persistence bound.
+    ContentTooLarge,
+    /// The live file hash differs from the indexed snapshot.
+    LiveDiffersFromIndex,
+    /// No same-generation indexed hash was available to prove eligibility.
+    IndexedHashUnavailable,
+    /// The bounded persistent cache could not retain another eligible base.
+    StorageCapacity,
+}
+
 /// Provenance and token accounting for one opt-in read delta decision.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReadDeltaReceipt {
@@ -141,6 +167,9 @@ pub struct ReadDeltaReceipt {
     /// Repository generation observed when the bounded base was captured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_generation: Option<u64>,
+    /// Storage tier that supplied the selected base.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_source: Option<ReadDeltaBaseSource>,
     /// Repository generation used to resolve the current target.
     pub head_generation: u64,
     /// Selected response form.
@@ -152,6 +181,12 @@ pub struct ReadDeltaReceipt {
     pub delta_tokens: Option<usize>,
     /// Full-content tokens avoided by the selected response.
     pub avoided_tokens: usize,
+    /// Whether the complete current base was retained in the repository cache.
+    #[serde(default)]
+    pub head_persisted: bool,
+    /// Why the current base was intentionally not persisted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persistence_fallback_reason: Option<ReadDeltaPersistenceFallback>,
     /// Explicit reason full content was retained after a delta attempt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fallback_reason: Option<ReadDeltaFallback>,

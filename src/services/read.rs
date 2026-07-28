@@ -225,6 +225,7 @@ impl Services {
         if request.delta {
             let evaluation = self.read_deltas.evaluate(
                 &response.meta.repository_id,
+                &self.storage,
                 &request,
                 &response,
                 &materialized.current_content,

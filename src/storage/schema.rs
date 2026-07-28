@@ -309,6 +309,60 @@ END;
 UPDATE meta SET schema_version = 7 WHERE id = 1;
 "#;
 
+const READ_DELTA_BASES_SQL: &str = r#"
+CREATE TABLE read_delta_base_usage (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    next_access_sequence INTEGER NOT NULL DEFAULT 0 CHECK (next_access_sequence >= 0),
+    base_count INTEGER NOT NULL DEFAULT 0 CHECK (base_count >= 0),
+    base_bytes INTEGER NOT NULL DEFAULT 0 CHECK (base_bytes >= 0)
+);
+INSERT INTO read_delta_base_usage(id) VALUES (1);
+
+CREATE TABLE read_delta_bases (
+    target_key TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    repository_generation INTEGER NOT NULL CHECK (repository_generation >= 0),
+    target_start_line INTEGER NOT NULL CHECK (target_start_line > 0),
+    target_end_line INTEGER NOT NULL CHECK (target_end_line >= target_start_line),
+    returned_start_line INTEGER NOT NULL CHECK (returned_start_line > 0),
+    returned_end_line INTEGER NOT NULL CHECK (returned_end_line >= returned_start_line),
+    content TEXT NOT NULL,
+    created_unix_millis INTEGER NOT NULL CHECK (created_unix_millis >= 0),
+    last_access_unix_millis INTEGER NOT NULL CHECK (last_access_unix_millis >= 0),
+    expires_unix_millis INTEGER NOT NULL CHECK (expires_unix_millis >= 0),
+    access_sequence INTEGER NOT NULL CHECK (access_sequence > 0),
+    logical_bytes INTEGER NOT NULL CHECK (logical_bytes >= 0),
+    PRIMARY KEY(target_key, content_hash)
+);
+CREATE INDEX read_delta_bases_expiry_idx
+ON read_delta_bases(expires_unix_millis, target_key, content_hash);
+CREATE INDEX read_delta_bases_lru_idx
+ON read_delta_bases(access_sequence, target_key, content_hash);
+CREATE INDEX read_delta_bases_target_latest_idx
+ON read_delta_bases(
+    target_key, repository_generation DESC, access_sequence DESC, content_hash
+);
+
+CREATE TRIGGER read_delta_bases_ai
+AFTER INSERT ON read_delta_bases
+BEGIN
+    UPDATE read_delta_base_usage
+    SET base_count = base_count + 1,
+        base_bytes = base_bytes + new.logical_bytes
+    WHERE id = 1;
+END;
+CREATE TRIGGER read_delta_bases_ad
+AFTER DELETE ON read_delta_bases
+BEGIN
+    UPDATE read_delta_base_usage
+    SET base_count = base_count - 1,
+        base_bytes = base_bytes - old.logical_bytes
+    WHERE id = 1;
+END;
+
+UPDATE meta SET schema_version = 8 WHERE id = 1;
+"#;
+
 const TOKEN_SAVINGS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS token_savings (
     tokenizer TEXT NOT NULL,
@@ -355,7 +409,8 @@ const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(CACHE_ACCESS_SQL),
     M::up(STRUCTURAL_SEARCH_SQL),
     M::up(RETRIEVAL_RECEIPTS_SQL).foreign_key_check(),
+    M::up(READ_DELTA_BASES_SQL),
 ];
-pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 8;
+pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 9;
 const _: () = assert!(MIGRATIONS_SLICE.len() == CURRENT_MIGRATION_VERSION as usize);
 const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);

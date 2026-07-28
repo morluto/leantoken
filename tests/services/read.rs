@@ -150,6 +150,242 @@ async fn read_delta_returns_a_complete_strictly_cheaper_edit() {
 }
 
 #[tokio::test]
+async fn read_delta_restart_matches_the_process_local_oracle() {
+    let source = (1..=120)
+        .map(|line| format!("let value_{line} = compute_value({line});\n"))
+        .collect::<String>();
+    let (persistent_root, persistent_a) =
+        indexed_source("restart.rs", source.as_bytes()).await;
+    let (oracle_root, oracle) = indexed_source("restart.rs", source.as_bytes()).await;
+    let request = |expected_hash: Option<String>| ReadRequest {
+        path: "restart.rs".into(),
+        start_line: None,
+        end_line: None,
+        symbol: None,
+        heading: None,
+        heading_occurrence: None,
+        continuation_cursor: None,
+        max_tokens: Some(32_000),
+        expected_hash,
+        delta: true,
+        receipt_id: None,
+    };
+
+    let persistent_base = persistent_a
+        .read(request(None))
+        .await
+        .expect("persist clean base");
+    let oracle_base = oracle
+        .read(request(None))
+        .await
+        .expect("capture process-local oracle base");
+    assert_eq!(persistent_base.content_hash, oracle_base.content_hash);
+    let persistent_receipt = persistent_base
+        .delta_receipt
+        .as_ref()
+        .expect("persistent base receipt");
+    assert!(persistent_receipt.head_persisted);
+    assert!(persistent_receipt.persistence_fallback_reason.is_none());
+
+    let changed_source = source.replace(
+        "let value_60 = compute_value(60);",
+        "let value_60 = compute_updated_value(60);",
+    );
+    std::fs::write(persistent_root.path().join("restart.rs"), &changed_source)
+        .expect("edit persistent source");
+    std::fs::write(oracle_root.path().join("restart.rs"), &changed_source)
+        .expect("edit oracle source");
+    drop(persistent_a);
+    let persistent_b = Services::open(
+        Config::discover(
+            persistent_root.path(),
+            Some(persistent_root.path().join("index.sqlite")),
+        )
+        .expect("restart config"),
+    )
+    .expect("restart services");
+
+    let expected_hash = persistent_base.content_hash.clone();
+    let restarted = persistent_b
+        .read(request(Some(expected_hash.clone())))
+        .await
+        .expect("read from persistent base");
+    let in_memory = oracle
+        .read(request(Some(expected_hash)))
+        .await
+        .expect("read from process-local base");
+    assert_eq!(restarted.status, ReadStatus::Delta);
+    assert_eq!(restarted.status, in_memory.status);
+    assert_eq!(restarted.delta, in_memory.delta);
+    assert_eq!(restarted.content_hash, in_memory.content_hash);
+    assert_eq!(restarted.indexed_hash, in_memory.indexed_hash);
+    assert_eq!(restarted.target_start_line, in_memory.target_start_line);
+    assert_eq!(restarted.target_end_line, in_memory.target_end_line);
+    assert_eq!(
+        restarted.returned_start_line,
+        in_memory.returned_start_line
+    );
+    assert_eq!(restarted.returned_end_line, in_memory.returned_end_line);
+    let restarted_receipt = restarted.delta_receipt.as_ref().expect("restart receipt");
+    let oracle_receipt = in_memory.delta_receipt.as_ref().expect("oracle receipt");
+    assert_eq!(
+        restarted_receipt.base_source,
+        Some(ReadDeltaBaseSource::Persistent)
+    );
+    assert_eq!(
+        oracle_receipt.base_source,
+        Some(ReadDeltaBaseSource::ProcessLocal)
+    );
+    assert_eq!(
+        restarted_receipt.persistence_fallback_reason,
+        Some(ReadDeltaPersistenceFallback::LiveDiffersFromIndex)
+    );
+    assert!(!restarted_receipt.head_persisted);
+    assert_eq!(restarted_receipt.outcome, oracle_receipt.outcome);
+    assert_eq!(
+        restarted_receipt.base_generation,
+        oracle_receipt.base_generation
+    );
+    assert_eq!(restarted_receipt.full_tokens, oracle_receipt.full_tokens);
+    assert_eq!(restarted_receipt.delta_tokens, oracle_receipt.delta_tokens);
+    assert_eq!(
+        restarted_receipt.avoided_tokens,
+        oracle_receipt.avoided_tokens
+    );
+}
+
+#[tokio::test]
+async fn dirty_unindexed_and_ignored_delta_bases_never_persist() {
+    let source = (1..=80)
+        .map(|line| format!("let value_{line} = compute_value({line});\n"))
+        .collect::<String>();
+    let (root, services) = indexed_source("dirty.rs", source.as_bytes()).await;
+    let dirty_source = source.replace(
+        "let value_40 = compute_value(40);",
+        "let value_40 = compute_dirty_value(40);",
+    );
+    std::fs::write(root.path().join("dirty.rs"), &dirty_source).expect("dirty source");
+    let dirty = services
+        .read(ReadRequest {
+            path: "dirty.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(32_000),
+            expected_hash: None,
+            delta: true,
+            receipt_id: None,
+        })
+        .await
+        .expect("capture process-local dirty base");
+    let dirty_receipt = dirty.delta_receipt.as_ref().expect("dirty receipt");
+    assert!(!dirty_receipt.head_persisted);
+    assert_eq!(
+        dirty_receipt.persistence_fallback_reason,
+        Some(ReadDeltaPersistenceFallback::LiveDiffersFromIndex)
+    );
+    let connection =
+        rusqlite::Connection::open(root.path().join("index.sqlite")).expect("inspect database");
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM read_delta_bases", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("persistent base count"),
+        0
+    );
+    drop(connection);
+
+    drop(services);
+    std::fs::write(
+        root.path().join("dirty.rs"),
+        dirty_source.replace("compute_dirty_value", "compute_dirtier_value"),
+    )
+    .expect("edit dirty source again");
+    let reopened = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite")))
+            .expect("restart config"),
+    )
+    .expect("restart services");
+    let after_restart = reopened
+        .read(ReadRequest {
+            path: "dirty.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(32_000),
+            expected_hash: Some(dirty.content_hash),
+            delta: true,
+            receipt_id: None,
+        })
+        .await
+        .expect("dirty base unavailable after restart");
+    let restart_receipt = after_restart.delta_receipt.expect("restart receipt");
+    assert_eq!(
+        restart_receipt.fallback_reason,
+        Some(ReadDeltaFallback::BaseUnavailable)
+    );
+    assert!(restart_receipt.base_source.is_none());
+
+    let isolated = tempfile::tempdir().expect("isolated repository");
+    std::fs::create_dir(isolated.path().join(".git")).expect("git marker");
+    std::fs::write(isolated.path().join(".gitignore"), "ignored.rs\n").expect("ignore file");
+    std::fs::write(isolated.path().join("tracked.rs"), "fn tracked() {}\n")
+        .expect("tracked file");
+    std::fs::write(isolated.path().join("ignored.rs"), "fn secret() {}\n")
+        .expect("ignored file");
+    let isolated_config = Config::discover(
+        isolated.path(),
+        Some(isolated.path().join("index.sqlite")),
+    )
+    .expect("isolated config");
+    let isolated_services = Services::open(isolated_config).expect("isolated services");
+    isolated_services
+        .index(false)
+        .await
+        .expect("index isolated repository");
+    std::fs::write(isolated.path().join("unindexed.rs"), "fn new_file() {}\n")
+        .expect("unindexed file");
+    for path in ["ignored.rs", "unindexed.rs"] {
+        assert!(
+            isolated_services
+                .read(ReadRequest {
+                    path: path.into(),
+                    start_line: None,
+                    end_line: None,
+                    symbol: None,
+                    heading: None,
+                    heading_occurrence: None,
+                    continuation_cursor: None,
+                    max_tokens: Some(32_000),
+                    expected_hash: None,
+                    delta: true,
+                    receipt_id: None,
+                })
+                .await
+                .is_err(),
+            "{path} must not become a delta base"
+        );
+    }
+    let connection = rusqlite::Connection::open(isolated.path().join("index.sqlite"))
+        .expect("inspect isolated database");
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM read_delta_bases", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("isolated persistent base count"),
+        0
+    );
+}
+
+#[tokio::test]
 async fn read_delta_automatically_uses_the_latest_exact_target_base() {
     let source = (1..=80)
         .map(|line| format!("let value_{line} = compute_value({line});\n"))
@@ -330,7 +566,13 @@ async fn read_delta_does_not_capture_or_diff_a_truncated_page() {
         receipt.fallback_reason,
         Some(ReadDeltaFallback::CurrentTruncated)
     );
+    assert!(!receipt.head_persisted);
+    assert_eq!(
+        receipt.persistence_fallback_reason,
+        Some(ReadDeltaPersistenceFallback::CurrentTruncated)
+    );
     assert_eq!(receipt.avoided_tokens, 0);
+
 }
 
 #[tokio::test]
