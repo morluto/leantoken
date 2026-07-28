@@ -398,8 +398,9 @@ pub(super) fn run(args: &ColdMatrixArgs) -> AnyResult<()> {
             "The report characterizes one pinned corpus on one host; worker or storage conclusions do not transfer automatically to other repositories or platforms.".into(),
             "Phase CPU attribution is sampled process CPU assigned to the latest observed process-local phase; exact IndexingDiagnostics wall times remain the phase-owner source of truth.".into(),
             "RSS and SQLite main/WAL/SHM values are sampled high-water observations and can miss peaks shorter than the configured interval.".into(),
-            "The per-index deadline requests cooperative cancellation. Rust cannot safely kill an indexing thread, so a worker that exceeds the additional cancellation grace is joined before the profiler returns an error; cancellation_grace_exceeded records that contract violation.".into(),
+            "The per-index deadline requests cooperative cancellation. An in-process worker cannot safely kill its indexing thread and joins it after a grace violation; the supervising parent imposes a separate hard subprocess bound and kills a worker that fails to exit. cancellation_grace_exceeded records the in-process contract violation.".into(),
             "Cancellation probes request cooperative cancellation after the target phase is observed. A single SQLite FTS statement or commit may finish before cancellation is checked; the report preserves the resulting generation instead of assuming rollback.".into(),
+            "Fresh subprocesses and SQLite paths isolate process initialization and database state, but the profiler does not evict the corpus from the operating-system page cache. The mirrored worker order counterbalances order effects; this is not a cold-disk measurement.".into(),
             "The snapshot copies ignore-visible regular files and does not vendor the external corpus or preserve Git metadata.".into(),
         ],
     };

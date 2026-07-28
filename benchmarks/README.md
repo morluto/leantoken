@@ -1362,7 +1362,7 @@ target/release/examples/indexing_profile cold-matrix \
   --repository-label https://github.com/tile-ai/TileLang.git \
   --expected-revision eb31994ad782108d8754b19603b428eca9c1e19d \
   --worker-order 1,2,4,4,2,1 \
-  --parity-query TODO,class \
+  --parity-query TODO,class,matmul,kernel,tvm,TileLang \
   --sample-interval-ms 25 \
   --timeout-seconds 7200 \
   --output target/dependency-heavy-cold-index-v1.json
@@ -1387,6 +1387,15 @@ missed cancellation phases, timeout, parity differences, or restart differences
 fail a decision run. A passing arm is only a follow-up candidate; this lane
 never changes the production worker default. The corpus is manual because its
 dependency tree is too expensive for ordinary pull-request CI.
+
+The completed
+[TileLang Linux x86-64 decision](reports/dependency-heavy-cold-index-tilelang-linux-x86_64-2026-07-28.md)
+and its
+[raw schema-v1 report](reports/dependency-heavy-cold-index-tilelang-linux-x86_64-2026-07-28.json)
+select two workers only as a follow-up candidate. Four workers failed the CPU
+and RSS limits. The run used fresh processes and databases, but did not evict
+the corpus from the operating-system page cache, so it is not cold-disk
+evidence.
 
 The repository includes one transparent [Tokio Linux x86-64 profile](reports/indexing-tokio-linux-x86_64-2026-07-16.json).
 It is a single-host measurement, not a cross-platform conclusion. On that run,
