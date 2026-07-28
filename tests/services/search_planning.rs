@@ -506,6 +506,16 @@ async fn regex_candidate_plans_match_full_scan_and_report_fallback_selection() {
                 .max(optimized.phases.regex_chunks_loaded),
             "{pattern}"
         );
+        assert_eq!(
+            full_scan.phases.regex_retained_chunks > 0,
+            !full_scan.response.hits.is_empty(),
+            "{pattern}"
+        );
+        assert!(
+            full_scan.phases.regex_retained_chunks
+                <= full_scan.phases.regex_chunks_loaded,
+            "{pattern}"
+        );
     }
 }
 

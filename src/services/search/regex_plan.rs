@@ -199,6 +199,8 @@ impl Services {
                     if max_candidates.is_some_and(|limit| hits.len() == limit) {
                         return Err(Error::LimitExceeded);
                     }
+                    phases.regex_retained_chunks =
+                        phases.regex_retained_chunks.saturating_add(1);
                     hits.push(ChunkHit {
                         chunk_id: chunk.id,
                         file_id: chunk.file_id,
@@ -259,6 +261,8 @@ impl Services {
                         if max_candidates.is_some_and(|limit| hits.len() == limit) {
                             return Err(Error::LimitExceeded);
                         }
+                        phases.regex_retained_chunks =
+                            phases.regex_retained_chunks.saturating_add(1);
                         hits.push(hit);
                     }
                 }
@@ -291,6 +295,8 @@ impl Services {
                     if max_candidates.is_some_and(|limit| hits.len() == limit) {
                         return Err(Error::LimitExceeded);
                     }
+                    phases.regex_retained_chunks =
+                        phases.regex_retained_chunks.saturating_add(1);
                     hits.push(hit);
                 }
             }
