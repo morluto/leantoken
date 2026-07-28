@@ -104,6 +104,13 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
                 "field": field,
             })),
         ),
+        crate::Error::InvalidInputConstraints(violations) => ErrorData::invalid_params(
+            cause.to_string(),
+            Some(serde_json::json!({
+                "category": "invalid_input",
+                "violations": violations,
+            })),
+        ),
         crate::Error::InputTooLong { field, max_bytes } => ErrorData::invalid_params(
             "request input exceeds its byte limit",
             Some(serde_json::json!({

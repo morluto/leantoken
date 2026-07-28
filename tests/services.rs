@@ -244,6 +244,120 @@ async fn retrieval_call_options_enforce_final_service_response_bounds() {
 }
 
 #[tokio::test]
+async fn receipt_reserved_response_minimum_is_an_exact_retry_hint() {
+    let (_root, services) = fixture().await;
+    let search_request = SearchRequest {
+        query: "greet".into(),
+        mode: SearchMode::Identifier,
+        include_paths: Vec::new(),
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(5),
+        max_tokens: Some(8_000),
+        context_lines: Some(2),
+        case_sensitive: false,
+        all_occurrences: false,
+        prefer_structural: false,
+        receipt_id: None,
+        cursor: None,
+    };
+    let search_minimum = match services
+        .search_with_options(
+            search_request.clone(),
+            ServiceCallOptions::new().with_max_response_tokens(1),
+        )
+        .await
+        .expect_err("one token cannot fit a search response")
+    {
+        Error::RequestLimitExceeded {
+            field: "max_response_tokens",
+            requested,
+            limit: 1,
+        } => requested,
+        error => panic!("unexpected search budget error: {error:?}"),
+    };
+    let retried_search = services
+        .search_with_options(
+            search_request.clone(),
+            ServiceCallOptions::new().with_max_response_tokens(search_minimum),
+        )
+        .await
+        .expect("reported search minimum must be directly retryable");
+    assert!(retried_search.meta.total_response_tokens <= search_minimum);
+    let repeated_search_minimum = match services
+        .search_with_options(
+            search_request,
+            ServiceCallOptions::new().with_max_response_tokens(search_minimum - 1),
+        )
+        .await
+        .expect_err("one token below the search minimum must fail")
+    {
+        Error::RequestLimitExceeded {
+            field: "max_response_tokens",
+            requested,
+            limit,
+        } => {
+            assert_eq!(limit, search_minimum - 1);
+            requested
+        }
+        error => panic!("unexpected repeated search budget error: {error:?}"),
+    };
+    assert_eq!(repeated_search_minimum, search_minimum);
+
+    let outline_request = OutlineRequest {
+        paths: vec!["src/lib.rs".into()],
+        symbol_name: None,
+        symbol_kind: None,
+        max_results: Some(20),
+        max_tokens: Some(8_000),
+        receipt_id: None,
+        cursor: None,
+    };
+    let outline_minimum = match services
+        .outline_with_options(
+            outline_request.clone(),
+            ServiceCallOptions::new().with_max_response_tokens(1),
+        )
+        .await
+        .expect_err("one token cannot fit an outline response")
+    {
+        Error::RequestLimitExceeded {
+            field: "max_response_tokens",
+            requested,
+            limit: 1,
+        } => requested,
+        error => panic!("unexpected outline budget error: {error:?}"),
+    };
+    let retried_outline = services
+        .outline_with_options(
+            outline_request.clone(),
+            ServiceCallOptions::new().with_max_response_tokens(outline_minimum),
+        )
+        .await
+        .expect("reported outline minimum must be directly retryable");
+    assert!(retried_outline.meta.total_response_tokens <= outline_minimum);
+    let repeated_outline_minimum = match services
+        .outline_with_options(
+            outline_request,
+            ServiceCallOptions::new().with_max_response_tokens(outline_minimum - 1),
+        )
+        .await
+        .expect_err("one token below the outline minimum must fail")
+    {
+        Error::RequestLimitExceeded {
+            field: "max_response_tokens",
+            requested,
+            limit,
+        } => {
+            assert_eq!(limit, outline_minimum - 1);
+            requested
+        }
+        error => panic!("unexpected repeated outline budget error: {error:?}"),
+    };
+    assert_eq!(repeated_outline_minimum, outline_minimum);
+}
+
+#[tokio::test]
 async fn files_response_budget_uses_a_resumable_deterministic_prefix() {
     let (root, services) = fixture().await;
     for index in 0..24 {
@@ -727,6 +841,8 @@ async fn context_handoff_rejects_plan_previews_and_unbounded_host_state() {
         .repository_generation;
     let mut plan_request = context_limit_request(1_000);
     plan_request.plan_only = true;
+    plan_request.minimum_fragments_per_focus_path = Some(2);
+    plan_request.receipt_id = Some("existing".into());
     let error = services
         .context_with_handoff_workflow_consistency_cancellable(
             plan_request,
@@ -737,13 +853,26 @@ async fn context_handoff_rejects_plan_previews_and_unbounded_host_state() {
         )
         .await
         .expect_err("plan handoff must fail");
-    assert!(matches!(
-        error,
-        Error::InvalidInput {
-            field: "plan_only",
-            ..
-        }
-    ));
+    let Error::InvalidInputConstraints(violations) = error else {
+        panic!("expected aggregated context constraints, got {error:?}");
+    };
+    assert_eq!(
+        violations.as_slice(),
+        &[
+            leantoken::InputViolation {
+                field: "focus paths",
+                reason: "must not be empty when focus path constraints are enabled",
+            },
+            leantoken::InputViolation {
+                field: "receipt_id",
+                reason: "must be omitted when plan_only is true",
+            },
+            leantoken::InputViolation {
+                field: "plan_only",
+                reason: "cannot be combined with a handoff manifest",
+            },
+        ]
+    );
     assert_eq!(
         services
             .status()
@@ -753,6 +882,20 @@ async fn context_handoff_rejects_plan_previews_and_unbounded_host_state() {
         generation,
         "static handoff errors must not reconcile the index"
     );
+
+    let mut plan_request = context_limit_request(1_000);
+    plan_request.plan_only = true;
+    let error = services
+        .context_with_handoff(plan_request, HandoffManifestRequest::default())
+        .await
+        .expect_err("one plan handoff conflict must preserve the single-field error");
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "plan_only",
+            reason: "cannot be combined with a handoff manifest"
+        }
+    ));
 
     let error = services
         .context_with_handoff(

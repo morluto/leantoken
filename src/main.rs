@@ -710,6 +710,8 @@ struct CliErrorResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    violations: Option<Vec<leantoken::InputViolation>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     syntax_category: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     offset: Option<usize>,
@@ -749,6 +751,7 @@ fn cli_parse_error_response(error: &clap::Error) -> CliErrorResponse {
         requested: None,
         limit: None,
         reason: None,
+        violations: None,
         syntax_category: None,
         offset: None,
         byte_offset: None,
@@ -766,6 +769,7 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         leantoken::Error::InvalidInput { field, .. } => {
             ("invalid_input", None, Some(*field), None, None)
         }
+        leantoken::Error::InvalidInputConstraints(_) => ("invalid_input", None, None, None, None),
         leantoken::Error::InvalidJson { .. } => ("invalid_json", None, Some("path"), None, None),
         leantoken::Error::InvalidJsonSelector { stage, .. } => (
             "invalid_json_selector",
@@ -859,6 +863,12 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         ),
         _ => (None, None, None, None, None, None),
     };
+    let violations = match error {
+        leantoken::Error::InvalidInputConstraints(violations) => {
+            Some(violations.as_slice().to_vec())
+        }
+        _ => None,
+    };
 
     CliErrorResponse {
         error: cli_error_message(error),
@@ -868,6 +878,7 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         requested,
         limit,
         reason,
+        violations,
         syntax_category,
         offset,
         byte_offset,
@@ -976,6 +987,32 @@ mod tests {
                     "error": "invalid query: is required for find",
                     "category": "invalid_input",
                     "field": "query"
+                }),
+            ),
+            (
+                leantoken::Error::InvalidInputConstraints(leantoken::InputViolations::new(vec![
+                    leantoken::InputViolation {
+                        field: "focus paths",
+                        reason: "must not be empty when focus path constraints are enabled",
+                    },
+                    leantoken::InputViolation {
+                        field: "plan_only",
+                        reason: "cannot be combined with a handoff manifest",
+                    },
+                ])),
+                serde_json::json!({
+                    "error": "invalid input constraints: focus paths: must not be empty when focus path constraints are enabled; plan_only: cannot be combined with a handoff manifest",
+                    "category": "invalid_input",
+                    "violations": [
+                        {
+                            "field": "focus paths",
+                            "reason": "must not be empty when focus path constraints are enabled"
+                        },
+                        {
+                            "field": "plan_only",
+                            "reason": "cannot be combined with a handoff manifest"
+                        }
+                    ]
                 }),
             ),
             (

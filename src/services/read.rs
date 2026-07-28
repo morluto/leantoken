@@ -873,7 +873,8 @@ impl Services {
         if !self.response_fits_with_receipt_reserve(&response, returned_entries, options)? {
             return Err(Error::RequestLimitExceeded {
                 field: "max_response_tokens",
-                requested: self.finalized_response_tokens(&response)?,
+                requested: self
+                    .finalized_response_tokens_with_receipt_reserve(&response, returned_entries)?,
                 limit: options
                     .max_response_tokens()
                     .expect("fitting only runs with a response limit"),

@@ -606,6 +606,39 @@ fn mcp_error_mapping_separates_invalid_input_from_internal_failures() {
         }))
     );
 
+    let input_constraints = into_mcp_error(crate::Error::InvalidInputConstraints(
+        crate::InputViolations::new(vec![
+            crate::InputViolation {
+                field: "focus paths",
+                reason: "must not be empty when focus path constraints are enabled",
+            },
+            crate::InputViolation {
+                field: "plan_only",
+                reason: "cannot be combined with a handoff manifest",
+            },
+        ]),
+    ));
+    assert_eq!(
+        input_constraints.code,
+        rmcp::model::ErrorCode::INVALID_PARAMS
+    );
+    assert_eq!(
+        input_constraints.data,
+        Some(serde_json::json!({
+            "category": "invalid_input",
+            "violations": [
+                {
+                    "field": "focus paths",
+                    "reason": "must not be empty when focus path constraints are enabled",
+                },
+                {
+                    "field": "plan_only",
+                    "reason": "cannot be combined with a handoff manifest",
+                }
+            ],
+        }))
+    );
+
     let selector = into_mcp_error(crate::Error::InvalidJsonSelector {
         stage: "evaluate",
         offset: 6,
@@ -1181,6 +1214,22 @@ fn context_focus_candidate_schema_exposes_generation_bounds() {
     assert_eq!(
         schema.pointer("/properties/minimum_fragments_per_focus_path/maximum"),
         Some(&serde_json::json!(8))
+    );
+    assert_eq!(
+        schema.pointer("/allOf/0/then/properties/focus_paths/minItems"),
+        Some(&serde_json::json!(1))
+    );
+    assert_eq!(
+        schema.pointer("/allOf/1/then/properties/focus_paths/minItems"),
+        Some(&serde_json::json!(1))
+    );
+    assert_eq!(
+        schema.pointer("/allOf/2/then/properties/receipt_id/type"),
+        Some(&serde_json::json!("null"))
+    );
+    assert_eq!(
+        schema.pointer("/allOf/2/then/properties/handoff/type"),
+        Some(&serde_json::json!("null"))
     );
 }
 

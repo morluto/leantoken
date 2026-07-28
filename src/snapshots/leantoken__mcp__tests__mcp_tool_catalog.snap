@@ -243,6 +243,76 @@ expression: tools
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "strict_focus_paths": {
+                "const": true
+              }
+            },
+            "required": [
+              "strict_focus_paths"
+            ]
+          },
+          "then": {
+            "properties": {
+              "focus_paths": {
+                "minItems": 1
+              }
+            },
+            "required": [
+              "focus_paths"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "minimum_fragments_per_focus_path": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "minimum_fragments_per_focus_path"
+            ]
+          },
+          "then": {
+            "properties": {
+              "focus_paths": {
+                "minItems": 1
+              }
+            },
+            "required": [
+              "focus_paths"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "plan_only": {
+                "const": true
+              }
+            },
+            "required": [
+              "plan_only"
+            ]
+          },
+          "then": {
+            "properties": {
+              "handoff": {
+                "type": "null"
+              },
+              "receipt_id": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
       "properties": {
         "base_revision": {
           "default": null,
@@ -321,7 +391,7 @@ expression: tools
             }
           ],
           "default": null,
-          "description": "Attach a compact provenance manifest for a host-triggered executor handoff."
+          "description": "Attach a compact provenance manifest for a host-triggered executor handoff;\ncannot be combined with `plan_only`."
         },
         "include_paths": {
           "default": [],
@@ -360,7 +430,7 @@ expression: tools
         },
         "minimum_fragments_per_focus_path": {
           "default": null,
-          "description": "Minimum returned fragments required per focus path (maximum 8).",
+          "description": "Minimum returned fragments required per focus path (maximum 8); requires\nnon-empty `focus_paths`.",
           "maximum": 8,
           "minimum": 1,
           "type": "integer"
@@ -387,7 +457,7 @@ expression: tools
         },
         "plan_only": {
           "default": false,
-          "description": "Preview ranked candidates without source or receipt mutation; omit `receipt_id`.",
+          "description": "Preview ranked candidates without source or receipt mutation; omit `receipt_id`\nand `handoff`.",
           "type": "boolean"
         },
         "prior_repository_generation": {
@@ -402,7 +472,7 @@ expression: tools
         },
         "receipt_id": {
           "default": null,
-          "description": "Suppress evidence already returned under this server-managed receipt.",
+          "description": "Suppress evidence already returned under this server-managed receipt; omit\nwhen `plan_only` is true.",
           "maxLength": 128,
           "type": [
             "string",
@@ -425,7 +495,7 @@ expression: tools
         },
         "strict_focus_paths": {
           "default": false,
-          "description": "Require every returned fragment to match at least one focus path.",
+          "description": "Require every returned fragment to match at least one focus path; requires\nnon-empty `focus_paths`.",
           "type": "boolean"
         },
         "task": {

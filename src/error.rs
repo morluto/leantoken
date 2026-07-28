@@ -43,6 +43,52 @@ impl std::fmt::Display for RetryableOperation {
     }
 }
 
+/// One statically known request-field dependency or incompatibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct InputViolation {
+    /// Safe public field label.
+    pub field: &'static str,
+    /// Safe public validation rule.
+    pub reason: &'static str,
+}
+
+impl InputViolation {
+    pub(crate) const fn new(field: &'static str, reason: &'static str) -> Self {
+        Self { field, reason }
+    }
+}
+
+/// Deterministically ordered static request conflicts returned together.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(transparent)]
+pub struct InputViolations(Vec<InputViolation>);
+
+impl InputViolations {
+    /// Preserve the supplied validation order for display and structured errors.
+    #[must_use]
+    pub fn new(violations: Vec<InputViolation>) -> Self {
+        Self(violations)
+    }
+
+    /// Return the individual field conflicts in deterministic validation order.
+    #[must_use]
+    pub fn as_slice(&self) -> &[InputViolation] {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for InputViolations {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (index, violation) in self.0.iter().enumerate() {
+            if index > 0 {
+                formatter.write_str("; ")?;
+            }
+            write!(formatter, "{}: {}", violation.field, violation.reason)?;
+        }
+        Ok(())
+    }
+}
+
 /// Errors returned by LeanToken operations.
 ///
 /// Callers should match the variants they can recover from and retain a
@@ -118,6 +164,9 @@ pub enum Error {
         /// Safe public validation rule.
         reason: &'static str,
     },
+    /// Multiple static request-field dependencies or incompatibilities failed.
+    #[error("invalid input constraints: {0}")]
+    InvalidInputConstraints(InputViolations),
     /// A JSON document failed strict parsing at a bounded source coordinate.
     #[error(
         "file is not valid JSON ({syntax_category} at byte {byte_offset}, line {line}, column {column}): {reason}"
@@ -272,7 +321,7 @@ impl Error {
             Self::LimitExceeded => "limit_exceeded",
             Self::RequestLimitExceeded { .. } => "request_limit_exceeded",
             Self::UnsupportedLanguage(_) => "unsupported_language",
-            Self::InvalidInput { .. } => "invalid_input",
+            Self::InvalidInput { .. } | Self::InvalidInputConstraints(_) => "invalid_input",
             Self::InvalidJson { .. } => "invalid_json",
             Self::InvalidJsonSelector { .. } => "invalid_json_selector",
             Self::InputTooLong { .. } => "input_too_long",
