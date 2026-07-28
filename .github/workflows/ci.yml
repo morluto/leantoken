@@ -397,6 +397,11 @@ jobs:
     timeout-minutes: 30
     env:
       RUSTUP_TOOLCHAIN: stable
+      # Rust attributes `include!` bodies to both the physical source and the
+      # include-only façade. Count the physical files, but not those duplicate
+      # zero-coverage aliases; mixed façades with executable logic stay gated.
+      COVERAGE_IGNORE_REGEX: >-
+        concurrency_profile\.rs$|/src/(cache|indexer|parser|ranking|repository|setup|storage|watcher)\.rs$|/src/services/context\.rs$
     steps:
       - uses: actions/checkout@v7
 
@@ -418,21 +423,20 @@ jobs:
       - name: Run instrumented tests
         run: >
           cargo llvm-cov --all-features --workspace --no-report
-          --ignore-filename-regex 'concurrency_profile\.rs$'
           -- --test-threads=2
 
       - name: Enforce line coverage and write LCOV
         if: success() || failure()
         run: >
           cargo llvm-cov report --lcov --output-path lcov.info
-          --ignore-filename-regex 'concurrency_profile\.rs$'
+          --ignore-filename-regex "$COVERAGE_IGNORE_REGEX"
           --fail-under-lines 50
 
       - name: Print coverage summary
         if: success() || failure()
         run: >
           cargo llvm-cov report
-          --ignore-filename-regex 'concurrency_profile\.rs$'
+          --ignore-filename-regex "$COVERAGE_IGNORE_REGEX"
 
       - name: Upload coverage artifact
         if: always()

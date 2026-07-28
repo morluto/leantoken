@@ -1127,8 +1127,9 @@ fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
     }
     // Coverage instrumentation and concurrent process tests can delay terminal
     // propagation without changing the one-second leadership grace, which is
-    // verified deterministically in the Services tests.
-    follower.wait_until_unavailable(Duration::from_secs(15));
+    // verified deterministically in the Services tests. Keep this process-level
+    // liveness check bounded, but allow for full-suite instrumentation overhead.
+    follower.wait_until_unavailable(Duration::from_secs(30));
     assert_eq!(database_state(&database).map(|state| state.0), Some(0));
 }
 

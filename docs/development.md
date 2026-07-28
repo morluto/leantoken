@@ -218,9 +218,10 @@ run them in parallel rather than starting one executable per file.
   rollback, stale-plan rejection, reopen, and generation behavior;
 - `tests/indexer.rs`: initial, unchanged, changed, deleted, rebuilt, bounded
   chunking, targeted reconciliation, and dependency invalidation;
-- `tests/services.rs`: all five retrieval services, token bounds, ranges,
-  hashes, cache-artifact exclusion, typed invalid inputs, retryable generation
-  conflicts, and continued service after rejection;
+- `tests/services.rs` registers owner-focused modules under `tests/services/`:
+  lifecycle/repository/consistency/path safety, per-tool behavior, limits and
+  response budgets, context planning/signals/workflows/diffs, receipts/savings,
+  language coverage, and smoke behavior;
 - `tests/mcp.rs`: SDK initialization, readiness states, retryable startup tool
   errors, exact tool catalog, structured calls, cancellation, and
   post-cancellation liveness;

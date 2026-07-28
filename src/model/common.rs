@@ -1,0 +1,186 @@
+use super::*;
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+/// State of the committed index while a response is produced.
+pub enum Freshness {
+    /// No reconciliation is active.
+    Current,
+    /// A query used the last committed generation during reconciliation.
+    Reconciling,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+/// Readiness of the repository index for retrieval.
+pub enum IndexState {
+    /// No index generation has completed.
+    Uninitialized,
+    /// At least one committed generation is available.
+    Ready,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+/// Consistency boundary applied before repository retrieval.
+pub enum IndexConsistency {
+    /// Query the latest completed index generation without scanning filesystem changes.
+    #[default]
+    #[serde(alias = "committed")]
+    IndexedGeneration,
+    /// Reconcile the current working tree before querying the resulting generation.
+    #[serde(alias = "working_tree")]
+    ReconcileWorkingTree,
+}
+
+/// Requested or resolved evidence workflow for context retrieval.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextWorkflow {
+    /// Infer a workflow only from high-confidence task language.
+    #[default]
+    Auto,
+    /// General feature, fix, and refactor implementation evidence.
+    Implementation,
+    /// Repository guidance, templates, validation, changed files, and owner tests.
+    Contribution,
+    /// Changed code, repository guidance, validation, and review evidence.
+    Review,
+    /// Diagnostic evidence for tracing behavior and root causes.
+    Investigation,
+}
+
+/// Caller-observed workflow signals kept separate from the natural-language task.
+///
+/// Use the builder methods instead of constructing this non-exhaustive type
+/// directly. Values are validated by [`crate::services::Services`] before retrieval.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[schemars(
+    description = "Caller-observed workflow signals kept separate from the natural-language task.\n\nUse the builder methods instead of constructing this non-exhaustive type\ndirectly. Values are validated by [`crate::Services`] before retrieval."
+)]
+#[non_exhaustive]
+#[serde(default, deny_unknown_fields)]
+pub struct WorkflowEvidence {
+    /// Bounded compiler, test, runtime, or log excerpts.
+    #[schemars(length(max = 8), inner(length(min = 1, max = 8192)))]
+    pub failure_traces: Vec<String>,
+    /// Exact or qualified identifiers observed by the caller.
+    #[schemars(length(max = 8), inner(length(min = 1, max = 8192)))]
+    pub symbols: Vec<String>,
+    /// Normalized repository-relative paths observed by the caller.
+    #[schemars(length(max = 8), inner(length(min = 1, max = 8192)))]
+    pub paths: Vec<String>,
+    /// Test names, commands, or behavioral checks relevant to the task.
+    #[schemars(length(max = 8), inner(length(min = 1, max = 8192)))]
+    pub test_intents: Vec<String>,
+}
+
+impl WorkflowEvidence {
+    /// Construct an empty evidence contract.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            failure_traces: Vec::new(),
+            symbols: Vec::new(),
+            paths: Vec::new(),
+            test_intents: Vec::new(),
+        }
+    }
+
+    /// Attach caller-observed failure traces.
+    #[must_use]
+    pub fn with_failure_traces(mut self, values: impl IntoIterator<Item = String>) -> Self {
+        self.failure_traces = values.into_iter().collect();
+        self
+    }
+
+    /// Attach caller-observed exact or qualified symbols.
+    #[must_use]
+    pub fn with_symbols(mut self, values: impl IntoIterator<Item = String>) -> Self {
+        self.symbols = values.into_iter().collect();
+        self
+    }
+
+    /// Attach caller-observed repository-relative paths.
+    #[must_use]
+    pub fn with_paths(mut self, values: impl IntoIterator<Item = String>) -> Self {
+        self.paths = values.into_iter().collect();
+        self
+    }
+
+    /// Attach caller-observed test names, commands, or behavioral checks.
+    #[must_use]
+    pub fn with_test_intents(mut self, values: impl IntoIterator<Item = String>) -> Self {
+        self.test_intents = values.into_iter().collect();
+        self
+    }
+
+    /// Return whether the contract contains no workflow evidence.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.failure_traces.is_empty()
+            && self.symbols.is_empty()
+            && self.paths.is_empty()
+            && self.test_intents.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ResponseMeta {
+    /// Stable opaque identity for the canonical repository root.
+    pub repository_id: String,
+    pub repository_generation: u64,
+    pub freshness: Freshness,
+    /// Tokens in source content selected for the response.
+    #[serde(default)]
+    pub source_tokens: usize,
+    /// Tokens in the compact JSON response envelope after values and result items are removed.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub protocol_tokens: usize,
+    /// Tokens attributed to paths, metadata values, and repeated result structure.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub path_and_metadata_tokens: usize,
+    /// Tokens in the final serialized service response, including accounting fields.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub total_response_tokens: usize,
+    /// Compatibility alias for `total_response_tokens`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub payload_tokens: usize,
+    /// Tokenizer used for source and serialized response accounting.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tokenizer: String,
+    /// Compatibility alias for `source_tokens`.
+    pub emitted_tokens: usize,
+    /// Whether the configured tokenizer produces exact local counts.
+    pub token_count_exact: bool,
+    /// Opaque server-managed retrieval receipt for suppressing repeated evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_id: Option<String>,
+    /// Evidence omitted because its content hash was already recorded by the receipt.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub receipt_suppressed_exact: usize,
+    /// Evidence omitted because its source range overlaps evidence recorded by the receipt.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub receipt_suppressed_overlap: usize,
+    /// Returned evidence that is semantically close to evidence recorded by the receipt.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub receipt_near_duplicates: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+pub(super) fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
+
+pub(super) fn is_source_representation(value: &String) -> bool {
+    value == "source"
+}
+
+pub(super) fn is_false(value: &bool) -> bool {
+    !value
+}
+
+pub(super) fn source_representation() -> String {
+    "source".to_owned()
+}
