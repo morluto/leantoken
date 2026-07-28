@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["WatcherAction","WatcherMessage"],"struct":["RepositoryWatcher","WatcherReconciliationScheduler"]};
+window.SIDEBAR_ITEMS = {"enum":["WatcherAction","WatcherBackend","WatcherFallbackReason","WatcherMessage"],"struct":["RepositoryWatcher","WatcherDiagnostics","WatcherReconciliationScheduler"]};
