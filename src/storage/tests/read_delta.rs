@@ -345,6 +345,42 @@ fn read_delta_migration_preserves_index_and_failed_migration_rolls_back() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn persistent_read_delta_content_keeps_index_database_ownership_and_permissions() {
+    use std::os::unix::fs::MetadataExt;
+
+    let directory = tempfile::tempdir().expect("directory");
+    let database = directory.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    let before = std::fs::metadata(&database).expect("metadata before");
+    let (content_hash, candidate) = base("same database content\n", 1);
+    storage
+        .persist_read_delta_base("target", &content_hash, &candidate)
+        .expect("persist base");
+    let after = std::fs::metadata(&database).expect("metadata after");
+    assert_eq!(after.uid(), before.uid());
+    assert_eq!(after.gid(), before.gid());
+    assert_eq!(after.mode(), before.mode());
+
+    let connection = storage
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_database_list
+                 WHERE name NOT IN ('main', 'temp')",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("attached source databases"),
+        0,
+        "persistent source content must not use an attached sidecar database"
+    );
+}
+
 fn downgrade_read_delta_schema(database: &Path, conflicting_table: bool) {
     let connection = Connection::open(database).expect("downgrade connection");
     connection
