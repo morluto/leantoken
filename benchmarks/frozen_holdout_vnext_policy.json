@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "dataset_kind": "frozen_holdout_vnext",
+  "frozen_at": "2026-07-28T00:00:00Z",
+  "baseline_revision": "24190353ce7feb4cdce4a4a3036ba6ca6a4986ff",
+  "tokenizer": "cl100k_base",
+  "task_families": [
+    "symptom_first_debugging",
+    "framework_convention",
+    "cross_package_ownership",
+    "config_generated_behavior",
+    "tests_as_specification",
+    "refactor_impact",
+    "history_root_cause",
+    "monorepo_routing",
+    "generated_source_mapping",
+    "failure_trace_to_owner",
+    "repository_orientation"
+  ],
+  "coverage": {
+    "minimum_tasks": 60,
+    "minimum_tasks_per_family": 4,
+    "minimum_repositories_per_family": 2,
+    "minimum_languages_per_family": 2,
+    "minimum_task_shapes_per_family": 2
+  },
+  "execution": {
+    "policy_id": "codex_paired_v1",
+    "attempts_per_arm": 3,
+    "maximum_tool_calls_per_attempt": 48,
+    "maximum_wall_time_seconds_per_attempt": 1800,
+    "maximum_source_tokens_per_retrieval": 8000,
+    "network_policy": "validator_only",
+    "workspace_policy": "fresh_detached_checkout",
+    "validation_policy": "task_declared_commands"
+  },
+  "promotion": {
+    "confidence_level": 0.95,
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 20260728,
+    "minimum_task_success_delta": 0.0,
+    "maximum_global_recall_regression": 0.0,
+    "maximum_family_recall_regression": 0.0,
+    "maximum_dead_end_source_regression": 0.0,
+    "maximum_reread_source_regression": 0.0,
+    "maximum_provider_input_regression": 0.05,
+    "maximum_warm_p95_latency_regression": 0.1,
+    "maximum_peak_rss_regression": 0.1,
+    "maximum_database_size_regression": 0.1
+  },
+  "required_provenance": [
+    "task_source",
+    "repository_revision",
+    "label_method",
+    "evaluator_revision",
+    "harness_revision",
+    "toolchain",
+    "host"
+  ],
+  "reclassification_rule": "After any feature implementer sees gold labels or per-task gold-derived diagnostics, the complete sealed batch becomes consumed diagnostic data and cannot support a blind promotion claim."
+}
