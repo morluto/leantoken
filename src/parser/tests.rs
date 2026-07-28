@@ -1,4 +1,3 @@
-
 use super::*;
 
 const RUST_SRC: &str = r#"
