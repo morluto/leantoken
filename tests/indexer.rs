@@ -1052,6 +1052,23 @@ fn profiled_reconcile_reports_bounded_batch_high_water_and_phases() {
         profiled.diagnostics.preparation_detail.files_profiled,
         profiled.response.files_indexed
     );
+    assert_eq!(
+        profiled
+            .diagnostics
+            .preparation_by_language
+            .get("rust")
+            .map(|detail| detail.files_profiled),
+        Some(3)
+    );
+    assert_eq!(
+        profiled
+            .diagnostics
+            .preparation_by_language
+            .values()
+            .map(|detail| detail.files_profiled)
+            .sum::<usize>(),
+        profiled.diagnostics.preparation_detail.files_profiled
+    );
     assert!(profiled.diagnostics.total_ms >= profiled.diagnostics.discovery_ms);
     assert!(profiled.diagnostics.publication_ms >= profiled.diagnostics.preparation_ms);
     let publication = &profiled.diagnostics.publication_detail;

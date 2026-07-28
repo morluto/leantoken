@@ -83,7 +83,15 @@ impl Indexer {
                 })?;
                 let mut batch = Vec::with_capacity(profiled.len());
                 for (prepared, detail) in profiled {
-                    metrics.detail.add(detail);
+                    if let PreparedFile::Indexed(file, _, _) = &prepared {
+                        let language = file.language.as_deref().unwrap_or("<unknown>");
+                        metrics
+                            .detail_by_language
+                            .entry(language.to_owned())
+                            .or_default()
+                            .add(&detail);
+                    }
+                    metrics.detail.add(&detail);
                     batch.push(prepared);
                 }
                 batch

@@ -121,7 +121,7 @@ fn populate_post_commit_diagnostics(
 }
 
 /// Logical on-disk bytes owned by each FTS5 search index.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct FtsStorageFootprint {
     /// Word-tokenized chunk index bytes.
     pub chunk_word_bytes: u64,
@@ -134,7 +134,7 @@ pub struct FtsStorageFootprint {
 }
 
 /// Storage phases and footprint captured only by profiled reconciliation.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct PublicationDiagnostics {
     /// Import resolution and relational insertion time supplied by the indexer.
     pub relational_write_ms: f64,

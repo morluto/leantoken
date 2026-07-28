@@ -1362,3 +1362,31 @@ latency or model task success.
 The exact revisions, four raw arms, physical byte deltas, logical bounds, query
 plans, limitations, and decision are recorded in
 [`../benchmarks/reports/receipt-persistence-v1-2026-07-28.json`](../benchmarks/reports/receipt-persistence-v1-2026-07-28.json).
+
+## Dependency-heavy generation-one indexing
+
+`indexing_profile cold-matrix` is the decision lane for cold builds whose
+dependency trees are materially larger than the first-party repository. The
+current frozen corpus is TileLang at
+`eb31994ad782108d8754b19603b428eca9c1e19d`, with its recorded recursive
+submodules. Exact preparation and execution commands are in
+[`../benchmarks/README.md`](../benchmarks/README.md#dependency-heavy-cold-index-matrix).
+
+The unit of comparison is a complete generation-one build in a fresh process
+and fresh SQLite cache. The default mirrored `1,2,4,4,2,1` order counterbalances
+host drift while process isolation prevents one arm from inheriting tokenizer
+initialization, allocator high-water, or parser state from another. The raw
+report preserves exact phase diagnostics and sampled resource high-water, plus
+logical-table, index-shape, and retrieval digests. Cancellation probes are
+separate fresh processes; each interrupted cache is reopened and rebuilt before
+its output is compared with the matrix baseline.
+
+The pre-registered decision asks which leaf phase owns current-main wall time
+before it asks whether more preparation workers are faster. A worker candidate
+is eligible only when preparation owns at least 35% of leaf-phase time, median
+wall improves by at least 20%, total CPU and RSS each grow by no more than 25%,
+and writes/final footprint each grow by no more than 5%. Missing resource
+evidence, incomplete phase observation, parity failure, timeout, or restart
+failure is a rejection. Passing this single-host profile authorizes only a
+focused follow-up experiment, never a production default or a cross-platform
+claim.
