@@ -16,6 +16,77 @@ fn recommended_watcher(callback: EventCallback, config: Config) -> notify::Resul
     RecommendedWatcher::new(callback, config).map(|watcher| Box::new(watcher) as NativeWatcher)
 }
 
+/// Filesystem change backend selected for one repository leader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WatcherBackend {
+    /// Native recursive filesystem notifications are active.
+    Native,
+    /// A bounded full reconciliation is scheduled at each polling interval.
+    PeriodicPolling,
+}
+
+/// Why native recursive filesystem notifications were not enabled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WatcherFallbackReason {
+    /// The bounded admission walk reached its entry limit.
+    AdmissionEntryLimit,
+    /// The bounded admission walk exceeded its directory limit.
+    AdmissionDirectoryLimit,
+    /// The admission walk was cancelled before it completed.
+    AdmissionCancelled,
+    /// The admission walk could not inspect the complete tree.
+    AdmissionError,
+    /// The platform watcher could not be created.
+    BackendCreationFailed,
+    /// Recursive registration of the repository root failed.
+    BackendRegistrationFailed,
+}
+
+/// Bounded, point-in-time watcher lifecycle counters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct WatcherDiagnostics {
+    /// Selected filesystem change backend.
+    pub backend: WatcherBackend,
+    /// Why periodic polling was selected, when applicable.
+    pub fallback_reason: Option<WatcherFallbackReason>,
+    /// Filesystem entries examined by the bounded watcher-admission walk.
+    pub admission_entries: usize,
+    /// Directories observed by the bounded watcher-admission walk.
+    pub admission_directories: usize,
+    /// Whether the admission walk reached the end of the repository tree.
+    pub admission_complete: bool,
+    /// Polling timer ticks observed after backend initialization.
+    pub poll_ticks: u64,
+    /// Successfully delivered changed-path messages.
+    pub changed_path_deliveries: u64,
+    /// Successfully delivered full-reconciliation messages.
+    pub full_reconciliation_deliveries: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WatchAdmission {
+    entries: usize,
+    directories: usize,
+    complete: bool,
+    fallback_reason: Option<WatcherFallbackReason>,
+}
+
+#[derive(Debug)]
+struct WatcherReady {
+    backend: WatcherBackend,
+    fallback_reason: Option<WatcherFallbackReason>,
+    admission: WatchAdmission,
+}
+
+#[derive(Debug, Default)]
+struct WatcherCounters {
+    poll_ticks: AtomicU64,
+    changed_path_deliveries: AtomicU64,
+    full_reconciliation_deliveries: AtomicU64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Debounced repository change delivered to the reconciliation loop.
 pub enum WatcherMessage {

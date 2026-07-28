@@ -85,13 +85,18 @@
         std::fs::create_dir_all(root.path().join("node_modules/pkg")).unwrap();
 
         let cancellation = CancellationToken::new();
+        let complete = inspect_watch_admission(root.path(), 100, 100, &cancellation);
+        assert_eq!(complete.entries, 6);
+        assert_eq!(complete.directories, 5);
+        assert!(complete.complete);
+        assert_eq!(complete.fallback_reason, None);
+
+        let directory_limited = inspect_watch_admission(root.path(), 2, 100, &cancellation);
+        assert_eq!(directory_limited.directories, 3);
+        assert!(!directory_limited.complete);
         assert_eq!(
-            count_watch_directories(root.path(), 100, 100, &cancellation),
-            5
-        );
-        assert_eq!(
-            count_watch_directories(root.path(), 2, 100, &cancellation),
-            3
+            directory_limited.fallback_reason,
+            Some(WatcherFallbackReason::AdmissionDirectoryLimit)
         );
     }
 
@@ -102,15 +107,21 @@
             std::fs::write(root.path().join(format!("{index}.txt")), "").unwrap();
         }
         let cancellation = CancellationToken::new();
+        let entry_limited = inspect_watch_admission(root.path(), 100, 4, &cancellation);
+        assert_eq!(entry_limited.entries, 4);
+        assert!(!entry_limited.complete);
         assert_eq!(
-            count_watch_directories(root.path(), 100, 4, &cancellation),
-            101
+            entry_limited.fallback_reason,
+            Some(WatcherFallbackReason::AdmissionEntryLimit)
         );
 
         cancellation.cancel();
+        let cancelled = inspect_watch_admission(root.path(), 100, 100, &cancellation);
+        assert_eq!(cancelled.entries, 0);
+        assert!(!cancelled.complete);
         assert_eq!(
-            count_watch_directories(root.path(), 100, 100, &cancellation),
-            101
+            cancelled.fallback_reason,
+            Some(WatcherFallbackReason::AdmissionCancelled)
         );
     }
 
@@ -125,6 +136,7 @@
         let mut rename_from = HashMap::new();
         let mut rename_to = HashMap::new();
         let mut reconcile = false;
+        let counters = WatcherCounters::default();
 
         assert!(flush(
             &mut pending,
@@ -132,6 +144,7 @@
             &mut rename_to,
             &mut reconcile,
             &tx,
+            &counters,
         ));
         assert!(pending.is_empty());
         assert!(reconcile);
@@ -146,8 +159,15 @@
             &mut rename_to,
             &mut reconcile,
             &tx,
+            &counters,
         ));
         assert!(!reconcile);
+        assert_eq!(
+            counters
+                .full_reconciliation_deliveries
+                .load(Ordering::Relaxed),
+            1
+        );
         assert!(matches!(
             rx.try_recv(),
             Ok(WatcherMessage::ReconcileRequired)

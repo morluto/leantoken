@@ -4,6 +4,7 @@ fn flush(
     rename_to: &mut HashMap<usize, String>,
     reconcile: &mut bool,
     tx: &mpsc::Sender<WatcherMessage>,
+    counters: &WatcherCounters,
 ) -> bool {
     if !rename_from.is_empty() || !rename_to.is_empty() {
         *reconcile = true;
@@ -16,6 +17,9 @@ fn flush(
             Ok(()) => {
                 *reconcile = false;
                 pending.clear();
+                counters
+                    .full_reconciliation_deliveries
+                    .fetch_add(1, Ordering::Relaxed);
             }
             Err(TrySendError::Full(_)) => {}
             Err(TrySendError::Closed(_)) => return false,
@@ -25,7 +29,12 @@ fn flush(
     if !pending.is_empty() {
         let paths = pending.iter().cloned().collect();
         match tx.try_send(WatcherMessage::Changed { paths }) {
-            Ok(()) => pending.clear(),
+            Ok(()) => {
+                pending.clear();
+                counters
+                    .changed_path_deliveries
+                    .fetch_add(1, Ordering::Relaxed);
+            }
             Err(TrySendError::Full(_)) => {
                 *reconcile = true;
                 pending.clear();

@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -13,7 +13,7 @@ use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::{
     sync::{mpsc, mpsc::error::TrySendError, oneshot},
     task::JoinHandle,
-    time::{Instant, sleep},
+    time::{Instant, interval_at, sleep},
 };
 use tokio_util::sync::CancellationToken;
 
