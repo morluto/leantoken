@@ -1,66 +1,99 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-## [0.1.17] - 2026-07-27
+## [0.1.18] - 2026-07-28
 ### Benchmarks
 
-- **arb:** Correct structural v2 accounting
-- **arb:** Record orientation capsule trajectories
-- **retrieval:** Freeze orientation capsule result
-- **retrieval:** Refresh AST lane provenance
-- **retrieval:** Freeze AST structural lane result
-- **retrieval:** Freeze Git history lane result
-- **retrieval:** Freeze workflow evidence A/B
-- **retrieval:** Freeze ARB smoke evidence
-- **retrieval:** Add ARB trace smoke baseline
-- **mcp:** Measure multi-process resource costs (#306) ([#306](https://github.com/morluto/leantoken/pull/306))
-- **protocol:** Record compact projection ablation
+- **indexing:** Record TileLang cold baseline
+- **indexing:** Profile dependency-heavy cold builds
+- Expand MCP multiprocess CPU profile
+- **search:** Profile bounded regex fallback
+- Profile persistent read delta reuse
+- Add receipt persistence profile
+- Seal frozen holdout vnext
 ### Bug Fixes
 
-- **release:** Restore product gate (#328) ([#328](https://github.com/morluto/leantoken/pull/328))
-- **mcp:** Validate savings input schema (#327) ([#327](https://github.com/morluto/leantoken/pull/327))
-- **savings:** Add classified snapshot deltas
-- **context:** Distinguish evidence coverage
-- **benchmark:** Enforce composite owner evidence bounds
-- **bench:** Fail closed on partial trajectories
-- **bench:** Bound compound prewalk preflight
-- **bench:** Distinguish skill reads from retrieval
-- **bench:** Report the AST path bound accurately
-- Validate ARB trace2code selection filters
-- **savings:** Report observed outcomes honestly
-- **history:** Omit absent ranges and normalize symbol diffs
-- **index:** Exclude recognized stale coordination sidecars
-- **context:** Generate bounded candidates for required focus coverage
-- **cache:** Canonicalize repository filter fixture
+- Bound cold reconciliation waits
+- Delay periodic watcher reconciliation
+- **ci:** Preserve release workflow timeouts
+- Reserve persistent receipt response cost
+- Stabilize receipt semantic signatures
+- Remove redundant context stage borrows
+- Aggregate context option conflicts
+- Report exact response budget retry minimum
+- Fail closed on retrieval integrity errors
+- **doctor:** Accept schema-qualified MCP versions
+- **mcp:** Decouple rustdoc links from schema
+- **context:** Reject empty focus and exclude inputs
+- **search:** Match short text substrings
+### Chores
+
+- **mcp:** Return rmcp to upstream releases
+### Continuous Integration
+
+- Enforce bounded audit checks
+- Account for include facade coverage
+- Restore coverage gate to the measured baseline
 ### Documentation
 
-- Use compact editorial README hero
-- Clarify README value and workflows
+- **mcp:** Prefer one-call autonomous triage (#349) ([#349](https://github.com/morluto/leantoken/pull/349))
+- **readme:** Add Chinese Japanese and Korean translations
+- Record read delta persistence evidence
+- Bind receipt profile to budget fix
+- Refresh receipt persistence profile
+- Record receipt persistence profile
+- Update service test ownership map
 ### Features
 
-- **read:** Reuse latest delta base (#326) ([#326](https://github.com/morluto/leantoken/pull/326))
-- **search:** Group exhaustive occurrences
-- **latex:** Index document structure
-- **benchmark:** Validate bounded AST owner evidence
-- **bench:** Measure bounded orientation handoffs
-- **bench:** Add bounded orientation capsules
-- **bench:** Add bounded AST structural lane
-- **bench:** Add bounded Git history lane
-- **bench:** Add context utilization telemetry
-- **context:** Add typed workflow evidence
-- **history:** Consolidate bounded multi-symbol revision queries
-- **protocol:** Add measured compact response projections
-- **json:** Add shallow traversal and bounded schema degradation
-- **cache:** Separate metadata state from content compatibility
-- **protocol:** Extend response budgets across retrieval operations
-- **context:** Enforce bounded serialized response budgets
+- Expose bounded cold index progress
+- Persist safe read delta bases
+- Persist retrieval receipts
+- Negotiate exact MCP result modes
+- Add context response profiles
+- Add retrieval promotion gate
+### Performance
+
+- Cut retrieval hot-path accounting and scan work
 ### Refactoring
 
-- **bench:** Label classified capsule runs
-- **cli:** Centralize command scope policy
+- Type read delta evaluation context
+- Split search execution owners
+- Split read execution owners
+- Stage search execution pipeline
+- Stage ranking selection pipeline
+- Centralize public error categories
+- Split binary lifecycle orchestration
+- Split CLI command groups
+- Separate watcher scheduling and runtime
+- Separate cache policy and rendering
+- Split ranking pipeline owners
+- Split storage read and write owners
+- Split index reconciliation owners
+- Split setup transaction owners
+- Split repository and Git owners
+- Split parser language owners
+- Split service lifecycle owners
+- Converge retrieval execution paths
+- Stage context retrieval pipeline
+- Split public models by domain
+- Separate MCP runtime responsibilities
+- Split MCP request schemas by tool
+- Split service integration test owners
+- Clarify MCP and context boundaries
+### Styling
+
+- Normalize service owner file endings
+- Normalize repository test module
+- Normalize parser test module
 ### Testing
 
-- **history:** Lock batched diff resource caps
-- **docs:** Freeze feedback regression contracts
-- **manifests:** Verify release projections
-- **docs:** Guard runtime limit projections
+- Stabilize reconciliation cleanup assertions
+- **storage:** Cover WAL checkpoint recovery
+- Harden git-dependent coverage
+- Update legacy schema fixtures
+- Verify read delta cache ownership
+- Canonicalize registry evidence lines
+- Follow context signal owner split
+- **context:** Follow compact omission contract
+- **mcp:** Validate savings snapshot documentation
+- Repair cross-platform CI fixtures
