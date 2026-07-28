@@ -445,6 +445,21 @@ fn convert_semble(
     let repository_path = source.join(&lock.semble.repositories_file);
     let repository_specs: Vec<SembleRepository> =
         serde_json::from_slice(&fs::read(repository_path)?)?;
+    if !repositories.is_empty() {
+        let available = repository_specs
+            .iter()
+            .map(|repository| repository.name.as_str())
+            .collect::<HashSet<_>>();
+        let mut missing = repositories
+            .iter()
+            .filter(|name| !available.contains(name.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        missing.sort();
+        if !missing.is_empty() {
+            return Err(format!("unknown Semble repositories: {}", missing.join(", ")).into());
+        }
+    }
     let annotations_root = source.join(&lock.semble.annotations_directory);
     let mut corpora = Vec::new();
     let mut remaining = limit.unwrap_or(usize::MAX);
@@ -1120,6 +1135,34 @@ mod tests {
         assert_eq!(task.relevant_files[0].path, "src/lib.rs");
         assert!(task.relevant_files[0].line_anchors.is_empty());
         assert_eq!(task.relevant_files[1].line_anchors, vec![10]);
+    }
+
+    #[test]
+    fn semble_rejects_unknown_repository_before_loading_annotations() {
+        let source = tempfile::tempdir().unwrap();
+        fs::write(
+            source.path().join("repositories.json"),
+            serde_json::to_vec(&serde_json::json!([{
+                "name": "demo",
+                "language": "rust",
+                "url": "https://example.invalid/demo.git",
+                "revision": "0123456789abcdef0123456789abcdef01234567"
+            }]))
+            .unwrap(),
+        )
+        .unwrap();
+        let lock = dummy_lock(None);
+
+        let error = convert_semble(
+            source.path(),
+            &lock,
+            &HashSet::from(["missing".into()]),
+            None,
+            2_000,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.to_string(), "unknown Semble repositories: missing");
     }
 
     #[test]

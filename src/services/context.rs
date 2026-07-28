@@ -1889,9 +1889,18 @@ impl Services {
                         symbol_content
                     );
                     let relevance = focus_text_relevance(&searchable, queries);
-                    if relevance == 0.0 {
+                    let exact_focus_symbol = request
+                        .focus_symbols
+                        .iter()
+                        .any(|focus_symbol| focus_symbol == &symbol.name);
+                    if relevance == 0.0 && !exact_focus_symbol {
                         continue;
                     }
+                    let exact_score = if exact_focus_symbol {
+                        4.0
+                    } else {
+                        relevance.min(4.0)
+                    };
                     let candidate = Candidate::new(
                         &file.path,
                         chunk.start_line,
@@ -1903,14 +1912,14 @@ impl Services {
                     .representation("focus_symbol")
                     .symbol_name(symbol.name)
                     .target_range(symbol.start_line, symbol.end_line)
-                    .exact(relevance.min(4.0))
-                    .symbol(1.0)
+                    .exact(exact_score)
+                    .symbol(if exact_focus_symbol { 2.0 } else { 1.0 })
                     .path_score(path_scorer.score(&file.path))
                     .focus_boost(2.0);
                     retain_ranked_focus_candidate(
                         &mut semantic,
                         FocusCandidate {
-                            relevance: relevance + 1.0,
+                            relevance: relevance + if exact_focus_symbol { 5.0 } else { 1.0 },
                             path: file.path.clone(),
                             start_line: chunk.start_line,
                             end_line: chunk.end_line,
@@ -1992,7 +2001,15 @@ impl Services {
                     break;
                 }
             }
-            if retained == 0 {
+            let requested_minimum = request
+                .minimum_fragments_per_focus_path
+                .unwrap_or(usize::from(request.strict_focus_paths));
+            if retained < requested_minimum {
+                warnings.push(format!(
+                    "focus pattern `{pattern}` generated {retained} distinct bounded candidates \
+                     for requested minimum {requested_minimum}"
+                ));
+            } else if retained == 0 {
                 warnings.push(format!(
                     "focus pattern `{pattern}` matched indexed files without bounded chunk evidence"
                 ));

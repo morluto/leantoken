@@ -824,6 +824,14 @@ applies only when a path matches multiple independent explicit terms; variants
 of one identifier do not count as separate evidence. Signals change ordering;
 absent structural evidence never removes a lexical match.
 
+Strict focus expansion stays inside the existing per-pattern bounds: at most
+four eligible files are inspected, with at most 256 chunks and 128 symbols per
+file, and at most eight distinct ranges retained per focus pattern. An exact
+`focus_symbol` found in that bounded file-local symbol set is candidate evidence
+even when the task text has no lexical overlap. If those bounded candidates
+cannot satisfy `minimum_fragments_per_focus_path`, the response reports the
+generated and requested counts instead of treating path presence as coverage.
+
 Symbol and lexical matches expand to the complete enclosing declaration when it
 fits. Oversized declarations use a bounded window centered on the exact match,
 so an arbitrary declaration prefix cannot hide the decisive line. Context

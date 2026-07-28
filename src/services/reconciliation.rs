@@ -1,5 +1,5 @@
 use std::fmt;
-use std::sync::{Arc, Mutex, atomic::AtomicUsize};
+use std::sync::{Arc, Mutex, MutexGuard, atomic::AtomicUsize};
 
 use tokio::sync::{Semaphore, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -106,21 +106,29 @@ impl WaiterGuard {
         self.armed = false;
     }
 
-    fn cancel(&mut self) {
+    fn cancel(&mut self) -> Result<()> {
         if self.armed {
-            self.coordinator.cancel_waiter(self.waiter_id);
             self.armed = false;
+            self.coordinator.cancel_waiter(self.waiter_id)?;
         }
+        Ok(())
     }
 }
 
 impl Drop for WaiterGuard {
     fn drop(&mut self) {
-        self.cancel();
+        let _ = self.cancel();
     }
 }
 
 impl ReconciliationCoordinator {
+    fn state(&self) -> Result<MutexGuard<'_, CoordinatorState>> {
+        self.inner
+            .state
+            .lock()
+            .map_err(|_| reconciliation_state_poisoned())
+    }
+
     pub(super) fn new(
         indexer: Indexer,
         coordination: IndexCoordination,
@@ -147,31 +155,31 @@ impl ReconciliationCoordinator {
 
     pub(super) async fn reconcile(&self, cancellation: CancellationToken) -> Result<()> {
         {
-            let mut state = self.inner.state.lock().expect("reconciliation state");
+            let mut state = self.state()?;
             state.diagnostics.requests = state.diagnostics.requests.saturating_add(1);
         }
         let _active_request = match Arc::clone(&self.inner.active_requests).try_acquire_owned() {
             Ok(permit) => permit,
             Err(_) => {
-                let mut state = self.inner.state.lock().expect("reconciliation state");
+                let mut state = self.state()?;
                 state.diagnostics.rejected_requests =
                     state.diagnostics.rejected_requests.saturating_add(1);
                 return Err(Error::RetrievalOverloaded);
             }
         };
         if cancellation.is_cancelled() {
-            let mut state = self.inner.state.lock().expect("reconciliation state");
+            let mut state = self.state()?;
             state.diagnostics.cancelled_waiters =
                 state.diagnostics.cancelled_waiters.saturating_add(1);
             return Err(Error::Cancelled);
         }
 
-        let (waiter_id, receiver) = self.enqueue();
+        let (waiter_id, receiver) = self.enqueue()?;
         let mut guard = WaiterGuard::new(self.clone(), waiter_id);
         let outcome = tokio::select! {
             biased;
             _ = cancellation.cancelled() => {
-                guard.cancel();
+                guard.cancel()?;
                 return Err(Error::Cancelled);
             }
             outcome = receiver => outcome,
@@ -186,12 +194,12 @@ impl ReconciliationCoordinator {
         }
     }
 
-    fn enqueue(&self) -> (u64, oneshot::Receiver<WaveOutcome>) {
+    fn enqueue(&self) -> Result<(u64, oneshot::Receiver<WaveOutcome>)> {
         let (sender, receiver) = oneshot::channel();
         let mut start = None;
         let waiter_id;
         {
-            let mut state = self.inner.state.lock().expect("reconciliation state");
+            let mut state = self.state()?;
             waiter_id = state.next_waiter_id;
             state.next_waiter_id = state.next_waiter_id.saturating_add(1);
             let waiter = Waiter {
@@ -230,7 +238,7 @@ impl ReconciliationCoordinator {
         if let Some((wave_id, wave_cancellation)) = start {
             self.spawn_wave(wave_id, wave_cancellation);
         }
-        (waiter_id, receiver)
+        Ok((waiter_id, receiver))
     }
 
     fn new_wave(&self, state: &mut CoordinatorState, waiter: Waiter) -> Wave {
@@ -262,7 +270,7 @@ impl ReconciliationCoordinator {
         tokio::spawn(async move {
             let result = tokio::task::spawn_blocking(move || {
                 let operation = coordination.acquire_operation(&cancellation)?;
-                if !runner_coordinator.mark_running(wave_id) {
+                if !runner_coordinator.mark_running(wave_id)? {
                     operation.release()?;
                     return Err(Error::Cancelled);
                 }
@@ -280,29 +288,48 @@ impl ReconciliationCoordinator {
         });
     }
 
-    fn mark_running(&self, wave_id: u64) -> bool {
-        let mut state = self.inner.state.lock().expect("reconciliation state");
+    fn mark_running(&self, wave_id: u64) -> Result<bool> {
+        let mut state = self.state()?;
         let Some(current) = state.current.as_mut() else {
-            return false;
+            return Ok(false);
         };
         if current.id != wave_id
             || current.phase != WavePhase::WaitingForOperation
             || current.waiters.is_empty()
             || current.cancellation.is_cancelled()
         {
-            return false;
+            return Ok(false);
         }
         current.phase = WavePhase::Running;
         let waiters = current.waiters.len();
         state.diagnostics.waves_started = state.diagnostics.waves_started.saturating_add(1);
         tracing::debug!(wave_id, waiters, "reconciliation wave started");
-        true
+        Ok(true)
     }
 
     fn finish_wave(&self, wave_id: u64, result: Result<()>) {
         let mut start = None;
         {
-            let mut state = self.inner.state.lock().expect("reconciliation state");
+            let mut state = match self.inner.state.lock() {
+                Ok(state) => state,
+                Err(poisoned) => {
+                    let mut state = poisoned.into_inner();
+                    let mut waiters = state
+                        .current
+                        .take()
+                        .map_or_else(Vec::new, |wave| wave.waiters);
+                    if let Some(pending) = state.pending.take() {
+                        waiters.extend(pending.waiters);
+                    }
+                    state.diagnostics.active_waves = 0;
+                    state.diagnostics.pending_waiters = 0;
+                    state.diagnostics.waves_failed =
+                        state.diagnostics.waves_failed.saturating_add(1);
+                    drop(state);
+                    distribute_failure(waiters, reconciliation_state_poisoned());
+                    return;
+                }
+            };
             let Some(current) = state.current.take() else {
                 return;
             };
@@ -354,8 +381,8 @@ impl ReconciliationCoordinator {
         }
     }
 
-    fn cancel_waiter(&self, waiter_id: u64) {
-        let mut state = self.inner.state.lock().expect("reconciliation state");
+    fn cancel_waiter(&self, waiter_id: u64) -> Result<()> {
+        let mut state = self.state()?;
         state.diagnostics.cancelled_waiters = state.diagnostics.cancelled_waiters.saturating_add(1);
 
         if let Some(current) = state.current.as_mut()
@@ -365,7 +392,7 @@ impl ReconciliationCoordinator {
                 current.cancellation.cancel();
             }
             update_waiter_high_water(&mut state);
-            return;
+            return Ok(());
         }
 
         let remove_pending = state
@@ -385,11 +412,16 @@ impl ReconciliationCoordinator {
                 .saturating_add(1);
         }
         update_waiter_high_water(&mut state);
+        Ok(())
     }
 
     #[cfg(test)]
     pub(super) fn reset_diagnostics(&self) {
-        let mut state = self.inner.state.lock().expect("reconciliation state");
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let active_waves =
             usize::from(state.current.is_some()) + usize::from(state.pending.is_some());
         let pending_waiters = state.pending.as_ref().map_or(0, |wave| wave.waiters.len());
@@ -407,9 +439,19 @@ impl ReconciliationCoordinator {
         self.inner
             .state
             .lock()
-            .expect("reconciliation state")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .diagnostics
             .clone()
+    }
+
+    #[cfg(test)]
+    pub(super) fn poison_state_for_test(&self) {
+        let inner = Arc::clone(&self.inner);
+        let _ = std::thread::spawn(move || {
+            let _state = inner.state.lock().expect("lock reconciliation state");
+            panic!("poison reconciliation state");
+        })
+        .join();
     }
 
     #[cfg(test)]
@@ -442,6 +484,10 @@ fn update_waiter_high_water(state: &mut CoordinatorState) {
         .diagnostics
         .peak_pending_waiters
         .max(state.diagnostics.pending_waiters);
+}
+
+fn reconciliation_state_poisoned() -> Error {
+    Error::InternalFailure("reconciliation coordinator state poisoned".into())
 }
 
 fn remove_waiter(waiters: &mut Vec<Waiter>, waiter_id: u64) -> bool {
