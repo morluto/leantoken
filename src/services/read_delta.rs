@@ -69,17 +69,27 @@ pub(super) struct ReadDeltaEvaluation {
     pub receipt: ReadDeltaReceipt,
 }
 
+pub(super) struct ReadDeltaInput<'a> {
+    pub repository_id: &'a str,
+    pub storage: &'a Storage,
+    pub request: &'a ReadRequest,
+    pub response: &'a ReadResponse,
+    pub current_content: &'a str,
+    pub full_tokens: usize,
+    pub tokenizer: Tokenizer,
+}
+
 impl ReadDeltaRegistry {
-    pub(super) fn evaluate(
-        &self,
-        repository_id: &str,
-        storage: &Storage,
-        request: &ReadRequest,
-        response: &ReadResponse,
-        current_content: &str,
-        full_tokens: usize,
-        tokenizer: Tokenizer,
-    ) -> Result<ReadDeltaEvaluation> {
+    pub(super) fn evaluate(&self, input: ReadDeltaInput<'_>) -> Result<ReadDeltaEvaluation> {
+        let ReadDeltaInput {
+            repository_id,
+            storage,
+            request,
+            response,
+            current_content,
+            full_tokens,
+            tokenizer,
+        } = input;
         let target_key = target_key(repository_id, request);
         let mut base_hash = request.expected_hash.clone();
         let mut base_generation = None;
@@ -792,15 +802,15 @@ mod tests {
             },
         };
         let evaluation = ReadDeltaRegistry::default()
-            .evaluate(
-                "repository",
-                &storage,
-                &request,
-                &response,
-                &content,
-                1,
-                Tokenizer::Cl100kBase,
-            )
+            .evaluate(ReadDeltaInput {
+                repository_id: "repository",
+                storage: &storage,
+                request: &request,
+                response: &response,
+                current_content: &content,
+                full_tokens: 1,
+                tokenizer: Tokenizer::Cl100kBase,
+            })
             .expect("evaluate oversized base");
         assert_eq!(
             evaluation.receipt.fallback_reason,
