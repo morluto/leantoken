@@ -12,6 +12,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::config::INDEX_CONTENT_VERSION;
+use crate::mcp::{McpResultModeResolution, mcp_schema_fingerprint, resolve_auto_result_mode};
 use crate::setup::{self, SetupClient};
 use crate::{Config, Error, Result};
 
@@ -42,6 +43,8 @@ pub struct DoctorReport {
     pub instructions_loaded: bool,
     /// Exact MCP tool names exposed by the server.
     pub tools: Vec<String>,
+    /// Requested, resolved, and fail-closed MCP result-mode decision.
+    pub result_mode: McpResultModeResolution,
     /// Host registration and pre-session discovery state.
     pub integration: IntegrationReport,
     /// First-retrieval readiness result.
@@ -117,6 +120,8 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
     )?;
     let initialize = transport.response(1, RESPONSE_TIMEOUT, "handshake")?;
     let result = result_object(&initialize, "initialize", "handshake")?;
+    let protocol_version =
+        required_string(result, "/protocolVersion", "protocol version", "handshake")?;
     let server_name = required_string(result, "/serverInfo/name", "server name", "handshake")?;
     let server_version =
         required_string(result, "/serverInfo/version", "server version", "handshake")?;
@@ -259,6 +264,12 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
 
     transport.close();
     let setup = setup::diagnostic_state();
+    let result_mode = resolve_auto_result_mode(
+        "leantoken-doctor",
+        env!("CARGO_PKG_VERSION"),
+        &protocol_version,
+        &mcp_schema_fingerprint(),
+    );
     Ok(DoctorReport {
         status: "ready",
         repository_root: config.root.clone(),
@@ -267,6 +278,7 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
         index_content_version: INDEX_CONTENT_VERSION,
         instructions_loaded,
         tools,
+        result_mode,
         integration: IntegrationReport {
             registration_status: setup.registration_status,
             configured_clients: setup.configured_clients,
@@ -322,6 +334,13 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
     )?;
     writeln!(output, "  ✓ Agent guidance loaded")?;
     writeln!(output, "  ✓ Tool catalog: {} MCP tools", report.tools.len())?;
+    writeln!(
+        output,
+        "  ✓ Result mode: {:?} → {:?} ({})",
+        report.result_mode.requested_mode,
+        report.result_mode.resolved_mode,
+        report.result_mode.reason.as_str()
+    )?;
     writeln!(
         output,
         "  {} Host registration: {}",
@@ -477,6 +496,7 @@ impl DoctorTransport {
             .arg("--tokenizer")
             .arg(config.tokenizer.name())
             .arg("mcp")
+            .args(["--result-mode", "auto"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

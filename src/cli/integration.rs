@@ -13,8 +13,8 @@ pub struct UpgradeArgs {
 /// MCP stdio transport options.
 #[derive(Debug, Clone, Args)]
 pub struct McpArgs {
-    /// Successful-result representation. Keep `dual` unless the host is known
-    /// to consume structured-only results.
+    /// Successful-result representation. `auto` requires an exact reviewed
+    /// initialize tuple and otherwise falls back to `dual`.
     #[arg(long, value_enum, default_value_t = McpResultMode::Dual)]
     pub result_mode: McpResultMode,
 }

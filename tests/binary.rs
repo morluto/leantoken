@@ -488,6 +488,10 @@ fn doctor_verifies_identity_catalog_and_first_retrieval() {
     );
     assert_eq!(report["instructions_loaded"], true);
     assert_eq!(report["tools"].as_array().map(Vec::len), Some(8));
+    assert_eq!(report["result_mode"]["requested_mode"], "auto");
+    assert_eq!(report["result_mode"]["resolved_mode"], "dual");
+    assert_eq!(report["result_mode"]["reason"], "client_name_miss");
+    assert_eq!(report["result_mode"]["registry_schema_current"], true);
     assert!(
         matches!(
             report["integration"]["registration_status"].as_str(),
@@ -645,6 +649,103 @@ fn mcp_survives_malformed_and_invalid_messages() {
     assert_eq!(response["id"], 100);
     assert!(response.get("result").is_some(), "{response}");
     assert!(process.child.try_wait().expect("poll process").is_none());
+}
+
+#[test]
+fn mcp_result_modes_and_auto_resolution_project_exact_wire_shapes() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
+        .expect("write fixture");
+    let database = root.path().join("index.sqlite");
+
+    for (requested, client_name, client_version, protocol, text, structured) in [
+        ("dual", "leantoken-test", "1", "2025-11-25", true, true),
+        ("text", "leantoken-test", "1", "2025-11-25", true, false),
+        (
+            "structured",
+            "leantoken-test",
+            "1",
+            "2025-11-25",
+            false,
+            true,
+        ),
+        (
+            "auto",
+            "codex-mcp-client",
+            "0.144.1",
+            "2025-06-18",
+            false,
+            true,
+        ),
+        (
+            "auto",
+            "codex-mcp-client",
+            "0.144.2",
+            "2025-06-18",
+            true,
+            true,
+        ),
+        (
+            "auto",
+            "codex-mcp-client",
+            "0.144.1",
+            "2025-11-25",
+            true,
+            true,
+        ),
+        (
+            "auto",
+            "codex-mcp-client",
+            "0.144.1",
+            "2099-01-01",
+            true,
+            true,
+        ),
+        (
+            "auto",
+            "unknown-host",
+            "0.144.1",
+            "2025-06-18",
+            true,
+            true,
+        ),
+    ] {
+        let mut process = McpProcess::spawn_with_mcp_args(
+            root.path(),
+            &database,
+            &["--result-mode", requested],
+        );
+        process.initialize_as(client_name, client_version, protocol);
+        process.send_initialized();
+        process.wait_until_ready(Duration::from_secs(30));
+        process.send(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 900,
+            "method": "tools/call",
+            "params": {
+                "name": "files",
+                "arguments": {
+                    "operation": {"kind": "tree"},
+                    "max_results": 1
+                }
+            }
+        }));
+        let response = process.response(Duration::from_secs(10));
+        let result = &response["result"];
+        assert_eq!(
+            result["content"]
+                .as_array()
+                .is_some_and(|content| !content.is_empty()),
+            text,
+            "{requested} {client_name} {client_version}: {result}"
+        );
+        assert_eq!(
+            result.get("structuredContent").is_some(),
+            structured,
+            "{requested} {client_name} {client_version}: {result}"
+        );
+        process.stop();
+    }
 }
 
 #[test]
@@ -1798,6 +1899,14 @@ impl McpProcess {
         Self::spawn_with_options(root, database, arguments, false)
     }
 
+    fn spawn_with_mcp_args(
+        root: &std::path::Path,
+        database: &std::path::Path,
+        arguments: &[&str],
+    ) -> Self {
+        Self::spawn_with_command_args(root, database, &[], arguments, false)
+    }
+
     fn spawn_with_captured_stderr(
         root: &std::path::Path,
         database: &std::path::Path,
@@ -1812,6 +1921,16 @@ impl McpProcess {
         arguments: &[&str],
         capture_stderr: bool,
     ) -> Self {
+        Self::spawn_with_command_args(root, database, arguments, &[], capture_stderr)
+    }
+
+    fn spawn_with_command_args(
+        root: &std::path::Path,
+        database: &std::path::Path,
+        arguments: &[&str],
+        mcp_arguments: &[&str],
+        capture_stderr: bool,
+    ) -> Self {
         let mut command = std::process::Command::new(assert_cmd::cargo::cargo_bin!("leantoken"));
         command
             .args([
@@ -1821,7 +1940,8 @@ impl McpProcess {
                 database.to_str().expect("database UTF-8"),
             ])
             .args(arguments)
-            .arg("mcp");
+            .arg("mcp")
+            .args(mcp_arguments);
         command.stderr(if capture_stderr {
             Stdio::piped()
         } else {
@@ -1869,14 +1989,23 @@ impl McpProcess {
     }
 
     fn initialize(&mut self) -> serde_json::Value {
+        self.initialize_as("leantoken-test", "1", "2025-11-25")
+    }
+
+    fn initialize_as(
+        &mut self,
+        client_name: &str,
+        client_version: &str,
+        protocol_version: &str,
+    ) -> serde_json::Value {
         self.send(serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
             "method": "initialize",
             "params": {
-                "protocolVersion": "2025-11-25",
+                "protocolVersion": protocol_version,
                 "capabilities": {},
-                "clientInfo": { "name": "leantoken-test", "version": "1" }
+                "clientInfo": { "name": client_name, "version": client_version }
             }
         }));
         let response = self.response(Duration::from_secs(5));

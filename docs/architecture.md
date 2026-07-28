@@ -666,6 +666,17 @@ releases the permit if the handler unwinds before producing a response. Excess
 calls receive the same fail-fast retryable capacity response before rmcp can
 create another task. Initialization and `tools/list` bypass this dispatch gate.
 
+Successful-result projection is fixed for explicit `dual`, `text`, and
+`structured` modes. Explicit `auto` starts in fail-safe `dual` and may change
+only during the MCP initialize handler. Its immutable registry requires exact
+client name/version, negotiated protocol version, and current deterministic
+tool-catalog digest; resolution is shared by handler clones and the bounded
+transport through one atomic wire-mode value. Missing or malformed initialize
+never reaches a smaller mode, and any key mismatch remains dual. Registry
+lookup is a fixed in-memory row scan with no filesystem access, subprocess,
+network call, storage write, or concurrency fan-out. Adding a row requires a
+code-reviewed real-host evidence receipt and a catalog-digest test.
+
 Inside the handler, each `LeanTokenMcp` server independently admits at most 16
 active `tools/call` requests after repository identity validation. Clones of
 that server share both process-local governors; a separately constructed server

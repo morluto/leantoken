@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-07-28",
+  "policy": {
+    "default_mode": "dual",
+    "auto_is_explicit_opt_in": true,
+    "match": "exact client name, client version, negotiated MCP protocol version, and LeanToken tool-catalog digest",
+    "miss_behavior": "dual",
+    "environment_or_process_inference": false
+  },
+  "rows": [
+    {
+      "client_name": "codex-mcp-client",
+      "client_version": "0.144.1",
+      "protocol_version": "2025-06-18",
+      "result_mode": "structured",
+      "tool_catalog_digest": "ffd5662e0731d265f561a5c10a891097",
+      "observed_on": "2026-07-20",
+      "evidence": {
+        "path": "benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-thin-leantoken-structured-owner.json",
+        "blake3": "37f18e8f28565320e91d72c6454b814d6ab14f2d56b0e69880ecfffa925119fd",
+        "runtime_validation": "benchmarks/reports/mcp-result-mode-auto-codex-0.144.1-2026-07-28.json",
+        "real_host": true,
+        "structured_only_model_consumption": "proven",
+        "frozen_task_success": true
+      }
+    }
+  ],
+  "unavailable_hosts": [
+    "claude-code",
+    "cursor",
+    "gemini-cli",
+    "opencode"
+  ],
+  "limitations": [
+    "The Codex row proves structured-only consumption for one frozen task and exact host version, not provider-input savings.",
+    "The catalog binding is invalidated by any tool-schema or description digest change.",
+    "Unknown hosts and every exact-key mismatch remain dual; unavailable hosts are not assigned zero-valued measurements.",
+    "Setup continues to write dual because configuration discovery does not attest an exact running host version."
+  ]
+}

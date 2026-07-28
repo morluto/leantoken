@@ -1470,6 +1470,7 @@ fn canonical_json_or_text(bytes: Vec<u8>) -> AnyResult<Vec<u8>> {
 
 fn mode_name(mode: McpResultMode) -> &'static str {
     match mode {
+        McpResultMode::Auto => "auto",
         McpResultMode::Dual => "dual",
         McpResultMode::Text => "text",
         McpResultMode::Structured => "structured",

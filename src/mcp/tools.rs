@@ -358,6 +358,30 @@ impl LeanTokenMcp {
 
 #[tool_handler(name = "leantoken")]
 impl ServerHandler for LeanTokenMcp {
+    fn initialize(
+        &self,
+        request: rmcp::model::InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<rmcp::model::InitializeResult, ErrorData>> + Send + '_ {
+        context.peer.set_peer_info(request.clone());
+        let mut info = self.get_info();
+        if rmcp::model::ProtocolVersion::KNOWN_VERSIONS.contains(&request.protocol_version) {
+            info.protocol_version = request.protocol_version.clone();
+        } else {
+            tracing::warn!(
+                client_requested = %request.protocol_version,
+                server_fallback = %info.protocol_version,
+                "client requested unsupported protocol version; falling back to server default"
+            );
+        }
+        // A known request is the negotiated version because rmcp echoes it.
+        // Pass an unknown request through to the resolver so it cannot match
+        // the fallback version selected only for the initialize response.
+        self.result_mode
+            .resolve_initialize(&request, request.protocol_version.as_str());
+        std::future::ready(Ok(info))
+    }
+
     fn get_info(&self) -> rmcp::model::ServerInfo {
         rmcp::model::ServerInfo::new(
             rmcp::model::ServerCapabilities::builder()

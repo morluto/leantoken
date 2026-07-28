@@ -39,7 +39,7 @@ leantoken json <path> [options]
 leantoken context --task <text> --budget <tokens> [--consistency <mode>]
 leantoken update [--check] [--yes]
 leantoken upgrade [--check] [--yes]
-leantoken mcp [--result-mode dual|text|structured]
+leantoken mcp [--result-mode auto|dual|text|structured]
 leantoken setup [CLIENT...] [--all] [--refresh] [--yes] [--dry-run] [--allow-outdated]
 leantoken remove [CLIENT...] [--all] [--yes] [--dry-run]
 leantoken cache list [--summary] [--state STATE] [--repository-root PATH]
@@ -337,7 +337,17 @@ diagnostics rather than protocol responses.
 The default `dual` mode returns JSON as text and `structuredContent` for broad
 host compatibility. `text` and `structured` remove that duplication, but use
 them only after capturing the target host and confirming it consumes that
-representation. The catalog publishes documented input schemas but omits
+representation. `auto` is an explicit opt-in: initialize must exactly match a
+code-reviewed client name, client version, negotiated MCP protocol version, and
+current tool-catalog digest. Any missing initialize state or mismatch falls
+back to `dual`; explicit `dual`, `text`, and `structured` are never rewritten.
+LeanToken does not inspect parent processes, `PATH`, environment variables, or
+host-family prefixes to resolve the mode. `leantoken doctor` reports requested
+and resolved modes, the exact match or miss reason, catalog freshness, and the
+reviewed observation when one matched. Setup continues to register `dual`
+unless it can attest the complete verified tuple.
+
+The catalog publishes documented input schemas but omits
 optional output schemas; repeating full response DTOs in every `tools/list`
 result costs model context without changing tool behavior.
 

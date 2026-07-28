@@ -11,7 +11,7 @@ use rmcp::{
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
-use super::{McpResultMode, RequestAdmission, RetryableToolResponse, retryable_tool_result};
+use super::{McpResultModeState, RequestAdmission, RetryableToolResponse, retryable_tool_result};
 
 const MAX_MCP_STDIO_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const RETAINED_MCP_FRAME_CAPACITY: usize = 64 * 1024;
@@ -42,11 +42,14 @@ pub(super) struct BoundedStdioTransport {
     request_dispatch: RequestAdmission,
     dispatched_calls:
         Arc<Mutex<HashMap<rmcp::model::RequestId, tokio::sync::OwnedSemaphorePermit>>>,
-    result_mode: McpResultMode,
+    result_mode: McpResultModeState,
 }
 
 impl BoundedStdioTransport {
-    pub(super) fn new(request_dispatch: RequestAdmission, result_mode: McpResultMode) -> Self {
+    pub(super) fn new(
+        request_dispatch: RequestAdmission,
+        result_mode: impl Into<McpResultModeState>,
+    ) -> Self {
         Self {
             reader: tokio::io::BufReader::with_capacity(8 * 1024, tokio::io::stdin()),
             writer: Arc::new(tokio::sync::Mutex::new(tokio::io::stdout())),
@@ -54,7 +57,7 @@ impl BoundedStdioTransport {
             discarding_oversized_frame: false,
             request_dispatch,
             dispatched_calls: Arc::new(Mutex::new(HashMap::new())),
-            result_mode,
+            result_mode: result_mode.into(),
         }
     }
 
@@ -145,7 +148,7 @@ impl BoundedStdioTransport {
                 "repository tool-call capacity is exhausted; retry shortly",
                 500,
             ),
-            self.result_mode,
+            self.result_mode.resolved_mode(),
         );
         TxJsonRpcMessage::<RoleServer>::response(ServerResult::CallToolResult(result), id)
     }

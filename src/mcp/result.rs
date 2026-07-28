@@ -24,8 +24,11 @@ impl RetryableToolResponse {
 }
 
 /// Wire representation used for successful MCP tool results.
-#[derive(Debug, Clone, Copy, Default, clap::ValueEnum, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, clap::ValueEnum, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum McpResultMode {
+    /// Resolve only an exact code-reviewed initialize tuple; otherwise use dual.
+    Auto,
     /// Send JSON as both text and structured content for broad host compatibility.
     #[default]
     Dual,
@@ -42,7 +45,7 @@ pub fn tool_result<T: Serialize>(
 ) -> Result<CallToolResult, ErrorData> {
     serde_json::to_value(value)
         .map(|value| match mode {
-            McpResultMode::Dual => CallToolResult::structured(value),
+            McpResultMode::Auto | McpResultMode::Dual => CallToolResult::structured(value),
             McpResultMode::Text => {
                 CallToolResult::success(vec![ContentBlock::text(value.to_string())])
             }
