@@ -8,7 +8,7 @@
 <a href=#8 id=8 data-nosnippet>8</a>
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>super::{McpResultMode, mcp_schema_fingerprint};
 <a href=#10 id=10 data-nosnippet>10</a>
-<a href=#11 id=11 data-nosnippet>11</a><span class="kw">const </span>CURRENT_VERIFIED_CATALOG_DIGEST: <span class="kw-2">&amp;</span>str = <span class="string">"ffd5662e0731d265f561a5c10a891097"</span>;
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">const </span>CURRENT_VERIFIED_CATALOG_DIGEST: <span class="kw-2">&amp;</span>str = <span class="string">"374b1eb87963c5cfc914ca8b1db6fd83"</span>;
 <a href=#12 id=12 data-nosnippet>12</a>
 <a href=#13 id=13 data-nosnippet>13</a><span class="attr">#[derive(Debug, Clone, Copy)]
 <a href=#14 id=14 data-nosnippet>14</a></span><span class="kw">struct </span>CompatibilityRow {
@@ -352,40 +352,53 @@
 <a href=#352 id=352 data-nosnippet>352</a>        <span class="macro">assert_eq!</span>(row[<span class="string">"tool_catalog_digest"</span>], runtime.catalog_digest);
 <a href=#353 id=353 data-nosnippet>353</a>        <span class="macro">assert_eq!</span>(row[<span class="string">"observed_on"</span>], runtime.observed_on);
 <a href=#354 id=354 data-nosnippet>354</a>        <span class="macro">assert_eq!</span>(row[<span class="string">"evidence"</span>][<span class="string">"blake3"</span>], runtime.evidence_blake3);
-<a href=#355 id=355 data-nosnippet>355</a>
-<a href=#356 id=356 data-nosnippet>356</a>        <span class="kw">let </span>evidence = <span class="macro">include_str!</span>(
-<a href=#357 id=357 data-nosnippet>357</a>            <span class="string">"../../benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-thin-leantoken-structured-owner.json"
-<a href=#358 id=358 data-nosnippet>358</a>        </span>);
-<a href=#359 id=359 data-nosnippet>359</a>        <span class="kw">let </span>repository_canonical_evidence = evidence.replace(<span class="string">"\r\n"</span>, <span class="string">"\n"</span>);
-<a href=#360 id=360 data-nosnippet>360</a>        <span class="macro">assert_eq!</span>(
-<a href=#361 id=361 data-nosnippet>361</a>            blake3::hash(repository_canonical_evidence.as_bytes())
-<a href=#362 id=362 data-nosnippet>362</a>                .to_hex()
-<a href=#363 id=363 data-nosnippet>363</a>                .as_str(),
-<a href=#364 id=364 data-nosnippet>364</a>            runtime.evidence_blake3
-<a href=#365 id=365 data-nosnippet>365</a>        );
-<a href=#366 id=366 data-nosnippet>366</a>    }
-<a href=#367 id=367 data-nosnippet>367</a>
-<a href=#368 id=368 data-nosnippet>368</a>    <span class="attr">#[test]
-<a href=#369 id=369 data-nosnippet>369</a>    </span><span class="kw">fn </span>auto_state_is_dual_until_initialize_and_explicit_modes_never_change() {
-<a href=#370 id=370 data-nosnippet>370</a>        <span class="kw">let </span>auto = McpResultModeState::new(McpResultMode::Auto);
-<a href=#371 id=371 data-nosnippet>371</a>        <span class="macro">assert_eq!</span>(auto.resolved_mode(), McpResultMode::Dual);
-<a href=#372 id=372 data-nosnippet>372</a>        <span class="macro">assert_eq!</span>(
-<a href=#373 id=373 data-nosnippet>373</a>            auto.resolution().reason,
-<a href=#374 id=374 data-nosnippet>374</a>            McpResultModeResolutionReason::InitializeIncomplete
-<a href=#375 id=375 data-nosnippet>375</a>        );
-<a href=#376 id=376 data-nosnippet>376</a>
-<a href=#377 id=377 data-nosnippet>377</a>        <span class="kw">for </span>mode <span class="kw">in </span>[
-<a href=#378 id=378 data-nosnippet>378</a>            McpResultMode::Dual,
-<a href=#379 id=379 data-nosnippet>379</a>            McpResultMode::Text,
-<a href=#380 id=380 data-nosnippet>380</a>            McpResultMode::Structured,
-<a href=#381 id=381 data-nosnippet>381</a>        ] {
-<a href=#382 id=382 data-nosnippet>382</a>            <span class="kw">let </span>state = McpResultModeState::new(mode);
-<a href=#383 id=383 data-nosnippet>383</a>            <span class="macro">assert_eq!</span>(state.resolved_mode(), mode);
-<a href=#384 id=384 data-nosnippet>384</a>            <span class="macro">assert_eq!</span>(
-<a href=#385 id=385 data-nosnippet>385</a>                state.resolution().reason,
-<a href=#386 id=386 data-nosnippet>386</a>                McpResultModeResolutionReason::ExplicitOverride
-<a href=#387 id=387 data-nosnippet>387</a>            );
-<a href=#388 id=388 data-nosnippet>388</a>        }
-<a href=#389 id=389 data-nosnippet>389</a>    }
-<a href=#390 id=390 data-nosnippet>390</a>}
+<a href=#355 id=355 data-nosnippet>355</a>        <span class="macro">assert_eq!</span>(
+<a href=#356 id=356 data-nosnippet>356</a>            receipt[<span class="string">"catalog_review"</span>][<span class="string">"tool_catalog_digest"</span>],
+<a href=#357 id=357 data-nosnippet>357</a>            runtime.catalog_digest
+<a href=#358 id=358 data-nosnippet>358</a>        );
+<a href=#359 id=359 data-nosnippet>359</a>        <span class="macro">assert_eq!</span>(
+<a href=#360 id=360 data-nosnippet>360</a>            receipt[<span class="string">"catalog_review"</span>][<span class="string">"change_kind"</span>],
+<a href=#361 id=361 data-nosnippet>361</a>            <span class="string">"context_description_only"
+<a href=#362 id=362 data-nosnippet>362</a>        </span>);
+<a href=#363 id=363 data-nosnippet>363</a>        <span class="macro">assert_eq!</span>(receipt[<span class="string">"catalog_review"</span>][<span class="string">"input_schema_changed"</span>], <span class="bool-val">false</span>);
+<a href=#364 id=364 data-nosnippet>364</a>        <span class="macro">assert_eq!</span>(
+<a href=#365 id=365 data-nosnippet>365</a>            receipt[<span class="string">"catalog_review"</span>][<span class="string">"result_projection_changed"</span>],
+<a href=#366 id=366 data-nosnippet>366</a>            <span class="bool-val">false
+<a href=#367 id=367 data-nosnippet>367</a>        </span>);
+<a href=#368 id=368 data-nosnippet>368</a>
+<a href=#369 id=369 data-nosnippet>369</a>        <span class="kw">let </span>evidence = <span class="macro">include_str!</span>(
+<a href=#370 id=370 data-nosnippet>370</a>            <span class="string">"../../benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-thin-leantoken-structured-owner.json"
+<a href=#371 id=371 data-nosnippet>371</a>        </span>);
+<a href=#372 id=372 data-nosnippet>372</a>        <span class="kw">let </span>repository_canonical_evidence = evidence.replace(<span class="string">"\r\n"</span>, <span class="string">"\n"</span>);
+<a href=#373 id=373 data-nosnippet>373</a>        <span class="macro">assert_eq!</span>(
+<a href=#374 id=374 data-nosnippet>374</a>            blake3::hash(repository_canonical_evidence.as_bytes())
+<a href=#375 id=375 data-nosnippet>375</a>                .to_hex()
+<a href=#376 id=376 data-nosnippet>376</a>                .as_str(),
+<a href=#377 id=377 data-nosnippet>377</a>            runtime.evidence_blake3
+<a href=#378 id=378 data-nosnippet>378</a>        );
+<a href=#379 id=379 data-nosnippet>379</a>    }
+<a href=#380 id=380 data-nosnippet>380</a>
+<a href=#381 id=381 data-nosnippet>381</a>    <span class="attr">#[test]
+<a href=#382 id=382 data-nosnippet>382</a>    </span><span class="kw">fn </span>auto_state_is_dual_until_initialize_and_explicit_modes_never_change() {
+<a href=#383 id=383 data-nosnippet>383</a>        <span class="kw">let </span>auto = McpResultModeState::new(McpResultMode::Auto);
+<a href=#384 id=384 data-nosnippet>384</a>        <span class="macro">assert_eq!</span>(auto.resolved_mode(), McpResultMode::Dual);
+<a href=#385 id=385 data-nosnippet>385</a>        <span class="macro">assert_eq!</span>(
+<a href=#386 id=386 data-nosnippet>386</a>            auto.resolution().reason,
+<a href=#387 id=387 data-nosnippet>387</a>            McpResultModeResolutionReason::InitializeIncomplete
+<a href=#388 id=388 data-nosnippet>388</a>        );
+<a href=#389 id=389 data-nosnippet>389</a>
+<a href=#390 id=390 data-nosnippet>390</a>        <span class="kw">for </span>mode <span class="kw">in </span>[
+<a href=#391 id=391 data-nosnippet>391</a>            McpResultMode::Dual,
+<a href=#392 id=392 data-nosnippet>392</a>            McpResultMode::Text,
+<a href=#393 id=393 data-nosnippet>393</a>            McpResultMode::Structured,
+<a href=#394 id=394 data-nosnippet>394</a>        ] {
+<a href=#395 id=395 data-nosnippet>395</a>            <span class="kw">let </span>state = McpResultModeState::new(mode);
+<a href=#396 id=396 data-nosnippet>396</a>            <span class="macro">assert_eq!</span>(state.resolved_mode(), mode);
+<a href=#397 id=397 data-nosnippet>397</a>            <span class="macro">assert_eq!</span>(
+<a href=#398 id=398 data-nosnippet>398</a>                state.resolution().reason,
+<a href=#399 id=399 data-nosnippet>399</a>                McpResultModeResolutionReason::ExplicitOverride
+<a href=#400 id=400 data-nosnippet>400</a>            );
+<a href=#401 id=401 data-nosnippet>401</a>        }
+<a href=#402 id=402 data-nosnippet>402</a>    }
+<a href=#403 id=403 data-nosnippet>403</a>}
 </code></pre></div></section></main></body></html>
