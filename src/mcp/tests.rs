@@ -53,7 +53,7 @@ fn cloned_servers_share_admission_but_separate_instances_do_not() {
 }
 
 #[test]
-fn capacity_errors_are_structured_retryable_tool_results() {
+fn retryable_service_errors_are_structured_successful_tool_results() {
     let (server, _) = LeanTokenMcp::pending();
     for (error, reason) in [
         (
@@ -64,6 +64,7 @@ fn capacity_errors_are_structured_retryable_tool_results() {
             crate::Error::RetrievalQueueTimeout,
             "retrieval_queue_timeout",
         ),
+        (crate::Error::IndexNotReady, "index_building"),
     ] {
         let result = server
             .service_result::<()>(Err(error))
@@ -381,6 +382,32 @@ async fn initial_index_retry_is_bounded() {
     assert!(matches!(error, crate::Error::IndexNotReady));
     assert_eq!(calls.load(Ordering::Acquire), 1);
     assert_eq!(waits.load(Ordering::Acquire), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn initial_operation_does_not_restart_the_readiness_deadline() {
+    let (_server, mcp_services) = LeanTokenMcp::pending();
+    let waits = std::sync::atomic::AtomicUsize::new(0);
+
+    let error = retry_after_initial_index_with_policy(
+        "files",
+        &mcp_services,
+        CancellationToken::new(),
+        Duration::from_secs(30),
+        |_| {
+            waits.fetch_add(1, Ordering::AcqRel);
+            std::future::ready(Ok(()))
+        },
+        || async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            Err::<(), _>(crate::Error::IndexNotReady)
+        },
+    )
+    .await
+    .expect_err("the first operation consumed the complete readiness budget");
+
+    assert!(matches!(error, crate::Error::IndexNotReady));
+    assert_eq!(waits.load(Ordering::Acquire), 0);
 }
 
 #[tokio::test(start_paused = true)]

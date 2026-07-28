@@ -40,6 +40,19 @@ async fn wait_until(predicate: impl Fn() -> bool) {
     panic!("condition was not reached");
 }
 
+async fn wait_until_with_timer(predicate: impl Fn() -> bool) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if predicate() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("condition was not reached before timeout");
+}
+
 async fn indexed_services() -> (tempfile::TempDir, Services) {
     let root = tempfile::tempdir().expect("root");
     fs::write(root.path().join("lib.rs"), "pub fn existing() {}\n").expect("source");
@@ -51,6 +64,18 @@ async fn indexed_services() -> (tempfile::TempDir, Services) {
     (root, services)
 }
 
+fn root_files_request() -> FilesRequest {
+    FilesRequest {
+        operation: FileOperation::Tree,
+        path: None,
+        query: None,
+        pattern: None,
+        max_results: Some(10),
+        cursor: None,
+        depth: Some(0),
+    }
+}
+
 #[tokio::test]
 async fn poisoned_reconciliation_state_returns_a_typed_error() {
     let (_root, services) = indexed_services().await;
@@ -58,7 +83,7 @@ async fn poisoned_reconciliation_state_returns_a_typed_error() {
 
     let result = services
         .reconciliation
-        .reconcile(CancellationToken::new())
+        .reconcile(CancellationToken::new(), None)
         .await;
 
     assert!(matches!(
@@ -440,6 +465,161 @@ async fn caller_after_a_cancelled_waiting_wave_uses_a_fresh_wave() {
     assert_eq!(diagnostics.waves_started, 1);
     assert_eq!(diagnostics.waves_completed, 1);
     assert_eq!(diagnostics.waves_cancelled_before_start, 1);
+}
+
+#[tokio::test]
+async fn generation_zero_reconciliation_deadline_returns_without_stale_retrieval() {
+    let root = tempfile::tempdir().expect("root");
+    fs::write(root.path().join("lib.rs"), "pub fn cold_source() {}\n").expect("source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    let held_operation = services
+        .coordination
+        .acquire_operation(&CancellationToken::new())
+        .expect("hold operation lock");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    let call_services = services.clone();
+    let call = tokio::spawn(async move {
+        call_services
+            .files_with_options_consistency_cancellable(
+                root_files_request(),
+                IndexConsistency::ReconcileWorkingTree,
+                ServiceCallOptions::new().with_initial_reconciliation_deadline(deadline),
+                CancellationToken::new(),
+            )
+            .await
+    });
+    wait_until_with_timer(|| {
+        let diagnostics = services.reconciliation.diagnostics();
+        diagnostics.requests == 1 && diagnostics.active_waves == 1
+    })
+    .await;
+
+    tokio::time::pause();
+    tokio::time::advance(std::time::Duration::from_secs(30)).await;
+    assert!(matches!(
+        call.await.expect("join timed-out retrieval"),
+        Err(Error::IndexNotReady)
+    ));
+    assert_eq!(
+        services
+            .storage
+            .repository_generation()
+            .expect("generation after timeout"),
+        0
+    );
+
+    tokio::time::resume();
+    held_operation.release().expect("release operation lock");
+    wait_until_with_timer(|| services.reconciliation.diagnostics().active_waves == 0).await;
+    let diagnostics = services.reconciliation.diagnostics();
+    assert_eq!(diagnostics.pending_waiters, 0);
+    assert_eq!(diagnostics.timed_out_waiters, 1);
+    assert_eq!(diagnostics.cancelled_waiters, 0);
+    assert_eq!(diagnostics.waves_cancelled_before_start, 1);
+}
+
+#[tokio::test]
+async fn generation_zero_reconciliation_can_complete_before_its_deadline() {
+    let root = tempfile::tempdir().expect("root");
+    fs::write(root.path().join("lib.rs"), "pub fn cold_source() {}\n").expect("source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+
+    let response = services
+        .files_with_options_consistency_cancellable(
+            root_files_request(),
+            IndexConsistency::ReconcileWorkingTree,
+            ServiceCallOptions::new().with_initial_reconciliation_deadline(
+                tokio::time::Instant::now() + std::time::Duration::from_secs(30),
+            ),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("cold reconciliation before deadline");
+
+    assert_eq!(response.meta.repository_generation, 1);
+    assert_eq!(services.reconciliation.diagnostics().timed_out_waiters, 0);
+}
+
+#[tokio::test]
+async fn committed_generation_reconciliation_keeps_waiting_past_cold_deadline() {
+    let (_root, services) = indexed_services().await;
+    let held_operation = services
+        .coordination
+        .acquire_operation(&CancellationToken::new())
+        .expect("hold operation lock");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    let call_services = services.clone();
+    let call = tokio::spawn(async move {
+        call_services
+            .apply_consistency_with_initial_deadline(
+                IndexConsistency::ReconcileWorkingTree,
+                CancellationToken::new(),
+                Some(deadline),
+            )
+            .await
+    });
+    wait_until_with_timer(|| {
+        let diagnostics = services.reconciliation.diagnostics();
+        diagnostics.requests == 1 && diagnostics.active_waves == 1
+    })
+    .await;
+
+    tokio::time::pause();
+    tokio::time::advance(std::time::Duration::from_secs(60)).await;
+    tokio::task::yield_now().await;
+    assert!(!call.is_finished());
+
+    held_operation.release().expect("release operation lock");
+    call.await
+        .expect("join warm reconciliation")
+        .expect("warm reconciliation");
+    let diagnostics = services.reconciliation.diagnostics();
+    assert_eq!(diagnostics.timed_out_waiters, 0);
+}
+
+#[tokio::test]
+async fn cancellation_precedes_initial_reconciliation_deadline_and_removes_waiter() {
+    let root = tempfile::tempdir().expect("root");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    let held_operation = services
+        .coordination
+        .acquire_operation(&CancellationToken::new())
+        .expect("hold operation lock");
+    let cancellation = CancellationToken::new();
+    let call_cancellation = cancellation.clone();
+    let call_services = services.clone();
+    let call = tokio::spawn(async move {
+        call_services
+            .apply_consistency_with_initial_deadline(
+                IndexConsistency::ReconcileWorkingTree,
+                call_cancellation,
+                Some(tokio::time::Instant::now() + std::time::Duration::from_secs(3_600)),
+            )
+            .await
+    });
+    wait_until_with_timer(|| {
+        let diagnostics = services.reconciliation.diagnostics();
+        diagnostics.requests == 1 && diagnostics.active_waves == 1
+    })
+    .await;
+
+    cancellation.cancel();
+    assert!(matches!(
+        call.await.expect("join cancelled reconciliation"),
+        Err(Error::Cancelled)
+    ));
+    held_operation.release().expect("release operation lock");
+    wait_until_with_timer(|| services.reconciliation.diagnostics().active_waves == 0).await;
+    let diagnostics = services.reconciliation.diagnostics();
+    assert_eq!(diagnostics.pending_waiters, 0);
+    assert_eq!(diagnostics.cancelled_waiters, 1);
+    assert_eq!(diagnostics.timed_out_waiters, 0);
 }
 
 #[tokio::test]

@@ -81,6 +81,7 @@ impl Services {
         request: &SearchRequest,
         occurrence_groups: bool,
         consistency: Option<IndexConsistency>,
+        deadline: Option<tokio::time::Instant>,
         cancellation: &CancellationToken,
     ) -> Result<()> {
         let Some(consistency) = consistency else {
@@ -99,7 +100,7 @@ impl Services {
         )?;
         self.observe_service_result(operation, self.context_line_limit(request.context_lines))?;
         let consistency_result = self
-            .apply_consistency(consistency, cancellation.clone())
+            .apply_consistency_with_initial_deadline(consistency, cancellation.clone(), deadline)
             .await;
         self.observe_service_result(operation, consistency_result)
     }
@@ -176,8 +177,14 @@ impl Services {
             cancellation,
         } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.apply_search_consistency(&request, false, consistency, &cancellation)
-            .await?;
+        self.apply_search_consistency(
+            &request,
+            false,
+            consistency,
+            options.initial_reconciliation_deadline(),
+            &cancellation,
+        )
+        .await?;
         let this = self.clone();
         let result = self
             .blocking_executor
@@ -245,8 +252,14 @@ impl Services {
             cancellation,
         } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.apply_search_consistency(&request, false, consistency, &cancellation)
-            .await?;
+        self.apply_search_consistency(
+            &request,
+            false,
+            consistency,
+            options.initial_reconciliation_deadline(),
+            &cancellation,
+        )
+        .await?;
         let this = self.clone();
         let result = self
             .blocking_executor
@@ -346,8 +359,14 @@ impl Services {
             cancellation,
         } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.apply_search_consistency(&request, true, consistency, &cancellation)
-            .await?;
+        self.apply_search_consistency(
+            &request,
+            true,
+            consistency,
+            options.initial_reconciliation_deadline(),
+            &cancellation,
+        )
+        .await?;
         if consistency.is_none() {
             self.observe_service_result(operation, validate_occurrence_group_input(&request))?;
         }

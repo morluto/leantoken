@@ -263,10 +263,13 @@ the initialize handshake is never blocked by indexing. After the client's
 initialized notification, one process becomes indexing leader and followers
 reuse its committed SQLite generations. A retrieval call made while the first
 generation is being built waits internally for up to 30 seconds so a short cold
-index does not require another model turn. If no generation commits within that
-bound, the call returns successful structured retry guidance with a reason and
-`retry_after_ms`. Later calls report whether they use a current or reconciling
-index generation.
+index does not require another model turn. This same absolute bound applies when
+an explicit `reconcile_working_tree` call is waiting behind the initial
+generation's operation lock. If the requested consistency boundary cannot
+finish within the bound, its waiter is removed and the call returns successful
+structured `index_building` retry guidance with `retry_after_ms`; it never falls
+back to a stale result. Later calls report whether they use a current or
+reconciling index generation.
 
 One MCP server accepts at most 16 active tool calls. Its cloned request
 handlers share that bound, while a separately started MCP process—including an

@@ -24,6 +24,7 @@ pub(super) struct ReconciliationDiagnostics {
     pub waves_cancelled_before_start: u64,
     pub coalesced_requests: u64,
     pub cancelled_waiters: u64,
+    pub timed_out_waiters: u64,
     pub active_waves: usize,
     pub peak_active_waves: usize,
     pub pending_waiters: usize,
@@ -87,6 +88,12 @@ enum WaveOutcome {
     Failed(Arc<Error>),
 }
 
+#[derive(Clone, Copy)]
+enum WaiterExit {
+    Cancelled,
+    TimedOut,
+}
+
 struct WaiterGuard {
     coordinator: ReconciliationCoordinator,
     waiter_id: u64,
@@ -107,9 +114,17 @@ impl WaiterGuard {
     }
 
     fn cancel(&mut self) -> Result<()> {
+        self.exit(WaiterExit::Cancelled)
+    }
+
+    fn timeout(&mut self) -> Result<()> {
+        self.exit(WaiterExit::TimedOut)
+    }
+
+    fn exit(&mut self, reason: WaiterExit) -> Result<()> {
         if self.armed {
             self.armed = false;
-            self.coordinator.cancel_waiter(self.waiter_id)?;
+            self.coordinator.exit_waiter(self.waiter_id, reason)?;
         }
         Ok(())
     }
@@ -153,7 +168,11 @@ impl ReconciliationCoordinator {
         }
     }
 
-    pub(super) async fn reconcile(&self, cancellation: CancellationToken) -> Result<()> {
+    pub(super) async fn reconcile(
+        &self,
+        cancellation: CancellationToken,
+        deadline: Option<tokio::time::Instant>,
+    ) -> Result<()> {
         {
             let mut state = self.state()?;
             state.diagnostics.requests = state.diagnostics.requests.saturating_add(1);
@@ -176,6 +195,13 @@ impl ReconciliationCoordinator {
 
         let (waiter_id, receiver) = self.enqueue()?;
         let mut guard = WaiterGuard::new(self.clone(), waiter_id);
+        let deadline_elapsed = async move {
+            match deadline {
+                Some(deadline) => tokio::time::sleep_until(deadline).await,
+                None => std::future::pending().await,
+            }
+        };
+        tokio::pin!(deadline_elapsed);
         let outcome = tokio::select! {
             biased;
             _ = cancellation.cancelled() => {
@@ -183,6 +209,10 @@ impl ReconciliationCoordinator {
                 return Err(Error::Cancelled);
             }
             outcome = receiver => outcome,
+            _ = &mut deadline_elapsed => {
+                guard.timeout()?;
+                return Err(Error::IndexNotReady);
+            }
         };
         guard.disarm();
         match outcome {
@@ -381,9 +411,18 @@ impl ReconciliationCoordinator {
         }
     }
 
-    fn cancel_waiter(&self, waiter_id: u64) -> Result<()> {
+    fn exit_waiter(&self, waiter_id: u64, reason: WaiterExit) -> Result<()> {
         let mut state = self.state()?;
-        state.diagnostics.cancelled_waiters = state.diagnostics.cancelled_waiters.saturating_add(1);
+        match reason {
+            WaiterExit::Cancelled => {
+                state.diagnostics.cancelled_waiters =
+                    state.diagnostics.cancelled_waiters.saturating_add(1);
+            }
+            WaiterExit::TimedOut => {
+                state.diagnostics.timed_out_waiters =
+                    state.diagnostics.timed_out_waiters.saturating_add(1);
+            }
+        }
 
         if let Some(current) = state.current.as_mut()
             && remove_waiter(&mut current.waiters, waiter_id)
