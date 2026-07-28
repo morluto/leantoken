@@ -1165,6 +1165,27 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
         building.structured_content.as_ref().and_then(|value| value["reason"].as_str()),
         Some("index_building")
     );
+    let progress = &building.structured_content.as_ref().expect("structured building result")
+        ["index_progress"];
+    assert_eq!(progress["detail_available"], false);
+    assert_eq!(progress["active"], false);
+    assert_eq!(
+        progress["cache_namespace"]
+            .as_str()
+            .expect("opaque cache namespace")
+            .len(),
+        32
+    );
+    assert!(
+        progress.get("files_discovered").is_none(),
+        "unavailable follower detail must not invent zero counters"
+    );
+    assert!(
+        !progress
+            .to_string()
+            .contains(root.path().to_string_lossy().as_ref()),
+        "progress must not expose the repository path"
+    );
 
     let peer = client.peer().clone();
     let waiting = tokio::spawn(async move {

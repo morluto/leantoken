@@ -666,11 +666,25 @@ is active on this cache.
 
 When the index has never completed a generation, retrieval tools wait for up to
 30 seconds before returning a successful retry result such as
-`{"status":"retryable","reason":"index_building","retry_after_ms":500}`. Retry
-the same call after that delay. Caller cancellation interrupts the internal
-wait. After local edits, set `consistency` to `reconcile_working_tree` on the
-next MCP retrieval. An `indexed_generation` read may still use `index_stale`
-and `expected_hash` to detect or suppress live ranges.
+`{"status":"retryable","reason":"index_building","retry_after_ms":500,
+"index_progress":{"detail_available":true,"active":true,
+"current_generation":0,"attempt_id":"...","phase":"preparation",...}}`.
+Detailed progress has a fixed shape with aggregate counters only. Its phases
+distinguish discovery, hash/planning, preparation, relational staging, each FTS
+build, final commit/checkpoint, and terminal completion/failure/cancellation.
+`update_sequence`, `last_progress_unix_ms`, and aggregate counters let callers
+detect forward progress without exposing paths or source. `files_staged` is not
+queryable until the atomic generation commit completes.
+
+A follower process that cannot observe the leader's memory instead returns
+`"detail_available":false`; unavailable optional fields are omitted rather
+than reported as zero. The same `index_progress` object appears in read-only
+status while the committed generation remains zero and is omitted once an
+index is ready. Retry the same call after `retry_after_ms`. Caller cancellation
+interrupts the internal wait. After local edits, set `consistency` to
+`reconcile_working_tree` on the next MCP retrieval. An `indexed_generation`
+read may still use `index_stale` and `expected_hash` to detect or suppress live
+ranges.
 
 ## `leantoken.json`
 

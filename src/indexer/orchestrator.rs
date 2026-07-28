@@ -6,16 +6,22 @@ impl Indexer {
             &config.root,
             cap_std::ambient_authority(),
         )?);
+        let progress = IndexProgressRegistry::new(index_progress_cache_namespace(&config));
         Ok(Self {
             config,
             storage,
             pool: Arc::new(LazyWorkerPool::new()),
             repository_root,
+            progress,
         })
     }
 
     pub(crate) fn repository_root(&self) -> Arc<Dir> {
         Arc::clone(&self.repository_root)
+    }
+
+    pub(crate) fn progress_snapshot(&self) -> Option<IndexProgressSnapshot> {
+        self.progress.snapshot()
     }
 
     /// Reconcile filesystem state into one committed repository generation.
@@ -133,14 +139,25 @@ impl Indexer {
         let total_started = Instant::now();
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
+        let mut progress = (baseline.repository_generation == 0)
+            .then(|| self.progress.start(0, cancellation));
 
         let discovery_started = Instant::now();
-        let discovery = discover_files_with_limits_policy_and_filter(
+        let discovery = discover_files_with_limits_policy_filter_and_progress(
             &self.config.root,
             self.config.discovery_limits(),
             self.config.discovery_policy(),
             cancellation,
             |path| !self.config.is_database_artifact_path(path),
+            |stats| {
+                if let Some(progress) = &progress {
+                    progress.discovered(
+                        stats.walk_entries,
+                        stats.files,
+                        stats.total_source_bytes,
+                    );
+                }
+            },
         )?;
         let discovery_elapsed = discovery_started.elapsed();
         let discovery_stats = discovery.stats;
@@ -152,6 +169,14 @@ impl Indexer {
             "repository discovery completed"
         );
         let discovered = discovery.files;
+        if let Some(progress) = &progress {
+            progress.discovered(
+                discovery_stats.walk_entries,
+                discovery_stats.files,
+                discovery_stats.total_source_bytes,
+            );
+            progress.phase(IndexProgressPhase::HashAndPlan);
+        }
         let planning_started = Instant::now();
         check_cancelled(cancellation)?;
         let existing = self.existing_files(cancellation)?;
@@ -206,13 +231,28 @@ impl Indexer {
         let mut skip_reasons = IndexSkipReasonCounts::default();
         let mut files_indexed = 0usize;
         before_preparation();
+        if let Some(progress) = &progress {
+            progress.phase(IndexProgressPhase::Preparation);
+        }
         let publication_started = Instant::now();
         let publish = |writer: &mut ReconciliationWriter<'_, '_>| {
             for path in &removed_paths {
                 writer.delete(path)?;
             }
-            let preparation =
-                self.prepare_candidate_batches(&candidates, cancellation, profiling, |prepared| {
+            let preparation = self.prepare_candidate_batches_with_progress(
+                &candidates,
+                cancellation,
+                profiling,
+                || {
+                    if let Some(progress) = &progress {
+                        progress.phase(IndexProgressPhase::Preparation);
+                    }
+                },
+                |prepared| {
+                    if let Some(progress) = &progress {
+                        progress.prepared_batch(prepared.len());
+                        progress.phase(IndexProgressPhase::RelationalWrite);
+                    }
                     let mut indexed = Vec::with_capacity(prepared.len());
                     let mut source_token_counts = HashMap::with_capacity(prepared.len());
                     for result in prepared {
@@ -252,6 +292,7 @@ impl Indexer {
                         }
                     }
                     resolve_imports(&mut indexed, &repository_paths, cancellation)?;
+                    let staged_files = indexed.len();
                     files_indexed = files_indexed.saturating_add(indexed.len());
                     for file in indexed {
                         check_cancelled(cancellation)?;
@@ -264,28 +305,57 @@ impl Indexer {
                             source_token_count,
                         )?;
                     }
+                    if let Some(progress) = &progress {
+                        progress.staged(staged_files);
+                    }
                     Ok(())
-                })?;
+                },
+            )?;
             source_bytes.enforce()?;
             Ok(preparation)
         };
+        let observe_publication = |phase| {
+            let Some(progress) = &progress else {
+                return;
+            };
+            progress.phase(match phase {
+                ReconciliationPublicationPhase::ChunkWordFts => {
+                    IndexProgressPhase::ChunkWordFts
+                }
+                ReconciliationPublicationPhase::ChunkTrigramFts => {
+                    IndexProgressPhase::ChunkTrigramFts
+                }
+                ReconciliationPublicationPhase::SymbolFts => IndexProgressPhase::SymbolFts,
+                ReconciliationPublicationPhase::ReferenceFts => IndexProgressPhase::ReferenceFts,
+                ReconciliationPublicationPhase::CommitAndCheckpoint => {
+                    IndexProgressPhase::CommitAndCheckpoint
+                }
+            });
+        };
         let (generation, preparation, mut publication_detail) =
             if profiling == StorageProfiling::Collect {
-                self.storage.publish_reconciliation_profiled_at(
+                self.storage
+                    .publish_reconciliation_profiled_at_with_progress(
                     &baseline,
                     &config_hash,
                     rebuild,
+                    observe_publication,
                     publish,
                 )?
             } else {
-                let (generation, preparation) = self.storage.publish_reconciliation_at(
-                    &baseline,
-                    &config_hash,
-                    rebuild,
-                    publish,
-                )?;
+                let (generation, preparation) =
+                    self.storage.publish_reconciliation_at_with_progress(
+                        &baseline,
+                        &config_hash,
+                        rebuild,
+                        observe_publication,
+                        publish,
+                    )?;
                 (generation, preparation, PublicationDiagnostics::default())
             };
+        if let Some(progress) = &mut progress {
+            progress.complete(generation);
+        }
         publication_detail.relational_write_ms = duration_ms(preparation.insertion);
         publication_detail.relational_write_bytes = preparation.insertion_write_bytes;
         let publication_elapsed = publication_started.elapsed();

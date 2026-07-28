@@ -131,6 +131,7 @@ mod tests {
                 indexed_source_bytes: 0,
                 index_amplification_ratio: None,
                 process_rss_bytes: None,
+                index_progress: None,
                 languages: Vec::new(),
                 warnings: Vec::new(),
             };

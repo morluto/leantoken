@@ -418,6 +418,38 @@ can scan. The adapter returns the existing `index_building` structured retry
 instead of reading generation zero or waiting for the host timeout. CLI and
 library calls do not set this MCP-owned deadline.
 
+Generation-zero full reconciliation also maintains one process-local, bounded
+progress snapshot. The snapshot contains only a fixed phase enum, timestamps,
+opaque 128-bit cache and attempt identities, a monotonic update sequence, and
+aggregate discovery/preparation/staging counters; it never retains repository
+paths, source, queries, or warning lists. The cache namespace hashes the
+index-content version and database identity instead of exposing that path.
+Discovery updates the snapshot once per 256 walker entries and once at
+completion. Preparation updates once per bounded batch, and publication updates
+only at relational, FTS, and commit boundaries, so progress reporting adds
+neither per-file locking nor SQLite writes. Readers copy the small snapshot
+under its own mutex and never acquire the operation or writer lock.
+
+The process performing the initial index exposes detailed phases for discovery,
+hash-and-plan, preparation, relational staging, the four FTS builds, and
+commit/checkpoint. `files_staged` remains explicitly unpublished until the
+ordinary atomic transaction commits; progress observation does not create
+partial generations. SQLite's ordinary auto-checkpoint can run inside commit,
+so the final non-terminal phase is honestly named `commit_and_checkpoint`
+rather than inventing a separately observable checkpoint. Every retry attempt
+replaces the prior counters and identity. Terminal guard updates are accepted
+only for their matching attempt, preventing cancellation, failure, takeover, or
+stale guard destruction from making an older attempt current.
+
+This snapshot is intentionally not persisted or shared through another
+sidecar. A same-process MCP leader can include full details in `index_building`
+and status responses. A follower reports `detail_available: false`, the
+committed generation it actually observed, and whether the nonblocking
+coordination probe sees an active reconciliation; optional counters remain
+absent rather than invented as zero. Completed generations omit
+`index_progress`. A worst-case fixed-shape detailed retry payload is regression
+tested at no more than 256 `cl100k_base` tokens.
+
 The leader registers its watcher before the initial reconciliation, preserving
 the startup event-gap guarantee. The automatic-indexing runtime uses a
 single-slot public queue; raw events, retained paths, and incomplete rename

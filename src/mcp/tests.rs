@@ -77,6 +77,40 @@ fn retryable_service_errors_are_structured_successful_tool_results() {
     }
 }
 
+#[test]
+fn detailed_index_progress_retry_payload_stays_bounded() {
+    let response = RetryableToolResponse::new(
+        "index_building",
+        "repository index is being built; retry the same call shortly",
+        500,
+    )
+    .with_index_progress(Some(IndexProgressSnapshot {
+        cache_namespace: "ffffffffffffffffffffffffffffffff".into(),
+        detail_available: true,
+        active: true,
+        current_generation: 0,
+        attempt_id: Some("ffffffffffffffffffffffffffffffff".into()),
+        phase: Some(crate::model::IndexProgressPhase::ReferenceFts),
+        started_unix_ms: Some(u64::MAX),
+        elapsed_ms: Some(u64::MAX),
+        last_progress_unix_ms: Some(u64::MAX),
+        update_sequence: Some(u64::MAX),
+        walk_entries: Some(u64::MAX),
+        files_discovered: Some(u64::MAX),
+        discovered_source_bytes: Some(u64::MAX),
+        files_prepared: Some(u64::MAX),
+        files_staged: Some(u64::MAX),
+        preparation_batches: Some(u64::MAX),
+    }));
+    let wire = serde_json::to_string(&response).expect("serialize retry payload");
+    let tokens = crate::tokens::Tokenizer::Cl100kBase.count(&wire);
+
+    assert!(
+        tokens <= 256,
+        "detailed retry payload must remain at most 256 cl100k tokens, observed {tokens}: {wire}"
+    );
+}
+
 #[tokio::test]
 async fn initialization_and_tool_listing_bypass_saturated_tool_admission() {
     let (server, _) = LeanTokenMcp::pending();

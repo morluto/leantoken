@@ -112,14 +112,25 @@ impl LeanTokenMcp {
         &self,
         result: crate::Result<T>,
     ) -> Result<CallToolResult, ErrorData> {
+        self.service_result_with_progress(result, None)
+    }
+
+    fn service_result_with_progress<T: Serialize>(
+        &self,
+        result: crate::Result<T>,
+        index_progress: Option<IndexProgressSnapshot>,
+    ) -> Result<CallToolResult, ErrorData> {
         match result {
             Ok(value) => self.result(value),
             Err(error) if matches!(error.reconciliation_cause(), crate::Error::IndexNotReady) => {
-                Ok(self.retryable_result(RetryableToolResponse::new(
-                    "index_building",
-                    "repository index is being built; retry the same call shortly",
-                    500,
-                )))
+                Ok(self.retryable_result(
+                    RetryableToolResponse::new(
+                        "index_building",
+                        "repository index is being built; retry the same call shortly",
+                        500,
+                    )
+                    .with_index_progress(index_progress),
+                ))
             }
             Err(error)
                 if matches!(
@@ -183,7 +194,16 @@ impl LeanTokenMcp {
             Ok(permit) => permit,
             Err(error) => return self.service_result::<T>(Err(error)),
         };
-        self.service_result(operation(services).await)
+        let progress_services = Arc::clone(&services);
+        let result = operation(services).await;
+        let index_progress = result
+            .as_ref()
+            .err()
+            .is_some_and(|error| {
+                matches!(error.reconciliation_cause(), crate::Error::IndexNotReady)
+            })
+            .then(|| progress_services.index_progress_for_retry());
+        self.service_result_with_progress(result, index_progress)
     }
 }
 

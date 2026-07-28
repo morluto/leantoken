@@ -12,6 +12,7 @@ pub struct Indexer {
     storage: Storage,
     pool: Arc<LazyWorkerPool>,
     repository_root: Arc<Dir>,
+    progress: IndexProgressRegistry,
 }
 
 /// Phase and batch high-water diagnostics for one full reconciliation.

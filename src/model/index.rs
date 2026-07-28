@@ -72,6 +72,88 @@ impl std::ops::Deref for IndexReport {
     }
 }
 
+/// Bounded phases exposed while the first repository generation is built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexProgressPhase {
+    /// Ignore-aware bounded repository traversal.
+    Discovery,
+    /// Existing-state load, hashing, and reconciliation planning.
+    HashAndPlan,
+    /// Parallel bounded-batch source preparation.
+    Preparation,
+    /// Import resolution and relational transaction staging.
+    RelationalWrite,
+    /// Word-tokenized chunk FTS rebuild.
+    ChunkWordFts,
+    /// Trigram-tokenized chunk FTS rebuild.
+    ChunkTrigramFts,
+    /// Symbol trigram FTS rebuild.
+    SymbolFts,
+    /// Symbol-reference trigram FTS rebuild.
+    ReferenceFts,
+    /// Atomic commit, including any SQLite auto-checkpoint work.
+    CommitAndCheckpoint,
+    /// The complete generation committed successfully.
+    Completed,
+    /// The attempt ended with a non-cancellation error.
+    Failed,
+    /// Cooperative cancellation stopped the attempt.
+    Cancelled,
+}
+
+/// Bounded, read-only progress for an initial repository reconciliation.
+///
+/// Detailed fields are absent when this process is only following an index
+/// leader and cannot observe its in-memory counters safely.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct IndexProgressSnapshot {
+    /// Opaque identity for the cache this attempt belongs to.
+    pub cache_namespace: String,
+    /// Whether process-local attempt details are available.
+    pub detail_available: bool,
+    /// Whether a reconciliation is currently active.
+    pub active: bool,
+    /// Last committed repository generation observed by this snapshot.
+    pub current_generation: u64,
+    /// Opaque identity that changes for every local reconciliation attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt_id: Option<String>,
+    /// Current or terminal phase for the local attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<IndexProgressPhase>,
+    /// Unix timestamp when the attempt began.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_unix_ms: Option<u64>,
+    /// Monotonic elapsed duration sampled while assembling this response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
+    /// Unix timestamp of the most recent phase or bounded-counter update.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_progress_unix_ms: Option<u64>,
+    /// Monotonic sequence within this attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_sequence: Option<u64>,
+    /// Filesystem entries yielded during completed discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub walk_entries: Option<u64>,
+    /// Files admitted by completed discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files_discovered: Option<u64>,
+    /// Aggregate metadata bytes admitted by completed discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovered_source_bytes: Option<u64>,
+    /// Files consumed by completed preparation batches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files_prepared: Option<u64>,
+    /// Searchable files staged in the unpublished transaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files_staged: Option<u64>,
+    /// Completed bounded preparation batches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preparation_batches: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StatusResponse {
     pub repository_root: String,
@@ -99,6 +181,9 @@ pub struct StatusResponse {
     /// Resident memory for the current LeanToken process when the platform exposes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process_rss_bytes: Option<u64>,
+    /// Initial-index progress, omitted after a committed generation is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_progress: Option<IndexProgressSnapshot>,
     pub languages: Vec<LanguageCount>,
     pub warnings: Vec<String>,
 }

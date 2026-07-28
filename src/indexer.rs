@@ -13,21 +13,26 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::INDEX_CONTENT_VERSION;
 use crate::error::RetryableOperation;
-use crate::model::{IndexReport, IndexResponse, IndexSkipReasonCounts};
+use crate::model::{
+    IndexProgressPhase, IndexProgressSnapshot, IndexReport, IndexResponse, IndexSkipReasonCounts,
+};
 use crate::parser::{self, ParseOutput};
 use crate::repository::{
-    DiscoveredFile, discover_files_with_limits_policy_and_filter, enforce_limit, slash_path,
+    DiscoveredFile, discover_files_with_limits_policy_and_filter,
+    discover_files_with_limits_policy_filter_and_progress, enforce_limit, slash_path,
     validate_relative,
 };
 use crate::storage::{
     ChunkInput, ImportInput, ImportProjection, IndexedFile, PublicationDiagnostics,
-    ReconciliationWriter, ReferenceInput, Storage, SymbolInput, process_write_bytes,
+    ReconciliationPublicationPhase, ReconciliationWriter, ReferenceInput, Storage, SymbolInput,
+    process_write_bytes,
 };
 use crate::text::{PreparedText, TextKind, hash_bytes};
 use crate::{Config, Error, Result};
 
 // Full and incremental reconciliation retain their existing publication
 // semantics; these physical owners share one concrete Indexer implementation.
+include!("indexer/progress.rs");
 include!("indexer/types.rs");
 include!("indexer/orchestrator.rs");
 include!("indexer/incremental.rs");
