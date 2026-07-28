@@ -45,7 +45,10 @@
         Ok(Box::new(RegistrationFailure))
     }
 
-    async fn assert_backend_failure_uses_polling(factory: WatcherFactory) {
+    async fn assert_backend_failure_uses_polling(
+        factory: WatcherFactory,
+        expected_reason: WatcherFallbackReason,
+    ) {
         let directory = tempfile::tempdir().expect("directory");
         let cancellation = CancellationToken::new();
         let (watcher, mut messages) = RepositoryWatcher::start_with_factory(
@@ -61,28 +64,54 @@
         .expect("polling watcher");
 
         assert_eq!(
-            messages.recv().await,
-            Some(WatcherMessage::ReconcileRequired)
+            watcher.diagnostics().backend,
+            WatcherBackend::PeriodicPolling
         );
-        advance(Duration::from_secs(30)).await;
+        assert_eq!(
+            watcher.diagnostics().fallback_reason,
+            Some(expected_reason)
+        );
+        assert_eq!(watcher.diagnostics().poll_ticks, 0);
+        assert!(messages.try_recv().is_err());
+        advance(Duration::from_secs(29)).await;
+        assert!(messages.try_recv().is_err());
+        advance(Duration::from_secs(1)).await;
         assert_eq!(
             messages.recv().await,
             Some(WatcherMessage::ReconcileRequired)
         );
-        timeout(Duration::from_secs(1), watcher.shutdown())
+        assert_eq!(watcher.diagnostics().poll_ticks, 1);
+        assert_eq!(
+            watcher.diagnostics().full_reconciliation_deliveries,
+            1
+        );
+        let final_diagnostics = timeout(
+            Duration::from_secs(1),
+            watcher.shutdown_with_diagnostics(),
+        )
             .await
             .expect("shutdown timeout")
             .expect("shutdown");
+        assert_eq!(final_diagnostics.poll_ticks, 1);
+        assert_eq!(final_diagnostics.full_reconciliation_deliveries, 1);
     }
 
     #[tokio::test(start_paused = true)]
     async fn watcher_creation_failure_falls_back_to_polling() {
-        assert_backend_failure_uses_polling(creation_failure).await;
+        assert_backend_failure_uses_polling(
+            creation_failure,
+            WatcherFallbackReason::BackendCreationFailed,
+        )
+        .await;
     }
 
     #[tokio::test(start_paused = true)]
     async fn watcher_registration_failure_falls_back_to_polling() {
-        assert_backend_failure_uses_polling(registration_failure).await;
+        assert_backend_failure_uses_polling(
+            registration_failure,
+            WatcherFallbackReason::BackendRegistrationFailed,
+        )
+        .await;
     }
 
     fn test_schedule_policy() -> ReconciliationSchedulePolicy {

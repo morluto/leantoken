@@ -1169,19 +1169,27 @@ measurement guide for the result table and limitations.
 
 ## Stdio MCP multi-process resource profile
 
-The Linux-only release experiment starts 1, 2, and 4 stdio MCP processes
-against one fresh synthetic Rust repository and SQLite cache. It observes the
-kernel lock owner and inotify descriptors, samples per-process resources, runs
-concurrent cold and warm `files` queries, then kills the leader and requires a
-follower to publish generation 2 with exactly one replacement watcher.
+The Linux-only release experiment starts 1, 4, and 8 stdio MCP processes in
+shared-cache and independent-cache A/B/B/A order. It measures cold startup,
+files/search/read/context warm rounds, idle CPU, and one forced periodic-poll
+fallback. The report includes aggregate and per-operation CPU, wall p50/p95,
+RSS, threads, file descriptors, estimated read connections, watcher backend and
+admission counters, generation publications, WAL, and follower takeover.
+Every process/workload has its own sequential baseline; any complete normalized
+response mismatch invalidates the decision.
 
 Reproduce it with the command in
 [`../docs/development.md`](../docs/development.md#benchmarks). The committed
 [raw JSON report](reports/mcp-multiprocess-resource-v1-2026-07-27.json) and
 [decision note](reports/mcp-multiprocess-resource-v1-2026-07-27.md) bind the
 release binary hash, fixture size, host observations, and predeclared decision
-thresholds. The profile is bounded to 16 processes, 10,000 files, 1,000
-functions per file, 1,000 warm rounds, and a 300-second operation timeout.
+thresholds. The historical v1 raw report remains the evidence for its 1/2/4
+shared-cache experiment. Schema v2 is bounded to 16 processes, 10,000 files,
+1,000 functions per file, 1,000 warm rounds, a 60-second idle window, 60,000
+polling-probe directories, a 120-second polling observation, and a 300-second
+operation timeout. See the
+[measurement guide](../docs/measurement.md#stdio-mcp-multi-process-cpu-matrix)
+for the complete command and interpretation rules.
 
 ## Interpretation limits
 

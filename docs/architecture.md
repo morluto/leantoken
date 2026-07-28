@@ -415,6 +415,14 @@ cookies have separate hard bounds. Overflow or ambiguity discards detailed
 path state in favor of one sticky full-reconciliation request, so a long initial
 scan cannot accumulate an unbounded event backlog.
 
+Watcher initialization exposes a bounded diagnostic snapshot containing the
+selected native or periodic-polling backend, the exact admission entries and
+directories examined, the fallback reason, and atomic poll/path/full-delivery
+counters. A polling fallback schedules its first full reconciliation only after
+the 30-second interval. It never emits an immediate poll after the mandatory
+startup reconciliation; subsequent missed ticks are skipped rather than
+replayed in a burst.
+
 After any scan, queued messages drain into one bounded scheduler state. Path
 changes deduplicate and wait for the configured quiet period. Ambiguous rename
 sequences, backend rescan requests, public queue overflow, or scheduler path
@@ -834,13 +842,15 @@ invent empty successful results at generation zero.
 - Response token accounting is best-effort telemetry. Its zero-timeout SQLite
   write can be skipped under cross-process writer contention; retrieval
   correctness and generation publication never wait for that observation.
-- The Linux release-mode multi-process profile verifies the OS lock owner,
-  inotify watcher owner, per-process connection bound, WAL growth, and follower
-  takeover for 1, 2, and 4 stdio MCP processes. Its committed decision report
-  is linked from `benchmarks/README.md`; exceeding its predeclared RSS,
-  startup, latency, write-amplification, connection, or takeover thresholds is
-  evidence to investigate a shared daemon, not permission to weaken these
-  invariants.
+- The Linux release-mode multi-process profile runs 1, 4, and 8 stdio MCP
+  processes in shared-cache and independent-cache A/B/B/A order. It separates
+  cold startup, files/search/read/context warm rounds, idle CPU, and a forced
+  periodic-poll phase; records aggregate CPU, CPU per operation, wall p50/p95,
+  RSS, threads, connections, watcher admission, generation publication, and
+  takeover; and requires complete normalized response parity. Its host-local
+  CPU thresholds identify evidence for host-wide admission work, not permission
+  to weaken retrieval, snapshot, or publication invariants and not automatic
+  authorization for a shared daemon.
 - MCP request admission and Services blocking execution are instance-local
   within one process. Another workspace or agent affects these limits only
   when it shares that same server or `Services` instance; a separate MCP

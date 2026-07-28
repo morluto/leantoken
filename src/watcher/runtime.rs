@@ -3,6 +3,8 @@ pub struct RepositoryWatcher {
     root: PathBuf,
     token: CancellationToken,
     handle: JoinHandle<()>,
+    ready: WatcherReady,
+    counters: Arc<WatcherCounters>,
 }
 
 impl RepositoryWatcher {
@@ -61,6 +63,8 @@ impl RepositoryWatcher {
         let (tx, rx) = mpsc::channel::<WatcherMessage>(capacity.max(1));
         let (ready_tx, ready_rx) = oneshot::channel();
         let task_token = cancellation.clone();
+        let counters = Arc::new(WatcherCounters::default());
+        let task_counters = Arc::clone(&counters);
         let raw_capacity = capacity.saturating_mul(4).max(64);
         let watched_root = root.clone();
 
@@ -72,8 +76,8 @@ impl RepositoryWatcher {
 
             let admission_root = watched_root.clone();
             let admission_cancellation = cancellation.clone();
-            let directory_count = tokio::task::spawn_blocking(move || {
-                count_watch_directories(
+            let admission = tokio::task::spawn_blocking(move || {
+                inspect_watch_admission(
                     &admission_root,
                     MAX_WATCHED_DIRECTORIES,
                     MAX_WATCH_ADMISSION_ENTRIES,
@@ -81,10 +85,16 @@ impl RepositoryWatcher {
                 )
             })
             .await
-            .unwrap_or(MAX_WATCHED_DIRECTORIES.saturating_add(1));
+            .unwrap_or(WatchAdmission {
+                entries: 0,
+                directories: 0,
+                complete: false,
+                fallback_reason: Some(WatcherFallbackReason::AdmissionError),
+            });
             let mut watcher = None;
             let mut watch_enabled = false;
-            if directory_count <= MAX_WATCHED_DIRECTORIES {
+            let mut fallback_reason = admission.fallback_reason;
+            if fallback_reason.is_none() {
                 let callback: EventCallback = Box::new({
                     let overflowed = Arc::clone(&overflowed);
                     move |event: notify::Result<Event>| {
@@ -104,6 +114,8 @@ impl RepositoryWatcher {
                                 watcher = Some(candidate);
                             }
                             Err(error) => {
+                                fallback_reason =
+                                    Some(WatcherFallbackReason::BackendRegistrationFailed);
                                 tracing::warn!(
                                     %error,
                                     "filesystem watcher registration failed; \
@@ -113,6 +125,7 @@ impl RepositoryWatcher {
                         }
                     }
                     Err(error) => {
+                        fallback_reason = Some(WatcherFallbackReason::BackendCreationFailed);
                         tracing::warn!(
                             %error,
                             "filesystem watcher creation failed; \
@@ -122,13 +135,32 @@ impl RepositoryWatcher {
                 }
             } else {
                 tracing::warn!(
-                    directories = directory_count,
+                    entries = admission.entries,
+                    directories = admission.directories,
                     cap = MAX_WATCHED_DIRECTORIES,
-                    "root has too many directories for recursive watching; \
+                    reason = ?fallback_reason,
+                    "native recursive watcher admission did not complete; \
                      falling back to periodic full reconciliation"
                 );
             }
-            let _ = ready_tx.send(());
+            let backend = if watch_enabled {
+                WatcherBackend::Native
+            } else {
+                WatcherBackend::PeriodicPolling
+            };
+            tracing::info!(
+                ?backend,
+                ?fallback_reason,
+                admission_entries = admission.entries,
+                admission_directories = admission.directories,
+                admission_complete = admission.complete,
+                "repository watcher initialized"
+            );
+            let _ = ready_tx.send(WatcherReady {
+                backend,
+                fallback_reason,
+                admission,
+            });
 
             let long_sleep = Duration::from_secs(60 * 60 * 24 * 365 * 10);
             let mut sleep = Box::pin(sleep(long_sleep));
@@ -136,10 +168,16 @@ impl RepositoryWatcher {
             let mut rename_from = HashMap::<usize, String>::new();
             let mut rename_to = HashMap::<usize, String>::new();
             let mut reconcile = false;
+            let poll_started_at = Instant::now()
+                + if watch_enabled {
+                    long_sleep
+                } else {
+                    poll_interval
+                };
             let mut poll_timer = if !watch_enabled {
-                tokio::time::interval(poll_interval)
+                interval_at(poll_started_at, poll_interval)
             } else {
-                tokio::time::interval(Duration::from_secs(60 * 60 * 24 * 365 * 10))
+                interval_at(poll_started_at, long_sleep)
             };
             poll_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -190,6 +228,7 @@ impl RepositoryWatcher {
                     }
                     _ = poll_timer.tick() => {
                         if !watch_enabled {
+                            task_counters.poll_ticks.fetch_add(1, Ordering::Relaxed);
                             reconcile = true;
                         }
                     }
@@ -200,6 +239,7 @@ impl RepositoryWatcher {
                             &mut rename_to,
                             &mut reconcile,
                             &tx,
+                            &task_counters,
                         ) {
                             return;
                         }
@@ -221,16 +261,19 @@ impl RepositoryWatcher {
                 &mut rename_to,
                 &mut reconcile,
                 &tx,
+                &task_counters,
             );
             drop(watcher);
         });
 
         match ready_rx.await {
-            Ok(()) => Ok((
+            Ok(ready) => Ok((
                 Self {
                     root,
                     token: task_token,
                     handle,
+                    ready,
+                    counters,
                 },
                 rx,
             )),
@@ -248,10 +291,46 @@ impl RepositoryWatcher {
         &self.root
     }
 
+    /// Return bounded watcher backend, admission, polling, and delivery counters.
+    pub fn diagnostics(&self) -> WatcherDiagnostics {
+        diagnostics_snapshot(&self.ready, &self.counters)
+    }
+
     /// Cancel and join the watcher task.
     pub async fn shutdown(self) -> Result<()> {
-        self.token.cancel();
-        self.handle.await?;
+        self.shutdown_with_diagnostics().await?;
         Ok(())
+    }
+
+    /// Cancel and join the watcher task, returning its final bounded counters.
+    pub async fn shutdown_with_diagnostics(self) -> Result<WatcherDiagnostics> {
+        let Self {
+            token,
+            handle,
+            ready,
+            counters,
+            ..
+        } = self;
+        token.cancel();
+        handle.await?;
+        Ok(diagnostics_snapshot(&ready, &counters))
+    }
+}
+
+fn diagnostics_snapshot(
+    ready: &WatcherReady,
+    counters: &WatcherCounters,
+) -> WatcherDiagnostics {
+    WatcherDiagnostics {
+        backend: ready.backend,
+        fallback_reason: ready.fallback_reason,
+        admission_entries: ready.admission.entries,
+        admission_directories: ready.admission.directories,
+        admission_complete: ready.admission.complete,
+        poll_ticks: counters.poll_ticks.load(Ordering::Relaxed),
+        changed_path_deliveries: counters.changed_path_deliveries.load(Ordering::Relaxed),
+        full_reconciliation_deliveries: counters
+            .full_reconciliation_deliveries
+            .load(Ordering::Relaxed),
     }
 }

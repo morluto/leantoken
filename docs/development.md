@@ -340,17 +340,23 @@ the product binary in release mode:
 cargo build --release
 cargo run --release --example mcp_multiprocess_profile -- \
   --binary target/release/leantoken \
-  --process-counts 1,2,4 \
+  --process-counts 1,4,8 \
   --files 200 \
   --functions-per-file 40 \
   --warm-iterations 10 \
-  --output benchmarks/reports/mcp-multiprocess-resource-v1-2026-07-27.json
+  --idle-seconds 5 \
+  --polling-directories 50001 \
+  --polling-observation-seconds 31 \
+  --output target/mcp-multiprocess-cpu-v2.json
 ```
 
 The example rejects more than 16 processes, 10,000 fixture files, 1,000
-functions per file, 1,000 warm rounds, or a timeout above 300 seconds. It
-requires Linux `/proc`; the raw artifact and interpretation are linked from the
-benchmark guide.
+functions per file, 1,000 warm rounds, 60 idle seconds, 60,000 polling
+directories, 120 polling-observation seconds, or a timeout above 300 seconds.
+It requires Linux `/proc`; use `--skip-polling-probe` only for a mechanical
+smoke run. Historical raw artifacts and their interpretation are linked from
+the benchmark guide; write new host-local evidence under `target/` unless it is
+being reviewed as a versioned benchmark report.
 
 Run the deterministic semantic change receipt gate in release mode:
 

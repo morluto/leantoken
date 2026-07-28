@@ -9,14 +9,30 @@ async fn run_index_leader(services: Arc<Services>, cancellation: CancellationTok
     .await?;
 
     let result = run_index_leader_until_shutdown(services, changes, cancellation).await;
-    let shutdown = watcher.shutdown().await;
+    let diagnostics_before_shutdown = watcher.diagnostics();
+    let shutdown = watcher.shutdown_with_diagnostics().await;
+    let diagnostics = shutdown
+        .as_ref()
+        .copied()
+        .unwrap_or(diagnostics_before_shutdown);
+    tracing::info!(
+        backend = ?diagnostics.backend,
+        fallback_reason = ?diagnostics.fallback_reason,
+        admission_entries = diagnostics.admission_entries,
+        admission_directories = diagnostics.admission_directories,
+        admission_complete = diagnostics.admission_complete,
+        poll_ticks = diagnostics.poll_ticks,
+        changed_path_deliveries = diagnostics.changed_path_deliveries,
+        full_reconciliation_deliveries = diagnostics.full_reconciliation_deliveries,
+        "repository watcher stopped"
+    );
     match (result, shutdown) {
         (Err(error), Err(shutdown_error)) => {
             tracing::warn!(%shutdown_error, "watcher shutdown failed after index error");
             Err(error)
         }
-        (Err(error), Ok(())) => Err(error),
-        (Ok(()), shutdown) => shutdown,
+        (Err(error), Ok(_)) => Err(error),
+        (Ok(()), shutdown) => shutdown.map(|_| ()),
     }
 }
 

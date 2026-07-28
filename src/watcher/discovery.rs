@@ -1,11 +1,11 @@
 /// Count every directory that a recursive backend may register before
 /// enabling the watcher. Callback filtering does not reduce kernel watches.
-fn count_watch_directories(
+fn inspect_watch_admission(
     root: &Path,
     directory_cap: usize,
     entry_cap: usize,
     cancellation: &CancellationToken,
-) -> usize {
+) -> WatchAdmission {
     use ignore::WalkBuilder;
     let mut builder = WalkBuilder::new(root);
     builder.hidden(false);
@@ -16,27 +16,59 @@ fn count_watch_directories(
     builder.git_global(false);
     builder.follow_links(false);
     let walker = builder.build();
-    let mut count = 0usize;
-    for (entries, entry) in walker.enumerate() {
-        if entries >= entry_cap || cancellation.is_cancelled() {
-            return directory_cap.saturating_add(1);
+    let mut entries = 0usize;
+    let mut directories = 0usize;
+    for entry in walker {
+        if cancellation.is_cancelled() {
+            return WatchAdmission {
+                entries,
+                directories,
+                complete: false,
+                fallback_reason: Some(WatcherFallbackReason::AdmissionCancelled),
+            };
         }
+        if entries >= entry_cap {
+            return WatchAdmission {
+                entries,
+                directories,
+                complete: false,
+                fallback_reason: Some(WatcherFallbackReason::AdmissionEntryLimit),
+            };
+        }
+        entries += 1;
         match entry {
             Ok(entry) => {
                 if !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
                     continue;
                 }
-                count += 1;
-                if count > directory_cap {
-                    return count;
+                directories += 1;
+                if directories > directory_cap {
+                    return WatchAdmission {
+                        entries,
+                        directories,
+                        complete: false,
+                        fallback_reason: Some(WatcherFallbackReason::AdmissionDirectoryLimit),
+                    };
                 }
             }
             // Failure to inspect a subtree means the recursive backend's
             // watch count cannot be proven bounded. Use polling instead.
-            Err(_) => return directory_cap.saturating_add(1),
+            Err(_) => {
+                return WatchAdmission {
+                    entries,
+                    directories,
+                    complete: false,
+                    fallback_reason: Some(WatcherFallbackReason::AdmissionError),
+                };
+            }
         }
     }
-    count
+    WatchAdmission {
+        entries,
+        directories,
+        complete: true,
+        fallback_reason: None,
+    }
 }
 
 fn relative_path(

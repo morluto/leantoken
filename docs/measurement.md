@@ -36,6 +36,56 @@ An unchanged targeted reconciliation can legitimately change response
 generation separately and treat the corresponding serialized token-accounting
 difference as protocol state, not retrieval drift.
 
+## Stdio MCP multi-process CPU matrix
+
+The Linux-only release example starts 1, 4, and 8 MCP processes in the fixed
+topology order `shared_cache`, `independent_caches`, `independent_caches`,
+`shared_cache`. Every run creates a fresh deterministic fixture, so the order
+alternates shared-index reuse and independent cold-index fan-out without
+reusing measurements across incompatible repository identities.
+
+Each process establishes its own files, search, read, and context baseline.
+Concurrent warm rounds and cross-process/topology/repetition checks remove only
+JSON-RPC request IDs, generated `receipt_id` and `repository_id` values,
+instantaneous `freshness`, and their derived `path_and_metadata_tokens`,
+`payload_tokens`, and `total_response_tokens` accounting, including the dual
+text representation. Repository identity is excluded because the independent
+topology intentionally uses distinct canonical roots; generated identifiers
+have content-sensitive token counts. Freshness is excluded because it is a
+liveness observation that can change while concurrent processes reconcile. The
+complete remaining response is compared exactly. Any mismatch invalidates the
+decision, and the report includes canonical response fingerprints plus bounded
+JSON-pointer mismatch paths. The report keeps cold startup CPU, idle CPU,
+complete-request p50/p95, CPU per operation, RSS, threads, file descriptors,
+estimated read connections, WAL, leader and watcher ownership, admission
+entries/directories, generation publication, response-accounting writes, and
+takeover separate.
+
+The default dedicated polling probe creates 50,001 directories to exceed the
+recursive watcher bound. It fails if a full reconciliation is observed at
+readiness, then requires at least one reconciliation during the following
+31-second interval. Use `--skip-polling-probe` only for a mechanical smoke run;
+such a report is incomplete for watcher CPU conclusions.
+
+```bash
+cargo build --release --bin leantoken --example mcp_multiprocess_profile
+target/release/examples/mcp_multiprocess_profile \
+  --process-counts 1,4,8 \
+  --files 200 \
+  --functions-per-file 40 \
+  --warm-iterations 10 \
+  --idle-seconds 5 \
+  --polling-directories 50001 \
+  --polling-observation-seconds 31 \
+  --output target/mcp-multiprocess-cpu-v2.json
+```
+
+CPU is read from Linux `/proc` in clock ticks and therefore needs enough
+operations to rise above host resolution. Results are same-host release
+evidence, not portable constants. Compare CPU per repository and per operation
+alongside complete-request latency and throughput; a faster aggregate finish
+does not excuse response drift or superlinear CPU.
+
 ## Frozen retrieval sets
 
 `benchmarks/representative.json` is the visible development set. Its eight
