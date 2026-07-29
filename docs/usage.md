@@ -30,6 +30,7 @@ responses are bounded.
 ```text
 leantoken index [--rebuild]
 leantoken status
+leantoken coverage
 leantoken savings
 leantoken doctor [--ready-timeout-seconds SECONDS]
 leantoken files <tree|find|glob> [options] [--consistency <mode>]
@@ -120,6 +121,13 @@ when the platform exposes it. RSS is per process, not a claim about all clients
 sharing the repository cache. `index_content_version` identifies the managed
 cache compatibility lane used by the current binary; different values use
 separate managed cache paths.
+
+`leantoken coverage` explicitly scans indexed file metadata from one pinned
+generation and reports structural parser coverage. It separates recognized
+complete, recognized incomplete, and unrecognized files, includes exact source
+byte totals, and returns bounded language and safe extension-family groups.
+Pass `--json` for compact machine-readable output. The report does not walk the
+working tree, reparse source, or expose repository paths.
 
 ### Indexing scope
 

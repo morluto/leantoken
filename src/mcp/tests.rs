@@ -690,6 +690,26 @@ fn mcp_error_mapping_separates_invalid_input_from_internal_failures() {
         }))
     );
 
+    let retrieval_limit = into_mcp_error(crate::Error::RetrievalLimitExceeded {
+        kind: crate::RetrievalLimitKind::RegexChunksPerFile,
+        observed: 264,
+        limit: 256,
+    });
+    assert_eq!(retrieval_limit.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        retrieval_limit.message,
+        "retrieval regex_chunks_per_file limit exceeded: observed 264, limit 256; exclude or narrow paths that include unusually large files"
+    );
+    assert_eq!(
+        retrieval_limit.data,
+        Some(serde_json::json!({
+            "category": "request_limit_exceeded",
+            "reason": "regex_chunks_per_file",
+            "requested": 264,
+            "limit": 256,
+        }))
+    );
+
     let response_budget = into_mcp_error(crate::Error::ResponseBudgetExceeded {
         provided_max_response_tokens: 40,
         minimum_required_response_tokens: 73,

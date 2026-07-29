@@ -16,29 +16,117 @@ impl RegexCandidateExpr {
     }
 }
 
-fn regex_candidate_plan(request: &SearchRequest) -> Option<RegexCandidatePlan> {
+fn regex_candidate_plan(request: &SearchRequest) -> RegexPlanDecision {
     // SQLite's default trigram tokenizer folds ASCII only. Rust regexes use
     // Unicode simple case folding, so a case-insensitive ASCII literal can
     // also match non-ASCII code points (for example, Kelvin sign for `k`).
     // Falling back avoids false negatives until those semantics can be
     // represented by the candidate index.
     if !request.case_sensitive {
-        return None;
+        return RegexPlanDecision::Fallback(RegexPlanDiagnostics {
+            fallback_reason: RegexPlanFallbackReason::CaseInsensitiveUnicode,
+            nodes_visited: 0,
+            term_count: 0,
+            term_bytes: 0,
+        });
     }
-    let hir = regex_syntax::parse(&request.query).ok()?;
-    let mut budget = RegexPlanBudget::default();
-    let expression = regex_candidate_expr(&hir, &mut budget).ok()??;
-    Some(RegexCandidatePlan {
-        expression,
+    let hir = match regex_syntax::parse(&request.query) {
+        Ok(hir) => hir,
+        Err(_) => {
+            return RegexPlanDecision::Fallback(RegexPlanDiagnostics {
+                fallback_reason: RegexPlanFallbackReason::HirParseFailed,
+                nodes_visited: 0,
+                term_count: 0,
+                term_bytes: 0,
+            });
+        }
+    };
+    let nodes_visited = match bounded_hir_node_count(&hir) {
+        Ok(nodes) => nodes,
+        Err(error) => {
+            return regex_plan_budget_fallback(
+                error,
+                RegexPlanBudget {
+                    nodes: MAX_REGEX_PLAN_NODES.saturating_add(1),
+                    ..RegexPlanBudget::default()
+                },
+            );
+        }
+    };
+    let mut budget = RegexPlanBudget {
+        nodes: nodes_visited,
+        ..RegexPlanBudget::default()
+    };
+    match regex_candidate_expr(&hir, &mut budget) {
+        Ok(Some(expression)) => RegexPlanDecision::Planned(RegexCandidatePlan {
+            expression,
+            source: RegexPlanSource::MandatoryLiterals,
+            nodes_visited,
+            term_count: budget.terms,
+            term_bytes: budget.term_bytes,
+            alternative_count: 1,
+            min_literal_len: 0,
+        }),
+        Err(error) => regex_plan_budget_fallback(error, budget),
+        Ok(None) => extracted_regex_candidate_plan(&hir, nodes_visited).unwrap_or({
+            RegexPlanDecision::Fallback(RegexPlanDiagnostics {
+                fallback_reason: RegexPlanFallbackReason::LiteralSequenceUnavailable,
+                nodes_visited,
+                term_count: budget.terms,
+                term_bytes: budget.term_bytes,
+            })
+        }),
+    }
+}
+
+fn bounded_hir_node_count(hir: &Hir) -> std::result::Result<usize, RegexPlanBudgetExceeded> {
+    fn visit(
+        hir: &Hir,
+        nodes: &mut usize,
+    ) -> std::result::Result<(), RegexPlanBudgetExceeded> {
+        *nodes = nodes.saturating_add(1);
+        if *nodes > MAX_REGEX_PLAN_NODES {
+            return Err(RegexPlanBudgetExceeded::Nodes);
+        }
+        match hir.kind() {
+            HirKind::Capture(capture) => visit(&capture.sub, nodes)?,
+            HirKind::Repetition(repetition) => visit(&repetition.sub, nodes)?,
+            HirKind::Concat(expressions) | HirKind::Alternation(expressions) => {
+                for expression in expressions {
+                    visit(expression, nodes)?;
+                }
+            }
+            HirKind::Empty | HirKind::Literal(_) | HirKind::Class(_) | HirKind::Look(_) => {}
+        }
+        Ok(())
+    }
+
+    let mut nodes = 0usize;
+    visit(hir, &mut nodes)?;
+    Ok(nodes)
+}
+
+fn regex_plan_budget_fallback(
+    error: RegexPlanBudgetExceeded,
+    budget: RegexPlanBudget,
+) -> RegexPlanDecision {
+    let fallback_reason = match error {
+        RegexPlanBudgetExceeded::Nodes => RegexPlanFallbackReason::PlanNodeLimit,
+        RegexPlanBudgetExceeded::Terms => RegexPlanFallbackReason::PlanTermLimit,
+        RegexPlanBudgetExceeded::TermBytes => RegexPlanFallbackReason::PlanTermBytesLimit,
+    };
+    RegexPlanDecision::Fallback(RegexPlanDiagnostics {
+        fallback_reason,
+        nodes_visited: budget.nodes,
         term_count: budget.terms,
+        term_bytes: budget.term_bytes,
     })
 }
 
 fn regex_candidate_expr(
     hir: &Hir,
     budget: &mut RegexPlanBudget,
-) -> std::result::Result<Option<RegexCandidateExpr>, ()> {
-    budget.visit()?;
+) -> std::result::Result<Option<RegexCandidateExpr>, RegexPlanBudgetExceeded> {
     match hir.kind() {
         HirKind::Literal(literal) => literal_candidate_expr(&literal.0, budget),
         HirKind::Capture(capture) => regex_candidate_expr(&capture.sub, budget),
@@ -71,17 +159,108 @@ fn regex_candidate_expr(
 fn literal_candidate_expr(
     literal: &[u8],
     budget: &mut RegexPlanBudget,
-) -> std::result::Result<Option<RegexCandidateExpr>, ()> {
+) -> std::result::Result<Option<RegexCandidateExpr>, RegexPlanBudgetExceeded> {
     let mut terms = Vec::new();
     for bytes in literal.split(|byte| !byte.is_ascii_alphanumeric() && *byte != b'_') {
         if bytes.len() < 3 {
             continue;
         }
-        let term = std::str::from_utf8(bytes).map_err(|_| ())?.to_owned();
+        let Some(term) = std::str::from_utf8(bytes).ok().map(str::to_owned) else {
+            continue;
+        };
         budget.add_term(&term)?;
         terms.push(RegexCandidateExpr::Term(term));
     }
     Ok(combine_candidate_expr(terms, true))
+}
+
+fn extracted_regex_candidate_plan(hir: &Hir, nodes_visited: usize) -> Option<RegexPlanDecision> {
+    let mut plans = Vec::new();
+    let mut first_limit = None;
+    for (kind, source) in [
+        (ExtractKind::Prefix, RegexPlanSource::PrefixLiterals),
+        (ExtractKind::Suffix, RegexPlanSource::SuffixLiterals),
+    ] {
+        match extracted_literal_plan(hir, nodes_visited, kind, source) {
+            Ok(Some(plan)) => plans.push(plan),
+            Ok(None) => {}
+            Err(error) => {
+                first_limit.get_or_insert(error);
+            }
+        }
+    }
+    if plans.is_empty() {
+        return first_limit.map(|(error, budget)| regex_plan_budget_fallback(error, budget));
+    }
+    plans.sort_by(|left, right| {
+        left.alternative_count
+            .cmp(&right.alternative_count)
+            .then_with(|| right.min_literal_len.cmp(&left.min_literal_len))
+            .then_with(|| right.term_bytes.cmp(&left.term_bytes))
+            .then_with(|| regex_plan_source_order(left.source).cmp(&regex_plan_source_order(right.source)))
+    });
+    Some(RegexPlanDecision::Planned(plans.remove(0)))
+}
+
+fn extracted_literal_plan(
+    hir: &Hir,
+    nodes_visited: usize,
+    kind: ExtractKind,
+    source: RegexPlanSource,
+) -> std::result::Result<
+    Option<RegexCandidatePlan>,
+    (RegexPlanBudgetExceeded, RegexPlanBudget),
+> {
+    let mut extractor = Extractor::new();
+    extractor
+        .kind(kind)
+        .limit_class(MAX_REGEX_LITERAL_SEQUENCE)
+        .limit_repeat(MAX_REGEX_LITERAL_SEQUENCE)
+        .limit_literal_len(MAX_REGEX_PLAN_TERM_BYTES)
+        .limit_total(MAX_REGEX_LITERAL_SEQUENCE);
+    let sequence = extractor.extract(hir);
+    let min_literal_len = sequence.min_literal_len().unwrap_or(0);
+    let Some(literals) = sequence.literals() else {
+        return Ok(None);
+    };
+    if literals.is_empty() {
+        return Ok(None);
+    }
+
+    let mut budget = RegexPlanBudget {
+        nodes: nodes_visited,
+        ..RegexPlanBudget::default()
+    };
+    let mut alternatives = Vec::with_capacity(literals.len());
+    for literal in literals {
+        let expression = match literal_candidate_expr(literal.as_bytes(), &mut budget) {
+            Ok(Some(expression)) => expression,
+            Ok(None) => return Ok(None),
+            Err(error) => return Err((error, budget)),
+        };
+        alternatives.push(expression);
+    }
+    let alternative_count = alternatives.len();
+    let Some(expression) = combine_candidate_expr(alternatives, false) else {
+        return Ok(None);
+    };
+    Ok(Some(RegexCandidatePlan {
+        expression,
+        source,
+        nodes_visited,
+        term_count: budget.terms,
+        term_bytes: budget.term_bytes,
+        alternative_count,
+        min_literal_len,
+    }))
+}
+
+const fn regex_plan_source_order(source: RegexPlanSource) -> u8 {
+    match source {
+        RegexPlanSource::MandatoryLiterals => 0,
+        RegexPlanSource::PrefixLiterals => 1,
+        RegexPlanSource::SuffixLiterals => 2,
+    }
 }
 
 fn combine_candidate_expr(
@@ -151,37 +330,59 @@ impl Services {
         let has_path_filters =
             !request.include_paths.is_empty() || !request.exclude_paths.is_empty();
         let file_count = session.file_count()?;
-        let plan = (planning == RegexPlanning::Enabled)
-            .then(|| regex_candidate_plan(request))
-            .flatten();
-        if let Some(plan) = plan {
-            return self.regex_candidate_hits(
-                session,
-                regex,
-                max_candidates,
-                cancellation,
-                path_filter,
-                has_path_filters,
-                &request.include_paths,
-                &request.exclude_paths,
-                file_count,
-                plan,
-            );
-        }
+        let decision = if planning == RegexPlanning::Enabled {
+            regex_candidate_plan(request)
+        } else {
+            RegexPlanDecision::Fallback(RegexPlanDiagnostics {
+                fallback_reason: RegexPlanFallbackReason::PlanningDisabled,
+                nodes_visited: 0,
+                term_count: 0,
+                term_bytes: 0,
+            })
+        };
+        let fallback = match decision {
+            RegexPlanDecision::Planned(plan) => {
+                return self.regex_candidate_hits(
+                    session,
+                    regex,
+                    max_candidates,
+                    cancellation,
+                    path_filter,
+                    has_path_filters,
+                    &request.include_paths,
+                    &request.exclude_paths,
+                    file_count,
+                    plan,
+                );
+            }
+            RegexPlanDecision::Fallback(diagnostics) => diagnostics,
+        };
 
         if file_count > MAX_REGEX_FILES_SCANNED {
-            return Err(Error::LimitExceeded);
+            return Err(Error::RetrievalLimitExceeded {
+                kind: RetrievalLimitKind::RegexFullScanFiles,
+                observed: file_count,
+                limit: MAX_REGEX_FILES_SCANNED,
+            });
         }
         let files = session.regex_scan_files(MAX_REGEX_FILES_SCANNED)?;
         for (file, chunk_count) in &files {
             check_cancelled(cancellation)?;
             if path_filter.allows(&file.path) && *chunk_count > MAX_REGEX_CHUNKS_PER_FILE {
-                return Err(Error::LimitExceeded);
+                return Err(Error::RetrievalLimitExceeded {
+                    kind: RetrievalLimitKind::RegexChunksPerFile,
+                    observed: *chunk_count,
+                    limit: MAX_REGEX_CHUNKS_PER_FILE,
+                });
             }
         }
         let mut hits = Vec::new();
         let mut phases = SearchPhaseCounters {
             regex_candidate_strategy: RegexCandidateStrategy::FullScan,
+            regex_plan_fallback_reason: Some(fallback.fallback_reason),
+            regex_plan_nodes: fallback.nodes_visited,
+            regex_plan_terms: fallback.term_count,
+            regex_plan_term_bytes: fallback.term_bytes,
             regex_files_considered: files.len(),
             ..SearchPhaseCounters::default()
         };
@@ -197,7 +398,11 @@ impl Services {
                 phases.regex_chunks_verified = phases.regex_chunks_verified.saturating_add(1);
                 if regex.is_match(&chunk.content) {
                     if max_candidates.is_some_and(|limit| hits.len() == limit) {
-                        return Err(Error::LimitExceeded);
+                        return Err(Error::RetrievalLimitExceeded {
+                            kind: RetrievalLimitKind::RegexRetainedChunks,
+                            observed: hits.len().saturating_add(1),
+                            limit: max_candidates.unwrap_or(MAX_REGEX_CANDIDATES),
+                        });
                     }
                     phases.regex_retained_chunks =
                         phases.regex_retained_chunks.saturating_add(1);
@@ -236,7 +441,10 @@ impl Services {
     ) -> Result<RegexScan> {
         let mut phases = SearchPhaseCounters {
             regex_candidate_strategy: RegexCandidateStrategy::Trigram,
+            regex_plan_source: Some(plan.source),
+            regex_plan_nodes: plan.nodes_visited,
             regex_plan_terms: plan.term_count,
+            regex_plan_term_bytes: plan.term_bytes,
             regex_files_considered: files_considered,
             ..SearchPhaseCounters::default()
         };
@@ -259,7 +467,11 @@ impl Services {
                     phases.regex_chunks_verified = phases.regex_chunks_verified.saturating_add(1);
                     if regex.is_match(&hit.content) {
                         if max_candidates.is_some_and(|limit| hits.len() == limit) {
-                            return Err(Error::LimitExceeded);
+                            return Err(Error::RetrievalLimitExceeded {
+                                kind: RetrievalLimitKind::RegexRetainedChunks,
+                                observed: hits.len().saturating_add(1),
+                                limit: max_candidates.unwrap_or(MAX_REGEX_CANDIDATES),
+                            });
                         }
                         phases.regex_retained_chunks =
                             phases.regex_retained_chunks.saturating_add(1);
@@ -272,7 +484,11 @@ impl Services {
         let candidate_count = session
             .regex_candidate_count_up_to(&query, MAX_REGEX_CANDIDATE_CHUNKS.saturating_add(1))?;
         if candidate_count > MAX_REGEX_CANDIDATE_CHUNKS {
-            return Err(Error::LimitExceeded);
+            return Err(Error::RetrievalLimitExceeded {
+                kind: RetrievalLimitKind::RegexCandidateChunks,
+                observed: candidate_count,
+                limit: MAX_REGEX_CANDIDATE_CHUNKS,
+            });
         }
         phases.regex_candidate_chunks = candidate_count;
         let mut hits = Vec::new();
@@ -293,7 +509,11 @@ impl Services {
                 phases.regex_chunks_verified = phases.regex_chunks_verified.saturating_add(1);
                 if regex.is_match(&hit.content) {
                     if max_candidates.is_some_and(|limit| hits.len() == limit) {
-                        return Err(Error::LimitExceeded);
+                        return Err(Error::RetrievalLimitExceeded {
+                            kind: RetrievalLimitKind::RegexRetainedChunks,
+                            observed: hits.len().saturating_add(1),
+                            limit: max_candidates.unwrap_or(MAX_REGEX_CANDIDATES),
+                        });
                     }
                     phases.regex_retained_chunks =
                         phases.regex_retained_chunks.saturating_add(1);

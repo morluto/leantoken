@@ -654,9 +654,12 @@ change whether an explicit value is accepted. Zero is valid only for
 
 ## Retrieval hot-path bounds
 
-These limits cap context fan-out, regex work, and file-list memory. A request
-returns `LimitExceeded` instead of silently returning incomplete regex results
-when a scan boundary is reached. Tree and glob pages use the indexed
+These limits cap context fan-out, regex work, and file-list memory. A regex
+request returns a typed retrieval-limit reason instead of silently returning
+incomplete results when a scan boundary is reached. The stable reason identifies
+the governing file, per-file chunk, candidate, scoped-row, retained-chunk, or
+occurrence bound and includes only safe aggregate counts; it never includes an
+offending path or source text. Tree and glob pages use the indexed
 `path_entries` projection with a path keyset cursor; glob filters file rows with
 SQLite `GLOB` (patterns that cannot map, such as brace expansion, fall back to a
 bounded globset scan). Find still scans indexed files with a lean path-only
@@ -683,6 +686,10 @@ claims.
 | Lightweight rows inspected for path-scoped trigram planning | 100000 |
 | Full-scan fallback files | 10000 |
 | Full-scan fallback chunks per file | 256 |
+| Regex candidate-plan HIR nodes | 256 |
+| Regex candidate-plan terms | 32 |
+| Regex candidate-plan aggregate term bytes | 256 |
+| Regex prefix/suffix literal alternatives | 16 |
 | File scan page size | 1000 for find (path projection) and globset fallback; tree/glob SQL-page `max_results + 1` projected paths |
 | Opt-in compact projection materialization | At most the 100 selected files, symbols, groups, or hits already admitted by `max_results`; no additional repository scan |
 | Exhaustive occurrence grouping | At most 100 selected occurrence coordinates and 100 group-map entries per response page; the existing 100,000-occurrence fail-closed scan cap is unchanged |
@@ -1116,6 +1123,20 @@ identified a reference-like occurrence. It does not prove the runtime target,
 dynamic caller, type relationship, or safety of a refactor. Malformed files
 remain text-searchable and are marked structurally incomplete.
 
+The explicit `coverage` command derives parser coverage from file metadata
+inside one pinned SQLite read snapshot. It performs no
+repository walk, parser pass, or source-content read. Recognized files are
+aggregated by stored language and structural completeness in SQL. Unsupported
+files provide indexed path and size metadata for safe extension-family
+classification. The response retains at most 20 language groups and 20
+extension groups, folds every omitted group into exact `other` file and byte
+totals, and emits only lowercased ASCII extension labels of at most 16 bytes
+before the leading dot (plus fixed no-extension and unsafe-extension buckets).
+Work is linear in indexed file metadata. The unsupported-file cursor is folded
+as it streams, so retained memory is linear in distinct safe extension groups
+rather than file count; the output is constant-sized. Ordinary status and
+retrieval calls do not run this scan.
+
 ## Retrieval and ranking
 
 - Word FTS5 supplies identifier and term candidates.
@@ -1124,6 +1145,17 @@ remain text-searchable and are marked structurally incomplete.
 - Symbol and syntactic-reference tables provide structural candidates.
 - Conservative local-import edges can add a bounded number of neighboring
   files for orientation.
+
+Case-sensitive regex planning first derives mandatory word literals. When that
+cannot produce a trigram, the maintained `regex-syntax` literal extractor may
+derive a finite prefix or suffix sequence within the node, term, byte, and
+alternative bounds above. Alternatives form a necessary-condition FTS query;
+the original regex still verifies every candidate. Case-insensitive Unicode
+requests continue to use the full-scan oracle because SQLite trigram folding is
+ASCII-only. Evaluation counters expose only fixed plan-source and fallback
+enums plus bounded counts; they never retain regex text, literals, paths, or
+repository identity. Differential tests compare planned results with a forced
+full scan before a new HIR shape is admitted.
 
 Ranking combines exactness, structural role, FTS relevance, path evidence,
 fragment size, lexical frequency, optional focus, import proximity, change

@@ -15,6 +15,7 @@ const REGEX_CANDIDATE_PAGE_SIZE: usize = 512;
 const MAX_REGEX_PLAN_NODES: usize = 256;
 const MAX_REGEX_PLAN_TERMS: usize = 32;
 const MAX_REGEX_PLAN_TERM_BYTES: usize = 256;
+const MAX_REGEX_LITERAL_SEQUENCE: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RegexPlanning {
@@ -62,7 +63,31 @@ enum RegexCandidateExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RegexCandidatePlan {
     expression: RegexCandidateExpr,
+    source: RegexPlanSource,
+    nodes_visited: usize,
     term_count: usize,
+    term_bytes: usize,
+    alternative_count: usize,
+    min_literal_len: usize,
+}
+
+struct RegexPlanDiagnostics {
+    fallback_reason: RegexPlanFallbackReason,
+    nodes_visited: usize,
+    term_count: usize,
+    term_bytes: usize,
+}
+
+enum RegexPlanDecision {
+    Planned(RegexCandidatePlan),
+    Fallback(RegexPlanDiagnostics),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RegexPlanBudgetExceeded {
+    Nodes,
+    Terms,
+    TermBytes,
 }
 
 #[derive(Default)]
@@ -73,16 +98,15 @@ struct RegexPlanBudget {
 }
 
 impl RegexPlanBudget {
-    fn visit(&mut self) -> std::result::Result<(), ()> {
-        self.nodes = self.nodes.saturating_add(1);
-        (self.nodes <= MAX_REGEX_PLAN_NODES).then_some(()).ok_or(())
-    }
-
-    fn add_term(&mut self, term: &str) -> std::result::Result<(), ()> {
+    fn add_term(&mut self, term: &str) -> std::result::Result<(), RegexPlanBudgetExceeded> {
         self.terms = self.terms.saturating_add(1);
         self.term_bytes = self.term_bytes.saturating_add(term.len());
-        (self.terms <= MAX_REGEX_PLAN_TERMS && self.term_bytes <= MAX_REGEX_PLAN_TERM_BYTES)
-            .then_some(())
-            .ok_or(())
+        if self.terms > MAX_REGEX_PLAN_TERMS {
+            return Err(RegexPlanBudgetExceeded::Terms);
+        }
+        if self.term_bytes > MAX_REGEX_PLAN_TERM_BYTES {
+            return Err(RegexPlanBudgetExceeded::TermBytes);
+        }
+        Ok(())
     }
 }

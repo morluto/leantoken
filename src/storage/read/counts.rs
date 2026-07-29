@@ -35,6 +35,13 @@ impl ReadSession {
         })
     }
 
+    pub(crate) fn parser_coverage_rows(
+        &self,
+        classify_extension: impl FnMut(&str) -> String,
+    ) -> Result<ParserCoverageRows> {
+        parser_coverage_rows(&self.conn, classify_extension)
+    }
+
     fn search_fts(
         &self,
         table: FtsTable,
@@ -58,4 +65,69 @@ impl ReadSession {
         let rows = stmt.query_map(params![query, limit, offset], Storage::map_chunk_hit)?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
+}
+
+fn parser_coverage_rows(
+    conn: &Connection,
+    mut classify_extension: impl FnMut(&str) -> String,
+) -> Result<ParserCoverageRows> {
+    if !table_exists(conn, "files")?
+        || !column_exists(conn, "files", "language")?
+        || !column_exists(conn, "files", "structurally_complete")?
+        || !column_exists(conn, "files", "size_bytes")?
+        || !column_exists(conn, "files", "path")?
+    {
+        return Ok(ParserCoverageRows::default());
+    }
+
+    let mut language_statement = conn.prepare_cached(
+        "SELECT language, structurally_complete, count(*), coalesce(sum(size_bytes), 0)
+         FROM files
+         WHERE language IS NOT NULL
+         GROUP BY language, structurally_complete
+         ORDER BY language, structurally_complete DESC",
+    )?;
+    let languages = language_statement
+        .query_map([], |row| {
+            Ok(ParserLanguageCoverageRow {
+                language: row.get(0)?,
+                structurally_complete: row.get(1)?,
+                files: i64_to_usize(row.get(2)?)?,
+                source_bytes: i64_to_u64(row.get(3)?)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    let mut unrecognized_statement = conn.prepare_cached(
+        "SELECT path, size_bytes
+         FROM files
+         WHERE language IS NULL
+         ORDER BY path",
+    )?;
+    let mut unrecognized_extensions = BTreeMap::<String, (usize, u64)>::new();
+    let mut unrecognized_rows = unrecognized_statement.query([])?;
+    while let Some(row) = unrecognized_rows.next()? {
+        let path = row.get::<_, String>(0)?;
+        let source_bytes = i64_to_u64(row.get(1)?)?;
+        let aggregate = unrecognized_extensions
+            .entry(classify_extension(&path))
+            .or_default();
+        aggregate.0 = aggregate.0.saturating_add(1);
+        aggregate.1 = aggregate.1.saturating_add(source_bytes);
+    }
+    let unrecognized_extensions = unrecognized_extensions
+        .into_iter()
+        .map(
+            |(extension, (files, source_bytes))| UnrecognizedExtensionCoverageRow {
+                extension,
+                files,
+                source_bytes,
+            },
+        )
+        .collect();
+
+    Ok(ParserCoverageRows {
+        languages,
+        unrecognized_extensions,
+    })
 }

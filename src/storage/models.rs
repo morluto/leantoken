@@ -218,6 +218,27 @@ pub struct StorageCounts {
     pub languages: Vec<(String, usize)>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ParserCoverageRows {
+    pub languages: Vec<ParserLanguageCoverageRow>,
+    pub unrecognized_extensions: Vec<UnrecognizedExtensionCoverageRow>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ParserLanguageCoverageRow {
+    pub language: String,
+    pub structurally_complete: bool,
+    pub files: usize,
+    pub source_bytes: u64,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct UnrecognizedExtensionCoverageRow {
+    pub extension: String,
+    pub files: usize,
+    pub source_bytes: u64,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ReadOnlyStatusSnapshot {
     pub generation: u64,

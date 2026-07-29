@@ -51,6 +51,7 @@ pub mod watcher;
 pub use config::{Config, DiscoveryLimits};
 pub use error::{
     Error, IndexLimitKind, InputViolation, InputViolations, ResponseBudgetBreakdown, Result,
+    RetrievalLimitKind,
 };
 pub use model::*;
 pub use repository::GitDiffResult;

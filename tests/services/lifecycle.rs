@@ -223,6 +223,113 @@ async fn empty_index_reports_status_but_retrieval_is_not_ready() {
 }
 
 #[tokio::test]
+async fn parser_coverage_reports_across_incremental_row_generations() {
+    let root = tempfile::tempdir().expect("root");
+    let rust_source = "pub fn ready() -> bool { true }\n";
+    let incomplete_typescript = "const missing = ;\n";
+    let unrecognized = "name: fixture\n";
+    std::fs::write(root.path().join("lib.rs"), rust_source).expect("rust source");
+    std::fs::write(root.path().join("broken.ts"), incomplete_typescript)
+        .expect("TypeScript source");
+    std::fs::write(root.path().join("settings.yaml"), unrecognized).expect("YAML source");
+    let database = root.path().join("index.sqlite");
+    let config = Config::discover(root.path(), Some(database.clone())).expect("config");
+    let services = Services::open(config).expect("services");
+
+    services.index(false).await.expect("initial index");
+    let initial_report = services
+        .parser_coverage()
+        .await
+        .expect("initial coverage");
+    assert_eq!(initial_report.repository_generation, 1);
+    let initial = initial_report.coverage;
+    assert_eq!(
+        initial.indexed,
+        leantoken::ParserCoverageCount {
+            files: 3,
+            source_bytes: u64::try_from(
+                rust_source.len() + incomplete_typescript.len() + unrecognized.len()
+            )
+            .expect("source bytes"),
+        }
+    );
+    assert_eq!(initial.recognized.files, 2);
+    assert_eq!(initial.complete.files, 1);
+    assert_eq!(initial.incomplete.files, 1);
+    assert_eq!(initial.unrecognized.files, 1);
+    assert_eq!(
+        initial
+            .languages
+            .iter()
+            .map(|language| (
+                language.language.as_str(),
+                language.complete.files,
+                language.incomplete.files,
+            ))
+            .collect::<Vec<_>>(),
+        vec![("rust", 1, 0), ("typescript", 0, 1)]
+    );
+    assert_eq!(
+        initial
+            .unrecognized_extensions
+            .iter()
+            .map(|extension| (extension.extension.as_str(), extension.total.files))
+            .collect::<Vec<_>>(),
+        vec![(".yaml", 1)]
+    );
+
+    let updated_rust = "pub fn ready() -> bool { false }\n";
+    std::fs::write(root.path().join("lib.rs"), updated_rust).expect("updated rust source");
+    services.index(false).await.expect("incremental index");
+    let connection = rusqlite::Connection::open(database).expect("database");
+    let distinct_generations: i64 = connection
+        .query_row(
+            "SELECT count(DISTINCT generation) FROM files",
+            [],
+            |row| row.get(0),
+        )
+        .expect("row generations");
+    assert!(
+        distinct_generations > 1,
+        "fixture did not retain unchanged rows from the earlier generation"
+    );
+
+    let updated_report = services
+        .parser_coverage()
+        .await
+        .expect("updated coverage");
+    assert_eq!(updated_report.repository_generation, 2);
+    let updated = updated_report.coverage;
+    assert_eq!(updated.indexed.files, 3);
+    assert_eq!(updated.recognized.files, 2);
+    assert_eq!(updated.complete.files, 1);
+    assert_eq!(updated.incomplete.files, 1);
+    assert_eq!(updated.unrecognized.files, 1);
+    assert_eq!(
+        updated.indexed.source_bytes,
+        u64::try_from(updated_rust.len() + incomplete_typescript.len() + unrecognized.len())
+            .expect("updated source bytes")
+    );
+}
+
+#[tokio::test]
+async fn parser_coverage_reports_an_empty_uninitialized_index() {
+    let root = tempfile::tempdir().expect("root");
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+
+    let report = services.parser_coverage().await.expect("empty coverage");
+
+    assert_eq!(report.repository_generation, 0);
+    assert_eq!(
+        report.coverage,
+        leantoken::ParserCoverageSummary::default()
+    );
+}
+
+#[tokio::test]
 async fn first_index_reports_uninitialized_while_reconciling() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(root.path().join("lib.rs"), "fn pending() {}\n").expect("source");

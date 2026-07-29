@@ -91,6 +91,20 @@
                 }),
             ),
             (
+                leantoken::Error::RetrievalLimitExceeded {
+                    kind: leantoken::RetrievalLimitKind::RegexFullScanFiles,
+                    observed: 10_001,
+                    limit: 10_000,
+                },
+                serde_json::json!({
+                    "error": "retrieval regex_full_scan_files limit exceeded: observed 10001, limit 10000; add a mandatory case-sensitive literal or use a smaller index scope",
+                    "category": "request_limit_exceeded",
+                    "requested": 10_001,
+                    "limit": 10_000,
+                    "reason": "regex_full_scan_files"
+                }),
+            ),
+            (
                 leantoken::Error::InvalidJson {
                     syntax_category: "syntax",
                     byte_offset: 12,

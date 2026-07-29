@@ -412,6 +412,7 @@ async fn regex_candidate_plans_match_full_scan_and_report_fallback_selection() {
         ),
         ("bravo.rs", "const needle_value: usize = 7;\n"),
         ("digits.rs", "const value_123: usize = 123;\n"),
+        ("repeat.rs", "const repeated = \"abab\";\n"),
         ("negative.rs", "const unrelated: usize = 0;\n"),
     ] {
         std::fs::write(root.path().join(path), source).expect("write source");
@@ -421,30 +422,48 @@ async fn regex_candidate_plans_match_full_scan_and_report_fallback_selection() {
     let services = Services::open(config).expect("services");
     services.index(false).await.expect("index fixture");
 
-    for (pattern, expected_strategy) in [
+    for (pattern, expected_strategy, expected_source, expected_fallback) in [
         (
             r"needle_value\s*:\s*usize\s*=\s*42",
             leantoken::RegexCandidateStrategy::Trigram,
+            Some(leantoken::RegexPlanSource::MandatoryLiterals),
+            None,
         ),
         (
             r"(?:needle|marker)_value",
             leantoken::RegexCandidateStrategy::Trigram,
+            Some(leantoken::RegexPlanSource::MandatoryLiterals),
+            None,
         ),
         (
             r"(?:needle|)value",
             leantoken::RegexCandidateStrategy::Trigram,
+            Some(leantoken::RegexPlanSource::MandatoryLiterals),
+            None,
         ),
         (
             r"(?:needle)?\d+",
             leantoken::RegexCandidateStrategy::FullScan,
+            None,
+            Some(leantoken::RegexPlanFallbackReason::LiteralSequenceUnavailable),
         ),
         (
             r"needle|value_\d+",
             leantoken::RegexCandidateStrategy::Trigram,
+            Some(leantoken::RegexPlanSource::MandatoryLiterals),
+            None,
         ),
         (
             r"needle|\d+",
             leantoken::RegexCandidateStrategy::FullScan,
+            None,
+            Some(leantoken::RegexPlanFallbackReason::LiteralSequenceUnavailable),
+        ),
+        (
+            r"(?:ab){2}",
+            leantoken::RegexCandidateStrategy::Trigram,
+            Some(leantoken::RegexPlanSource::PrefixLiterals),
+            None,
         ),
     ] {
         let request = SearchRequest {
@@ -493,9 +512,20 @@ async fn regex_candidate_plans_match_full_scan_and_report_fallback_selection() {
             optimized.phases.regex_candidate_strategy, expected_strategy,
             "{pattern}"
         );
+        assert_eq!(optimized.phases.regex_plan_source, expected_source, "{pattern}");
+        assert_eq!(
+            optimized.phases.regex_plan_fallback_reason, expected_fallback,
+            "{pattern}"
+        );
+        assert!(optimized.phases.regex_plan_nodes > 0, "{pattern}");
         assert_eq!(
             full_scan.phases.regex_candidate_strategy,
             leantoken::RegexCandidateStrategy::FullScan,
+            "{pattern}"
+        );
+        assert_eq!(
+            full_scan.phases.regex_plan_fallback_reason,
+            Some(leantoken::RegexPlanFallbackReason::PlanningDisabled),
             "{pattern}"
         );
         assert_eq!(
@@ -517,6 +547,85 @@ async fn regex_candidate_plans_match_full_scan_and_report_fallback_selection() {
             "{pattern}"
         );
     }
+}
+
+#[tokio::test]
+async fn regex_planner_reports_privacy_safe_fallback_reasons_and_budgets() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("fixture.rs"), "const needle: usize = 1;\n")
+        .expect("write source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let request = |query: String, case_sensitive: bool| SearchRequest {
+        query,
+        mode: SearchMode::Regex,
+        include_paths: Vec::new(),
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(20),
+        max_tokens: Some(4_000),
+        context_lines: Some(0),
+        case_sensitive,
+        all_occurrences: true,
+        prefer_structural: false,
+        receipt_id: None,
+        query_receipt: None,
+        cursor: None,
+    };
+
+    let case_insensitive = services
+        .search_evaluation(request("needle".into(), false))
+        .await
+        .expect("case-insensitive fallback");
+    assert_eq!(
+        case_insensitive.phases.regex_plan_fallback_reason,
+        Some(leantoken::RegexPlanFallbackReason::CaseInsensitiveUnicode)
+    );
+    assert_eq!(case_insensitive.phases.regex_plan_nodes, 0);
+    assert_eq!(case_insensitive.phases.regex_plan_terms, 0);
+    assert_eq!(case_insensitive.phases.regex_plan_term_bytes, 0);
+
+    let term_limited_pattern = (0..33)
+        .map(|index| format!("x{index:02}"))
+        .collect::<Vec<_>>()
+        .join("|");
+    let term_limited = services
+        .search_evaluation(request(term_limited_pattern, true))
+        .await
+        .expect("term-limit fallback");
+    assert_eq!(
+        term_limited.phases.regex_plan_fallback_reason,
+        Some(leantoken::RegexPlanFallbackReason::PlanTermLimit)
+    );
+    assert_eq!(term_limited.phases.regex_plan_terms, 33);
+    assert!(term_limited.phases.regex_plan_term_bytes > 0);
+
+    let bytes_limited = services
+        .search_evaluation(request("z".repeat(257), true))
+        .await
+        .expect("term-bytes fallback");
+    assert_eq!(
+        bytes_limited.phases.regex_plan_fallback_reason,
+        Some(leantoken::RegexPlanFallbackReason::PlanTermBytesLimit)
+    );
+    assert_eq!(bytes_limited.phases.regex_plan_terms, 1);
+    assert_eq!(bytes_limited.phases.regex_plan_term_bytes, 257);
+
+    let node_limited_pattern = "[ab]".repeat(257);
+    let node_limited = services
+        .search_evaluation(request(node_limited_pattern, true))
+        .await
+        .expect("node-limit fallback");
+    assert_eq!(
+        node_limited.phases.regex_plan_fallback_reason,
+        Some(leantoken::RegexPlanFallbackReason::PlanNodeLimit)
+    );
+    assert_eq!(node_limited.phases.regex_plan_nodes, 257);
+    assert_eq!(node_limited.phases.regex_plan_terms, 0);
+    assert_eq!(node_limited.phases.regex_plan_term_bytes, 0);
 }
 
 #[tokio::test]
@@ -559,8 +668,57 @@ async fn regex_candidate_plan_preserves_candidate_limit_errors() {
         .await
         .expect_err("full-scan candidate cap");
 
-    assert!(matches!(optimized, Error::LimitExceeded));
-    assert!(matches!(full_scan, Error::LimitExceeded));
+    for error in [optimized, full_scan] {
+        assert!(matches!(
+            error,
+            Error::RetrievalLimitExceeded {
+                kind: leantoken::RetrievalLimitKind::RegexRetainedChunks,
+                observed: 21,
+                limit: 20,
+            }
+        ));
+    }
+}
+
+#[tokio::test]
+async fn regex_full_scan_reports_the_per_file_chunk_bound_without_a_path() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let source = "let value = true;\n".repeat(257 * 80);
+    std::fs::write(root.path().join("large.rs"), source).expect("write source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+    let request = SearchRequest {
+        query: r"\d+".into(),
+        mode: SearchMode::Regex,
+        include_paths: Vec::new(),
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(20),
+        max_tokens: Some(4_000),
+        context_lines: Some(0),
+        case_sensitive: true,
+        all_occurrences: false,
+        prefer_structural: false,
+        receipt_id: None,
+        query_receipt: None,
+        cursor: None,
+    };
+
+    let error = services
+        .search_evaluation(request)
+        .await
+        .expect_err("full scan must reject the oversized file");
+
+    assert!(matches!(
+        error,
+        Error::RetrievalLimitExceeded {
+            kind: leantoken::RetrievalLimitKind::RegexChunksPerFile,
+            observed: 257,
+            limit: 256,
+        }
+    ));
 }
 
 #[tokio::test]
@@ -718,7 +876,14 @@ async fn regex_candidate_plan_bypasses_only_the_full_scan_file_bound() {
         .search_full_scan_evaluation(planned_request)
         .await
         .expect_err("full scan remains bounded by the file inventory");
-    assert!(matches!(full_scan, Error::LimitExceeded));
+    assert!(matches!(
+        full_scan,
+        Error::RetrievalLimitExceeded {
+            kind: leantoken::RetrievalLimitKind::RegexFullScanFiles,
+            observed: 10_001,
+            limit: 10_000,
+        }
+    ));
 
     let fallback = services
         .search_evaluation(SearchRequest {
@@ -739,7 +904,14 @@ async fn regex_candidate_plan_bypasses_only_the_full_scan_file_bound() {
         })
         .await
         .expect_err("case-insensitive fallback remains bounded");
-    assert!(matches!(fallback, Error::LimitExceeded));
+    assert!(matches!(
+        fallback,
+        Error::RetrievalLimitExceeded {
+            kind: leantoken::RetrievalLimitKind::RegexFullScanFiles,
+            observed: 10_001,
+            limit: 10_000,
+        }
+    ));
 
     let mut connection =
         rusqlite::Connection::open(root.path().join("index.sqlite")).expect("writer connection");
@@ -779,5 +951,12 @@ async fn regex_candidate_plan_bypasses_only_the_full_scan_file_bound() {
         })
         .await
         .expect_err("planned candidate query remains bounded");
-    assert!(matches!(candidate_overflow, Error::LimitExceeded));
+    assert!(matches!(
+        candidate_overflow,
+        Error::RetrievalLimitExceeded {
+            kind: leantoken::RetrievalLimitKind::RegexCandidateChunks,
+            observed: 10_001,
+            limit: 10_000,
+        }
+    ));
 }

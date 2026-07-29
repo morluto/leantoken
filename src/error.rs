@@ -25,6 +25,63 @@ impl std::fmt::Display for IndexLimitKind {
     }
 }
 
+/// Retrieval work whose configured hard limit was exceeded.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetrievalLimitKind {
+    /// Indexed files considered by the regex full-scan fallback.
+    RegexFullScanFiles,
+    /// Chunks in one included file considered by the regex full-scan fallback.
+    RegexChunksPerFile,
+    /// Trigram candidate chunks admitted before regex verification.
+    RegexCandidateChunks,
+    /// Trigram rows inspected while applying path scope.
+    RegexScopedRows,
+    /// Regex-matching chunks retained for occurrence hydration.
+    RegexRetainedChunks,
+    /// Individual occurrences materialized for an exhaustive search.
+    ExhaustiveOccurrences,
+}
+
+impl RetrievalLimitKind {
+    /// Stable privacy-safe reason code used by CLI and MCP adapters.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RegexFullScanFiles => "regex_full_scan_files",
+            Self::RegexChunksPerFile => "regex_chunks_per_file",
+            Self::RegexCandidateChunks => "regex_candidate_chunks",
+            Self::RegexScopedRows => "regex_scoped_rows",
+            Self::RegexRetainedChunks => "regex_retained_chunks",
+            Self::ExhaustiveOccurrences => "exhaustive_occurrences",
+        }
+    }
+
+    /// Static remediation guidance that does not disclose repository content.
+    #[must_use]
+    pub const fn guidance(self) -> &'static str {
+        match self {
+            Self::RegexFullScanFiles => {
+                "add a mandatory case-sensitive literal or use a smaller index scope"
+            }
+            Self::RegexChunksPerFile => {
+                "exclude or narrow paths that include unusually large files"
+            }
+            Self::RegexCandidateChunks => "make the regex more selective",
+            Self::RegexScopedRows => "narrow the path scope or make the regex more selective",
+            Self::RegexRetainedChunks | Self::ExhaustiveOccurrences => {
+                "narrow the expression or requested scope"
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for RetrievalLimitKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 /// Repository operation that may be retried after concurrent state changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetryableOperation {
@@ -167,6 +224,16 @@ pub enum Error {
     },
     #[error("requested content exceeds the configured limit")]
     LimitExceeded,
+    /// Retrieval crossed a named hard work bound.
+    #[error("retrieval {kind} limit exceeded: observed {observed}, limit {limit}")]
+    RetrievalLimitExceeded {
+        /// Stable privacy-safe retrieval owner.
+        kind: RetrievalLimitKind,
+        /// First observed value outside the configured bound.
+        observed: usize,
+        /// Configured inclusive maximum.
+        limit: usize,
+    },
     /// Caller-controlled response limit crossed its configured maximum.
     #[error("{field} exceeds its configured limit: requested {requested}, limit {limit}")]
     RequestLimitExceeded {
@@ -379,6 +446,7 @@ impl Error {
             Self::InputTooLong { .. } => "input_too_long",
             Self::RequestLimitExceeded { .. }
             | Self::ResponseBudgetExceeded { .. }
+            | Self::RetrievalLimitExceeded { .. }
             | Self::LimitExceeded => "request_limit_exceeded",
             Self::NotIndexed(_) => "not_indexed",
             Self::SymbolNotFound { .. } => "symbol_not_found",
@@ -439,6 +507,7 @@ impl Error {
             Self::AmbiguousSymbol { .. } => "symbol_ambiguous",
             Self::HeadingNotFound { .. } => "heading_not_found",
             Self::LimitExceeded => "limit_exceeded",
+            Self::RetrievalLimitExceeded { .. } => "request_limit_exceeded",
             Self::RequestLimitExceeded { .. } => "request_limit_exceeded",
             Self::ResponseBudgetExceeded { .. } => "request_limit_exceeded",
             Self::UnsupportedLanguage(_) => "unsupported_language",

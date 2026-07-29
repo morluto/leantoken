@@ -2,7 +2,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use regex_syntax::hir::{Hir, HirKind};
+use regex_syntax::hir::{
+    Hir, HirKind,
+    literal::{ExtractKind, Extractor},
+};
 use tokio_util::sync::CancellationToken;
 
 use super::execution_options::RetrievalExecution;
@@ -22,7 +25,7 @@ use crate::storage::{ChunkHit, ReadSession, ReferenceHit, SymbolHit};
 use crate::text::{
     anchored_line_window, byte_range_to_line_range, byte_to_line, excerpt, hash, line_starts,
 };
-use crate::{Error, Result};
+use crate::{Error, Result, RetrievalLimitKind};
 
 include!("search/types.rs");
 include!("search/regex_plan.rs");
@@ -563,9 +566,27 @@ mod tests {
             score: 0.0,
         };
 
-        let error = chunk_search_hits(&hit, "key", true, 0, None, false, 2)
-            .expect_err("third occurrence exceeds the materialization limit");
+        let error = chunk_search_hits(
+            &hit,
+            "key",
+            true,
+            0,
+            None,
+            false,
+            OccurrenceMaterializationLimit {
+                existing_hits: 5,
+                max_hits: 7,
+            },
+        )
+        .expect_err("third occurrence exceeds the materialization limit");
 
-        assert!(matches!(error, Error::LimitExceeded));
+        assert!(matches!(
+            error,
+            Error::RetrievalLimitExceeded {
+                kind: RetrievalLimitKind::ExhaustiveOccurrences,
+                observed: 8,
+                limit: 7,
+            }
+        ));
     }
 }
