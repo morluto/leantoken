@@ -143,6 +143,29 @@ four frozen `rg` discovery sequences. Native discovery reached all 11 labeled
 files; context reached 7. This is a negative local baseline, not evidence that
 the MCP calls explain model-scale end-to-end latency.
 
+## Exact query-receipt mechanism profile
+
+`exact_query_receipt_profile` compares a normal exhaustive text scan with
+same-generation reuse of an explicitly recorded complete query receipt. The
+one-time index and record operations are outside the timed arms. Each arm runs
+at least four samples in mirrored order, and an occurrence-total mismatch aborts
+the run:
+
+```bash
+cargo run --release --example exact_query_receipt_profile -- \
+  --repository CLEAN_DETACHED_WORKTREE \
+  --iterations 12
+```
+
+The first clean detached-worktree receipt is
+[`reports/exact-query-receipt-profile-v1-2026-07-29.json`](reports/exact-query-receipt-profile-v1-2026-07-29.json).
+On that single LeanToken self-repository workload, p50 wall time changed from
+34.835 ms to 4.960 ms, an 85.76% reduction, with exact occurrence-count parity.
+This proves the local scan-avoidance mechanism is material on that workload; it
+does not prove task success, provider savings, or an avoided tool/model call.
+Cross-generation freshness, false-absence, cancellation, storage, and response
+budgets remain behavioral correctness gates rather than benchmark conclusions.
+
 ## Prepare pinned repositories
 
 Run from the LeanToken repository root. The commands fetch both the benchmarked base and the future fix used to audit the labels, then leave each worktree detached at the base revision.
