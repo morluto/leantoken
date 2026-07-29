@@ -54,6 +54,61 @@ mod tests {
     }
 
     #[test]
+    fn focus_coverage_keeps_legacy_results_readable_and_bounds_diagnostics() {
+        let legacy: ContextFocusPathCoverage = serde_json::from_value(serde_json::json!({
+            "pattern": "src/**",
+            "indexed_paths": 2,
+            "minimum_fragments": 1,
+            "selected_fragments": 1,
+            "satisfied": true
+        }))
+        .expect("deserialize legacy focus coverage");
+        assert_eq!(legacy.diagnostics, None);
+
+        let current = ContextFocusPathCoverage {
+            pattern: "src/**".into(),
+            indexed_paths: 2,
+            minimum_fragments: 2,
+            selected_fragments: 1,
+            satisfied: false,
+            diagnostics: Some(ContextFocusPathDiagnostics {
+                eligible_paths: 2,
+                generated_fragments: 3,
+                generated_symbol_fragments: 2,
+                reserved_fragments: 1,
+                selected_source_tokens: 40,
+                suppressed_by: vec![ContextFocusSuppression {
+                    boundary: ContextFocusSuppressionBoundary::MaxFragments,
+                    fragments: 2,
+                }],
+                capacity_blocker: Some(ContextFocusCapacityBlocker::MaxFragments),
+            }),
+        };
+        assert_eq!(
+            serde_json::to_value(current).expect("serialize focus diagnostics"),
+            serde_json::json!({
+                "pattern": "src/**",
+                "indexed_paths": 2,
+                "minimum_fragments": 2,
+                "selected_fragments": 1,
+                "satisfied": false,
+                "diagnostics": {
+                    "eligible_paths": 2,
+                    "generated_fragments": 3,
+                    "generated_symbol_fragments": 2,
+                    "reserved_fragments": 1,
+                    "selected_source_tokens": 40,
+                    "suppressed_by": [{
+                        "boundary": "max_fragments",
+                        "fragments": 2
+                    }],
+                    "capacity_blocker": "max_fragments"
+                }
+            })
+        );
+    }
+
+    #[test]
     fn index_report_preserves_unknown_legacy_skip_reasons_and_serializes_known_counts() {
         let legacy: IndexReport = serde_json::from_value(serde_json::json!({
             "repository_generation": 1,

@@ -125,13 +125,22 @@ impl Services {
                 .focus_paths
                 .iter()
                 .zip(&focus_path_matches)
-                .map(|(pattern, indexed_paths)| ContextFocusPathCoverage {
-                    pattern: pattern.clone(),
-                    indexed_paths: *indexed_paths,
-                    minimum_fragments: minimum_focus_fragments,
-                    selected_fragments: 0,
-                    satisfied: false,
-                })
+                .zip(&focus_path_eligible)
+                .map(
+                    |((pattern, indexed_paths), eligible_paths)| ContextFocusPathCoverage {
+                        pattern: pattern.clone(),
+                        indexed_paths: *indexed_paths,
+                        minimum_fragments: minimum_focus_fragments,
+                        selected_fragments: 0,
+                        satisfied: false,
+                        diagnostics: request.verbose_diagnostics.then(|| {
+                            ContextFocusPathDiagnostics {
+                                eligible_paths: *eligible_paths,
+                                ..ContextFocusPathDiagnostics::default()
+                            }
+                        }),
+                    },
+                )
                 .collect();
         }
         coverage.unmatched_include_paths = request

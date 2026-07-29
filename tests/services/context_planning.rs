@@ -375,6 +375,7 @@ async fn context_response_profiles_only_change_bounded_presentation() {
     let mut request = context_limit_request(200);
     request.task = "find shared_capture_target".into();
     request.include_paths = vec!["src/browser/**".into()];
+    request.focus_paths = vec!["src/browser/**".into()];
     request.changed_paths = vec!["src/browser/capture.rs".into()];
     request.max_fragments = Some(1);
 
@@ -444,6 +445,26 @@ async fn context_response_profiles_only_change_bounded_presentation() {
         explicit_legacy_explain.effective_response_profile,
         ContextResponseProfile::Explain
     );
+    assert!(
+        balanced.coverage.focus_path_coverage[0]
+            .diagnostics
+            .is_none()
+    );
+    assert!(
+        compact.coverage.focus_path_coverage[0]
+            .diagnostics
+            .is_none()
+    );
+    assert!(
+        explain.coverage.focus_path_coverage[0]
+            .diagnostics
+            .is_some()
+    );
+    assert!(
+        legacy_explain.coverage.focus_path_coverage[0]
+            .diagnostics
+            .is_some()
+    );
 
     let identities = |response: &leantoken::ContextResponse| {
         response
@@ -463,6 +484,14 @@ async fn context_response_profiles_only_change_bounded_presentation() {
             .collect::<Vec<_>>()
     };
     let balanced_identities = identities(&balanced);
+    let coverage_without_focus_diagnostics = |response: &leantoken::ContextResponse| {
+        let mut coverage = response.coverage.clone();
+        for focus in &mut coverage.focus_path_coverage {
+            focus.diagnostics = None;
+        }
+        coverage
+    };
+    let balanced_coverage = coverage_without_focus_diagnostics(&balanced);
     for response in [
         &compact,
         &explain,
@@ -480,7 +509,10 @@ async fn context_response_profiles_only_change_bounded_presentation() {
             balanced.receipt.fragment_hashes
         );
         assert_eq!(response.meta.source_tokens, balanced.meta.source_tokens);
-        assert_eq!(response.coverage, balanced.coverage);
+        assert_eq!(
+            coverage_without_focus_diagnostics(response),
+            balanced_coverage
+        );
         assert_eq!(response.workflow, balanced.workflow);
         assert_eq!(response.routing, balanced.routing);
         assert_eq!(response.warnings, balanced.warnings);
@@ -947,6 +979,7 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
     underfilled.strict_focus_paths = true;
     underfilled.minimum_fragments_per_focus_path = Some(2);
     underfilled.max_fragments = Some(3);
+    underfilled.verbose_diagnostics = true;
     let underfilled = services
         .context(underfilled)
         .await
@@ -963,11 +996,51 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
             .count(),
         1
     );
+    let satisfied = underfilled
+        .coverage
+        .focus_path_coverage
+        .iter()
+        .find(|focus| focus.satisfied)
+        .expect("satisfied focus diagnostics");
+    let satisfied_diagnostics = satisfied
+        .diagnostics
+        .as_ref()
+        .expect("satisfied focus diagnostics");
+    assert!(satisfied_diagnostics.generated_fragments >= 2);
+    assert_eq!(satisfied_diagnostics.reserved_fragments, 2);
+    assert!(satisfied_diagnostics.selected_source_tokens > 0);
+    assert_eq!(satisfied_diagnostics.capacity_blocker, None);
+    let underfilled_focus = underfilled
+        .coverage
+        .focus_path_coverage
+        .iter()
+        .find(|focus| !focus.satisfied)
+        .expect("underfilled focus diagnostics");
+    let underfilled_diagnostics = underfilled_focus
+        .diagnostics
+        .as_ref()
+        .expect("underfilled focus diagnostics");
+    assert!(underfilled_diagnostics.generated_fragments >= 2);
+    assert_eq!(underfilled_diagnostics.reserved_fragments, 1);
+    assert!(
+        underfilled_diagnostics
+            .suppressed_by
+            .iter()
+            .any(|suppression| {
+                suppression.boundary == ContextFocusSuppressionBoundary::MaxFragments
+                    && suppression.fragments > 0
+            })
+    );
+    assert_eq!(
+        underfilled_diagnostics.capacity_blocker,
+        Some(ContextFocusCapacityBlocker::MaxFragments)
+    );
 
     let mut missing = context_limit_request(400);
     missing.task = "change shared_scope_target".into();
     missing.focus_paths = vec!["src/missing/**".into()];
     missing.strict_focus_paths = true;
+    missing.verbose_diagnostics = true;
     let missing = services.context(missing).await.expect("missing strict focus");
     assert!(missing.fragments.is_empty());
     assert_eq!(missing.coverage.strict_scope_satisfied, Some(false));
@@ -975,6 +1048,14 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
     assert_eq!(missing.coverage.unmatched_focus_paths, ["src/missing/**"]);
     assert_eq!(missing.coverage.focus_path_coverage[0].indexed_paths, 0);
     assert!(!missing.coverage.focus_path_coverage[0].satisfied);
+    assert_eq!(
+        missing.coverage.focus_path_coverage[0]
+            .diagnostics
+            .as_ref()
+            .expect("missing focus diagnostics")
+            .capacity_blocker,
+        Some(ContextFocusCapacityBlocker::NoIndexedPaths)
+    );
     assert!(missing.warnings.iter().any(|warning| {
         warning.contains("focus path constraints did not meet minimum fragment coverage")
     }));
@@ -1128,17 +1209,48 @@ async fn strict_focus_paths_generate_candidates_before_global_top_n_truncation()
         ]
     );
 
+    let mut fanout_limited = context_limit_request(4_000);
+    fanout_limited.task = "perform the requested audit".into();
+    fanout_limited.focus_paths = vec!["focus/**".into()];
+    fanout_limited.minimum_fragments_per_focus_path = Some(8);
+    fanout_limited.max_fragments = Some(8);
+    fanout_limited.plan_only = true;
+    fanout_limited.verbose_diagnostics = true;
+    let fanout_limited = services
+        .context(fanout_limited)
+        .await
+        .expect("fan-out-limited focus plan");
+    let fanout_diagnostics = fanout_limited.coverage.focus_path_coverage[0]
+        .diagnostics
+        .as_ref()
+        .expect("fan-out-limited diagnostics");
+    assert_eq!(fanout_diagnostics.eligible_paths, 9);
+    assert!(fanout_diagnostics.generated_fragments < 8);
+    assert_eq!(
+        fanout_diagnostics.capacity_blocker,
+        Some(ContextFocusCapacityBlocker::CandidateFanoutLimit)
+    );
+
     let mut excluded = context_limit_request(1_000);
     excluded.task = "change buried_focus_target".into();
     excluded.focus_paths = vec!["focus/owner_0.rs".into()];
     excluded.exclude_paths = vec!["focus/owner_0.rs".into()];
     excluded.strict_focus_paths = true;
+    excluded.verbose_diagnostics = true;
     let excluded = services
         .context(excluded)
         .await
         .expect("policy-empty focus scope");
     assert!(excluded.fragments.is_empty());
     assert_eq!(excluded.coverage.focus_path_coverage[0].indexed_paths, 1);
+    assert_eq!(
+        excluded.coverage.focus_path_coverage[0]
+            .diagnostics
+            .as_ref()
+            .expect("excluded focus diagnostics")
+            .capacity_blocker,
+        Some(ContextFocusCapacityBlocker::PathPolicy)
+    );
     assert!(excluded.warnings.iter().any(|warning| {
         warning.contains("focus pattern `focus/owner_0.rs`")
             && warning.contains("no candidate-eligible indexed path")
@@ -1181,6 +1293,136 @@ async fn strict_focus_paths_generate_candidates_before_global_top_n_truncation()
 }
 
 #[tokio::test]
+async fn five_focus_diagnostics_freeze_plan_and_materialized_capacity_truth() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let focus_paths = [
+        "src/alpha.rs",
+        "src/beta.rs",
+        "src/gamma.rs",
+        "examples/demo.rs",
+        "benchmarks/profile.rs",
+    ];
+    for (path_index, path) in focus_paths.iter().enumerate() {
+        let path = root.path().join(path);
+        std::fs::create_dir_all(path.parent().expect("fixture parent"))
+            .expect("fixture directory");
+        let mut source = String::new();
+        for symbol_index in 0..2 {
+            source.push_str(&format!(
+                "pub fn allocation_owner_{path_index}_{symbol_index}() -> usize {{\n"
+            ));
+            for line in 0..80 {
+                source.push_str(&format!(
+                    "    let allocation_owner_value_{symbol_index}_{line:02} = {line}usize;\n"
+                ));
+            }
+            source.push_str(&format!(
+                "    allocation_owner_value_{symbol_index}_00\n}}\n\n"
+            ));
+        }
+        std::fs::write(path, source).expect("fixture source");
+    }
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let request = {
+        let mut request = context_limit_request(12_000);
+        request.task = "review allocation_owner behavior".into();
+        request.focus_paths = focus_paths.iter().map(ToString::to_string).collect();
+        request.strict_focus_paths = true;
+        request.minimum_fragments_per_focus_path = Some(2);
+        request.max_fragments = Some(9);
+        request.verbose_diagnostics = true;
+        request
+    };
+    let materialized = services
+        .context(request.clone())
+        .await
+        .expect("five-focus materialized context");
+    let mut plan_request = request;
+    plan_request.plan_only = true;
+    let planned = services
+        .context(plan_request)
+        .await
+        .expect("five-focus plan");
+
+    assert_eq!(materialized.fragments.len(), 9);
+    assert_eq!(
+        materialized
+            .coverage
+            .focus_path_coverage
+            .iter()
+            .filter(|focus| focus.satisfied)
+            .count(),
+        4
+    );
+    let underfilled = materialized
+        .coverage
+        .focus_path_coverage
+        .iter()
+        .find(|focus| !focus.satisfied)
+        .expect("one focus must expose the hard capacity shortfall");
+    let diagnostics = underfilled
+        .diagnostics
+        .as_ref()
+        .expect("underfilled focus diagnostics");
+    assert!(diagnostics.generated_fragments >= 2);
+    assert_eq!(diagnostics.reserved_fragments, 1);
+    assert_eq!(
+        diagnostics.capacity_blocker,
+        Some(ContextFocusCapacityBlocker::MaxFragments)
+    );
+    assert!(
+        diagnostics
+            .suppressed_by
+            .iter()
+            .any(|suppression| suppression.boundary
+                == ContextFocusSuppressionBoundary::MaxFragments)
+    );
+    for focus in &materialized.coverage.focus_path_coverage {
+        let diagnostics = focus
+            .diagnostics
+            .as_ref()
+            .expect("materialized focus diagnostics");
+        assert!(diagnostics.generated_fragments >= 2);
+        assert_eq!(
+            diagnostics.reserved_fragments,
+            focus.selected_fragments.min(focus.minimum_fragments)
+        );
+        assert_eq!(
+            diagnostics.selected_source_tokens,
+            materialized
+                .fragments
+                .iter()
+                .filter(|fragment| fragment.path == focus.pattern)
+                .map(|fragment| fragment.token_count)
+                .sum::<usize>()
+        );
+    }
+    assert_eq!(
+        planned.coverage.focus_path_coverage,
+        materialized.coverage.focus_path_coverage
+    );
+    assert_eq!(
+        planned
+            .plan
+            .expect("five-focus query plan")
+            .candidates
+            .iter()
+            .map(|candidate| (&candidate.path, candidate.start_line, candidate.end_line))
+            .collect::<Vec<_>>(),
+        materialized
+            .fragments
+            .iter()
+            .map(|fragment| (&fragment.path, fragment.start_line, fragment.end_line))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
 async fn exact_focus_symbols_satisfy_multi_fragment_minimum_after_reconciliation() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::create_dir_all(root.path().join("focus")).expect("focus directory");
@@ -1215,6 +1457,7 @@ async fn exact_focus_symbols_satisfy_multi_fragment_minimum_after_reconciliation
     };
     let mut plan_request = request.clone();
     plan_request.plan_only = true;
+    plan_request.verbose_diagnostics = true;
     let preview = services
         .context_with_consistency_cancellable(
             plan_request,
@@ -1227,6 +1470,14 @@ async fn exact_focus_symbols_satisfy_multi_fragment_minimum_after_reconciliation
 
     assert!(plan.focus_coverage[0].satisfied);
     assert!(plan.focus_coverage[0].candidate_fragments >= 2);
+    let plan_diagnostics = preview.coverage.focus_path_coverage[0]
+        .diagnostics
+        .as_ref()
+        .expect("plan focus diagnostics");
+    assert!(plan_diagnostics.generated_fragments >= 2);
+    assert!(plan_diagnostics.generated_symbol_fragments >= 2);
+    assert_eq!(plan_diagnostics.reserved_fragments, 2);
+    assert!(plan_diagnostics.selected_source_tokens > 0);
     assert!(
         plan.candidates
             .iter()
@@ -1235,8 +1486,10 @@ async fn exact_focus_symbols_satisfy_multi_fragment_minimum_after_reconciliation
             >= 2
     );
 
+    let mut materialized_request = request.clone();
+    materialized_request.verbose_diagnostics = true;
     let first = services
-        .context(request.clone())
+        .context(materialized_request)
         .await
         .expect("focused context");
     let second = services

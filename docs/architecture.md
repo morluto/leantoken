@@ -1018,6 +1018,23 @@ even when the task text has no lexical overlap. If those bounded candidates
 cannot satisfy `minimum_fragments_per_focus_path`, the response reports the
 generated and requested counts instead of treating path presence as coverage.
 
+Explain-profile focus allocation diagnostics reuse the in-memory candidate
+partitions and final selection; they perform no additional storage query or
+repository scan. Balanced and compact plans skip the diagnostic candidate walk,
+preserving the existing metadata-plan cost contract. An explain-profile plan or
+materialized response emits at most one diagnostic per focus pattern (32) and
+at most one non-zero count for each of seven suppression boundaries per pattern.
+Candidate range keys are deduplicated in request-local sets bounded by the
+existing candidate fan-out. The primary blocker distinguishes missing indexed
+paths, path policy, candidate generation/fan-out, caller-held hashes,
+deduplication, source budget, hard fragment capacity, per-file diversity, and
+soft global ranking. `selected_source_tokens` describes selection before
+delivery-time server-receipt suppression; response fitting never drops focused
+selection prefixes and instead fails with the normal response-budget error when
+the constrained response cannot fit. Overlapping focus patterns independently
+account the same matching range, so per-pattern counts and token totals are not
+summed into a request total.
+
 Symbol and lexical matches expand to the complete enclosing declaration when it
 fits. Oversized declarations use a bounded window centered on the exact match,
 so an arbitrary declaration prefix cannot hide the decisive line. Context

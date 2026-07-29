@@ -60,6 +60,19 @@ pub(super) fn merge_selected_coverage(
         target.selected_fragments = selected.selected_fragments;
         target.satisfied = target.indexed_paths > 0 && selected.satisfied;
     }
+    for (target, selected) in coverage
+        .focus_path_coverage
+        .iter_mut()
+        .zip(std::mem::take(&mut response.coverage.focus_path_coverage))
+    {
+        if let Some(mut selected) = selected.diagnostics {
+            selected.eligible_paths = target
+                .diagnostics
+                .as_ref()
+                .map_or(0, |diagnostics| diagnostics.eligible_paths);
+            target.diagnostics = Some(selected);
+        }
+    }
     if !coverage.required_evidence.is_empty() {
         coverage.evidence_scope_satisfied =
             Some(coverage.required_evidence.iter().all(|item| item.satisfied));

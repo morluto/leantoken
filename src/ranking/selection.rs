@@ -215,10 +215,24 @@ fn select_with_options(
 ) -> ContextResponse {
     let scope = SelectionScope::new(request, context_exclude_paths);
     apply_request_signals(&mut candidates, request, &scope.focus_paths);
+    let generated_focus =
+        request
+            .verbose_diagnostics
+            .then(|| generated_focus_facts(&candidates, request));
     let partition = partition_candidates(candidates, request, &scope, weights, tokenizer);
     let selection = select_candidates(partition.eligible, request, weights, tokenizer);
-    let coverage =
+    let mut coverage =
         build_context_coverage(request, &selection.selected, &partition.known_omitted);
+    if let Some(generated_focus) = &generated_focus {
+        coverage.focus_path_coverage = build_focus_path_coverage(
+            request,
+            generated_focus,
+            &partition.path_omitted,
+            &partition.known_omitted,
+            &selection.selected,
+            &selection.omitted,
+        );
+    }
     let estimated_source_tokens = selection
         .selected
         .iter()

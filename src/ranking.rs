@@ -23,10 +23,12 @@ use std::path::Path;
 
 use crate::config::{DEFAULT_CONTEXT_FRAGMENTS, default_context_exclude_paths};
 use crate::model::{
-    ContextCoverageReceipt, ContextFragment, ContextOmissionFacet, ContextOmissionSummary,
-    ContextPlanCandidate, ContextPlanFocusCoverage, ContextQueryPlan, ContextRequest,
-    ContextRequiredEvidenceCoverage, ContextResponse, ContextResponseProfile, EvidenceReceipt,
-    Freshness, OmittedCandidate, ResponseMeta,
+    ContextCoverageReceipt, ContextFocusCapacityBlocker, ContextFocusPathCoverage,
+    ContextFocusPathDiagnostics, ContextFocusSuppression, ContextFocusSuppressionBoundary,
+    ContextFragment, ContextOmissionFacet, ContextOmissionSummary, ContextPlanCandidate,
+    ContextPlanFocusCoverage, ContextQueryPlan, ContextRequest, ContextRequiredEvidenceCoverage,
+    ContextResponse, ContextResponseProfile, EvidenceReceipt, Freshness, OmittedCandidate,
+    ResponseMeta,
 };
 use crate::services::validation::{PathMatcher, path_matches};
 use crate::tokens;
@@ -38,6 +40,7 @@ include!("ranking/omissions.rs");
 include!("ranking/candidate.rs");
 include!("ranking/scored.rs");
 include!("ranking/dedup.rs");
+include!("ranking/focus_diagnostics.rs");
 include!("ranking/selection.rs");
 include!("ranking/requirements.rs");
 include!("ranking/greedy.rs");

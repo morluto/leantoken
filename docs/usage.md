@@ -849,6 +849,17 @@ Context accepts at most 32 focus patterns and a minimum of at most eight
 fragments per pattern. Required focus coverage receives bounded file-local
 candidates before global top-N truncation; broad globs that exceed the
 per-pattern file inspection bound report that limitation in `warnings`.
+Explain-profile plans and materialized responses report a bounded allocation
+diagnostic under each `coverage.focus_path_coverage[].diagnostics`. Balanced and
+compact responses omit it without changing selection or making a metadata-only
+plan larger than the corresponding materialized response. The diagnostic
+separates eligible indexed paths, generated ranges and symbol ranges, enforced
+reservations, exact selected source tokens, and non-zero suppression counts for
+path policy, caller-held hashes, deduplication, source budget, fragment
+capacity, per-file diversity, or soft global ranking. An unsatisfied path also
+reports one `capacity_blocker`; it is an observed selection boundary, not a
+task-success or relevance-confidence estimate. Counts are per pattern and are
+not additive when focus globs overlap.
 `strict_changed_paths=true` restricts fragments to the resolved explicit paths,
 an immutable `BASE..HEAD` range, a base-revision-to-working-tree diff, or current
 Git working-tree changes when neither diff input is supplied. Include, strict
@@ -987,7 +998,7 @@ Check `coverage.changed_path_coverage` and `path_scope_satisfied` for the hard
 range boundary, and inspect `workflow_receipt.owner_test_candidates` plus
 `missing_families` for bounded owner-test evidence and gaps. Then repeat it with
 `plan_only=false`. Use `response_profile="explain"` only when the omitted or
-semantic diff diagnostics are needed.
+focus-allocation or semantic diff diagnostics are needed.
 
 `workflow` accepts `auto`, `implementation`, `contribution`, `review`, or
 `investigation`. Contribution and review modes add bounded repository guidance,
