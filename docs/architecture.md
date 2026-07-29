@@ -716,8 +716,13 @@ generation but before receipt evidence is committed. It first removes bounded
 omission facets, detailed diff evidence, routing detail, and ranking reasons.
 Only requests without include, must-cover, focus, diff, strict-scope, or
 handoff constraints may then drop lowest-ranked selected fragments. Constrained
-requests return a typed `RequestLimitExceeded` error when their correctness
-skeleton cannot fit; fitting never weakens their coverage contract. Balanced
+requests return a typed `ResponseBudgetExceeded` error when their correctness
+skeleton cannot fit; fitting never weakens their coverage contract. The error
+keeps the public `request_limit_exceeded` category and legacy
+`requested`/`limit` adapter fields, while adding the caller-provided ceiling,
+the exact retryable minimum, and a bounded aggregate split across mandatory
+source, protocol, path/metadata, and receipt-reserve tokens. It never reports
+an optional pre-trimming candidate total as the retry minimum. Balanced
 plan-only diff context omits detailed diff evidence; compact always omits
 optional diff evidence and explain includes it when available. Receipt sizing
 reserves the exact request/generated receipt identifier plus conservative
@@ -774,7 +779,7 @@ projection, while the global entry offset traverses only indexed files, so
 partial-success pages cannot be mixed or silently omit a path outcome. All three
 projections are finalized and checked against `max_response_tokens` inside
 `Services`; a compact correctness skeleton that cannot fit returns typed
-`RequestLimitExceeded`.
+`ResponseBudgetExceeded`.
 
 MCP JSON keys use depth-then-pointer order and an optional maximum depth of 64;
 root depth is zero and array elements share one wildcard path. Version-two keys

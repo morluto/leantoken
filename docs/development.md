@@ -304,7 +304,9 @@ The crate remains on the `0.x` development line. `Error` is intentionally
 non-exhaustive: consumers must include a fallback arm and should only branch on
 variants they can recover from. LT-06 establishes that contract while adding
 `RequestLimitExceeded`, whose fields are required for adapter-safe limit
-reporting. This is an acknowledged source-compatibility change for consumers
+reporting. `ResponseBudgetExceeded` separately represents a computed,
+exactly-retryable response minimum and exposes only bounded aggregate
+accounting. These are acknowledged source-compatibility changes for consumers
 that exhaustively matched the earlier enum. Release PRs own package version
 changes; feature and fix PRs do not edit `Cargo.toml` versions independently.
 

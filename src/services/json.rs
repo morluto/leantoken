@@ -667,16 +667,45 @@ impl Services {
                 response.meta.emitted_tokens = source_tokens;
                 return Ok(());
             }
+            if !entries.is_empty() {
+                let mut minimum = original;
+                let mut value = entries.clone();
+                value.truncate(1);
+                minimum.value = Some(Value::Array(value));
+                let consumed = offset.saturating_add(1);
+                let total = minimum.total_items.unwrap_or(consumed);
+                let remaining = total.saturating_sub(consumed);
+                minimum.returned_items = Some(1);
+                minimum.remaining_items = Some(remaining);
+                minimum.result_complete = remaining == 0;
+                minimum.incomplete_reason =
+                    (remaining > 0).then_some(JsonIncompleteReason::MaxTokens);
+                minimum.meta.next_cursor = (remaining > 0)
+                    .then(|| make_json_cursor(*cursor_version, source_hash, query_hash, consumed));
+                let source_tokens = json_tokens(
+                    self,
+                    minimum
+                        .value
+                        .as_ref()
+                        .expect("keys projection keeps a value"),
+                )?;
+                minimum.meta.source_tokens = source_tokens;
+                minimum.meta.emitted_tokens = source_tokens;
+                return Err(self.response_budget_error(
+                    &minimum,
+                    options
+                        .max_response_tokens()
+                        .expect("fitting only runs with a response limit"),
+                )?);
+            }
         }
 
-        let requested = self.finalized_response_tokens(response)?;
-        Err(Error::RequestLimitExceeded {
-            field: "max_response_tokens",
-            requested,
-            limit: options
+        Err(self.response_budget_error(
+            response,
+            options
                 .max_response_tokens()
                 .expect("fitting only runs with a response limit"),
-        })
+        )?)
     }
 
     fn load_json(&self, path: &str) -> Result<LoadedJson> {

@@ -682,6 +682,43 @@ fn mcp_error_mapping_separates_invalid_input_from_internal_failures() {
         }))
     );
 
+    let response_budget = into_mcp_error(crate::Error::ResponseBudgetExceeded {
+        provided_max_response_tokens: 40,
+        minimum_required_response_tokens: 73,
+        retry_with_at_least: 73,
+        breakdown: crate::ResponseBudgetBreakdown {
+            mandatory_response_tokens: 61,
+            source_tokens: 17,
+            protocol_tokens: 20,
+            path_and_metadata_tokens: 24,
+            receipt_reserve_tokens: 12,
+        },
+    });
+    assert_eq!(response_budget.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        response_budget.message,
+        "max_response_tokens is too small; retry with at least 73"
+    );
+    assert_eq!(
+        response_budget.data,
+        Some(serde_json::json!({
+            "category": "request_limit_exceeded",
+            "field": "max_response_tokens",
+            "requested": 73,
+            "limit": 40,
+            "provided_max_response_tokens": 40,
+            "minimum_required_response_tokens": 73,
+            "retry_with_at_least": 73,
+            "breakdown": {
+                "mandatory_response_tokens": 61,
+                "source_tokens": 17,
+                "protocol_tokens": 20,
+                "path_and_metadata_tokens": 24,
+                "receipt_reserve_tokens": 12,
+            },
+        }))
+    );
+
     let input_constraints = into_mcp_error(crate::Error::InvalidInputConstraints(
         crate::InputViolations::new(vec![
             crate::InputViolation {

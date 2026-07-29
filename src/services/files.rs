@@ -775,23 +775,20 @@ impl Services {
             return Ok(());
         }
 
-        let requested = original
+        let minimum = original
             .entries
             .first()
             .map(|entry| {
                 let mut minimum = original.clone();
                 minimum.entries.truncate(1);
-                minimum.meta.next_cursor =
-                    Some(files_cursor_for_entry(&operation, entry).encode(generation));
-                self.finalized_response_tokens(&minimum)
+                if original.entries.len() > 1 {
+                    minimum.meta.next_cursor =
+                        Some(files_cursor_for_entry(&operation, entry).encode(generation));
+                }
+                minimum
             })
-            .transpose()?
-            .unwrap_or(self.finalized_response_tokens(&original)?);
-        Err(Error::RequestLimitExceeded {
-            field: "max_response_tokens",
-            requested,
-            limit: max_response_tokens,
-        })
+            .unwrap_or(original);
+        Err(self.response_budget_error(&minimum, max_response_tokens)?)
     }
 
     fn fit_files_paths_response(
@@ -827,22 +824,19 @@ impl Services {
             return Ok(());
         }
 
-        let requested = entries
+        let minimum = entries
             .first()
             .map(|entry| {
                 let mut minimum = original.clone();
                 minimum.paths.truncate(1);
-                minimum.meta.next_cursor =
-                    Some(files_cursor_for_entry(&operation, entry).encode(generation));
-                self.finalized_response_tokens(&minimum)
+                if original.paths.len() > 1 {
+                    minimum.meta.next_cursor =
+                        Some(files_cursor_for_entry(&operation, entry).encode(generation));
+                }
+                minimum
             })
-            .transpose()?
-            .unwrap_or(self.finalized_response_tokens(&original)?);
-        Err(Error::RequestLimitExceeded {
-            field: "max_response_tokens",
-            requested,
-            limit: max_response_tokens,
-        })
+            .unwrap_or(original);
+        Err(self.response_budget_error(&minimum, max_response_tokens)?)
     }
 }
 

@@ -301,14 +301,66 @@ async fn context_response_budget_fails_loudly_when_the_mandatory_skeleton_cannot
         .await
         .expect_err("one token cannot fit the correctness skeleton");
 
-    assert!(matches!(
-        error,
-        Error::RequestLimitExceeded {
-            field: "max_response_tokens",
-            requested,
-            limit: 1,
-        } if requested > 1
-    ));
+    let (minimum, breakdown) = assert_response_budget_error(error, 1);
+    assert!(minimum > 1);
+    assert!(breakdown.mandatory_response_tokens > 0);
+}
+
+#[tokio::test]
+async fn context_response_budget_details_are_exact_for_plan_and_materialization() {
+    let (_root, services) = fixture().await;
+    for plan_only in [true, false] {
+        let mut request = context_limit_request(200);
+        request.task = "inspect greet".into();
+        request.focus_paths = vec!["src/lib.rs".into()];
+        request.strict_focus_paths = true;
+        request.plan_only = plan_only;
+
+        let (minimum, breakdown) = assert_response_budget_error(
+            services
+                .context_with_options(
+                    request.clone(),
+                    ServiceCallOptions::new().with_max_response_tokens(1),
+                )
+                .await
+                .expect_err("one token cannot fit context"),
+            1,
+        );
+        if plan_only {
+            assert_eq!(breakdown.receipt_reserve_tokens, 0);
+        } else {
+            assert!(breakdown.receipt_reserve_tokens > 0);
+        }
+
+        let exact = services
+            .context_with_options(
+                request.clone(),
+                ServiceCallOptions::new().with_max_response_tokens(minimum),
+            )
+            .await
+            .expect("reported context minimum must be directly retryable");
+        assert!(exact.meta.total_response_tokens <= minimum);
+        let (repeated_minimum, repeated_breakdown) = assert_response_budget_error(
+            services
+                .context_with_options(
+                    request.clone(),
+                    ServiceCallOptions::new().with_max_response_tokens(minimum - 1),
+                )
+                .await
+                .expect_err("one token below context minimum must fail"),
+            minimum - 1,
+        );
+        assert_eq!(repeated_minimum, minimum);
+        assert_eq!(repeated_breakdown, breakdown);
+
+        services
+            .context_with_options(
+                request,
+                ServiceCallOptions::new().with_max_response_tokens(32_000),
+            )
+            .await
+            .expect("configured response maximum must remain accepted");
+    }
 }
 
 #[tokio::test]

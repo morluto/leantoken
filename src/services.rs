@@ -320,6 +320,71 @@ impl Services {
         self.finalized_response_tokens(&sized)
     }
 
+    fn response_budget_exceeded(
+        meta: &ResponseMeta,
+        provided_max_response_tokens: usize,
+        minimum_required_response_tokens: usize,
+    ) -> Error {
+        debug_assert_eq!(
+            meta.total_response_tokens,
+            meta.source_tokens
+                .saturating_add(meta.protocol_tokens)
+                .saturating_add(meta.path_and_metadata_tokens)
+        );
+        debug_assert!(minimum_required_response_tokens >= meta.total_response_tokens);
+        Error::ResponseBudgetExceeded {
+            provided_max_response_tokens,
+            minimum_required_response_tokens,
+            retry_with_at_least: minimum_required_response_tokens,
+            breakdown: crate::ResponseBudgetBreakdown {
+                mandatory_response_tokens: meta.total_response_tokens,
+                source_tokens: meta.source_tokens,
+                protocol_tokens: meta.protocol_tokens,
+                path_and_metadata_tokens: meta.path_and_metadata_tokens,
+                receipt_reserve_tokens: minimum_required_response_tokens
+                    .saturating_sub(meta.total_response_tokens),
+            },
+        }
+    }
+
+    fn response_budget_error<T>(
+        &self,
+        response: &T,
+        provided_max_response_tokens: usize,
+    ) -> Result<Error>
+    where
+        T: RetrievalResponse + Clone,
+    {
+        let mut mandatory = response.clone();
+        self.finalize_response(&mut mandatory)?;
+        let meta = mandatory.meta_mut();
+        Ok(Self::response_budget_exceeded(
+            meta,
+            provided_max_response_tokens,
+            meta.total_response_tokens,
+        ))
+    }
+
+    fn response_budget_error_with_receipt_reserve<T>(
+        &self,
+        response: &T,
+        returned_items: usize,
+        provided_max_response_tokens: usize,
+    ) -> Result<Error>
+    where
+        T: RetrievalResponse + Clone,
+    {
+        let minimum_required_response_tokens =
+            self.finalized_response_tokens_with_receipt_reserve(response, returned_items)?;
+        let mut mandatory = response.clone();
+        self.finalize_response(&mut mandatory)?;
+        Ok(Self::response_budget_exceeded(
+            mandatory.meta_mut(),
+            provided_max_response_tokens,
+            minimum_required_response_tokens,
+        ))
+    }
+
     fn finalize_bounded_response<T>(
         &self,
         response: &mut T,
@@ -332,11 +397,12 @@ impl Services {
         if let Some(limit) = options.max_response_tokens()
             && response.meta_mut().total_response_tokens > limit
         {
-            return Err(Error::RequestLimitExceeded {
-                field: "max_response_tokens",
-                requested: response.meta_mut().total_response_tokens,
+            let minimum_required_response_tokens = response.meta_mut().total_response_tokens;
+            return Err(Self::response_budget_exceeded(
+                response.meta_mut(),
                 limit,
-            });
+                minimum_required_response_tokens,
+            ));
         }
         Ok(())
     }

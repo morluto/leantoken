@@ -41,6 +41,14 @@ struct CliErrorResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     limit: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    provided_max_response_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    minimum_required_response_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_with_at_least: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    breakdown: Option<leantoken::ResponseBudgetBreakdown>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     violations: Option<Vec<leantoken::InputViolation>>,
@@ -83,6 +91,10 @@ fn cli_parse_error_response(error: &clap::Error) -> CliErrorResponse {
         field: None,
         requested: None,
         limit: None,
+        provided_max_response_tokens: None,
+        minimum_required_response_tokens: None,
+        retry_with_at_least: None,
+        breakdown: None,
         reason: None,
         violations: None,
         syntax_category: None,
@@ -116,6 +128,16 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
             requested,
             limit,
         } => (None, Some(*field), Some(*requested), Some(*limit)),
+        leantoken::Error::ResponseBudgetExceeded {
+            provided_max_response_tokens,
+            minimum_required_response_tokens,
+            ..
+        } => (
+            None,
+            Some("max_response_tokens"),
+            Some(*minimum_required_response_tokens),
+            Some(*provided_max_response_tokens),
+        ),
         _ => (None, None, None, None),
     };
     let (reason, syntax_category, offset, byte_offset, line, column) = match error {
@@ -156,6 +178,25 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         }
         _ => None,
     };
+    let (
+        provided_max_response_tokens,
+        minimum_required_response_tokens,
+        retry_with_at_least,
+        breakdown,
+    ) = match error {
+        leantoken::Error::ResponseBudgetExceeded {
+            provided_max_response_tokens,
+            minimum_required_response_tokens,
+            retry_with_at_least,
+            breakdown,
+        } => (
+            Some(*provided_max_response_tokens),
+            Some(*minimum_required_response_tokens),
+            Some(*retry_with_at_least),
+            Some(*breakdown),
+        ),
+        _ => (None, None, None, None),
+    };
 
     CliErrorResponse {
         error: cli_error_message(error),
@@ -164,6 +205,10 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         field,
         requested,
         limit,
+        provided_max_response_tokens,
+        minimum_required_response_tokens,
+        retry_with_at_least,
+        breakdown,
         reason,
         violations,
         syntax_category,

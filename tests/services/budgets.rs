@@ -171,14 +171,7 @@ async fn retrieval_call_options_enforce_final_service_response_bounds() {
         )
         .await
         .expect_err("mandatory files skeleton must fail loudly");
-    assert!(matches!(
-        too_small,
-        Error::RequestLimitExceeded {
-            field: "max_response_tokens",
-            limit: 1,
-            ..
-        }
-    ));
+    let _ = assert_response_budget_error(too_small, 1);
 }
 
 #[tokio::test]
@@ -199,21 +192,17 @@ async fn receipt_reserved_response_minimum_is_an_exact_retry_hint() {
         receipt_id: None,
         cursor: None,
     };
-    let search_minimum = match services
+    let (search_minimum, search_breakdown) = assert_response_budget_error(
+        services
         .search_with_options(
             search_request.clone(),
             ServiceCallOptions::new().with_max_response_tokens(1),
         )
         .await
-        .expect_err("one token cannot fit a search response")
-    {
-        Error::RequestLimitExceeded {
-            field: "max_response_tokens",
-            requested,
-            limit: 1,
-        } => requested,
-        error => panic!("unexpected search budget error: {error:?}"),
-    };
+        .expect_err("one token cannot fit a search response"),
+        1,
+    );
+    assert!(search_breakdown.receipt_reserve_tokens > 0);
     let retried_search = services
         .search_with_options(
             search_request.clone(),
@@ -222,24 +211,15 @@ async fn receipt_reserved_response_minimum_is_an_exact_retry_hint() {
         .await
         .expect("reported search minimum must be directly retryable");
     assert!(retried_search.meta.total_response_tokens <= search_minimum);
-    let repeated_search_minimum = match services
-        .search_with_options(
+    let (repeated_search_minimum, _) = assert_response_budget_error(
+        services.search_with_options(
             search_request,
             ServiceCallOptions::new().with_max_response_tokens(search_minimum - 1),
         )
         .await
-        .expect_err("one token below the search minimum must fail")
-    {
-        Error::RequestLimitExceeded {
-            field: "max_response_tokens",
-            requested,
-            limit,
-        } => {
-            assert_eq!(limit, search_minimum - 1);
-            requested
-        }
-        error => panic!("unexpected repeated search budget error: {error:?}"),
-    };
+        .expect_err("one token below the search minimum must fail"),
+        search_minimum - 1,
+    );
     assert_eq!(repeated_search_minimum, search_minimum);
 
     let outline_request = OutlineRequest {
@@ -251,21 +231,17 @@ async fn receipt_reserved_response_minimum_is_an_exact_retry_hint() {
         receipt_id: None,
         cursor: None,
     };
-    let outline_minimum = match services
+    let (outline_minimum, outline_breakdown) = assert_response_budget_error(
+        services
         .outline_with_options(
             outline_request.clone(),
             ServiceCallOptions::new().with_max_response_tokens(1),
         )
         .await
-        .expect_err("one token cannot fit an outline response")
-    {
-        Error::RequestLimitExceeded {
-            field: "max_response_tokens",
-            requested,
-            limit: 1,
-        } => requested,
-        error => panic!("unexpected outline budget error: {error:?}"),
-    };
+        .expect_err("one token cannot fit an outline response"),
+        1,
+    );
+    assert!(outline_breakdown.receipt_reserve_tokens > 0);
     let retried_outline = services
         .outline_with_options(
             outline_request.clone(),
@@ -274,24 +250,15 @@ async fn receipt_reserved_response_minimum_is_an_exact_retry_hint() {
         .await
         .expect("reported outline minimum must be directly retryable");
     assert!(retried_outline.meta.total_response_tokens <= outline_minimum);
-    let repeated_outline_minimum = match services
-        .outline_with_options(
+    let (repeated_outline_minimum, _) = assert_response_budget_error(
+        services.outline_with_options(
             outline_request,
             ServiceCallOptions::new().with_max_response_tokens(outline_minimum - 1),
         )
         .await
-        .expect_err("one token below the outline minimum must fail")
-    {
-        Error::RequestLimitExceeded {
-            field: "max_response_tokens",
-            requested,
-            limit,
-        } => {
-            assert_eq!(limit, outline_minimum - 1);
-            requested
-        }
-        error => panic!("unexpected repeated outline budget error: {error:?}"),
-    };
+        .expect_err("one token below the outline minimum must fail"),
+        outline_minimum - 1,
+    );
     assert_eq!(repeated_outline_minimum, outline_minimum);
 }
 
@@ -338,13 +305,10 @@ async fn files_response_budget_uses_a_resumable_deterministic_prefix() {
         )
         .await
         .expect_err("one token below the resumable skeleton");
-    assert!(matches!(
-        below_minimum,
-        Error::RequestLimitExceeded {
-            field: "max_response_tokens",
-            ..
-        }
-    ));
+    let (reported_minimum, breakdown) =
+        assert_response_budget_error(below_minimum, exact_limit - 1);
+    assert_eq!(reported_minimum, exact_limit);
+    assert_eq!(breakdown.receipt_reserve_tokens, 0);
 
     let request = FilesRequest {
         operation: FileOperation::Tree,

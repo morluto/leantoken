@@ -240,14 +240,7 @@ async fn exhaustive_occurrence_groups_preserve_probe_e_coordinates_without_repea
         )
         .await
         .expect_err("grouped coordinates must honor the serialized response bound");
-    assert!(matches!(
-        error,
-        Error::RequestLimitExceeded {
-            field: "max_response_tokens",
-            limit,
-            ..
-        } if limit == response_limit
-    ));
+    let _ = assert_response_budget_error(error, response_limit);
 
     let mut coordinate_request = request;
     coordinate_request.max_tokens = Some(1);

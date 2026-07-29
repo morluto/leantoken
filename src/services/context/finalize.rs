@@ -42,6 +42,27 @@ impl Services {
         Ok(serialized_tokens)
     }
 
+    fn context_response_budget_error(
+        &self,
+        response: &ContextResponse,
+        request: &ContextRequest,
+        provided_max_response_tokens: usize,
+    ) -> Result<Error> {
+        let minimum_required_response_tokens =
+            self.context_response_tokens_with_receipt_reserve(response, request)?;
+        let mut mandatory = response.clone();
+        set_routing_consistency(
+            &mut mandatory,
+            IndexConsistency::ReconcileWorkingTree,
+        );
+        self.finalize_response(&mut mandatory)?;
+        Ok(Self::response_budget_exceeded(
+            &mandatory.meta,
+            provided_max_response_tokens,
+            minimum_required_response_tokens,
+        ))
+    }
+
     fn context_response_fits(
         &self,
         response: &ContextResponse,
@@ -195,12 +216,7 @@ impl Services {
             Self::trim_context_selection(response, 0);
         }
 
-        let minimum = self.context_response_tokens_with_receipt_reserve(response, request)?;
-        Err(Error::RequestLimitExceeded {
-            field: "max_response_tokens",
-            requested: minimum,
-            limit: max_response_tokens,
-        })
+        Err(self.context_response_budget_error(response, request, max_response_tokens)?)
     }
 
     fn finalize_context_pipeline(

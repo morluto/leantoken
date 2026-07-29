@@ -1079,6 +1079,7 @@ impl Services {
             return Ok(());
         }
 
+        let mut minimum = None;
         if let Some(content) = response
             .symbol
             .as_ref()
@@ -1086,6 +1087,13 @@ impl Services {
             .cloned()
         {
             let boundaries = char_boundaries(&content);
+            minimum = Some(self.history_text_prefix_candidate(
+                response,
+                &content,
+                &boundaries,
+                usize::from(boundaries.len() > 1),
+                false,
+            ));
             if let Some(candidate) =
                 self.fit_history_text_prefix(response, &content, &boundaries, options, false)?
             {
@@ -1094,6 +1102,13 @@ impl Services {
             }
         } else if let Some(diff) = response.diff.clone() {
             let boundaries = char_boundaries(&diff);
+            minimum = Some(self.history_text_prefix_candidate(
+                response,
+                &diff,
+                &boundaries,
+                usize::from(boundaries.len() > 1),
+                true,
+            ));
             if let Some(candidate) =
                 self.fit_history_text_prefix(response, &diff, &boundaries, options, true)?
             {
@@ -1117,16 +1132,20 @@ impl Services {
                 response.result_complete = false;
                 return Ok(());
             }
+            let mut candidate = original;
+            candidate.commits.truncate(1);
+            if response.commits.len() > 1 {
+                candidate.result_complete = false;
+            }
+            minimum = Some(candidate);
         }
 
-        let requested = self.finalized_response_tokens(response)?;
-        Err(Error::RequestLimitExceeded {
-            field: "max_response_tokens",
-            requested,
-            limit: options
+        Err(self.response_budget_error(
+            minimum.as_ref().unwrap_or(response),
+            options
                 .max_response_tokens()
                 .expect("fitting only runs with a response limit"),
-        })
+        )?)
     }
 
     fn fit_diff_symbols_response(
@@ -1182,12 +1201,7 @@ impl Services {
                 )
             });
             refresh_diff_symbols_accounting(&self.config.tokenizer, &mut minimum);
-            let requested = self.finalized_response_tokens(&minimum)?;
-            return Err(Error::RequestLimitExceeded {
-                field: "max_response_tokens",
-                requested,
-                limit: max_response_tokens,
-            });
+            return Err(self.response_budget_error(&minimum, max_response_tokens)?);
         };
 
         let mut fitted = skeleton;
@@ -1264,25 +1278,26 @@ impl Services {
             .expect("fitting only runs with a response limit");
         let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
         let keep = budget.largest_fitting_prefix(boundaries.len().saturating_sub(1), |keep| {
-            let prefix = &text[..boundaries[keep]];
-            let mut candidate = response.clone();
-            let source_tokens = self.config.tokenizer.count(prefix);
-            candidate.meta.source_tokens = source_tokens;
-            candidate.meta.emitted_tokens = source_tokens;
-            candidate.result_complete = false;
-            if is_diff {
-                candidate.diff = Some(prefix.to_owned());
-                candidate.diff_truncated = true;
-            } else if let Some(symbol) = candidate.symbol.as_mut() {
-                symbol.content = Some(prefix.to_owned());
-                symbol.returned_end_line = returned_end_line(symbol.target_start_line, prefix);
-                symbol.truncated = true;
-            }
+            let candidate =
+                self.history_text_prefix_candidate(response, text, boundaries, keep, is_diff);
             self.finalized_response_tokens(&candidate)
         })?;
         let Some(keep) = keep.filter(|keep| *keep > 0) else {
             return Ok(None);
         };
+        Ok(Some(self.history_text_prefix_candidate(
+            response, text, boundaries, keep, is_diff,
+        )))
+    }
+
+    fn history_text_prefix_candidate(
+        &self,
+        response: &HistoryResponse,
+        text: &str,
+        boundaries: &[usize],
+        keep: usize,
+        is_diff: bool,
+    ) -> HistoryResponse {
         let prefix = &text[..boundaries[keep]];
         let mut candidate = response.clone();
         let source_tokens = self.config.tokenizer.count(prefix);
@@ -1297,7 +1312,7 @@ impl Services {
             symbol.returned_end_line = returned_end_line(symbol.target_start_line, prefix);
             symbol.truncated = true;
         }
-        Ok(Some(candidate))
+        candidate
     }
 
     fn historical_symbol(

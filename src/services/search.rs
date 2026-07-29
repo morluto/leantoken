@@ -66,14 +66,13 @@ impl Services {
         if self.response_fits_with_receipt_reserve(&sized, selected.len(), options)? {
             return Ok(());
         }
-        Err(Error::RequestLimitExceeded {
-            field: "max_response_tokens",
-            requested: self
-                .finalized_response_tokens_with_receipt_reserve(&sized, selected.len())?,
-            limit: options
+        Err(self.response_budget_error_with_receipt_reserve(
+            &sized,
+            selected.len(),
+            options
                 .max_response_tokens()
                 .expect("fitting only runs with a response limit"),
-        })
+        )?)
     }
 
     async fn apply_search_consistency(
