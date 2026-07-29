@@ -279,6 +279,20 @@ leantoken --root /path/to/repo context \
   --budget 2000
 ```
 
+Audit an existing redacted experiment or host report without opening a
+repository index:
+
+```bash
+leantoken episode audit \
+  --adapter multi-agent-suite-v1 \
+  --input benchmarks/reports/multi-agent-context-suite-v1-codex-0.144.1.json
+```
+
+The default projection is Markdown; add global `--json` for the stable
+normalized JSON schema. The auditor is local, bounded, and read-only with
+respect to its input. It retains artifact hashes, not raw prompts, source, tool
+arguments, or tool outputs.
+
 `npm install leantoken` installs the command in the current project's
 `node_modules/.bin`; it does not add `leantoken` to the shell `PATH`. Invoke a
 project-local install through `npx leantoken`, a package script, or

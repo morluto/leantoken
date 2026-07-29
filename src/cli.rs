@@ -292,6 +292,7 @@ impl Cli {
             Commands::Setup(_)
                 | Commands::Remove(_)
                 | Commands::Cache(_)
+                | Commands::Episode(_)
                 | Commands::Update(_)
                 | Commands::Upgrade(_)
         ) {
@@ -316,6 +317,7 @@ impl Cli {
             Commands::Setup(_) => "setup",
             Commands::Remove(_) => "remove",
             Commands::Cache(_) => "cache",
+            Commands::Episode(_) => "episode",
             Commands::Update(_) => "update",
             Commands::Upgrade(_) => "upgrade",
             _ => unreachable!("repository-free commands checked above"),
@@ -481,6 +483,9 @@ impl Cli {
                 CacheCommand::List(args) => AppRequest::CacheListV2(args.into()),
                 CacheCommand::Prune(args) => AppRequest::CachePruneV2(args.into()),
             },
+            Commands::Episode(args) => match args.command {
+                EpisodeCommand::Audit(args) => AppRequest::EpisodeAudit(args.into()),
+            },
             Commands::Update(args) | Commands::Upgrade(args) => AppRequest::Upgrade {
                 check: args.check,
                 yes: args.yes,
@@ -550,6 +555,7 @@ pub enum AppRequest {
     CachePrune(CachePruneRequest),
     CacheListV2(CacheListV2Request),
     CachePruneV2(CachePruneV2Request),
+    EpisodeAudit(crate::episode::EpisodeAuditRequest),
     Upgrade {
         check: bool,
         yes: bool,
@@ -609,6 +615,9 @@ pub enum Commands {
     /// Inspect or prune centrally managed repository caches.
     Cache(CacheArgs),
 
+    /// Audit existing redacted model/tool episode artifacts.
+    Episode(EpisodeArgs),
+
     /// Update LeanToken to the latest release.
     Update(UpgradeArgs),
 
@@ -620,6 +629,7 @@ pub enum Commands {
 // distinct physical owner while Cli, Commands, and AppRequest stay here.
 include!("cli/integration.rs");
 include!("cli/cache.rs");
+include!("cli/episode.rs");
 include!("cli/retrieval.rs");
 include!("cli/files.rs");
 include!("cli/search.rs");
