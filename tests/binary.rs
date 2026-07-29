@@ -105,6 +105,84 @@ fn cli_indexes_statuses_and_searches_as_json() {
 }
 
 #[test]
+fn cli_scoped_index_omits_dependencies_and_discloses_the_boundary() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir(root.path().join("src")).expect("source directory");
+    std::fs::create_dir(root.path().join("third_party")).expect("dependency directory");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn selected_scope_target() {}\n",
+    )
+    .expect("write selected fixture");
+    std::fs::write(
+        root.path().join("third_party/lib.rs"),
+        "pub fn dependency_scope_target() {}\n",
+    )
+    .expect("write dependency fixture");
+    let database = root.path().join("scoped.sqlite");
+    let scope_args = [
+        "--index-include",
+        "src/**",
+        "--index-exclude",
+        "third_party/**",
+    ];
+
+    let index = run(
+        root.path(),
+        &database,
+        &[
+            scope_args[0],
+            scope_args[1],
+            scope_args[2],
+            scope_args[3],
+            "index",
+        ],
+    );
+    assert_eq!(index["files_seen"], 1);
+    assert_eq!(index["files_indexed"], 1);
+
+    let status = run(
+        root.path(),
+        &database,
+        &[
+            scope_args[0],
+            scope_args[1],
+            scope_args[2],
+            scope_args[3],
+            "status",
+        ],
+    );
+    assert_eq!(status["index_scope"], "scoped");
+    assert_eq!(status["index_include_paths"], serde_json::json!(["src/**"]));
+    assert_eq!(
+        status["index_exclude_paths"],
+        serde_json::json!(["third_party/**"])
+    );
+    assert_eq!(status["file_count"], 1);
+
+    let absent = run(
+        root.path(),
+        &database,
+        &[
+            scope_args[0],
+            scope_args[1],
+            scope_args[2],
+            scope_args[3],
+            "search",
+            "dependency_scope_target",
+            "--mode",
+            "identifier",
+        ],
+    );
+    assert!(absent["hits"].as_array().is_some_and(Vec::is_empty));
+    assert_eq!(absent["meta"]["index_scope"], "scoped");
+    assert_eq!(
+        absent["meta"]["index_scope_digest"],
+        status["index_scope_digest"]
+    );
+}
+
+#[test]
 fn cli_retrieval_reconciles_live_changes_unless_snapshot_consistency_is_requested() {
     let root = tempfile::tempdir().expect("temporary repository");
     let source = root.path().join("lib.rs");
@@ -1526,6 +1604,7 @@ fn cache_list_and_prune_do_not_require_a_repository() {
     assert!(human_list.contains("corrupt"));
     assert!(human_list.contains("last_access="));
     assert!(human_list.contains("root_available="));
+    assert!(human_list.contains("scope=full"));
 
     let summary = command()
         .args([

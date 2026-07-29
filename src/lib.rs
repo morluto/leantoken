@@ -50,5 +50,5 @@ pub use error::{
     Error, IndexLimitKind, InputViolation, InputViolations, ResponseBudgetBreakdown, Result,
 };
 pub use model::*;
-pub use repository::DiscoveryPolicy;
 pub use repository::GitDiffResult;
+pub use repository::{DiscoveryPolicy, IndexScope};

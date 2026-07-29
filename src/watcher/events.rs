@@ -1,7 +1,7 @@
 fn process_raw_event(
     raw: notify::Result<Event>,
     root: &Path,
-    policy: DiscoveryPolicy,
+    policy: &DiscoveryPolicy,
     pending: &mut BTreeSet<String>,
     rename_from: &mut HashMap<usize, String>,
     rename_to: &mut HashMap<usize, String>,
@@ -31,7 +31,10 @@ fn process_raw_event(
             Ok(Some(rel)) => inside.push(rel),
             Ok(None) => {
                 outside = true;
-                tracing::warn!(path = %path.display(), "watcher event outside root");
+                tracing::warn!(
+                    path = %path.display(),
+                    "watcher event outside the active index boundary"
+                );
             }
             Err(()) => {
                 *reconcile = true;
@@ -82,7 +85,7 @@ fn bound_pending_state(
 fn raw_event_is_relevant(
     event: &notify::Result<Event>,
     root: &Path,
-    policy: DiscoveryPolicy,
+    policy: &DiscoveryPolicy,
 ) -> bool {
     match event {
         Ok(event) if event.need_rescan() => true,

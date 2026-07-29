@@ -182,6 +182,7 @@ impl Indexer {
                 }
             }
         } else {
+            let discovery_policy = self.config.discovery_policy();
             for requested in &paths {
                 check_cancelled(cancellation)?;
                 let relative = validate_relative(requested)?;
@@ -210,6 +211,15 @@ impl Indexer {
                     }
                     Err(error) => return Err(error.into()),
                 };
+                if !discovery_policy
+                    .includes_path(&relative_path, metadata.file_type().is_dir())
+                {
+                    if existing.contains_key(&relative_path) {
+                        directly_observed_deletions.insert(relative_path.clone());
+                        deletions.insert(relative_path);
+                    }
+                    continue;
+                }
                 if metadata.len() > self.config.max_file_bytes {
                     deletions.insert(relative_path);
                     continue;

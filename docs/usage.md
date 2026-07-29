@@ -10,6 +10,8 @@ responses are bounded.
 --root <PATH>      Repository root (default: current directory)
 --allow-broad-root Allow a filesystem root, home directory, or parent of home
 --include-generated Include known generated and package-cache directories
+--index-include <PATTERN> Include only matching repository-relative paths (repeatable)
+--index-exclude <PATTERN> Exclude matching repository-relative paths (repeatable)
 --max-walk-entries <COUNT>       Walker entries per discovery (default: 500000)
 --max-files <COUNT>              Admitted source files (default: 150000)
 --max-total-source-bytes <BYTES> Aggregate source bytes (default: 2147483648)
@@ -66,6 +68,56 @@ when the platform exposes it. RSS is per process, not a claim about all clients
 sharing the repository cache. `index_content_version` identifies the managed
 cache compatibility lane used by the current binary; different values use
 separate managed cache paths.
+
+### Indexing scope
+
+By default, LeanToken indexes the complete repository visible through Git,
+`.ignore`, and `.leantokenignore` rules, except for `.git` metadata and the
+conservative generated-directory policy. An explicit indexing scope reduces
+the repository membership built into SQLite:
+
+```bash
+leantoken --root . \
+  --index-include 'src/**' \
+  --index-include 'tests/**' \
+  --index-exclude 'src/generated/**' \
+  index
+```
+
+Includes are optional; with only excludes, every other ignore-visible path is
+eligible. Excludes always win. Literal paths select their complete subtree,
+while patterns use the same slash-normalized, case-sensitive glob behavior as
+retrieval path filters. Patterns must be repository-relative. LeanToken
+normalizes separators and redundant `.` components, sorts and deduplicates the
+result, and accepts at most 64 include-plus-exclude patterns, 1,024 bytes per
+pattern, and 16 KiB in total.
+
+Scope is an indexing and negative-evidence boundary, not a query-time
+convenience filter. Discovery prunes excluded subtrees before traversal limits
+and preparation; status reports the normalized patterns and a compact opaque
+scope digest. Every retrieval response reports `meta.index_scope` as `full` or
+`scoped` and includes the digest for scoped caches. An empty result from a
+scoped cache therefore proves absence only inside that configured scope.
+
+Normalized scope participates in the automatically managed cache identity, so
+full and scoped indexes for one repository can coexist. Reuse the same scope
+arguments on every command that must address that cache. An explicit
+`--database` is bound to both repository and full scope identity and fails
+with `index_scope_mismatch` if reused with another scope.
+
+For a dependency-heavy TileLang checkout, for example, first-party work can
+exclude the recorded dependency submodules:
+
+```bash
+leantoken --root . --index-exclude '3rdparty/**' index
+leantoken --root . --index-exclude '3rdparty/**' mcp
+```
+
+Workspace-specific MCP registrations can place the repeatable scope flags
+before the `mcp` subcommand in their command arguments. The global `setup`
+flow intentionally remains repository-agnostic and does not infer a scope.
+Changing scope selects another managed cache; it never mutates the membership
+meaning of an existing cache silently.
 
 After the first generation, the one-shot `files`, `search`, `outline`, `read`,
 and `context` commands default to `--consistency reconcile_working_tree`. Each
@@ -201,16 +253,17 @@ filters are bound into the versioned cursor and cannot be changed between
 pages.
 
 Entry pages retain the existing metadata `state` and separately expose content
-`compatibility`, recorded root, schema, last access, direct SQLite/sidecar
-bytes, and active lease status. Summaries report entries/bytes by compatibility
-plus inactive incompatible bytes that are actually safe to reclaim. Legacy
-repository-only identities remain visible. Listing does not open repository
-services and therefore works from any directory. JSON output contains Unix
-timestamps and returned/matched/total counts for automation.
+`compatibility`, full/scoped index identity, recorded root, schema, last
+access, direct SQLite/sidecar bytes, and active lease status. Summaries report
+entries/bytes by compatibility plus inactive incompatible bytes that are
+actually safe to reclaim. Legacy repository-only identities remain visible.
+Listing does not open repository services and therefore works from any
+directory. JSON output contains Unix timestamps and
+returned/matched/total counts for automation.
 
 The versioned identity applies to automatically managed caches. An explicit
-`--database` path remains unchanged and must not be shared concurrently by
-incompatible index-content versions.
+`--database` path remains unchanged and must not be shared by incompatible
+index-content versions or normalized index scopes.
 
 `cache prune` requires at least one explicit selection policy:
 

@@ -23,6 +23,188 @@ fn services_reject_database_owned_by_another_repository() {
     .expect("same root may share database");
 }
 
+#[test]
+fn explicit_database_rejects_a_different_index_scope() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("shared.sqlite");
+    let source_scope =
+        IndexScope::new(vec!["src/**".into()], Vec::new()).expect("source scope");
+    let first = Services::open(
+        Config::discover_scoped(
+            root.path(),
+            Some(database.clone()),
+            source_scope.clone(),
+        )
+        .expect("scoped config"),
+    )
+    .expect("claim scoped database");
+
+    let full_error = Services::open(
+        Config::discover(root.path(), Some(database.clone())).expect("full config"),
+    )
+    .expect_err("full scope must not share a scoped explicit database");
+    assert!(matches!(full_error, Error::IndexScopeMismatch { .. }));
+
+    drop(first);
+    Services::open(
+        Config::discover_scoped(
+            root.path(),
+            Some(database),
+            IndexScope::new(vec!["./src\\**".into()], Vec::new())
+                .expect("equivalent scope"),
+        )
+        .expect("equivalent config"),
+    )
+    .expect("normalized equivalent scope may share the database");
+}
+
+#[tokio::test]
+async fn scoped_index_preserves_selected_retrievals_and_discloses_negative_evidence_boundary() {
+    let root = tempfile::tempdir().expect("root");
+    let cache = tempfile::tempdir().expect("cache");
+    std::fs::create_dir_all(root.path().join("src")).expect("src");
+    std::fs::create_dir_all(root.path().join("tests")).expect("tests");
+    std::fs::create_dir_all(root.path().join("third_party/dependency")).expect("dependency");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn first_party_scope_target() -> bool { true }\n",
+    )
+    .expect("first-party source");
+    std::fs::write(
+        root.path().join("tests/smoke.rs"),
+        "fn scoped_smoke_test() {}\n",
+    )
+    .expect("test source");
+    std::fs::write(
+        root.path().join("third_party/dependency/lib.rs"),
+        "pub fn dependency_only_target() {}\n",
+    )
+    .expect("dependency source");
+    let scope = IndexScope::new(
+        vec!["src/**".into(), "tests/**".into()],
+        vec!["tests/generated/**".into()],
+    )
+    .expect("scope");
+    let scoped = Services::open(
+        Config::discover_scoped(
+            root.path(),
+            Some(cache.path().join("scoped.sqlite")),
+            scope.clone(),
+        )
+        .expect("scoped config"),
+    )
+    .expect("scoped services");
+    scoped.index(false).await.expect("scoped index");
+
+    let status = scoped.status().await.expect("scoped status");
+    assert_eq!(status.index_scope, IndexScopeMode::Scoped);
+    assert_eq!(status.index_scope_digest.as_deref(), scope.digest());
+    assert_eq!(status.index_include_paths, ["src/**", "tests/**"]);
+    assert_eq!(status.index_exclude_paths, ["tests/generated/**"]);
+    assert_eq!(status.file_count, 2);
+
+    let request = SearchRequest {
+        query: "first_party_scope_target".into(),
+        mode: SearchMode::Identifier,
+        include_paths: Vec::new(),
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(10),
+        max_tokens: Some(1_000),
+        context_lines: Some(1),
+        case_sensitive: true,
+        all_occurrences: false,
+        prefer_structural: true,
+        receipt_id: None,
+        cursor: None,
+    };
+    let scoped_result = scoped.search(request.clone()).await.expect("scoped search");
+    assert_eq!(scoped_result.meta.index_scope, IndexScopeMode::Scoped);
+    assert_eq!(
+        scoped_result.meta.index_scope_digest.as_deref(),
+        scope.digest()
+    );
+    assert_eq!(scoped_result.hits.len(), 1);
+    assert_eq!(scoped_result.hits[0].path, "src/lib.rs");
+
+    let mut absent_request = request.clone();
+    absent_request.query = "dependency_only_target".into();
+    let absent = scoped.search(absent_request).await.expect("scoped absence");
+    assert!(absent.hits.is_empty());
+    assert_eq!(absent.meta.index_scope, IndexScopeMode::Scoped);
+
+    std::fs::write(
+        root.path().join("third_party/dependency/new.rs"),
+        "pub fn outside_scope_change() {}\n",
+    )
+    .expect("outside-scope change");
+    scoped
+        .index_paths(vec!["third_party/dependency/new.rs".into()])
+        .await
+        .expect("outside-scope targeted reconciliation");
+    assert_eq!(
+        scoped.status().await.expect("status after outside change").file_count,
+        2
+    );
+
+    std::fs::write(
+        root.path().join("src/new.rs"),
+        "pub fn scoped_rename_target() {}\n",
+    )
+    .expect("included change");
+    scoped
+        .index_paths(vec!["src/new.rs".into()])
+        .await
+        .expect("included targeted reconciliation");
+    assert_eq!(
+        scoped.status().await.expect("status after included change").file_count,
+        3
+    );
+    std::fs::rename(
+        root.path().join("src/new.rs"),
+        root.path().join("third_party/dependency/moved.rs"),
+    )
+    .expect("rename across scope");
+    scoped
+        .index_paths(vec![
+            "src/new.rs".into(),
+            "third_party/dependency/moved.rs".into(),
+        ])
+        .await
+        .expect("cross-scope rename reconciliation");
+    assert_eq!(
+        scoped.status().await.expect("status after rename").file_count,
+        2
+    );
+
+    let full = Services::open(
+        Config::discover(
+            root.path(),
+            Some(cache.path().join("full.sqlite")),
+        )
+        .expect("full config"),
+    )
+    .expect("full services");
+    full.index(false).await.expect("full index");
+    let full_result = full.search(request).await.expect("full search");
+    assert_eq!(full_result.meta.index_scope, IndexScopeMode::Full);
+    assert_eq!(full_result.meta.index_scope_digest, None);
+    assert_eq!(full_result.hits.len(), scoped_result.hits.len());
+    assert_eq!(full_result.hits[0].path, scoped_result.hits[0].path);
+    assert_eq!(
+        full_result.hits[0].content_hash,
+        scoped_result.hits[0].content_hash
+    );
+    assert_eq!(
+        full_result.hits[0].start_line,
+        scoped_result.hits[0].start_line
+    );
+    assert_eq!(
+        full_result.hits[0].end_line,
+        scoped_result.hits[0].end_line
+    );
+}
+
 #[tokio::test]
 async fn same_repository_services_share_committed_generations() {
     let root = tempfile::tempdir().expect("root");

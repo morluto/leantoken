@@ -381,6 +381,18 @@ LeanToken indexes source once, then serves compact paths, ranked matches,
 structural outlines, exact source ranges, and task-specific context. It avoids
 resending unchanged evidence across turns.
 
+Dependency-heavy workspaces can opt into a separate, cache-identified
+first-party index without changing the default whole-repository behavior:
+
+```bash
+leantoken --index-include 'src/**' --index-include 'tests/**' index
+```
+
+Status and every retrieval disclose whether the active index is full or
+scoped, so an empty scoped result is never presented as whole-repository
+absence. See the [usage guide](docs/usage.md#indexing-scope) for bounds,
+cache identity, and MCP registration examples.
+
 LeanToken's goal is to return the code an agent needs with fewer input tokens.
 
 ## Documentation

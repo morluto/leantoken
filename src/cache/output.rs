@@ -1,3 +1,13 @@
+fn scope_label(entry: &CacheEntry) -> String {
+    match entry.index_scope {
+        IndexScopeMode::Full => "scope=full".into(),
+        IndexScopeMode::Scoped => entry.index_scope_digest.as_deref().map_or_else(
+            || "scope=scoped".into(),
+            |digest| format!("scope=scoped:{digest}"),
+        ),
+    }
+}
+
 /// Print a cache-list report as JSON or concise human-readable output.
 pub fn print_list(report: &CacheListReport, json_output: bool) -> Result<()> {
     let stdout = std::io::stdout();
@@ -35,11 +45,12 @@ pub fn print_list(report: &CacheListReport, json_output: bool) -> Result<()> {
     for entry in &report.entries {
         writeln!(
             output,
-            "{}  {} bytes  {}  {}  last_access={}  root_available={}  {}",
+            "{}  {} bytes  {}  {}  {}  last_access={}  root_available={}  {}",
             entry.id,
             entry.size_bytes,
             if entry.active { "active" } else { "inactive" },
             entry.state.label(),
+            scope_label(entry),
             entry
                 .last_access_unix_seconds
                 .map_or_else(|| "unknown".into(), |timestamp| timestamp.to_string()),
@@ -109,7 +120,7 @@ pub fn print_list_v2(report: &CacheListV2Report, json_output: bool) -> Result<()
     for entry in &report.entries {
         writeln!(
             output,
-            "{}  {} bytes  {}  {}  {}  last_access={}  root_available={}  {}",
+            "{}  {} bytes  {}  {}  {}  {}  last_access={}  root_available={}  {}",
             entry.entry.id,
             entry.entry.size_bytes,
             if entry.entry.active {
@@ -119,6 +130,7 @@ pub fn print_list_v2(report: &CacheListV2Report, json_output: bool) -> Result<()
             },
             entry.entry.state.label(),
             entry.compatibility.label(),
+            scope_label(&entry.entry),
             entry
                 .entry
                 .last_access_unix_seconds

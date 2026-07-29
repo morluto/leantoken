@@ -265,6 +265,12 @@ pub enum Error {
         expected_repository: String,
         actual_repository: PathBuf,
     },
+    /// An explicit SQLite path is already bound to another normalized index scope.
+    #[error("SQLite index {database} belongs to a different indexing scope")]
+    IndexScopeMismatch {
+        /// SQLite path whose immutable repository membership boundary differs.
+        database: PathBuf,
+    },
     /// Retrieval request was intended for a different bound repository.
     #[error("repository identity mismatch: expected {expected}, actual {actual}")]
     RepositoryIdentityMismatch {
@@ -376,6 +382,7 @@ impl Error {
             Self::RootNotFound(_)
             | Self::UnsafeRepositoryRoot(_)
             | Self::RepositoryMismatch { .. }
+            | Self::IndexScopeMismatch { .. }
             | Self::InvalidConfiguration(_) => "repository_configuration",
             Self::IndexLimitExceeded { .. } => "repository_index_limit",
             Self::RepositoryTraversal(_) => "repository_traversal",
@@ -425,6 +432,7 @@ impl Error {
             Self::DoctorFailure { .. } => "doctor_failure",
             Self::InvalidConfiguration(_) => "invalid_configuration",
             Self::RepositoryMismatch { .. } => "repository_mismatch",
+            Self::IndexScopeMismatch { .. } => "index_scope_mismatch",
             Self::RepositoryIdentityMismatch { .. } => "repository_identity_mismatch",
             Self::StaleCursor => "stale_cursor",
             Self::UnknownReceipt(_) => "unknown_receipt",

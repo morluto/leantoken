@@ -54,12 +54,17 @@ impl Services {
         cache_lease: CacheLease,
     ) -> Result<Self> {
         let open_storage = || match startup_timeout {
-            Some(timeout) => Storage::open_for_repository_with_startup_timeout(
+            Some(timeout) => Storage::open_for_repository_scoped_with_startup_timeout(
                 &config.database_path,
                 &config.root,
+                config.index_scope().full_digest(),
                 timeout,
             ),
-            None => Storage::open_for_repository(&config.database_path, &config.root),
+            None => Storage::open_for_repository_scoped(
+                &config.database_path,
+                &config.root,
+                config.index_scope().full_digest(),
+            ),
         };
         let storage = match open_storage() {
             Ok(storage) => storage,

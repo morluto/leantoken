@@ -111,6 +111,8 @@ fn finalize_context_response(
         repository_id: String::new(),
         repository_generation,
         freshness: Freshness::Current,
+        index_scope: crate::model::IndexScopeMode::Full,
+        index_scope_digest: None,
         source_tokens: emitted_tokens,
         protocol_tokens: 0,
         path_and_metadata_tokens: 0,

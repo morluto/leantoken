@@ -1,7 +1,7 @@
 use std::fs;
 
 use leantoken::repository::{
-    DiscoveryPolicy, discover_files, discover_files_with_limits,
+    DiscoveryPolicy, IndexScope, discover_files, discover_files_with_limits,
     discover_files_with_limits_and_policy, discover_files_with_limits_cancellable,
     git_changed_paths, git_diff_hunks, git_diff_paths, normalize_relative, resolve_existing,
     slash_path, validate_relative,
@@ -70,6 +70,49 @@ fn discover_files_honors_gitignore() {
     assert!(paths.contains(&".github/workflows/ci.yml"));
     assert!(!paths.contains(&"ignored.rs"));
     assert!(!paths.contains(&".git/config"));
+}
+
+#[test]
+fn explicit_index_scope_prunes_excluded_trees_before_limits_and_preserves_selected_files() {
+    let root = tempfile::tempdir().expect("root");
+    fs::create_dir_all(root.path().join("src/generated/deep")).expect("generated");
+    fs::create_dir_all(root.path().join("third_party/dependency/deep")).expect("dependency");
+    fs::create_dir_all(root.path().join("tests")).expect("tests");
+    fs::write(root.path().join("src/lib.rs"), "pub fn selected() {}\n").expect("source");
+    fs::write(
+        root.path().join("src/generated/deep/schema.rs"),
+        "pub fn generated() {}\n",
+    )
+    .expect("generated source");
+    fs::write(
+        root.path().join("third_party/dependency/deep/lib.rs"),
+        "pub fn dependency() {}\n",
+    )
+    .expect("dependency source");
+    fs::write(root.path().join("tests/smoke.rs"), "fn smoke() {}\n").expect("test");
+    let scope = IndexScope::new(
+        vec!["src/**".into(), "tests/**".into()],
+        vec!["src/generated/**".into()],
+    )
+    .expect("scope");
+    let policy = DiscoveryPolicy::default().with_index_scope(scope);
+    let discovery = discover_files_with_limits_and_policy(
+        root.path(),
+        DiscoveryLimits {
+            max_walk_entries: 8,
+            ..DiscoveryLimits::default()
+        },
+        policy,
+    )
+    .expect("scoped discovery remains below the traversal limit");
+    let paths = discovery
+        .files
+        .iter()
+        .map(|file| file.relative_path.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(paths, ["src/lib.rs", "tests/smoke.rs"]);
+    assert!(discovery.stats.walk_entries <= 8);
 }
 
 #[test]

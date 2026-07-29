@@ -74,7 +74,7 @@ fn inspect_watch_admission(
 fn relative_path(
     root: &Path,
     path: &Path,
-    policy: DiscoveryPolicy,
+    policy: &DiscoveryPolicy,
     directory_hint: bool,
 ) -> std::result::Result<Option<String>, ()> {
     if !path.starts_with(root) {
@@ -82,7 +82,7 @@ fn relative_path(
     }
     let rel = path.strip_prefix(root).map_err(|_| ())?;
     let s = checked_slash_path(rel).map_err(|_| ())?;
-    if s.is_empty() || !policy.includes_path(&s, directory_hint || path.is_dir()) {
+    if s.is_empty() || !policy.includes_watch_path(&s, directory_hint || path.is_dir()) {
         Ok(None)
     } else {
         Ok(Some(s))

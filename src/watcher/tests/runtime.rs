@@ -66,7 +66,7 @@
             relative_path(
                 root.path(),
                 &root.path().join("nested/b.txt"),
-                DiscoveryPolicy::default(),
+                &DiscoveryPolicy::default(),
                 false,
             )
             .expect("UTF-8 relative path")

@@ -1,6 +1,6 @@
     use super::*;
-    use crate::Config;
-    use crate::config::managed_cache_id;
+    use crate::{Config, IndexScope};
+    use crate::config::{managed_cache_id, managed_cache_id_for_scope};
     use crate::services::Services;
     use crate::storage::Storage;
 
@@ -34,6 +34,26 @@
                 [i64::try_from(accessed_at).expect("test timestamp")],
             )
             .expect("access timestamp");
+        (id, database)
+    }
+
+    fn create_scoped_cache(
+        manager: &CacheManager,
+        repository: &Path,
+        scope: &IndexScope,
+    ) -> (String, PathBuf) {
+        let id = managed_cache_id_for_scope(repository, scope);
+        let directory = manager.root.join(&id);
+        fs::create_dir_all(&directory).expect("cache directory");
+        let database = directory.join(DATABASE_NAME);
+        drop(
+            Storage::open_for_repository_scoped(
+                &database,
+                repository,
+                scope.full_digest(),
+            )
+            .expect("scoped cache database"),
+        );
         (id, database)
     }
 

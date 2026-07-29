@@ -3561,7 +3561,7 @@ mod tests {
     use super::*;
     use leantoken::{
         ContextCoverageReceipt, ContextOmissionSummary, ContextResponseProfile, ContextWorkflow,
-        EvidenceReceipt, Freshness, ResponseMeta,
+        EvidenceReceipt, Freshness, IndexScopeMode, ResponseMeta,
     };
 
     fn external_manifest() -> Manifest {
@@ -4033,6 +4033,8 @@ mod tests {
                 repository_id: "repository".into(),
                 repository_generation: 7,
                 freshness: Freshness::Current,
+                index_scope: IndexScopeMode::Full,
+                index_scope_digest: None,
                 source_tokens: 0,
                 protocol_tokens: 0,
                 path_and_metadata_tokens: 0,

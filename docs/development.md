@@ -323,6 +323,14 @@ their constructible field sets. Content-compatibility filters and summaries use
 `CachePruneV2Request`. The CLI selects those versioned APIs while older Rust
 callers can continue using the original list/prune methods.
 
+Explicit indexing scope adds public provenance fields to `ResponseMeta`,
+`StatusResponse`, and `CacheEntry`, plus the `IndexScopeMismatch` error variant.
+This is wire-additive and legacy deserialization defaults to full scope, but
+downstream Rust consumers constructing those public response structs with
+literals must add the new fields. `IndexScope` is immutable after
+normalization; use `Config::discover_scoped` instead of mutating cache
+membership after service startup.
+
 Use `InvalidRequest` only for audited caller validation. Infrastructure and
 invariant failures use `InternalFailure`, which retains the historical
 `invalid request: ...` display prefix for CLI text compatibility while adapters

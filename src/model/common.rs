@@ -10,6 +10,17 @@ pub enum Freshness {
     Reconciling,
 }
 
+/// Repository coverage boundary represented by one committed index.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexScopeMode {
+    /// The index covers the complete ignore-visible repository.
+    #[default]
+    Full,
+    /// Explicit include or exclude patterns constrain indexed membership.
+    Scoped,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 /// Readiness of the repository index for retrieval.
@@ -131,6 +142,12 @@ pub struct ResponseMeta {
     pub repository_id: String,
     pub repository_generation: u64,
     pub freshness: Freshness,
+    /// Whether negative evidence is valid for the full ignore-visible repository.
+    #[serde(default)]
+    pub index_scope: IndexScopeMode,
+    /// Compact opaque identity for a scoped index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_scope_digest: Option<String>,
     /// Tokens in source content selected for the response.
     #[serde(default)]
     pub source_tokens: usize,

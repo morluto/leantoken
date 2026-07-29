@@ -1152,6 +1152,36 @@ fn cli_generated_tree_override_is_explicit_and_global() {
 }
 
 #[test]
+fn cli_index_scope_is_repeatable_normalized_and_cache_identified() {
+    let root = tempfile::tempdir().expect("root");
+    let root_text = root.path().to_str().expect("UTF-8 root");
+    let scoped = parse(&[
+        "status",
+        "--root",
+        root_text,
+        "--index-include",
+        "src\\**",
+        "--index-include",
+        "./tests/**",
+        "--index-exclude",
+        "third_party//**",
+    ]);
+    let full = parse(&["status", "--root", root_text]);
+    let scoped_config = scoped.config().expect("scoped config");
+    let full_config = full.config().expect("full config");
+
+    assert_eq!(
+        scoped_config.index_scope().includes(),
+        ["src/**", "tests/**"]
+    );
+    assert_eq!(
+        scoped_config.index_scope().excludes(),
+        ["third_party/**"]
+    );
+    assert_ne!(scoped_config.database_path, full_config.database_path);
+}
+
+#[test]
 fn cli_broad_root_override_is_explicit_and_global() {
     let home = directories::BaseDirs::new()
         .expect("home directories")

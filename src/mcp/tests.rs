@@ -850,6 +850,9 @@ fn mcp_error_mapping_never_serializes_internal_or_input_paths() {
             expected_repository: unix_marker.into(),
             actual_repository: unix_marker.into(),
         },
+        crate::Error::IndexScopeMismatch {
+            database: windows_marker.into(),
+        },
         crate::Error::Io(std::io::Error::other(format!(
             "permission denied at {unix_marker}"
         ))),

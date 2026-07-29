@@ -73,6 +73,7 @@ impl RepositoryWatcher {
             let overflowed = Arc::new(AtomicBool::new(false));
             let config = Config::default().with_follow_symlinks(false);
             let callback_root = watched_root.clone();
+            let callback_policy = policy.clone();
 
             let admission_root = watched_root.clone();
             let admission_cancellation = cancellation.clone();
@@ -98,7 +99,7 @@ impl RepositoryWatcher {
                 let callback: EventCallback = Box::new({
                     let overflowed = Arc::clone(&overflowed);
                     move |event: notify::Result<Event>| {
-                        if !raw_event_is_relevant(&event, &callback_root, policy) {
+                        if !raw_event_is_relevant(&event, &callback_root, &callback_policy) {
                             return;
                         }
                         if let Err(TrySendError::Full(_)) = raw_tx.try_send(event) {
@@ -200,7 +201,7 @@ impl RepositoryWatcher {
                             process_raw_event(
                                 raw,
                                 &watched_root,
-                                policy,
+                                &policy,
                                 &mut pending,
                                 &mut rename_from,
                                 &mut rename_to,

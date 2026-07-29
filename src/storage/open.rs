@@ -10,9 +10,18 @@ impl Storage {
 
     /// Read status from an existing cache without running migrations, changing
     /// SQLite pragmas, or binding the cache to a repository.
+    #[cfg(test)]
     pub(crate) fn read_only_status(
         path: &Path,
         repository_root: &Path,
+    ) -> Result<ReadOnlyStatusSnapshot> {
+        Self::read_only_status_scoped(path, repository_root, None)
+    }
+
+    pub(crate) fn read_only_status_scoped(
+        path: &Path,
+        repository_root: &Path,
+        index_scope_digest: Option<&str>,
     ) -> Result<ReadOnlyStatusSnapshot> {
         let conn = Connection::open_with_flags(
             path,
@@ -52,13 +61,18 @@ impl Storage {
         } else {
             String::new()
         };
-        let actual_identity = repository_identity(repository_root);
+        let actual_identity = repository_identity(repository_root, index_scope_digest);
         let actual_repository = repository_root.to_string_lossy();
         let mismatched_identity =
             !expected_identity.is_empty() && expected_identity != actual_identity;
         let mismatched_legacy_root = expected_identity.is_empty()
             && !expected_repository.is_empty()
             && expected_repository != actual_repository;
+        if mismatched_identity && expected_repository == actual_repository {
+            return Err(Error::IndexScopeMismatch {
+                database: path.to_path_buf(),
+            });
+        }
         if mismatched_identity || mismatched_legacy_root {
             return Err(Error::RepositoryMismatch {
                 database: path.to_path_buf(),
@@ -149,31 +163,64 @@ impl Storage {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn open_for_repository(
         path: impl AsRef<Path>,
         repository_root: &Path,
     ) -> Result<Self> {
-        Self::open_for_repository_with_startup_timeout(path, repository_root, DEFAULT_BUSY_TIMEOUT)
+        Self::open_for_repository_scoped_with_startup_timeout(
+            path,
+            repository_root,
+            None,
+            DEFAULT_BUSY_TIMEOUT,
+        )
     }
 
-    pub(crate) fn open_for_repository_with_startup_timeout(
+    pub(crate) fn open_for_repository_scoped(
         path: impl AsRef<Path>,
         repository_root: &Path,
+        index_scope_digest: Option<&str>,
+    ) -> Result<Self> {
+        Self::open_for_repository_scoped_with_startup_timeout(
+            path,
+            repository_root,
+            index_scope_digest,
+            DEFAULT_BUSY_TIMEOUT,
+        )
+    }
+
+    pub(crate) fn open_for_repository_scoped_with_startup_timeout(
+        path: impl AsRef<Path>,
+        repository_root: &Path,
+        index_scope_digest: Option<&str>,
         startup_timeout: Duration,
     ) -> Result<Self> {
         let storage = Self::open_with_startup_timeout(path, startup_timeout)?;
-        storage.bind_repository(repository_root)?;
+        storage.bind_repository(repository_root, index_scope_digest)?;
         Ok(storage)
     }
 
-    fn bind_repository(&self, repository_root: &Path) -> Result<()> {
-        self.bind_repository_at(repository_root, unix_seconds(SystemTime::now()))
+    fn bind_repository(
+        &self,
+        repository_root: &Path,
+        index_scope_digest: Option<&str>,
+    ) -> Result<()> {
+        self.bind_repository_at(
+            repository_root,
+            index_scope_digest,
+            unix_seconds(SystemTime::now()),
+        )
     }
 
-    fn bind_repository_at(&self, repository_root: &Path, accessed_at: i64) -> Result<()> {
+    fn bind_repository_at(
+        &self,
+        repository_root: &Path,
+        index_scope_digest: Option<&str>,
+        accessed_at: i64,
+    ) -> Result<()> {
         let actual_repository = repository_root.to_path_buf();
         let actual_display = repository_root.to_string_lossy();
-        let actual_identity = repository_identity(repository_root);
+        let actual_identity = repository_identity(repository_root, index_scope_digest);
         let mut conn = self
             .writer
             .lock()
@@ -194,6 +241,11 @@ impl Storage {
             return Ok(());
         }
         if expected_identity != actual_identity {
+            if expected_repository == actual_display {
+                return Err(Error::IndexScopeMismatch {
+                    database: self.path.clone(),
+                });
+            }
             return Err(Error::RepositoryMismatch {
                 database: self.path.clone(),
                 expected_repository,

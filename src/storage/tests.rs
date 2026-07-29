@@ -497,7 +497,7 @@ fn repository_binding_updates_last_access_once_per_open() {
     let storage = Storage::open(&database).expect("storage");
 
     storage
-        .bind_repository_at(&repository, 1_234)
+        .bind_repository_at(&repository, None, 1_234)
         .expect("initial binding");
     let connection = Connection::open(&database).expect("inspect binding");
     assert_eq!(
@@ -512,7 +512,7 @@ fn repository_binding_updates_last_access_once_per_open() {
     );
 
     storage
-        .bind_repository_at(&repository, 5_678)
+        .bind_repository_at(&repository, None, 5_678)
         .expect("repeat binding");
     assert_eq!(
         connection
@@ -534,6 +534,8 @@ fn token_savings_accounting_skips_a_busy_local_writer() {
         repository_id: "repository".into(),
         repository_generation: 1,
         freshness: crate::model::Freshness::Current,
+        index_scope: crate::model::IndexScopeMode::Full,
+        index_scope_digest: None,
         source_tokens: 2,
         protocol_tokens: 3,
         path_and_metadata_tokens: 5,

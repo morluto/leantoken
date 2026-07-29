@@ -21,7 +21,11 @@ impl Services {
         let coordination = IndexCoordination::for_database(&config.database_path);
         let operation = coordination.try_acquire_operation()?;
         let freshness = operation.is_none();
-        let snapshot = Storage::read_only_status(&config.database_path, &config.root);
+        let snapshot = Storage::read_only_status_scoped(
+            &config.database_path,
+            &config.root,
+            config.index_scope().full_digest(),
+        );
         if let Some(operation) = operation {
             operation.release()?;
         }
@@ -100,6 +104,14 @@ fn status_response(
         repository_root: config.root.display().to_string(),
         database_path: config.database_path.display().to_string(),
         index_content_version: INDEX_CONTENT_VERSION,
+        index_scope: if config.index_scope().is_full() {
+            IndexScopeMode::Full
+        } else {
+            IndexScopeMode::Scoped
+        },
+        index_scope_digest: config.index_scope().digest().map(str::to_owned),
+        index_include_paths: config.index_scope().includes().to_vec(),
+        index_exclude_paths: config.index_scope().excludes().to_vec(),
         repository_generation: generation,
         index_state: if generation == 0 {
             IndexState::Uninitialized

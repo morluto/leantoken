@@ -11,7 +11,7 @@ use toml_edit::DocumentMut;
 use crate::coordination::{
     is_coordination_sidecar_for_database, is_recognized_stale_coordination_sidecar,
 };
-use crate::repository::DiscoveryPolicy;
+use crate::repository::{DiscoveryPolicy, IndexScope};
 use crate::tokens::Tokenizer;
 use crate::{Error, Result};
 
@@ -142,6 +142,8 @@ pub struct Config {
     pub max_prepare_batch_bytes: u64,
     /// Whether known generated and package-cache trees are indexed.
     pub include_generated: bool,
+    /// Immutable, cache-identified repository indexing boundary.
+    index_scope: IndexScope,
     /// Repository-relative patterns excluded from context unless explicitly included.
     pub context_exclude_paths: Vec<String>,
     /// Default number of returned results.
@@ -178,7 +180,16 @@ impl Config {
     /// aliases. Filesystem roots, the current user's home directory, and parents
     /// of that home directory are rejected by default.
     pub fn discover(root: impl AsRef<Path>, database_path: Option<PathBuf>) -> Result<Self> {
-        Self::discover_with_broad_root(root, database_path, false)
+        Self::discover_scoped_with_broad_root(root, database_path, false, IndexScope::default())
+    }
+
+    /// Resolve a repository root with an explicit cache-identified index scope.
+    pub fn discover_scoped(
+        root: impl AsRef<Path>,
+        database_path: Option<PathBuf>,
+        index_scope: IndexScope,
+    ) -> Result<Self> {
+        Self::discover_scoped_with_broad_root(root, database_path, false, index_scope)
     }
 
     /// Resolve a repository root with an explicit broad-root safety override.
@@ -189,6 +200,21 @@ impl Config {
         root: impl AsRef<Path>,
         database_path: Option<PathBuf>,
         allow_broad_root: bool,
+    ) -> Result<Self> {
+        Self::discover_scoped_with_broad_root(
+            root,
+            database_path,
+            allow_broad_root,
+            IndexScope::default(),
+        )
+    }
+
+    /// Resolve a repository root, broad-root policy, and explicit index scope.
+    pub fn discover_scoped_with_broad_root(
+        root: impl AsRef<Path>,
+        database_path: Option<PathBuf>,
+        allow_broad_root: bool,
+        index_scope: IndexScope,
     ) -> Result<Self> {
         let root = root.as_ref().canonicalize().map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -207,7 +233,8 @@ impl Config {
             return Err(Error::UnsafeRepositoryRoot(root));
         }
         let database_is_managed_cache = database_path.is_none();
-        let database_path = database_path.unwrap_or_else(|| default_database_path(&root));
+        let database_path =
+            database_path.unwrap_or_else(|| default_database_path_for_scope(&root, &index_scope));
         let database_path = canonicalize_database_path(database_path);
         let context_exclude_paths = load_context_exclude_paths(&root)?;
         Ok(Self {
@@ -222,6 +249,7 @@ impl Config {
             max_prepare_batch_files: DiscoveryLimits::DEFAULT_MAX_PREPARE_BATCH_FILES,
             max_prepare_batch_bytes: DiscoveryLimits::DEFAULT_MAX_PREPARE_BATCH_BYTES,
             include_generated: false,
+            index_scope,
             context_exclude_paths,
             default_results: DEFAULT_RESULTS,
             max_results: MAX_RESULTS,
@@ -323,7 +351,13 @@ impl Config {
     /// Return one immutable repository visibility policy.
     #[must_use]
     pub fn discovery_policy(&self) -> DiscoveryPolicy {
-        DiscoveryPolicy::new(self.include_generated)
+        DiscoveryPolicy::new(self.include_generated).with_index_scope(self.index_scope.clone())
+    }
+
+    /// Return the immutable cache-identified indexing boundary.
+    #[must_use]
+    pub fn index_scope(&self) -> &IndexScope {
+        &self.index_scope
     }
 
     #[must_use]
@@ -473,44 +507,68 @@ pub(crate) fn managed_cache_root() -> Option<PathBuf> {
         .map(|project_dirs| project_dirs.cache_dir().to_path_buf())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ManagedCacheIdentity {
     Legacy,
-    Versioned(u32),
+    Versioned {
+        version: u32,
+        root_hash: String,
+        scope_digest: Option<String>,
+    },
 }
 
+#[cfg(test)]
 pub(crate) fn managed_cache_id(root: &Path) -> String {
-    managed_cache_id_for_version(root, INDEX_CONTENT_VERSION)
+    managed_cache_id_for_scope(root, &IndexScope::default())
+}
+
+pub(crate) fn managed_cache_id_for_scope(root: &Path, scope: &IndexScope) -> String {
+    managed_cache_id_for_version(root, INDEX_CONTENT_VERSION, scope.digest())
 }
 
 pub(crate) fn parse_managed_cache_id(value: &str) -> Option<ManagedCacheIdentity> {
     if is_managed_cache_hash(value) {
         return Some(ManagedCacheIdentity::Legacy);
     }
-    let (version_text, hash) = value.strip_prefix('v')?.split_once('-')?;
+    let (version_text, remainder) = value.strip_prefix('v')?.split_once('-')?;
     let version = version_text
         .parse::<u32>()
         .ok()
         .filter(|version| *version > 0)?;
-    if version.to_string() != version_text || !is_managed_cache_hash(hash) {
+    let mut parts = remainder.split('-');
+    let root_hash = parts.next()?;
+    let scope_digest = match parts.next() {
+        Some(scope) => Some(scope.strip_prefix('s')?.to_owned()),
+        None => None,
+    };
+    if parts.next().is_some()
+        || version.to_string() != version_text
+        || !is_managed_cache_hash(root_hash)
+        || scope_digest
+            .as_deref()
+            .is_some_and(|digest| !is_managed_cache_hash(digest))
+    {
         return None;
     }
-    Some(ManagedCacheIdentity::Versioned(version))
+    Some(ManagedCacheIdentity::Versioned {
+        version,
+        root_hash: root_hash.to_owned(),
+        scope_digest,
+    })
 }
 
 pub(crate) fn managed_cache_id_matches_root(value: &str, root: &Path) -> bool {
     let hash = managed_cache_root_hash(root);
     match parse_managed_cache_id(value) {
         Some(ManagedCacheIdentity::Legacy) => value == hash,
-        Some(ManagedCacheIdentity::Versioned(version)) => {
-            value == managed_cache_id_for_version(root, version)
-        }
+        Some(ManagedCacheIdentity::Versioned { root_hash, .. }) => root_hash == hash,
         None => false,
     }
 }
 
-fn managed_cache_id_for_version(root: &Path, version: u32) -> String {
-    format!("v{version}-{}", managed_cache_root_hash(root))
+fn managed_cache_id_for_version(root: &Path, version: u32, scope_digest: Option<&str>) -> String {
+    let base = format!("v{version}-{}", managed_cache_root_hash(root));
+    scope_digest.map_or(base.clone(), |scope| format!("{base}-s{scope}"))
 }
 
 fn managed_cache_root_hash(root: &Path) -> String {
@@ -525,12 +583,23 @@ fn is_managed_cache_hash(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+#[cfg(test)]
 fn default_database_path(root: &Path) -> PathBuf {
+    default_database_path_for_scope(root, &IndexScope::default())
+}
+
+fn default_database_path_for_scope(root: &Path, scope: &IndexScope) -> PathBuf {
     if let Some(cache_root) = managed_cache_root() {
-        return cache_root.join(managed_cache_id(root)).join("index.sqlite");
+        return cache_root
+            .join(managed_cache_id_for_scope(root, scope))
+            .join("index.sqlite");
     }
+    let cache_directory = scope.digest().map_or_else(
+        || format!("v{INDEX_CONTENT_VERSION}"),
+        |digest| format!("v{INDEX_CONTENT_VERSION}-s{digest}"),
+    );
     root.join(FALLBACK_CACHE_DIRECTORY)
-        .join(format!("v{INDEX_CONTENT_VERSION}"))
+        .join(cache_directory)
         .join("index.sqlite")
 }
 
@@ -561,14 +630,18 @@ mod tests {
 
         assert!(id.starts_with(&format!("v{INDEX_CONTENT_VERSION}-")));
         assert_ne!(id, legacy_id);
-        assert_eq!(
+        assert!(matches!(
             parse_managed_cache_id(&id),
-            Some(ManagedCacheIdentity::Versioned(INDEX_CONTENT_VERSION))
-        );
+            Some(ManagedCacheIdentity::Versioned {
+                version: INDEX_CONTENT_VERSION,
+                scope_digest: None,
+                ..
+            })
+        ));
         assert!(managed_cache_id_matches_root(&id, root));
         assert!(managed_cache_id_matches_root(legacy_id, root));
         assert_ne!(
-            managed_cache_id_for_version(root, INDEX_CONTENT_VERSION - 1),
+            managed_cache_id_for_version(root, INDEX_CONTENT_VERSION - 1, None),
             id
         );
         assert_eq!(
@@ -578,6 +651,34 @@ mod tests {
         assert!(parse_managed_cache_id("v0-0000000000000001").is_none());
         assert!(parse_managed_cache_id("v01-0000000000000001").is_none());
         assert!(parse_managed_cache_id("v12-000000000000000g").is_none());
+    }
+
+    #[test]
+    fn managed_cache_identity_distinguishes_normalized_index_scopes() {
+        let root = Path::new("/tmp/repository");
+        let first = IndexScope::new(vec!["src\\**".into()], vec!["src/generated/**".into()])
+            .expect("first scope");
+        let equivalent = IndexScope::new(
+            vec!["./src/**".into(), "src/**".into()],
+            vec!["src//generated/**".into()],
+        )
+        .expect("equivalent scope");
+        let different =
+            IndexScope::new(vec!["tests/**".into()], Vec::new()).expect("different scope");
+
+        let first_id = managed_cache_id_for_scope(root, &first);
+        assert_eq!(first_id, managed_cache_id_for_scope(root, &equivalent));
+        assert_ne!(first_id, managed_cache_id(root));
+        assert_ne!(first_id, managed_cache_id_for_scope(root, &different));
+        assert!(managed_cache_id_matches_root(&first_id, root));
+        assert!(matches!(
+            parse_managed_cache_id(&first_id),
+            Some(ManagedCacheIdentity::Versioned {
+                version: INDEX_CONTENT_VERSION,
+                scope_digest: Some(_),
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -67,6 +67,12 @@ Advanced repository options:
       --include-generated
           Include known generated and package-cache directories
 
+      --index-include <PATTERN>
+          Include only repository-relative paths matched by these patterns
+
+      --index-exclude <PATTERN>
+          Exclude repository-relative paths matched by these patterns
+
       --max-walk-entries <COUNT>
           Maximum filesystem entries yielded by repository discovery
 

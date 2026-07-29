@@ -34,9 +34,13 @@ impl CacheManager {
         let path = self.root.join(id);
         let database = path.join(DATABASE_NAME);
         let identity = parse_managed_cache_id(id).expect("validated managed cache identity");
-        let index_content_version = match identity {
-            ManagedCacheIdentity::Legacy => None,
-            ManagedCacheIdentity::Versioned(version) => Some(version),
+        let (index_content_version, index_scope_digest) = match identity {
+            ManagedCacheIdentity::Legacy => (None, None),
+            ManagedCacheIdentity::Versioned {
+                version,
+                scope_digest,
+                ..
+            } => (Some(version), scope_digest),
         };
         let initial_scan = scan_artifacts(&path)?;
         let latest_access_mtime = initial_scan.latest_access_mtime;
@@ -55,6 +59,12 @@ impl CacheManager {
             id: id.into(),
             path,
             index_content_version,
+            index_scope: if index_scope_digest.is_some() {
+                IndexScopeMode::Scoped
+            } else {
+                IndexScopeMode::Full
+            },
+            index_scope_digest,
             repository_root: None,
             repository_available: None,
             last_access_unix_seconds: latest_access_mtime,

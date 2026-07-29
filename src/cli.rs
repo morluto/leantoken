@@ -72,6 +72,16 @@ const COMMAND_SCOPE_OPTIONS: &[ScopedGlobalOption] = &[
         advanced: true,
     },
     ScopedGlobalOption {
+        id: "index_include",
+        long: "--index-include",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "index_exclude",
+        long: "--index-exclude",
+        advanced: true,
+    },
+    ScopedGlobalOption {
         id: "max_walk_entries",
         long: "--max-walk-entries",
         advanced: true,
@@ -157,6 +167,26 @@ pub struct Cli {
     /// Include known generated and package-cache directories.
     #[arg(long, global = true, help_heading = "Advanced repository options")]
     pub include_generated: bool,
+
+    /// Include only repository-relative paths matched by these patterns.
+    #[arg(
+        long = "index-include",
+        value_name = "PATTERN",
+        global = true,
+        action = clap::ArgAction::Append,
+        help_heading = "Advanced repository options"
+    )]
+    pub index_include: Vec<String>,
+
+    /// Exclude repository-relative paths matched by these patterns.
+    #[arg(
+        long = "index-exclude",
+        value_name = "PATTERN",
+        global = true,
+        action = clap::ArgAction::Append,
+        help_heading = "Advanced repository options"
+    )]
+    pub index_exclude: Vec<String>,
 
     /// Maximum filesystem entries yielded by repository discovery.
     #[arg(
@@ -303,10 +333,13 @@ impl Cli {
     /// Returns an error when the repository root cannot be canonicalized or is
     /// an unsafe broad root without the explicit override.
     pub fn config(&self) -> Result<Config> {
-        let mut config = Config::discover_with_broad_root(
+        let index_scope =
+            crate::IndexScope::new(self.index_include.clone(), self.index_exclude.clone())?;
+        let mut config = Config::discover_scoped_with_broad_root(
             &self.root,
             self.database.clone(),
             self.allow_broad_root,
+            index_scope,
         )?;
         if let Some(value) = self.max_walk_entries {
             config.max_walk_entries = value.get();

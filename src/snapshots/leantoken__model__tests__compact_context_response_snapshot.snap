@@ -37,6 +37,7 @@ expression: response
     "repository_id": "repository",
     "repository_generation": 7,
     "freshness": "reconciling",
+    "index_scope": "full",
     "source_tokens": 9,
     "protocol_tokens": 17,
     "path_and_metadata_tokens": 97,

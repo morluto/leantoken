@@ -976,6 +976,49 @@ fn changing_generated_policy_invalidates_the_index_configuration_hash() {
 }
 
 #[test]
+fn changing_index_scope_forces_a_complete_membership_rebuild() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    std::fs::create_dir(root.path().join("src")).expect("src");
+    std::fs::create_dir(root.path().join("third_party")).expect("third party");
+    std::fs::write(root.path().join("src/lib.rs"), "fn selected() {}\n").expect("source");
+    std::fs::write(
+        root.path().join("third_party/lib.rs"),
+        "fn dependency() {}\n",
+    )
+    .expect("dependency");
+    let storage = Storage::open(&database).expect("storage");
+    let source_scope = leantoken::IndexScope::new(vec!["src/**".into()], Vec::new())
+        .expect("source scope");
+    let first_config = Arc::new(
+        Config::discover_scoped(root.path(), Some(database.clone()), source_scope)
+            .expect("scoped config"),
+    );
+    let first = Indexer::new(first_config, storage.clone()).expect("scoped indexer");
+    first.reconcile(false).expect("scoped reconcile");
+    assert!(storage.find_file("src/lib.rs").expect("source lookup").is_some());
+    assert!(
+        storage
+            .find_file("third_party/lib.rs")
+            .expect("dependency lookup")
+            .is_none()
+    );
+
+    let full_config =
+        Arc::new(Config::discover(root.path(), Some(database)).expect("full config"));
+    let full = Indexer::new(full_config, storage.clone()).expect("full indexer");
+    let rebuilt = full.reconcile(false).expect("scope rebuild");
+
+    assert_eq!(rebuilt.repository_generation, 2);
+    assert!(
+        storage
+            .find_file("third_party/lib.rs")
+            .expect("dependency lookup")
+            .is_some()
+    );
+}
+
+#[test]
 fn preparation_batch_size_does_not_change_the_logical_index() {
     let root = tempfile::tempdir().expect("root");
     for index in 0..6 {
