@@ -4,7 +4,7 @@ macro_rules! integration_modules {
         $(mod $module;)+
 
         #[test]
-        fn every_integration_test_file_is_registered() {
+        fn every_ordinary_integration_test_file_is_registered() {
             use std::{collections::BTreeSet, ffi::OsStr, fs};
 
             let tests_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
@@ -14,7 +14,8 @@ macro_rules! integration_modules {
                 .filter(|path| path.extension() == Some(OsStr::new("rs")))
                 .filter_map(|path| {
                     let stem = path.file_stem()?.to_str()?;
-                    (stem != "integration").then(|| stem.to_owned())
+                    (stem != "integration" && stem != "benchmark_contract")
+                        .then(|| stem.to_owned())
                 })
                 .collect::<BTreeSet<_>>();
             let registered = [$(stringify!($module)),+]
@@ -28,20 +29,10 @@ macro_rules! integration_modules {
 }
 
 integration_modules!(
-    benchmark_contract,
-    binary,
+    process,
     cli,
-    config,
     graph_signal_ablation_report,
-    indexer,
-    mcp,
-    mcp_token_costs,
     model_ab_trajectory_report,
-    ranking,
-    repository,
     representation_comparison,
     services,
-    storage,
-    tokens,
-    watcher,
 );

@@ -1517,6 +1517,9 @@ fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
         McpProcess::spawn_with_args(root.path(), &database, &["--max-files", "1"]);
     follower.initialize();
     follower.send_initialized();
+
+    drop(operation_blocker);
+
     follower.send(serde_json::json!({
         "jsonrpc": "2.0",
         "id": 2,
@@ -1526,8 +1529,6 @@ fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
             "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
         }
     }));
-
-    drop(operation_blocker);
     // Process scheduling can delay the follower's first response when unit
     // and integration tests share the host. This is a liveness observation,
     // not the one-second leadership-grace contract tested in Services.

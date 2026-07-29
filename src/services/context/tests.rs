@@ -106,6 +106,11 @@ fn mcp_repository_questions_prioritize_mcp_implementation_paths() {
             "src/mcp.rs",
             "benchmarks/reports/mcp-profile.md",
         ),
+        (
+            "Which test suite verifies the MCP server catalog and tool schemas?",
+            "crates/test-suite/src/domains/protocol.rs",
+            "tests/services/search.rs",
+        ),
     ] {
         assert!(
             context_path_score(preferred, &[], task) > context_path_score(distractor, &[], task),

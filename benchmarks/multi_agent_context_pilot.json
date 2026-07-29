@@ -18,7 +18,7 @@
       "symbol": "select_with_options"
     },
     {
-      "path": "tests/ranking.rs",
+      "path": "crates/test-suite/src/domains/retrieval.rs",
       "symbol": "select_omits_known_hashes_and_reports_them"
     }
   ],

@@ -127,7 +127,9 @@ impl ContextPathScorer {
                 || path == "src/main/mcp_runtime.rs"
             {
                 score += 14.0;
-            } else if path == "tests/mcp.rs" || path.starts_with("tests/mcp/") {
+            } else if path == "crates/test-suite/src/domains/protocol.rs"
+                || path == "crates/test-suite/src/domains/contracts.rs"
+            {
                 score += 8.0;
             }
         }
