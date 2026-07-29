@@ -363,11 +363,13 @@ gate targeted reconciliation and any future hot-file cache.
 For a generation-one dependency-heavy decision, build
 `indexing_profile` in release mode and use its `cold-matrix` subcommand against
 the pinned clean TileLang checkout documented in the benchmark guide. The lane
-runs 1/2/4-worker samples and cancellation/restart probes in isolated
-subprocesses, validates complete logical/retrieval parity, and writes the raw
-report under `target/` by default. It is manual evidence and is not part of
-`cargo test-extras` or normal pull-request CI; the small in-process contract
-test remains in the example test target.
+runs 1/2/4-worker screening samples and cancellation/restart probes in isolated
+subprocesses. Its `--matrix-kind two-worker-follow-up` mode instead runs four
+samples per arm in alternating ABBA/BAAB order and requires both p50 and p95
+improvement. Both modes validate complete logical/retrieval parity and write
+the raw report under `target/` by default. They are manual evidence and are not
+part of `cargo test-extras` or normal pull-request CI; the small in-process
+contract test remains in the example test target.
 
 On Linux, reproduce the stdio MCP ownership and resource profile after building
 the product binary in release mode:
@@ -376,6 +378,7 @@ the product binary in release mode:
 cargo build --release
 cargo run --release --example mcp_multiprocess_profile -- \
   --binary target/release/leantoken \
+  --max-index-workers 1 \
   --process-counts 1,4,8 \
   --files 200 \
   --functions-per-file 40 \
@@ -383,16 +386,19 @@ cargo run --release --example mcp_multiprocess_profile -- \
   --idle-seconds 5 \
   --polling-directories 50001 \
   --polling-observation-seconds 31 \
-  --output target/mcp-multiprocess-cpu-v2.json
+  --output target/mcp-multiprocess-cpu-v3.json
 ```
 
 The example rejects more than 16 processes, 10,000 fixture files, 1,000
 functions per file, 1,000 warm rounds, 60 idle seconds, 60,000 polling
-directories, 120 polling-observation seconds, or a timeout above 300 seconds.
-It requires Linux `/proc`; use `--skip-polling-probe` only for a mechanical
-smoke run. Historical raw artifacts and their interpretation are linked from
-the benchmark guide; write new host-local evidence under `target/` unless it is
-being reviewed as a versioned benchmark report.
+directories, 120 polling-observation seconds, a timeout above 300 seconds, or
+an explicit worker limit outside `1..=64`. It requires Linux `/proc`; use
+`--skip-polling-probe` only for a mechanical smoke run. A guarded 1-vs-2
+cold-start contention comparison runs the complete profiler four times in
+external `1,2,2,1` order and retains every schema-v3 report. Historical raw
+artifacts and their interpretation are linked from the benchmark guide; write
+new host-local evidence under `target/` unless it is being reviewed as a
+versioned benchmark report.
 
 Run the deterministic semantic change receipt gate in release mode:
 

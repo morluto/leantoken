@@ -558,6 +558,15 @@ file preparation and reused afterward. Read-only followers therefore allocate
 no indexing threads, while a process that becomes leader retains its configured
 worker bound without rebuilding a pool on every reconciliation.
 
+The manual dependency-heavy profiler keeps production concurrency unchanged.
+Its screening matrix accepts at most 16 fresh subprocesses. The guarded
+two-worker follow-up admits only alternating `1,2,2,1` / `2,1,1,2` blocks,
+requires at least four generation-one samples per arm, and retains the existing
+64-worker parser bound. The stdio multi-process profiler likewise validates an
+explicit `1..=64` worker limit and records it in every report; that explicit
+limit applies to all indexing attempts in the measurement process and is not a
+generation-one-only production policy.
+
 Request result, token, and context-line bounds are validated in `Services`, so
 library and direct MCP callers receive the same contract as the CLI. CLI
 positive-integer parsers and MCP JSON Schema ranges provide earlier feedback
