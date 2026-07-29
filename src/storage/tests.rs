@@ -16,7 +16,10 @@ fn cold_publication_reports_ordered_bounded_phases() {
             &baseline,
             "config",
             false,
-            |phase| phases.push(phase),
+            |phase| {
+                phases.push(phase);
+                Ok(())
+            },
             |writer| {
                 writer.replace(sample_file("lib.rs", "fn answer() -> u8 { 42 }\n"))?;
                 let unpublished =
@@ -42,6 +45,67 @@ fn cold_publication_reports_ordered_bounded_phases() {
             ReconciliationPublicationPhase::CommitAndCheckpoint,
         ]
     );
+}
+
+#[test]
+fn publication_phase_cancellation_rolls_back_and_rebuilds_from_the_same_cache() {
+    for target in [
+        ReconciliationPublicationPhase::ChunkWordFts,
+        ReconciliationPublicationPhase::ChunkTrigramFts,
+        ReconciliationPublicationPhase::SymbolFts,
+        ReconciliationPublicationPhase::ReferenceFts,
+        ReconciliationPublicationPhase::CommitAndCheckpoint,
+    ] {
+        let root = tempfile::tempdir().expect("root");
+        let database = root.path().join("index.sqlite");
+        let storage = Storage::open(&database).expect("storage");
+        let baseline = storage.meta().expect("baseline");
+        let error = storage
+            .publish_reconciliation_at_with_progress(
+                &baseline,
+                "config",
+                false,
+                |phase| {
+                    if phase == target {
+                        Err(Error::Cancelled)
+                    } else {
+                        Ok(())
+                    }
+                },
+                |writer| {
+                    writer.replace(sample_file("lib.rs", "fn answer() -> u8 { 42 }\n"))?;
+                    Ok(())
+                },
+            )
+            .expect_err("cancellation before commit must roll back");
+        assert!(
+            matches!(error, Error::Cancelled),
+            "target phase: {target:?}"
+        );
+        drop(storage);
+
+        let reopened = Storage::open(&database).expect("reopen cancelled cache");
+        let cancelled =
+            Storage::read_only_status(&database, root.path()).expect("cancelled status");
+        assert_eq!(cancelled.generation, 0, "target phase: {target:?}");
+        assert_eq!(cancelled.counts.files, 0, "target phase: {target:?}");
+
+        let generation = reopened
+            .full_reconcile(
+                "config",
+                vec![sample_file("lib.rs", "fn answer() -> u8 { 42 }\n")],
+            )
+            .expect("rebuild cancelled cache");
+        assert_eq!(generation, 1, "target phase: {target:?}");
+        assert_eq!(
+            reopened
+                .search_word("answer", 10)
+                .expect("search rebuilt cache")
+                .len(),
+            1,
+            "target phase: {target:?}"
+        );
+    }
 }
 
 #[test]
