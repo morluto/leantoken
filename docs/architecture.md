@@ -33,10 +33,20 @@ ignore-aware discovery -> chunking -> tree-sitter extraction
   validation in `validation`.
 - The MCP adapter owns SDK types, protocol error translation, cancellation, and
   stdio lifecycle. It omits optional output schemas from the catalog and offers
-  explicit dual, text-only, and structured-only result modes. Dual remains the
-  compatibility default. Protocol errors cross an explicit allowlist: clients
+  explicit dual, text-only, and structured-only result modes. Structured is the
+  default; dual and text remain troubleshooting overrides. Protocol errors cross an explicit allowlist: clients
   receive fixed safe messages and stable category data, while path-bearing and
   infrastructure details remain in stderr diagnostics.
+
+The MCP adapter also exposes persisted retrieval receipts as non-enumerable,
+read-only resources. Producers return the opaque
+`leantoken://receipt/v1/{receipt_id}` URI; `resources/list` stays empty and one
+narrow template advertises the URI shape. Resource reads use storage snapshots
+only: they do not reconcile, refresh, prune, touch access order, or extend the
+24-hour receipt lifetime. The response contains at most 2,048 source-free
+evidence identities and remains subject to the existing per-receipt evidence
+byte limit. Receipt links and resource fields remain adapter-owned rather than
+entering service or CLI response types.
 
 LeanToken does not implement JSON-RPC framing or MCP dispatch. Those remain in
 the official Rust MCP SDK.
@@ -957,16 +967,10 @@ releases the permit if the handler unwinds before producing a response. Excess
 calls receive the same fail-fast retryable capacity response before rmcp can
 create another task. Initialization and `tools/list` bypass this dispatch gate.
 
-Successful-result projection is fixed for explicit `dual`, `text`, and
-`structured` modes. Explicit `auto` starts in fail-safe `dual` and may change
-only during the MCP initialize handler. Its immutable registry requires exact
-client name/version, negotiated protocol version, and current deterministic
-tool-catalog digest; resolution is shared by handler clones and the bounded
-transport through one atomic wire-mode value. Missing or malformed initialize
-never reaches a smaller mode, and any key mismatch remains dual. Registry
-lookup is a fixed in-memory row scan with no filesystem access, subprocess,
-network call, storage write, or concurrency fan-out. Adding a row requires a
-code-reviewed real-host evidence receipt and a catalog-digest test.
+Successful-result projection is static for explicit `dual`, `text`, and
+`structured` modes. Structured is the global default; the bounded transport
+and handler clones carry the same immutable mode without initialize-time host
+detection or a compatibility registry.
 
 Inside the handler, each `LeanTokenMcp` server independently admits at most 16
 active `tools/call` requests after repository identity validation. Clones of
@@ -1000,6 +1004,19 @@ consistent generation. That snapshot is transaction state, not a copied
 database or per-request artifact. Its main storage effect is that SQLite may
 retain old WAL pages until the reader finishes; dropping the request session
 rolls back the read transaction and returns the connection.
+
+Receipt `resources/read` requests have a separate fail-fast eight-request
+admission bound matching that reader pool. Admitted reads run on the blocking
+executor, hold one deferred transaction for a complete receipt snapshot, and
+return their permit after serialization state is materialized. Excess reads
+fail before waiting for a pooled connection or allocating a bounded receipt
+response.
+
+MCP requests with `max_response_tokens` reserve 128 tokens before service
+execution for the adapter-owned receipt reference. The adapter recalculates the
+decorated structured result and enforces the caller's original ceiling as a
+final backstop. This keeps receipt persistence behind the same fail-before-write
+budget decision as other response metadata.
 
 ## Live read vs index
 

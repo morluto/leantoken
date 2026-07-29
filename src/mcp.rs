@@ -6,7 +6,11 @@ use std::time::{Duration, Instant};
 
 use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
-    model::{CallToolResult, ContentBlock},
+    model::{
+        CacheScope, CallToolResult, ContentBlock, ListResourceTemplatesResult, ListResourcesResult,
+        PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
+        ReadResourceResult, Resource, ResourceContents, ResourceTemplate,
+    },
     service::{NotificationContext, RequestContext},
     tool, tool_handler, tool_router,
 };
@@ -33,6 +37,7 @@ use crate::services::{
 
 const DEFAULT_ACTIVE_TOOL_CALL_CAPACITY: usize = 16;
 const DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY: usize = DEFAULT_ACTIVE_TOOL_CALL_CAPACITY;
+const DEFAULT_RECEIPT_RESOURCE_READ_CAPACITY: usize = 8;
 const INITIAL_INDEX_WAIT: Duration = Duration::from_secs(30);
 const MCP_INSTRUCTIONS: &str = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: for autonomous broad coding, debugging, review, or architecture triage, call leantoken.context once with the user's task and plan_only=false; use the materialized evidence directly and make at most one focused follow-up for an explicit coverage gap. Reserve plan_only=true for human or control-plane inspection before expensive or high-risk materialization. PREFER leantoken.search over grep or rg for source search; leantoken.files over find, ls, or glob for paths; leantoken.outline over opening whole files to discover structure; leantoken.read over cat, head, or sed for exact current symbols and ranges; leantoken.history over git show, diff, or log -L for one symbol across immutable revisions; and leantoken.json over jq or whole-file reads for structural JSON queries, summaries, and selected-field diffs. Workflow: known identifier -> search -> read; known file, unknown range -> outline -> read; unknown path -> files. Set consistency=reconcile_working_tree on index-backed tools after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, runtime probes, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms and reuse returned hashes to suppress unchanged evidence. When an older-generation receipt is worth preserving, call leantoken.receipt_rebase explicitly; it carries only same-path, same-coordinate, same-hash evidence. After an upgrade, restart or re-register the host if serverInfo.version or tools/list is older than the current runtime; use leantoken setup --refresh --yes and verify the negotiated server version before relying on new fields.";
 
@@ -40,17 +45,40 @@ fn serialized_response<T: Serialize>(response: T) -> crate::Result<serde_json::V
     serde_json::to_value(response).map_err(|error| crate::Error::InternalFailure(error.to_string()))
 }
 
+#[cfg(test)]
 pub(crate) fn mcp_schema_fingerprint() -> String {
     let catalog = LeanTokenMcp::tool_router().list_all();
     let encoded = serde_json::to_vec(&catalog).expect("MCP tool catalog is serializable");
     crate::text::hash_bytes(&encoded)
 }
 
+fn mcp_contract() -> serde_json::Value {
+    serde_json::json!({
+        "tools": LeanTokenMcp::tool_router().list_all(),
+        "resources": {
+            "capability": {"listChanged": false, "subscribe": false},
+            "listed": [],
+            "templates": [{
+                "uriTemplate": resources::RECEIPT_RESOURCE_TEMPLATE,
+                "name": "retrieval_receipt",
+                "mimeType": resources::RECEIPT_RESOURCE_MEDIA_TYPE,
+            }],
+        },
+        "result_envelope_version": 2,
+        "default_result_mode": McpResultMode::Structured,
+    })
+}
+
+pub(crate) fn mcp_contract_fingerprint() -> String {
+    let encoded = serde_json::to_vec(&mcp_contract()).expect("MCP contract is serializable");
+    crate::text::hash_bytes(&encoded)
+}
+
 pub(crate) fn mcp_runtime_version() -> String {
     format!(
-        "{}+schema.{}",
+        "{}+contract.{}",
         env!("CARGO_PKG_VERSION"),
-        mcp_schema_fingerprint()
+        mcp_contract_fingerprint()
     )
 }
 
@@ -65,18 +93,15 @@ mod requests;
 use requests::*;
 
 mod admission;
-mod compatibility;
+mod resources;
 mod result;
 mod runtime;
 mod server;
 mod state;
 
 use admission::RequestAdmission;
-use compatibility::McpResultModeState;
-pub(crate) use compatibility::resolve_auto_result_mode;
-pub use compatibility::{McpResultModeResolution, McpResultModeResolutionReason};
 pub use result::{McpResultMode, tool_result};
-use result::{RetryableToolResponse, retryable_tool_result};
+use result::{RetryableToolResponse, retryable_tool_result, tool_result_with_limit};
 use runtime::RetrievalPreparation;
 #[cfg(test)]
 use runtime::retry_after_initial_index_with_policy;
@@ -106,8 +131,7 @@ pub async fn serve_stdio(services: Arc<Services>, result_mode: McpResultMode) ->
 /// Run a prepared MCP server over stdio.
 pub async fn serve_stdio_server(server: LeanTokenMcp) -> crate::Result<()> {
     let token = CancellationToken::new();
-    let transport =
-        BoundedStdioTransport::new(server.request_dispatch.clone(), server.result_mode.clone());
+    let transport = BoundedStdioTransport::new(server.request_dispatch.clone(), server.result_mode);
 
     let signal_task = tokio::spawn({
         let token = token.clone();

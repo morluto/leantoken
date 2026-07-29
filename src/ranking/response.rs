@@ -117,9 +117,7 @@ fn finalize_context_response(
         protocol_tokens: 0,
         path_and_metadata_tokens: 0,
         total_response_tokens: 0,
-        payload_tokens: 0,
         tokenizer: tokenizer.name().into(),
-        emitted_tokens,
         token_count_exact: tokenizer.is_exact(),
         receipt_id: None,
         receipt_suppressed_exact: 0,
@@ -150,6 +148,5 @@ fn finalize_context_response(
     response.meta.protocol_tokens = accounting.protocol_tokens;
     response.meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
     response.meta.total_response_tokens = accounting.total_response_tokens;
-    response.meta.payload_tokens = accounting.total_response_tokens;
     response
 }

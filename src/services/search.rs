@@ -293,7 +293,6 @@ impl Services {
                     .sum();
                 let mut meta = response.meta;
                 meta.source_tokens = source_tokens;
-                meta.emitted_tokens = source_tokens;
                 let mut compact = SearchGroupedResponse {
                     groups_returned: groups.len(),
                     groups,

@@ -139,11 +139,11 @@ async fn read_delta_returns_a_complete_strictly_cheaper_edit() {
     assert_eq!(receipt.outcome, ReadDeltaOutcome::Delta);
     assert_eq!(receipt.base_generation, Some(first_receipt.head_generation));
     assert_eq!(receipt.head_hash, changed.content_hash);
-    assert_eq!(receipt.delta_tokens, Some(changed.meta.emitted_tokens));
-    assert!(receipt.full_tokens > changed.meta.emitted_tokens);
+    assert_eq!(receipt.delta_tokens, Some(changed.meta.source_tokens));
+    assert!(receipt.full_tokens > changed.meta.source_tokens);
     assert_eq!(
         receipt.avoided_tokens,
-        receipt.full_tokens - changed.meta.emitted_tokens
+        receipt.full_tokens - changed.meta.source_tokens
     );
     assert!(receipt.fallback_reason.is_none());
     assert_response_token_accounting!(changed, Tokenizer::Cl100kBase);
@@ -772,7 +772,7 @@ async fn read_receipt_distinguishes_exact_suppression_from_not_modified() {
     assert!(!repeated.not_modified);
     assert!(repeated.content.is_none());
     assert_eq!(repeated.meta.receipt_suppressed_exact, 1);
-    assert_eq!(repeated.meta.emitted_tokens, 0);
+    assert_eq!(repeated.meta.source_tokens, 0);
     let report = services
         .token_savings_report()
         .await
@@ -829,7 +829,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
         .expect("conditional exact range");
     assert_eq!(unchanged.status, ReadStatus::NotModified);
     assert!(unchanged.content.is_none());
-    assert_eq!(unchanged.meta.emitted_tokens, 0);
+    assert_eq!(unchanged.meta.source_tokens, 0);
 
     let from_second = services
         .read(ReadRequest {
@@ -1010,7 +1010,7 @@ async fn open_ended_read_bounds_live_suffix_before_returning_content() {
     assert!(content.len() <= 12 * 32);
     assert!(content.contains("generated_5000"));
     assert!(response.start_line >= 5_000);
-    assert!(response.meta.emitted_tokens <= 12);
+    assert!(response.meta.source_tokens <= 12);
 }
 
 #[tokio::test]
@@ -1258,7 +1258,7 @@ async fn token_truncated_read_reports_the_returned_line_range() {
     assert_eq!(response.start_line, 2);
     assert_eq!(response.end_line, response.start_line + returned_lines - 1);
     assert!(response.end_line <= 4);
-    assert!(response.meta.emitted_tokens <= 3);
+    assert!(response.meta.source_tokens <= 3);
 }
 
 #[tokio::test]

@@ -242,7 +242,7 @@ async fn compare_context_representations() {
         );
         let context_full_read_source_tokens = context_full_read_hits
             .iter()
-            .map(|r| r.meta.emitted_tokens)
+            .map(|r| r.meta.source_tokens)
             .sum();
 
         let search_request = SearchRequest {
@@ -342,7 +342,7 @@ async fn compare_context_representations() {
         }
         let read_total_json_tokens =
             tokens::count(&serde_json::to_string(&read_hits).expect("read json"));
-        let read_source_tokens = read_hits.iter().map(|r| r.meta.emitted_tokens).sum();
+        let read_source_tokens = read_hits.iter().map(|r| r.meta.source_tokens).sum();
 
         let repo_map_total_json =
             tokens::count(&serde_json::to_string(&repo_map).expect("repo map json"));
@@ -356,13 +356,13 @@ async fn compare_context_representations() {
             context_representation_breakdown: breakdown,
             context_full_read_source_tokens,
             context_full_read_total_json_tokens,
-            search_source_tokens: search.meta.emitted_tokens,
+            search_source_tokens: search.meta.source_tokens,
             search_total_json_tokens: search_total_json,
-            search_grouped_source_tokens: grouped_search.meta.emitted_tokens,
+            search_grouped_source_tokens: grouped_search.meta.source_tokens,
             search_grouped_total_json_tokens: search_grouped_total_json,
-            outline_source_tokens: outline.meta.emitted_tokens,
+            outline_source_tokens: outline.meta.source_tokens,
             outline_total_json_tokens: outline_total_json,
-            outline_signatures_source_tokens: signature_outline.meta.emitted_tokens,
+            outline_signatures_source_tokens: signature_outline.meta.source_tokens,
             outline_signatures_total_json_tokens: outline_signatures_total_json,
             read_source_tokens,
             read_total_json_tokens,
@@ -374,11 +374,11 @@ async fn compare_context_representations() {
             ),
             outline_source_savings_vs_read_fraction: savings(
                 read_source_tokens,
-                outline.meta.emitted_tokens,
+                outline.meta.source_tokens,
             ),
             search_source_savings_vs_read_fraction: savings(
                 read_source_tokens,
-                search.meta.emitted_tokens,
+                search.meta.source_tokens,
             ),
             latency_ms,
         };

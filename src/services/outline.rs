@@ -688,7 +688,6 @@ impl Services {
             })
             .sum::<usize>();
         response.meta.source_tokens = symbol_tokens.saturating_add(import_tokens);
-        response.meta.emitted_tokens = response.meta.source_tokens;
         receipt.apply_meta(&mut response.meta);
         self.finalize_bounded_response(&mut response, options)?;
         if record_savings {

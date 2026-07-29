@@ -224,7 +224,6 @@ impl Services {
             meta.protocol_tokens = 0;
             meta.path_and_metadata_tokens = 0;
             meta.total_response_tokens = 0;
-            meta.payload_tokens = 0;
             meta.source_tokens
         };
         const MAX_ACCOUNTING_PASSES: usize = 32;
@@ -235,14 +234,12 @@ impl Services {
             if meta.protocol_tokens == accounting.protocol_tokens
                 && meta.path_and_metadata_tokens == accounting.path_and_metadata_tokens
                 && meta.total_response_tokens == accounting.total_response_tokens
-                && meta.payload_tokens == accounting.total_response_tokens
             {
                 return Ok(());
             }
             meta.protocol_tokens = accounting.protocol_tokens;
             meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
             meta.total_response_tokens = accounting.total_response_tokens;
-            meta.payload_tokens = accounting.total_response_tokens;
         }
         Err(Error::InternalFailure(
             "serialized response accounting did not reach a fixed point".into(),
@@ -554,9 +551,7 @@ impl Services {
             protocol_tokens: 0,
             path_and_metadata_tokens: 0,
             total_response_tokens: 0,
-            payload_tokens: 0,
             tokenizer: self.config.tokenizer.name().into(),
-            emitted_tokens,
             token_count_exact: self.config.tokenizer.is_exact(),
             receipt_id: None,
             receipt_suppressed_exact: 0,
@@ -571,6 +566,14 @@ impl Services {
         let mut input = b"leantoken-repository-root-v1\0".to_vec();
         input.extend_from_slice(self.config.root.as_os_str().as_encoded_bytes());
         blake3::hash(&input).to_hex()[..32].to_string()
+    }
+
+    pub(crate) fn read_stored_receipt(
+        &self,
+        receipt_id: &str,
+        now_unix_millis: i64,
+    ) -> Result<crate::receipt::StoredReceipt> {
+        self.storage.read_receipt(receipt_id, now_unix_millis)
     }
 
     /// Rejects retrieval bound to a different repository/worktree.

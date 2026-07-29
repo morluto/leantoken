@@ -42,7 +42,7 @@ leantoken json <path> [options]
 leantoken context --task <text> --budget <tokens> [--consistency <mode>]
 leantoken update [--check] [--yes]
 leantoken upgrade [--check] [--yes]
-leantoken mcp [--result-mode auto|dual|text|structured]
+leantoken mcp [--result-mode dual|text|structured]
 leantoken setup [CLIENT...] [--all] [--refresh] [--yes] [--dry-run] [--allow-outdated]
 leantoken remove [CLIENT...] [--all] [--yes] [--dry-run]
 leantoken cache list [--summary] [--state STATE] [--repository-root PATH]
@@ -456,18 +456,9 @@ service errors exposed through MCP use fixed, allowlisted messages and a stable
 canonical paths, plus underlying I/O and SQLite details, remain in stderr
 diagnostics rather than protocol responses.
 
-The default `dual` mode returns JSON as text and `structuredContent` for broad
-host compatibility. `text` and `structured` remove that duplication, but use
-them only after capturing the target host and confirming it consumes that
-representation. `auto` is an explicit opt-in: initialize must exactly match a
-code-reviewed client name, client version, negotiated MCP protocol version, and
-current tool-catalog digest. Any missing initialize state or mismatch falls
-back to `dual`; explicit `dual`, `text`, and `structured` are never rewritten.
-LeanToken does not inspect parent processes, `PATH`, environment variables, or
-host-family prefixes to resolve the mode. `leantoken doctor` reports requested
-and resolved modes, the exact match or miss reason, catalog freshness, and the
-reviewed observation when one matched. Setup continues to register `dual`
-unless it can attest the complete verified tuple.
+The default `structured` mode returns the typed result without duplicating its
+JSON as text. Explicit `dual` and `text` modes remain troubleshooting
+overrides. `leantoken doctor` reports the effective static mode directly.
 
 The catalog publishes documented input schemas but omits
 optional output schemas; repeating full response DTOs in every `tools/list`
@@ -760,10 +751,11 @@ text/regex scan and result payload but cannot claim that the host skipped a
 model turn. A future handoff or capsule integration would need separate host
 evidence before claiming an avoided call.
 
-The MCP initialize response appends `+schema.<fingerprint>` to the runtime
-version. The fingerprint is computed from the running tool catalog, so clients
-can distinguish a stale server binary or cached schema from the feature set
-that accepted the request.
+The MCP initialize response appends `+contract.<fingerprint>` to the runtime
+version. The fingerprint covers the running tool catalog, resource capability
+and template contract, result-envelope version, and default result mode, so
+clients can distinguish a stale server binary or cached contract from the
+feature set that accepted the request.
 
 Each page examines at most `max_results` ranked candidates. `max_tokens` may
 filter some or all of those candidates, so a page can contain fewer hits or be
@@ -1322,7 +1314,6 @@ overhead:
   including paths, metadata values, and repeated result structure.
 - `total_response_tokens` counts the final compact JSON service response,
   including the nonzero accounting fields themselves.
-- `payload_tokens` is a compatibility alias for `total_response_tokens`.
 - `tokenizer` identifies the tokenizer used for every count.
 
 Accounting is filled repeatedly to a deterministic fixed point. Therefore
@@ -1343,11 +1334,9 @@ shapes fail loudly instead of dropping evidence without a valid continuation.
 These counts and limits describe the service
 response DTO, not MCP
 text/structured-content duplication, tool schemas, provider framing, or JSON-RPC
-envelopes. In the default `dual` mode, MCP serializes the structured payload in
+envelopes. The `dual` troubleshooting mode serializes the structured payload in
 both text and `structuredContent`; use the wire-cost harness when that boundary
 matters.
-- `emitted_tokens` remains a compatibility alias for `source_tokens`.
-
 The default tokenizer is `cl100k_base`. Exact built-in modes are `cl100k_base`,
 `o200k_base`, `o200k_harmony`, `p50k_base`, `p50k_edit`, `r50k_base`, and
 `gpt2`.
@@ -1370,7 +1359,7 @@ expected-hash suppression. Retry chains, evidence use, superseded calls, and
 task outcomes remain explicitly unobserved.
 
 Source limits do not include JSON keys, paths, scores, hashes, receipts, tool
-schemas, or JSON-RPC envelopes. `payload_tokens` captures the compact response
+schemas, or JSON-RPC envelopes. `total_response_tokens` captures the compact response
 DTO costs; benchmark utilities continue to measure complete transport costs
 when they include schemas, result-mode duplication, and JSON-RPC envelopes.
 

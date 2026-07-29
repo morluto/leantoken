@@ -4,6 +4,8 @@ use std::borrow::Cow;
 
 use serde::de::DeserializeOwned;
 
+pub(in crate::mcp) const RECEIPT_RESOURCE_RESPONSE_RESERVE_TOKENS: usize = 128;
+
 /// Project-owned parameter extractor that preserves generated RMCP schemas but
 /// returns deserialization failures as ordinary JSON-RPC invalid-params errors.
 #[derive(Debug, Deserialize)]
@@ -58,7 +60,11 @@ pub(in crate::mcp) fn service_call_options(
     max_response_tokens: Option<usize>,
 ) -> ServiceCallOptions {
     max_response_tokens.map_or_else(ServiceCallOptions::new, |limit| {
-        ServiceCallOptions::new().with_max_response_tokens(limit)
+        ServiceCallOptions::new().with_max_response_tokens(
+            limit
+                .saturating_sub(RECEIPT_RESOURCE_RESPONSE_RESERVE_TOKENS)
+                .max(1),
+        )
     })
 }
 

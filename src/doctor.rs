@@ -12,7 +12,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::config::INDEX_CONTENT_VERSION;
-use crate::mcp::{McpResultModeResolution, mcp_schema_fingerprint, resolve_auto_result_mode};
+use crate::mcp::McpResultMode;
 use crate::setup::{self, SetupClient};
 use crate::{Config, Error, Result};
 
@@ -50,8 +50,8 @@ pub struct DoctorReport {
     pub instructions_loaded: bool,
     /// Exact MCP tool names exposed by the server.
     pub tools: Vec<String>,
-    /// Requested, resolved, and fail-closed MCP result-mode decision.
-    pub result_mode: McpResultModeResolution,
+    /// Effective static MCP result mode.
+    pub result_mode: McpResultMode,
     /// Host registration and pre-session discovery state.
     pub integration: IntegrationReport,
     /// First-retrieval readiness result.
@@ -151,8 +151,7 @@ pub fn run(config: &Config, ready_timeout: Duration) -> Result<DoctorReport> {
     )?;
     let initialize = transport.response(1, RESPONSE_TIMEOUT, "handshake")?;
     let result = result_object(&initialize, "initialize", "handshake")?;
-    let protocol_version =
-        required_string(result, "/protocolVersion", "protocol version", "handshake")?;
+    required_string(result, "/protocolVersion", "protocol version", "handshake")?;
     let server_name = required_string(result, "/serverInfo/name", "server name", "handshake")?;
     let server_version =
         required_string(result, "/serverInfo/version", "server version", "handshake")?;
@@ -166,7 +165,7 @@ pub fn run(config: &Config, ready_timeout: Duration) -> Result<DoctorReport> {
         return Err(doctor_error(
             "handshake",
             format!(
-                "MCP reported version {server_version}, expected {}+schema.<32 hex characters>",
+                "MCP reported version {server_version}, expected {}+contract.<32 hex characters>",
                 env!("CARGO_PKG_VERSION")
             ),
         ));
@@ -333,12 +332,7 @@ pub fn run(config: &Config, ready_timeout: Duration) -> Result<DoctorReport> {
     } else {
         "stale"
     };
-    let result_mode = resolve_auto_result_mode(
-        "leantoken-doctor",
-        env!("CARGO_PKG_VERSION"),
-        &protocol_version,
-        &mcp_schema_fingerprint(),
-    );
+    let result_mode = McpResultMode::Structured;
     Ok(DoctorReport {
         status: "ready",
         repository_root: config.root.clone(),
@@ -377,7 +371,7 @@ pub fn run(config: &Config, ready_timeout: Duration) -> Result<DoctorReport> {
 
 fn server_version_matches_current_runtime(version: &str) -> bool {
     version
-        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+schema."))
+        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+contract."))
         .is_some_and(|fingerprint| {
             fingerprint.len() == 32 && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit())
         })
@@ -407,13 +401,7 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
     )?;
     writeln!(output, "  ✓ Agent guidance loaded")?;
     writeln!(output, "  ✓ Tool catalog: {} MCP tools", report.tools.len())?;
-    writeln!(
-        output,
-        "  ✓ Result mode: {:?} → {:?} ({})",
-        report.result_mode.requested_mode,
-        report.result_mode.resolved_mode,
-        report.result_mode.reason.as_str()
-    )?;
+    writeln!(output, "  ✓ Result mode: {:?}", report.result_mode)?;
     writeln!(
         output,
         "  {} Host registration: {}",
@@ -587,7 +575,7 @@ impl DoctorTransport {
             .arg("--tokenizer")
             .arg(config.tokenizer.name())
             .arg("mcp")
-            .args(["--result-mode", "auto"])
+            .args(["--result-mode", "structured"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -787,7 +775,7 @@ mod tests {
     fn runtime_version_requires_the_current_semver_and_bounded_schema_fingerprint() {
         let current = concat!(
             env!("CARGO_PKG_VERSION"),
-            "+schema.0123456789abcdef0123456789abcdef"
+            "+contract.0123456789abcdef0123456789abcdef"
         );
         assert!(server_version_matches_current_runtime(current));
         assert!(!server_version_matches_current_runtime(env!(
@@ -795,10 +783,10 @@ mod tests {
         )));
         assert!(!server_version_matches_current_runtime(concat!(
             env!("CARGO_PKG_VERSION"),
-            "+schema.short"
+            "+contract.short"
         )));
         assert!(!server_version_matches_current_runtime(
-            "999.0.0+schema.0123456789abcdef0123456789abcdef"
+            "999.0.0+contract.0123456789abcdef0123456789abcdef"
         ));
     }
 

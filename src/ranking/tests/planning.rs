@@ -15,7 +15,6 @@
         assert!(preview.fragments.is_empty());
         assert!(preview.receipt.fragment_hashes.is_empty());
         assert_eq!(preview.meta.source_tokens, 0);
-        assert_eq!(preview.meta.emitted_tokens, 0);
         assert!(!plan.candidates.is_empty());
         assert_eq!(plan.candidates.len(), 1);
         assert!(!plan.result_complete);
@@ -146,22 +145,22 @@
         assert!(!resp.receipt.task_fingerprint.is_empty());
         assert_eq!(resp.receipt.fragment_hashes.len(), resp.fragments.len());
         assert_eq!(
-            resp.meta.emitted_tokens,
+            resp.meta.source_tokens,
             resp.fragments.iter().map(|f| f.token_count).sum::<usize>()
         );
-        assert_eq!(resp.meta.source_tokens, resp.meta.emitted_tokens);
+        assert_eq!(resp.meta.source_tokens, resp.meta.source_tokens);
         assert_eq!(resp.meta.tokenizer, tokens::Tokenizer::default().name());
         let mut countable = resp.clone();
         countable.meta.protocol_tokens = 0;
         countable.meta.path_and_metadata_tokens = 0;
         countable.meta.total_response_tokens = 0;
-        countable.meta.payload_tokens = 0;
+        countable.meta.total_response_tokens = 0;
         let payload = serde_json::to_string(&countable).expect("serialize context response");
         assert_eq!(
             resp.meta.total_response_tokens,
             tokens::Tokenizer::default().count(&payload)
         );
-        assert_eq!(resp.meta.payload_tokens, resp.meta.total_response_tokens);
+        assert_eq!(resp.meta.total_response_tokens, resp.meta.total_response_tokens);
         assert_eq!(
             resp.meta.total_response_tokens,
             resp.meta.source_tokens
@@ -184,9 +183,9 @@
         );
 
         assert!(!response.meta.token_count_exact);
-        assert_eq!(response.meta.source_tokens, response.meta.emitted_tokens);
+        assert_eq!(response.meta.source_tokens, response.meta.source_tokens);
         assert_eq!(response.meta.tokenizer, tokens::Tokenizer::Estimate.name());
-        assert_eq!(response.meta.emitted_tokens, 4);
+        assert_eq!(response.meta.source_tokens, 4);
     }
 
     #[test]

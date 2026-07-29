@@ -248,7 +248,6 @@ impl Services {
                 .iter()
                 .map(|fragment| self.config.tokenizer.count(&fragment.content))
                 .sum();
-            response.meta.emitted_tokens = response.meta.source_tokens;
             receipt.apply_meta(&mut response.meta);
             if response.meta.receipt_near_duplicates > 0 {
                 response.warnings.push(format!(

@@ -12,8 +12,8 @@ use wait_timeout::ChildExt;
 fn assert_runtime_version(value: &serde_json::Value) {
     let version = value.as_str().expect("runtime version string");
     let fingerprint = version
-        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+schema."))
-        .expect("runtime version carries the current package version and schema fingerprint");
+        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+contract."))
+        .expect("runtime version carries the current package version and contract fingerprint");
     assert_eq!(fingerprint.len(), 32);
     assert!(fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()));
 }
@@ -67,7 +67,7 @@ fn cli_indexes_statuses_and_searches_as_json() {
     );
     assert_eq!(search["hits"][0]["path"], "lib.rs");
     assert!(
-        search["meta"]["emitted_tokens"]
+        search["meta"]["source_tokens"]
             .as_u64()
             .is_some_and(|value| value <= 100)
     );
@@ -566,10 +566,7 @@ fn doctor_verifies_identity_catalog_and_first_retrieval() {
     );
     assert_eq!(report["instructions_loaded"], true);
     assert_eq!(report["tools"].as_array().map(Vec::len), Some(9));
-    assert_eq!(report["result_mode"]["requested_mode"], "auto");
-    assert_eq!(report["result_mode"]["resolved_mode"], "dual");
-    assert_eq!(report["result_mode"]["reason"], "client_name_miss");
-    assert_eq!(report["result_mode"]["registry_schema_current"], true);
+    assert_eq!(report["result_mode"], "structured");
     assert!(
         matches!(
             report["integration"]["registration_status"].as_str(),
@@ -730,7 +727,7 @@ fn mcp_survives_malformed_and_invalid_messages() {
 }
 
 #[test]
-fn mcp_result_modes_and_auto_resolution_project_exact_wire_shapes() {
+fn mcp_result_modes_project_exact_wire_shapes() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
         .expect("write fixture");
@@ -745,46 +742,6 @@ fn mcp_result_modes_and_auto_resolution_project_exact_wire_shapes() {
             "1",
             "2025-11-25",
             false,
-            true,
-        ),
-        (
-            "auto",
-            "codex-mcp-client",
-            "0.144.1",
-            "2025-06-18",
-            false,
-            true,
-        ),
-        (
-            "auto",
-            "codex-mcp-client",
-            "0.144.2",
-            "2025-06-18",
-            true,
-            true,
-        ),
-        (
-            "auto",
-            "codex-mcp-client",
-            "0.144.1",
-            "2025-11-25",
-            true,
-            true,
-        ),
-        (
-            "auto",
-            "codex-mcp-client",
-            "0.144.1",
-            "2099-01-01",
-            true,
-            true,
-        ),
-        (
-            "auto",
-            "unknown-host",
-            "0.144.1",
-            "2025-06-18",
-            true,
             true,
         ),
     ] {

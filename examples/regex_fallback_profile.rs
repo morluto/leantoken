@@ -296,7 +296,7 @@ fn canonical_outcome(result: &LeanTokenResult<SearchEvaluation>) -> Value {
                 meta.insert("receipt_id".into(), Value::Null);
                 for field in [
                     "path_and_metadata_tokens",
-                    "payload_tokens",
+                    "total_response_tokens",
                     "total_response_tokens",
                 ] {
                     meta.insert(field.into(), Value::from(0));

@@ -114,7 +114,7 @@ async fn response_accounting_reaches_an_inclusive_fixed_point_across_digit_bound
             response.meta.total_response_tokens
         );
         assert_eq!(
-            response.meta.payload_tokens,
+            response.meta.total_response_tokens,
             response.meta.total_response_tokens
         );
         digit_widths.push(response.meta.total_response_tokens.to_string().len());
@@ -830,7 +830,7 @@ async fn index_search_read_and_hash_delta() {
         .await
         .expect("search");
     assert!(!search.hits.is_empty());
-    assert!(search.meta.emitted_tokens <= 100);
+    assert!(search.meta.source_tokens <= 100);
 
     let first = services
         .read(ReadRequest {
@@ -866,7 +866,7 @@ async fn index_search_read_and_hash_delta() {
         .expect("read delta");
     assert_eq!(second.status, ReadStatus::NotModified);
     assert!(second.content.is_none());
-    assert_eq!(second.meta.emitted_tokens, 0);
+    assert_eq!(second.meta.source_tokens, 0);
 }
 
 #[tokio::test]

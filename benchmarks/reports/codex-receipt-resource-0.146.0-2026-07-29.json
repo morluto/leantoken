@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "decision": "promote_structured_default",
+  "host": "codex-cli",
+  "host_version": "0.146.0",
+  "model": "gpt-5.6-sol",
+  "candidate_server_version": "0.1.18+contract.8608bc293efcb9092b87646f0b9578f2",
+  "candidate_result_mode": "structured",
+  "candidate_default_result_mode": "dual",
+  "fixture": "benchmarks/fixtures/codex-receipt-resource-v1.json",
+  "prompt_requires": [
+    "evidence_count",
+    "src/receipt.rs content_hash"
+  ],
+  "permissions": "dangerously-bypass-approvals-and-sandbox",
+  "cache_policy": "fresh ephemeral Codex session; shared immutable pre-indexed repository database",
+  "production_variant": "instructed_reference_link",
+  "production_gate": {
+    "trials": 5,
+    "exact_resource_reads": 5,
+    "correct_answers": 5,
+    "uri_repairs": 0,
+    "invalid_reads": 0,
+    "fallback_retrievals": 0,
+    "wrong_server_selections": 0,
+    "inline_duplication_supplied_answer": false,
+    "expected_evidence_count": 1,
+    "expected_content_hash": "ffb3513a56552e73da78afa0713238fd"
+  },
+  "trial_summaries": [
+    {"trial": 1, "resource_read": true, "uri_unchanged": true, "correct_server": true, "correct_answer": true, "invalid_reads": 0, "retries": 0, "fallback_tools": 0, "input_tokens": 98283, "cached_input_tokens": 70912, "output_tokens": 255},
+    {"trial": 2, "resource_read": true, "uri_unchanged": true, "correct_server": true, "correct_answer": true, "invalid_reads": 0, "retries": 0, "fallback_tools": 0, "input_tokens": 98519, "cached_input_tokens": 70912, "output_tokens": 257},
+    {"trial": 3, "resource_read": true, "uri_unchanged": true, "correct_server": true, "correct_answer": true, "invalid_reads": 0, "retries": 0, "fallback_tools": 0, "input_tokens": 98466, "cached_input_tokens": 92160, "output_tokens": 236},
+    {"trial": 4, "resource_read": true, "uri_unchanged": true, "correct_server": true, "correct_answer": true, "invalid_reads": 0, "retries": 0, "fallback_tools": 0, "input_tokens": 98539, "cached_input_tokens": 70912, "output_tokens": 259},
+    {"trial": 5, "resource_read": true, "uri_unchanged": true, "correct_server": true, "correct_answer": true, "invalid_reads": 0, "retries": 0, "fallback_tools": 0, "input_tokens": 97255, "cached_input_tokens": 69888, "output_tokens": 345}
+  ],
+  "serialized_result_bytes": null,
+  "raw_traces_retained": false,
+  "limitations": [
+    "The promotion gate is the five-trial production instructed variant required by policy.",
+    "The inline and reference-link-only fixture variants are frozen for reproducibility but were not rerun because they do not participate in the selected promotion threshold.",
+    "The terminal capture exposed structured values but did not retain an exact raw JSON-RPC frame, so serialized_result_bytes is unavailable.",
+    "Two read-only-sandbox calibration sessions cancelled MCP calls before the fixed permission policy was applied and are excluded from the controlled trials."
+  ]
+}

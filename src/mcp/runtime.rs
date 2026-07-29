@@ -17,7 +17,15 @@ impl LeanTokenMcp {
         &self,
         value: T,
     ) -> Result<CallToolResult, ErrorData> {
-        tool_result(value, self.result_mode.resolved_mode())
+        tool_result(value, self.result_mode)
+    }
+
+    fn result_with_limit<T: Serialize>(
+        &self,
+        value: T,
+        max_response_tokens: Option<usize>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result_with_limit(value, self.result_mode, max_response_tokens)
     }
 
     pub(in crate::mcp) fn services(
@@ -41,7 +49,7 @@ impl LeanTokenMcp {
         &self,
         response: RetryableToolResponse,
     ) -> CallToolResult {
-        retryable_tool_result(response, self.result_mode.resolved_mode())
+        retryable_tool_result(response, self.result_mode)
     }
 
     pub(in crate::mcp) async fn prepare_retrieval_call(
@@ -76,6 +84,7 @@ impl LeanTokenMcp {
         tool: &'static str,
         prepared: PreparedRetrievalCall,
         expected_repository_id: Option<String>,
+        max_response_tokens: Option<usize>,
         mut operation: F,
     ) -> Result<CallToolResult, ErrorData>
     where
@@ -90,9 +99,10 @@ impl LeanTokenMcp {
             ..
         } = prepared;
         let mcp_services = self.services.clone();
-        self.run_admitted(
+        self.run_admitted_with_limit(
             services,
             expected_repository_id,
+            max_response_tokens,
             move |services| async move {
                 retry_after_initial_index(
                     tool,
@@ -187,6 +197,22 @@ impl LeanTokenMcp {
         F: FnOnce(Arc<Services>) -> Fut,
         Fut: Future<Output = crate::Result<T>>,
     {
+        self.run_admitted_with_limit(services, expected_repository_id, None, operation)
+            .await
+    }
+
+    async fn run_admitted_with_limit<T, F, Fut>(
+        &self,
+        services: Arc<Services>,
+        expected_repository_id: Option<String>,
+        max_response_tokens: Option<usize>,
+        operation: F,
+    ) -> Result<CallToolResult, ErrorData>
+    where
+        T: Serialize,
+        F: FnOnce(Arc<Services>) -> Fut,
+        Fut: Future<Output = crate::Result<T>>,
+    {
         services
             .validate_repository_id(expected_repository_id.as_deref())
             .map_err(into_mcp_error)?;
@@ -203,7 +229,44 @@ impl LeanTokenMcp {
                 matches!(error.reconciliation_cause(), crate::Error::IndexNotReady)
             })
             .then(|| progress_services.index_progress_for_retry());
-        self.service_result_with_progress(result, index_progress)
+        match result {
+            Ok(value) => self.result_with_limit(value, max_response_tokens),
+            Err(error) => {
+                let error = restore_adapter_response_budget(error, max_response_tokens);
+                self.service_result_with_progress::<T>(Err(error), index_progress)
+            }
+        }
+    }
+}
+
+fn restore_adapter_response_budget(
+    error: crate::Error,
+    max_response_tokens: Option<usize>,
+) -> crate::Error {
+    let Some(provided_max_response_tokens) = max_response_tokens else {
+        return error;
+    };
+    let crate::Error::ResponseBudgetExceeded {
+        minimum_required_response_tokens,
+        breakdown,
+        ..
+    } = error
+    else {
+        return error;
+    };
+    let receipt_reserve_tokens = RECEIPT_RESOURCE_RESPONSE_RESERVE_TOKENS;
+    let minimum_required_response_tokens =
+        minimum_required_response_tokens.saturating_add(receipt_reserve_tokens);
+    crate::Error::ResponseBudgetExceeded {
+        provided_max_response_tokens,
+        minimum_required_response_tokens,
+        retry_with_at_least: minimum_required_response_tokens,
+        breakdown: crate::ResponseBudgetBreakdown {
+            receipt_reserve_tokens: breakdown
+                .receipt_reserve_tokens
+                .saturating_add(receipt_reserve_tokens),
+            ..breakdown
+        },
     }
 }
 

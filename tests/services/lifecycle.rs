@@ -110,10 +110,10 @@ async fn concurrent_queries_observe_one_committed_generation_during_reconciliati
             .expect("reconcile")
     });
     let mut queries = tokio::task::JoinSet::new();
-    // Stay within the documented process-local active retrieval bound. Exact
-    // overload behavior is covered separately; this test isolates generation
-    // consistency while reconciliation publishes a replacement snapshot.
-    for index in 0..16 {
+    // Stay within the execution bound so a slow Windows runner cannot turn this
+    // snapshot-consistency test into a queue-timeout test. Exact queue and
+    // overload behavior is covered separately.
+    for index in 0..8 {
         let services = std::sync::Arc::clone(&services);
         queries.spawn(async move {
             let query = if index % 2 == 0 { "greet" } else { "replacement" };

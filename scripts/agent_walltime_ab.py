@@ -827,7 +827,7 @@ def run_corpus(
                 raise InvalidEvidence(
                     f"{workload['name']}: context response is incomplete"
                 )
-            emitted = meta.get("emitted_tokens")
+            emitted = meta.get("source_tokens")
             if not isinstance(emitted, int) or emitted > task["token_budget"]:
                 raise InvalidEvidence(
                     f"{workload['name']}: context exceeded its token budget"
@@ -837,7 +837,7 @@ def run_corpus(
                 "paths": sorted({item["path"] for item in fragments}),
                 "fragments": fragments,
                 "source_tokens": emitted,
-                "payload_tokens": meta.get("payload_tokens"),
+                "total_response_tokens": meta.get("total_response_tokens"),
             }, payload
 
         def validate_discovery(native: Any, lean: Any) -> None:
@@ -908,7 +908,7 @@ def run_corpus(
         context_paths, context_value["fragments"], task
     )
     discovery_report["context_source_tokens"] = context_value["source_tokens"]
-    discovery_report["context_payload_tokens"] = context_value["payload_tokens"]
+    discovery_report["context_payload_tokens"] = context_value["total_response_tokens"]
     discovery_report["context_determinism"] = "pass"
     return {
         "name": workload["name"],

@@ -4,9 +4,10 @@ use super::*;
 #[derive(Clone)]
 pub struct LeanTokenMcp {
     pub(in crate::mcp) services: McpServices,
-    pub(in crate::mcp) result_mode: McpResultModeState,
+    pub(in crate::mcp) result_mode: McpResultMode,
     pub(in crate::mcp) request_admission: RequestAdmission,
     pub(in crate::mcp) request_dispatch: RequestAdmission,
+    pub(in crate::mcp) resource_read_admission: RequestAdmission,
 }
 
 impl LeanTokenMcp {
@@ -14,9 +15,10 @@ impl LeanTokenMcp {
     pub fn new(services: Arc<Services>) -> Self {
         Self {
             services: McpServices::ready(services),
-            result_mode: McpResultModeState::new(McpResultMode::Dual),
+            result_mode: McpResultMode::Structured,
             request_admission: RequestAdmission::new(DEFAULT_ACTIVE_TOOL_CALL_CAPACITY),
             request_dispatch: RequestAdmission::new(DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY),
+            resource_read_admission: RequestAdmission::new(DEFAULT_RECEIPT_RESOURCE_READ_CAPACITY),
         }
     }
 
@@ -27,9 +29,12 @@ impl LeanTokenMcp {
         (
             Self {
                 services: services.clone(),
-                result_mode: McpResultModeState::new(McpResultMode::Dual),
+                result_mode: McpResultMode::Structured,
                 request_admission: RequestAdmission::new(DEFAULT_ACTIVE_TOOL_CALL_CAPACITY),
                 request_dispatch: RequestAdmission::new(DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY),
+                resource_read_admission: RequestAdmission::new(
+                    DEFAULT_RECEIPT_RESOURCE_READ_CAPACITY,
+                ),
             },
             services,
         )
@@ -38,13 +43,7 @@ impl LeanTokenMcp {
     /// Select the successful-result representation for this server instance.
     #[must_use]
     pub fn with_result_mode(mut self, result_mode: McpResultMode) -> Self {
-        self.result_mode = McpResultModeState::new(result_mode);
+        self.result_mode = result_mode;
         self
-    }
-
-    /// Return the requested and currently resolved result-mode decision.
-    #[must_use]
-    pub fn result_mode_resolution(&self) -> McpResultModeResolution {
-        self.result_mode.resolution()
     }
 }

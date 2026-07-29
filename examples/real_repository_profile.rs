@@ -698,7 +698,7 @@ fn comparable_search_response(response: &leantoken::SearchResponse) -> Value {
     let mut response = response.clone();
     response.meta.receipt_id = None;
     response.meta.path_and_metadata_tokens = 0;
-    response.meta.payload_tokens = 0;
+    response.meta.total_response_tokens = 0;
     response.meta.total_response_tokens = 0;
     serde_json::to_value(response).expect("search response serialization")
 }

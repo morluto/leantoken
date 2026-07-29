@@ -949,7 +949,7 @@ fn ingest_mcp_result(payload: &Value, tool_calls: &mut ToolCallCounts) -> Result
             u64::try_from(serde_json::to_vec(structured)?.len())?,
         )?;
         let emitted = structured
-            .pointer("/meta/emitted_tokens")
+            .pointer("/meta/source_tokens")
             .and_then(Value::as_u64)
             .unwrap_or(0);
         tool_calls.mcp_emitted_source_tokens =
@@ -1227,7 +1227,7 @@ mod tests {
             "result": {
                 "Ok": {
                     "content":[{"type":"text","text":"private source"}],
-                    "structuredContent":{"meta":{"emitted_tokens":7},"private":"source"},
+                    "structuredContent":{"meta":{"source_tokens":7},"private":"source"},
                     "isError":true
                 }
             }

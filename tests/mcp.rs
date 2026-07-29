@@ -5,7 +5,10 @@ use leantoken::{
 };
 use rmcp::{
     RoleClient,
-    model::{CallToolRequestParams, CallToolResult, ClientRequest, ErrorCode, Request},
+    model::{
+        CacheScope, CallToolRequestParams, CallToolResult, ClientRequest, ContentBlock, ErrorCode,
+        ProtocolVersion, ReadResourceRequestParams, Request, ResourceContents,
+    },
     serve_client, serve_server,
     service::{Peer, PeerRequestOptions, ServiceError},
 };
@@ -339,7 +342,7 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
         context
             .structured_content
             .as_ref()
-            .and_then(|value| value.pointer("/meta/emitted_tokens"))
+            .and_then(|value| value.pointer("/meta/source_tokens"))
             .and_then(serde_json::Value::as_u64)
             .is_some_and(|tokens| tokens <= 40)
     );
@@ -508,13 +511,18 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
 
     let server_info = client.peer().peer_info().expect("server initialize result");
     assert_eq!(server_info.server_info.name, "leantoken");
-    let schema_fingerprint = server_info
+    assert!(server_info.capabilities.resources.is_some());
+    let contract_fingerprint = server_info
         .server_info
         .version
-        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+schema."))
-        .expect("runtime version carries the MCP schema fingerprint");
-    assert_eq!(schema_fingerprint.len(), 32);
-    assert!(schema_fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+contract."))
+        .expect("runtime version carries the MCP contract fingerprint");
+    assert_eq!(contract_fingerprint.len(), 32);
+    assert!(
+        contract_fingerprint
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    );
     let instructions = server_info
         .instructions
         .clone()
@@ -562,6 +570,28 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         );
         assert_eq!(tool.input_schema.get("type"), Some(&serde_json::json!("object")));
     }
+    assert!(
+        client
+            .peer()
+            .list_all_resources()
+            .await
+            .expect("list resources")
+            .is_empty()
+    );
+    let templates = client
+        .peer()
+        .list_all_resource_templates()
+        .await
+        .expect("list resource templates");
+    assert_eq!(templates.len(), 1);
+    assert_eq!(
+        templates[0].uri_template,
+        "leantoken://receipt/v1/{receipt_id}"
+    );
+    assert_eq!(
+        templates[0].mime_type.as_deref(),
+        Some("application/vnd.leantoken.retrieval-receipt+json;version=1")
+    );
 
     let files_arguments = serde_json::json!({
         "operation": "tree",
@@ -597,7 +627,10 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     .await
     .expect("call exhaustive search");
     assert_ne!(response.is_error, Some(true));
-    let structured = response.structured_content.expect("occurrence response");
+    let structured = response
+        .structured_content
+        .as_ref()
+        .expect("occurrence response");
     assert!(structured.get("hits").is_none());
     assert_eq!(structured["groups_returned"], 1);
     assert_eq!(structured["occurrences_returned"], 1);
@@ -606,6 +639,74 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     assert_eq!(
         structured["groups"][0]["occurrences"][0]["start_column"],
         7
+    );
+    let receipt_uri = structured["receipt_resource"]["uri"]
+        .as_str()
+        .expect("receipt resource URI")
+        .to_owned();
+    assert_eq!(
+        structured["receipt_resource"]["id"],
+        structured["meta"]["receipt_id"]
+    );
+    assert!(response.content.iter().any(|content| {
+        matches!(
+            content,
+            ContentBlock::ResourceLink(resource) if resource.uri == receipt_uri
+        )
+    }));
+    let receipt = client
+        .peer()
+        .read_resource(ReadResourceRequestParams::new(receipt_uri.clone()))
+        .await
+        .expect("read receipt resource");
+    assert_eq!(receipt.contents.len(), 1);
+    if server_info.protocol_version >= ProtocolVersion::V_2026_07_28 {
+        assert_eq!(receipt.cache_scope, Some(CacheScope::Private));
+        assert_eq!(receipt.ttl_ms, Some(0));
+    } else {
+        assert_eq!(receipt.cache_scope, None);
+        assert_eq!(receipt.ttl_ms, None);
+    }
+    let ResourceContents::TextResourceContents {
+        uri,
+        mime_type,
+        text,
+        ..
+    } = &receipt.contents[0]
+    else {
+        panic!("receipt resource must be JSON text");
+    };
+    assert_eq!(uri, &receipt_uri);
+    assert_eq!(
+        mime_type.as_deref(),
+        Some("application/vnd.leantoken.retrieval-receipt+json;version=1")
+    );
+    let receipt_json: serde_json::Value =
+        serde_json::from_str(text).expect("receipt resource JSON");
+    assert_eq!(receipt_json["uri"], receipt_uri);
+    assert_eq!(receipt_json["complete"], true);
+    assert_eq!(receipt_json["source_free"], true);
+    assert_eq!(
+        receipt_json["evidence_count"].as_u64(),
+        receipt_json["evidence"].as_array().map(|items| items.len() as u64)
+    );
+    let ServiceError::McpError(not_found) = client
+        .peer()
+        .read_resource(ReadResourceRequestParams::new(
+            receipt_uri.to_ascii_uppercase(),
+        ))
+        .await
+        .expect_err("altered receipt URI must not resolve")
+    else {
+        panic!("altered receipt URI returned a non-MCP error");
+    };
+    assert_eq!(
+        not_found.code,
+        if server_info.protocol_version >= ProtocolVersion::V_2026_07_28 {
+            ErrorCode::INVALID_PARAMS
+        } else {
+            ErrorCode::RESOURCE_NOT_FOUND
+        }
     );
 
     let response = call_tool(
@@ -955,7 +1056,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         bounded
             .structured_content
             .as_ref()
-            .and_then(|value| value.pointer("/meta/emitted_tokens"))
+            .and_then(|value| value.pointer("/meta/source_tokens"))
             .and_then(serde_json::Value::as_u64)
             .is_some_and(|tokens| tokens <= 50)
     );
@@ -979,7 +1080,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         default_context
             .structured_content
             .as_ref()
-            .and_then(|value| value.pointer("/meta/emitted_tokens"))
+            .and_then(|value| value.pointer("/meta/source_tokens"))
             .and_then(serde_json::Value::as_u64)
             .is_some_and(|tokens| tokens <= 3_000)
     );

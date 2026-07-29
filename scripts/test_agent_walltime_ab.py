@@ -230,7 +230,7 @@ sys.stderr.flush()
     def test_canonical_context_ignores_only_receipt_identity(self) -> None:
         first = {
             "fragments": [{"path": "src/lib.rs", "source": "one"}],
-            "meta": {"receipt_id": "r1", "emitted_tokens": 4},
+            "meta": {"receipt_id": "r1", "source_tokens": 4},
             "receipt": {"receipt_id": "r1", "fragment_hashes": ["abc"]},
         }
         second = json.loads(json.dumps(first))

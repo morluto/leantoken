@@ -42,9 +42,7 @@ expression: response
     "protocol_tokens": 17,
     "path_and_metadata_tokens": 97,
     "total_response_tokens": 123,
-    "payload_tokens": 123,
     "tokenizer": "cl100k_base",
-    "emitted_tokens": 9,
     "token_count_exact": true
   }
 }

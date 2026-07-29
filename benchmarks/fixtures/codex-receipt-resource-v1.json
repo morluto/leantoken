@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "receipt": {
+    "schema_version": 1,
+    "kind": "retrieval_receipt",
+    "uri": "leantoken://receipt/v1/r0123456789abcdef0123456789abcdef0123456789abcdef",
+    "receipt_id": "r0123456789abcdef0123456789abcdef0123456789abcdef",
+    "repository_id": "0123456789abcdef0123456789abcdef",
+    "repository_identity": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "repository_generation": 1,
+    "created_unix_millis": 1785283200000,
+    "expires_unix_millis": 1785369600000,
+    "evidence_count": 1,
+    "evidence": [
+      {
+        "path": "src/receipt.rs",
+        "start_line": 10,
+        "end_line": 14,
+        "content_hash": "ffb3513a56552e73da78afa0713238fd",
+        "exact_only": false
+      }
+    ],
+    "complete": true,
+    "source_free": true
+  },
+  "variants": {
+    "inline": {
+      "receipt_inline": true
+    },
+    "reference_link": {
+      "receipt_resource": {
+        "kind": "retrieval_receipt",
+        "id": "r0123456789abcdef0123456789abcdef0123456789abcdef",
+        "uri": "leantoken://receipt/v1/r0123456789abcdef0123456789abcdef0123456789abcdef"
+      },
+      "resource_link": true
+    },
+    "instructed_reference_link": {
+      "receipt_resource": {
+        "kind": "retrieval_receipt",
+        "id": "r0123456789abcdef0123456789abcdef0123456789abcdef",
+        "uri": "leantoken://receipt/v1/r0123456789abcdef0123456789abcdef0123456789abcdef"
+      },
+      "instruction": "Copy the opaque URI exactly and call MCP resources/read. In Codex, call read_mcp_resource.",
+      "resource_link": true
+    }
+  }
+}
