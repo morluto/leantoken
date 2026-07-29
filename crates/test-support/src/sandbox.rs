@@ -199,12 +199,22 @@ fn stable_id(module: &str, callsite: &str) -> String {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
-    format!("{module}-{hash:016x}")
+    let safe_module = module
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    format!("{safe_module}-{hash:016x}")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Sandbox;
+    use super::{Sandbox, stable_id};
 
     #[test]
     fn creates_isolated_capability_directories() {
@@ -214,5 +224,15 @@ mod tests {
         assert!(sandbox.cache().is_dir());
         assert_eq!(sandbox.environment().get("LC_ALL").unwrap(), "C");
         assert!(!sandbox.environment().contains_key("RUSTUP_TOOLCHAIN"));
+    }
+
+    #[test]
+    fn stable_ids_are_valid_cross_platform_path_components() {
+        let id = stable_id("leantoken_test_suite::domains::storage", "storage_case");
+        assert!(
+            id.chars().all(
+                |character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            )
+        );
     }
 }

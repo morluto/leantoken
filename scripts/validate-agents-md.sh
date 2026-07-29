@@ -33,6 +33,14 @@ while IFS= read -r cmd; do
     failures=$((failures + 1))
   fi
 
+  # Cargo aliases are not ordinary subcommands. `cargo "$subcmd" --help`
+  # executes the alias, which is unsafe for test aliases and can turn a
+  # documentation check into a full test run. `cargo help` above verifies that
+  # the alias is registered; skip the ordinary-subcommand flag check here.
+  if grep -Eq "^[[:space:]]*$subcmd[[:space:]]*=" .cargo/config.toml 2>/dev/null; then
+    continue
+  fi
+
   # Validate flags parse (dry-run via cargo help)
   if ! cargo "$subcmd" --help &>/dev/null; then
     echo "::error::Command in AGENTS.md may have invalid flags: $bare_cmd"
