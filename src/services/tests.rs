@@ -1128,7 +1128,7 @@ fn pinned_snapshot_operation_errors_are_not_retried() {
 }
 
 #[tokio::test]
-async fn regex_candidate_overflow_is_not_reported_as_complete() {
+async fn regex_retained_chunk_overflow_is_not_reported_as_complete() {
     use crate::storage::{ChunkInput, IndexedFile};
 
     let root = tempfile::tempdir().expect("root");
@@ -1181,5 +1181,123 @@ async fn regex_candidate_overflow_is_not_reported_as_complete() {
         .await
         .expect_err("candidate overflow must be explicit");
 
-    assert!(matches!(error, Error::LimitExceeded));
+    assert!(
+        matches!(
+            error,
+            Error::RetrievalLimitExceeded {
+                kind: crate::RetrievalLimitKind::RegexRetainedChunks,
+                observed: 2_001,
+                limit: 2_000,
+            }
+        ),
+        "unexpected candidate overflow: {error:?}"
+    );
+}
+
+#[tokio::test]
+async fn regex_candidate_chunk_overflow_reports_the_fts_bound() {
+    use crate::storage::{ChunkInput, IndexedFile};
+
+    let root = tempfile::tempdir().expect("root");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    let chunks = (0..=10_000)
+        .map(|index| ChunkInput {
+            content: "needle".into(),
+            start_line: index + 1,
+            end_line: index + 1,
+            start_byte: index * 6,
+            end_byte: (index + 1) * 6,
+            token_count: 1,
+        })
+        .collect();
+    services
+        .storage
+        .full_reconcile(
+            "hash-a",
+            vec![IndexedFile {
+                path: "large.rs".into(),
+                language: Some("rust".into()),
+                structurally_complete: true,
+                size_bytes: 60_006,
+                modified_ns: None,
+                content_hash: "hash-large".into(),
+                chunks,
+                symbols: Vec::new(),
+                references: Vec::new(),
+                imports: Vec::new(),
+            }],
+        )
+        .expect("indexed fixture");
+
+    let error = services
+        .search(SearchRequest {
+            query: "needle".into(),
+            mode: SearchMode::Regex,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(100),
+            max_tokens: Some(10_000),
+            context_lines: Some(0),
+            case_sensitive: true,
+            all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
+            query_receipt: None,
+            cursor: None,
+        })
+        .await
+        .expect_err("candidate overflow must be explicit");
+
+    assert!(matches!(
+        error,
+        Error::RetrievalLimitExceeded {
+            kind: crate::RetrievalLimitKind::RegexCandidateChunks,
+            observed: 10_001,
+            limit: 10_000,
+        }
+    ));
+}
+
+#[test]
+fn parser_coverage_bounds_groups_and_sanitizes_extension_labels() {
+    let mut rows = ParserCoverageRows::default();
+    for index in 0..=MAX_PARSER_COVERAGE_GROUPS {
+        rows.unrecognized_extensions
+            .push(crate::storage::UnrecognizedExtensionCoverageRow {
+                extension: format!(".ext{index:02}"),
+                files: 1,
+                source_bytes: u64::try_from(index + 1).expect("fixture bytes"),
+            });
+    }
+    rows.unrecognized_extensions
+        .push(crate::storage::UnrecognizedExtensionCoverageRow {
+            extension: "[no_extension]".into(),
+            files: 1,
+            source_bytes: 2,
+        });
+    rows.unrecognized_extensions
+        .push(crate::storage::UnrecognizedExtensionCoverageRow {
+            extension: "[other_extension]".into(),
+            files: 1,
+            source_bytes: 3,
+        });
+
+    let summary = parser_coverage_summary(rows);
+
+    assert_eq!(
+        summary.unrecognized_extensions.len(),
+        MAX_PARSER_COVERAGE_GROUPS
+    );
+    assert_eq!(summary.indexed.files, MAX_PARSER_COVERAGE_GROUPS + 3);
+    assert_eq!(summary.unrecognized, summary.indexed);
+    assert_eq!(summary.other_unrecognized_extensions.files, 3);
+    assert_eq!(safe_extension_family("source.RS"), ".rs");
+    assert_eq!(safe_extension_family("Makefile"), "[no_extension]");
+    assert_eq!(
+        safe_extension_family("data.unsupported$label"),
+        "[other_extension]"
+    );
 }

@@ -686,6 +686,10 @@ claims.
 | Lightweight rows inspected for path-scoped trigram planning | 100000 |
 | Full-scan fallback files | 10000 |
 | Full-scan fallback chunks per file | 256 |
+| Regex candidate-plan HIR nodes | 256 |
+| Regex candidate-plan terms | 32 |
+| Regex candidate-plan aggregate term bytes | 256 |
+| Regex prefix/suffix literal alternatives | 16 |
 | File scan page size | 1000 for find (path projection) and globset fallback; tree/glob SQL-page `max_results + 1` projected paths |
 | Opt-in compact projection materialization | At most the 100 selected files, symbols, groups, or hits already admitted by `max_results`; no additional repository scan |
 | Exhaustive occurrence grouping | At most 100 selected occurrence coordinates and 100 group-map entries per response page; the existing 100,000-occurrence fail-closed scan cap is unchanged |
@@ -1141,6 +1145,17 @@ retrieval calls do not run this scan.
 - Symbol and syntactic-reference tables provide structural candidates.
 - Conservative local-import edges can add a bounded number of neighboring
   files for orientation.
+
+Case-sensitive regex planning first derives mandatory word literals. When that
+cannot produce a trigram, the maintained `regex-syntax` literal extractor may
+derive a finite prefix or suffix sequence within the node, term, byte, and
+alternative bounds above. Alternatives form a necessary-condition FTS query;
+the original regex still verifies every candidate. Case-insensitive Unicode
+requests continue to use the full-scan oracle because SQLite trigram folding is
+ASCII-only. Evaluation counters expose only fixed plan-source and fallback
+enums plus bounded counts; they never retain regex text, literals, paths, or
+repository identity. Differential tests compare planned results with a forced
+full scan before a new HIR shape is admitted.
 
 Ranking combines exactness, structural role, FTS relevance, path evidence,
 fragment size, lexical frequency, optional focus, import proximity, change

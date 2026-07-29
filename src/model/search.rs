@@ -347,13 +347,55 @@ pub enum RegexCandidateStrategy {
     Trigram,
 }
 
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+/// HIR analysis that produced a sound trigram candidate plan.
+pub enum RegexPlanSource {
+    /// Existing recursive analysis found mandatory inner literal terms.
+    MandatoryLiterals,
+    /// Bounded extraction found a finite set of required match prefixes.
+    PrefixLiterals,
+    /// Bounded extraction found a finite set of required match suffixes.
+    SuffixLiterals,
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+/// Privacy-safe reason a regex request retained the bounded full-scan path.
+pub enum RegexPlanFallbackReason {
+    /// The evaluation explicitly forced the full-scan oracle.
+    PlanningDisabled,
+    /// Unicode case folding cannot be represented by SQLite's ASCII folding.
+    CaseInsensitiveUnicode,
+    /// The HIR parser unexpectedly rejected a regex accepted by the matcher.
+    HirParseFailed,
+    /// Recursive analysis crossed its bounded HIR-node limit.
+    PlanNodeLimit,
+    /// Candidate translation crossed its bounded term-count limit.
+    PlanTermLimit,
+    /// Candidate translation crossed its bounded aggregate term-byte limit.
+    PlanTermBytesLimit,
+    /// Prefix and suffix literal sequences were infinite or not indexable.
+    LiteralSequenceUnavailable,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 /// Deterministic phase and candidate counts for an evaluation-only search.
 pub struct SearchPhaseCounters {
     /// Candidate source selected for a regex request.
     pub regex_candidate_strategy: RegexCandidateStrategy,
-    /// Mandatory trigram terms in the selected candidate plan.
+    /// Planner analysis that produced the candidate expression.
+    pub regex_plan_source: Option<RegexPlanSource>,
+    /// Stable reason the request used the full-scan fallback.
+    pub regex_plan_fallback_reason: Option<RegexPlanFallbackReason>,
+    /// HIR nodes visited before selecting or rejecting a bounded plan.
+    pub regex_plan_nodes: usize,
+    /// Trigram terms in the selected candidate plan.
     pub regex_plan_terms: usize,
+    /// Aggregate bytes in selected word-trigram terms.
+    pub regex_plan_term_bytes: usize,
     /// Indexed files in the pinned repository snapshot.
     ///
     /// Candidate plans report corpus scale without scanning these files. The

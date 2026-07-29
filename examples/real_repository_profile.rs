@@ -24,7 +24,7 @@ use leantoken::model::{
 };
 use leantoken::services::Services;
 use leantoken::storage::Storage;
-use leantoken::{Config, Result as LeanTokenResult};
+use leantoken::{Config, IndexScope, Result as LeanTokenResult};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -45,6 +45,12 @@ struct Args {
     /// Reuse an existing caller-provided index without reconciling the repository.
     #[arg(long, requires = "database")]
     skip_index: bool,
+    /// Include only repository-relative paths matched by these patterns.
+    #[arg(long = "index-include", action = clap::ArgAction::Append)]
+    index_include: Vec<String>,
+    /// Exclude repository-relative paths matched by these patterns.
+    #[arg(long = "index-exclude", action = clap::ArgAction::Append)]
+    index_exclude: Vec<String>,
     /// Recreate the four empty FTS5 indexes with columnsize=0 before indexing.
     #[arg(long, conflicts_with = "skip_index")]
     fts_columnsize_zero: bool,
@@ -84,7 +90,12 @@ async fn main() -> AnyResult<()> {
             .path()
             .join("repository.sqlite")
     });
-    let config = Config::discover(&root, Some(database.clone()))?;
+    let config = Config::discover_scoped_with_broad_root(
+        &root,
+        Some(database.clone()),
+        false,
+        IndexScope::new(args.index_include.clone(), args.index_exclude.clone())?,
+    )?;
     if args.fts_columnsize_zero {
         initialize_columnsize_zero_schema(&config)?;
     }
@@ -323,18 +334,38 @@ async fn profile_regex_matrix(services: &Services, iterations: usize) -> Value {
             "negative_planned",
             r"leantoken_openclaw_absent_92741\s*=\s*never",
             true,
+            &[][..],
         ),
-        ("sparse_positive_planned", r"startGatewayServer\s*\(", true),
-        ("common_positive_planned", r"describe\s*\(", true),
+        (
+            "sparse_positive_planned",
+            r"startGatewayServer\s*\(",
+            true,
+            &[][..],
+        ),
+        ("common_positive_planned", r"describe\s*\(", true, &[][..]),
         (
             "sparse_positive_case_insensitive_fallback",
             r"startgatewayserver\s*\(",
             false,
+            &[][..],
+        ),
+        (
+            "finite_repeat_positive_trial",
+            r"(?:ab){2}",
+            true,
+            &["**/*.md"][..],
+        ),
+        (
+            "finite_repeat_negative_trial",
+            r"(?:qz){2}",
+            true,
+            &["**/*.md"][..],
         ),
     ];
     let mut report = serde_json::Map::new();
-    for (label, query, case_sensitive) in shapes {
-        let request = regex_request(query, case_sensitive);
+    for (label, query, case_sensitive, include_paths) in shapes {
+        let mut request = regex_request(query, case_sensitive);
+        request.include_paths = include_paths.iter().map(|path| (*path).into()).collect();
         report.insert(
             label.into(),
             profile_regex_shape(services, request, iterations).await,
@@ -635,7 +666,8 @@ async fn profile_regex_shape(
     let full_scan_outcome = search_outcome(&full_scan);
     let parity = match (&optimized, &full_scan) {
         (Ok(left), Ok(right)) => {
-            serde_json::to_value(&left.response).ok() == serde_json::to_value(&right.response).ok()
+            comparable_search_response(&left.response)
+                == comparable_search_response(&right.response)
         }
         (Err(left), Err(right)) => left.to_string() == right.to_string(),
         _ => false,
@@ -651,15 +683,24 @@ async fn profile_regex_shape(
         black_box(&current);
     }
     json!({
-        "query": request.query,
         "case_sensitive": request.case_sensitive,
         "optimized": optimized_outcome,
         "full_scan": full_scan_outcome,
         "differential_parity": parity,
         "optimized_phases": optimized.as_ref().ok().map(|evaluation| &evaluation.phases),
+        "full_scan_phases": full_scan.as_ref().ok().map(|evaluation| &evaluation.phases),
         "timing_ms": TimingStats::from_durations(durations),
         "repeated_outcomes": repeated_outcomes,
     })
+}
+
+fn comparable_search_response(response: &leantoken::SearchResponse) -> Value {
+    let mut response = response.clone();
+    response.meta.receipt_id = None;
+    response.meta.path_and_metadata_tokens = 0;
+    response.meta.payload_tokens = 0;
+    response.meta.total_response_tokens = 0;
+    serde_json::to_value(response).expect("search response serialization")
 }
 
 fn search_outcome(result: &LeanTokenResult<SearchEvaluation>) -> Value {
