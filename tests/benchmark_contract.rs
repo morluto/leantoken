@@ -147,7 +147,7 @@ async fn benchmark_token_economy() {
         let baseline_json = tokens::count(
             &serde_json::to_string(&baseline_files).expect("baseline read responses"),
         );
-        let emitted = response.meta.emitted_tokens;
+        let emitted = response.meta.source_tokens;
         let total_json = tokens::count(&serde_json::to_string(&response).expect("response JSON"));
         let known = response
             .fragments
@@ -216,7 +216,7 @@ async fn benchmark_token_economy() {
                 total_json,
             ),
             warm_latency_ms,
-            second_response_source_tokens: repeated.meta.emitted_tokens,
+            second_response_source_tokens: repeated.meta.source_tokens,
             estimated_repeated_range_source_tokens,
             known_fragments_resent,
         });

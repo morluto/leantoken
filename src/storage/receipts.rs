@@ -3,6 +3,7 @@ use crate::receipt::{
     MAX_RECEIPTS, MAX_TOTAL_EVIDENCE, MAX_TOTAL_EVIDENCE_BYTES, MAX_TOTAL_RECEIPT_BYTES,
     RECEIPT_TOUCH_INTERVAL_MILLIS, RECEIPT_TTL_MILLIS, ReceiptDecision, ReceiptEvaluation,
     ReceiptEvidence, ReceiptRebaseSource, decide, format_receipt_id, parse_receipt_id,
+    StoredReceipt,
 };
 
 const RECEIPT_HEADER_FIXED_LOGICAL_BYTES: usize = 9 * size_of::<u64>();
@@ -30,6 +31,59 @@ struct PersistentReceiptUsage {
 }
 
 impl Storage {
+    /// Load an immutable receipt snapshot without pruning, touching, or extending it.
+    pub(crate) fn read_receipt(
+        &self,
+        requested_id: &str,
+        now_unix_millis: i64,
+    ) -> Result<StoredReceipt> {
+        if requested_id.len() > MAX_RECEIPT_ID_BYTES {
+            return Err(Error::UnknownReceipt(requested_id.to_owned()));
+        }
+        let mut conn = self.readers.get()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let namespace: String = tx.query_row(
+            "SELECT namespace FROM retrieval_receipt_usage WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        let Some(row_id) = parse_receipt_id(requested_id, &namespace) else {
+            return Err(Error::UnknownReceipt(requested_id.to_owned()));
+        };
+        let Some(receipt) = load_receipt_connection(&tx, row_id)? else {
+            return Err(Error::UnknownReceipt(requested_id.to_owned()));
+        };
+        let repository_identity: String = tx.query_row(
+            "SELECT repository_identity FROM meta WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        if receipt.repository_identity != repository_identity
+            || receipt.created_unix_millis > now_unix_millis
+            || receipt.expires_unix_millis <= now_unix_millis
+        {
+            return Err(Error::UnknownReceipt(requested_id.to_owned()));
+        }
+        let evidence = load_receipt_evidence_connection(&tx, row_id)?;
+        if evidence.len() != receipt.evidence_count
+            || evidence.len() > MAX_EVIDENCE_PER_RECEIPT
+            || receipt.evidence_bytes > MAX_EVIDENCE_BYTES_PER_RECEIPT
+        {
+            return Err(Error::InternalFailure(
+                "retrieval receipt storage bounds are inconsistent".into(),
+            ));
+        }
+        tx.commit()?;
+        Ok(StoredReceipt {
+            receipt_id: requested_id.to_owned(),
+            repository_identity,
+            repository_generation: receipt.repository_generation,
+            created_unix_millis: receipt.created_unix_millis,
+            expires_unix_millis: receipt.expires_unix_millis,
+            evidence,
+        })
+    }
+
     pub(crate) fn evaluate_receipt(
         &self,
         requested_id: Option<&str>,
@@ -612,7 +666,14 @@ fn next_receipt_access_sequence(tx: &Transaction<'_>, current: i64) -> Result<i6
 }
 
 fn load_receipt(tx: &Transaction<'_>, row_id: i64) -> Result<Option<PersistentReceiptRow>> {
-    tx.query_row(
+    load_receipt_connection(tx, row_id)
+}
+
+fn load_receipt_connection(
+    connection: &Connection,
+    row_id: i64,
+) -> Result<Option<PersistentReceiptRow>> {
+    connection.query_row(
         "SELECT id,
                 repository_identity,
                 repository_generation,
@@ -645,7 +706,14 @@ fn load_receipt_evidence(
     tx: &Transaction<'_>,
     receipt_id: i64,
 ) -> Result<Vec<ReceiptEvidence>> {
-    let mut statement = tx.prepare(
+    load_receipt_evidence_connection(tx, receipt_id)
+}
+
+fn load_receipt_evidence_connection(
+    connection: &Connection,
+    receipt_id: i64,
+) -> Result<Vec<ReceiptEvidence>> {
+    let mut statement = connection.prepare(
         "SELECT path, start_line, end_line, content_hash, semantic_signature, exact_only
          FROM retrieval_receipt_evidence
          WHERE receipt_id = ?1

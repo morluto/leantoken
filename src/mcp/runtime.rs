@@ -17,7 +17,7 @@ impl LeanTokenMcp {
         &self,
         value: T,
     ) -> Result<CallToolResult, ErrorData> {
-        tool_result(value, self.result_mode.resolved_mode())
+        tool_result(value, self.result_mode)
     }
 
     pub(in crate::mcp) fn services(
@@ -41,7 +41,7 @@ impl LeanTokenMcp {
         &self,
         response: RetryableToolResponse,
     ) -> CallToolResult {
-        retryable_tool_result(response, self.result_mode.resolved_mode())
+        retryable_tool_result(response, self.result_mode)
     }
 
     pub(in crate::mcp) async fn prepare_retrieval_call(

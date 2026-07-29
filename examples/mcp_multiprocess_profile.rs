@@ -618,7 +618,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "Latency is host-local wall time from one orchestrator and is comparable only on the same host and release build.",
             "Startup readiness and concurrent-query responses are observed by one orchestrator in process order, so later processes can include bounded client-side receipt delay.",
             "Watcher backend is confirmed with Linux inotify descriptors; admission counters are parsed from the product's structured tracing fields.",
-            "Complete response parity removes only JSON-RPC request ids, generated receipt_id/repository_id values, instantaneous freshness, and their derived path_and_metadata_tokens/payload_tokens/total_response_tokens accounting (the independent topology uses distinct canonical roots and concurrent freshness is a liveness observation), then compares every other observable result field across processes, workloads, topologies, and ABBA repetitions.",
+            "Complete response parity removes only JSON-RPC request ids, generated receipt_id/repository_id values, instantaneous freshness, and their derived path_and_metadata_tokens/total_response_tokens accounting (the independent topology uses distinct canonical roots and concurrent freshness is a liveness observation), then compares every other observable result field across processes, workloads, topologies, and ABBA repetitions.",
             "The explicit max_index_workers value applies to every indexing attempt in this profiler. A two-worker run is a cold-start contention probe, not evidence that warm reconciliation should use two workers.",
         ],
     };
@@ -1295,7 +1295,7 @@ fn remove_generated_identifiers(value: &mut Value) {
             object.remove("repository_id");
             object.remove("freshness");
             object.remove("path_and_metadata_tokens");
-            object.remove("payload_tokens");
+            object.remove("total_response_tokens");
             object.remove("total_response_tokens");
             for value in object.values_mut() {
                 remove_generated_identifiers(value);
@@ -2000,7 +2000,7 @@ mod tests {
                         "repository_id": "repository-first",
                         "freshness": "current",
                         "path_and_metadata_tokens": 10,
-                        "payload_tokens": 20,
+                        "total_response_tokens": 20,
                         "total_response_tokens": 30
                     },
                     "files": ["src/lib.rs"]
@@ -2021,7 +2021,7 @@ mod tests {
                         "repository_id": "repository-second",
                         "freshness": "reconciling",
                         "path_and_metadata_tokens": 11,
-                        "payload_tokens": 21,
+                        "total_response_tokens": 21,
                         "total_response_tokens": 32
                     },
                     "files": ["src/lib.rs"]

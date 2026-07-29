@@ -101,7 +101,6 @@ async fn context_plan_previews_materialization_without_receipt_or_source() {
     assert!(preview.fragments.is_empty());
     assert!(preview.receipt.fragment_hashes.is_empty());
     assert_eq!(preview.meta.source_tokens, 0);
-    assert_eq!(preview.meta.emitted_tokens, 0);
     assert!(preview.meta.receipt_id.is_none());
     assert!(!plan.candidates.is_empty());
     assert!(plan.focus_coverage[0].satisfied);

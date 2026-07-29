@@ -329,21 +329,73 @@ fn tools_have_input_schemas_without_redundant_output_schemas() {
 }
 
 #[test]
+fn mcp_contract_snapshot() {
+    insta::assert_json_snapshot!(mcp_contract());
+}
+
+#[test]
 fn result_modes_emit_only_the_selected_representations() {
     let value = serde_json::json!({"answer": 42});
-    let auto = tool_result(value.clone(), McpResultMode::Auto).expect("unresolved auto");
     let dual = tool_result(value.clone(), McpResultMode::Dual).expect("dual");
     let text = tool_result(value.clone(), McpResultMode::Text).expect("text");
     let structured = tool_result(value, McpResultMode::Structured).expect("structured");
 
-    assert!(!auto.content.is_empty());
-    assert!(auto.structured_content.is_some());
     assert!(!dual.content.is_empty());
     assert!(dual.structured_content.is_some());
     assert!(!text.content.is_empty());
     assert!(text.structured_content.is_none());
     assert!(structured.content.is_empty());
     assert!(structured.structured_content.is_some());
+}
+
+#[test]
+fn receipt_results_expose_one_consistent_resource_handoff() {
+    let receipt_id = "r0123456789abcdef0123456789abcdef0123456789abcdef";
+    let value = serde_json::json!({
+        "meta": {
+            "receipt_id": receipt_id,
+            "source_tokens": 0,
+            "protocol_tokens": 0,
+            "path_and_metadata_tokens": 0,
+            "total_response_tokens": 0,
+            "tokenizer": "cl100k_base"
+        }
+    });
+    let result = tool_result(value, McpResultMode::Structured).expect("receipt result");
+    let structured = result
+        .structured_content
+        .expect("structured receipt result");
+    let uri = format!("leantoken://receipt/v1/{receipt_id}");
+    assert_eq!(structured["receipt_resource"]["kind"], "retrieval_receipt");
+    assert_eq!(structured["receipt_resource"]["id"], receipt_id);
+    assert_eq!(structured["receipt_resource"]["uri"], uri);
+    assert!(result.content.iter().any(|content| {
+        content
+            .as_text()
+            .is_some_and(|text| text.text.contains("read_mcp_resource") && text.text.contains(&uri))
+    }));
+    assert!(result.content.iter().any(
+        |content| matches!(content, ContentBlock::ResourceLink(resource) if resource.uri == uri)
+    ));
+    assert!(
+        structured["meta"]["total_response_tokens"]
+            .as_u64()
+            .is_some_and(|tokens| tokens > 0)
+    );
+
+    let without_receipt = tool_result(
+        serde_json::json!({"meta": {"receipt_id": null}}),
+        McpResultMode::Structured,
+    )
+    .expect("receipt-free result");
+    assert!(without_receipt.content.is_empty());
+    assert!(
+        without_receipt
+            .structured_content
+            .expect("structured receipt-free result")
+            .get("receipt_resource")
+            .is_none()
+    );
 }
 
 #[test]

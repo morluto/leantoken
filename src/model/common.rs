@@ -160,14 +160,9 @@ pub struct ResponseMeta {
     /// Tokens in the final serialized service response, including accounting fields.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub total_response_tokens: usize,
-    /// Compatibility alias for `total_response_tokens`.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub payload_tokens: usize,
     /// Tokenizer used for source and serialized response accounting.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub tokenizer: String,
-    /// Compatibility alias for `source_tokens`.
-    pub emitted_tokens: usize,
     /// Whether the configured tokenizer produces exact local counts.
     pub token_count_exact: bool,
     /// Opaque server-managed retrieval receipt for suppressing repeated evidence.

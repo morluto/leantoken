@@ -458,7 +458,6 @@ fn refresh_diff_symbols_accounting(
         .map(|diff| tokenizer.count(diff))
         .fold(0usize, usize::saturating_add);
     response.meta.source_tokens = source_tokens;
-    response.meta.emitted_tokens = source_tokens;
     response.diagnostics.retained_diff_bytes = response
         .results
         .iter()
@@ -1302,7 +1301,6 @@ impl Services {
         let mut candidate = response.clone();
         let source_tokens = self.config.tokenizer.count(prefix);
         candidate.meta.source_tokens = source_tokens;
-        candidate.meta.emitted_tokens = source_tokens;
         candidate.result_complete = false;
         if is_diff {
             candidate.diff = Some(prefix.to_owned());

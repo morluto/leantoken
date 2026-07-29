@@ -168,7 +168,7 @@ async fn run_case(case: Case) -> Result<CaseReport, Box<dyn Error>> {
     let full = services
         .read(request(case.target, Some(base_hash), false))
         .await?;
-    if full.status != ReadStatus::Content || full.meta.emitted_tokens == 0 {
+    if full.status != ReadStatus::Content || full.meta.source_tokens == 0 {
         return Err(format!("{} full-response control was not content", case.name).into());
     }
     if changed.status == ReadStatus::Delta
@@ -190,7 +190,7 @@ async fn run_case(case: Case) -> Result<CaseReport, Box<dyn Error>> {
         outcome: receipt.outcome.clone(),
         fallback_reason: receipt.fallback_reason.clone(),
         full_tokens: receipt.full_tokens,
-        returned_source_tokens: changed.meta.emitted_tokens,
+        returned_source_tokens: changed.meta.source_tokens,
         avoided_source_tokens: receipt.avoided_tokens,
         full_response_tokens: serialized_tokens(&full)?,
         returned_response_tokens: serialized_tokens(&changed)?,
@@ -227,9 +227,9 @@ fn validate_case(case: &Case, response: &ReadResponse) -> Result<(), Box<dyn Err
     }
     if receipt.outcome == ReadDeltaOutcome::Delta {
         let delta = response.delta.as_deref().ok_or("delta content missing")?;
-        if receipt.delta_tokens != Some(response.meta.emitted_tokens)
+        if receipt.delta_tokens != Some(response.meta.source_tokens)
             || receipt.avoided_tokens == 0
-            || receipt.full_tokens <= response.meta.emitted_tokens
+            || receipt.full_tokens <= response.meta.source_tokens
         {
             return Err(format!("{} did not record strict token savings", case.name).into());
         }

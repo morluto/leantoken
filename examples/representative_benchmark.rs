@@ -2909,7 +2909,7 @@ async fn run_task(
         .map_or(0, |evidence| evidence.report.serialized_tokens);
     let leantoken_source_tokens = response
         .meta
-        .emitted_tokens
+        .source_tokens
         .saturating_add(owner_source_tokens);
     if leantoken_source_tokens > task.token_budget {
         return Err(format!(
@@ -3053,7 +3053,7 @@ async fn run_task(
         warm_context_median_ms: percentile(&warm_context_ms_samples, 0.50),
         warm_context_p95_ms: percentile(&warm_context_ms_samples, 0.95),
         warm_context_ms_samples,
-        second_response_source_tokens: repeat.meta.emitted_tokens,
+        second_response_source_tokens: repeat.meta.source_tokens,
         estimated_repeated_range_source_tokens,
         repeat_request_json_tokens,
         repeat_total_json_tokens,
@@ -3356,10 +3356,10 @@ fn verify_token_accounting(response: &ContextResponse) -> Result<(), Box<dyn Err
         .iter()
         .map(|fragment| fragment.token_count)
         .sum::<usize>();
-    if declared != response.meta.emitted_tokens {
+    if declared != response.meta.source_tokens {
         return Err(format!(
             "context token mismatch: fragment fields={declared}, meta={}",
-            response.meta.emitted_tokens
+            response.meta.source_tokens
         )
         .into());
     }
@@ -4040,9 +4040,7 @@ mod tests {
                 protocol_tokens: 0,
                 path_and_metadata_tokens: 0,
                 total_response_tokens: 0,
-                payload_tokens: 0,
                 tokenizer: "cl100k_base".into(),
-                emitted_tokens: 0,
                 token_count_exact: true,
                 receipt_id: Some(receipt_id.into()),
                 receipt_suppressed_exact: 0,

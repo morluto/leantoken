@@ -118,7 +118,6 @@ impl Services {
             (removed, removed_tokens)
         };
         response.meta.source_tokens = response.meta.source_tokens.saturating_sub(removed_tokens);
-        response.meta.emitted_tokens = response.meta.source_tokens;
         response.omission_summary.budget_or_result_limit = response
             .omission_summary
             .budget_or_result_limit

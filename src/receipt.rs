@@ -81,6 +81,16 @@ pub(crate) struct ReceiptRebaseSource {
     pub evidence: Vec<ReceiptEvidence>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StoredReceipt {
+    pub receipt_id: String,
+    pub repository_identity: String,
+    pub repository_generation: u64,
+    pub created_unix_millis: i64,
+    pub expires_unix_millis: i64,
+    pub evidence: Vec<ReceiptEvidence>,
+}
+
 impl ReceiptEvaluation {
     pub(crate) fn apply_meta(&self, meta: &mut ResponseMeta) {
         meta.receipt_id = Some(self.receipt_id.clone());

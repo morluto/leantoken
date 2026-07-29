@@ -6,7 +6,11 @@ use std::time::{Duration, Instant};
 
 use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
-    model::{CallToolResult, ContentBlock},
+    model::{
+        CacheScope, CallToolResult, ContentBlock, ListResourceTemplatesResult, ListResourcesResult,
+        PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
+        ReadResourceResult, Resource, ResourceContents, ResourceTemplate,
+    },
     service::{NotificationContext, RequestContext},
     tool, tool_handler, tool_router,
 };
@@ -40,17 +44,40 @@ fn serialized_response<T: Serialize>(response: T) -> crate::Result<serde_json::V
     serde_json::to_value(response).map_err(|error| crate::Error::InternalFailure(error.to_string()))
 }
 
+#[cfg(test)]
 pub(crate) fn mcp_schema_fingerprint() -> String {
     let catalog = LeanTokenMcp::tool_router().list_all();
     let encoded = serde_json::to_vec(&catalog).expect("MCP tool catalog is serializable");
     crate::text::hash_bytes(&encoded)
 }
 
+fn mcp_contract() -> serde_json::Value {
+    serde_json::json!({
+        "tools": LeanTokenMcp::tool_router().list_all(),
+        "resources": {
+            "capability": {"listChanged": false, "subscribe": false},
+            "listed": [],
+            "templates": [{
+                "uriTemplate": resources::RECEIPT_RESOURCE_TEMPLATE,
+                "name": "retrieval_receipt",
+                "mimeType": resources::RECEIPT_RESOURCE_MEDIA_TYPE,
+            }],
+        },
+        "result_envelope_version": 2,
+        "default_result_mode": McpResultMode::Structured,
+    })
+}
+
+pub(crate) fn mcp_contract_fingerprint() -> String {
+    let encoded = serde_json::to_vec(&mcp_contract()).expect("MCP contract is serializable");
+    crate::text::hash_bytes(&encoded)
+}
+
 pub(crate) fn mcp_runtime_version() -> String {
     format!(
-        "{}+schema.{}",
+        "{}+contract.{}",
         env!("CARGO_PKG_VERSION"),
-        mcp_schema_fingerprint()
+        mcp_contract_fingerprint()
     )
 }
 
@@ -65,16 +92,13 @@ mod requests;
 use requests::*;
 
 mod admission;
-mod compatibility;
+mod resources;
 mod result;
 mod runtime;
 mod server;
 mod state;
 
 use admission::RequestAdmission;
-use compatibility::McpResultModeState;
-pub(crate) use compatibility::resolve_auto_result_mode;
-pub use compatibility::{McpResultModeResolution, McpResultModeResolutionReason};
 pub use result::{McpResultMode, tool_result};
 use result::{RetryableToolResponse, retryable_tool_result};
 use runtime::RetrievalPreparation;

@@ -1160,7 +1160,7 @@ impl Analysis {
         };
         let structured = item.pointer("/result/structured_content");
         let result_source_tokens = structured
-            .and_then(|value| value.pointer("/meta/emitted_tokens"))
+            .and_then(|value| value.pointer("/meta/source_tokens"))
             .and_then(Value::as_u64)
             .unwrap_or(0);
         let ranges = structured
@@ -1732,7 +1732,7 @@ mod tests {
                     "end_line": 1,
                     "excerpt": "fn answer() {}"
                 }],
-                "meta": {"repository_generation": 1, "emitted_tokens": 4}
+                "meta": {"repository_generation": 1, "source_tokens": 4}
             }})
         } else {
             serde_json::json!({})
@@ -1849,7 +1849,7 @@ mod tests {
                         }],
                         "meta": {
                             "repository_generation": 7,
-                            "emitted_tokens": 5
+                            "source_tokens": 5
                         }
                     }}
                 }

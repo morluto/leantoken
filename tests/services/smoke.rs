@@ -41,7 +41,7 @@ async fn five_services_return_bounded_grounded_responses() {
         .await
         .expect("search");
     assert!(!search.hits.is_empty());
-    assert!(search.meta.emitted_tokens <= 200);
+    assert!(search.meta.source_tokens <= 200);
     assert!(search.hits.iter().all(|hit| hit.start_line <= hit.end_line));
     assert_response_token_accounting!(search, Tokenizer::Cl100kBase);
 
@@ -63,7 +63,7 @@ async fn five_services_return_bounded_grounded_responses() {
             .iter()
             .any(|symbol| symbol.name == "greet")
     );
-    assert!(outline.meta.emitted_tokens <= 100);
+    assert!(outline.meta.source_tokens <= 100);
     assert_response_token_accounting!(outline, Tokenizer::Cl100kBase);
 
     let first = services
@@ -101,7 +101,7 @@ async fn five_services_return_bounded_grounded_responses() {
         .expect("conditional read");
     assert_eq!(second.status, ReadStatus::NotModified);
     assert!(second.content.is_none());
-    assert_eq!(second.meta.emitted_tokens, 0);
+    assert_eq!(second.meta.source_tokens, 0);
     assert_response_token_accounting!(second, Tokenizer::Cl100kBase);
 
     let context = services
@@ -130,7 +130,7 @@ async fn five_services_return_bounded_grounded_responses() {
         .await
         .expect("context");
     assert!(!context.fragments.is_empty());
-    assert!(context.meta.emitted_tokens <= 200);
+    assert!(context.meta.source_tokens <= 200);
     assert_response_token_accounting!(context, Tokenizer::Cl100kBase);
     assert_eq!(
         context.receipt.fragment_hashes.len(),
@@ -166,12 +166,12 @@ async fn five_services_return_bounded_grounded_responses() {
     let mut deterministic_context = context.clone();
     deterministic_context.meta.receipt_id = None;
     deterministic_context.meta.path_and_metadata_tokens = 0;
-    deterministic_context.meta.payload_tokens = 0;
+    deterministic_context.meta.total_response_tokens = 0;
     deterministic_context.meta.total_response_tokens = 0;
     let mut deterministic_repeat = repeated_context.clone();
     deterministic_repeat.meta.receipt_id = None;
     deterministic_repeat.meta.path_and_metadata_tokens = 0;
-    deterministic_repeat.meta.payload_tokens = 0;
+    deterministic_repeat.meta.total_response_tokens = 0;
     deterministic_repeat.meta.total_response_tokens = 0;
     assert_eq!(
         serde_json::to_string(&deterministic_repeat).expect("serialize repeated context"),

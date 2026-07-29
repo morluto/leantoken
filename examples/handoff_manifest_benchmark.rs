@@ -662,7 +662,7 @@ impl ResponseAccounting for ContextResponse {
         self.meta.protocol_tokens = 0;
         self.meta.path_and_metadata_tokens = 0;
         self.meta.total_response_tokens = 0;
-        self.meta.payload_tokens = 0;
+        self.meta.total_response_tokens = 0;
     }
 }
 
@@ -675,7 +675,7 @@ impl ResponseAccounting for ReadResponse {
         self.meta.protocol_tokens = 0;
         self.meta.path_and_metadata_tokens = 0;
         self.meta.total_response_tokens = 0;
-        self.meta.payload_tokens = 0;
+        self.meta.total_response_tokens = 0;
     }
 }
 

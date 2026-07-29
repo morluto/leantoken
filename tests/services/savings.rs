@@ -82,10 +82,10 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     );
     assert_eq!(
         report.emitted_source_tokens,
-        search.meta.emitted_tokens as u64
-            + outline.meta.emitted_tokens as u64
-            + first_read.meta.emitted_tokens as u64
-            + context.meta.emitted_tokens as u64
+        search.meta.source_tokens as u64
+            + outline.meta.source_tokens as u64
+            + first_read.meta.source_tokens as u64
+            + context.meta.source_tokens as u64
     );
     assert!(report.baseline_source_tokens >= report.emitted_source_tokens);
     assert!(report.estimated_source_tokens_saved > 0);

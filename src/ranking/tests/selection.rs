@@ -48,7 +48,7 @@
                 .count(),
             2
         );
-        assert!(response.meta.emitted_tokens < 1_200);
+        assert!(response.meta.source_tokens < 1_200);
     }
 
     #[test]

@@ -229,7 +229,7 @@ fn observe(response: &ReadResponse, totals: &mut OutcomeTotals) {
     }
     totals.emitted_source_tokens = totals
         .emitted_source_tokens
-        .saturating_add(response.meta.emitted_tokens);
+        .saturating_add(response.meta.source_tokens);
     totals.total_response_tokens = totals
         .total_response_tokens
         .saturating_add(response.meta.total_response_tokens);

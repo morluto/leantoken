@@ -60,6 +60,53 @@ fn persistent_receipt_survives_storage_restart() {
 }
 
 #[test]
+fn receipt_resource_read_is_snapshot_only_and_does_not_extend_lifetime() {
+    let directory = tempfile::tempdir().expect("directory");
+    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+    let receipt_id = storage
+        .evaluate_receipt_at(None, 7, &[evidence(1)], true, 1_000)
+        .expect("create receipt")
+        .receipt_id;
+    let before: (i64, i64, i64) = {
+        let connection = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        connection
+            .query_row(
+                "SELECT last_access_unix_millis, expires_unix_millis, access_sequence
+                 FROM retrieval_receipts WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("receipt state")
+    };
+    let receipt = storage
+        .read_receipt(&receipt_id, 1_001)
+        .expect("read stored receipt");
+    assert_eq!(receipt.evidence, vec![evidence(1)]);
+    let after: (i64, i64, i64) = {
+        let connection = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        connection
+            .query_row(
+                "SELECT last_access_unix_millis, expires_unix_millis, access_sequence
+                 FROM retrieval_receipts WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("receipt state")
+    };
+    assert_eq!(after, before);
+    assert!(matches!(
+        storage.read_receipt(&receipt_id, 1_000 + RECEIPT_TTL_MILLIS),
+        Err(Error::UnknownReceipt(_))
+    ));
+}
+
+#[test]
 fn sqlite_decisions_match_the_previous_in_memory_oracle() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");

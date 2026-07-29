@@ -243,7 +243,6 @@ impl Services {
                 response.content = None;
                 response.delta = None;
                 response.meta.source_tokens = 0;
-                response.meta.emitted_tokens = 0;
             } else if let Some(delta) = evaluation.delta {
                 let emitted_tokens = evaluation
                     .receipt
@@ -253,7 +252,6 @@ impl Services {
                 response.content = None;
                 response.delta = Some(delta);
                 response.meta.source_tokens = emitted_tokens;
-                response.meta.emitted_tokens = emitted_tokens;
             }
             response.delta_receipt = Some(evaluation.receipt);
             prefer_full_if_delta_payload_not_smaller(
@@ -307,7 +305,7 @@ impl Services {
             response.status = ReadStatus::ReceiptSuppressed;
             response.not_modified = false;
             response.meta.source_tokens = 0;
-            response.meta.emitted_tokens = 0;
+            response.meta.source_tokens = 0;
             if let Some(delta_receipt) = response.delta_receipt.as_mut() {
                 delta_receipt.outcome = ReadDeltaOutcome::ReceiptSuppressed;
                 delta_receipt.delta_tokens = Some(0);
@@ -521,7 +519,7 @@ fn prefer_full_if_delta_payload_not_smaller(
     full.content = Some(current_content.to_owned());
     full.delta = None;
     full.meta.source_tokens = current_tokens;
-    full.meta.emitted_tokens = current_tokens;
+    full.meta.source_tokens = current_tokens;
     if let Some(receipt) = full.delta_receipt.as_mut() {
         receipt.outcome = ReadDeltaOutcome::Full;
         receipt.delta_tokens = None;
@@ -542,7 +540,7 @@ fn finalized_serialized_read_tokens(
     finalized.meta.protocol_tokens = 0;
     finalized.meta.path_and_metadata_tokens = 0;
     finalized.meta.total_response_tokens = 0;
-    finalized.meta.payload_tokens = 0;
+    finalized.meta.total_response_tokens = 0;
     let accounting = crate::tokens::response_token_accounting(
         &finalized,
         finalized.meta.source_tokens,
@@ -551,7 +549,7 @@ fn finalized_serialized_read_tokens(
     finalized.meta.protocol_tokens = accounting.protocol_tokens;
     finalized.meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
     finalized.meta.total_response_tokens = accounting.total_response_tokens;
-    finalized.meta.payload_tokens = accounting.total_response_tokens;
+    finalized.meta.total_response_tokens = accounting.total_response_tokens;
     Ok(tokenizer.count(&serde_json::to_string(&finalized)?))
 }
 

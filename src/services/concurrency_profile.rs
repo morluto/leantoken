@@ -713,9 +713,7 @@ fn collect_arrays(value: &Value, arrays: &mut Vec<Value>) {
 
 fn token_accounting(value: &Value) -> Vec<Option<Value>> {
     [
-        "/meta/emitted_tokens",
         "/meta/source_tokens",
-        "/meta/payload_tokens",
         "/meta/total_response_tokens",
         "/meta/token_count_exact",
         "/meta/tokenizer",

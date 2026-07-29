@@ -585,7 +585,7 @@ impl Services {
             });
         }
         response.meta.source_tokens = projected_tokens;
-        response.meta.emitted_tokens = projected_tokens;
+        response.meta.source_tokens = projected_tokens;
         self.fit_json_response(&mut response, key_page_context.as_ref(), options)?;
         self.finalize_bounded_response(&mut response, options)?;
         self.record_token_savings(
@@ -639,7 +639,6 @@ impl Services {
                         .expect("keys projection keeps a value"),
                 )?;
                 candidate.meta.source_tokens = source_tokens;
-                candidate.meta.emitted_tokens = source_tokens;
                 self.finalized_response_tokens(&candidate)
             })?;
             if let Some(keep) = keep.filter(|keep| *keep > 0) {
@@ -664,7 +663,6 @@ impl Services {
                         .expect("keys projection keeps a value"),
                 )?;
                 response.meta.source_tokens = source_tokens;
-                response.meta.emitted_tokens = source_tokens;
                 return Ok(());
             }
             if !entries.is_empty() {
@@ -690,7 +688,6 @@ impl Services {
                         .expect("keys projection keeps a value"),
                 )?;
                 minimum.meta.source_tokens = source_tokens;
-                minimum.meta.emitted_tokens = source_tokens;
                 return Err(self.response_budget_error(
                     &minimum,
                     options

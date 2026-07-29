@@ -915,7 +915,7 @@ fn cli_index_and_status_and_mcp_commands() {
     assert!(matches!(
         cli.app_request(),
         AppRequest::Mcp {
-            result_mode: leantoken::mcp::McpResultMode::Dual
+            result_mode: leantoken::mcp::McpResultMode::Structured
         }
     ));
     let cli = parse(&["mcp", "--result-mode", "structured"]);
@@ -923,13 +923,6 @@ fn cli_index_and_status_and_mcp_commands() {
         cli.app_request(),
         AppRequest::Mcp {
             result_mode: leantoken::mcp::McpResultMode::Structured
-        }
-    ));
-    let cli = parse(&["mcp", "--result-mode", "auto"]);
-    assert!(matches!(
-        cli.app_request(),
-        AppRequest::Mcp {
-            result_mode: leantoken::mcp::McpResultMode::Auto
         }
     ));
 }

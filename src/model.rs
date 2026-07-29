@@ -259,9 +259,7 @@ mod tests {
                 protocol_tokens: 0,
                 path_and_metadata_tokens: 0,
                 total_response_tokens: 0,
-                payload_tokens: 0,
                 tokenizer: "cl100k_base".into(),
-                emitted_tokens: 4,
                 token_count_exact: true,
                 receipt_id: None,
                 receipt_suppressed_exact: 0,
@@ -300,7 +298,6 @@ mod tests {
         legacy_meta.remove("protocol_tokens");
         legacy_meta.remove("path_and_metadata_tokens");
         legacy_meta.remove("total_response_tokens");
-        legacy_meta.remove("payload_tokens");
         legacy_meta.remove("tokenizer");
         let legacy: ContextResponse =
             serde_json::from_value(legacy_value).expect("deserialize legacy response");
@@ -308,7 +305,7 @@ mod tests {
         assert_eq!(legacy.meta.protocol_tokens, 0);
         assert_eq!(legacy.meta.path_and_metadata_tokens, 0);
         assert_eq!(legacy.meta.total_response_tokens, 0);
-        assert_eq!(legacy.meta.payload_tokens, 0);
+        assert_eq!(legacy.meta.total_response_tokens, 0);
         assert!(legacy.meta.tokenizer.is_empty());
     }
 
@@ -362,9 +359,7 @@ mod tests {
                 protocol_tokens: 17,
                 path_and_metadata_tokens: 97,
                 total_response_tokens: 123,
-                payload_tokens: 123,
                 tokenizer: "cl100k_base".into(),
-                emitted_tokens: 9,
                 token_count_exact: true,
                 receipt_id: None,
                 receipt_suppressed_exact: 0,

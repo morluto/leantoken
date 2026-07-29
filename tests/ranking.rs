@@ -112,7 +112,7 @@ fn select_respects_token_budget() {
         total,
         request.token_budget
     );
-    assert!(response.meta.emitted_tokens <= request.token_budget);
+    assert!(response.meta.source_tokens <= request.token_budget);
     assert_eq!(response.meta.repository_generation, 1);
     assert!(matches!(response.meta.freshness, Freshness::Current));
 }

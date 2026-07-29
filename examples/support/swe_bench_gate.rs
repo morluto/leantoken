@@ -986,7 +986,7 @@ fn run_prediction_task(
     if response.meta.repository_generation != index_response.repository_generation {
         return Err(format!("{} context/index generation mismatch", task.task_id).into());
     }
-    if response.meta.emitted_tokens > FROZEN_SOURCE_TOKEN_BUDGET {
+    if response.meta.source_tokens > FROZEN_SOURCE_TOKEN_BUDGET {
         return Err(format!("{} exceeded the source-token budget", task.task_id).into());
     }
     let counted_source = response
@@ -994,7 +994,7 @@ fn run_prediction_task(
         .iter()
         .map(|fragment| FROZEN_TOKENIZER.count(&fragment.content))
         .sum::<usize>();
-    if counted_source != response.meta.emitted_tokens {
+    if counted_source != response.meta.source_tokens {
         return Err(format!("{} source token accounting differs", task.task_id).into());
     }
     let response_text = std::str::from_utf8(response_bytes)?;
@@ -1028,7 +1028,7 @@ fn run_prediction_task(
         },
         tokenizer: Some(FROZEN_TOKENIZER.name().into()),
         complete_response_tokens: Some(complete_response_tokens),
-        source_tokens: Some(response.meta.emitted_tokens),
+        source_tokens: Some(response.meta.source_tokens),
         latency_ms: None,
         index_generation: Some(response.meta.repository_generation),
         regions,
@@ -1051,7 +1051,7 @@ fn run_prediction_task(
             .strip_prefix(&args.work_root)?
             .to_path_buf(),
         complete_response_tokens,
-        source_tokens: response.meta.emitted_tokens,
+        source_tokens: response.meta.source_tokens,
         regions: response.fragments.len(),
         repetitions_identical,
     };
