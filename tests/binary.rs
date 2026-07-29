@@ -1301,7 +1301,10 @@ fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
     }));
 
     drop(operation_blocker);
-    let first = follower.response(Duration::from_secs(10));
+    // Process scheduling can delay the follower's first response when unit
+    // and integration tests share the host. This is a liveness observation,
+    // not the one-second leadership-grace contract tested in Services.
+    let first = follower.response(Duration::from_secs(30));
     if first["result"]["isError"] != true {
         assert_eq!(
             first["result"]["structuredContent"]["reason"],

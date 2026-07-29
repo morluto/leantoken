@@ -53,6 +53,18 @@ benchmark contract or examples:
 cargo test-product
 ```
 
+For faster local feedback, run independent unit and ordinary integration
+lanes concurrently, then run process-heavy executable and MCP tests with two
+workers:
+
+```bash
+python3 scripts/test_product_parallel.py
+```
+
+This runs the same product tests as `cargo test-product`; process-heavy tests
+stay isolated so higher parallelism does not make their startup deadlines
+flaky.
+
 Run the token-economy contract explicitly when changing retrieval accounting or
 its fixture. CI runs it on every supported OS for every Rust change:
 
