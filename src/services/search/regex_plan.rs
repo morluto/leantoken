@@ -68,7 +68,7 @@ fn regex_candidate_plan(request: &SearchRequest) -> RegexPlanDecision {
             min_literal_len: 0,
         }),
         Err(error) => regex_plan_budget_fallback(error, budget),
-        Ok(None) => extracted_regex_candidate_plan(&hir, nodes_visited).unwrap_or_else(|| {
+        Ok(None) => extracted_regex_candidate_plan(&hir, nodes_visited).unwrap_or({
             RegexPlanDecision::Fallback(RegexPlanDiagnostics {
                 fallback_reason: RegexPlanFallbackReason::LiteralSequenceUnavailable,
                 nodes_visited,
