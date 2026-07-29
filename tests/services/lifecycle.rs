@@ -18,6 +18,7 @@ async fn oversized_query_is_rejected_without_stopping_services() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -49,6 +50,7 @@ async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_service
                 all_occurrences: false,
                 prefer_structural: false,
                 receipt_id: None,
+                query_receipt: None,
                 cursor: None,
             },
             cancellation.child_token(),
@@ -129,6 +131,7 @@ async fn concurrent_queries_observe_one_committed_generation_during_reconciliati
                     all_occurrences: false,
                     prefer_structural: false,
                     receipt_id: None,
+                    query_receipt: None,
                     cursor: None,
                 })
                 .await

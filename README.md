@@ -220,7 +220,7 @@ and MCP transport wrappers are not part of this source-token budget; see
 | Tool | Purpose |
 | --- | --- |
 | `leantoken.context` | Default materialized first call for autonomous broad triage; optional preview for human or control-plane review. |
-| `leantoken.search` | Prefer over grep/rg for ranked text, regex, identifier, symbol, or reference search. |
+| `leantoken.search` | Prefer over grep/rg for ranked search; exhaustive text/regex calls can explicitly record or reuse complete query coverage. |
 | `leantoken.files` | Prefer over find/ls/glob for compact, ignore-aware path discovery. |
 | `leantoken.outline` | Inspect definitions, signatures, imports, and ranges without whole-file reads. |
 | `leantoken.read` | Prefer over cat/head/sed for one exact symbol or inclusive line range. |

@@ -540,6 +540,7 @@ async fn compact_response_projections_preserve_verifiable_coverage_and_reduce_to
         all_occurrences: false,
         prefer_structural: true,
         receipt_id: None,
+        query_receipt: None,
         cursor: None,
     };
     let full_search = services
@@ -681,6 +682,7 @@ async fn compact_response_projections_preserve_verifiable_coverage_and_reduce_to
         all_occurrences: false,
         prefer_structural: true,
         receipt_id: None,
+        query_receipt: None,
         cursor: None,
     };
     let mut full_page_request = paged_search_request.clone();
@@ -771,6 +773,7 @@ async fn compact_response_projections_preserve_verifiable_coverage_and_reduce_to
                 all_occurrences: false,
                 prefer_structural: true,
                 receipt_id: None,
+                query_receipt: None,
                 cursor: None,
             },
             ServiceCallOptions::new()

@@ -162,6 +162,48 @@ BLAKE3 classification commitment cover every source item; the response retains
 at most 16 source-free samples per outcome. Rebase performs no repository walk,
 subprocess, network access, or concurrency fan-out.
 
+Exact exhaustive query receipts use separate SQLite headers and a separate
+opaque `q` namespace; they never participate in excerpt exact/overlap/
+near-duplicate suppression. The caller must explicitly select `record` or
+`reuse`, and only `text` or `regex` with `all_occurrences=true` and the
+occurrence projection is eligible. A record is inserted only after the
+exhaustive engine has completed, every occurrence fits one response page, the
+final serialized response fits its caller ceiling, and cancellation is checked
+immediately before the write. Ranked/fuzzy/structural channels, pagination,
+token omission, invalid regex, exhaustive-limit failure, and pre-write
+cancellation cannot create a complete query receipt.
+
+The persisted normalized predicate stores a BLAKE3 query commitment rather than
+raw query text, plus versioned case/Unicode/regex semantics and sorted,
+deduplicated include/exclude patterns. The result commitment covers every
+deduplicated path and exact byte/line/column coordinate in deterministic order.
+Same-generation reuse validates the database namespace, repository identity,
+predicate, TTL, and generation before returning `already_covered` without
+reading source chunks. A zero-match proof may cover a narrower scope only when
+syntactic include-set containment and exclude-set expansion prove the subset;
+nonzero subset reuse fails loud because the stored aggregate cannot derive its
+count.
+
+Cross-generation reuse additionally requires an identical index config hash and
+an identical relevant-partition commitment. The commitment streams
+`files(path, content_hash)` in path-index order through the pinned request
+snapshot and the recorded scope filter, retaining only one row at a time. It
+therefore performs at most one pass over the configured maximum indexed-file
+count and no source/chunk read, repository walk, subprocess, network access, or
+fan-out. Any relevant add/delete/rename/content change, config change, unknown
+receipt, expired receipt, predicate mismatch, or partition mismatch fails loud.
+
+Query receipt storage retains at most 128 headers, 64 KiB per normalized
+predicate, and 1 MiB of logical data in total for a fixed 24-hour TTL. Logical
+bytes include every stored string and fixed-width scalar, not SQLite page
+overhead. An `IMMEDIATE` insert transaction rechecks generation and config,
+deduplicates identical complete proofs, lazily prunes expiry, and evicts by a
+deterministic access sequence. Header lookup is primary-key bounded; duplicate,
+expiry, and eviction paths use checked predicate, expiry, and access indexes.
+The tables contain no raw query or result/source content. A reuse call can avoid
+the exhaustive server scan and payload, but it is not counted as a host-avoided
+tool call.
+
 Opt-in read deltas persist a narrower safe subset of their bases in the same
 repository SQLite cache. A base is eligible only when the returned target is
 complete, at most 512 KiB, and the complete live file hash equals the indexed

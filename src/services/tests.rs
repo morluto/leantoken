@@ -368,6 +368,7 @@ async fn caller_after_scan_start_waits_for_the_next_wave() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -823,6 +824,7 @@ async fn index_search_read_and_hash_delta() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -963,6 +965,7 @@ async fn search_cursor_tracks_candidates_consumed_by_token_filter() {
         all_occurrences: false,
         prefer_structural: false,
         receipt_id: None,
+        query_receipt: None,
         cursor: None,
     };
     let response = services.search(request.clone()).await.expect("search");
@@ -1172,6 +1175,7 @@ async fn regex_candidate_overflow_is_not_reported_as_complete() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await

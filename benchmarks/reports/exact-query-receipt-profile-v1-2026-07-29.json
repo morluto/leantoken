@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "profile": "exact_query_receipt_mechanism",
+  "observed_on": "2026-07-29",
+  "candidate_git_revision": "de4a5609b444f4db0bace4cd906ee9fab6f03fc4",
+  "repository": {
+    "kind": "leantoken_self",
+    "git_revision": "de4a5609b444f4db0bace4cd906ee9fab6f03fc4",
+    "clean_detached_worktree": true
+  },
+  "host": {
+    "os": "linux",
+    "architecture": "x86_64",
+    "kernel": "6.1.0-50-cloud-amd64",
+    "rustc": "1.95.0 (59807616e 2026-04-14)"
+  },
+  "command": "target/release/examples/exact_query_receipt_profile --repository CLEAN_DETACHED_WORKTREE --iterations 12",
+  "query_blake3": "fbf4551dd88ef5c88cd31d816cf96f98f9e2d4946bf646a38742def864baf1c7",
+  "indexed_generation": 1,
+  "occurrences_total": 1,
+  "iterations_per_arm": 12,
+  "ordering": "mirrored_control_reuse",
+  "exhaustive_control": {
+    "samples": 12,
+    "p50_micros": 34835,
+    "p95_micros": 37613,
+    "mean_micros": 34948
+  },
+  "query_receipt_reuse": {
+    "samples": 12,
+    "p50_micros": 4960,
+    "p95_micros": 7028,
+    "mean_micros": 5115
+  },
+  "p50_wall_reduction_percent": 85.76144682072628,
+  "parity": {
+    "occurrences_total_equal": true
+  },
+  "mechanism": {
+    "server_exhaustive_scan_avoided": true,
+    "server_result_payload_avoided": true,
+    "host_tool_call_avoided": false
+  },
+  "decision": {
+    "minimum_p50_wall_reduction_percent": 20.0,
+    "latency_gate_passed": true,
+    "keep_exact_query_receipt_mechanism": true
+  },
+  "limitations": [
+    "One clean local repository and one low-cardinality exhaustive-text predicate.",
+    "Aggregated wall-time samples are mechanism evidence, not a task-success or provider-cost result.",
+    "CPU, RSS, storage overhead, and model/provider behavior were not measured by this profile.",
+    "Both arms issue a Services call; host/model turn avoidance remains unmeasured.",
+    "False-absence, freshness, cancellation, persistence, and response-budget claims are covered by separate behavioral tests rather than inferred from timing."
+  ]
+}

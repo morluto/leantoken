@@ -232,8 +232,8 @@ run them in parallel rather than starting one executable per file.
   chunking, targeted reconciliation, and dependency invalidation;
 - `tests/services.rs` registers owner-focused modules under `tests/services/`:
   lifecycle/repository/consistency/path safety, per-tool behavior, limits and
-  response budgets, context planning/signals/workflows/diffs, receipts/savings,
-  language coverage, and smoke behavior;
+  response budgets, context planning/signals/workflows/diffs, evidence/query
+  receipts and savings, language coverage, and smoke behavior;
 - `tests/mcp.rs`: SDK initialization, readiness states, retryable startup tool
   errors, exact tool catalog, structured calls, cancellation, and
   post-cancellation liveness;

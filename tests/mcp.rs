@@ -610,6 +610,61 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
 
     let response = call_tool(
         client.peer(),
+        "search",
+        serde_json::json!({
+            "query": "answer",
+            "mode": "text",
+            "all_occurrences": true,
+            "coordinates_only": true,
+            "include_paths": ["lib.rs"],
+            "context_lines": 0,
+            "max_results": 10,
+            "query_receipt": {"kind": "record"}
+        }),
+    )
+    .await
+    .expect("record exhaustive query coverage");
+    assert_ne!(response.is_error, Some(true));
+    let structured = response
+        .structured_content
+        .expect("recorded occurrence response");
+    assert_eq!(structured["query_receipt"]["status"], "recorded");
+    assert_eq!(structured["query_receipt"]["complete"], true);
+    let query_receipt_id = structured["query_receipt"]["receipt_id"]
+        .as_str()
+        .expect("query receipt id")
+        .to_owned();
+
+    let response = call_tool(
+        client.peer(),
+        "search",
+        serde_json::json!({
+            "query": "answer",
+            "mode": "text",
+            "all_occurrences": true,
+            "coordinates_only": true,
+            "include_paths": ["lib.rs"],
+            "context_lines": 0,
+            "max_results": 10,
+            "query_receipt": {
+                "kind": "reuse",
+                "receipt_id": query_receipt_id
+            }
+        }),
+    )
+    .await
+    .expect("reuse exhaustive query coverage");
+    assert_ne!(response.is_error, Some(true));
+    let structured = response
+        .structured_content
+        .expect("reused occurrence response");
+    assert_eq!(structured["query_receipt"]["status"], "already_covered");
+    assert_eq!(structured["groups"], serde_json::json!([]));
+    assert_eq!(structured["occurrences_returned"], 0);
+    assert_eq!(structured["occurrences_total"], 1);
+
+    let response = call_tool(
+        client.peer(),
         "context",
         serde_json::json!({
             "task": "find the answer definition",

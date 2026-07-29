@@ -163,6 +163,7 @@ public sealed class Worker {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -188,6 +189,7 @@ public sealed class Worker {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -329,6 +331,7 @@ function helper() {
                 all_occurrences: false,
                 prefer_structural: false,
                 receipt_id: None,
+                query_receipt: None,
                 cursor: None,
             })
             .await
@@ -499,6 +502,7 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
                 all_occurrences: false,
                 prefer_structural: false,
                 receipt_id: None,
+                query_receipt: None,
                 cursor: None,
             })
             .await
@@ -797,6 +801,7 @@ async fn latex_outline_and_read_share_exact_section_label_and_bibliography_struc
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await

@@ -69,7 +69,7 @@ fn storage_opens_and_validates_fts5_support() {
     let db = dir.path().join("index.sqlite");
     let storage = Storage::open(&db).expect("open");
     let meta = storage.meta().expect("meta");
-    assert_eq!(meta.schema_version, 9);
+    assert_eq!(meta.schema_version, 10);
     assert_eq!(meta.repository_generation, 0);
     assert!(db.exists());
 }
@@ -152,6 +152,8 @@ fn storage_applies_lookup_index_migration_to_existing_databases() {
     connection
         .execute_batch(
             "DROP INDEX chunks_file_line_idx;
+             DROP TABLE query_coverage_receipts;
+             DROP TABLE query_coverage_receipt_usage;
              DROP TABLE read_delta_bases;
              DROP TABLE read_delta_base_usage;
              DROP TABLE retrieval_receipt_evidence;
@@ -193,6 +195,8 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
     connection
         .execute_batch(
             "DROP TABLE read_delta_bases;
+             DROP TABLE query_coverage_receipts;
+             DROP TABLE query_coverage_receipt_usage;
              DROP TABLE read_delta_base_usage;
              DROP TABLE retrieval_receipt_evidence;
              DROP TABLE retrieval_receipts;
@@ -208,7 +212,7 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
     drop(connection);
 
     let storage = Storage::open(&db).expect("migrate");
-    assert_eq!(storage.meta().expect("metadata").schema_version, 9);
+    assert_eq!(storage.meta().expect("metadata").schema_version, 10);
     let connection = rusqlite::Connection::open(&db).expect("inspect");
     let last_access: i64 = connection
         .query_row(
@@ -245,7 +249,7 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
     let migration_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("migration version");
-    assert_eq!(migration_version, 10);
+    assert_eq!(migration_version, 11);
 }
 
 #[test]
@@ -474,6 +478,8 @@ fn structural_search_migration_rebuilds_existing_rows() {
              DROP TRIGGER symbol_refs_ai_trigram;
              DROP TRIGGER symbol_refs_ad_trigram;
              DROP TRIGGER symbol_refs_au_trigram;
+             DROP TABLE query_coverage_receipts;
+             DROP TABLE query_coverage_receipt_usage;
              DROP TABLE read_delta_bases;
              DROP TABLE read_delta_base_usage;
              DROP TABLE retrieval_receipt_evidence;

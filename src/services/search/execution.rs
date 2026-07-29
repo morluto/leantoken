@@ -2,6 +2,7 @@ struct PreparedSearch {
     regex: Option<regex::Regex>,
     literal_regex: Option<regex::Regex>,
     occurrence_literal_regex: Option<regex::Regex>,
+    query_predicate: Option<ExactQueryPredicate>,
     limit: usize,
     token_limit: usize,
     context_lines: usize,
@@ -18,6 +19,7 @@ struct SearchSnapshotResult {
     baseline_source_tokens: Option<usize>,
     phases: SearchPhaseCounters,
     primitive_keys: Vec<RetrievalPrimitiveKey>,
+    query_receipt: QueryReceiptExecution,
 }
 
 impl Services {
@@ -35,10 +37,16 @@ impl Services {
             (request.all_occurrences && matches!(request.mode, SearchMode::Text))
                 .then(|| compile_occurrence_literal_regex(request))
                 .transpose()?;
+        let query_predicate = request
+            .query_receipt
+            .as_ref()
+            .map(|_| ExactQueryPredicate::from_request(request))
+            .transpose()?;
         Ok(PreparedSearch {
             regex,
             literal_regex,
             occurrence_literal_regex,
+            query_predicate,
             limit: self.result_limit(request.max_results)?,
             token_limit: self
                 .token_limit(request.max_tokens, self.config.default_read_tokens)?,
@@ -58,6 +66,29 @@ impl Services {
         diagnostics: SearchDiagnostics,
         execution: SearchExecutionOptions,
     ) -> Result<SearchSnapshotResult> {
+        if request.query_receipt.is_some()
+            && !matches!(
+                execution.output_shape,
+                SearchOutputShape::OccurrenceGroups { .. }
+            )
+        {
+            return Err(Error::InvalidInput {
+                field: "query_receipt",
+                reason: "requires the occurrences projection",
+            });
+        }
+        if let Some(QueryReceiptAction::Reuse { receipt_id }) = &request.query_receipt {
+            return self.reuse_query_receipt(
+                session,
+                generation,
+                receipt_id,
+                prepared
+                    .query_predicate
+                    .as_ref()
+                    .expect("query receipt action prepares a predicate"),
+                cancellation,
+            );
+        }
         let offset = parse_cursor(request.cursor.as_deref(), generation)?;
         let mut hits = self.collect_structural_search_hits(
             session,
@@ -77,7 +108,7 @@ impl Services {
         )?;
         hits.extend(lexical.hits);
         let hits = order_search_hits(hits, request)?;
-        let (response, baseline_source_tokens) = self.build_search_page(
+        let (response, baseline_source_tokens, query_receipt) = self.build_search_page(
             session,
             generation,
             request,
@@ -92,6 +123,82 @@ impl Services {
             baseline_source_tokens,
             phases: lexical.phases,
             primitive_keys: lexical.primitive_keys,
+            query_receipt,
+        })
+    }
+
+    fn reuse_query_receipt(
+        &self,
+        session: &ReadSession,
+        generation: u64,
+        receipt_id: &str,
+        requested_predicate: &ExactQueryPredicate,
+        cancellation: &CancellationToken,
+    ) -> Result<SearchSnapshotResult> {
+        check_cancelled(cancellation)?;
+        let stored = session.load_query_receipt(receipt_id)?;
+        let Some(scope_relation) = requested_predicate.scope_relation_to(&stored.predicate) else {
+            return Err(Error::QueryReceiptMismatch);
+        };
+        if scope_relation == QueryReceiptScopeRelation::Subset && stored.match_count != 0 {
+            return Err(Error::QueryReceiptMismatch);
+        }
+        let current_meta = session.meta()?;
+        if current_meta.config_hash != stored.config_hash {
+            return Err(Error::StaleQueryReceipt {
+                receipt_generation: stored.repository_generation,
+                repository_generation: generation,
+            });
+        }
+        let reused_across_generation = stored.repository_generation != generation;
+        if reused_across_generation {
+            let recorded_filter = PathFilter::new(
+                stored.predicate.include_paths(),
+                stored.predicate.exclude_paths(),
+            )?;
+            let current_partition = session.exact_query_partition(
+                |path| recorded_filter.allows(path),
+                || check_cancelled(cancellation),
+            )?;
+            if current_partition != stored.partition {
+                return Err(Error::StaleQueryReceipt {
+                    receipt_generation: stored.repository_generation,
+                    repository_generation: generation,
+                });
+            }
+        }
+        let requested_predicate_blake3 = requested_predicate.digest()?;
+        let outcome = QueryReceiptOutcome {
+            status: QueryReceiptStatus::AlreadyCovered,
+            receipt_id: Some(stored.receipt_id),
+            complete: true,
+            match_count: stored.match_count,
+            requested_predicate_blake3,
+            covered_predicate_blake3: stored.predicate_blake3,
+            result_blake3: Some(stored.result_blake3),
+            receipt_generation: stored.repository_generation,
+            reused_across_generation,
+            scope_relation,
+        };
+        Ok(SearchSnapshotResult {
+            response: SearchResponse {
+                hits: Vec::new(),
+                coverage: SearchCoverage {
+                    text_matches: SearchCoverageCount {
+                        total: stored.match_count,
+                        returned: 0,
+                        truncated: stored.match_count,
+                    },
+                    ..SearchCoverage::default()
+                },
+                occurrences_returned: 0,
+                occurrences_total: Some(stored.match_count),
+                meta: self.meta(generation, 0, None),
+            },
+            baseline_source_tokens: None,
+            phases: SearchPhaseCounters::default(),
+            primitive_keys: Vec::new(),
+            query_receipt: QueryReceiptExecution::Outcome(outcome),
         })
     }
 
@@ -407,7 +514,11 @@ impl Services {
         cancellation: &CancellationToken,
         hits: Vec<CandidateSearchHit>,
         offset: usize,
-    ) -> Result<(SearchResponse, Option<usize>)> {
+    ) -> Result<(
+        SearchResponse,
+        Option<usize>,
+        QueryReceiptExecution,
+    )> {
         let total_candidates = hits.len();
         let (mut selected, consumed, _) = select_search_page(
             &hits,
@@ -493,7 +604,64 @@ impl Services {
             ),
         };
         receipt.apply_meta(&mut response.meta);
-        Ok((response, baseline_source_tokens))
+        let query_receipt = if matches!(
+            request.query_receipt.as_ref(),
+            Some(QueryReceiptAction::Record)
+        ) {
+            let predicate = prepared
+                .query_predicate
+                .as_ref()
+                .expect("query receipt action prepares a predicate");
+            let predicate_blake3 = predicate.digest()?;
+            if !has_more && occurrences_returned == total_candidates {
+                let path_filter =
+                    PathFilter::new(predicate.include_paths(), predicate.exclude_paths())?;
+                let partition = session.exact_query_partition(
+                    |path| path_filter.allows(path),
+                    || check_cancelled(cancellation),
+                )?;
+                let occurrences = hits
+                    .iter()
+                    .map(|candidate| {
+                        candidate
+                            .hit
+                            .occurrence
+                            .as_ref()
+                            .map(|occurrence| (candidate.hit.path.as_str(), occurrence))
+                            .ok_or_else(|| {
+                                Error::InternalFailure(
+                                    "exhaustive query result omitted exact coordinates".into(),
+                                )
+                            })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                QueryReceiptExecution::Pending(QueryReceiptRecord {
+                    repository_generation: generation,
+                    config_hash: session.meta()?.config_hash,
+                    predicate: predicate.clone(),
+                    predicate_blake3,
+                    partition,
+                    match_count: total_candidates,
+                    result_blake3: exhaustive_result_digest(occurrences),
+                })
+            } else {
+                QueryReceiptExecution::Outcome(QueryReceiptOutcome {
+                    status: QueryReceiptStatus::NotRecordedIncompleteResponse,
+                    receipt_id: None,
+                    complete: false,
+                    match_count: total_candidates,
+                    requested_predicate_blake3: predicate_blake3.clone(),
+                    covered_predicate_blake3: predicate_blake3,
+                    result_blake3: None,
+                    receipt_generation: generation,
+                    reused_across_generation: false,
+                    scope_relation: QueryReceiptScopeRelation::Exact,
+                })
+            }
+        } else {
+            QueryReceiptExecution::None
+        };
+        Ok((response, baseline_source_tokens, query_receipt))
     }
 }
 

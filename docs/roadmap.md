@@ -64,6 +64,11 @@ regressions.
   materialization. Plans reuse hard scopes and ranking, expose scores, reasons,
   exact token estimates, focus coverage, and generated-artifact warnings, and
   do not create or update receipts.
+- Explicit exhaustive `text`/`regex` query receipts now persist only complete
+  coverage, reuse exact predicates across processes, carry zero-match proofs to
+  conservatively narrower scopes, and cross generations only when relevant
+  indexed partitions are unchanged. Ranked identifier/symbol/path queries,
+  incomplete pages, and changed partitions remain fail-closed no-go cases.
 
 ## Token accounting
 

@@ -209,6 +209,7 @@ async fn invalid_focus_glob_is_a_typed_error() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await

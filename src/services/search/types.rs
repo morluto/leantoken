@@ -41,6 +41,12 @@ struct SearchExecutionOptions {
     record_savings: bool,
 }
 
+enum QueryReceiptExecution {
+    None,
+    Pending(QueryReceiptRecord),
+    Outcome(QueryReceiptOutcome),
+}
+
 struct RegexScan {
     hits: Vec<ChunkHit>,
     phases: SearchPhaseCounters,

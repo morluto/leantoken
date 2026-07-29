@@ -14,7 +14,7 @@
       "client_version": "0.144.1",
       "protocol_version": "2025-06-18",
       "result_mode": "structured",
-      "tool_catalog_digest": "e0119afc74f7294dc28751ea54516a7c",
+      "tool_catalog_digest": "d2b3193e3686c0a77a77fb48cecacc8b",
       "observed_on": "2026-07-20",
       "evidence": {
         "path": "benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-thin-leantoken-structured-owner.json",
@@ -28,11 +28,11 @@
   ],
   "catalog_review": {
     "reviewed_on": "2026-07-29",
-    "tool_catalog_digest": "e0119afc74f7294dc28751ea54516a7c",
+    "tool_catalog_digest": "d2b3193e3686c0a77a77fb48cecacc8b",
     "snapshot_path": "src/snapshots/leantoken__mcp__tests__mcp_tool_catalog.snap",
-    "change_kind": "additive_tool",
+    "change_kind": "additive_search_query_receipt",
     "input_schema_changed": true,
-    "result_projection_changed": false,
+    "result_projection_changed": true,
     "historical_runtime_validation_catalog_digest": "ffd5662e0731d265f561a5c10a891097"
   },
   "unavailable_hosts": [
@@ -43,7 +43,7 @@
   ],
   "limitations": [
     "The Codex row proves structured-only consumption for one frozen task and exact host version, not provider-input savings.",
-    "Any catalog digest change invalidates the row until review. The current digest carries the structured-consumption evidence only after review confirmed one additive tool, no changes to existing tool schemas, and no result-projection change; the historical runtime A/B receipt binds the prior digest.",
+    "Any catalog digest change invalidates the row until review. The current digest carries the structured-consumption evidence only after review confirmed one optional search input and opt-in query-receipt result metadata, with no new required field, no default result change, and no tool-count change; the historical runtime A/B receipt binds the prior digest.",
     "Unknown hosts and every exact-key mismatch remain dual; unavailable hosts are not assigned zero-valued measurements.",
     "Setup continues to write dual because configuration discovery does not attest an exact running host version."
   ]

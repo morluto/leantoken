@@ -41,6 +41,7 @@ async fn retrieval_call_options_enforce_final_service_response_bounds() {
                 all_occurrences: false,
                 prefer_structural: false,
                 receipt_id: None,
+                query_receipt: None,
                 cursor: None,
             },
             options,
@@ -190,6 +191,7 @@ async fn receipt_reserved_response_minimum_is_an_exact_retry_hint() {
         all_occurrences: false,
         prefer_structural: false,
         receipt_id: None,
+        query_receipt: None,
         cursor: None,
     };
     let (search_minimum, search_breakdown) = assert_response_budget_error(

@@ -160,6 +160,18 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
             "retrieval receipt belongs to a stale repository generation",
             mcp_error_data(cause.public_category()),
         ),
+        crate::Error::UnknownQueryReceipt(_) => ErrorData::invalid_params(
+            "query coverage receipt is unknown or expired",
+            mcp_error_data(cause.public_category()),
+        ),
+        crate::Error::QueryReceiptMismatch => ErrorData::invalid_params(
+            "query coverage receipt does not cover the requested predicate",
+            mcp_error_data(cause.public_category()),
+        ),
+        crate::Error::StaleQueryReceipt { .. } => ErrorData::invalid_params(
+            "relevant indexed content changed after the query coverage receipt was recorded",
+            mcp_error_data(cause.public_category()),
+        ),
         crate::Error::Regex(_) => ErrorData::invalid_params(
             "regular expression is invalid",
             mcp_error_data(cause.public_category()),

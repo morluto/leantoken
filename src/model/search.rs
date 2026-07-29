@@ -19,6 +19,20 @@ pub enum SearchMode {
     Reference,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+/// Explicit lifecycle action for one exhaustive-query coverage receipt.
+pub enum QueryReceiptAction {
+    /// Record a receipt only when the exhaustive result is returned completely.
+    Record,
+    /// Reuse a prior complete receipt instead of repeating the exhaustive scan.
+    Reuse {
+        /// Opaque server-managed query receipt.
+        #[schemars(length(max = 128))]
+        receipt_id: String,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 /// Input for `leantoken.search`.
 pub struct SearchRequest {
@@ -57,6 +71,9 @@ pub struct SearchRequest {
     /// Server-managed receipt whose previously returned evidence should be suppressed.
     #[serde(default)]
     pub receipt_id: Option<String>,
+    /// Explicit record or reuse action for an exhaustive text or regex query.
+    #[serde(default)]
+    pub query_receipt: Option<QueryReceiptAction>,
     /// Cursor returned by an earlier response from the same generation.
     #[serde(default)]
     pub cursor: Option<String>,
@@ -174,6 +191,55 @@ pub struct SearchOccurrenceGroup {
     pub occurrences: Vec<SearchOccurrenceCoordinate>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+/// Persistence outcome for an explicit exhaustive-query receipt action.
+pub enum QueryReceiptStatus {
+    /// A complete result was persisted after response fitting succeeded.
+    Recorded,
+    /// A prior complete result proved the requested query without rescanning source chunks.
+    AlreadyCovered,
+    /// The scan completed, but pagination or token selection omitted occurrences.
+    NotRecordedIncompleteResponse,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+/// Relationship between the requested path scope and the recorded proof scope.
+pub enum QueryReceiptScopeRelation {
+    /// The normalized include/exclude scopes are identical.
+    Exact,
+    /// A zero-match proof over a conservative syntactic superset covers this scope.
+    Subset,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Bounded proof metadata for one explicit exhaustive-query receipt action.
+pub struct QueryReceiptOutcome {
+    pub status: QueryReceiptStatus,
+    /// Present only for persisted or reused complete receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_id: Option<String>,
+    /// Whether this outcome is a complete reusable coverage proof.
+    pub complete: bool,
+    /// Exact match count for the requested predicate.
+    pub match_count: usize,
+    /// BLAKE3 commitment to the normalized requested predicate.
+    pub requested_predicate_blake3: String,
+    /// BLAKE3 commitment to the predicate whose proof was recorded.
+    pub covered_predicate_blake3: String,
+    /// BLAKE3 commitment to the complete ordered result set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_blake3: Option<String>,
+    /// Repository generation where the persisted proof was originally recorded.
+    pub receipt_generation: u64,
+    /// Whether unchanged relevant indexed partitions allowed reuse in a later generation.
+    #[serde(default)]
+    pub reused_across_generation: bool,
+    /// Exact scope reuse or a conservative zero-result subset proof.
+    pub scope_relation: QueryReceiptScopeRelation,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 /// Exhaustive lexical matches without repeated excerpts or ranked-hit metadata.
 pub struct SearchOccurrencesResponse {
@@ -183,6 +249,9 @@ pub struct SearchOccurrencesResponse {
     pub occurrences_total: usize,
     pub coordinates_only: bool,
     pub coverage: SearchCoverage,
+    /// Present only when the caller explicitly records or reuses query coverage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_receipt: Option<QueryReceiptOutcome>,
     pub meta: ResponseMeta,
 }
 

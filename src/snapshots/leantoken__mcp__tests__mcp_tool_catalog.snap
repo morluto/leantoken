@@ -1700,9 +1700,48 @@ expression: tools
   },
   {
     "name": "search",
-    "description": "Search indexed source for symbols, references, identifiers, text, or regex matches. Use projection=grouped for summaries; exhaustive text or regex searches use projection=occurrences, with coordinates_only=true for coordinates without excerpts. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}.",
+    "description": "Search indexed source for symbols, references, identifiers, text, or regex. projection=occurrences makes text/regex exhaustive; coordinates_only omits excerpts. query_receipt record/reuse persists only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}.",
     "inputSchema": {
       "$defs": {
+        "QueryReceiptAction": {
+          "description": "Explicit lifecycle action for one exhaustive-query coverage receipt.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Record a receipt only when the exhaustive result is returned completely.",
+              "properties": {
+                "kind": {
+                  "const": "record",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Reuse a prior complete receipt instead of repeating the exhaustive scan.",
+              "properties": {
+                "kind": {
+                  "const": "reuse",
+                  "type": "string"
+                },
+                "receipt_id": {
+                  "description": "Opaque server-managed query receipt.",
+                  "maxLength": 128,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "receipt_id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "SearchMcpProjection": {
           "description": "Response projection for indexed search.",
           "oneOf": [
@@ -1891,6 +1930,18 @@ expression: tools
           "maxLength": 65536,
           "minLength": 1,
           "type": "string"
+        },
+        "query_receipt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueryReceiptAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Explicitly record or reuse complete exhaustive-query coverage."
         },
         "receipt_id": {
           "default": null,

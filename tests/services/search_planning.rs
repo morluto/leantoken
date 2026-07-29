@@ -33,6 +33,7 @@ async fn search_applies_path_filters_before_candidate_limits() {
                 max_tokens: Some(200),
                 context_lines: Some(0),
                 receipt_id: None,
+                query_receipt: None,
                 cursor: None,
             })
             .await
@@ -54,6 +55,7 @@ async fn search_applies_path_filters_before_candidate_limits() {
                 max_tokens: Some(200),
                 context_lines: Some(0),
                 receipt_id: None,
+                query_receipt: None,
                 cursor: None,
             })
             .await
@@ -87,6 +89,7 @@ async fn exhaustive_text_search_returns_each_occurrence_with_exact_total_and_pag
         all_occurrences: true,
         prefer_structural: false,
         receipt_id: None,
+        query_receipt: None,
         cursor: None,
     };
 
@@ -184,6 +187,7 @@ async fn exhaustive_occurrence_groups_preserve_probe_e_coordinates_without_repea
         all_occurrences: true,
         prefer_structural: false,
         receipt_id: None,
+        query_receipt: None,
         cursor: None,
     };
 
@@ -329,6 +333,7 @@ async fn identifier_search_merges_definition_channels_and_reports_coverage() {
             all_occurrences: false,
             prefer_structural: true,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -380,6 +385,7 @@ async fn exhaustive_regex_search_counts_repeated_matches_in_one_chunk() {
             all_occurrences: true,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -454,6 +460,7 @@ async fn regex_candidate_plans_match_full_scan_and_report_fallback_selection() {
             all_occurrences: true,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         };
         let optimized = services
@@ -539,6 +546,7 @@ async fn regex_candidate_plan_preserves_candidate_limit_errors() {
         all_occurrences: false,
         prefer_structural: false,
         receipt_id: None,
+        query_receipt: None,
         cursor: None,
     };
 
@@ -613,6 +621,7 @@ async fn regex_candidate_plan_applies_path_scope_before_candidate_limit() {
         all_occurrences: false,
         prefer_structural: false,
         receipt_id: None,
+        query_receipt: None,
         cursor: None,
     };
     let optimized = services
@@ -688,6 +697,7 @@ async fn regex_candidate_plan_bypasses_only_the_full_scan_file_bound() {
         all_occurrences: false,
         prefer_structural: false,
         receipt_id: None,
+        query_receipt: None,
         cursor: None,
     };
     let optimized = services
@@ -724,6 +734,7 @@ async fn regex_candidate_plan_bypasses_only_the_full_scan_file_bound() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -763,6 +774,7 @@ async fn regex_candidate_plan_bypasses_only_the_full_scan_file_bound() {
             all_occurrences: true,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await

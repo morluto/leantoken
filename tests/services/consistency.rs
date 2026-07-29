@@ -244,6 +244,7 @@ async fn regex_search_respects_absolute_candidate_cap() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -285,6 +286,7 @@ async fn reconcile_working_tree_search_reconciles_file_created_after_index() {
                 all_occurrences: false,
                 prefer_structural: false,
                 receipt_id: None,
+                query_receipt: None,
                 cursor: None,
             },
             IndexConsistency::ReconcileWorkingTree,
@@ -328,6 +330,7 @@ async fn indexed_generation_search_does_not_reconcile_file_created_after_index()
                 all_occurrences: false,
                 prefer_structural: false,
                 receipt_id: None,
+                query_receipt: None,
                 cursor: None,
             },
             IndexConsistency::IndexedGeneration,

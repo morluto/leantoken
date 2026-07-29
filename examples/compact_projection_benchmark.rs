@@ -248,6 +248,7 @@ async fn main() -> AnyResult<()> {
         all_occurrences: false,
         prefer_structural: true,
         receipt_id: None,
+        query_receipt: None,
         cursor: None,
     };
     let search_full = services.search(search_request.clone()).await?;

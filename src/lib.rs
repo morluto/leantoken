@@ -25,6 +25,7 @@ pub mod mcp;
 pub mod model;
 /// Tree-sitter language detection and syntax extraction.
 pub mod parser;
+mod query_receipt;
 /// Deterministic evidence ranking, deduplication, and selection.
 pub mod ranking;
 mod read_delta;

@@ -909,6 +909,84 @@ fn mcp_receipt_created_by_one_process_is_reused_by_another() {
 }
 
 #[test]
+fn mcp_query_receipt_created_by_one_process_is_reused_by_another() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "pub fn persistent_query_receipt_answer() -> u8 { 42 }\n",
+    )
+    .expect("write fixture");
+    let database = root.path().join("index.sqlite");
+
+    let mut first = McpProcess::spawn(root.path(), &database);
+    first.initialize();
+    first.send_initialized();
+    first.wait_until_ready(Duration::from_secs(30));
+    first.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 903,
+        "method": "tools/call",
+        "params": {
+            "name": "search",
+            "arguments": {
+                "query": "persistent_query_receipt_answer",
+                "mode": "text",
+                "all_occurrences": true,
+                "coordinates_only": true,
+                "max_results": 100,
+                "max_tokens": 10_000,
+                "query_receipt": {"kind": "record"}
+            }
+        }
+    }));
+    let first_response = first.response(Duration::from_secs(10));
+    let first_result = &first_response["result"]["structuredContent"];
+    assert_eq!(
+        first_result["query_receipt"]["status"], "recorded",
+        "{first_response}"
+    );
+    let receipt_id = first_result["query_receipt"]["receipt_id"]
+        .as_str()
+        .expect("query receipt id")
+        .to_owned();
+    first.stop();
+
+    let mut second = McpProcess::spawn(root.path(), &database);
+    second.initialize();
+    second.send_initialized();
+    second.wait_until_ready(Duration::from_secs(30));
+    second.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 904,
+        "method": "tools/call",
+        "params": {
+            "name": "search",
+            "arguments": {
+                "query": "persistent_query_receipt_answer",
+                "mode": "text",
+                "all_occurrences": true,
+                "coordinates_only": true,
+                "max_results": 100,
+                "max_tokens": 10_000,
+                "query_receipt": {
+                    "kind": "reuse",
+                    "receipt_id": receipt_id
+                }
+            }
+        }
+    }));
+    let second_response = second.response(Duration::from_secs(10));
+    let second_result = &second_response["result"]["structuredContent"];
+    assert_eq!(
+        second_result["query_receipt"]["status"], "already_covered",
+        "{second_response}"
+    );
+    assert_eq!(second_result["groups"], serde_json::json!([]));
+    assert_eq!(second_result["occurrences_returned"], 0);
+    assert_eq!(second_result["occurrences_total"], 1);
+}
+
+#[test]
 fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(

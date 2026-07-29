@@ -294,6 +294,22 @@ pub enum Error {
         /// Repository generation serving the current retrieval.
         repository_generation: u64,
     },
+    /// Exhaustive-query coverage receipt is unknown, expired, or has been evicted.
+    #[error("unknown query coverage receipt: {0}")]
+    UnknownQueryReceipt(String),
+    /// Query receipt cannot prove the normalized predicate requested by the caller.
+    #[error("query coverage receipt does not cover the requested predicate")]
+    QueryReceiptMismatch,
+    /// Relevant indexed partitions changed after the query receipt was recorded.
+    #[error(
+        "stale query coverage receipt: receipt generation {receipt_generation}, repository generation {repository_generation}"
+    )]
+    StaleQueryReceipt {
+        /// Repository generation recorded when the receipt was created.
+        receipt_generation: u64,
+        /// Repository generation serving the current retrieval.
+        repository_generation: u64,
+    },
     #[error("request cancelled")]
     Cancelled,
     /// Process-local retrieval admission is full; no blocking work was queued.
@@ -372,6 +388,9 @@ impl Error {
             Self::StaleCursor => "stale_cursor",
             Self::UnknownReceipt(_) => "unknown_receipt",
             Self::StaleReceipt { .. } => "stale_receipt",
+            Self::UnknownQueryReceipt(_) => "unknown_query_receipt",
+            Self::QueryReceiptMismatch => "query_receipt_mismatch",
+            Self::StaleQueryReceipt { .. } => "stale_query_receipt",
             Self::Cancelled => "request_cancelled",
             Self::PathOutsideRoot(_) => "path_outside_root",
             Self::UnsupportedPathEncoding(_) => "unsupported_path_encoding",
@@ -437,6 +456,9 @@ impl Error {
             Self::StaleCursor => "stale_cursor",
             Self::UnknownReceipt(_) => "unknown_receipt",
             Self::StaleReceipt { .. } => "stale_receipt",
+            Self::UnknownQueryReceipt(_) => "unknown_query_receipt",
+            Self::QueryReceiptMismatch => "query_receipt_mismatch",
+            Self::StaleQueryReceipt { .. } => "stale_query_receipt",
             Self::Cancelled => "cancelled",
             Self::RetrievalOverloaded => "retrieval_overloaded",
             Self::RetrievalQueueTimeout => "retrieval_queue_timeout",

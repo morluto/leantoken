@@ -378,6 +378,70 @@ WHERE id = 1;
 UPDATE meta SET schema_version = 9 WHERE id = 1;
 "#;
 
+const QUERY_COVERAGE_RECEIPTS_SQL: &str = r#"
+CREATE TABLE query_coverage_receipt_usage (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    namespace TEXT NOT NULL CHECK (length(namespace) = 32),
+    next_access_sequence INTEGER NOT NULL DEFAULT 0 CHECK (next_access_sequence >= 0),
+    receipt_count INTEGER NOT NULL DEFAULT 0 CHECK (receipt_count >= 0),
+    logical_bytes INTEGER NOT NULL DEFAULT 0 CHECK (logical_bytes >= 0)
+);
+
+INSERT INTO query_coverage_receipt_usage(id, namespace)
+VALUES (1, lower(hex(randomblob(16))));
+
+CREATE TABLE query_coverage_receipts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repository_identity TEXT NOT NULL,
+    repository_generation INTEGER NOT NULL CHECK (repository_generation >= 0),
+    config_hash TEXT NOT NULL,
+    semantics_version INTEGER NOT NULL CHECK (semantics_version > 0),
+    predicate_json TEXT NOT NULL,
+    predicate_blake3 TEXT NOT NULL CHECK (length(predicate_blake3) = 64),
+    partition_blake3 TEXT NOT NULL CHECK (length(partition_blake3) = 64),
+    partition_file_count INTEGER NOT NULL CHECK (partition_file_count >= 0),
+    match_count INTEGER NOT NULL CHECK (match_count >= 0),
+    result_blake3 TEXT NOT NULL CHECK (length(result_blake3) = 64),
+    created_unix_millis INTEGER NOT NULL CHECK (created_unix_millis >= 0),
+    last_access_unix_millis INTEGER NOT NULL CHECK (last_access_unix_millis >= 0),
+    expires_unix_millis INTEGER NOT NULL CHECK (expires_unix_millis >= 0),
+    access_sequence INTEGER NOT NULL CHECK (access_sequence > 0),
+    logical_bytes INTEGER NOT NULL CHECK (logical_bytes >= 0)
+);
+
+CREATE INDEX query_coverage_receipts_expiry_idx
+ON query_coverage_receipts(expires_unix_millis, id);
+CREATE INDEX query_coverage_receipts_lru_idx
+ON query_coverage_receipts(access_sequence, id);
+CREATE INDEX query_coverage_receipts_predicate_idx
+ON query_coverage_receipts(
+    repository_generation,
+    predicate_blake3,
+    partition_blake3,
+    result_blake3
+);
+
+CREATE TRIGGER query_coverage_receipts_ai
+AFTER INSERT ON query_coverage_receipts
+BEGIN
+    UPDATE query_coverage_receipt_usage
+    SET receipt_count = receipt_count + 1,
+        logical_bytes = logical_bytes + new.logical_bytes
+    WHERE id = 1;
+END;
+
+CREATE TRIGGER query_coverage_receipts_ad
+AFTER DELETE ON query_coverage_receipts
+BEGIN
+    UPDATE query_coverage_receipt_usage
+    SET receipt_count = receipt_count - 1,
+        logical_bytes = logical_bytes - old.logical_bytes
+    WHERE id = 1;
+END;
+
+UPDATE meta SET schema_version = 10 WHERE id = 1;
+"#;
+
 const TOKEN_SAVINGS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS token_savings (
     tokenizer TEXT NOT NULL,
@@ -426,7 +490,8 @@ const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(RETRIEVAL_RECEIPTS_SQL).foreign_key_check(),
     M::up(READ_DELTA_BASES_SQL),
     M::up(RECEIPT_EXACT_ONLY_SQL),
+    M::up(QUERY_COVERAGE_RECEIPTS_SQL),
 ];
-pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 10;
+pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 11;
 const _: () = assert!(MIGRATIONS_SLICE.len() == CURRENT_MIGRATION_VERSION as usize);
 const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);

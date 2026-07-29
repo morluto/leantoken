@@ -14,6 +14,10 @@ use super::validation::{
 };
 use super::{ServiceCallOptions, Services, retrieval_primitive_key};
 use crate::model::*;
+use crate::query_receipt::{
+    ExactQueryPredicate, QUERY_RECEIPT_ID_RESPONSE_RESERVE, QueryReceiptRecord,
+    exhaustive_result_digest,
+};
 use crate::storage::{ChunkHit, ReadSession, ReferenceHit, SymbolHit};
 use crate::text::{
     anchored_line_window, byte_range_to_line_range, byte_to_line, excerpt, hash, line_starts,
@@ -199,7 +203,7 @@ impl Services {
                         record_savings: true,
                     },
                 )
-                .map(|evaluation| evaluation.response)
+                .map(|snapshot| snapshot.response)
             })
             .await;
         self.observe_service_result(operation, result)
@@ -373,25 +377,32 @@ impl Services {
         let result = self
             .blocking_executor
             .run(cancellation, move |cancellation| {
-                let response = this
-                    .search_sync(
-                        request,
-                        cancellation,
-                        RegexPlanning::Enabled,
-                        SearchDiagnostics::Omit,
-                        SearchExecutionOptions {
-                            output_shape: SearchOutputShape::OccurrenceGroups { coordinates_only },
-                            response_options: ServiceCallOptions::new(),
-                            record_savings: false,
-                        },
-                    )?
-                    .response;
+                let snapshot = this.search_sync(
+                    request,
+                    cancellation,
+                    RegexPlanning::Enabled,
+                    SearchDiagnostics::Omit,
+                    SearchExecutionOptions {
+                        output_shape: SearchOutputShape::OccurrenceGroups { coordinates_only },
+                        response_options: ServiceCallOptions::new(),
+                        record_savings: false,
+                    },
+                )?;
+                let response = snapshot.response;
                 let occurrences_total = response.occurrences_total.ok_or_else(|| {
                     Error::InternalFailure(
                         "grouped occurrence search omitted its exact total".into(),
                     )
                 })?;
                 let groups = group_occurrence_hits(&response.hits, coordinates_only)?;
+                let query_receipt = match &snapshot.query_receipt {
+                    QueryReceiptExecution::None => None,
+                    QueryReceiptExecution::Pending(record) => Some(recorded_query_receipt_outcome(
+                        record,
+                        QUERY_RECEIPT_ID_RESPONSE_RESERVE.to_owned(),
+                    )),
+                    QueryReceiptExecution::Outcome(outcome) => Some(outcome.clone()),
+                };
                 let mut compact = SearchOccurrencesResponse {
                     groups_returned: groups.len(),
                     groups,
@@ -399,9 +410,17 @@ impl Services {
                     occurrences_total,
                     coordinates_only,
                     coverage: response.coverage,
+                    query_receipt,
                     meta: response.meta,
                 };
                 this.finalize_bounded_response(&mut compact, options)?;
+                if let QueryReceiptExecution::Pending(record) = snapshot.query_receipt {
+                    check_cancelled(cancellation)?;
+                    let receipt_id = this.storage.persist_query_receipt(&record)?;
+                    compact.query_receipt =
+                        Some(recorded_query_receipt_outcome(&record, receipt_id));
+                    this.finalize_bounded_response(&mut compact, options)?;
+                }
                 this.record_token_savings(TokenAccountingOperation::Search, None, &compact.meta);
                 Ok(compact)
             })
@@ -417,7 +436,7 @@ impl Services {
         let this = self.clone();
         self.blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
-                this.search_sync(
+                let snapshot = this.search_sync(
                     request,
                     cancellation,
                     RegexPlanning::Enabled,
@@ -427,7 +446,12 @@ impl Services {
                         response_options: ServiceCallOptions::new(),
                         record_savings: true,
                     },
-                )
+                )?;
+                Ok(SearchEvaluation {
+                    response: snapshot.response,
+                    phases: snapshot.phases,
+                    primitive_keys: snapshot.primitive_keys,
+                })
             })
             .await
     }
@@ -443,7 +467,7 @@ impl Services {
         let this = self.clone();
         self.blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
-                this.search_sync(
+                let snapshot = this.search_sync(
                     request,
                     cancellation,
                     RegexPlanning::Disabled,
@@ -453,7 +477,12 @@ impl Services {
                         response_options: ServiceCallOptions::new(),
                         record_savings: true,
                     },
-                )
+                )?;
+                Ok(SearchEvaluation {
+                    response: snapshot.response,
+                    phases: snapshot.phases,
+                    primitive_keys: snapshot.primitive_keys,
+                })
             })
             .await
     }
@@ -465,10 +494,10 @@ impl Services {
         regex_planning: RegexPlanning,
         diagnostics: SearchDiagnostics,
         execution: SearchExecutionOptions,
-    ) -> Result<SearchEvaluation> {
+    ) -> Result<SearchSnapshotResult> {
         check_cancelled(cancellation)?;
         let prepared = self.prepare_search(&request)?;
-        let snapshot = self.consistent(|session, generation| {
+        let mut snapshot = self.consistent(|session, generation| {
             self.search_snapshot(
                 session,
                 generation,
@@ -480,20 +509,33 @@ impl Services {
                 execution,
             )
         })?;
-        let mut response = snapshot.response;
-        self.finalize_bounded_response(&mut response, execution.response_options)?;
+        self.finalize_bounded_response(&mut snapshot.response, execution.response_options)?;
         if execution.record_savings {
             self.record_token_savings(
                 TokenAccountingOperation::Search,
                 snapshot.baseline_source_tokens,
-                &response.meta,
+                &snapshot.response.meta,
             );
         }
-        Ok(SearchEvaluation {
-            response,
-            phases: snapshot.phases,
-            primitive_keys: snapshot.primitive_keys,
-        })
+        Ok(snapshot)
+    }
+}
+
+fn recorded_query_receipt_outcome(
+    record: &QueryReceiptRecord,
+    receipt_id: String,
+) -> QueryReceiptOutcome {
+    QueryReceiptOutcome {
+        status: QueryReceiptStatus::Recorded,
+        receipt_id: Some(receipt_id),
+        complete: true,
+        match_count: record.match_count,
+        requested_predicate_blake3: record.predicate_blake3.clone(),
+        covered_predicate_blake3: record.predicate_blake3.clone(),
+        result_blake3: Some(record.result_blake3.clone()),
+        receipt_generation: record.repository_generation,
+        reused_across_generation: false,
+        scope_relation: QueryReceiptScopeRelation::Exact,
     }
 }
 

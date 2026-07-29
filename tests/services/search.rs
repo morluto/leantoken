@@ -17,6 +17,7 @@ async fn search_range_covers_the_returned_context_lines() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -59,6 +60,7 @@ async fn text_search_windows_keep_case_insensitive_matches_across_a_chunk() {
                 all_occurrences: false,
                 prefer_structural: false,
                 receipt_id: None,
+                query_receipt: None,
                 cursor: None,
             })
             .await
@@ -103,6 +105,7 @@ async fn maximum_text_context_keeps_the_original_read_bounded_range_match() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -134,6 +137,7 @@ async fn short_text_queries_match_inside_longer_tokens() {
                     all_occurrences: false,
                     prefer_structural: false,
                     receipt_id: None,
+                    query_receipt: None,
                     cursor: None,
                 })
                 .await
@@ -166,6 +170,7 @@ async fn short_identifier_queries_match_inside_longer_tokens() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -203,6 +208,7 @@ async fn regex_search_keeps_a_multiline_match_that_exceeds_the_line_cap() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -246,6 +252,7 @@ async fn symbol_search_caps_a_long_definition_without_losing_its_declaration() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -282,6 +289,7 @@ async fn reference_search_window_keeps_the_required_reference_span() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -335,6 +343,7 @@ async fn text_search_reports_enclosing_symbols_across_languages() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -387,6 +396,7 @@ async fn text_search_preserves_multiline_matches_without_a_single_matching_line(
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await

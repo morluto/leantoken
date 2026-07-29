@@ -116,6 +116,7 @@ async fn scoped_index_preserves_selected_retrievals_and_discloses_negative_evide
         all_occurrences: false,
         prefer_structural: true,
         receipt_id: None,
+        query_receipt: None,
         cursor: None,
     };
     let scoped_result = scoped.search(request.clone()).await.expect("scoped search");
