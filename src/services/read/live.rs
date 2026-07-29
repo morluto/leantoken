@@ -36,13 +36,21 @@ fn resolve_read_target(
     }
 
     let (target_start_line, target_end_line) = if let Some(symbol_name) = &request.symbol {
-        let symbol =
-            session
-                .find_symbol(file_id, symbol_name)?
-                .ok_or_else(|| Error::SymbolNotFound {
+        let symbol = match session.find_symbol(file_id, symbol_name)? {
+            crate::symbol_identity::SymbolResolution::Unique(symbol) => symbol,
+            crate::symbol_identity::SymbolResolution::NotFound => {
+                return Err(Error::SymbolNotFound {
                     path: request.path.clone(),
                     symbol: symbol_name.clone(),
-                })?;
+                });
+            }
+            crate::symbol_identity::SymbolResolution::Ambiguous => {
+                return Err(Error::AmbiguousSymbol {
+                    path: request.path.clone(),
+                    symbol: symbol_name.clone(),
+                });
+            }
+        };
         (symbol.start_line, Some(symbol.end_line))
     } else if let Some(heading_name) = &request.heading {
         let occurrence = request.heading_occurrence.unwrap_or(1);

@@ -132,6 +132,14 @@ pub enum Error {
         /// Exact symbol identity requested by the caller.
         symbol: String,
     },
+    /// A bare or qualified symbol identity matched multiple definitions.
+    #[error("symbol is ambiguous in {path}: {symbol}")]
+    AmbiguousSymbol {
+        /// Repository-relative indexed or historical file.
+        path: String,
+        /// Exact symbol identity requested by the caller.
+        symbol: String,
+    },
     /// Requested document heading occurrence was absent from an indexed file.
     #[error("document heading occurrence {occurrence} is not indexed in {path}: {heading}")]
     HeadingNotFound {
@@ -321,6 +329,7 @@ impl Error {
             Self::RequestLimitExceeded { .. } | Self::LimitExceeded => "request_limit_exceeded",
             Self::NotIndexed(_) => "not_indexed",
             Self::SymbolNotFound { .. } => "symbol_not_found",
+            Self::AmbiguousSymbol { .. } => "symbol_ambiguous",
             Self::HeadingNotFound { .. } => "heading_not_found",
             Self::IndexNotReady => "index_not_ready",
             Self::StaleCursor => "stale_cursor",
@@ -370,6 +379,7 @@ impl Error {
             Self::RepositoryTraversal(_) => "repository_traversal",
             Self::NotIndexed(_) => "not_indexed",
             Self::SymbolNotFound { .. } => "symbol_not_found",
+            Self::AmbiguousSymbol { .. } => "symbol_ambiguous",
             Self::HeadingNotFound { .. } => "heading_not_found",
             Self::LimitExceeded => "limit_exceeded",
             Self::RequestLimitExceeded { .. } => "request_limit_exceeded",

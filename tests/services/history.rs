@@ -1,5 +1,229 @@
 use super::*;
 
+#[tokio::test]
+async fn canonical_symbol_identity_round_trips_without_silent_ambiguity() {
+    require_git();
+
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(
+        root.path().join("service.rs"),
+        "pub struct ServiceCallOptions;\n\
+         \n\
+         pub struct Services;\n\
+         impl Services {\n\
+             pub fn wait_for_initial_index_cancellable() -> &'static str { \"services\" }\n\
+             pub fn go() -> &'static str { \"short leaf\" }\n\
+         }\n\
+         \n\
+         pub struct Other;\n\
+         impl Other {\n\
+             pub fn wait_for_initial_index_cancellable() -> &'static str { \"other\" }\n\
+         }\n",
+    )
+    .expect("service source");
+    init_git_repo(root.path());
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index");
+
+    let qualified = "Services.wait_for_initial_index_cancellable";
+    let outline = services
+        .outline(OutlineRequest {
+            paths: vec!["service.rs".into()],
+            symbol_name: Some(qualified.into()),
+            symbol_kind: Some("method".into()),
+            max_results: Some(10),
+            max_tokens: Some(1_000),
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect("qualified outline");
+    assert_eq!(outline.total_symbols, 1);
+    assert_eq!(outline.files[0].symbols.len(), 1);
+    let outlined = &outline.files[0].symbols[0];
+    assert_eq!(outlined.name, "wait_for_initial_index_cancellable");
+    assert_eq!(outlined.parent.as_deref(), Some("Services"));
+
+    let search_request = |query: &str| SearchRequest {
+        query: query.into(),
+        mode: SearchMode::Symbol,
+        include_paths: vec!["service.rs".into()],
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(10),
+        max_tokens: Some(1_000),
+        context_lines: Some(0),
+        case_sensitive: true,
+        all_occurrences: false,
+        prefer_structural: false,
+        receipt_id: None,
+        cursor: None,
+    };
+    let searched = services
+        .search_with_options(
+            search_request(qualified),
+            ServiceCallOptions::new().with_max_response_tokens(5_000),
+        )
+        .await
+        .expect("qualified symbol search");
+    assert_eq!(searched.coverage.definitions.total, 1);
+    assert_eq!(searched.hits.len(), 1);
+    assert_eq!(
+        searched.hits[0].symbol.as_deref(),
+        Some("wait_for_initial_index_cancellable")
+    );
+    assert_eq!(
+        searched.hits[0].enclosing_symbol.as_deref(),
+        Some("Services")
+    );
+    assert_eq!(searched.hits[0].start_line, outlined.start_line);
+
+    let options = services
+        .search(search_request("ServiceCallOptions"))
+        .await
+        .expect("fresh exact struct symbol search");
+    assert_eq!(options.hits.len(), 1);
+    assert_eq!(
+        options.hits[0].symbol.as_deref(),
+        Some("ServiceCallOptions")
+    );
+
+    let short_qualified = services
+        .search(search_request("Services.go"))
+        .await
+        .expect("qualified symbol with a short leaf");
+    assert_eq!(short_qualified.hits.len(), 1);
+    assert_eq!(short_qualified.hits[0].symbol.as_deref(), Some("go"));
+    assert_eq!(
+        short_qualified.hits[0].enclosing_symbol.as_deref(),
+        Some("Services")
+    );
+
+    let read = services
+        .read(ReadRequest {
+            path: "service.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: Some(qualified.into()),
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(1_000),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+        })
+        .await
+        .expect("qualified live read");
+    assert_eq!(read.target_start_line, outlined.start_line);
+    assert!(
+        read.content
+            .as_deref()
+            .is_some_and(|content| content.contains("\"services\""))
+    );
+
+    let historical = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::ReadSymbol {
+                path: "service.rs".into(),
+                symbol: qualified.into(),
+                revision: "HEAD".into(),
+            },
+            max_results: None,
+            max_tokens: Some(1_000),
+        })
+        .await
+        .expect("qualified historical read");
+    let historical = historical.symbol.expect("historical symbol");
+    assert_eq!(historical.target_start_line, outlined.start_line);
+    assert_eq!(historical.name, outlined.name);
+    assert_eq!(historical.parent, outlined.parent);
+
+    let unqualified = "wait_for_initial_index_cancellable";
+    let candidates = services
+        .search(search_request(unqualified))
+        .await
+        .expect("bounded ambiguous candidates");
+    assert_eq!(candidates.coverage.definitions.total, 2);
+    assert_eq!(candidates.hits.len(), 2);
+
+    let live_ambiguity = services
+        .read(ReadRequest {
+            path: "service.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: Some(unqualified.into()),
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(1_000),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+        })
+        .await
+        .expect_err("unqualified live symbol must not select the first match");
+    assert!(matches!(
+        live_ambiguity,
+        Error::AmbiguousSymbol { path, symbol }
+            if path == "service.rs" && symbol == unqualified
+    ));
+
+    let historical_ambiguity = services
+        .history(HistoryRequest {
+            operation: HistoryOperation::ReadSymbol {
+                path: "service.rs".into(),
+                symbol: unqualified.into(),
+                revision: "HEAD".into(),
+            },
+            max_results: None,
+            max_tokens: Some(1_000),
+        })
+        .await
+        .expect_err("unqualified historical symbol must not select the first match");
+    assert!(matches!(
+        historical_ambiguity,
+        Error::AmbiguousSymbol { path, symbol }
+            if path.starts_with("service.rs@") && symbol == unqualified
+    ));
+
+    let batch = services
+        .history_diff_symbols(DiffSymbolsRequest {
+            targets: vec![
+                DiffSymbolsTarget {
+                    path: "service.rs".into(),
+                    symbol: unqualified.into(),
+                    head_path: None,
+                    head_symbol: None,
+                },
+                DiffSymbolsTarget {
+                    path: "service.rs".into(),
+                    symbol: qualified.into(),
+                    head_path: None,
+                    head_symbol: None,
+                },
+            ],
+            base_revision: "HEAD".into(),
+            head_revision: "HEAD".into(),
+            max_results: Some(10),
+            max_tokens: Some(1_000),
+            cursor: None,
+        })
+        .await
+        .expect("batch ambiguity remains a per-target outcome");
+    assert_eq!(batch.results.len(), 2);
+    assert_eq!(batch.results[0].status, DiffSymbolsStatus::Unavailable);
+    assert_eq!(
+        batch.results[0].reason.as_deref(),
+        Some("ambiguous_base_symbol")
+    );
+    assert_eq!(batch.results[1].status, DiffSymbolsStatus::Unchanged);
+    assert!(!batch.result_complete);
+}
+
 
 #[tokio::test]
 async fn csharp_qualified_symbols_support_historical_reads_and_diffs() {

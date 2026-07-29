@@ -512,6 +512,14 @@ The response `coverage` reports `total`, current-page `returned`, and
 `truncated` counts separately for definitions, references, and text/regex
 matches. One merged hit can represent more than one channel.
 
+Structural symbol queries accept either a bare `name` or the canonical
+`parent.name` identity exposed by outline and search metadata. Qualified
+queries use the leaf name to obtain trigram candidates and then verify the
+combined owner/name identity, so they do not require a larger FTS index.
+Unqualified search remains a bounded candidate operation and may return more
+than one definition; combine each hit's `enclosing_symbol` and `symbol` to pass
+the qualified identity to outline, read, or history.
+
 Set `projection="grouped"` for broad symbol/reference discovery that does not
 need every repeated excerpt or score. Grouping runs after the normal ranked
 page, exact-hit deduplication, lexical/structural definition merge, and receipt
@@ -564,6 +572,11 @@ partial exhaustive result.
 Returns definitions, imports, signatures, parent relationships, and one-based
 line ranges for one or more files. Name and kind filters narrow the output.
 Bodies are not returned by default.
+
+The name filter accepts the same bare or canonical `parent.name` identity used
+by symbol search, read, and history. A bare name can intentionally return
+multiple definitions; use the returned `parent`, `kind`, and line coordinates
+to choose a qualified target.
 
 `path_results` returns one ordered outcome for every input with its zero-based
 `request_index`, normalized repository-relative `path`, and typed `status`.
@@ -628,7 +641,10 @@ Reads an exact source range.
 - `target: {"kind":"lines","start":40,"end":90}` selects an inclusive
   one-based range.
 - `target: {"kind":"symbol","name":"LeanTokenMcp"}` selects one indexed
-  symbol definition.
+  symbol definition. Nested definitions also accept the canonical
+  `parent.name` form, such as `Services.wait_for_initial_index_cancellable`.
+  An unqualified or qualified identity that matches multiple definitions
+  returns typed `symbol_ambiguous` instead of selecting the first definition.
 - `target: {"kind":"heading","name":"Installation"}` selects one indexed
   Markdown section. The exact outline signature form, such as
   `"name":"## Installation"`, is also accepted. Add `"occurrence":2` to
@@ -757,7 +773,11 @@ working tree or index:
 Historical paths are repository-relative, revisions are resolved before object
 lookup, and blobs remain subject to the configured per-file byte limit.
 Nested symbols use the same `parent.name` qualification accepted by exact live
-reads. `diff_symbol` permits the file or symbol to be absent at one endpoint:
+reads. A unique bare name also resolves, while multiple matches return typed
+`symbol_ambiguous` instead of selecting by parser order. In `diff_symbols`, an
+ambiguous endpoint remains a per-target `unavailable` result with
+`ambiguous_base_symbol` or `ambiguous_head_symbol`, so other targets still
+succeed. `diff_symbol` permits the file or symbol to be absent at one endpoint:
 `before` or `after` is omitted, the unified diff contains the complete bounded
 addition or deletion, and `semantic_change.kind` is `added` or `removed`. A
 symbol absent at both endpoints remains a typed `symbol_not_found` error.

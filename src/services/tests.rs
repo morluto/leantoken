@@ -886,10 +886,11 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
         .expect("find file")
         .expect("indexed file");
     let session = services.storage.begin_read().expect("read session");
-    let large = session
-        .find_symbol(file.id, "large")
-        .expect("find symbol")
-        .expect("large symbol");
+    let crate::symbol_identity::SymbolResolution::Unique(large) =
+        session.find_symbol(file.id, "large").expect("find symbol")
+    else {
+        panic!("large symbol must resolve uniquely");
+    };
     let matched_line = 151;
     let enclosing = session
         .find_enclosing_symbol(file.id, matched_line)
@@ -914,10 +915,11 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
     assert!(bounded.start_line > large.start_line);
     assert!(bounded.end_line <= large.end_line);
 
-    let small = session
-        .find_symbol(file.id, "small")
-        .expect("find symbol")
-        .expect("small symbol");
+    let crate::symbol_identity::SymbolResolution::Unique(small) =
+        session.find_symbol(file.id, "small").expect("find symbol")
+    else {
+        panic!("small symbol must resolve uniquely");
+    };
     let complete = services
         .adaptive_context_excerpt(
             &session,

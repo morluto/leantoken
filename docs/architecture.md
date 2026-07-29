@@ -748,6 +748,18 @@ retains the largest ordered status skeleton before spending remaining capacity
 on diff prefixes; it never keeps a large early diff at the cost of otherwise
 representable symbol outcomes.
 
+Live and historical symbol resolution share one identity rule: a request
+matches an exact bare `name` or exact `parent.name`. Live SQLite lookup reads at
+most two ordered matches, which is sufficient to distinguish missing, unique,
+and ambiguous identities without materializing every candidate; both the bare
+and qualified leaf lookup retain `symbols_name_idx`. Historical resolution
+stops identity matching after the second match. Single-target read/history
+calls return typed `symbol_ambiguous`; batched history converts endpoint
+ambiguity into a per-target unavailable reason. Qualified symbol search uses
+only the leaf name for trigram candidate generation and verifies `parent.name`
+in the same read snapshot, so this contract adds no FTS column, migration, or
+publication work.
+
 Compact response projections are explicit and never replace the default DTO.
 `files=paths` maps the already selected entry page to ordered strings and keeps
 the same keyset cursor. `search=grouped` groups at most the selected search page,
@@ -861,8 +873,10 @@ rolls back the read transaction and returns the connection.
 ## Live read vs index
 
 `leantoken.read` always reads the live filesystem for the returned body while
-symbol resolution and path admission use the index. A complete read hashes the
-file and extracts its bounded range during one forward stream. A
+symbol resolution and path admission use the index. Unique bare and qualified
+`parent.name` identities resolve; multiple matches fail typed instead of
+selecting the first indexed row. A complete read hashes the file and extracts
+its bounded range during one forward stream. A
 token-truncated read performs one additional full-hash verification before
 issuing a continuation cursor. Responses include:
 

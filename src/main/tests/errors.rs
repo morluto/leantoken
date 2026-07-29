@@ -127,6 +127,16 @@
                 }),
             ),
             (
+                leantoken::Error::AmbiguousSymbol {
+                    path: "lib.rs".into(),
+                    symbol: "run".into(),
+                },
+                serde_json::json!({
+                    "error": "symbol is ambiguous in lib.rs: run",
+                    "category": "symbol_ambiguous"
+                }),
+            ),
+            (
                 leantoken::Error::HeadingNotFound {
                     path: "README.md".into(),
                     heading: "Installation".into(),

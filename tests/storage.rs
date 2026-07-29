@@ -586,6 +586,54 @@ fn hot_relational_projections_use_their_indexes() {
         "unexpected exact-symbol plan: {exact_symbol_plan}"
     );
 
+    let qualified_symbol_plan = query_plan(
+        &connection,
+        "EXPLAIN QUERY PLAN
+         WITH matches AS (
+             SELECT id, file_id, name, kind, parent, signature,
+                    start_line, end_line, start_byte, end_byte
+             FROM symbols INDEXED BY symbols_name_idx
+             WHERE file_id = ?1
+               AND name = ?2 COLLATE NOCASE
+               AND name = ?2 COLLATE BINARY
+             UNION ALL
+             SELECT id, file_id, name, kind, parent, signature,
+                    start_line, end_line, start_byte, end_byte
+             FROM symbols INDEXED BY symbols_name_idx
+             WHERE file_id = ?1
+               AND name = ?4 COLLATE NOCASE
+               AND name = ?4 COLLATE BINARY
+               AND parent = ?3
+         )
+         SELECT id FROM matches
+         ORDER BY start_byte, id
+         LIMIT 2",
+        &[&1_i64, &"Services.main", &"Services", &"main"],
+    );
+    assert!(
+        qualified_symbol_plan
+            .matches("symbols_name_idx")
+            .count()
+            >= 2,
+        "unexpected qualified-symbol plan: {qualified_symbol_plan}"
+    );
+
+    let qualified_search_plan = query_plan(
+        &connection,
+        "EXPLAIN QUERY PLAN
+         SELECT s.id
+         FROM symbols_fts_trigram
+         JOIN symbols s ON s.rowid = symbols_fts_trigram.rowid
+         WHERE symbols_fts_trigram MATCH ?1
+           AND s.parent IS NOT NULL
+           AND instr(s.parent || '.' || s.name, ?2) > 0",
+        &[&"\"main\"", &"Services.main"],
+    );
+    assert!(
+        qualified_search_plan.contains("VIRTUAL TABLE INDEX"),
+        "unexpected qualified symbol-search plan: {qualified_search_plan}"
+    );
+
     let tree_plan = query_plan(
         &connection,
         "EXPLAIN QUERY PLAN

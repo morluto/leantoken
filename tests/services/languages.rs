@@ -440,6 +440,11 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
             .iter()
             .any(|symbol| symbol.name == ".clinic-hero" && symbol.kind == "css_selector")
     );
+    let top_level_hero = css
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == ".clinic-hero" && symbol.parent.is_none())
+        .expect("top-level hero selector");
     assert!(
         css.symbols.iter().any(
             |symbol| symbol.name == "--clinic-accent" && symbol.kind == "css_custom_property"
@@ -501,14 +506,50 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
         assert!(!search.hits.is_empty(), "missing {mode:?} search for {query}");
     }
 
-    for (path, symbol, marker) in [
-        (
-            "styles/clinic.css",
-            ".clinic-hero",
-            "color: var(--clinic-accent)",
-        ),
-        ("index.html", "#clinic", "data-action=\"book-therapy\""),
-    ] {
+    let ambiguous_hero = services
+        .read(ReadRequest {
+            path: "styles/clinic.css".into(),
+            start_line: None,
+            end_line: None,
+            symbol: Some(".clinic-hero".into()),
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(2_000),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+        })
+        .await
+        .expect_err("repeated selector requires an exact outline range");
+    assert!(matches!(
+        ambiguous_hero,
+        Error::AmbiguousSymbol { path, symbol }
+            if path == "styles/clinic.css" && symbol == ".clinic-hero"
+    ));
+    let hero = services
+        .read(ReadRequest {
+            path: "styles/clinic.css".into(),
+            start_line: Some(top_level_hero.start_line),
+            end_line: Some(top_level_hero.end_line),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(2_000),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+        })
+        .await
+        .expect("exact top-level selector range");
+    assert!(
+        hero.content
+            .as_deref()
+            .is_some_and(|content| content.contains("color: var(--clinic-accent)"))
+    );
+
+    for (path, symbol, marker) in [("index.html", "#clinic", "data-action=\"book-therapy\"")] {
         let read = services
             .read(ReadRequest {
                 path: path.into(),

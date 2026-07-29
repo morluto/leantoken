@@ -137,17 +137,27 @@ impl ReadSession {
     ) -> Result<Vec<SymbolRecord>> {
         let limit = bounded_limit(max_results);
         let offset = i64::try_from(offset).unwrap_or(i64::MAX);
+        let qualified =
+            name.is_some_and(|name| crate::symbol_identity::split_qualified_symbol(name).is_some());
         let mut stmt = self.conn.prepare_cached(
             "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
                  FROM symbols
                  WHERE file_id = ?1
-                   AND (?2 IS NULL OR instr(name, ?2) > 0)
+                   AND (
+                       ?2 IS NULL
+                       OR instr(name, ?2) > 0
+                       OR (
+                           ?4
+                           AND parent IS NOT NULL
+                           AND instr(parent || '.' || name, ?2) > 0
+                       )
+                   )
                    AND (?3 IS NULL OR kind = ?3)
                  ORDER BY start_byte, id
-                 LIMIT ?4 OFFSET ?5",
+                 LIMIT ?5 OFFSET ?6",
         )?;
         let rows = stmt.query_map(
-            params![file_id, name, kind, limit, offset],
+            params![file_id, name, kind, qualified, limit, offset],
             Storage::map_symbol,
         )?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -159,35 +169,81 @@ impl ReadSession {
         name: Option<&str>,
         kind: Option<&str>,
     ) -> Result<Vec<(String, usize)>> {
+        let qualified =
+            name.is_some_and(|name| crate::symbol_identity::split_qualified_symbol(name).is_some());
         let mut stmt = self.conn.prepare_cached(
             "SELECT kind, COUNT(*)
                  FROM symbols
                  WHERE file_id = ?1
-                   AND (?2 IS NULL OR instr(name, ?2) > 0)
+                   AND (
+                       ?2 IS NULL
+                       OR instr(name, ?2) > 0
+                       OR (
+                           ?4
+                           AND parent IS NOT NULL
+                           AND instr(parent || '.' || name, ?2) > 0
+                       )
+                   )
                    AND (?3 IS NULL OR kind = ?3)
                  GROUP BY kind
                  ORDER BY kind",
         )?;
-        let rows = stmt.query_map(params![file_id, name, kind], |row| {
+        let rows = stmt.query_map(params![file_id, name, kind, qualified], |row| {
             Ok((row.get(0)?, i64_to_usize(row.get(1)?)?))
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
-    pub(crate) fn find_symbol(&self, file_id: i64, name: &str) -> Result<Option<SymbolRecord>> {
-        Ok(self
-            .conn
-            .query_row(
-                "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
-                     FROM symbols
-                     WHERE file_id = ?1
-                       AND (name = ?2 OR (parent IS NOT NULL AND parent || '.' || name = ?2))
-                     ORDER BY CASE WHEN name = ?2 THEN 0 ELSE 1 END, start_byte
-                     LIMIT 1",
-                params![file_id, name],
-                Storage::map_symbol,
-            )
-            .optional()?)
+    pub(crate) fn find_symbol(
+        &self,
+        file_id: i64,
+        name: &str,
+    ) -> Result<crate::symbol_identity::SymbolResolution<SymbolRecord>> {
+        let qualified = crate::symbol_identity::split_qualified_symbol(name);
+        let sql = if qualified.is_some() {
+            "WITH matches AS (
+                 SELECT id, file_id, name, kind, parent, signature,
+                        start_line, end_line, start_byte, end_byte
+                 FROM symbols INDEXED BY symbols_name_idx
+                 WHERE file_id = ?1
+                   AND name = ?2 COLLATE NOCASE
+                   AND name = ?2 COLLATE BINARY
+                 UNION ALL
+                 SELECT id, file_id, name, kind, parent, signature,
+                        start_line, end_line, start_byte, end_byte
+                 FROM symbols INDEXED BY symbols_name_idx
+                 WHERE file_id = ?1
+                   AND name = ?4 COLLATE NOCASE
+                   AND name = ?4 COLLATE BINARY
+                   AND parent = ?3
+             )
+             SELECT id, file_id, name, kind, parent, signature,
+                    start_line, end_line, start_byte, end_byte
+             FROM matches
+             ORDER BY start_byte, id
+             LIMIT 2"
+        } else {
+            "SELECT id, file_id, name, kind, parent, signature,
+                    start_line, end_line, start_byte, end_byte
+             FROM symbols INDEXED BY symbols_name_idx
+             WHERE file_id = ?1
+               AND name = ?2 COLLATE NOCASE
+               AND name = ?2 COLLATE BINARY
+               AND ?3 IS NULL
+               AND ?4 IS NULL
+             ORDER BY start_byte, id
+             LIMIT 2"
+        };
+        let (parent, leaf_name) = qualified.unzip();
+        let mut stmt = self.conn.prepare_cached(sql)?;
+        let rows = stmt.query_map(
+            params![file_id, name, parent, leaf_name],
+            Storage::map_symbol,
+        )?;
+        let matches = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(crate::symbol_identity::resolve_symbol_matches(
+            matches.into_iter(),
+        ))
     }
 
     pub(crate) fn find_document_heading(

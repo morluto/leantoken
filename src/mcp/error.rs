@@ -28,6 +28,10 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
             "requested symbol is not indexed",
             mcp_error_data(cause.public_category()),
         ),
+        crate::Error::AmbiguousSymbol { .. } => ErrorData::invalid_params(
+            "requested symbol matches multiple definitions",
+            mcp_error_data(cause.public_category()),
+        ),
         crate::Error::HeadingNotFound { .. } => ErrorData::invalid_params(
             "requested document heading occurrence is not indexed",
             mcp_error_data(cause.public_category()),
