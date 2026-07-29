@@ -19,6 +19,8 @@ pub(crate) const RECEIPT_ID_RESPONSE_RESERVE: &str =
     "r0a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f708";
 const NEAR_DUPLICATE_HAMMING_DISTANCE: u32 = 8;
 const RECEIPT_EVIDENCE_FIXED_LOGICAL_BYTES: usize = 7 * size_of::<u64>();
+pub(crate) const MAX_RECEIPT_EVIDENCE_LOGICAL_BYTES: usize =
+    RECEIPT_EVIDENCE_FIXED_LOGICAL_BYTES + 4_096 + 128;
 const _: () = assert!(
     RECEIPT_ID_RESPONSE_RESERVE.len()
         == 1 + RECEIPT_ID_NAMESPACE_HEX_BYTES + RECEIPT_ID_ROW_HEX_BYTES
@@ -88,6 +90,7 @@ pub(crate) struct StoredReceipt {
     pub repository_generation: u64,
     pub created_unix_millis: i64,
     pub expires_unix_millis: i64,
+    pub complete: bool,
     pub evidence: Vec<ReceiptEvidence>,
 }
 

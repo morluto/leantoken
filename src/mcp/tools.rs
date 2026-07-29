@@ -16,11 +16,13 @@ impl LeanTokenMcp {
             RetrievalPreparation::Ready(prepared) => prepared,
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
+        let max_response_tokens = req.max_response_tokens;
         let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
         self.run_prepared(
             "files",
             prepared,
             expected_repository_id,
+            max_response_tokens,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let options = options.with_initial_reconciliation_deadline(deadline);
@@ -67,12 +69,14 @@ impl LeanTokenMcp {
             RetrievalPreparation::Ready(prepared) => prepared,
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
+        let max_response_tokens = req.max_response_tokens;
         let (request, projection, coordinates_only, consistency, options, expected_repository_id) =
             req.into_parts();
         self.run_prepared(
             "search",
             prepared,
             expected_repository_id,
+            max_response_tokens,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let options = options.with_initial_reconciliation_deadline(deadline);
@@ -132,11 +136,13 @@ impl LeanTokenMcp {
             RetrievalPreparation::Ready(prepared) => prepared,
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
+        let max_response_tokens = req.max_response_tokens;
         let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
         self.run_prepared(
             "outline",
             prepared,
             expected_repository_id,
+            max_response_tokens,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let options = options.with_initial_reconciliation_deadline(deadline);
@@ -183,11 +189,13 @@ impl LeanTokenMcp {
             RetrievalPreparation::Ready(prepared) => prepared,
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
+        let max_response_tokens = req.max_response_tokens;
         let (request, consistency, options, expected_repository_id) = req.into_parts();
         self.run_prepared(
             "read",
             prepared,
             expected_repository_id,
+            max_response_tokens,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let options = options.with_initial_reconciliation_deadline(deadline);
@@ -222,11 +230,13 @@ impl LeanTokenMcp {
             RetrievalPreparation::Ready(prepared) => prepared,
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
+        let max_response_tokens = req.max_response_tokens;
         let (call, options, expected_repository_id) = req.into_parts().map_err(into_mcp_error)?;
         self.run_prepared(
             "history",
             prepared,
             expected_repository_id,
+            max_response_tokens,
             move |services, cancellation, _deadline| {
                 let call = call.clone();
                 async move {
@@ -266,11 +276,13 @@ impl LeanTokenMcp {
             RetrievalPreparation::Ready(prepared) => prepared,
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
+        let max_response_tokens = req.max_response_tokens;
         let (request, options, execution, expected_repository_id) = req.into_parts();
         self.run_prepared(
             "json",
             prepared,
             expected_repository_id,
+            max_response_tokens,
             move |services, cancellation, _deadline| {
                 let request = request.clone();
                 async move {
@@ -304,6 +316,7 @@ impl LeanTokenMcp {
             RetrievalPreparation::Ready(prepared) => prepared,
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
+        let max_response_tokens = req.max_response_tokens;
         let (
             request,
             workflow,
@@ -317,6 +330,7 @@ impl LeanTokenMcp {
             "context",
             prepared,
             expected_repository_id,
+            max_response_tokens,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let handoff = handoff.clone();
@@ -356,11 +370,13 @@ impl LeanTokenMcp {
             RetrievalPreparation::Ready(prepared) => prepared,
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
+        let max_response_tokens = req.max_response_tokens;
         let (request, consistency, options, expected_repository_id) = req.into_parts();
         self.run_prepared(
             "receipt_rebase",
             prepared,
             expected_repository_id,
+            max_response_tokens,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let options = options.with_initial_reconciliation_deadline(deadline);
@@ -426,7 +442,7 @@ impl ServerHandler for LeanTokenMcp {
         request: ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ReadResourceResponse, ErrorData>> + Send + '_ {
-        std::future::ready(self.read_receipt_resource(request.uri, context.protocol_version()))
+        self.read_receipt_resource(request.uri, context.protocol_version())
     }
 
     fn initialize(

@@ -85,6 +85,7 @@ fn receipt_resource_read_is_snapshot_only_and_does_not_extend_lifetime() {
         .read_receipt(&receipt_id, 1_001)
         .expect("read stored receipt");
     assert_eq!(receipt.evidence, vec![evidence(1)]);
+    assert!(receipt.complete);
     let after: (i64, i64, i64) = {
         let connection = storage
             .writer
@@ -103,6 +104,23 @@ fn receipt_resource_read_is_snapshot_only_and_does_not_extend_lifetime() {
     assert!(matches!(
         storage.read_receipt(&receipt_id, 1_000 + RECEIPT_TTL_MILLIS),
         Err(Error::UnknownReceipt(_))
+    ));
+}
+
+#[test]
+fn receipt_resource_read_rejects_an_observed_clock_rollback() {
+    let directory = tempfile::tempdir().expect("directory");
+    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+    let receipt_id = storage
+        .evaluate_receipt_at(None, 7, &[evidence(1)], true, 1_000)
+        .expect("create receipt")
+        .receipt_id;
+    storage
+        .evaluate_receipt_at(Some(&receipt_id), 7, &[], true, 70_000)
+        .expect("touch receipt");
+    assert!(matches!(
+        storage.read_receipt(&receipt_id, 60_000),
+        Err(Error::UnknownReceipt(id)) if id == receipt_id
     ));
 }
 
@@ -634,6 +652,12 @@ fn receipt_count_and_logical_byte_quotas_are_enforced() {
     assert_eq!(count, MAX_EVIDENCE_PER_RECEIPT);
     assert!(bytes <= MAX_EVIDENCE_BYTES_PER_RECEIPT);
     drop(connection);
+    assert!(
+        !storage
+            .read_receipt(&receipt_id, unix_millis(SystemTime::now()))
+            .expect("read saturated receipt")
+            .complete
+    );
 
     for batch in 1..=(MAX_TOTAL_EVIDENCE / MAX_EVIDENCE_PER_RECEIPT) {
         let offset = batch.saturating_mul(MAX_EVIDENCE_PER_RECEIPT + 1);
@@ -650,7 +674,7 @@ fn receipt_count_and_logical_byte_quotas_are_enforced() {
 }
 
 #[test]
-fn oversized_logical_evidence_is_returned_but_never_persisted() {
+fn oversized_logical_evidence_fails_before_persisting_a_receipt() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
     let oversized = ReceiptEvidence::new(
@@ -660,15 +684,18 @@ fn oversized_logical_evidence_is_returned_but_never_persisted() {
         "hash",
         None,
     );
-    let created = storage
+    let error = storage
         .evaluate_receipt(None, 1, std::slice::from_ref(&oversized), true)
-        .expect("return oversized evidence");
-    assert_eq!(created.decisions, vec![ReceiptDecision::Return]);
+        .expect_err("oversized evidence must fail closed");
+    assert!(matches!(
+        error,
+        Error::InputTooLong {
+            field: "receipt_evidence",
+            max_bytes: MAX_EVIDENCE_BYTES_PER_RECEIPT
+        }
+    ));
     assert_eq!(usage(&storage).2, 0);
-    let repeated = storage
-        .evaluate_receipt(Some(&created.receipt_id), 1, &[oversized], true)
-        .expect("oversized evidence was not recorded");
-    assert_eq!(repeated.decisions, vec![ReceiptDecision::Return]);
+    assert_eq!(usage(&storage).0, 0);
 }
 
 #[test]

@@ -751,10 +751,11 @@ text/regex scan and result payload but cannot claim that the host skipped a
 model turn. A future handoff or capsule integration would need separate host
 evidence before claiming an avoided call.
 
-The MCP initialize response appends `+schema.<fingerprint>` to the runtime
-version. The fingerprint is computed from the running tool catalog, so clients
-can distinguish a stale server binary or cached schema from the feature set
-that accepted the request.
+The MCP initialize response appends `+contract.<fingerprint>` to the runtime
+version. The fingerprint covers the running tool catalog, resource capability
+and template contract, result-envelope version, and default result mode, so
+clients can distinguish a stale server binary or cached contract from the
+feature set that accepted the request.
 
 Each page examines at most `max_results` ranked candidates. `max_tokens` may
 filter some or all of those candidates, so a page can contain fewer hits or be

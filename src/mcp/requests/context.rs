@@ -149,11 +149,7 @@ impl ContextMcpRequest {
         Option<String>,
         Option<HandoffManifestRequest>,
     ) {
-        let options = self
-            .max_response_tokens
-            .map_or_else(ServiceCallOptions::new, |limit| {
-                ServiceCallOptions::new().with_max_response_tokens(limit)
-            });
+        let options = service_call_options(self.max_response_tokens);
         let options = self.response_profile.map_or(options, |profile| {
             options.with_context_response_profile(profile)
         });

@@ -382,6 +382,11 @@ fn receipt_results_expose_one_consistent_resource_handoff() {
             .as_u64()
             .is_some_and(|tokens| tokens > 0)
     );
+    assert!(
+        structured["meta"]["total_response_tokens"]
+            .as_u64()
+            .is_some_and(|tokens| { tokens <= RECEIPT_RESOURCE_RESPONSE_RESERVE_TOKENS as u64 })
+    );
 
     let without_receipt = tool_result(
         serde_json::json!({"meta": {"receipt_id": null}}),
@@ -395,6 +400,65 @@ fn receipt_results_expose_one_consistent_resource_handoff() {
             .expect("structured receipt-free result")
             .get("receipt_resource")
             .is_none()
+    );
+}
+
+#[test]
+fn receipt_decoration_cannot_exceed_the_requested_response_budget() {
+    let receipt_id = "r0123456789abcdef0123456789abcdef0123456789abcdef";
+    let value = serde_json::json!({
+        "meta": {
+            "receipt_id": receipt_id,
+            "source_tokens": 0,
+            "protocol_tokens": 0,
+            "path_and_metadata_tokens": 0,
+            "total_response_tokens": 0,
+            "tokenizer": "cl100k_base"
+        }
+    });
+    let error = tool_result_with_limit(value, McpResultMode::Structured, Some(1))
+        .expect_err("receipt decoration must respect the final response budget");
+    assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        error.data.as_ref().and_then(|data| data.get("limit")),
+        Some(&serde_json::json!(1))
+    );
+    assert!(
+        error
+            .data
+            .as_ref()
+            .and_then(|data| data.get("minimum_required_response_tokens"))
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|tokens| tokens > 1)
+    );
+}
+
+#[tokio::test]
+async fn receipt_resource_reads_fail_fast_at_the_reader_pool_bound() {
+    let (server, _state) = LeanTokenMcp::pending();
+    let permits = (0..DEFAULT_RECEIPT_RESOURCE_READ_CAPACITY)
+        .map(|_| {
+            server
+                .resource_read_admission
+                .try_admit()
+                .expect("resource read permit")
+        })
+        .collect::<Vec<_>>();
+    let error = server
+        .read_receipt_resource(
+            "leantoken://receipt/v1/r0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+            None,
+        )
+        .await
+        .expect_err("resource read must fail before waiting for storage");
+    assert_eq!(
+        error.data.as_ref().and_then(|data| data.get("category")),
+        Some(&serde_json::json!("retrieval_capacity_exhausted"))
+    );
+    drop(permits);
+    assert_eq!(
+        server.resource_read_admission.available_permits(),
+        DEFAULT_RECEIPT_RESOURCE_READ_CAPACITY
     );
 }
 
@@ -1079,7 +1143,7 @@ fn omitted_context_budget_uses_the_runtime_default() {
     .expect("context request with a budget");
     let (request, _, workflow_evidence, _, options, _, _) = request.into_parts(37);
     assert_eq!(request.token_budget, 23);
-    assert_eq!(options.max_response_tokens(), Some(47));
+    assert_eq!(options.max_response_tokens(), Some(1));
     assert_eq!(
         options.context_response_profile(),
         Some(ContextResponseProfile::Explain)
@@ -1582,7 +1646,10 @@ fn receipt_rebase_maps_explicit_exact_only_controls() {
     assert_eq!(request.receipt_id, "r0000000000000001");
     assert_eq!(request.max_samples_per_outcome, Some(0));
     assert_eq!(consistency, IndexConsistency::ReconcileWorkingTree);
-    assert_eq!(options.max_response_tokens(), Some(1_000));
+    assert_eq!(
+        options.max_response_tokens(),
+        Some(1_000 - RECEIPT_RESOURCE_RESPONSE_RESERVE_TOKENS)
+    );
     assert_eq!(expected_repository_id.as_deref(), Some("repository"));
 
     let oversized = serde_json::from_value::<ReceiptRebaseMcpRequest>(serde_json::json!({
@@ -1661,7 +1728,10 @@ fn diff_symbols_history_maps_targets_cursor_and_response_budget() {
         .validate_limits(McpLimitPolicy::DEFAULT)
         .expect("batched history limits");
     let (call, options, _) = request.into_parts().expect("batched history parts");
-    assert_eq!(options.max_response_tokens(), Some(900));
+    assert_eq!(
+        options.max_response_tokens(),
+        Some(900 - RECEIPT_RESOURCE_RESPONSE_RESERVE_TOKENS)
+    );
     let HistoryMcpCall::DiffSymbols(request) = call else {
         panic!("expected batched-symbol history call");
     };

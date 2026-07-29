@@ -1005,6 +1005,19 @@ database or per-request artifact. Its main storage effect is that SQLite may
 retain old WAL pages until the reader finishes; dropping the request session
 rolls back the read transaction and returns the connection.
 
+Receipt `resources/read` requests have a separate fail-fast eight-request
+admission bound matching that reader pool. Admitted reads run on the blocking
+executor, hold one deferred transaction for a complete receipt snapshot, and
+return their permit after serialization state is materialized. Excess reads
+fail before waiting for a pooled connection or allocating a bounded receipt
+response.
+
+MCP requests with `max_response_tokens` reserve 128 tokens before service
+execution for the adapter-owned receipt reference. The adapter recalculates the
+decorated structured result and enforces the caller's original ceiling as a
+final backstop. This keeps receipt persistence behind the same fail-before-write
+budget decision as other response metadata.
+
 ## Live read vs index
 
 `leantoken.read` always reads the live filesystem for the returned body while

@@ -101,7 +101,7 @@ fn resource_value<'a>(
                 exact_only: evidence.exact_only,
             })
             .collect(),
-        complete: true,
+        complete: receipt.complete,
         source_free: true,
     }
 }
@@ -141,12 +141,23 @@ impl LeanTokenMcp {
         }
     }
 
-    pub(in crate::mcp) fn read_receipt_resource(
+    pub(in crate::mcp) async fn read_receipt_resource(
         &self,
         uri: String,
         protocol: Option<ProtocolVersion>,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        let receipt_id = parse_receipt_uri(&uri).ok_or_else(|| resource_not_found(&uri))?;
+        let receipt_id = parse_receipt_uri(&uri)
+            .ok_or_else(|| resource_not_found(&uri))?
+            .to_owned();
+        let _admission = self.resource_read_admission.try_admit().map_err(|_| {
+            ErrorData::internal_error(
+                "receipt resource capacity is exhausted; retry shortly",
+                Some(serde_json::json!({
+                    "category": "retrieval_capacity_exhausted",
+                    "retry_after_ms": 500,
+                })),
+            )
+        })?;
         let state = self.services.get();
         let services = match state {
             McpServiceState::Ready { services, .. } => services,
@@ -158,9 +169,14 @@ impl LeanTokenMcp {
             }
         };
         let now = now_unix_millis()?;
+        let repository_id = services.repository_id();
         let receipt =
-            services
-                .read_stored_receipt(receipt_id, now)
+            tokio::task::spawn_blocking(move || services.read_stored_receipt(&receipt_id, now))
+                .await
+                .map_err(|error| {
+                    tracing::error!(%error, "receipt resource read task failed");
+                    ErrorData::internal_error("retrieval receipt read failed", None)
+                })?
                 .map_err(|error| match error {
                     crate::Error::UnknownReceipt(_) => resource_not_found(&uri),
                     other => {
@@ -168,7 +184,6 @@ impl LeanTokenMcp {
                         ErrorData::internal_error("retrieval receipt read failed", None)
                     }
                 })?;
-        let repository_id = services.repository_id();
         let text = serde_json::to_string(&resource_value(&receipt, &repository_id, &uri)).map_err(
             |error| {
                 tracing::error!(%error, "receipt resource serialization failed");
@@ -181,10 +196,7 @@ impl LeanTokenMcp {
             .as_ref()
             .is_some_and(|version| version >= &ProtocolVersion::V_2026_07_28)
         {
-            let remaining = receipt.expires_unix_millis.saturating_sub(now) as u64;
-            result = result
-                .with_ttl_ms(remaining)
-                .with_cache_scope(CacheScope::Private);
+            result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
         }
         Ok(ReadResourceResponse::Complete(result))
     }

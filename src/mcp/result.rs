@@ -52,41 +52,63 @@ pub fn tool_result<T: Serialize>(
     value: T,
     mode: McpResultMode,
 ) -> Result<CallToolResult, ErrorData> {
-    serde_json::to_value(value)
+    tool_result_with_limit(value, mode, None)
+}
+
+pub(in crate::mcp) fn tool_result_with_limit<T: Serialize>(
+    value: T,
+    mode: McpResultMode,
+    max_response_tokens: Option<usize>,
+) -> Result<CallToolResult, ErrorData> {
+    let (value, receipt_id) = serde_json::to_value(value)
         .and_then(decorate_receipt_result)
-        .map(|(value, receipt_id)| {
-            let mut result = match mode {
-                McpResultMode::Dual => CallToolResult::structured(value.clone()),
-                McpResultMode::Text => {
-                    CallToolResult::success(vec![ContentBlock::text(value.to_string())])
-                }
-                McpResultMode::Structured => {
-                    let mut result = CallToolResult::default();
-                    result.structured_content = Some(value);
-                    result.is_error = Some(false);
-                    result
-                }
-            };
-            if let Some(receipt_id) = receipt_id {
-                let uri = resources::receipt_uri(&receipt_id);
-                result.content.push(ContentBlock::text(format!(
-                    "Copy the opaque URI exactly and call MCP resources/read: {uri}. In Codex, call read_mcp_resource with the LeanToken server and this exact URI."
-                )));
-                result
-                    .content
-                    .push(ContentBlock::resource_link(resources::receipt_resource_link(
-                        &receipt_id,
-                    )));
-            }
-            result
-        })
         .map_err(|error| {
             tracing::error!(%error, "MCP response serialization failed");
             ErrorData::internal_error(
                 "repository retrieval failed",
                 mcp_error_data("response_serialization"),
             )
-        })
+        })?;
+    if let Some(limit) = max_response_tokens
+        && let Some(total) = value
+            .pointer("/meta/total_response_tokens")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|total| usize::try_from(total).ok())
+        && total > limit
+    {
+        return Err(ErrorData::invalid_params(
+            format!("max_response_tokens is too small; retry with at least {total}"),
+            Some(serde_json::json!({
+                "category": "request_limit_exceeded",
+                "field": "max_response_tokens",
+                "requested": total,
+                "limit": limit,
+                "provided_max_response_tokens": limit,
+                "minimum_required_response_tokens": total,
+                "retry_with_at_least": total,
+            })),
+        ));
+    }
+    let mut result = match mode {
+        McpResultMode::Dual => CallToolResult::structured(value.clone()),
+        McpResultMode::Text => CallToolResult::success(vec![ContentBlock::text(value.to_string())]),
+        McpResultMode::Structured => {
+            let mut result = CallToolResult::default();
+            result.structured_content = Some(value);
+            result.is_error = Some(false);
+            result
+        }
+    };
+    if let Some(receipt_id) = receipt_id {
+        let uri = resources::receipt_uri(&receipt_id);
+        result.content.push(ContentBlock::text(format!(
+            "Copy the opaque URI exactly and call MCP resources/read: {uri}. In Codex, call read_mcp_resource with the LeanToken server and this exact URI."
+        )));
+        result.content.push(ContentBlock::resource_link(
+            resources::receipt_resource_link(&receipt_id),
+        ));
+    }
+    Ok(result)
 }
 
 fn decorate_receipt_result(

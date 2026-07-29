@@ -7,6 +7,7 @@ pub struct LeanTokenMcp {
     pub(in crate::mcp) result_mode: McpResultMode,
     pub(in crate::mcp) request_admission: RequestAdmission,
     pub(in crate::mcp) request_dispatch: RequestAdmission,
+    pub(in crate::mcp) resource_read_admission: RequestAdmission,
 }
 
 impl LeanTokenMcp {
@@ -17,6 +18,7 @@ impl LeanTokenMcp {
             result_mode: McpResultMode::Structured,
             request_admission: RequestAdmission::new(DEFAULT_ACTIVE_TOOL_CALL_CAPACITY),
             request_dispatch: RequestAdmission::new(DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY),
+            resource_read_admission: RequestAdmission::new(DEFAULT_RECEIPT_RESOURCE_READ_CAPACITY),
         }
     }
 
@@ -30,6 +32,9 @@ impl LeanTokenMcp {
                 result_mode: McpResultMode::Structured,
                 request_admission: RequestAdmission::new(DEFAULT_ACTIVE_TOOL_CALL_CAPACITY),
                 request_dispatch: RequestAdmission::new(DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY),
+                resource_read_admission: RequestAdmission::new(
+                    DEFAULT_RECEIPT_RESOURCE_READ_CAPACITY,
+                ),
             },
             services,
         )

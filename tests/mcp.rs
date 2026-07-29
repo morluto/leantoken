@@ -662,7 +662,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     assert_eq!(receipt.contents.len(), 1);
     if server_info.protocol_version >= ProtocolVersion::V_2026_07_28 {
         assert_eq!(receipt.cache_scope, Some(CacheScope::Private));
-        assert!(receipt.ttl_ms.is_some_and(|ttl| ttl <= 24 * 60 * 60 * 1_000));
+        assert_eq!(receipt.ttl_ms, Some(0));
     } else {
         assert_eq!(receipt.cache_scope, None);
         assert_eq!(receipt.ttl_ms, None);

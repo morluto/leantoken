@@ -1,9 +1,10 @@
 use crate::receipt::{
-    MAX_EVIDENCE_BYTES_PER_RECEIPT, MAX_EVIDENCE_PER_RECEIPT, MAX_RECEIPT_ID_BYTES,
-    MAX_RECEIPTS, MAX_TOTAL_EVIDENCE, MAX_TOTAL_EVIDENCE_BYTES, MAX_TOTAL_RECEIPT_BYTES,
+    MAX_EVIDENCE_BYTES_PER_RECEIPT, MAX_EVIDENCE_PER_RECEIPT,
+    MAX_RECEIPT_EVIDENCE_LOGICAL_BYTES, MAX_RECEIPT_ID_BYTES, MAX_RECEIPTS,
+    MAX_TOTAL_EVIDENCE, MAX_TOTAL_EVIDENCE_BYTES, MAX_TOTAL_RECEIPT_BYTES,
     RECEIPT_TOUCH_INTERVAL_MILLIS, RECEIPT_TTL_MILLIS, ReceiptDecision, ReceiptEvaluation,
-    ReceiptEvidence, ReceiptRebaseSource, decide, format_receipt_id, parse_receipt_id,
-    StoredReceipt,
+    ReceiptEvidence, ReceiptRebaseSource, StoredReceipt, decide, format_receipt_id,
+    parse_receipt_id,
 };
 
 const RECEIPT_HEADER_FIXED_LOGICAL_BYTES: usize = 9 * size_of::<u64>();
@@ -60,6 +61,7 @@ impl Storage {
         )?;
         if receipt.repository_identity != repository_identity
             || receipt.created_unix_millis > now_unix_millis
+            || receipt.last_access_unix_millis > now_unix_millis
             || receipt.expires_unix_millis <= now_unix_millis
         {
             return Err(Error::UnknownReceipt(requested_id.to_owned()));
@@ -80,6 +82,11 @@ impl Storage {
             repository_generation: receipt.repository_generation,
             created_unix_millis: receipt.created_unix_millis,
             expires_unix_millis: receipt.expires_unix_millis,
+            complete: receipt.evidence_count < MAX_EVIDENCE_PER_RECEIPT
+                && receipt
+                    .evidence_bytes
+                    .saturating_add(MAX_RECEIPT_EVIDENCE_LOGICAL_BYTES)
+                    <= MAX_EVIDENCE_BYTES_PER_RECEIPT,
             evidence,
         })
     }
@@ -118,6 +125,15 @@ impl Storage {
             return Err(Error::InternalFailure(
                 "system clock precedes the Unix epoch".into(),
             ));
+        }
+        if candidates
+            .iter()
+            .any(|evidence| evidence.logical_bytes() > MAX_EVIDENCE_BYTES_PER_RECEIPT)
+        {
+            return Err(Error::InputTooLong {
+                field: "receipt_evidence",
+                max_bytes: MAX_EVIDENCE_BYTES_PER_RECEIPT,
+            });
         }
         let expires_unix_millis = now_unix_millis
             .checked_add(RECEIPT_TTL_MILLIS)
