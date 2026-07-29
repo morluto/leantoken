@@ -1091,6 +1091,7 @@ mod tests {
                 all_occurrences: false,
                 prefer_structural: false,
                 receipt_id: None,
+                query_receipt: None,
                 cursor: None,
             })
             .await
