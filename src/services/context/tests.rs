@@ -94,6 +94,27 @@ fn language_scope_boosts_common_source_file_extensions() {
 }
 
 #[test]
+fn mcp_repository_questions_prioritize_mcp_implementation_paths() {
+    for (task, preferred, distractor) in [
+        (
+            "Where is MCP tool registration and catalog schema defined?",
+            "src/mcp/tools.rs",
+            "src/watcher/tests/support.rs",
+        ),
+        (
+            "Which repository file defines the MCP server catalog and tool schemas?",
+            "src/mcp.rs",
+            "benchmarks/reports/mcp-profile.md",
+        ),
+    ] {
+        assert!(
+            context_path_score(preferred, &[], task) > context_path_score(distractor, &[], task),
+            "routing regression for {task:?}"
+        );
+    }
+}
+
+#[test]
 fn owner_test_matching_requires_filename_token_boundaries() {
     let mut request = ContextRequest {
         task: "fix core".into(),

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "reviewed_at": "2026-07-28",
+  "reviewed_at": "2026-07-29",
   "policy": {
     "default_mode": "dual",
     "auto_is_explicit_opt_in": true,
@@ -14,7 +14,7 @@
       "client_version": "0.144.1",
       "protocol_version": "2025-06-18",
       "result_mode": "structured",
-      "tool_catalog_digest": "374b1eb87963c5cfc914ca8b1db6fd83",
+      "tool_catalog_digest": "2a685897e677559e8ccb964b536afc89",
       "observed_on": "2026-07-20",
       "evidence": {
         "path": "benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-thin-leantoken-structured-owner.json",
@@ -27,8 +27,8 @@
     }
   ],
   "catalog_review": {
-    "reviewed_on": "2026-07-28",
-    "tool_catalog_digest": "374b1eb87963c5cfc914ca8b1db6fd83",
+    "reviewed_on": "2026-07-29",
+    "tool_catalog_digest": "2a685897e677559e8ccb964b536afc89",
     "snapshot_path": "src/snapshots/leantoken__mcp__tests__mcp_tool_catalog.snap",
     "change_kind": "context_description_only",
     "input_schema_changed": false,

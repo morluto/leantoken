@@ -1106,6 +1106,39 @@ fn tool_input_fields_are_documented() {
 }
 
 #[test]
+fn tool_required_fields_match_the_wire_contract() {
+    let expected = [
+        ("context", Some(serde_json::json!(["task"]))),
+        ("files", Some(serde_json::json!(["operation"]))),
+        ("history", Some(serde_json::json!(["operation"]))),
+        ("json", Some(serde_json::json!(["operation"]))),
+        ("outline", Some(serde_json::json!(["paths"]))),
+        ("read", Some(serde_json::json!(["path", "target"]))),
+        ("savings", None),
+        ("search", Some(serde_json::json!(["query"]))),
+    ]
+    .into_iter()
+    .collect::<std::collections::HashMap<_, _>>();
+
+    for tool in LeanTokenMcp::tool_router().list_all() {
+        let expected = expected.get(tool.name.as_ref()).expect("known tool");
+        match expected {
+            Some(required) => assert_eq!(
+                tool.input_schema.get("required"),
+                Some(required),
+                "{} required fields changed",
+                tool.name
+            ),
+            None => assert!(
+                tool.input_schema.get("required").is_none(),
+                "{} should not advertise required fields",
+                tool.name
+            ),
+        }
+    }
+}
+
+#[test]
 fn files_schema_matches_operation_specific_runtime_requirements() {
     let tool = LeanTokenMcp::tool_router()
         .list_all()
@@ -1187,21 +1220,40 @@ fn tool_descriptions_route_native_discovery_workflows() {
             )
         })
         .collect::<std::collections::HashMap<_, _>>();
-    assert!(descriptions["files"].contains("instead of find"));
-    assert!(descriptions["search"].contains("instead of grep or rg"));
+    assert!(descriptions["files"].contains("Discover repository paths"));
+    assert!(descriptions["files"].contains("Next: use outline or read"));
+    assert!(descriptions["search"].contains("Search indexed source"));
+    assert!(descriptions["search"].contains("enclosing_symbol"));
     assert!(descriptions["outline"].contains("without reading whole source files"));
+    assert!(descriptions["outline"].contains("Next: pass"));
     assert!(descriptions["read"].contains("expected_hash"));
-    assert!(descriptions["read"].contains("instead of cat"));
-    assert!(descriptions["context"].contains("DEFAULT FIRST CALL"));
-    assert!(descriptions["context"].contains("plan_only=false"));
-    assert!(descriptions["context"].contains("at most one focused follow-up"));
-    assert!(descriptions["context"].contains("human or control-plane"));
-    assert!(descriptions["savings"].contains("explicitly unobserved task outcomes"));
-    assert!(descriptions["savings"].contains("not claims about task success"));
+    assert!(descriptions["read"].contains("truncated reads"));
+    assert!(descriptions["context"].contains("Build a bounded"));
+    assert!(descriptions["context"].contains("plan_only previews"));
+    assert!(descriptions["savings"].contains("unobserved task outcomes"));
+    assert!(descriptions["savings"].contains("not task-success claims"));
+    assert!(
+        descriptions
+            .values()
+            .all(|description| !description.contains("leantoken.search over grep or rg"))
+    );
+    assert!(
+        descriptions
+            .values()
+            .all(|description| !description.contains("DEFAULT FIRST CALL"))
+    );
     assert!(
         descriptions
             .values()
             .all(|description| description.contains("Example:"))
+    );
+    let description_bytes = descriptions
+        .values()
+        .map(|description| description.len())
+        .sum::<usize>();
+    assert!(
+        description_bytes <= 3_500,
+        "tool descriptions regressed to {description_bytes} bytes"
     );
 }
 

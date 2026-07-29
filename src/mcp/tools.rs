@@ -2,7 +2,7 @@
 impl LeanTokenMcp {
     #[tool(
         name = "files",
-        description = "Preferred repository path discovery instead of find, ls, or glob. Use tree for hierarchy, find for fuzzy filenames, and glob for path patterns; returns paths, not source. Set projection=paths for opt-in path-only results without kind, language, size, or score metadata. Example: {\"operation\":\"find\",\"query\":\"mcp\"}."
+        description = "Discover repository paths and metadata. Use tree for hierarchy, find for fuzzy filenames, or glob for path patterns; returns paths, not source. Set projection=paths to omit per-entry metadata. Next: use outline or read once the file is known. Example: {\"operation\":\"find\",\"query\":\"mcp\"}."
     )]
     async fn leantoken_files(
         &self,
@@ -53,7 +53,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "search",
-        description = "Preferred indexed source search instead of grep or rg. Finds ranked symbols, references, identifiers, text, or regex matches. Set projection=grouped for opt-in symbol/file summaries. Exhaustive text or regex searches default to projection=occurrences: one excerpt plus every exact line/column coordinate; set coordinates_only=true to omit excerpts and hashes. Use explicit projection=full for legacy per-occurrence hits. Exhaustive scans keep exact returned/total counts and fail instead of silently truncating at internal scan limits. Text and regex hits include the narrowest enclosing_symbol when structural data is available; use that exact name or the returned line range with leantoken.read. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
+        description = "Search indexed source for symbols, references, identifiers, text, or regex matches. Use projection=grouped for summaries; exhaustive text or regex searches use projection=occurrences, with coordinates_only=true for coordinates without excerpts. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
     )]
     async fn leantoken_search(
         &self,
@@ -118,7 +118,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "outline",
-        description = "Inspect file structure without reading whole source files. Prefer this when the file is known but the relevant symbol or range is not; then use leantoken.read. Set projection=signatures to omit imports and byte offsets while retaining path, line range, signature-set hash, parse coverage, freshness, and continuation. Example: {\"paths\":[\"src/mcp.rs\"]}."
+        description = "Inspect known files without reading whole source files. Returns definitions, imports, ranges, and parse coverage; set projection=signatures to keep only compact signatures. Next: pass a returned symbol or range to read. Example: {\"paths\":[\"src/mcp.rs\"]}."
     )]
     async fn leantoken_outline(
         &self,
@@ -169,7 +169,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "read",
-        description = "Preferred exact source and Markdown section reader instead of cat, head, or sed. Keep path as a file path; put the owner separately in target. Exact target shapes include {\"kind\":\"symbol\",\"name\":\"LeanTokenMcp\"}, {\"kind\":\"heading\",\"name\":\"## Performance\",\"occurrence\":2}, and {\"kind\":\"lines\",\"start\":120,\"end\":160}. Heading targets accept an exact rendered title or outline signature. Set delta=true to reuse the latest compatible base for the exact target; unchanged content returns not_modified. Pass expected_hash to require one explicit base. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}."
+        description = "Read an exact source symbol, Markdown heading, line range, or continuation. Keep path separate from target; use the symbol or range returned by search or outline. Set delta=true or pass expected_hash to suppress unchanged content; truncated reads return a continuation cursor. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}."
     )]
     async fn leantoken_read(
         &self,
@@ -208,7 +208,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "history",
-        description = "Read, diff, batch-diff, or trace parsed symbols across immutable Git revisions. Symbols may use parent.name qualification. diff_symbols resolves one shared range, loads each bounded path once per endpoint, and returns cursor-paged per-symbol outcomes without N Git subprocess chains. diff_symbol returns bounded add/delete diffs when one endpoint is absent; symbol_log traces tracked lines. For immutable range-scoped context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbols\",\"targets\":[{\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\"}],\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}."
+        description = "Read, diff, batch-diff, or trace parsed symbols across immutable Git revisions. Use parent.name for qualified symbols; diff_symbols shares one range and returns bounded cursor-paged outcomes. For immutable context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbols\",\"targets\":[{\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\"}],\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}."
     )]
     async fn leantoken_history(
         &self,
@@ -252,7 +252,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "json",
-        description = "Query, summarize, or compare bounded live JSON without indexing raw artifacts. Select with RFC 6901 JSON Pointer or standard JMESPath; use collapsed, keys, or schema projections for large arrays and objects, numeric_summary for count/min/median/p95/max, and diff_fields for selected values across two files. Keys can be bounded by depth (root is zero) and paginate in depth-then-pointer order; incomplete schemas return a breadth-first shape with explicit omission metadata. Repeat an incomplete keys query with its cursor. Example: {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"artifacts/results.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"runs[].score\"}}}."
+        description = "Query, summarize, or compare bounded live JSON without indexing raw artifacts. Use JSON Pointer or JMESPath selectors; choose collapsed, keys, or schema projections for large values, numeric_summary for distributions, and diff_fields for selected comparisons. Keys paginate in depth-then-pointer order with explicit omission metadata. Example: {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"artifacts/results.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"runs[].score\"}}}."
     )]
     async fn leantoken_json(
         &self,
@@ -290,7 +290,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "context",
-        description = "DEFAULT FIRST CALL for autonomous broad coding, debugging, review, and architecture triage. Returns the most relevant repository evidence within a strict token budget instead of manually combining search and whole-file reads. Set plan_only=false and use the materialized evidence directly; make at most one focused follow-up only when coverage identifies a concrete gap. Reserve plan_only=true for human or control-plane inspection before expensive or high-risk materialization: it previews bounded ranked paths, ranges, reasons, token estimates, focus coverage, and generated-artifact warnings without source or receipt mutation. Use include_paths, strict_focus_paths, or strict_changed_paths for hard boundaries; pass BASE..HEAD as base_revision for an immutable Git range. Use minimum_fragments_per_focus_path and must-include constraints for required paths or symbols. When path presence is insufficient, pass required_evidence entries with a path and literal queries; path_scope_satisfied reports only path coverage, while evidence_scope_satisfied requires matching selected evidence. When the caller has directly observed a failure, pass workflow_evidence with bounded failure_traces, symbols, paths, or test_intents; do not infer or copy gold labels into it. Use response_profile=compact for the smallest fail-loud presentation, balanced for the historical default, or explain for bounded omission and diff detail. Legacy verbose_diagnostics=true maps to explain and conflicts with an explicit compact or balanced profile. Oversized diff scopes may return bounded routing suggestions. Reuse receipt fragment_hashes as known_hashes. Set handoff for a compact provenance manifest without copied source. Example: {\"task\":\"Audit MCP tool discovery\"}."
+        description = "Build a bounded, ranked evidence bundle for a broad coding, debugging, review, or architecture task. Returns fragments, coverage, omissions, and an optional receipt; plan_only previews candidates without source or receipt mutation. Use strict scopes and required evidence when coverage must be explicit, response_profile=compact for the smallest fail-loud result, and known_hashes or receipt_id for follow-ups. Example: {\"task\":\"Audit MCP tool discovery\"}."
     )]
     async fn leantoken_context(
         &self,
@@ -342,7 +342,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "savings",
-        description = "Report repository-local observed response accounting, request classifications, expected-hash suppression, service failures, and explicitly unobserved task outcomes. Returns an opaque snapshot; supply it later for a bounded aggregate delta. Source compression and full-response net cost are separate comparisons against represented source, not claims about task success or complete session savings. Example: {}.",
+        description = "Report repository-local response accounting, request classifications, expected-hash suppression, service failures, and unobserved task outcomes. Returns an opaque snapshot for a later bounded delta; savings are retrieval accounting, not task-success claims. Example: {}.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn leantoken_savings(

@@ -534,9 +534,26 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let names = tools
         .iter()
         .map(|tool| tool.name.as_ref())
-        .collect::<std::collections::HashSet<_>>();
-    assert!(!names.is_empty());
-    assert!(names.contains("files"));
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected_names = [
+        "context", "files", "history", "json", "outline", "read", "savings", "search",
+    ]
+    .into_iter()
+    .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(names, expected_names);
+    for tool in &tools {
+        let description = tool
+            .description
+            .as_deref()
+            .unwrap_or_else(|| panic!("{} description missing", tool.name));
+        assert!(
+            (40..=1_024).contains(&description.len()),
+            "{} description has {} bytes",
+            tool.name,
+            description.len()
+        );
+        assert_eq!(tool.input_schema.get("type"), Some(&serde_json::json!("object")));
+    }
 
     let files_arguments = serde_json::json!({
         "operation": "tree",
@@ -699,6 +716,61 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
                 && data.data.as_ref().and_then(|value| value["category"].as_str())
                     == Some("path_outside_root")
     ));
+
+    let unknown_field = call_tool(
+        client.peer(),
+        "files",
+        serde_json::json!({
+            "operation": "tree",
+            "bogus": true
+        }),
+    )
+    .await
+    .expect_err("unknown fields should be protocol invalid-params errors");
+    let ServiceError::McpError(data) = unknown_field else {
+        panic!("unknown field returned a tool result error");
+    };
+    assert_eq!(data.code, ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        data.data
+            .as_ref()
+            .and_then(|value| value["category"].as_str()),
+        Some("invalid_input")
+    );
+    assert_eq!(
+        data.data
+            .as_ref()
+            .and_then(|value| value["field"].as_str()),
+        Some("parameters")
+    );
+    assert!(data
+        .data
+        .as_ref()
+        .and_then(|value| value["reason"].as_str())
+        .is_some_and(|reason| reason.contains("unknown field") && reason.contains("bogus")));
+
+    let missing_json = call_tool(
+        client.peer(),
+        "json",
+        serde_json::json!({
+            "operation": {
+                "kind": "query",
+                "path": "missing.json"
+            }
+        }),
+    )
+    .await
+    .expect_err("missing JSON paths should be invalid parameters");
+    let ServiceError::McpError(data) = missing_json else {
+        panic!("missing JSON path returned a non-MCP error");
+    };
+    assert_eq!(data.code, ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        data.data
+            .as_ref()
+            .and_then(|value| value["category"].as_str()),
+        Some("not_found")
+    );
 
     let oversized_arguments = serde_json::json!({
         "query": "x".repeat(65 * 1024),

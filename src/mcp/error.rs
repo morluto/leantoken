@@ -141,6 +141,9 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
                 "limit": max_bytes,
             })),
         ),
+        crate::Error::Io(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            ErrorData::invalid_params("requested path does not exist", mcp_error_data("not_found"))
+        }
         crate::Error::InvalidRequest(_) => ErrorData::invalid_params(
             "request parameters are invalid",
             mcp_error_data(cause.public_category()),
