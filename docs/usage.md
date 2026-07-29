@@ -50,9 +50,61 @@ leantoken cache list [--summary] [--state STATE] [--repository-root PATH]
 leantoken cache prune [--older-than DAYS] [--max-total-bytes BYTES]
                       [--remove-missing-roots] [--incompatible-with-current]
                       [--dry-run] [--yes]
+leantoken episode audit --adapter ADAPTER --input PATH
 ```
 
 Use `leantoken <command> --help` for the complete argument list.
+
+### Episode auditor
+
+`episode audit` normalizes one existing, already-redacted analyzer report into
+a stable local report. It is repository-free: repository, database, indexing,
+and tokenizer options are rejected. The default output is deterministic
+Markdown; pass global `--json` for deterministic compact JSON:
+
+```bash
+leantoken episode audit \
+  --adapter multi-agent-suite-v1 \
+  --input benchmarks/reports/multi-agent-context-suite-v1-codex-0.144.1.json
+
+leantoken --json episode audit \
+  --adapter mcp-wire-report-v2 \
+  --input benchmarks/reports/wire-trace-synthetic-v2.json
+```
+
+Adapters are explicit and versioned:
+
+- `multi-agent-suite-v1` imports `codex_multi_agent_suite` aggregates;
+- `model-ab-trajectory-v1` imports `model_ab_trajectory` classifications;
+- `mcp-wire-report-v2` imports current `mcp_wire_analyze` reports;
+- `codex-host-receipt-v1` imports publishable `codex_host_receipt` reports;
+- `context-utilization-v1` imports `context_utilization` classifications.
+
+An adapter/schema mismatch fails instead of guessing. The suite adapter
+recomputes counts, provider-request means, provider-input comparisons, and
+contract violations from complete redacted run samples, then checks the
+published aggregates. It therefore reproduces the 60-run v1 mean of 8.2 child
+provider requests and 50.9% input regression, and identifies the v2
+one-context-plus-optional-search contract without reading private rollouts.
+Wire and host adapters share the same normalized output while keeping absent
+provider accounting `null`.
+
+The auditor reads at most 64 MiB and accepts at most 10,000 episodes, 100,000
+tool calls, 100,000 events, 100,000 evidence ranges, and 4,096 distinct
+artifact bindings. JSON input is parsed once and output cardinality is bounded
+by those limits. Reports contain only normalized counts, fixed classifier
+descriptions, and BLAKE3/Git bindings. Input paths, task names, prompts, raw
+source, commands, tool arguments, and tool outputs are not copied. A host
+receipt whose privacy declaration retains private material is rejected.
+
+Coverage accompanies every nullable count. `complete` means complete within
+the imported analyzer's declared boundary, `reported_subset` names a
+conservative child/tool subset, and `unavailable` serializes a `null` value.
+Local tokenizer counts never populate provider-native input. Downstream-use
+signals remain explicit proxies; absence of a signal is not labeled unused
+evidence. The report separately lists all eight v1 avoidable-event classifiers
+as `exact`, `proxy`, or `unavailable`, so an unevaluable classifier cannot be
+mistaken for an observed zero.
 
 `leantoken status` reports readiness separately from reconciliation activity.
 `index_state` is `uninitialized` until the first generation commits and `ready`

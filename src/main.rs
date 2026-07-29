@@ -9,7 +9,7 @@ use clap::Parser;
 use leantoken::{
     Result, cache,
     cli::{AppRequest, Cli},
-    doctor, mcp,
+    doctor, episode, mcp,
     model::{IndexConsistency, IndexState},
     services::{ServiceCallOptions, Services},
     setup::{self, SetupOperation},

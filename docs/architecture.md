@@ -1152,6 +1152,25 @@ The index contains local source text in SQLite. Users should place an explicit
 database path only where its filesystem permissions and retention policy are
 appropriate for that repository.
 
+The repository-free episode auditor is an application-layer, read-only
+normalizer in `episode`; CLI parsing and rendering remain thin. It imports only
+reports already redacted by the existing wire, host-receipt, trajectory,
+context-utilization, and multi-agent-suite analyzers. An explicit
+adapter/version pair owns each input contract. Wrong versions, missing or
+malformed artifact hashes, internally inconsistent suite aggregates, and host
+receipts that declare retained private material fail closed. The normalized
+schema preserves unknown measurements as `null` with an explicit coverage
+boundary; local tokenizer counts never stand in for provider-native usage.
+
+The auditor reads one file through a 64 MiB bounded reader and parses it once.
+It accepts at most 10,000 episodes, 100,000 model/tool calls, 100,000 protocol
+or trajectory events, 100,000 evidence ranges, and 4,096 artifact bindings.
+Suite reports are accumulated in one bounded in-memory pass; normalized output
+contains aggregate measurements and sorted/deduplicated hashes rather than
+source, prompts, paths, commands, arguments, or tool results. It opens no
+repository, SQLite cache, subprocess, or network connection. JSON and Markdown
+are deterministic projections of the same normalized report.
+
 Evaluation-only frozen-holdout tooling is outside the application hot path. It
 reads at most 32 MiB per policy, task, label, host, or receipt artifact and at
 most 1,000 JSONL records. It performs no network requests, repository scans, or

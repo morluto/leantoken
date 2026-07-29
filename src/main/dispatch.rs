@@ -5,6 +5,7 @@ async fn run(cli: Cli) -> Result<()> {
             run_upgrade_command(cli, json)
         }
         leantoken::cli::Commands::Cache(_) => run_cache_command(cli, json),
+        leantoken::cli::Commands::Episode(_) => run_episode_command(cli, json),
         leantoken::cli::Commands::Setup(_) | leantoken::cli::Commands::Remove(_) => {
             run_integration_command(cli, json)
         }
@@ -14,6 +15,20 @@ async fn run(cli: Cli) -> Result<()> {
         }
         _ => run_repository_command(cli, json).await,
     }
+}
+
+fn run_episode_command(cli: Cli, json: bool) -> Result<()> {
+    let AppRequest::EpisodeAudit(request) = cli.app_request() else {
+        unreachable!("episode command checked by dispatch")
+    };
+    let report = episode::audit_episode(&request)?;
+    if json {
+        return print(&report, true);
+    }
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    lock.write_all(report.to_markdown().as_bytes())?;
+    Ok(())
 }
 
 fn run_upgrade_command(cli: Cli, json: bool) -> Result<()> {
@@ -266,6 +281,7 @@ async fn dispatch_repository_request(
         | AppRequest::CachePrune(_)
         | AppRequest::CacheListV2(_)
         | AppRequest::CachePruneV2(_)
+        | AppRequest::EpisodeAudit(_)
         | AppRequest::Upgrade { .. } => {
             unreachable!("repository-free command handled by top-level dispatch")
         }

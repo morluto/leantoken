@@ -1506,6 +1506,17 @@ fn repository_options_are_rejected_by_repository_free_commands() {
         vec!["--json", "--root", ".", "setup", "--all", "--dry-run"],
         vec!["--json", "--root", ".", "remove", "--all", "--dry-run"],
         vec!["--json", "cache", "list", "--max-file-bytes", "1"],
+        vec![
+            "--json",
+            "--root",
+            ".",
+            "episode",
+            "audit",
+            "--adapter",
+            "mcp-wire-report-v2",
+            "--input",
+            "trace.json",
+        ],
         vec!["--json", "upgrade", "--tokenizer", "cl100k_base", "--check"],
     ] {
         let output = Command::cargo_bin("leantoken")
@@ -1524,6 +1535,79 @@ fn repository_options_are_rejected_by_repository_free_commands() {
             "{error}"
         );
     }
+}
+
+#[test]
+fn episode_audit_is_repo_free_deterministic_and_read_only() {
+    let temp = tempfile::tempdir().expect("temporary working directory");
+    let input = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("benchmarks/reports/multi-agent-context-suite-v1-codex-0.144.1.json");
+    let before = std::fs::read(&input).expect("read input before audit");
+    let command = || {
+        let mut command = Command::cargo_bin("leantoken").expect("binary");
+        command.current_dir(temp.path());
+        command
+    };
+    let arguments = [
+        "--json",
+        "episode",
+        "audit",
+        "--adapter",
+        "multi-agent-suite-v1",
+        "--input",
+        input.to_str().expect("input UTF-8"),
+    ];
+    let first = command().args(arguments).output().expect("first JSON audit");
+    let second = command().args(arguments).output().expect("second JSON audit");
+    assert!(
+        first.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert_eq!(first.stdout, second.stdout);
+    let report: serde_json::Value =
+        serde_json::from_slice(&first.stdout).expect("normalized report");
+    assert_eq!(report["schema_version"], 1);
+    assert_eq!(report["report_kind"], "episode_audit");
+    assert_eq!(report["adapter"]["name"], "multi_agent_suite");
+    assert_eq!(report["summary"]["episodes"], 60);
+    assert!(
+        report["findings"]
+            .as_array()
+            .is_some_and(|findings| findings.iter().any(|finding| {
+                finding["code"] == "provider_input_regression"
+                    && finding["value"]
+                        .as_f64()
+                        .is_some_and(|value| (value - 0.509_299_914_852_593_3).abs() < 1e-12)
+            }))
+    );
+    assert!(!String::from_utf8_lossy(&first.stdout).contains("flask-ipv6"));
+    assert_eq!(
+        std::fs::read(&input).expect("read input after audit"),
+        before
+    );
+    assert_eq!(
+        std::fs::read_dir(temp.path())
+            .expect("temporary directory")
+            .count(),
+        0
+    );
+
+    let human = command()
+        .args([
+            "episode",
+            "audit",
+            "--adapter",
+            "multi-agent-suite-v1",
+            "--input",
+            input.to_str().expect("input UTF-8"),
+        ])
+        .output()
+        .expect("Markdown audit");
+    assert!(human.status.success());
+    let markdown = String::from_utf8(human.stdout).expect("Markdown UTF-8");
+    assert!(markdown.starts_with("# LeanToken episode audit\n"));
+    assert!(markdown.contains("| `provider_input_regression` | 20 | 50.93% |"));
 }
 
 #[test]

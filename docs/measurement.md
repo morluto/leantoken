@@ -960,6 +960,18 @@ receipt set, so the summaries can be recomputed without private rollouts:
 [v1 iterative baseline](../benchmarks/reports/multi-agent-context-suite-v1-codex-0.144.1.json)
 and
 [v2 context bundle](../benchmarks/reports/multi-agent-context-suite-v2-codex-0.144.1.json).
+The product CLI replays either publishable aggregate through the explicit
+versioned adapter:
+
+```bash
+leantoken --json episode audit \
+  --adapter multi-agent-suite-v1 \
+  --input benchmarks/reports/multi-agent-context-suite-v1-codex-0.144.1.json
+```
+
+It recomputes the candidate request mean and paired input delta from the 60
+redacted samples, verifies the published summary, and emits the common bounded
+episode-audit schema. It does not need or import the private rollout directory.
 The Express path label remained 0/5 for every arm in both suites; the result is
 kept as negative dataset evidence rather than relabeled after inspection. Four
 fixed development tasks and one host/model/topology are enough to establish a
