@@ -318,6 +318,7 @@ fn operation_label(operation: TokenAccountingOperation) -> &'static str {
         TokenAccountingOperation::Context => "Context",
         TokenAccountingOperation::Json => "JSON",
         TokenAccountingOperation::History => "History",
+        TokenAccountingOperation::ReceiptRebase => "Receipt rebase",
     }
 }
 

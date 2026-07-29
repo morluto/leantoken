@@ -87,10 +87,12 @@ pub enum TokenAccountingOperation {
     Json,
     /// Immutable symbol history.
     History,
+    /// Exact-only carry of prior receipt evidence into one current generation.
+    ReceiptRebase,
 }
 
 impl TokenAccountingOperation {
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 9] = [
         Self::Files,
         Self::Search,
         Self::Outline,
@@ -99,6 +101,7 @@ impl TokenAccountingOperation {
         Self::Context,
         Self::Json,
         Self::History,
+        Self::ReceiptRebase,
     ];
 
     pub(crate) const fn as_str(self) -> &'static str {
@@ -111,6 +114,7 @@ impl TokenAccountingOperation {
             Self::Context => "context",
             Self::Json => "json",
             Self::History => "history",
+            Self::ReceiptRebase => "receipt_rebase",
         }
     }
 

@@ -226,13 +226,15 @@ and MCP transport wrappers are not part of this source-token budget; see
 | `leantoken.read` | Prefer over cat/head/sed for one exact symbol or inclusive line range. |
 | `leantoken.history` | Read, batch-diff, or trace parsed symbols across immutable Git revisions. |
 | `leantoken.json` | Query, summarize, or compare bounded live JSON with paged keys and typed diagnostics. |
+| `leantoken.receipt_rebase` | Explicitly carry only same-path, same-coordinate, same-hash evidence into a newer completed generation. |
 | `leantoken.savings` | Report observed response accounting, hash suppression, failures, and explicit observation limits. |
 
 <details>
 <summary><strong>Advanced retrieval controls</strong></summary>
 
-Every index-backed retrieval tool accepts `consistency: "reconcile_working_tree"` when
-completed edits must be reconciled before the query. The default,
+Every index-backed retrieval tool, including `receipt_rebase`, accepts
+`consistency: "reconcile_working_tree"` when completed edits must be reconciled
+before the query. The default,
 `"indexed_generation"`, returns the latest completed index generation without
 scanning or waiting for filesystem changes; it is not a Git revision boundary.
 `leantoken.history` reads immutable Git objects and `leantoken.json` reads exact

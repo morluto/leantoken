@@ -3,7 +3,7 @@
 const LIVE_READ_TOKEN_CHECK_BYTES: usize = 64 * 1024;
 const MAX_LIVE_READ_BYTES: usize = 8 * 1024 * 1024;
 
-pub(super) fn open_live_file(services: &Services, path: &str) -> Result<File> {
+pub(in crate::services) fn open_live_file(services: &Services, path: &str) -> Result<File> {
     services
         .repository_root
         .open(path)

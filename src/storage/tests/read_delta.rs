@@ -387,6 +387,14 @@ fn downgrade_read_delta_schema(database: &Path, conflicting_table: bool) {
         .execute_batch(
             "DROP TABLE IF EXISTS read_delta_bases;
              DROP TABLE IF EXISTS read_delta_base_usage;
+             ALTER TABLE retrieval_receipt_evidence DROP COLUMN exact_only;
+             UPDATE retrieval_receipt_evidence
+             SET logical_bytes = logical_bytes - 8;
+             UPDATE retrieval_receipts
+             SET evidence_bytes = evidence_bytes - evidence_count * 8;
+             UPDATE retrieval_receipt_usage
+             SET evidence_bytes = evidence_bytes - evidence_count * 8
+             WHERE id = 1;
              UPDATE meta SET schema_version = 7 WHERE id = 1;
              PRAGMA user_version = 8;",
         )

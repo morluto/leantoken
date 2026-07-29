@@ -16,8 +16,16 @@ use crate::mcp::{McpResultModeResolution, mcp_schema_fingerprint, resolve_auto_r
 use crate::setup::{self, SetupClient};
 use crate::{Config, Error, Result};
 
-const EXPECTED_TOOLS: [&str; 8] = [
-    "context", "files", "history", "json", "outline", "read", "savings", "search",
+const EXPECTED_TOOLS: [&str; 9] = [
+    "context",
+    "files",
+    "history",
+    "json",
+    "outline",
+    "read",
+    "receipt_rebase",
+    "savings",
+    "search",
 ];
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 const DIAGNOSTIC_WAIT_TIMEOUT: Duration = Duration::from_secs(1);

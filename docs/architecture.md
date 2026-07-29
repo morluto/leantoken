@@ -56,7 +56,7 @@ still open or rebuild the cache; the current release repopulates exact
 whole-file token metadata on its next reconciliation.
 
 Successful retrieval accounting has one row per tokenizer and each of the
-eight fixed retrieval operations. A finalized response performs at most one
+nine fixed retrieval operations. A finalized response performs at most one
 best-effort saturating upsert. Exact read `expected_hash` matches add their
 not-modified count and represented-source tokens omitted to that same row;
 receipt suppression remains a separate counter. Four additive counters classify
@@ -68,7 +68,7 @@ columns. Full-response accounting still includes every successful class.
 Observed service failures use `service_failures`, keyed by tokenizer, operation,
 and a finite, non-sensitive error-variant category. No request source, path,
 query, or error message is stored. Its cardinality is bounded by configured
-tokenizer names × eight operations × the finite error category set. An
+tokenizer names × nine operations × the finite error category set. An
 instrumented service boundary performs at most one best-effort saturating
 upsert only when the call fails, so successful retrievals do no failure-table
 I/O. Evaluation-only APIs outside CLI/MCP are not part of this observation
@@ -88,7 +88,7 @@ aggregate counters into a compact, checksummed, caller-carried opaque snapshot
 bound to repository identity and tokenizer. A later request subtracts that
 snapshot with checked arithmetic and fails closed on malformed, cross-repository,
 cross-tokenizer, reset, or future counters. Snapshot input and output are each
-bounded to 32 KiB; current rows remain bounded by eight operations and failures
+bounded to 32 KiB; current rows remain bounded by nine operations and failures
 by the finite category matrix. These properties make the counters persisted
 lower bounds rather than an audit ledger.
 
@@ -111,6 +111,33 @@ snapshot that produced it even if a newer generation publishes before the
 receipt transaction. A later request on the new generation fails with
 `StaleReceipt`; it never silently creates a new session.
 
+`receipt_rebase` is the only opt-in cross-generation path. It first loads an
+immutable snapshot of at most 2,048 source receipt rows, then classifies them
+against one pinned completed generation. Carry requires the same normalized
+path, inclusive line coordinates, and emitted-content hash. Live source is
+accepted only when its complete hash matches the indexed file record from that
+snapshot; outline-only evidence may additionally match one current symbol
+signature/name or import target at the exact same coordinates. Line shifts,
+renames, symbol-name relocation, overlaps, semantic signatures, near-duplicate
+signatures, and fuzzy matching never carry evidence. Missing paths, changed
+content, live/index divergence, invalid coordinates, and validation overflow
+remain source-free `missing`, `changed`, or `unmapped` outcomes.
+
+Every carried row is persisted as exact-only evidence. It may suppress a later
+candidate with the same emitted-content hash, but receipt evaluation excludes
+it from range-overlap and near-duplicate decisions. This prevents an unchanged
+outline signature from hiding a changed body in the same range; any changed
+representation is returned and appended as ordinary current-generation
+evidence.
+
+After classification, one `IMMEDIATE` transaction rechecks the current
+generation and the complete source receipt snapshot before inserting a new
+current-generation receipt. Quota cleanup is forbidden from evicting the
+source receipt. A concurrent publication, source append, expiry, quota failure,
+cancellation before the transaction, or insert failure creates no new receipt
+and does not update the source. Response fitting also runs before this write.
+The old receipt retains its original generation and normal stale behavior.
+
 The hard receipt bounds are 128 headers, 64 KiB of logical header data, 2,048
 evidence rows and 1 MiB of logical evidence per receipt, and 16,384 evidence
 rows or 8 MiB of logical evidence globally. Logical bytes include persisted
@@ -124,8 +151,15 @@ inside receipt evaluation. Capacity eviction and expiry deliberately become
 `UnknownReceipt`, while generation-stale headers remain available until expiry
 or capacity pressure so callers normally receive the more specific
 `StaleReceipt`. Whole-cache prune removes receipts with the same disposable
-database. One operation can inspect at most 128 headers and 16,384 cascading
-evidence rows during worst-case quota cleanup; there is no filesystem scan,
+database. Normal evaluation can inspect at most 128 headers and 16,384
+cascading evidence rows during worst-case quota cleanup and performs no
+filesystem scan. One rebase opens at most one live file per distinct source
+path, retains only one file at a time (bounded by the configured per-file
+indexing limit), and reads at most 64 MiB of live source in total. Each evidence
+item checks at most 64 exact-coordinate structural candidates. Evidence beyond
+either validation bound is `unmapped`, never carried. Complete counts and a
+BLAKE3 classification commitment cover every source item; the response retains
+at most 16 source-free samples per outcome. Rebase performs no repository walk,
 subprocess, network access, or concurrency fan-out.
 
 Opt-in read deltas persist a narrower safe subset of their bases in the same
@@ -889,7 +923,7 @@ Inside the handler, each `LeanTokenMcp` server independently admits at most 16
 active `tools/call` requests after repository identity validation. Clones of
 that server share both process-local governors; a separately constructed server
 or another MCP process has independent capacity. Handler admission covers all
-eight tools, including `savings`, but does not cover initialization or
+nine tools, including `savings`, but does not cover initialization or
 `tools/list`. The transport gate bounds protocol task memory; handler admission
 keeps repository identity checking ahead of execution-facing capacity.
 

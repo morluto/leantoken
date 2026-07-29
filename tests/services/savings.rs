@@ -147,7 +147,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             + accounting.protocol_tokens,
         accounting.total_response_tokens
     );
-    assert_eq!(accounting.by_operation.len(), 8);
+    assert_eq!(accounting.by_operation.len(), 9);
     assert_eq!(
         accounting
             .by_operation
@@ -163,6 +163,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             (TokenAccountingOperation::Context, 1),
             (TokenAccountingOperation::Json, 0),
             (TokenAccountingOperation::History, 0),
+            (TokenAccountingOperation::ReceiptRebase, 0),
         ]
     );
     let observed = services
@@ -299,6 +300,78 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             .expect("alternate tokenizer savings")
             .tracked_requests,
         0
+    );
+}
+
+#[tokio::test]
+async fn receipt_rebase_records_success_and_failure_accounting() {
+    let (root, services) = fixture().await;
+    let source = services
+        .read(ReadRequest {
+            path: "src/lib.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+        })
+        .await
+        .expect("source read");
+    let source_receipt = source.meta.receipt_id.expect("source receipt");
+    std::fs::write(root.path().join("src/rebase-added.rs"), "fn added() {}\n")
+        .expect("generation edit");
+    services.index(false).await.expect("publish generation");
+
+    services
+        .rebase_receipt(ReceiptRebaseRequest {
+            receipt_id: source_receipt.clone(),
+            max_samples_per_outcome: Some(0),
+        })
+        .await
+        .expect("successful rebase");
+    assert!(matches!(
+        services
+            .rebase_receipt(ReceiptRebaseRequest {
+                receipt_id: source_receipt,
+                max_samples_per_outcome: Some(17),
+            })
+            .await,
+        Err(Error::RequestLimitExceeded {
+            field: "max_samples_per_outcome",
+            requested: 17,
+            limit: 16,
+        })
+    ));
+
+    let observed = services
+        .observed_token_savings_report()
+        .await
+        .expect("observed accounting");
+    let rebase = observed
+        .report
+        .response_accounting
+        .by_operation
+        .iter()
+        .find(|row| row.operation == TokenAccountingOperation::ReceiptRebase)
+        .expect("receipt rebase row");
+    assert_eq!(rebase.tracked_requests, 1);
+    assert_eq!(
+        observed
+            .observations
+            .failed_by_operation_and_category
+            .iter()
+            .filter(|failure| failure.operation == TokenAccountingOperation::ReceiptRebase)
+            .map(|failure| (
+                failure.error_category.as_str(),
+                failure.failed_requests
+            ))
+            .collect::<Vec<_>>(),
+        vec![("request_limit_exceeded", 1)]
     );
 }
 

@@ -1,6 +1,7 @@
 use std::sync::{Arc, Barrier};
 
 use super::*;
+use crate::error::RetryableOperation;
 use crate::receipt::{
     MAX_EVIDENCE_BYTES_PER_RECEIPT, MAX_EVIDENCE_PER_RECEIPT, MAX_RECEIPTS, MAX_TOTAL_EVIDENCE,
     RECEIPT_TTL_MILLIS, ReceiptDecision, ReceiptEvidence,
@@ -248,6 +249,10 @@ fn receipt_namespace_prevents_cross_database_id_reuse() {
         right.evaluate_receipt(Some(&left_id), 1, &[], true),
         Err(Error::UnknownReceipt(id)) if id == left_id
     ));
+    assert!(matches!(
+        right.load_receipt_rebase_source(&left_id),
+        Err(Error::UnknownReceipt(id)) if id == left_id
+    ));
 }
 
 #[test]
@@ -352,6 +357,168 @@ fn old_snapshot_receipt_remains_generation_bound_after_publication() {
             && repository_generation == second_generation
     ));
     drop(snapshot);
+}
+
+#[test]
+fn rebased_receipt_is_atomic_source_preserving_and_restart_safe() {
+    let directory = tempfile::tempdir().expect("directory");
+    let database = directory.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    let first_generation = storage
+        .full_reconcile("first", vec![sample_file("lib.rs", "fn stable() {}\n")])
+        .expect("first generation");
+    let stable = evidence(1);
+    let changed = evidence(2);
+    let source_id = storage
+        .evaluate_receipt(
+            None,
+            first_generation,
+            &[stable.clone(), changed.clone()],
+            true,
+        )
+        .expect("source receipt")
+        .receipt_id;
+    let source = storage
+        .load_receipt_rebase_source(&source_id)
+        .expect("load source");
+    let second_generation = storage
+        .full_reconcile("second", vec![sample_file("lib.rs", "fn stable() {}\n")])
+        .expect("second generation");
+    let rebased_id = storage
+        .persist_rebased_receipt(&source, second_generation, std::slice::from_ref(&stable))
+        .expect("persist exact subset");
+
+    let connection = storage
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let namespace: String = connection
+        .query_row(
+            "SELECT namespace FROM retrieval_receipt_usage WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("namespace");
+    let source_row =
+        crate::receipt::parse_receipt_id(&source_id, &namespace).expect("source row id");
+    let rebased_row =
+        crate::receipt::parse_receipt_id(&rebased_id, &namespace).expect("rebased row id");
+    let source_state: (u64, usize) = connection
+        .query_row(
+            "SELECT repository_generation, evidence_count
+             FROM retrieval_receipts WHERE id = ?1",
+            [source_row],
+            |row| Ok((i64_to_u64(row.get(0)?)?, i64_to_usize(row.get(1)?)?)),
+        )
+        .expect("source state");
+    assert_eq!(source_state, (first_generation, 2));
+    let rebased_state: (u64, usize) = connection
+        .query_row(
+            "SELECT repository_generation, evidence_count
+             FROM retrieval_receipts WHERE id = ?1",
+            [rebased_row],
+            |row| Ok((i64_to_u64(row.get(0)?)?, i64_to_usize(row.get(1)?)?)),
+        )
+        .expect("rebased state");
+    assert_eq!(rebased_state, (second_generation, 1));
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT exact_only
+                 FROM retrieval_receipt_evidence
+                 WHERE receipt_id = ?1 AND ordinal = 0",
+                [rebased_row],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("rebased evidence mode"),
+        1
+    );
+    drop(connection);
+    drop(storage);
+
+    let reopened = Storage::open(&database).expect("reopen");
+    let overlapping_changed = ReceiptEvidence::new(
+        stable.path.clone(),
+        stable.start_line,
+        stable.end_line,
+        "changed-after-rebase",
+        Some("completely different current representation"),
+    );
+    let repeated = reopened
+        .evaluate_receipt(
+            Some(&rebased_id),
+            second_generation,
+            &[stable, overlapping_changed],
+            true,
+        )
+        .expect("reuse rebased receipt");
+    assert_eq!(
+        repeated.decisions,
+        vec![ReceiptDecision::SuppressExact, ReceiptDecision::Return]
+    );
+}
+
+#[test]
+fn rebase_conflicts_roll_back_without_mutating_the_source() {
+    let directory = tempfile::tempdir().expect("directory");
+    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+    let first_generation = storage
+        .full_reconcile("first", vec![sample_file("lib.rs", "fn first() {}\n")])
+        .expect("first generation");
+    let first = evidence(1);
+    let appended = evidence(2);
+    let source_id = storage
+        .evaluate_receipt(None, first_generation, std::slice::from_ref(&first), true)
+        .expect("source receipt")
+        .receipt_id;
+    let stale_source = storage
+        .load_receipt_rebase_source(&source_id)
+        .expect("source snapshot");
+    storage
+        .evaluate_receipt(
+            Some(&source_id),
+            first_generation,
+            std::slice::from_ref(&appended),
+            true,
+        )
+        .expect("concurrent append");
+    let second_generation = storage
+        .full_reconcile("second", vec![sample_file("lib.rs", "fn second() {}\n")])
+        .expect("second generation");
+    let before = usage(&storage);
+    assert!(matches!(
+        storage.persist_rebased_receipt(
+            &stale_source,
+            second_generation,
+            std::slice::from_ref(&first)
+        ),
+        Err(Error::RetryableConflict(RetryableOperation::Retrieval))
+    ));
+    assert_eq!(usage(&storage), before);
+
+    let current_source = storage
+        .load_receipt_rebase_source(&source_id)
+        .expect("current source");
+    let third_generation = storage
+        .full_reconcile("third", vec![sample_file("lib.rs", "fn third() {}\n")])
+        .expect("third generation");
+    assert!(third_generation > second_generation);
+    assert!(matches!(
+        storage.persist_rebased_receipt(
+            &current_source,
+            second_generation,
+            std::slice::from_ref(&first)
+        ),
+        Err(Error::RetryableConflict(RetryableOperation::Retrieval))
+    ));
+    assert_eq!(usage(&storage), before);
+    assert_eq!(
+        storage
+            .load_receipt_rebase_source(&source_id)
+            .expect("source remains")
+            .evidence,
+        vec![first, appended]
+    );
 }
 
 #[test]
@@ -485,6 +652,99 @@ fn receipt_insert_failure_rolls_back_header_usage_and_evidence() {
 }
 
 #[test]
+fn rebase_insert_failure_rolls_back_and_preserves_the_source() {
+    let directory = tempfile::tempdir().expect("directory");
+    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+    let first_generation = storage
+        .full_reconcile("first", vec![sample_file("lib.rs", "fn first() {}\n")])
+        .expect("first generation");
+    let first = evidence(1);
+    let source_id = storage
+        .evaluate_receipt(None, first_generation, std::slice::from_ref(&first), true)
+        .expect("source receipt")
+        .receipt_id;
+    let source = storage
+        .load_receipt_rebase_source(&source_id)
+        .expect("source snapshot");
+    let second_generation = storage
+        .full_reconcile("second", vec![sample_file("lib.rs", "fn second() {}\n")])
+        .expect("second generation");
+    {
+        let connection = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        connection
+            .execute_batch(
+                "CREATE TRIGGER fail_rebased_evidence
+                 BEFORE INSERT ON retrieval_receipt_evidence
+                 BEGIN
+                     SELECT RAISE(ABORT, 'injected rebase failure');
+                 END;",
+            )
+            .expect("failure trigger");
+    }
+    let before = usage(&storage);
+    assert!(
+        storage
+            .persist_rebased_receipt(&source, second_generation, std::slice::from_ref(&first))
+            .is_err()
+    );
+    assert_eq!(usage(&storage), before);
+    assert_eq!(
+        storage
+            .load_receipt_rebase_source(&source_id)
+            .expect("source remains")
+            .evidence,
+        vec![first]
+    );
+}
+
+#[test]
+fn rebase_quota_eviction_never_selects_the_source_receipt() {
+    let directory = tempfile::tempdir().expect("directory");
+    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+    let first_generation = storage
+        .full_reconcile("first", vec![sample_file("lib.rs", "fn first() {}\n")])
+        .expect("first generation");
+    let first = evidence(1);
+    let source_id = storage
+        .evaluate_receipt(None, first_generation, std::slice::from_ref(&first), true)
+        .expect("source receipt")
+        .receipt_id;
+    for _ in 1..MAX_RECEIPTS {
+        storage
+            .evaluate_receipt(None, first_generation, &[], true)
+            .expect("fill receipt headers");
+    }
+    assert_eq!(usage(&storage).0, MAX_RECEIPTS);
+    let source = storage
+        .load_receipt_rebase_source(&source_id)
+        .expect("source snapshot");
+    let second_generation = storage
+        .full_reconcile("second", vec![sample_file("lib.rs", "fn second() {}\n")])
+        .expect("second generation");
+    let rebased = storage
+        .persist_rebased_receipt(&source, second_generation, std::slice::from_ref(&first))
+        .expect("rebase at header quota");
+    assert_eq!(usage(&storage).0, MAX_RECEIPTS);
+    assert_eq!(
+        storage
+            .load_receipt_rebase_source(&source_id)
+            .expect("source retained")
+            .evidence,
+        vec![first.clone()]
+    );
+    assert_eq!(
+        storage
+            .evaluate_receipt(Some(&rebased), second_generation, &[first], true)
+            .expect("rebased receipt")
+            .decisions,
+        vec![ReceiptDecision::SuppressExact]
+    );
+}
+
+#[test]
 fn poisoned_process_local_writer_mutex_does_not_corrupt_receipts() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
@@ -527,6 +787,11 @@ fn receipt_lookup_append_and_prune_query_plans_use_bounded_indexes() {
             "retrieval_receipts_expiry_idx",
         ),
         (
+            "DELETE FROM retrieval_receipts
+             WHERE expires_unix_millis <= 1 AND id != 2",
+            "retrieval_receipts_expiry_idx",
+        ),
+        (
             "SELECT id FROM retrieval_receipts
              WHERE access_sequence > 0
              ORDER BY access_sequence, id LIMIT 1",
@@ -551,6 +816,47 @@ fn receipt_lookup_append_and_prune_query_plans_use_bounded_indexes() {
             "unbounded receipt scan: {details}"
         );
     }
+}
+
+#[test]
+fn receipt_rebase_structural_lookup_uses_file_bounded_indexes() {
+    let directory = tempfile::tempdir().expect("directory");
+    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+    let connection = storage
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let sql = "SELECT content
+               FROM (
+                   SELECT COALESCE(signature, name) AS content, rowid AS stable_id, 0 AS kind
+                   FROM symbols
+                   WHERE file_id = 1 AND start_line = 2 AND end_line = 3
+                   UNION ALL
+                   SELECT raw_target AS content, id AS stable_id, 1 AS kind
+                   FROM imports
+                   WHERE file_id = 1 AND line = 2 AND line = 3
+               )
+               ORDER BY kind, stable_id
+               LIMIT 65";
+    let mut statement = connection
+        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+        .expect("query plan");
+    let details = statement
+        .query_map([], |row| row.get::<_, String>(3))
+        .expect("plan rows")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("plan details")
+        .join(" | ");
+    assert!(
+        details.contains("symbols_file_start_idx"),
+        "symbol lookup must stay file-bounded: {details}"
+    );
+    assert!(
+        details.contains("imports_file_line_idx"),
+        "import lookup must stay file/line-bounded: {details}"
+    );
+    assert!(!details.contains("SCAN symbols"), "{details}");
+    assert!(!details.contains("SCAN imports"), "{details}");
 }
 
 #[test]
@@ -583,6 +889,52 @@ fn receipt_migration_preserves_existing_index_and_failed_migration_rolls_back() 
             .expect("migration version"),
         7
     );
+}
+
+#[test]
+fn exact_only_migration_keeps_existing_evidence_as_ordinary() {
+    let directory = tempfile::tempdir().expect("directory");
+    let database = directory.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    let generation = storage
+        .full_reconcile("config", vec![sample_file("lib.rs", "fn indexed() {}\n")])
+        .expect("index");
+    let prior = evidence(1);
+    let receipt_id = storage
+        .evaluate_receipt(None, generation, std::slice::from_ref(&prior), true)
+        .expect("receipt")
+        .receipt_id;
+    drop(storage);
+
+    let connection = Connection::open(&database).expect("downgrade connection");
+    connection
+        .execute_batch(
+            "ALTER TABLE retrieval_receipt_evidence DROP COLUMN exact_only;
+             UPDATE retrieval_receipt_evidence
+             SET logical_bytes = logical_bytes - 8;
+             UPDATE retrieval_receipts
+             SET evidence_bytes = evidence_bytes - evidence_count * 8;
+             UPDATE retrieval_receipt_usage
+             SET evidence_bytes = evidence_bytes - evidence_count * 8
+             WHERE id = 1;
+             UPDATE meta SET schema_version = 8 WHERE id = 1;
+             PRAGMA user_version = 9;",
+        )
+        .expect("downgrade exact-only migration");
+    drop(connection);
+
+    let migrated = Storage::open(&database).expect("migrate exact-only column");
+    let overlapping = ReceiptEvidence::new(
+        prior.path,
+        prior.start_line,
+        prior.end_line,
+        "changed",
+        Some("unrelated replacement"),
+    );
+    let evaluation = migrated
+        .evaluate_receipt(Some(&receipt_id), generation, &[overlapping], true)
+        .expect("evaluate migrated ordinary evidence");
+    assert_eq!(evaluation.decisions, vec![ReceiptDecision::SuppressOverlap]);
 }
 
 fn downgrade_receipt_schema(database: &Path, conflicting_table: bool) {
@@ -622,7 +974,8 @@ fn oracle_decide(
     }
     if suppress_overlap
         && previous.iter().any(|seen| {
-            seen.path == candidate.path
+            !seen.exact_only
+                && seen.path == candidate.path
                 && seen.start_line <= candidate.end_line
                 && candidate.start_line <= seen.end_line
         })
@@ -631,8 +984,10 @@ fn oracle_decide(
     }
     if candidate.semantic_signature.is_some_and(|signature| {
         previous.iter().any(|seen| {
-            seen.semantic_signature
-                .is_some_and(|prior| (signature ^ prior).count_ones() <= 8)
+            !seen.exact_only
+                && seen
+                    .semantic_signature
+                    .is_some_and(|prior| (signature ^ prior).count_ones() <= 8)
         })
     }) {
         return ReceiptDecision::ReturnNearDuplicate;

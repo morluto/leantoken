@@ -1618,6 +1618,63 @@ expression: tools
     }
   },
   {
+    "name": "receipt_rebase",
+    "description": "Explicitly carry only exactly unchanged evidence from a stale server-managed receipt into the current committed generation. Requires the same repository/cache/scope identity and exact path, line coordinates, and content hash; never guesses line shifts, renames, symbol relocation, overlap, near-duplicates, or fuzzy matches. Returns complete carried/changed/missing/unmapped counts, bounded source-free samples, and a digest. Example: {\"receipt_id\":\"r...\",\"consistency\":\"reconcile_working_tree\"}.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "consistency": {
+          "default": "indexed_generation",
+          "description": "Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.",
+          "enum": [
+            "indexed_generation",
+            "reconcile_working_tree"
+          ],
+          "type": "string"
+        },
+        "expected_repository_id": {
+          "default": null,
+          "description": "Expected opaque repository identity from an earlier response.",
+          "maxLength": 128,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_response_tokens": {
+          "default": null,
+          "description": "Maximum tokens in the final serialized service response.",
+          "format": "uint",
+          "maximum": 32000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_samples_per_outcome": {
+          "default": null,
+          "description": "Maximum source-free examples per outcome; complete counts and digest are always returned.",
+          "format": "uint",
+          "maximum": 16,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "receipt_id": {
+          "description": "Opaque server-managed receipt from an earlier repository generation.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_id"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "name": "savings",
     "description": "Report repository-local response accounting, request classifications, expected-hash suppression, service failures, and unobserved task outcomes. Returns an opaque snapshot for a later bounded delta; savings are retrieval accounting, not task-success claims. Example: {}.",
     "inputSchema": {

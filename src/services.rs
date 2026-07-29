@@ -38,6 +38,7 @@ mod json;
 mod outline;
 mod read;
 mod read_delta;
+mod receipt_rebase;
 mod receipts;
 mod reconciliation;
 mod search;
@@ -208,6 +209,7 @@ impl_retrieval_response!(
     OutlineResponse,
     OutlineSignaturesResponse,
     ReadResponse,
+    ReceiptRebaseResponse,
     ContextResponse,
 );
 

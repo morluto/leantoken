@@ -238,7 +238,7 @@ Setup writes only the `leantoken` entry in each selected global client config.
 It also manages a concise `leantoken` discovery skill in
 `~/.agents/skills/leantoken/SKILL.md` and
 `~/.claude/skills/leantoken/SKILL.md`. Hosts preload only its name and routing
-description, then load the instructions on selection; the eight MCP schemas
+description, then load the instructions on selection; the nine MCP schemas
 remain deferred. Repeated setup updates only marker-owned copies, removal
 preserves an unowned file at either path, and partial client removal retains the
 skill while another LeanToken registration remains. JSON setup reports the
@@ -350,7 +350,7 @@ pruning during a mixed-version rollout.
 ## First-run doctor
 
 `leantoken doctor` launches the current executable as a real MCP subprocess and
-verifies its initialization identity and agent instructions, exact eight-tool
+verifies its initialization identity and agent instructions, exact nine-tool
 catalog, and first `leantoken.context` retrieval. On a cold repository it
 allows up to 120 seconds by default for the first retrieval, then follows
 structured `retry_after_ms` guidance while the index warms. Set
@@ -482,6 +482,40 @@ semantic signatures—not task/query text or raw source. Context
 `fragment_hashes` and `known_hashes` remain available for stateless
 compatibility.
 
+Use `leantoken.receipt_rebase` only when carrying exact evidence across a
+completed generation is useful. It is explicit and never changes ordinary
+stale-receipt behavior:
+
+```json
+{
+  "receipt_id": "r...",
+  "consistency": "reconcile_working_tree",
+  "max_samples_per_outcome": 4,
+  "max_response_tokens": 2000
+}
+```
+
+The source receipt must belong to the same repository cache and indexing scope
+and to an earlier generation. Evidence is carried only when current path,
+inclusive line coordinates, and content hash are all identical. The operation
+does not guess line shifts, renames, moved symbols, duplicate bodies, overlap,
+near-duplicates, or fuzzy matches. It returns complete `carried`, `changed`,
+`missing`, and `unmapped` counts, a BLAKE3 commitment to the ordered full
+classification, and up to 16 source-free examples per outcome. The new receipt
+is `meta.receipt_id`; the source remains unchanged and stale.
+
+Carried rows are exact-only: they suppress only a later candidate with the same
+emitted-content hash. They do not participate in range-overlap or
+near-duplicate suppression, so an unchanged outline signature cannot hide a
+changed body in the same range.
+
+Validation is bounded to the source receipt's 2,048 evidence rows, 64 MiB of
+live source in total, one configured-size file buffer at a time, and 64
+exact-coordinate structural candidates per evidence item. Anything that cannot
+be proven inside those bounds is `unmapped` and is not carried. Generation or
+source-receipt races fail without creating a partial receipt. This Phase 1
+contract intentionally excludes automatic rebase and all relocation heuristics.
+
 Prefer LeanToken over shell discovery and whole-file reads. For a broad coding,
 debugging, review, or architecture task, start with `leantoken.context`. Use the
 narrow tools directly when the target is already known:
@@ -493,7 +527,8 @@ known file, unknown range -> outline -> read
 unknown path -> files
 ```
 
-All five MCP retrieval tools accept an optional `consistency` input:
+Index-backed MCP retrieval tools, including `receipt_rebase`, accept an
+optional `consistency` input:
 
 - `indexed_generation` (default) queries the latest completed index generation
   without scanning or waiting for filesystem changes. It does not mean Git
@@ -531,6 +566,14 @@ and `tools/list` remain available while tool capacity is saturated. These
 bounds are process-local: another MCP process serving another workspace has
 independent capacity.
 
+## `leantoken.receipt_rebase`
+
+This explicit evidence-lifecycle operation is described in the
+[MCP receipt section](#mcp-server). It returns no source and performs no
+retrieval ranking. Call it only after a stale receipt is worth preserving; use
+the returned current-generation `meta.receipt_id` on later `search`, `outline`,
+`read`, or `context` requests.
+
 ## `leantoken.savings`
 
 Returns repository-local token accounting and an opaque `snapshot`. With no
@@ -548,7 +591,7 @@ subsequent delta when a strictly post-classification measurement is required.
 `response_accounting` separately retains every successful
 response and reports comparable baseline counts,
 source/path-metadata/protocol/total response tokens, signed response deltas,
-receipt-suppression counts, and fixed rows for all eight retrieval operations.
+receipt-suppression counts, and fixed rows for all nine retrieval operations.
 
 The additive `observations` object reports best-effort persisted successes,
 failures by operation and stable error category, and exact `expected_hash`
@@ -1164,8 +1207,10 @@ Validations are transported as caller reports; LeanToken does not execute them.
 materialized grounded evidence.
 
 The manifest is a host-triggered transfer artifact, not persistent memory.
-`receipt_id` is useful only in the same server process; coordinates and hashes
-remain the persistent verification boundary. If Git identity or working-tree
+`receipt_id` remains useful across processes while the same repository cache,
+generation, and TTL survive; after a new generation, only the explicit
+exact-only `receipt_rebase` operation can create a current receipt. Coordinates
+and hashes remain the verification boundary. If Git identity or working-tree
 state cannot be established, the corresponding field is absent or `unknown`
 and `gaps` explains the missing provenance. Receipt suppression can leave
 `fragments` empty while the manifest still records the selected pre-suppression

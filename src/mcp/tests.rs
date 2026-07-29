@@ -159,7 +159,7 @@ async fn initialization_and_tool_listing_bypass_saturated_tool_admission() {
             .await
             .expect("list tools while saturated")
             .len(),
-        8
+        9
     );
 
     drop(permits);
@@ -257,14 +257,22 @@ fn startup_failures_expose_only_allowlisted_guidance() {
 }
 
 #[test]
-fn mcp_exposes_eight_tools() {
+fn mcp_exposes_nine_tools() {
     let router = LeanTokenMcp::tool_router();
     let tools = router.list_all();
-    assert_eq!(tools.len(), 8);
+    assert_eq!(tools.len(), 9);
 
     let names: std::collections::HashSet<_> = tools.iter().map(|t| t.name.as_ref()).collect();
     for name in [
-        "files", "search", "outline", "read", "history", "json", "context", "savings",
+        "files",
+        "search",
+        "outline",
+        "read",
+        "history",
+        "json",
+        "context",
+        "receipt_rebase",
+        "savings",
     ] {
         assert!(names.contains(name), "missing tool {name}");
     }
@@ -1114,6 +1122,7 @@ fn tool_required_fields_match_the_wire_contract() {
         ("json", Some(serde_json::json!(["operation"]))),
         ("outline", Some(serde_json::json!(["paths"]))),
         ("read", Some(serde_json::json!(["path", "target"]))),
+        ("receipt_rebase", Some(serde_json::json!(["receipt_id"]))),
         ("savings", None),
         ("search", Some(serde_json::json!(["query"]))),
     ]
@@ -1482,6 +1491,41 @@ fn receipt_id_maps_to_the_service_request() {
     .expect("read request with receipt");
     let (request, _, _, _) = request.into_parts();
     assert_eq!(request.receipt_id.as_deref(), Some("r0000000000000001"));
+}
+
+#[test]
+fn receipt_rebase_maps_explicit_exact_only_controls() {
+    let request = serde_json::from_value::<ReceiptRebaseMcpRequest>(serde_json::json!({
+        "receipt_id": "r0000000000000001",
+        "max_samples_per_outcome": 0,
+        "max_response_tokens": 1_000,
+        "consistency": "reconcile_working_tree",
+        "expected_repository_id": "repository"
+    }))
+    .expect("receipt rebase request");
+    request
+        .validate_limits(McpLimitPolicy::DEFAULT)
+        .expect("receipt rebase limits");
+    let (request, consistency, options, expected_repository_id) = request.into_parts();
+    assert_eq!(request.receipt_id, "r0000000000000001");
+    assert_eq!(request.max_samples_per_outcome, Some(0));
+    assert_eq!(consistency, IndexConsistency::ReconcileWorkingTree);
+    assert_eq!(options.max_response_tokens(), Some(1_000));
+    assert_eq!(expected_repository_id.as_deref(), Some("repository"));
+
+    let oversized = serde_json::from_value::<ReceiptRebaseMcpRequest>(serde_json::json!({
+        "receipt_id": "r0000000000000001",
+        "max_samples_per_outcome": 17
+    }))
+    .expect("schema-independent oversized request");
+    assert!(matches!(
+        oversized.validate_limits(McpLimitPolicy::DEFAULT),
+        Err(crate::Error::RequestLimitExceeded {
+            field: "max_samples_per_outcome",
+            requested: 17,
+            limit: MAX_RECEIPT_REBASE_SAMPLES_PER_OUTCOME,
+        })
+    ));
 }
 
 #[test]

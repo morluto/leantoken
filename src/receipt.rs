@@ -7,6 +7,8 @@ pub(crate) const MAX_RECEIPT_ID_BYTES: usize = 128;
 pub(crate) const MAX_TOTAL_RECEIPT_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_EVIDENCE_BYTES_PER_RECEIPT: usize = 1024 * 1024;
 pub(crate) const MAX_TOTAL_EVIDENCE_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_REBASE_STRUCTURAL_CANDIDATES_PER_EVIDENCE: usize = 64;
+pub(crate) const MAX_REBASE_LIVE_BYTES: u64 = 64 * 1024 * 1024;
 pub(crate) const RECEIPT_TTL_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 pub(crate) const RECEIPT_TOUCH_INTERVAL_MILLIS: i64 = 60 * 1_000;
 const RECEIPT_ID_NAMESPACE_HEX_BYTES: usize = 32;
@@ -16,7 +18,7 @@ const RECEIPT_ID_ROW_HEX_BYTES: usize = 16;
 pub(crate) const RECEIPT_ID_RESPONSE_RESERVE: &str =
     "r0a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f708";
 const NEAR_DUPLICATE_HAMMING_DISTANCE: u32 = 8;
-const RECEIPT_EVIDENCE_FIXED_LOGICAL_BYTES: usize = 6 * size_of::<u64>();
+const RECEIPT_EVIDENCE_FIXED_LOGICAL_BYTES: usize = 7 * size_of::<u64>();
 const _: () = assert!(
     RECEIPT_ID_RESPONSE_RESERVE.len()
         == 1 + RECEIPT_ID_NAMESPACE_HEX_BYTES + RECEIPT_ID_ROW_HEX_BYTES
@@ -29,6 +31,7 @@ pub(crate) struct ReceiptEvidence {
     pub end_line: usize,
     pub content_hash: String,
     pub semantic_signature: Option<u64>,
+    pub exact_only: bool,
 }
 
 impl ReceiptEvidence {
@@ -45,6 +48,7 @@ impl ReceiptEvidence {
             end_line,
             content_hash: content_hash.into(),
             semantic_signature: content.and_then(semantic_signature),
+            exact_only: false,
         }
     }
 
@@ -67,6 +71,14 @@ pub(crate) enum ReceiptDecision {
 pub(crate) struct ReceiptEvaluation {
     pub receipt_id: String,
     pub decisions: Vec<ReceiptDecision>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReceiptRebaseSource {
+    pub receipt_id: String,
+    pub repository_identity: String,
+    pub repository_generation: u64,
+    pub evidence: Vec<ReceiptEvidence>,
 }
 
 impl ReceiptEvaluation {
@@ -104,7 +116,8 @@ pub(crate) fn decide(
     }
     if suppress_overlap
         && previous.iter().any(|seen| {
-            seen.path == candidate.path
+            !seen.exact_only
+                && seen.path == candidate.path
                 && ranges_overlap(
                     seen.start_line,
                     seen.end_line,
@@ -117,9 +130,10 @@ pub(crate) fn decide(
     }
     if candidate.semantic_signature.is_some_and(|signature| {
         previous.iter().any(|seen| {
-            seen.semantic_signature.is_some_and(|prior| {
-                (signature ^ prior).count_ones() <= NEAR_DUPLICATE_HAMMING_DISTANCE
-            })
+            !seen.exact_only
+                && seen.semantic_signature.is_some_and(|prior| {
+                    (signature ^ prior).count_ones() <= NEAR_DUPLICATE_HAMMING_DISTANCE
+                })
         })
     }) {
         return ReceiptDecision::ReturnNearDuplicate;
@@ -222,6 +236,54 @@ mod tests {
         );
         assert_eq!(
             decide(&previous, &candidates[1], false),
+            ReceiptDecision::Return
+        );
+    }
+
+    #[test]
+    fn exact_only_evidence_suppresses_hashes_but_not_ranges_or_signatures() {
+        let mut previous = ReceiptEvidence::new(
+            "src/lib.rs",
+            10,
+            20,
+            "first",
+            Some("alpha beta gamma delta epsilon"),
+        );
+        previous.exact_only = true;
+        assert_eq!(
+            decide(
+                std::slice::from_ref(&previous),
+                &ReceiptEvidence::new("src/lib.rs", 10, 20, "first", Some("replacement")),
+                true,
+            ),
+            ReceiptDecision::SuppressExact
+        );
+        assert_eq!(
+            decide(
+                std::slice::from_ref(&previous),
+                &ReceiptEvidence::new(
+                    "src/lib.rs",
+                    15,
+                    25,
+                    "changed",
+                    Some("unrelated words here"),
+                ),
+                true,
+            ),
+            ReceiptDecision::Return
+        );
+        assert_eq!(
+            decide(
+                std::slice::from_ref(&previous),
+                &ReceiptEvidence::new(
+                    "src/other.rs",
+                    1,
+                    2,
+                    "different",
+                    Some("epsilon delta gamma beta alpha"),
+                ),
+                true,
+            ),
             ReceiptDecision::Return
         );
     }
