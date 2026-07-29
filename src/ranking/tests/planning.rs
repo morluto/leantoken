@@ -148,7 +148,6 @@
             resp.meta.source_tokens,
             resp.fragments.iter().map(|f| f.token_count).sum::<usize>()
         );
-        assert_eq!(resp.meta.source_tokens, resp.meta.source_tokens);
         assert_eq!(resp.meta.tokenizer, tokens::Tokenizer::default().name());
         let mut countable = resp.clone();
         countable.meta.protocol_tokens = 0;
@@ -160,7 +159,6 @@
             resp.meta.total_response_tokens,
             tokens::Tokenizer::default().count(&payload)
         );
-        assert_eq!(resp.meta.total_response_tokens, resp.meta.total_response_tokens);
         assert_eq!(
             resp.meta.total_response_tokens,
             resp.meta.source_tokens
@@ -183,7 +181,6 @@
         );
 
         assert!(!response.meta.token_count_exact);
-        assert_eq!(response.meta.source_tokens, response.meta.source_tokens);
         assert_eq!(response.meta.tokenizer, tokens::Tokenizer::Estimate.name());
         assert_eq!(response.meta.source_tokens, 4);
     }
