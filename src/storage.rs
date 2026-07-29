@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::model::{
     ReferenceRole, ResponseMeta, TokenAccountingOperation, TokenSavingsRequestClass,
 };
-use crate::{Error, Result};
+use crate::{Error, Result, RetrievalLimitKind};
 
 // These files are physically separated by storage responsibility while
 // remaining in one Rust module. Keeping the shared private scope avoids

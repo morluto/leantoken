@@ -5,6 +5,35 @@ mod read_delta;
 mod receipts;
 
 #[test]
+fn scoped_regex_row_limit_reports_the_governing_bound() {
+    let root = tempfile::tempdir().expect("root");
+    let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
+    storage
+        .full_reconcile(
+            "config",
+            vec![
+                sample_file("alpha.rs", "const needle_alpha: bool = true;\n"),
+                sample_file("bravo.rs", "const needle_bravo: bool = true;\n"),
+            ],
+        )
+        .expect("index fixture");
+    let session = storage.begin_read().expect("read session");
+
+    let error = session
+        .select_scoped_regex_candidate_ids("\"needle\"", 1, 10, &[], &[], |_| true)
+        .expect_err("second FTS row crosses the scan bound");
+
+    assert!(matches!(
+        error,
+        Error::RetrievalLimitExceeded {
+            kind: RetrievalLimitKind::RegexScopedRows,
+            observed: 2,
+            limit: 1,
+        }
+    ));
+}
+
+#[test]
 fn parser_coverage_rows_remain_pinned_across_publication() {
     let root = tempfile::tempdir().expect("root");
     let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");

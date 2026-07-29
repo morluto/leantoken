@@ -203,6 +203,12 @@ pub(super) fn chunk_search_hit(
     )))
 }
 
+#[derive(Clone, Copy)]
+struct OccurrenceMaterializationLimit {
+    existing_hits: usize,
+    max_hits: usize,
+}
+
 fn chunk_search_hits(
     hit: &ChunkHit,
     query: &str,
@@ -210,7 +216,7 @@ fn chunk_search_hits(
     context: usize,
     compiled_matcher: Option<&regex::Regex>,
     regex_match: bool,
-    max_hits: usize,
+    occurrence_limit: OccurrenceMaterializationLimit,
 ) -> Result<Vec<SearchHit>> {
     let ranges: Box<dyn Iterator<Item = (usize, usize)> + '_> =
         if let Some(regex) = compiled_matcher {
@@ -231,8 +237,17 @@ fn chunk_search_hits(
     let starts = line_starts(&hit.content);
     let mut hits = Vec::new();
     for (start, end) in ranges {
-        if hits.len() == max_hits {
-            return Err(Error::LimitExceeded);
+        if occurrence_limit.existing_hits.saturating_add(hits.len())
+            == occurrence_limit.max_hits
+        {
+            return Err(Error::RetrievalLimitExceeded {
+                kind: RetrievalLimitKind::ExhaustiveOccurrences,
+                observed: occurrence_limit
+                    .existing_hits
+                    .saturating_add(hits.len())
+                    .saturating_add(1),
+                limit: occurrence_limit.max_hits,
+            });
         }
         hits.push(chunk_search_hit_for_range(
             hit,

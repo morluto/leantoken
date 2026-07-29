@@ -16,6 +16,9 @@ fn cli_error_message(error: &leantoken::Error) -> String {
         leantoken::Error::IndexNotReady => "repository index is not ready; run `leantoken index` \
             for direct CLI use or `leantoken doctor` to verify MCP readiness"
             .into(),
+        leantoken::Error::RetrievalLimitExceeded { kind, .. } => {
+            format!("{error}; {}", kind.guidance())
+        }
         _ => error.to_string(),
     }
 }
@@ -128,6 +131,9 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
             requested,
             limit,
         } => (None, Some(*field), Some(*requested), Some(*limit)),
+        leantoken::Error::RetrievalLimitExceeded {
+            observed, limit, ..
+        } => (None, None, Some(*observed), Some(*limit)),
         leantoken::Error::ResponseBudgetExceeded {
             provided_max_response_tokens,
             minimum_required_response_tokens,
@@ -169,6 +175,14 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
             None,
             Some(*line),
             Some(*column),
+        ),
+        leantoken::Error::RetrievalLimitExceeded { kind, .. } => (
+            Some(kind.as_str().to_owned()),
+            None,
+            None,
+            None,
+            None,
+            None,
         ),
         _ => (None, None, None, None, None, None),
     };

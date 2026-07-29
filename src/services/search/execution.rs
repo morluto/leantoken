@@ -443,7 +443,10 @@ impl Services {
                         .or(prepared.occurrence_literal_regex.as_ref())
                         .or(prepared.literal_regex.as_ref()),
                     matches!(request.mode, SearchMode::Regex),
-                    MAX_EXHAUSTIVE_OCCURRENCES.saturating_sub(lexical_hits.len()),
+                    OccurrenceMaterializationLimit {
+                        existing_hits: lexical_hits.len(),
+                        max_hits: MAX_EXHAUSTIVE_OCCURRENCES,
+                    },
                 )?
             } else {
                 chunk_search_hit(
@@ -459,7 +462,11 @@ impl Services {
             };
             for search_hit in chunk_hits {
                 if request.all_occurrences && lexical_hits.len() == MAX_EXHAUSTIVE_OCCURRENCES {
-                    return Err(Error::LimitExceeded);
+                    return Err(Error::RetrievalLimitExceeded {
+                        kind: RetrievalLimitKind::ExhaustiveOccurrences,
+                        observed: lexical_hits.len().saturating_add(1),
+                        limit: MAX_EXHAUSTIVE_OCCURRENCES,
+                    });
                 }
                 let matched_line = search_hit
                     .occurrence

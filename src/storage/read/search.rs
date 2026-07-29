@@ -84,7 +84,11 @@ impl ReadSession {
         while let Some(row) = rows.next()? {
             rows_scanned = rows_scanned.saturating_add(1);
             if rows_scanned > max_rows_scanned {
-                return Err(Error::LimitExceeded);
+                return Err(Error::RetrievalLimitExceeded {
+                    kind: RetrievalLimitKind::RegexScopedRows,
+                    observed: rows_scanned,
+                    limit: max_rows_scanned,
+                });
             }
             let path: String = row.get(1)?;
             // Rust PathFilter remains the correctness gate for patterns SQL
@@ -93,7 +97,11 @@ impl ReadSession {
                 continue;
             }
             if candidate_ids.len() == max_candidates {
-                return Err(Error::LimitExceeded);
+                return Err(Error::RetrievalLimitExceeded {
+                    kind: RetrievalLimitKind::RegexCandidateChunks,
+                    observed: candidate_ids.len().saturating_add(1),
+                    limit: max_candidates,
+                });
             }
             candidate_ids.push(row.get(0)?);
         }

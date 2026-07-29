@@ -654,9 +654,12 @@ change whether an explicit value is accepted. Zero is valid only for
 
 ## Retrieval hot-path bounds
 
-These limits cap context fan-out, regex work, and file-list memory. A request
-returns `LimitExceeded` instead of silently returning incomplete regex results
-when a scan boundary is reached. Tree and glob pages use the indexed
+These limits cap context fan-out, regex work, and file-list memory. A regex
+request returns a typed retrieval-limit reason instead of silently returning
+incomplete results when a scan boundary is reached. The stable reason identifies
+the governing file, per-file chunk, candidate, scoped-row, retained-chunk, or
+occurrence bound and includes only safe aggregate counts; it never includes an
+offending path or source text. Tree and glob pages use the indexed
 `path_entries` projection with a path keyset cursor; glob filters file rows with
 SQLite `GLOB` (patterns that cannot map, such as brace expansion, fall back to a
 bounded globset scan). Find still scans indexed files with a lean path-only
