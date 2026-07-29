@@ -130,8 +130,7 @@ pub async fn serve_stdio(services: Arc<Services>, result_mode: McpResultMode) ->
 /// Run a prepared MCP server over stdio.
 pub async fn serve_stdio_server(server: LeanTokenMcp) -> crate::Result<()> {
     let token = CancellationToken::new();
-    let transport =
-        BoundedStdioTransport::new(server.request_dispatch.clone(), server.result_mode.clone());
+    let transport = BoundedStdioTransport::new(server.request_dispatch.clone(), server.result_mode);
 
     let signal_task = tokio::spawn({
         let token = token.clone();
