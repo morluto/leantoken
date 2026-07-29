@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use clap::Args;
+use clap::{Args, ValueEnum};
 use leantoken::Config;
 use leantoken::indexer::{Indexer, IndexingDiagnostics, ProfiledIndexResponse};
 use leantoken::model::{IndexProgressPhase, IndexResponse};
@@ -21,7 +21,7 @@ use super::{
     snapshot_repository, storage_footprint,
 };
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 const MAX_MATRIX_RUNS: usize = 16;
 const MAX_WORKERS: usize = 64;
 const MAX_PARITY_QUERIES: usize = 16;
@@ -31,6 +31,15 @@ const MAX_SAMPLE_INTERVAL_MS: u64 = 1_000;
 const CANCELLATION_GRACE_SECONDS: u64 = 10 * 60;
 const MAX_WORKER_REPORT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_BASELINE_BYTES: u64 = 64 * 1024;
+const REQUIRED_CANCELLATION_PHASES: [IndexProgressPhase; 7] = [
+    IndexProgressPhase::Preparation,
+    IndexProgressPhase::RelationalWrite,
+    IndexProgressPhase::ChunkWordFts,
+    IndexProgressPhase::ChunkTrigramFts,
+    IndexProgressPhase::SymbolFts,
+    IndexProgressPhase::ReferenceFts,
+    IndexProgressPhase::CommitAndCheckpoint,
+];
 
 #[derive(Debug, Args)]
 pub(super) struct ColdMatrixArgs {
@@ -43,9 +52,12 @@ pub(super) struct ColdMatrixArgs {
     /// Exact Git revision required before the snapshot is created.
     #[arg(long)]
     expected_revision: String,
-    /// Counterbalanced fresh-cache worker order.
-    #[arg(long, default_value = "1,2,4,4,2,1")]
-    worker_order: String,
+    /// Screening matrix or the guarded one-versus-two-worker follow-up.
+    #[arg(long, value_enum, default_value_t = ColdMatrixKind::Screening)]
+    matrix_kind: ColdMatrixKind,
+    /// Counterbalanced fresh-cache worker order. Defaults depend on matrix kind.
+    #[arg(long)]
+    worker_order: Option<String>,
     /// Retrieval parity queries replayed against every complete index.
     #[arg(
         long = "parity-query",
@@ -77,6 +89,29 @@ pub(super) struct ColdMatrixArgs {
     /// Permit an incomplete/non-counterbalanced worker order for smoke tests.
     #[arg(long, hide = true)]
     allow_incomplete_matrix: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+enum ColdMatrixKind {
+    Screening,
+    TwoWorkerFollowUp,
+}
+
+impl ColdMatrixKind {
+    fn default_worker_order(self) -> &'static str {
+        match self {
+            Self::Screening => "1,2,4,4,2,1",
+            Self::TwoWorkerFollowUp => "1,2,2,1,2,1,1,2",
+        }
+    }
+
+    fn minimum_samples_per_worker(self) -> usize {
+        match self {
+            Self::Screening => 2,
+            Self::TwoWorkerFollowUp => 4,
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -149,13 +184,16 @@ struct ColdCorpusReport {
 
 #[derive(Debug, Serialize)]
 struct MeasurementPolicy {
+    matrix_kind: ColdMatrixKind,
     worker_order: Vec<usize>,
+    minimum_samples_per_worker: usize,
     sample_interval_ms: u64,
     timeout_seconds: u64,
     cancellation_grace_seconds: u64,
     cancellation_phases: Vec<IndexProgressPhase>,
     parity_queries: Vec<String>,
     minimum_wall_reduction: f64,
+    minimum_wall_p95_reduction: Option<f64>,
     maximum_cpu_increase: f64,
     maximum_peak_rss_increase: f64,
     maximum_write_increase: f64,
@@ -251,6 +289,7 @@ struct DecisionReport {
 struct WorkerComparison {
     workers: usize,
     wall_reduction: f64,
+    wall_p95_reduction: f64,
     cpu_increase: Option<f64>,
     peak_rss_increase: Option<f64>,
     write_increase: Option<f64>,
@@ -456,32 +495,42 @@ fn validate_args(args: &ColdMatrixArgs) -> AnyResult<MeasurementPolicy> {
         }
     }
 
-    let worker_order = parse_worker_order(&args.worker_order)?;
-    if !args.allow_incomplete_matrix {
-        let reverse = worker_order.iter().rev().copied().collect::<Vec<_>>();
-        let workers = worker_order.iter().copied().collect::<BTreeSet<_>>();
-        let balanced = [1, 2, 4].into_iter().all(|worker| {
-            worker_order
+    let cancellation_phases = parse_cancellation_phases(&args.cancellation_phases)?;
+    if !args.allow_incomplete_matrix
+        && (cancellation_phases.len() != REQUIRED_CANCELLATION_PHASES.len()
+            || REQUIRED_CANCELLATION_PHASES
                 .iter()
-                .filter(|actual| **actual == worker)
-                .count()
-                >= 2
-        });
-        if worker_order != reverse || !balanced || workers != BTreeSet::from([1, 2, 4]) {
-            return Err(invalid_input(
-                "--worker-order must be a mirrored counterbalance containing 1,2,4 at least twice",
-            ));
+                .any(|phase| !cancellation_phases.contains(phase)))
+    {
+        return Err(invalid_input(
+            "decision matrices require every cancellation phase; use --allow-incomplete-matrix only for mechanical smoke tests",
+        ));
+    }
+    let worker_order = parse_worker_order(
+        args.worker_order
+            .as_deref()
+            .unwrap_or_else(|| args.matrix_kind.default_worker_order()),
+    )?;
+    if !args.allow_incomplete_matrix {
+        match args.matrix_kind {
+            ColdMatrixKind::Screening => validate_screening_order(&worker_order)?,
+            ColdMatrixKind::TwoWorkerFollowUp => {
+                validate_two_worker_follow_up_order(&worker_order)?;
+            }
         }
     }
-    let cancellation_phases = parse_cancellation_phases(&args.cancellation_phases)?;
     Ok(MeasurementPolicy {
+        matrix_kind: args.matrix_kind,
         worker_order,
+        minimum_samples_per_worker: args.matrix_kind.minimum_samples_per_worker(),
         sample_interval_ms: args.sample_interval_ms,
         timeout_seconds: args.timeout_seconds,
         cancellation_grace_seconds: CANCELLATION_GRACE_SECONDS,
         cancellation_phases,
         parity_queries: args.parity_queries.clone(),
         minimum_wall_reduction: 0.20,
+        minimum_wall_p95_reduction: (args.matrix_kind == ColdMatrixKind::TwoWorkerFollowUp)
+            .then_some(0.20),
         maximum_cpu_increase: 0.25,
         maximum_peak_rss_increase: 0.25,
         maximum_write_increase: 0.05,
@@ -489,6 +538,54 @@ fn validate_args(args: &ColdMatrixArgs) -> AnyResult<MeasurementPolicy> {
         preparation_owner_threshold: 0.35,
         require_cancellation_observation: !args.allow_incomplete_matrix,
     })
+}
+
+fn validate_screening_order(worker_order: &[usize]) -> AnyResult<()> {
+    let reverse = worker_order.iter().rev().copied().collect::<Vec<_>>();
+    let workers = worker_order.iter().copied().collect::<BTreeSet<_>>();
+    let balanced = [1, 2, 4].into_iter().all(|worker| {
+        worker_order
+            .iter()
+            .filter(|actual| **actual == worker)
+            .count()
+            >= 2
+    });
+    if worker_order != reverse || !balanced || workers != BTreeSet::from([1, 2, 4]) {
+        return Err(invalid_input(
+            "screening --worker-order must be a mirrored counterbalance containing 1,2,4 at least twice",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_two_worker_follow_up_order(worker_order: &[usize]) -> AnyResult<()> {
+    let workers = worker_order.iter().copied().collect::<BTreeSet<_>>();
+    let one_samples = worker_order.iter().filter(|workers| **workers == 1).count();
+    let two_samples = worker_order.iter().filter(|workers| **workers == 2).count();
+    let blocks_are_counterbalanced =
+        worker_order
+            .chunks_exact(4)
+            .enumerate()
+            .all(|(index, block)| {
+                let expected = if index % 2 == 0 {
+                    [1, 2, 2, 1]
+                } else {
+                    [2, 1, 1, 2]
+                };
+                block == expected
+            });
+    if worker_order.len() < 8
+        || !worker_order.len().is_multiple_of(4)
+        || workers != BTreeSet::from([1, 2])
+        || one_samples != two_samples
+        || one_samples < ColdMatrixKind::TwoWorkerFollowUp.minimum_samples_per_worker()
+        || !blocks_are_counterbalanced
+    {
+        return Err(invalid_input(
+            "two-worker-follow-up --worker-order must contain alternating 1,2,2,1 / 2,1,1,2 blocks with at least four samples per worker",
+        ));
+    }
+    Ok(())
 }
 
 fn parse_worker_order(value: &str) -> AnyResult<Vec<usize>> {
@@ -1561,6 +1658,8 @@ fn decide(
             .filter(|candidate| candidate.workers != baseline_workers)
         {
             let wall_reduction = relative_reduction(baseline.wall_p50_ms, candidate.wall_p50_ms);
+            let wall_p95_reduction =
+                relative_reduction(baseline.wall_p95_ms, candidate.wall_p95_ms);
             let cpu_increase =
                 relative_increase_option(baseline.mean_cpu_ms, candidate.mean_cpu_ms);
             let peak_rss_increase = relative_increase_option(
@@ -1576,6 +1675,9 @@ fn decide(
                 candidate.max_final_storage_bytes as f64,
             );
             let passes = wall_reduction >= policy.minimum_wall_reduction
+                && policy
+                    .minimum_wall_p95_reduction
+                    .is_none_or(|minimum| wall_p95_reduction >= minimum)
                 && cpu_increase.is_some_and(|value| value <= policy.maximum_cpu_increase)
                 && peak_rss_increase.is_some_and(|value| value <= policy.maximum_peak_rss_increase)
                 && write_increase.is_some_and(|value| value <= policy.maximum_write_increase)
@@ -1583,6 +1685,7 @@ fn decide(
             comparisons.push(WorkerComparison {
                 workers: candidate.workers,
                 wall_reduction,
+                wall_p95_reduction,
                 cpu_increase,
                 peak_rss_increase,
                 write_increase,
@@ -1593,7 +1696,10 @@ fn decide(
     }
     let preparation_owns_cost = dominant_phase == "preparation"
         && dominant_phase_share >= policy.preparation_owner_threshold;
-    let candidate_workers = preparation_owns_cost
+    let sample_counts_complete = summaries
+        .iter()
+        .all(|summary| summary.samples >= policy.minimum_samples_per_worker);
+    let candidate_workers = (preparation_owns_cost && sample_counts_complete)
         .then(|| {
             comparisons
                 .iter()
@@ -1607,6 +1713,14 @@ fn decide(
             "insufficient_evidence",
             "The matrix did not contain a one-worker baseline.".into(),
         )
+    } else if !sample_counts_complete {
+        (
+            "insufficient_evidence",
+            format!(
+                "Every worker arm requires at least {} samples before this matrix can make a decision.",
+                policy.minimum_samples_per_worker
+            ),
+        )
     } else if !preparation_owns_cost {
         (
             "optimize_measured_owner",
@@ -1616,12 +1730,20 @@ fn decide(
             ),
         )
     } else if let Some(workers) = candidate_workers {
-        (
-            "candidate_for_follow_up",
-            format!(
-                "{workers} workers passed the preregistered wall, CPU, RSS, write, and footprint thresholds; this measurement PR does not change production defaults."
+        match policy.matrix_kind {
+            ColdMatrixKind::Screening => (
+                "candidate_for_follow_up",
+                format!(
+                    "{workers} workers passed the preregistered wall, CPU, RSS, write, and footprint thresholds; this measurement PR does not change production defaults."
+                ),
             ),
-        )
+            ColdMatrixKind::TwoWorkerFollowUp => (
+                "candidate_for_mcp_contention_measurement",
+                format!(
+                    "{workers} workers passed the preregistered p50, p95, CPU, RSS, write, and footprint thresholds; production defaults remain unchanged until MCP contention and multi-process evidence also passes."
+                ),
+            ),
+        }
     } else {
         (
             "keep_current_worker_default",
@@ -1863,6 +1985,12 @@ mod tests {
         assert!(parse_worker_order("65").is_err());
         assert!(parse_worker_order("").is_err());
         assert!(parse_worker_order(&vec!["1"; 17].join(",")).is_err());
+        validate_screening_order(&[1, 2, 4, 4, 2, 1]).expect("screening order");
+        assert!(validate_screening_order(&[1, 2, 4, 1, 2, 4]).is_err());
+        validate_two_worker_follow_up_order(&[1, 2, 2, 1, 2, 1, 1, 2])
+            .expect("two-worker follow-up order");
+        assert!(validate_two_worker_follow_up_order(&[1, 2, 2, 1, 1, 2]).is_err());
+        assert!(validate_two_worker_follow_up_order(&[1, 2, 2, 1, 1, 2, 2, 1]).is_err());
 
         assert!(
             parse_cancellation_phases("none")
@@ -1903,9 +2031,10 @@ mod tests {
             repository: repository.path().to_path_buf(),
             repository_label: "local-fixture".into(),
             expected_revision: revision,
-            worker_order: "1,2".into(),
+            matrix_kind: ColdMatrixKind::Screening,
+            worker_order: Some("1,2".into()),
             parity_queries: vec!["item".into(), "class".into()],
-            cancellation_phases: "preparation".into(),
+            cancellation_phases: "preparation,relational_write,chunk_word_fts,chunk_trigram_fts,symbol_fts,reference_fts,commit_and_checkpoint".into(),
             sample_interval_ms: 1,
             timeout_seconds: 30,
             output: output.path().join("cold.json"),
@@ -1913,12 +2042,25 @@ mod tests {
             allow_dirty: true,
             allow_incomplete_matrix: true,
         };
-        args.worker_order = "1,2,4,4,2,1".into();
+        args.worker_order = Some("1,2,4,4,2,1".into());
         args.allow_incomplete_matrix = false;
         validate_args(&args).expect("strict counterbalance");
-        args.worker_order = "1,2".into();
+        let required_cancellation_phases = args.cancellation_phases.clone();
+        args.cancellation_phases = "none".into();
         assert!(validate_args(&args).is_err());
+        args.cancellation_phases = required_cancellation_phases;
+        args.worker_order = Some("1,2".into());
+        assert!(validate_args(&args).is_err());
+        args.matrix_kind = ColdMatrixKind::TwoWorkerFollowUp;
+        args.worker_order = None;
+        let follow_up = validate_args(&args).expect("strict two-worker follow-up");
+        assert_eq!(follow_up.worker_order, vec![1, 2, 2, 1, 2, 1, 1, 2]);
+        assert_eq!(follow_up.minimum_samples_per_worker, 4);
+        assert_eq!(follow_up.minimum_wall_p95_reduction, Some(0.20));
+        args.matrix_kind = ColdMatrixKind::Screening;
+        args.worker_order = Some("1,2".into());
         args.allow_incomplete_matrix = true;
+        args.cancellation_phases = "preparation".into();
         let policy = validate_args(&args).expect("policy");
         let corpus = prepare_corpus(&args).expect("corpus");
         let first = measure_cold_run_in_process(

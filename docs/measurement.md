@@ -70,6 +70,7 @@ such a report is incomplete for watcher CPU conclusions.
 ```bash
 cargo build --release --bin leantoken --example mcp_multiprocess_profile
 target/release/examples/mcp_multiprocess_profile \
+  --max-index-workers 1 \
   --process-counts 1,4,8 \
   --files 200 \
   --functions-per-file 40 \
@@ -77,8 +78,17 @@ target/release/examples/mcp_multiprocess_profile \
   --idle-seconds 5 \
   --polling-directories 50001 \
   --polling-observation-seconds 31 \
-  --output target/mcp-multiprocess-cpu-v2.json
+  --output target/mcp-multiprocess-cpu-v3.json
 ```
+
+Schema v3 records the explicit `max_index_workers` value and passes it to every
+MCP process. For a guarded cold-index comparison, run four fresh profiler
+invocations in `1,2,2,1` order with the same release binary and arguments.
+Compare shared-cache leader startup and independent-cache contention together;
+the two-worker arm must not trade response parity, ownership, takeover, CPU,
+RSS, WAL, or warm request behavior for faster readiness. Because the explicit
+limit also applies to later reconciliations, this is a cold-start contention
+probe rather than a generation-one-only adoption policy.
 
 CPU is read from Linux `/proc` in clock ticks and therefore needs enough
 operations to rise above host resolution. Results are same-host release
@@ -1393,13 +1403,14 @@ submodules. Exact preparation and execution commands are in
 [`../benchmarks/README.md`](../benchmarks/README.md#dependency-heavy-cold-index-matrix).
 
 The unit of comparison is a complete generation-one build in a fresh process
-and fresh SQLite cache. The default mirrored `1,2,4,4,2,1` order counterbalances
-host drift while process isolation prevents one arm from inheriting tokenizer
-initialization, allocator high-water, or parser state from another. The raw
-report preserves exact phase diagnostics and sampled resource high-water, plus
-logical-table, index-shape, and retrieval digests. Cancellation probes are
-separate fresh processes; each interrupted cache is reopened and rebuilt before
-its output is compared with the matrix baseline.
+and fresh SQLite cache. Screening uses mirrored `1,2,4,4,2,1`; the guarded
+two-worker follow-up uses alternating `1,2,2,1` / `2,1,1,2` blocks and at least
+four samples per arm. Process isolation prevents one arm from inheriting
+tokenizer initialization, allocator high-water, or parser state from another.
+The raw report preserves exact phase diagnostics and sampled resource
+high-water, plus logical-table, index-shape, and retrieval digests.
+Cancellation probes are separate fresh processes; each interrupted cache is
+reopened and rebuilt before its output is compared with the matrix baseline.
 
 The pre-registered decision asks which leaf phase owns current-main wall time
 before it asks whether more preparation workers are faster. A worker candidate
@@ -1408,5 +1419,7 @@ wall improves by at least 20%, total CPU and RSS each grow by no more than 25%,
 and writes/final footprint each grow by no more than 5%. Missing resource
 evidence, incomplete phase observation, parity failure, timeout, or restart
 failure is a rejection. Passing this single-host profile authorizes only a
-focused follow-up experiment, never a production default or a cross-platform
-claim.
+focused follow-up experiment. The two-worker follow-up also requires p95 wall
+time to improve by at least 20%, then requires the explicit stdio
+multi-process/contention profile described above. Neither report alone
+authorizes a production default or a cross-platform claim.

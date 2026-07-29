@@ -25,6 +25,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 const MAX_PROCESSES: usize = 16;
+const MAX_INDEX_WORKERS: usize = 64;
 const MAX_FIXTURE_FILES: usize = 10_000;
 const MAX_FUNCTIONS_PER_FILE: usize = 1_000;
 const MAX_WARM_ITERATIONS: usize = 1_000;
@@ -45,6 +46,9 @@ struct Args {
     /// Release-mode LeanToken executable to launch.
     #[arg(long, default_value = "target/release/leantoken")]
     binary: PathBuf,
+    /// Explicit file-preparation worker limit passed to every MCP process.
+    #[arg(long, default_value_t = 1)]
+    max_index_workers: usize,
     /// Comma-separated process counts. Include 1, 4, and 8 for a decision.
     #[arg(long, default_value = "1,4,8")]
     process_counts: String,
@@ -80,6 +84,7 @@ struct Args {
 #[derive(Debug, Clone, Copy)]
 struct RunConfig<'a> {
     binary: &'a Path,
+    max_index_workers: usize,
     files: usize,
     functions_per_file: usize,
     warm_iterations: usize,
@@ -317,6 +322,7 @@ struct Report {
     logical_cpus: usize,
     binary: String,
     binary_blake3: String,
+    max_index_workers: usize,
     fixture_files: usize,
     functions_per_file: usize,
     warm_iterations_per_process: usize,
@@ -340,9 +346,16 @@ struct McpProcess {
 }
 
 impl McpProcess {
-    fn spawn(binary: &Path, root: &Path, database: &Path) -> Result<Self, Box<dyn Error>> {
+    fn spawn(
+        binary: &Path,
+        root: &Path,
+        database: &Path,
+        max_index_workers: usize,
+    ) -> Result<Self, Box<dyn Error>> {
         let mut child = std::process::Command::new(binary)
             .args(["--root", path_str(root)?, "--database", path_str(database)?])
+            .arg("--max-index-workers")
+            .arg(max_index_workers.to_string())
             .arg("mcp")
             .env("RUST_LOG", "leantoken=info")
             .stdin(Stdio::piped())
@@ -547,6 +560,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let thresholds = DecisionThresholds::default();
     let run_config = RunConfig {
         binary: &binary,
+        max_index_workers: args.max_index_workers,
         files: args.files,
         functions_per_file: args.functions_per_file,
         warm_iterations: args.warm_iterations,
@@ -570,6 +584,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else {
         Some(run_periodic_poll_probe(
             &binary,
+            args.max_index_workers,
             args.polling_directories,
             Duration::from_secs(args.polling_observation_seconds),
             timeout,
@@ -577,7 +592,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let decision = make_decision(&runs, thresholds);
     let report = Report {
-        schema_version: 2,
+        schema_version: 3,
         generated_at_unix_seconds: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         platform: "linux-procfs",
         kernel_release: fs::read_to_string("/proc/sys/kernel/osrelease")?
@@ -586,6 +601,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         logical_cpus: std::thread::available_parallelism()?.get(),
         binary: binary.display().to_string(),
         binary_blake3: hash_file(&binary)?,
+        max_index_workers: args.max_index_workers,
         fixture_files: args.files,
         functions_per_file: args.functions_per_file,
         warm_iterations_per_process: args.warm_iterations,
@@ -603,6 +619,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "Startup readiness and concurrent-query responses are observed by one orchestrator in process order, so later processes can include bounded client-side receipt delay.",
             "Watcher backend is confirmed with Linux inotify descriptors; admission counters are parsed from the product's structured tracing fields.",
             "Complete response parity removes only JSON-RPC request ids, generated receipt_id/repository_id values, instantaneous freshness, and their derived path_and_metadata_tokens/payload_tokens/total_response_tokens accounting (the independent topology uses distinct canonical roots and concurrent freshness is a liveness observation), then compares every other observable result field across processes, workloads, topologies, and ABBA repetitions.",
+            "The explicit max_index_workers value applies to every indexing attempt in this profiler. A two-worker run is a cold-start contention probe, not evidence that warm reconciliation should use two workers.",
         ],
     };
     let serialized = serde_json::to_string_pretty(&report)?;
@@ -619,6 +636,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn validate_args(args: &Args) -> Result<(), Box<dyn Error>> {
+    validate_max_index_workers(args.max_index_workers)?;
     if args.files == 0 || args.files > MAX_FIXTURE_FILES {
         return Err(format!("--files must be within 1..={MAX_FIXTURE_FILES}").into());
     }
@@ -653,6 +671,13 @@ fn validate_args(args: &Args) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn validate_max_index_workers(value: usize) -> Result<(), Box<dyn Error>> {
+    if !(1..=MAX_INDEX_WORKERS).contains(&value) {
+        return Err(format!("--max-index-workers must be within 1..={MAX_INDEX_WORKERS}").into());
+    }
+    Ok(())
+}
+
 fn parse_process_counts(value: &str) -> Result<Vec<usize>, Box<dyn Error>> {
     let mut counts = value
         .split(',')
@@ -672,6 +697,7 @@ fn parse_process_counts(value: &str) -> Result<Vec<usize>, Box<dyn Error>> {
 
 fn run_periodic_poll_probe(
     binary: &Path,
+    max_index_workers: usize,
     directories: usize,
     observation: Duration,
     timeout: Duration,
@@ -685,7 +711,7 @@ fn run_periodic_poll_probe(
     }
     let database = workspace.path().join("polling-cache").join("index.sqlite");
     fs::create_dir_all(database.parent().ok_or("database parent missing")?)?;
-    let mut process = McpProcess::spawn(binary, &repository, &database)?;
+    let mut process = McpProcess::spawn(binary, &repository, &database, max_index_workers)?;
     let initialize = process.send_initialize()?;
     let response = process.receive(initialize, timeout)?;
     if response.get("result").is_none() {
@@ -750,6 +776,7 @@ fn run_measurement(
 ) -> Result<RunMeasurement, Box<dyn Error>> {
     let RunConfig {
         binary,
+        max_index_workers,
         files,
         functions_per_file,
         warm_iterations,
@@ -789,7 +816,9 @@ fn run_measurement(
     let mut processes = repositories
         .iter()
         .zip(&databases)
-        .map(|(repository, database)| McpProcess::spawn(binary, repository, database))
+        .map(|(repository, database)| {
+            McpProcess::spawn(binary, repository, database, max_index_workers)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let startup_cpu_before = aggregate_cpu_ticks(&processes)?;
     let initialize_ids = processes
@@ -1940,6 +1969,10 @@ mod tests {
         assert_eq!(parse_process_counts("4, 1,2,4").unwrap(), vec![1, 2, 4]);
         assert!(parse_process_counts("0,1").is_err());
         assert!(parse_process_counts("1,17").is_err());
+        validate_max_index_workers(1).expect("one worker");
+        validate_max_index_workers(MAX_INDEX_WORKERS).expect("maximum workers");
+        assert!(validate_max_index_workers(0).is_err());
+        assert!(validate_max_index_workers(MAX_INDEX_WORKERS + 1).is_err());
     }
 
     #[test]
