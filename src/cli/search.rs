@@ -71,6 +71,7 @@ impl From<SearchArgs> for SearchRequest {
             all_occurrences: args.all_occurrences,
             prefer_structural: args.prefer_structural,
             receipt_id: None,
+            query_receipt: None,
             cursor: args.cursor,
         }
     }

@@ -11,7 +11,8 @@ use leantoken::{
     JsonSelector, OutlinePathResult, OutlinePathStatus, OutlineRequest, ReadDeltaBaseSource,
     ReadDeltaFallback, ReadDeltaOutcome, ReadDeltaPersistenceFallback, ReadRequest, ReadStatus,
     ReceiptRebaseRequest, ReferenceRole, SearchMode, SearchRequest, TokenAccountingOperation,
-    TokenSavingsOperation, TokenSavingsWindow, WorkflowEvidence,
+    TokenSavingsOperation, TokenSavingsWindow, WorkflowEvidence, QueryReceiptAction,
+    QueryReceiptScopeRelation, QueryReceiptStatus,
     coordination::IndexCoordination,
     services::{ServiceCallOptions, Services},
     tokens::Tokenizer,
@@ -68,6 +69,7 @@ async fn fixture() -> (tempfile::TempDir, Services) {
 
 mod budgets;
 mod receipts;
+mod query_receipts;
 mod search_planning;
 mod path_safety;
 mod context_workflow;
@@ -180,6 +182,7 @@ fn search_limit_request(
         all_occurrences: false,
         prefer_structural: false,
         receipt_id: None,
+        query_receipt: None,
         cursor: None,
     }
 }

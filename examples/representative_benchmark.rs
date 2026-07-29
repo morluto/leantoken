@@ -1951,6 +1951,7 @@ fn ast_search_request(
         all_occurrences: false,
         prefer_structural,
         receipt_id: None,
+        query_receipt: None,
         cursor: None,
     }
 }

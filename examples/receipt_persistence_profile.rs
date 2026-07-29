@@ -203,6 +203,7 @@ fn search_request(query: &str, receipt_id: Option<String>) -> SearchRequest {
         all_occurrences: false,
         prefer_structural: true,
         receipt_id,
+        query_receipt: None,
         cursor: None,
     }
 }

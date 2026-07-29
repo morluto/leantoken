@@ -700,6 +700,58 @@ counts each unique excerpt once; coordinates-only calls charge no source
 tokens. Exhaustive pagination still applies `max_results` without changing the
 total; follow `next_cursor` until absent.
 
+For a repeated exact exhaustive query, MCP callers can explicitly request a
+persistent coverage receipt:
+
+```json
+{
+  "query": "unsafe\\s+fn",
+  "mode": "regex",
+  "all_occurrences": true,
+  "coordinates_only": true,
+  "query_receipt": {"kind": "record"}
+}
+```
+
+`record` persists a receipt only when every occurrence fits the returned page
+and the final response budget succeeds. Pagination or token omission returns
+`status: "not_recorded_incomplete_response"` without an ID. Invalid regex,
+internal exhaustive limits, cancellation before the receipt write, and any
+other error persist nothing. Ranked `auto`, `identifier`, `symbol`, and
+`reference` modes, focus boosts, cursors, the `full`/`grouped` projections, and
+evidence `receipt_id` cannot be combined with query receipts.
+
+Pass the returned ID back with the same normalized predicate to avoid repeating
+the lexical scan:
+
+```json
+{
+  "query": "unsafe\\s+fn",
+  "mode": "regex",
+  "all_occurrences": true,
+  "coordinates_only": true,
+  "query_receipt": {
+    "kind": "reuse",
+    "receipt_id": "q..."
+  }
+}
+```
+
+A successful reuse returns `status: "already_covered"`, the exact match count
+and result commitment, and no occurrence groups. Path separators, duplicate
+patterns, and pattern order are normalized. An exact zero-match proof may also
+cover a conservatively provable narrower include/exclude scope; a nonzero
+superset cannot derive a subset count and fails with
+`query_receipt_mismatch`. A later repository generation is reusable only when
+the index configuration and a streaming digest of every relevant indexed
+path/content hash are unchanged. Otherwise the call fails with
+`stale_query_receipt`.
+
+This reuse still requires a tool call, so it can avoid the server-side
+text/regex scan and result payload but cannot claim that the host skipped a
+model turn. A future handoff or capsule integration would need separate host
+evidence before claiming an avoided call.
+
 The MCP initialize response appends `+schema.<fingerprint>` to the runtime
 version. The fingerprint is computed from the running tool catalog, so clients
 can distinguish a stale server binary or cached schema from the feature set

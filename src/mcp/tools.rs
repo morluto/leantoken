@@ -53,7 +53,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "search",
-        description = "Search indexed source for symbols, references, identifiers, text, or regex matches. Use projection=grouped for summaries; exhaustive text or regex searches use projection=occurrences, with coordinates_only=true for coordinates without excerpts. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
+        description = "Search indexed source for symbols, references, identifiers, text, or regex. projection=occurrences makes text/regex exhaustive; coordinates_only omits excerpts. query_receipt record/reuse persists only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}."
     )]
     async fn leantoken_search(
         &self,

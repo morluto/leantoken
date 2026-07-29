@@ -60,6 +60,7 @@ async fn canonical_symbol_identity_round_trips_without_silent_ambiguity() {
         all_occurrences: false,
         prefer_structural: false,
         receipt_id: None,
+        query_receipt: None,
         cursor: None,
     };
     let searched = services

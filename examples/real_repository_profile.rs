@@ -690,6 +690,7 @@ fn regex_request(query: &str, case_sensitive: bool) -> SearchRequest {
         all_occurrences: false,
         prefer_structural: false,
         receipt_id: None,
+        query_receipt: None,
         cursor: None,
     }
 }

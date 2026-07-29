@@ -24,6 +24,41 @@ fn validate_search_input(request: &SearchRequest) -> Result<()> {
             reason: "requires auto or identifier mode",
         });
     }
+    if request.query_receipt.is_some() {
+        if !request.all_occurrences
+            || !matches!(request.mode, SearchMode::Text | SearchMode::Regex)
+        {
+            return Err(Error::InvalidInput {
+                field: "query_receipt",
+                reason: "requires all_occurrences=true with text or regex mode",
+            });
+        }
+        if !request.focus_paths.is_empty() {
+            return Err(Error::InvalidInput {
+                field: "query_receipt",
+                reason: "does not allow focus_paths",
+            });
+        }
+        if request.receipt_id.is_some() {
+            return Err(Error::InvalidInput {
+                field: "query_receipt",
+                reason: "cannot be combined with evidence receipt_id",
+            });
+        }
+        if request.cursor.is_some() {
+            return Err(Error::InvalidInput {
+                field: "query_receipt",
+                reason: "does not allow a cursor",
+            });
+        }
+        if let Some(QueryReceiptAction::Reuse { receipt_id }) = &request.query_receipt {
+            validate_input(
+                receipt_id,
+                "query receipt_id",
+                crate::query_receipt::MAX_QUERY_RECEIPT_ID_BYTES,
+            )?;
+        }
+    }
     if matches!(request.mode, SearchMode::Regex) {
         compile_regex(request)?;
     } else {

@@ -35,6 +35,7 @@ async fn five_services_return_bounded_grounded_responses() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
@@ -336,6 +337,7 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await

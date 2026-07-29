@@ -909,7 +909,9 @@ fn exact_only_migration_keeps_existing_evidence_as_ordinary() {
     let connection = Connection::open(&database).expect("downgrade connection");
     connection
         .execute_batch(
-            "ALTER TABLE retrieval_receipt_evidence DROP COLUMN exact_only;
+            "DROP TABLE query_coverage_receipts;
+             DROP TABLE query_coverage_receipt_usage;
+             ALTER TABLE retrieval_receipt_evidence DROP COLUMN exact_only;
              UPDATE retrieval_receipt_evidence
              SET logical_bytes = logical_bytes - 8;
              UPDATE retrieval_receipts
@@ -941,7 +943,9 @@ fn downgrade_receipt_schema(database: &Path, conflicting_table: bool) {
     let connection = Connection::open(database).expect("downgrade connection");
     connection
         .execute_batch(
-            "DROP TABLE IF EXISTS read_delta_bases;
+            "DROP TABLE IF EXISTS query_coverage_receipts;
+             DROP TABLE IF EXISTS query_coverage_receipt_usage;
+             DROP TABLE IF EXISTS read_delta_bases;
              DROP TABLE IF EXISTS read_delta_base_usage;
              DROP TABLE IF EXISTS retrieval_receipt_evidence;
              DROP TABLE IF EXISTS retrieval_receipts;

@@ -1,4 +1,5 @@
 use super::*;
+use crate::model::QueryReceiptAction;
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -75,6 +76,9 @@ pub(in crate::mcp) struct SearchMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 128))]
     pub(in crate::mcp) receipt_id: Option<String>,
+    /// Explicitly record or reuse complete exhaustive-query coverage.
+    #[serde(default)]
+    pub(in crate::mcp) query_receipt: Option<QueryReceiptAction>,
     /// Cursor returned by the same search and repository generation.
     #[serde(default)]
     #[schemars(length(max = 4096))]
@@ -125,6 +129,17 @@ impl SearchMcpRequest {
                 reason: "occurrences requires all_occurrences=true",
             });
         }
+        if self.query_receipt.is_some()
+            && !matches!(
+                self.projection,
+                SearchMcpProjection::Auto | SearchMcpProjection::Occurrences
+            )
+        {
+            return Err(crate::Error::InvalidInput {
+                field: "query_receipt",
+                reason: "requires the occurrences projection",
+            });
+        }
         Ok(())
     }
 
@@ -157,6 +172,7 @@ impl SearchMcpRequest {
                 all_occurrences: self.all_occurrences,
                 prefer_structural: self.prefer_structural,
                 receipt_id: self.receipt_id,
+                query_receipt: self.query_receipt,
                 cursor: self.cursor,
             },
             projection,

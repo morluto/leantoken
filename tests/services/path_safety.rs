@@ -162,6 +162,7 @@ async fn repository_identity_distinguishes_linked_worktrees_before_empty_search_
             max_tokens: Some(200),
             context_lines: Some(0),
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await

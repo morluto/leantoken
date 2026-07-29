@@ -177,6 +177,7 @@ async fn run_child(args: Args) -> AnyResult<()> {
         all_occurrences: true,
         prefer_structural: false,
         receipt_id: None,
+        query_receipt: None,
         cursor: None,
     };
 

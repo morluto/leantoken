@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use super::{McpResultMode, mcp_schema_fingerprint};
 
-const CURRENT_VERIFIED_CATALOG_DIGEST: &str = "e0119afc74f7294dc28751ea54516a7c";
+const CURRENT_VERIFIED_CATALOG_DIGEST: &str = "d2b3193e3686c0a77a77fb48cecacc8b";
 
 #[derive(Debug, Clone, Copy)]
 struct CompatibilityRow {
@@ -356,12 +356,12 @@ mod tests {
             receipt["catalog_review"]["tool_catalog_digest"],
             runtime.catalog_digest
         );
-        assert_eq!(receipt["catalog_review"]["change_kind"], "additive_tool");
-        assert_eq!(receipt["catalog_review"]["input_schema_changed"], true);
         assert_eq!(
-            receipt["catalog_review"]["result_projection_changed"],
-            false
+            receipt["catalog_review"]["change_kind"],
+            "additive_search_query_receipt"
         );
+        assert_eq!(receipt["catalog_review"]["input_schema_changed"], true);
+        assert_eq!(receipt["catalog_review"]["result_projection_changed"], true);
 
         let evidence = include_str!(
             "../../benchmarks/reports/multi-agent-context-pilot-codex-0.144.1-thin-leantoken-structured-owner.json"

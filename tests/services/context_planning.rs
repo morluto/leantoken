@@ -900,6 +900,7 @@ async fn repository_context_exclusions_preserve_exact_artifact_access() {
             all_occurrences: false,
             prefer_structural: false,
             receipt_id: None,
+            query_receipt: None,
             cursor: None,
         })
         .await
