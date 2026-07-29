@@ -116,7 +116,13 @@ impl Indexer {
         cancellation: &CancellationToken,
         profiling: StorageProfiling,
     ) -> Result<ProfiledIndexReport> {
-        self.reconcile_once_with_profiling_hook(rebuild, cancellation, profiling, || {})
+        self.reconcile_once_with_profiling_hooks(
+            rebuild,
+            cancellation,
+            profiling,
+            || {},
+            || {},
+        )
     }
 
     #[cfg(test)]
@@ -126,20 +132,38 @@ impl Indexer {
         cancellation: &CancellationToken,
         before_preparation: impl FnOnce(),
     ) -> Result<ProfiledIndexReport> {
-        self.reconcile_once_with_profiling_hook(
+        self.reconcile_once_with_profiling_hooks(
             rebuild,
             cancellation,
             StorageProfiling::Omit,
             before_preparation,
+            || {},
         )
     }
 
-    fn reconcile_once_with_profiling_hook(
+    #[cfg(test)]
+    fn reconcile_once_with_post_publication_hook(
+        &self,
+        rebuild: bool,
+        cancellation: &CancellationToken,
+        after_publication: impl FnOnce(),
+    ) -> Result<ProfiledIndexReport> {
+        self.reconcile_once_with_profiling_hooks(
+            rebuild,
+            cancellation,
+            StorageProfiling::Omit,
+            || {},
+            after_publication,
+        )
+    }
+
+    fn reconcile_once_with_profiling_hooks(
         &self,
         rebuild: bool,
         cancellation: &CancellationToken,
         profiling: StorageProfiling,
         before_preparation: impl FnOnce(),
+        after_publication: impl FnOnce(),
     ) -> Result<ProfiledIndexReport> {
         let total_started = Instant::now();
         check_cancelled(cancellation)?;
@@ -320,22 +344,7 @@ impl Indexer {
             Ok(preparation)
         };
         let observe_publication = |phase| {
-            let Some(progress) = &progress else {
-                return;
-            };
-            progress.phase(match phase {
-                ReconciliationPublicationPhase::ChunkWordFts => {
-                    IndexProgressPhase::ChunkWordFts
-                }
-                ReconciliationPublicationPhase::ChunkTrigramFts => {
-                    IndexProgressPhase::ChunkTrigramFts
-                }
-                ReconciliationPublicationPhase::SymbolFts => IndexProgressPhase::SymbolFts,
-                ReconciliationPublicationPhase::ReferenceFts => IndexProgressPhase::ReferenceFts,
-                ReconciliationPublicationPhase::CommitAndCheckpoint => {
-                    IndexProgressPhase::CommitAndCheckpoint
-                }
-            });
+            observe_publication_phase(progress.as_ref(), cancellation, phase)
         };
         let (generation, preparation, mut publication_detail) =
             if profiling == StorageProfiling::Collect {
@@ -358,6 +367,7 @@ impl Indexer {
                     )?;
                 (generation, preparation, PublicationDiagnostics::default())
             };
+        after_publication();
         if let Some(progress) = &mut progress {
             progress.complete(generation);
         }
@@ -365,7 +375,9 @@ impl Indexer {
         publication_detail.relational_write_bytes = preparation.insertion_write_bytes;
         let publication_elapsed = publication_started.elapsed();
 
-        check_cancelled(cancellation)?;
+        // Storage returns only after the generation transaction commits. A
+        // cancellation observed after this commit point cannot roll publication
+        // back and must not turn committed success into a `Cancelled` outcome.
         let files_seen = unchanged + candidates.len();
         let files_removed = removed_paths.len();
         let files_skipped = skip_reasons.total();
@@ -418,4 +430,23 @@ impl Indexer {
             diagnostics,
         })
     }
+}
+
+fn observe_publication_phase(
+    progress: Option<&IndexProgressAttempt>,
+    cancellation: &CancellationToken,
+    phase: ReconciliationPublicationPhase,
+) -> Result<()> {
+    if let Some(progress) = progress {
+        progress.phase(match phase {
+            ReconciliationPublicationPhase::ChunkWordFts => IndexProgressPhase::ChunkWordFts,
+            ReconciliationPublicationPhase::ChunkTrigramFts => IndexProgressPhase::ChunkTrigramFts,
+            ReconciliationPublicationPhase::SymbolFts => IndexProgressPhase::SymbolFts,
+            ReconciliationPublicationPhase::ReferenceFts => IndexProgressPhase::ReferenceFts,
+            ReconciliationPublicationPhase::CommitAndCheckpoint => {
+                IndexProgressPhase::CommitAndCheckpoint
+            }
+        });
+    }
+    check_cancelled(cancellation)
 }

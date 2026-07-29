@@ -93,7 +93,7 @@ impl Storage {
             config_hash,
             rebuild,
             false,
-            |_| {},
+            |_| Ok(()),
             write,
         )
             .map(|(generation, output, _)| (generation, output))
@@ -105,7 +105,7 @@ impl Storage {
         baseline: &MetaRecord,
         config_hash: &str,
         rebuild: bool,
-        observe: impl FnMut(ReconciliationPublicationPhase),
+        observe: impl FnMut(ReconciliationPublicationPhase) -> Result<()>,
         write: impl FnOnce(&mut ReconciliationWriter<'_, '_>) -> Result<T>,
     ) -> Result<(u64, T)> {
         self.publish_reconciliation_inner(
@@ -128,7 +128,14 @@ impl Storage {
         rebuild: bool,
         write: impl FnOnce(&mut ReconciliationWriter<'_, '_>) -> Result<T>,
     ) -> Result<(u64, T, PublicationDiagnostics)> {
-        self.publish_reconciliation_inner(baseline, config_hash, rebuild, true, |_| {}, write)
+        self.publish_reconciliation_inner(
+            baseline,
+            config_hash,
+            rebuild,
+            true,
+            |_| Ok(()),
+            write,
+        )
     }
 
     /// Build and publish with profiling plus bounded storage-phase reporting.
@@ -137,7 +144,7 @@ impl Storage {
         baseline: &MetaRecord,
         config_hash: &str,
         rebuild: bool,
-        observe: impl FnMut(ReconciliationPublicationPhase),
+        observe: impl FnMut(ReconciliationPublicationPhase) -> Result<()>,
         write: impl FnOnce(&mut ReconciliationWriter<'_, '_>) -> Result<T>,
     ) -> Result<(u64, T, PublicationDiagnostics)> {
         self.publish_reconciliation_inner(baseline, config_hash, rebuild, true, observe, write)
@@ -149,7 +156,7 @@ impl Storage {
         config_hash: &str,
         rebuild: bool,
         profile: bool,
-        mut observe: impl FnMut(ReconciliationPublicationPhase),
+        mut observe: impl FnMut(ReconciliationPublicationPhase) -> Result<()>,
         write: impl FnOnce(&mut ReconciliationWriter<'_, '_>) -> Result<T>,
     ) -> Result<(u64, T, PublicationDiagnostics)> {
         let mut writer = self
@@ -213,7 +220,7 @@ impl Storage {
             drop(writer);
 
             if changed && bulk_fts {
-                observe(ReconciliationPublicationPhase::ChunkWordFts);
+                observe(ReconciliationPublicationPhase::ChunkWordFts)?;
                 let (_, elapsed_ms, write_bytes) = measured_storage_phase(profile, || {
                     tx.execute(
                         "INSERT INTO chunks_fts_word(chunks_fts_word) VALUES('rebuild')",
@@ -224,7 +231,7 @@ impl Storage {
                 diagnostics.chunk_word_fts_rebuild_ms = elapsed_ms;
                 diagnostics.chunk_word_fts_rebuild_write_bytes = write_bytes;
 
-                observe(ReconciliationPublicationPhase::ChunkTrigramFts);
+                observe(ReconciliationPublicationPhase::ChunkTrigramFts)?;
                 let (_, elapsed_ms, write_bytes) = measured_storage_phase(profile, || {
                     tx.execute(
                         "INSERT INTO chunks_fts_trigram(chunks_fts_trigram) VALUES('rebuild')",
@@ -235,7 +242,7 @@ impl Storage {
                 diagnostics.chunk_trigram_fts_rebuild_ms = elapsed_ms;
                 diagnostics.chunk_trigram_fts_rebuild_write_bytes = write_bytes;
 
-                observe(ReconciliationPublicationPhase::SymbolFts);
+                observe(ReconciliationPublicationPhase::SymbolFts)?;
                 let (_, elapsed_ms, write_bytes) = measured_storage_phase(profile, || {
                     tx.execute(
                         "INSERT INTO symbols_fts_trigram(symbols_fts_trigram) VALUES('rebuild')",
@@ -246,7 +253,7 @@ impl Storage {
                 diagnostics.symbol_fts_rebuild_ms = elapsed_ms;
                 diagnostics.symbol_fts_rebuild_write_bytes = write_bytes;
 
-                observe(ReconciliationPublicationPhase::ReferenceFts);
+                observe(ReconciliationPublicationPhase::ReferenceFts)?;
                 let (_, elapsed_ms, write_bytes) = measured_storage_phase(profile, || {
                     tx.execute(
                         "INSERT INTO symbol_refs_fts_trigram(symbol_refs_fts_trigram) VALUES('rebuild')",
@@ -270,7 +277,7 @@ impl Storage {
                 guard.restore()?;
             }
             drop(trigger_guard);
-            observe(ReconciliationPublicationPhase::CommitAndCheckpoint);
+            observe(ReconciliationPublicationPhase::CommitAndCheckpoint)?;
             let (_, elapsed_ms, write_bytes) =
                 measured_storage_phase(profile, || Ok(tx.commit()?))?;
             diagnostics.commit_ms = elapsed_ms;

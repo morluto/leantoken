@@ -197,6 +197,15 @@ storage, or cancellation error rolls back every earlier batch. Replacements,
 deletions, and generation advancement become visible together at the final
 commit.
 
+Cooperative cancellation is checked between each FTS publication phase and
+immediately before commit. Cancellation observed at one of those boundaries
+rolls the transaction back; an individual SQLite FTS statement remains the
+smallest non-interruptible unit. Once commit returns successfully, that
+generation is authoritative and the caller receives committed success even if
+its cancellation token changes afterward. A post-commit cancellation can stop
+later work, but cannot retroactively turn a visible generation into a failed
+reconciliation outcome.
+
 Profiled reconciliation can additionally attribute relational insertion, each
 of the four FTS rebuilds, commit, checkpoint, Linux process write bytes, and
 `dbstat` FTS footprints. It also sums per-file worker durations for reads, text

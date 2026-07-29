@@ -147,6 +147,97 @@ fn cancelled_initial_reconcile_reports_cancelled_terminal_progress() {
     assert_eq!(progress.current_generation, 0);
 }
 
+#[test]
+fn cancellation_is_checked_at_each_publication_progress_boundary() {
+    for (publication_phase, progress_phase) in [
+        (
+            ReconciliationPublicationPhase::ChunkWordFts,
+            IndexProgressPhase::ChunkWordFts,
+        ),
+        (
+            ReconciliationPublicationPhase::ChunkTrigramFts,
+            IndexProgressPhase::ChunkTrigramFts,
+        ),
+        (
+            ReconciliationPublicationPhase::SymbolFts,
+            IndexProgressPhase::SymbolFts,
+        ),
+        (
+            ReconciliationPublicationPhase::ReferenceFts,
+            IndexProgressPhase::ReferenceFts,
+        ),
+        (
+            ReconciliationPublicationPhase::CommitAndCheckpoint,
+            IndexProgressPhase::CommitAndCheckpoint,
+        ),
+    ] {
+        let registry = IndexProgressRegistry::new("cache-namespace".into());
+        let cancellation = CancellationToken::new();
+        let progress = registry.start(0, &cancellation);
+        cancellation.cancel();
+
+        let error = observe_publication_phase(Some(&progress), &cancellation, publication_phase)
+            .expect_err("publication boundary must observe cancellation");
+        assert!(
+            matches!(error, Error::Cancelled),
+            "publication phase: {publication_phase:?}"
+        );
+        assert_eq!(
+            registry.snapshot().expect("boundary progress").phase,
+            Some(progress_phase),
+            "publication phase: {publication_phase:?}"
+        );
+        drop(progress);
+        let terminal = registry.snapshot().expect("cancelled progress");
+        assert!(!terminal.active, "publication phase: {publication_phase:?}");
+        assert_eq!(
+            terminal.phase,
+            Some(IndexProgressPhase::Cancelled),
+            "publication phase: {publication_phase:?}"
+        );
+        assert_eq!(
+            terminal.current_generation, 0,
+            "publication phase: {publication_phase:?}"
+        );
+    }
+}
+
+#[test]
+fn cancellation_after_publication_returns_committed_success_and_completed_progress() {
+    let root = tempfile::tempdir().expect("root");
+    fs::write(root.path().join("lib.rs"), "fn committed() {}\n").expect("source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
+    let cancellation = CancellationToken::new();
+
+    let response = indexer
+        .reconcile_once_with_post_publication_hook(false, &cancellation, || cancellation.cancel())
+        .expect("a committed generation must not be reported as cancelled")
+        .report;
+
+    assert_eq!(response.repository_generation, 1);
+    assert_eq!(
+        storage
+            .meta()
+            .expect("published metadata")
+            .repository_generation,
+        1
+    );
+    assert_eq!(
+        storage
+            .search_word("committed", 10)
+            .expect("published search")
+            .len(),
+        1
+    );
+    let progress = indexer.progress_snapshot().expect("completed progress");
+    assert!(!progress.active);
+    assert_eq!(progress.phase, Some(IndexProgressPhase::Completed));
+    assert_eq!(progress.current_generation, 1);
+}
+
 fn assert_skip_reasons(
     response: &IndexReport,
     binary: usize,
