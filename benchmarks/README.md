@@ -1104,7 +1104,9 @@ not sufficient.
 In the 2026-07-15 fixture run, the five-tool catalog was 1,539 tokens. The same
 tool result cost 875 tokens in dual mode, 464 as text only, and 433 as structured
 content only. That measures serialization opportunity, not host compatibility;
-dual remains the default until a real host trace proves a smaller mode works.
+This historical conclusion was superseded by the Codex CLI 0.146.0
+receipt-resource gate in
+`reports/codex-receipt-resource-0.146.0-2026-07-29.json`.
 
 The real Codex CLI 0.144.1 run publishes two redacted artifacts: a
 [host lifecycle receipt](reports/codex-host-receipt-0.144.1.json) and its
@@ -1137,7 +1139,8 @@ serialized receipt: response JSON falls from 574 to 556 exact local tokens and
 the complete modeled dual handoff from 4,345 to 4,306. The fixed follow-up adds
 no exact resend or overlapping source relative to baseline. Larger candidates
 that remove freshness, range, deduplication, or model-readable metadata are
-rejected; structured-only remains a Codex CLI 0.144.1 opt-in and `dual` remains
+rejected; this historical Codex CLI 0.144.1 conclusion was superseded when the
+0.146.0 instructed receipt-resource variant passed 5/5 and structured became
 the global default. Provider-native values remain null because the available
 receipts do not expose an attributable provider request frame.
 

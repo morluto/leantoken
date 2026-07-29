@@ -47,8 +47,8 @@ reusing measurements across incompatible repository identities.
 Each process establishes its own files, search, read, and context baseline.
 Concurrent warm rounds and cross-process/topology/repetition checks remove only
 JSON-RPC request IDs, generated `receipt_id` and `repository_id` values,
-instantaneous `freshness`, and their derived `path_and_metadata_tokens`,
-`payload_tokens`, and `total_response_tokens` accounting, including the dual
+instantaneous `freshness`, and their derived `path_and_metadata_tokens` and
+`total_response_tokens` accounting, including the dual
 text representation. Repository identity is excluded because the independent
 topology intentionally uses distinct canonical roots; generated identifiers
 have content-sensitive token counts. Freshness is excluded because it is a
@@ -1244,12 +1244,12 @@ zero for an unavailable measurement and verifies every committed source
 artifact by repository-canonical LF JSON BLAKE3 plus its decisive semantic
 fields, independent of Windows checkout line-ending conversion.
 
-Unit tests still verify all three serialized shapes, and the Rust MCP SDK
-integration test covers the default dual mode. Fixture serialization is not
-real-host evidence. Keep `dual` globally until captured compatibility is broad
-enough to justify a smaller mode per host/version.
+This compatibility analysis is retained as historical evidence and was
+superseded by the Codex CLI 0.146.0 receipt-resource gate on 2026-07-29.
+Structured is now the global default; dual and text remain explicit
+troubleshooting modes.
 
-The explicit opt-in `auto` registry is a narrower policy than a global default.
+The removed `auto` registry was a narrower policy than a global default.
 Its checked [machine-readable receipt](../benchmarks/reports/mcp-result-mode-registry-v1.json)
 binds one exact Codex CLI 0.144.1 initialize tuple and the current LeanToken
 catalog digest to the frozen structured-only owner-tracing receipt. Runtime
