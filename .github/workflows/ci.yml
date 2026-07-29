@@ -424,6 +424,9 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
+      - name: Remove stale LLVM profiles
+        run: cargo llvm-cov clean --profraw-only
+
       - name: Run instrumented tests
         run: >
           cargo llvm-cov --all-features --workspace --no-report
