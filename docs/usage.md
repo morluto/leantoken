@@ -565,18 +565,29 @@ Returns definitions, imports, signatures, parent relationships, and one-based
 line ranges for one or more files. Name and kind filters narrow the output.
 Bodies are not returned by default.
 
-`parse_complete` reports whether every requested file was parsed completely;
-each file reports the same state independently. `structurally_complete` remains
-as a compatibility alias on each file. Parse completeness does not imply result
-completeness.
+`path_results` returns one ordered outcome for every input with its zero-based
+`request_index`, normalized repository-relative `path`, and typed `status`.
+Indexed paths continue to produce bounded entries in `files` when another path
+is absent. Paths that are missing, ignored, or otherwise outside the current
+index snapshot report `not_indexed`; LeanToken does not probe the live
+filesystem to guess which cause applies. Invalid or unsafe paths remain
+request-level errors.
 
-`result_complete` is true only when the response contains every filtered symbol
-and import. Exact `total_symbols`, `returned_symbols`, `total_imports`,
-`returned_imports`, and `symbol_counts_by_kind` make coverage auditable.
+`parse_complete` reports whether every requested path was indexed and parsed
+completely; each file reports the same state independently.
+`structurally_complete` remains as a compatibility alias on each file. Parse
+completeness does not imply result completeness.
+
+`result_complete` is true only when every path was indexed and the response
+contains every filtered symbol and import. Exact `total_symbols`,
+`returned_symbols`, `total_imports`, `returned_imports`, and
+`symbol_counts_by_kind` cover the indexed subset and make its coverage auditable.
 `truncated_by_max_results` provides `meta.next_cursor` for another page, while
 `truncated_by_max_tokens` means the query must be repeated with a larger token
 budget to recover omitted entries. Outline cursors are bound to the repository
-generation, normalized path order, and symbol filters.
+generation, normalized path order, symbol filters, and projection. Each page
+repeats the same ordered `path_results`; the cursor's global entry offset maps
+deterministically through the indexed subset in that same request snapshot.
 
 Set `projection="signatures"` to exclude imports before result/token selection
 and omit symbol byte offsets. The response retains path, language,

@@ -365,6 +365,7 @@ impl Services {
                 }
                 let mut compact = OutlineSignaturesResponse {
                     files,
+                    path_results: response.path_results,
                     parse_complete: response.parse_complete,
                     result_complete: response.result_complete,
                     total_symbols: response.total_symbols,
@@ -416,13 +417,27 @@ impl Services {
             let mut total_imports = 0usize;
             let mut symbol_counts_by_kind = BTreeMap::new();
             let mut parse_complete = true;
+            let mut all_paths_indexed = true;
             let mut files = Vec::with_capacity(request.paths.len());
             let mut file_totals = Vec::with_capacity(request.paths.len());
-            for path in &request.paths {
+            let mut path_results = Vec::with_capacity(request.paths.len());
+            for (request_index, path) in request.paths.iter().enumerate() {
                 check_cancelled(cancellation)?;
-                let file = session
-                    .find_file(path)?
-                    .ok_or_else(|| Error::NotIndexed(path.clone()))?;
+                let Some(file) = session.find_file(path)? else {
+                    parse_complete = false;
+                    all_paths_indexed = false;
+                    path_results.push(OutlinePathResult {
+                        request_index,
+                        path: path.clone(),
+                        status: OutlinePathStatus::NotIndexed,
+                    });
+                    continue;
+                };
+                path_results.push(OutlinePathResult {
+                    request_index,
+                    path: path.clone(),
+                    status: OutlinePathStatus::Indexed,
+                });
                 let kind_counts = session.symbol_counts_for_file_filtered(
                     file.id,
                     request.symbol_name.as_deref(),
@@ -567,8 +582,9 @@ impl Services {
             Ok((
                 OutlineResponse {
                     files,
+                    path_results,
                     parse_complete,
-                    result_complete,
+                    result_complete: result_complete && all_paths_indexed,
                     total_symbols,
                     returned_symbols,
                     total_imports,

@@ -25,6 +25,26 @@ pub struct OutlineRequest {
     pub cursor: Option<String>,
 }
 
+/// Indexed availability for one requested outline path.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OutlinePathStatus {
+    /// The path is present in the request's pinned index snapshot.
+    Indexed,
+    /// The path has no row in the pinned index snapshot.
+    NotIndexed,
+}
+
+/// Per-input outcome for a requested outline path.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct OutlinePathResult {
+    /// Zero-based position in the complete ordered request.
+    pub request_index: usize,
+    /// Caller-supplied path normalized to repository-relative form.
+    pub path: String,
+    pub status: OutlinePathStatus,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct OutlineFile {
     pub path: String,
@@ -44,19 +64,22 @@ pub struct OutlineFile {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct OutlineResponse {
     pub files: Vec<OutlineFile>,
-    /// Whether every requested file was parsed completely.
+    /// Ordered outcome for every requested path, including paths absent from the index.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path_results: Vec<OutlinePathResult>,
+    /// Whether every requested path was indexed and parsed completely.
     #[serde(default)]
     pub parse_complete: bool,
-    /// Whether this response contains every filtered symbol and import.
+    /// Whether every path was indexed and this response contains every filtered entry.
     #[serde(default)]
     pub result_complete: bool,
-    /// Exact filtered symbol count across all requested files.
+    /// Exact filtered symbol count across indexed requested files.
     #[serde(default)]
     pub total_symbols: usize,
     /// Symbols returned in this response.
     #[serde(default)]
     pub returned_symbols: usize,
-    /// Exact import count across all requested files.
+    /// Exact import count across indexed requested files.
     #[serde(default)]
     pub total_imports: usize,
     /// Imports returned in this response.
@@ -105,6 +128,9 @@ pub struct OutlineSignaturesFile {
 /// Opt-in outline response that omits imports and symbol byte offsets.
 pub struct OutlineSignaturesResponse {
     pub files: Vec<OutlineSignaturesFile>,
+    /// Ordered outcome for every requested path, including paths absent from the index.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path_results: Vec<OutlinePathResult>,
     pub parse_complete: bool,
     pub result_complete: bool,
     pub total_symbols: usize,
