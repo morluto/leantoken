@@ -231,6 +231,23 @@ impl Services {
                 .count();
             focus.satisfied =
                 focus.indexed_paths > 0 && focus.selected_fragments >= focus.minimum_fragments;
+            if let Some(diagnostics) = &mut focus.diagnostics {
+                diagnostics.capacity_blocker = if focus.satisfied {
+                    None
+                } else if focus.indexed_paths == 0 {
+                    Some(ContextFocusCapacityBlocker::NoIndexedPaths)
+                } else if diagnostics.eligible_paths == 0 {
+                    Some(ContextFocusCapacityBlocker::PathPolicy)
+                } else if diagnostics.eligible_paths > MAX_CONTEXT_FOCUS_FILES_PER_PATTERN
+                    && diagnostics.generated_fragments < focus.minimum_fragments
+                {
+                    Some(ContextFocusCapacityBlocker::CandidateFanoutLimit)
+                } else {
+                    diagnostics
+                        .capacity_blocker
+                        .or(Some(ContextFocusCapacityBlocker::CandidateGeneration))
+                };
+            }
         }
 
         if request.strict_changed_paths {

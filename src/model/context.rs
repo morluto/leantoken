@@ -272,6 +272,87 @@ pub struct ContextFocusPathCoverage {
     pub selected_fragments: usize,
     /// Whether indexed and selected evidence met the requested minimum.
     pub satisfied: bool,
+    /// Bounded allocation details for plans and explain-profile responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<ContextFocusPathDiagnostics>,
+}
+
+/// Why one generated focus candidate was not selected.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextFocusSuppressionBoundary {
+    /// Request path policy removed the candidate before ranking.
+    PathPolicy,
+    /// A caller-provided content hash suppressed the candidate.
+    KnownHash,
+    /// Overlap or exact-content deduplication retained another candidate.
+    Deduplicated,
+    /// The source-token budget could not admit the candidate.
+    TokenBudget,
+    /// Hard required focus minima exceeded the fragment limit.
+    MaxFragments,
+    /// The per-file diversity cap rejected another region from the same file.
+    FileDiversity,
+    /// Higher-utility evidence displaced a soft focus candidate.
+    GlobalRanking,
+}
+
+/// Count at one deterministic focus-candidate suppression boundary.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ContextFocusSuppression {
+    /// Selection boundary that rejected these candidates.
+    pub boundary: ContextFocusSuppressionBoundary,
+    /// Distinct focus-matching candidate ranges rejected at this boundary.
+    pub fragments: usize,
+}
+
+/// Primary reason an unsatisfied focus path could not reach its minimum.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextFocusCapacityBlocker {
+    /// The pattern matched no file in the pinned index generation.
+    NoIndexedPaths,
+    /// Path policy left no matched file eligible for candidate generation.
+    PathPolicy,
+    /// Eligible indexed files produced no bounded candidate evidence.
+    CandidateGeneration,
+    /// The per-pattern file or candidate fan-out bound prevented the minimum.
+    CandidateFanoutLimit,
+    /// Caller-held hashes suppressed evidence needed for returned coverage.
+    KnownHash,
+    /// Candidate deduplication retained fewer distinct focus regions than required.
+    Deduplicated,
+    /// The source-token budget could not admit enough matching evidence.
+    TokenBudget,
+    /// Required focus minima exceeded the request fragment capacity.
+    MaxFragments,
+    /// The per-file diversity cap prevented another matching region.
+    FileDiversity,
+    /// Higher-utility evidence displaced a soft focus candidate.
+    GlobalRanking,
+}
+
+/// Bounded allocation facts for one focus path pattern.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ContextFocusPathDiagnostics {
+    /// Indexed files remaining after include, exclude, generated-artifact, and
+    /// strict changed-path policy.
+    pub eligible_paths: usize,
+    /// Distinct generated candidate ranges matching this focus pattern.
+    pub generated_fragments: usize,
+    /// Generated candidates carrying an indexed symbol target.
+    pub generated_symbol_fragments: usize,
+    /// Selected fragments occupying an enforced per-focus reservation.
+    pub reserved_fragments: usize,
+    /// Exact source tokens selected for this focus pattern before delivery-time
+    /// receipt suppression.
+    pub selected_source_tokens: usize,
+    /// Bounded non-zero candidate counts grouped by selection boundary.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suppressed_by: Vec<ContextFocusSuppression>,
+    /// Primary reason this pattern did not meet its requested minimum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capacity_blocker: Option<ContextFocusCapacityBlocker>,
 }
 
 /// Selected coverage for a strict resolved changed-path scope.

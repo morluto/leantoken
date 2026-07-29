@@ -179,6 +179,156 @@
     }
 
     #[test]
+    fn focus_diagnostics_explain_soft_production_displacement() {
+        let production =
+            Candidate::new("src/owner.rs", 1, 2, "production evidence").exact(0.01);
+        let example = Candidate::new("examples/demo.rs", 1, 2, "example evidence").exact(20.0);
+        let mut request = request_focused(100, "src/owner.rs");
+        request.max_fragments = Some(1);
+        request.verbose_diagnostics = true;
+
+        let response = select(vec![production, example], &request, 1);
+
+        assert_eq!(response.fragments.len(), 1);
+        assert_eq!(response.fragments[0].path, "examples/demo.rs");
+        let coverage = &response.coverage.focus_path_coverage[0];
+        assert_eq!(coverage.selected_fragments, 0);
+        assert!(!coverage.satisfied);
+        let diagnostics = coverage
+            .diagnostics
+            .as_ref()
+            .expect("focus allocation diagnostics");
+        assert_eq!(diagnostics.generated_fragments, 1);
+        assert_eq!(diagnostics.reserved_fragments, 0);
+        assert_eq!(diagnostics.selected_source_tokens, 0);
+        assert_eq!(
+            diagnostics.suppressed_by,
+            vec![ContextFocusSuppression {
+                boundary: ContextFocusSuppressionBoundary::GlobalRanking,
+                fragments: 1,
+            }]
+        );
+        assert_eq!(
+            diagnostics.capacity_blocker,
+            Some(ContextFocusCapacityBlocker::GlobalRanking)
+        );
+    }
+
+    #[test]
+    fn focus_diagnostics_distinguish_hash_token_and_dedup_suppression() {
+        let known = Candidate::new("known.rs", 1, 1, "known evidence").exact(1.0);
+        let mut known_request = request_focused(100, "known.rs");
+        known_request.strict_focus_paths = true;
+        known_request.known_hashes = vec![known.content_hash()];
+        known_request.verbose_diagnostics = true;
+        let known_response = select(vec![known], &known_request, 1);
+        let known_diagnostics = known_response.coverage.focus_path_coverage[0]
+            .diagnostics
+            .as_ref()
+            .expect("known-hash diagnostics");
+        assert_eq!(
+            known_diagnostics.suppressed_by,
+            vec![ContextFocusSuppression {
+                boundary: ContextFocusSuppressionBoundary::KnownHash,
+                fragments: 1,
+            }]
+        );
+        assert_eq!(
+            known_diagnostics.capacity_blocker,
+            Some(ContextFocusCapacityBlocker::KnownHash)
+        );
+
+        let expensive =
+            Candidate::new("expensive.rs", 1, 20, "expensive ".repeat(40)).exact(1.0);
+        let mut token_request = request_focused(1, "expensive.rs");
+        token_request.strict_focus_paths = true;
+        token_request.verbose_diagnostics = true;
+        let token_response = select(vec![expensive], &token_request, 1);
+        let token_diagnostics = token_response.coverage.focus_path_coverage[0]
+            .diagnostics
+            .as_ref()
+            .expect("token diagnostics");
+        assert!(
+            token_diagnostics
+                .suppressed_by
+                .iter()
+                .any(|suppression| suppression.boundary
+                    == ContextFocusSuppressionBoundary::TokenBudget)
+        );
+        assert_eq!(
+            token_diagnostics.capacity_blocker,
+            Some(ContextFocusCapacityBlocker::TokenBudget)
+        );
+
+        let first = Candidate::new("overlap.rs", 1, 10, "first evidence").exact(2.0);
+        let second = Candidate::new("overlap.rs", 5, 14, "second evidence").exact(1.0);
+        let mut dedup_request = request_focused(100, "overlap.rs");
+        dedup_request.strict_focus_paths = true;
+        dedup_request.minimum_fragments_per_focus_path = Some(2);
+        dedup_request.max_fragments = Some(2);
+        dedup_request.verbose_diagnostics = true;
+        let dedup_response = select(vec![first, second], &dedup_request, 1);
+        let dedup_diagnostics = dedup_response.coverage.focus_path_coverage[0]
+            .diagnostics
+            .as_ref()
+            .expect("dedup diagnostics");
+        assert_eq!(dedup_diagnostics.generated_fragments, 2);
+        assert!(dedup_diagnostics.selected_source_tokens > 0);
+        assert!(
+            dedup_diagnostics
+                .suppressed_by
+                .iter()
+                .any(|suppression| suppression.boundary
+                    == ContextFocusSuppressionBoundary::Deduplicated)
+        );
+        assert_eq!(
+            dedup_diagnostics.capacity_blocker,
+            Some(ContextFocusCapacityBlocker::Deduplicated)
+        );
+
+        let excluded = Candidate::new("src/excluded.rs", 1, 1, "excluded").exact(1.0);
+        let mut policy_request = request_focused(100, "src/**");
+        policy_request.strict_focus_paths = true;
+        policy_request.exclude_paths = vec!["src/**".into()];
+        policy_request.verbose_diagnostics = true;
+        let policy_response = select(vec![excluded], &policy_request, 1);
+        let policy_diagnostics = policy_response.coverage.focus_path_coverage[0]
+            .diagnostics
+            .as_ref()
+            .expect("path policy diagnostics");
+        assert_eq!(
+            policy_diagnostics.suppressed_by,
+            vec![ContextFocusSuppression {
+                boundary: ContextFocusSuppressionBoundary::PathPolicy,
+                fragments: 1,
+            }]
+        );
+        assert_eq!(
+            policy_diagnostics.capacity_blocker,
+            Some(ContextFocusCapacityBlocker::PathPolicy)
+        );
+
+        let first = Candidate::new("src/owner.rs", 1, 1, "first").exact(2.0);
+        let second = Candidate::new("src/owner.rs", 10, 10, "second").exact(1.0);
+        let other = Candidate::new("examples/demo.rs", 1, 1, "other").exact(0.5);
+        let mut diversity_request = request_focused(100, "src/owner.rs");
+        diversity_request.verbose_diagnostics = true;
+        let diversity_response = select(vec![first, second, other], &diversity_request, 1);
+        let diversity_diagnostics = diversity_response.coverage.focus_path_coverage[0]
+            .diagnostics
+            .as_ref()
+            .expect("file diversity diagnostics");
+        assert!(
+            diversity_diagnostics
+                .suppressed_by
+                .iter()
+                .any(|suppression| suppression.boundary
+                    == ContextFocusSuppressionBoundary::FileDiversity)
+        );
+        assert_eq!(diversity_diagnostics.capacity_blocker, None);
+    }
+
+    #[test]
     fn partial_required_symbol_is_selected_but_not_reported_as_complete() {
         let required = Candidate::new("src/required.rs", 10, 20, "partial definition")
             .symbol_name("required_symbol")

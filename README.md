@@ -174,7 +174,9 @@ Explicit focus constraints are contracts. When a request supplies
 `focus_paths`, exact `focus_symbols`, and
 `minimum_fragments_per_focus_path`, LeanToken generates candidates within the
 documented per-file bounds and reports a coverage failure when distinct ranges
-cannot satisfy the minimum.
+cannot satisfy the minimum. Explain-profile plans and materialized responses
+also identify the bounded allocation boundary that generated, reserved,
+selected, or suppressed each focus candidate without changing ranking.
 
 ## Why LeanToken
 
