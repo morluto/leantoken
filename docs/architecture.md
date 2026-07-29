@@ -1116,6 +1116,20 @@ identified a reference-like occurrence. It does not prove the runtime target,
 dynamic caller, type relationship, or safety of a refactor. Malformed files
 remain text-searchable and are marked structurally incomplete.
 
+The explicit `coverage` command derives parser coverage from file metadata
+inside one pinned SQLite read snapshot. It performs no
+repository walk, parser pass, or source-content read. Recognized files are
+aggregated by stored language and structural completeness in SQL. Unsupported
+files provide indexed path and size metadata for safe extension-family
+classification. The response retains at most 20 language groups and 20
+extension groups, folds every omitted group into exact `other` file and byte
+totals, and emits only lowercased ASCII extension labels of at most 16 bytes
+before the leading dot (plus fixed no-extension and unsafe-extension buckets).
+Work is linear in indexed file metadata. The unsupported-file cursor is folded
+as it streams, so retained memory is linear in distinct safe extension groups
+rather than file count; the output is constant-sized. Ordinary status and
+retrieval calls do not run this scan.
+
 ## Retrieval and ranking
 
 - Word FTS5 supplies identifier and term candidates.

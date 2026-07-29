@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::sync::{
     Arc,
@@ -19,8 +19,8 @@ use crate::indexer::{Indexer, index_progress_cache_namespace};
 use crate::model::*;
 use crate::receipt::RECEIPT_ID_RESPONSE_RESERVE;
 use crate::storage::{
-    ReadSession, ServiceFailureRecord, Storage, StorageCounts, TokenSavingsObservation,
-    TokenSavingsRecord,
+    ParserCoverageRows, ReadSession, ServiceFailureRecord, Storage, StorageCounts,
+    TokenSavingsObservation, TokenSavingsRecord,
 };
 use crate::tokens::response_token_accounting;
 use crate::{Config, Error, Result};
@@ -625,6 +625,7 @@ fn sqlite_error_code(error: &Error) -> Option<rusqlite::ErrorCode> {
 
 include!("services/startup.rs");
 include!("services/indexing.rs");
+include!("services/coverage.rs");
 include!("services/status.rs");
 include!("services/savings.rs");
 

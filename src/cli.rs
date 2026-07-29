@@ -411,6 +411,7 @@ impl Cli {
         match self.command {
             Commands::Index { rebuild } => AppRequest::Index { rebuild },
             Commands::Status => AppRequest::Status,
+            Commands::Coverage => AppRequest::Coverage,
             Commands::Savings(args) => {
                 args.snapshot
                     .map_or(AppRequest::Savings, |snapshot| AppRequest::SavingsDelta {
@@ -524,6 +525,7 @@ pub enum AppRequest {
         rebuild: bool,
     },
     Status,
+    Coverage,
     Savings,
     SavingsDelta {
         snapshot: String,
@@ -598,6 +600,9 @@ pub enum Commands {
 
     /// Show index status.
     Status,
+
+    /// Report structural parser coverage for the indexed generation.
+    Coverage,
 
     /// Show source compression and full-response token accounting.
     Savings(SavingsArgs),

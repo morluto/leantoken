@@ -34,6 +34,14 @@ fn cli_root_help_snapshot() {
 }
 
 #[test]
+fn cli_coverage_request_is_explicit() {
+    assert!(matches!(
+        parse(&["coverage"]).app_request(),
+        AppRequest::Coverage
+    ));
+}
+
+#[test]
 fn cli_search_help_snapshot() {
     insta::assert_snapshot!("search_help", help(&["search"]));
 }

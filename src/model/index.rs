@@ -72,6 +72,69 @@ impl std::ops::Deref for IndexReport {
     }
 }
 
+/// Exact file and source-byte totals for one parser-coverage category.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ParserCoverageCount {
+    /// Indexed files in this category.
+    pub files: usize,
+    /// Complete source bytes represented by those files.
+    pub source_bytes: u64,
+}
+
+/// Bounded coverage details for one recognized structural language.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ParserLanguageCoverage {
+    /// Parser-owned stable language label.
+    pub language: String,
+    /// All indexed files recognized as this language.
+    pub total: ParserCoverageCount,
+    /// Recognized files whose syntax tree contained no recovery nodes.
+    pub complete: ParserCoverageCount,
+    /// Recognized files whose syntax tree required recovery.
+    pub incomplete: ParserCoverageCount,
+}
+
+/// Bounded aggregate for one safe unrecognized extension family.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ParserExtensionCoverage {
+    /// Lower-cased extension label or a fixed non-sensitive category.
+    pub extension: String,
+    /// Indexed files and bytes in this extension family.
+    pub total: ParserCoverageCount,
+}
+
+/// Generation-scoped structural parser coverage for indexed source.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ParserCoverageSummary {
+    /// Every indexed source file in the pinned snapshot.
+    pub indexed: ParserCoverageCount,
+    /// Files recognized by a configured structural parser.
+    pub recognized: ParserCoverageCount,
+    /// Recognized files whose syntax tree contained no recovery nodes.
+    pub complete: ParserCoverageCount,
+    /// Recognized files whose syntax tree required recovery.
+    pub incomplete: ParserCoverageCount,
+    /// Indexed files without a configured structural parser.
+    pub unrecognized: ParserCoverageCount,
+    /// Highest-count recognized languages in deterministic order.
+    pub languages: Vec<ParserLanguageCoverage>,
+    /// Exact remainder after the bounded language list.
+    pub other_languages: ParserCoverageCount,
+    /// Highest-count safe unrecognized extension families.
+    pub unrecognized_extensions: Vec<ParserExtensionCoverage>,
+    /// Exact remainder after the bounded extension list.
+    pub other_unrecognized_extensions: ParserCoverageCount,
+}
+
+/// Explicit generation-scoped structural parser coverage report.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ParserCoverageReport {
+    /// Repository generation pinned while all coverage metadata was read.
+    pub repository_generation: u64,
+    /// Exact totals and bounded deterministic group breakdowns.
+    pub coverage: ParserCoverageSummary,
+}
+
 /// Bounded phases exposed while the first repository generation is built.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

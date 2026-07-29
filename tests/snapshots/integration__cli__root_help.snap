@@ -1,6 +1,6 @@
 ---
 source: tests/cli.rs
-assertion_line: 32
+assertion_line: 33
 expression: "help(&[])"
 ---
 Token-budgeted repository context
@@ -8,25 +8,26 @@ Token-budgeted repository context
 Usage: leantoken [OPTIONS] <COMMAND>
 
 Commands:
-  index    Index the repository
-  status   Show index status
-  savings  Show source compression and full-response token accounting
-  files    List, find, or glob repository paths
-  search   Search the repository for terms, symbols, or references
-  outline  Show the structural outline of one or more files
-  read     Read a bounded source range
-  history  Read, diff, or trace a symbol across Git revisions
-  json     Query, summarize, or compare live JSON structures
-  context  Retrieve ranked task context within a token budget
-  doctor   Verify MCP identity, tools, and first-retrieval readiness
-  mcp      Run the MCP server over stdio
-  setup    Configure LeanToken as a global MCP server for coding clients
-  remove   Remove LeanToken's global MCP server entries
-  cache    Inspect or prune centrally managed repository caches
-  episode  Audit existing redacted model/tool episode artifacts
-  update   Update LeanToken to the latest release
-  upgrade  Update LeanToken to the latest release
-  help     Print this message or the help of the given subcommand(s)
+  index     Index the repository
+  status    Show index status
+  coverage  Report structural parser coverage for the indexed generation
+  savings   Show source compression and full-response token accounting
+  files     List, find, or glob repository paths
+  search    Search the repository for terms, symbols, or references
+  outline   Show the structural outline of one or more files
+  read      Read a bounded source range
+  history   Read, diff, or trace a symbol across Git revisions
+  json      Query, summarize, or compare live JSON structures
+  context   Retrieve ranked task context within a token budget
+  doctor    Verify MCP identity, tools, and first-retrieval readiness
+  mcp       Run the MCP server over stdio
+  setup     Configure LeanToken as a global MCP server for coding clients
+  remove    Remove LeanToken's global MCP server entries
+  cache     Inspect or prune centrally managed repository caches
+  episode   Audit existing redacted model/tool episode artifacts
+  update    Update LeanToken to the latest release
+  upgrade   Update LeanToken to the latest release
+  help      Print this message or the help of the given subcommand(s)
 
 Options:
       --root <PATH>

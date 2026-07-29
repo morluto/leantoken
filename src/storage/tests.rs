@@ -5,6 +5,58 @@ mod read_delta;
 mod receipts;
 
 #[test]
+fn parser_coverage_rows_remain_pinned_across_publication() {
+    let root = tempfile::tempdir().expect("root");
+    let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
+    storage
+        .full_reconcile("config", vec![sample_file("alpha.rs", "fn alpha() {}\n")])
+        .expect("initial publication");
+    let pinned = storage.begin_read().expect("pinned read");
+    assert_eq!(
+        pinned.repository_generation().expect("pinned generation"),
+        1
+    );
+    let initial = pinned
+        .parser_coverage_rows(|_| "fixture".to_owned())
+        .expect("initial parser coverage");
+    assert_eq!(
+        initial.languages.iter().map(|row| row.files).sum::<usize>(),
+        1
+    );
+
+    storage
+        .full_reconcile(
+            "config",
+            vec![
+                sample_file("alpha.rs", "fn alpha() {}\n"),
+                sample_file("bravo.rs", "fn bravo() {}\n"),
+            ],
+        )
+        .expect("second publication");
+
+    let still_pinned = pinned
+        .parser_coverage_rows(|_| "fixture".to_owned())
+        .expect("pinned parser coverage after publication");
+    assert_eq!(
+        still_pinned
+            .languages
+            .iter()
+            .map(|row| row.files)
+            .sum::<usize>(),
+        1
+    );
+    let current = storage
+        .begin_read()
+        .expect("current read")
+        .parser_coverage_rows(|_| "fixture".to_owned())
+        .expect("current parser coverage");
+    assert_eq!(
+        current.languages.iter().map(|row| row.files).sum::<usize>(),
+        2
+    );
+}
+
+#[test]
 fn cold_publication_reports_ordered_bounded_phases() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");

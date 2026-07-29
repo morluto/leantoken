@@ -133,6 +133,7 @@ async fn dispatch_repository_request(
 ) -> Result<()> {
     match request {
         AppRequest::Index { rebuild } => print(&services.index_report(rebuild).await?, json),
+        AppRequest::Coverage => print(&services.parser_coverage().await?, json),
         AppRequest::Savings => {
             savings::print_report(&services.observed_token_savings_snapshot(None).await?, json)
         }
