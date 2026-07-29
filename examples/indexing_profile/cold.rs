@@ -78,7 +78,7 @@ pub(super) struct ColdMatrixArgs {
     #[arg(long, default_value_t = 7_200)]
     timeout_seconds: u64,
     /// JSON report destination.
-    #[arg(long, default_value = "target/dependency-heavy-cold-index-v1.json")]
+    #[arg(long, default_value = "target/dependency-heavy-cold-index-v2.json")]
     output: PathBuf,
     /// Permit a debug build for deterministic mechanical smoke tests only.
     #[arg(long, hide = true)]
@@ -2018,6 +2018,70 @@ mod tests {
         assert!(process_write_bytes().is_some());
         assert!(process_rss_bytes().is_some());
         assert!(clock_ticks_per_second().is_some());
+    }
+
+    #[test]
+    fn checked_two_worker_follow_up_is_a_complete_no_go_receipt() {
+        let report: serde_json::Value = serde_json::from_str(include_str!(
+            "../../benchmarks/reports/dependency-heavy-cold-index-two-worker-follow-up-linux-x86_64-2026-07-29.json"
+        ))
+        .expect("checked follow-up report");
+        assert_eq!(report["schema_version"], 2);
+        assert_eq!(
+            report["leantoken_git_revision"],
+            "19599583bf01a963cebfc51b87a1a457a7baaeef"
+        );
+        assert_eq!(report["leantoken_worktree_dirty"], false);
+        assert_eq!(
+            report["measurement_policy"]["matrix_kind"],
+            "two_worker_follow_up"
+        );
+        assert_eq!(
+            report["measurement_policy"]["worker_order"],
+            serde_json::json!([1, 2, 2, 1, 2, 1, 1, 2])
+        );
+        assert_eq!(report["decision"]["outcome"], "keep_current_worker_default");
+        assert_eq!(
+            report["decision"]["candidate_workers"],
+            serde_json::Value::Null
+        );
+        let comparison = &report["decision"]["comparisons"][0];
+        assert_eq!(comparison["passes"], false);
+        assert!(
+            comparison["wall_reduction"].as_f64().unwrap()
+                < report["measurement_policy"]["minimum_wall_reduction"]
+                    .as_f64()
+                    .unwrap()
+        );
+        assert!(
+            comparison["wall_p95_reduction"].as_f64().unwrap()
+                < report["measurement_policy"]["minimum_wall_p95_reduction"]
+                    .as_f64()
+                    .unwrap()
+        );
+        assert!(
+            comparison["cpu_increase"].as_f64().unwrap()
+                > report["measurement_policy"]["maximum_cpu_increase"]
+                    .as_f64()
+                    .unwrap()
+        );
+        assert_eq!(report["parity"]["complete"], true);
+
+        let probes = report["cancellation_probes"]
+            .as_array()
+            .expect("cancellation probes");
+        assert_eq!(probes.len(), REQUIRED_CANCELLATION_PHASES.len());
+        assert!(probes.iter().all(|probe| probe["phase_observed"] == true
+            && probe["restart_matches_baseline"] == true
+            && probe["restart_generation"] == 1));
+        assert!(
+            probes[..6]
+                .iter()
+                .all(|probe| probe["result"] == "cancelled"
+                    && probe["generation_after_attempt"] == 0)
+        );
+        assert_eq!(probes[6]["result"], "completed_after_cancellation");
+        assert_eq!(probes[6]["generation_after_attempt"], 1);
     }
 
     #[test]

@@ -1368,7 +1368,7 @@ target/release/examples/indexing_profile cold-matrix \
   --parity-query TODO,class,matmul,kernel,tvm,TileLang \
   --sample-interval-ms 25 \
   --timeout-seconds 7200 \
-  --output target/dependency-heavy-cold-index-v1.json
+  --output target/dependency-heavy-cold-index-v2.json
 ```
 
 Run the narrower 1-vs-2 follow-up only after the screening report selects two
@@ -1427,6 +1427,17 @@ select two workers only as a follow-up candidate. Four workers failed the CPU
 and RSS limits. The run used fresh processes and databases, but did not evict
 the corpus from the operating-system page cache, so it is not cold-disk
 evidence.
+
+The guarded
+[two-worker follow-up](reports/dependency-heavy-cold-index-two-worker-follow-up-linux-x86_64-2026-07-29.md)
+and its
+[raw schema-v2 report](reports/dependency-heavy-cold-index-two-worker-follow-up-linux-x86_64-2026-07-29.json)
+retain four samples per arm in alternating ABBA/BAAB order. Two workers improved
+wall p50 by 8.56% and p95 by 11.49%, below both 20% gates, while increasing mean
+CPU by 29.24%, above the 25% cap. Every parity and cancellation/restart check
+passed, including completed success after commit/checkpoint cancellation. The
+candidate was rejected and the downstream MCP contention promotion stage was
+not run.
 
 The later
 [explicit index-scope mechanism profile](reports/index-scope-tilelang-linux-x86_64-2026-07-29.md)

@@ -1423,3 +1423,11 @@ focused follow-up experiment. The two-worker follow-up also requires p95 wall
 time to improve by at least 20%, then requires the explicit stdio
 multi-process/contention profile described above. Neither report alone
 authorizes a production default or a cross-platform claim.
+
+The completed
+[two-worker follow-up](../benchmarks/reports/dependency-heavy-cold-index-two-worker-follow-up-linux-x86_64-2026-07-29.md)
+is a no-go result. Across four samples per arm, two workers improved wall p50 by
+8.56% and p95 by 11.49%, but increased mean CPU by 29.24%. It therefore failed
+three hard gates before the MCP contention stage. Complete logical/retrieval
+parity and all seven cancellation/restart probes passed; production defaults
+remain unchanged.
