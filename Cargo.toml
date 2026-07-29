@@ -1,3 +1,16 @@
+[workspace]
+resolver = "3"
+members = [".", "crates/test-support", "crates/test-suite", "xtask"]
+default-members = [".", "crates/test-support", "crates/test-suite", "xtask"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+cognitive_complexity = "warn"
+todo = "warn"
+
 [package]
 name = "leantoken"
 version = "0.1.19"
@@ -10,9 +23,17 @@ repository = "https://github.com/morluto/leantoken"
 homepage = "https://github.com/morluto/leantoken"
 readme = "README.md"
 
+[lints]
+workspace = true
+
 [[test]]
 name = "integration"
 path = "tests/integration.rs"
+
+[[example]]
+name = "benchmark-contract"
+path = "tests/benchmark_contract.rs"
+test = false
 
 [dependencies]
 base64 = "0.22.1"
@@ -94,11 +115,3 @@ debug = false
 [profile.dist]
 inherits = "release"
 lto = "thin"
-
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-all = "warn"
-cognitive_complexity = "warn"
-todo = "warn"
