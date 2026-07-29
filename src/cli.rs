@@ -3,6 +3,7 @@ use std::{
     num::{NonZeroU64, NonZeroUsize},
     path::PathBuf,
     str::FromStr,
+    time::Duration,
 };
 
 use clap::{Args, Command, Parser, Subcommand, ValueEnum};
@@ -41,6 +42,24 @@ fn parse_cache_list_limit(value: &str) -> std::result::Result<usize, String> {
     let value = parse_positive_usize(value)?;
     if value > MAX_CACHE_LIST_LIMIT {
         return Err(format!("must not exceed {MAX_CACHE_LIST_LIMIT}"));
+    }
+    Ok(value)
+}
+
+const DEFAULT_DOCTOR_READY_TIMEOUT_SECONDS: u64 = 120;
+const MAX_DOCTOR_READY_TIMEOUT_SECONDS: u64 = 600;
+
+fn parse_doctor_ready_timeout(value: &str) -> std::result::Result<u64, String> {
+    let value = value
+        .parse::<u64>()
+        .map_err(|_| "value must be a positive integer".to_owned())?;
+    if value == 0 {
+        return Err("value must be a positive integer".to_owned());
+    }
+    if value > MAX_DOCTOR_READY_TIMEOUT_SECONDS {
+        return Err(format!(
+            "value must not exceed {MAX_DOCTOR_READY_TIMEOUT_SECONDS} seconds"
+        ));
     }
     Ok(value)
 }
@@ -473,7 +492,9 @@ impl Cli {
                     response_profile,
                 }
             }
-            Commands::Doctor => AppRequest::Doctor,
+            Commands::Doctor(args) => AppRequest::Doctor {
+                ready_timeout: Duration::from_secs(args.ready_timeout_seconds),
+            },
             Commands::Mcp(args) => AppRequest::Mcp {
                 result_mode: args.result_mode,
             },
@@ -545,7 +566,9 @@ pub enum AppRequest {
         max_response_tokens: Option<usize>,
         response_profile: Option<crate::model::ContextResponseProfile>,
     },
-    Doctor,
+    Doctor {
+        ready_timeout: Duration,
+    },
     Mcp {
         result_mode: McpResultMode,
     },
@@ -601,7 +624,7 @@ pub enum Commands {
     Context(ContextArgs),
 
     /// Verify MCP identity, tools, and first-retrieval readiness.
-    Doctor,
+    Doctor(DoctorArgs),
 
     /// Run the MCP server over stdio.
     Mcp(McpArgs),
@@ -623,6 +646,20 @@ pub enum Commands {
 
     /// Update LeanToken to the latest release.
     Upgrade(UpgradeArgs),
+}
+
+/// Readiness budget used by `leantoken doctor` while a cold repository index
+/// is being built.
+#[derive(Debug, Clone, Args)]
+pub struct DoctorArgs {
+    /// Maximum seconds to wait for the first repository retrieval to become ready.
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = DEFAULT_DOCTOR_READY_TIMEOUT_SECONDS,
+        value_parser = parse_doctor_ready_timeout
+    )]
+    pub ready_timeout_seconds: u64,
 }
 
 // Command DTOs remain transport-specific, but each command family has a

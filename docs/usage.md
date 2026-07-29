@@ -31,7 +31,7 @@ responses are bounded.
 leantoken index [--rebuild]
 leantoken status
 leantoken savings
-leantoken doctor
+leantoken doctor [--ready-timeout-seconds SECONDS]
 leantoken files <tree|find|glob> [options] [--consistency <mode>]
 leantoken search <query> [options] [--consistency <mode>]
 leantoken outline <path>... [--consistency <mode>]
@@ -352,11 +352,16 @@ pruning during a mixed-version rollout.
 `leantoken doctor` launches the current executable as a real MCP subprocess and
 verifies its initialization identity and agent instructions, exact eight-tool
 catalog, and first `leantoken.context` retrieval. On a cold repository it
-allows the first retrieval's bounded internal wait, then follows structured
-`retry_after_ms` guidance if the index needs longer. Use `--json` for a
-machine-readable readiness report, including the executable's
-`index_content_version`. This doctor launches the current executable; it does
-not claim to identify other running binaries that share an explicit database.
+allows up to 120 seconds by default for the first retrieval, then follows
+structured `retry_after_ms` guidance while the index warms. Set
+`--ready-timeout-seconds` from 1 through 600 for a different bounded window.
+If the window expires during normal indexing, the diagnostic says that the
+index is still building and tells you to rerun after it completes. Use `--json`
+for a machine-readable readiness report, including the current executable,
+configured host registrations and their inferred versions, and the executable's
+`index_content_version`. This doctor launches the current executable and
+compares it with configured host entries; it does not claim to identify other
+unregistered processes that share an explicit database.
 Failures use the `doctor_failure` category and identify the `launch`,
 `handshake`, `catalog`, or `first_retrieval` stage so repair tooling does not
 need to parse prose.

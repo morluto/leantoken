@@ -1,5 +1,59 @@
 use super::*;
 
+use std::borrow::Cow;
+
+use serde::de::DeserializeOwned;
+
+/// Project-owned parameter extractor that preserves generated RMCP schemas but
+/// returns deserialization failures as ordinary JSON-RPC invalid-params errors.
+#[derive(Debug, Deserialize)]
+#[serde(transparent)]
+pub(in crate::mcp) struct Parameters<T>(pub(in crate::mcp) T);
+
+impl<T: JsonSchema> JsonSchema for Parameters<T> {
+    fn inline_schema() -> bool {
+        T::inline_schema()
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        T::schema_name()
+    }
+
+    fn schema_id() -> Cow<'static, str> {
+        T::schema_id()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        T::json_schema(generator)
+    }
+}
+
+impl<S, T>
+    rmcp::handler::server::common::FromContextPart<
+        rmcp::handler::server::tool::ToolCallContext<'_, S>,
+    > for Parameters<T>
+where
+    T: DeserializeOwned,
+{
+    fn from_context_part(
+        context: &mut rmcp::handler::server::tool::ToolCallContext<S>,
+    ) -> Result<Self, ErrorData> {
+        let arguments = context.arguments.take().unwrap_or_default();
+        serde_json::from_value(serde_json::Value::Object(arguments))
+            .map(Self)
+            .map_err(|error| {
+                ErrorData::invalid_params(
+                    format!("invalid parameters for {}", context.name()),
+                    Some(serde_json::json!({
+                        "category": "invalid_input",
+                        "field": "parameters",
+                        "reason": error.to_string(),
+                    })),
+                )
+            })
+    }
+}
+
 pub(in crate::mcp) fn service_call_options(
     max_response_tokens: Option<usize>,
 ) -> ServiceCallOptions {

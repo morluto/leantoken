@@ -75,17 +75,23 @@ pub(crate) fn diagnostic_state() -> SetupDiagnostic {
         return SetupDiagnostic {
             registration_status: "unknown",
             configured_clients: Vec::new(),
+            registrations: Vec::new(),
             discovery_status: "unknown",
             discovery_paths: Vec::new(),
         };
     };
-    let configured =
-        McpLauncher::current().and_then(|launcher| configured_clients(&home, &launcher));
-    let (registration_status, configured_clients) = match configured {
-        Ok(clients) if clients.is_empty() => ("not_registered", clients),
-        Ok(clients) => ("registered", clients),
+    let configured = McpLauncher::current().and_then(|launcher| {
+        configured_registrations(&home, &launcher)
+    });
+    let (registration_status, registrations) = match configured {
+        Ok(registrations) if registrations.is_empty() => ("not_registered", registrations),
+        Ok(registrations) => ("registered", registrations),
         Err(_) => ("unknown", Vec::new()),
     };
+    let configured_clients = registrations
+        .iter()
+        .map(|registration| registration.client)
+        .collect();
     let discovery_paths = [
         home.join(".agents/skills/leantoken/SKILL.md"),
         home.join(".claude/skills/leantoken/SKILL.md"),
@@ -101,6 +107,7 @@ pub(crate) fn diagnostic_state() -> SetupDiagnostic {
     SetupDiagnostic {
         registration_status,
         configured_clients,
+        registrations,
         discovery_status: match discovery_paths.len() {
             0 => "missing",
             2 => "installed",
@@ -108,6 +115,166 @@ pub(crate) fn diagnostic_state() -> SetupDiagnostic {
         },
         discovery_paths,
     }
+}
+
+fn configured_registrations(
+    home: &Path,
+    launcher: &McpLauncher,
+) -> Result<Vec<ConfiguredRegistration>> {
+    SetupClient::ALL
+        .into_iter()
+        .filter_map(|client| {
+            read_configured_registration(client, home, launcher)
+                .transpose()
+        })
+        .collect()
+}
+
+fn read_configured_registration(
+    client: SetupClient,
+    home: &Path,
+    launcher: &McpLauncher,
+) -> Result<Option<ConfiguredRegistration>> {
+    let definition = client.definition(home);
+    let Some(source) = read_optional(&definition.path)? else {
+        return Ok(None);
+    };
+    let (command, args) = match definition.format {
+        ConfigFormat::Json { section, shape } => {
+            let root: Value = jsonc_parser::parse_to_serde_value(
+                &source,
+                &ParseOptions::default(),
+            )
+            .map_err(|error| invalid_config(&definition.path, error))?;
+            let Some(entry) = root
+                .get(section)
+                .and_then(Value::as_object)
+                .and_then(|section| section.get(SERVER_NAME))
+            else {
+                return Ok(None);
+            };
+            json_registration_command(entry, shape, &definition.path)?
+        }
+        ConfigFormat::Toml => {
+            let document = source
+                .parse::<DocumentMut>()
+                .map_err(|error| invalid_config(&definition.path, error))?;
+            let Some(entry) = document
+                .get("mcp_servers")
+                .and_then(Item::as_table)
+                .and_then(|servers| servers.get(SERVER_NAME))
+            else {
+                return Ok(None);
+            };
+            toml_registration_command(entry, &definition.path)?
+        }
+    };
+    let expected_command = launcher.command()?.to_owned();
+    let matches_current = command == expected_command && args == launcher.args;
+    Ok(Some(ConfiguredRegistration {
+        client,
+        path: definition.path,
+        version: registered_version(&command, &args),
+        command,
+        args,
+        expected_version: launcher.version().to_owned(),
+        matches_current,
+    }))
+}
+
+fn json_registration_command(
+    entry: &Value,
+    shape: JsonEntryShape,
+    path: &Path,
+) -> Result<(String, Vec<String>)> {
+    let object = entry
+        .as_object()
+        .ok_or_else(|| invalid_config(path, "LeanToken MCP entry must be an object"))?;
+    match shape {
+        JsonEntryShape::CommandAndArgs => {
+            let command = object
+                .get("command")
+                .and_then(Value::as_str)
+                .ok_or_else(|| invalid_config(path, "LeanToken MCP command must be a string"))?;
+            let args = json_string_array(object.get("args"), path, "args")?;
+            Ok((command.to_owned(), args))
+        }
+        JsonEntryShape::OpenCode => {
+            let command = object
+                .get("command")
+                .and_then(Value::as_array)
+                .ok_or_else(|| invalid_config(path, "OpenCode MCP command must be an array"))?;
+            let mut values = command.iter();
+            let executable = values
+                .next()
+                .and_then(Value::as_str)
+                .ok_or_else(|| invalid_config(path, "OpenCode MCP command is empty"))?;
+            let args = values
+                .map(|value| {
+                    value.as_str().map(str::to_owned).ok_or_else(|| {
+                        invalid_config(path, "OpenCode MCP command arguments must be strings")
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok((executable.to_owned(), args))
+        }
+    }
+}
+
+fn json_string_array(value: Option<&Value>, path: &Path, field: &str) -> Result<Vec<String>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    value
+        .as_array()
+        .ok_or_else(|| invalid_config(path, format!("LeanToken MCP {field} must be an array")))?
+        .iter()
+        .map(|value| {
+            value.as_str().map(str::to_owned).ok_or_else(|| {
+                invalid_config(path, format!("LeanToken MCP {field} must contain strings"))
+            })
+        })
+        .collect()
+}
+
+fn toml_registration_command(entry: &Item, path: &Path) -> Result<(String, Vec<String>)> {
+    let table = entry
+        .as_table()
+        .ok_or_else(|| invalid_config(path, "LeanToken MCP entry must be a table"))?;
+    let command = table
+        .get("command")
+        .and_then(Item::as_str)
+        .ok_or_else(|| invalid_config(path, "LeanToken MCP command must be a string"))?;
+    let args = table
+        .get("args")
+        .and_then(Item::as_array)
+        .map(|args| {
+            args.iter()
+                .map(|value| {
+                    value.as_str().map(str::to_owned).ok_or_else(|| {
+                        invalid_config(path, "LeanToken MCP arguments must be strings")
+                    })
+                })
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok((command.to_owned(), args))
+}
+
+fn registered_version(command: &str, args: &[String]) -> Option<String> {
+    args.iter()
+        .find_map(|argument| argument.strip_prefix("--package=leantoken@"))
+        .map(str::to_owned)
+        .or_else(|| {
+            Path::new(command)
+                .components()
+                .collect::<Vec<_>>()
+                .windows(2)
+                .find(|components| components[0].as_os_str() == "runtimes")
+                .and_then(|components| components[1].as_os_str().to_str())
+                .map(str::to_owned)
+        })
 }
 
 fn configured_clients(home: &Path, launcher: &McpLauncher) -> Result<Vec<SetupClient>> {

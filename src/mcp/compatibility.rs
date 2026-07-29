@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use super::{McpResultMode, mcp_schema_fingerprint};
 
-const CURRENT_VERIFIED_CATALOG_DIGEST: &str = "374b1eb87963c5cfc914ca8b1db6fd83";
+const CURRENT_VERIFIED_CATALOG_DIGEST: &str = "2a685897e677559e8ccb964b536afc89";
 
 #[derive(Debug, Clone, Copy)]
 struct CompatibilityRow {

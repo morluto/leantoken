@@ -43,6 +43,46 @@ async fn typed_workflow_evidence_is_bounded_and_reaches_candidate_provenance() {
 }
 
 #[tokio::test]
+async fn context_plan_routes_mcp_catalog_questions_to_mcp_sources() {
+    let (root, services) = fixture().await;
+    std::fs::create_dir_all(root.path().join("src/mcp")).expect("create MCP source directory");
+    std::fs::create_dir_all(root.path().join("src/watcher/tests"))
+        .expect("create watcher test directory");
+    std::fs::write(
+        root.path().join("src/mcp/tools.rs"),
+        "// MCP tool catalog registration and request schemas\npub fn register_tools() {}\n",
+    )
+    .expect("write MCP tool fixture");
+    std::fs::write(
+        root.path().join("src/mcp/tests.rs"),
+        "// MCP catalog schema regression tests\n",
+    )
+    .expect("write MCP test fixture");
+    std::fs::write(
+        root.path().join("src/watcher/tests/support.rs"),
+        "struct RegistrationFailure;\n",
+    )
+    .expect("write unrelated registration fixture");
+    services.index(false).await.expect("index MCP routing fixture");
+
+    let mut request = context_limit_request(600);
+    request.task = "Where is MCP tool registration and catalog schema defined?".into();
+    request.plan_only = true;
+    request.max_fragments = Some(4);
+    let response = services.context(request).await.expect("context plan");
+    let plan = response.plan.expect("plan-only response");
+    assert_eq!(
+        plan.candidates.first().map(|candidate| candidate.path.as_str()),
+        Some("src/mcp/tools.rs")
+    );
+    assert!(plan
+        .candidates
+        .iter()
+        .take(2)
+        .all(|candidate| candidate.path.starts_with("src/mcp")));
+}
+
+#[tokio::test]
 async fn context_plan_previews_materialization_without_receipt_or_source() {
     let (_root, services) = fixture().await;
     let mut request = context_limit_request(100);

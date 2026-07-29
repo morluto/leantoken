@@ -47,6 +47,7 @@ struct ContextPathScorer {
     terms: Vec<String>,
     code_token_parts: Vec<Vec<String>>,
     languages: [bool; 5],
+    mcp_repository_intent: bool,
 }
 
 impl ContextPathScorer {
@@ -79,6 +80,7 @@ impl ContextPathScorer {
                 task_mentions_language(task, "rust"),
                 task_mentions_language(task, "go"),
             ],
+            mcp_repository_intent: mcp_repository_intent(terms, task),
         }
     }
 
@@ -119,8 +121,37 @@ impl ContextPathScorer {
                 score += 12.0;
             }
         }
+        if self.mcp_repository_intent {
+            if path == "src/mcp.rs"
+                || path.starts_with("src/mcp/")
+                || path == "src/main/mcp_runtime.rs"
+            {
+                score += 14.0;
+            } else if path == "tests/mcp.rs" || path.starts_with("tests/mcp/") {
+                score += 8.0;
+            }
+        }
         score
     }
+}
+
+fn mcp_repository_intent(terms: &[String], task: &str) -> bool {
+    let terms = terms
+        .iter()
+        .map(|term| term.to_ascii_lowercase())
+        .chain(
+            task.split(|character: char| !character.is_alphanumeric() && character != '_')
+                .filter(|term| !term.is_empty())
+                .map(str::to_ascii_lowercase),
+        )
+        .collect::<HashSet<_>>();
+    if terms.contains("mcp") {
+        return true;
+    }
+    let surface_terms = ["tool", "tools", "catalog", "schema", "schemas"];
+    let registration_terms = ["registration", "registered", "register", "server"];
+    surface_terms.iter().any(|term| terms.contains(*term))
+        && registration_terms.iter().any(|term| terms.contains(*term))
 }
 
 fn context_path_group(path: &str) -> String {

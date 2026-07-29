@@ -977,7 +977,21 @@ fn cli_setup_and_remove_select_clients() {
 #[test]
 fn cli_doctor_selects_executable_readiness_diagnostic() {
     let cli = parse(&["doctor"]);
-    assert!(matches!(cli.app_request(), AppRequest::Doctor));
+    let AppRequest::Doctor { ready_timeout } = cli.app_request() else {
+        panic!("expected doctor request");
+    };
+    assert_eq!(ready_timeout, std::time::Duration::from_secs(120));
+
+    let AppRequest::Doctor { ready_timeout } = parse(&[
+        "doctor",
+        "--ready-timeout-seconds",
+        "240",
+    ])
+    .app_request()
+    else {
+        panic!("expected doctor request");
+    };
+    assert_eq!(ready_timeout, std::time::Duration::from_secs(240));
 }
 
 #[test]
