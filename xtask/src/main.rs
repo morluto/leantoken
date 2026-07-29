@@ -74,6 +74,16 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
             "--lib",
             &filter,
         ])
+    } else if suite_has_test(root, selector)? {
+        cargo_command([
+            "test",
+            "--locked",
+            "--package",
+            SUITE,
+            "--all-features",
+            "--lib",
+            selector,
+        ])
     } else {
         cargo_command([
             "test",
@@ -99,6 +109,40 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
             code: status.code(),
         })
     }
+}
+
+fn suite_has_test(root: &Path, selector: &str) -> Result<bool, XtaskError> {
+    let command = cargo_command([
+        "test",
+        "--locked",
+        "--package",
+        SUITE,
+        "--all-features",
+        "--lib",
+        selector,
+        "--",
+        "--list",
+    ]);
+    println!("==> {}", command.join(" "));
+    let (program, args) = command
+        .split_first()
+        .ok_or_else(|| XtaskError::Usage("empty command".to_owned()))?;
+    let output = Command::new(program)
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(XtaskError::Io)?;
+    if !output.status.success() {
+        return Err(XtaskError::CommandFailed {
+            command: command.join(" "),
+            code: output.status.code(),
+        });
+    }
+    let selector_suffix = format!("::{selector}");
+    Ok(String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+        line.strip_suffix(": test")
+            .is_some_and(|name| name == selector || name.ends_with(&selector_suffix))
+    }))
 }
 
 fn run_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError> {

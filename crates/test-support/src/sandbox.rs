@@ -15,6 +15,7 @@ pub struct Sandbox {
     logs: PathBuf,
     artifacts: PathBuf,
     rerun: String,
+    preservation_id: String,
 }
 
 #[derive(Debug)]
@@ -56,7 +57,8 @@ impl Sandbox {
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_nanos())
             .unwrap_or_default();
-        let root = parent.join(format!("{id}-{nonce:x}"));
+        let preservation_id = format!("{id}-{nonce:x}");
+        let root = parent.join(&preservation_id);
         fs::create_dir(&root).map_err(|error| {
             if error.kind() == std::io::ErrorKind::AlreadyExists {
                 SandboxError::CreationFailed(root.clone())
@@ -75,6 +77,7 @@ impl Sandbox {
             artifacts: root.join("artifacts"),
             root,
             rerun: format!("cargo test --locked -- {module}::{callsite}"),
+            preservation_id,
         };
         for path in [
             &sandbox.repo,
@@ -174,8 +177,7 @@ impl Drop for Sandbox {
         let workspace_root = workspace_root();
         let failure_root = workspace_root.join("target").join("test-failures");
         let _ = fs::create_dir_all(&failure_root);
-        let destination = failure_root.join(&self.id);
-        let _ = fs::remove_dir_all(&destination);
+        let destination = failure_root.join(&self.preservation_id);
         let _ = fs::rename(&self.root, &destination);
         eprintln!(
             "LeanToken test sandbox preserved: {}",
@@ -234,5 +236,13 @@ mod tests {
                 |character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
             )
         );
+    }
+
+    #[test]
+    fn preserved_sandboxes_have_unique_destinations_for_one_stable_id() {
+        let first = Sandbox::new(module_path!(), "storage_case").unwrap();
+        let second = Sandbox::new(module_path!(), "storage_case").unwrap();
+        assert_eq!(first.id(), second.id());
+        assert_ne!(first.preservation_id, second.preservation_id);
     }
 }

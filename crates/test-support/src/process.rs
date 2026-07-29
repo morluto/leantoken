@@ -1,6 +1,6 @@
 use crate::{Deadline, Sandbox};
 use std::fmt;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -83,13 +83,13 @@ impl<'a> ProcessHarness<'a> {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = command.spawn()?;
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(input)?;
-        }
+        let mut stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
         let stdout_thread = thread::spawn(move || read_all(stdout));
         let stderr_thread = thread::spawn(move || read_all(stderr));
+        let input = input.to_owned();
+        let stdin_thread = thread::spawn(move || stdin.write_all(&input));
         let deadline = Deadline::new(self.timeout);
         let status = loop {
             if let Some(status) = child.try_wait()? {
@@ -102,6 +102,12 @@ impl<'a> ProcessHarness<'a> {
             }
             thread::sleep(Duration::from_millis(10));
         };
+        let input_result = stdin_thread
+            .join()
+            .unwrap_or_else(|_| Err(io::Error::other("stdin writer thread panicked")));
+        if status.is_some() {
+            input_result?;
+        }
         let output = ProcessOutput {
             status,
             stdout: String::from_utf8_lossy(&stdout_thread.join().unwrap_or_default()).into_owned(),
