@@ -347,25 +347,67 @@
 <a href=#347 id=347 data-nosnippet>347</a>    </span>Trigram,
 <a href=#348 id=348 data-nosnippet>348</a>}
 <a href=#349 id=349 data-nosnippet>349</a>
-<a href=#350 id=350 data-nosnippet>350</a><span class="attr">#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-<a href=#351 id=351 data-nosnippet>351</a></span><span class="doccomment">/// Deterministic phase and candidate counts for an evaluation-only search.
-<a href=#352 id=352 data-nosnippet>352</a></span><span class="kw">pub struct </span>SearchPhaseCounters {
-<a href=#353 id=353 data-nosnippet>353</a>    <span class="doccomment">/// Candidate source selected for a regex request.
-<a href=#354 id=354 data-nosnippet>354</a>    </span><span class="kw">pub </span>regex_candidate_strategy: RegexCandidateStrategy,
-<a href=#355 id=355 data-nosnippet>355</a>    <span class="doccomment">/// Mandatory trigram terms in the selected candidate plan.
-<a href=#356 id=356 data-nosnippet>356</a>    </span><span class="kw">pub </span>regex_plan_terms: usize,
-<a href=#357 id=357 data-nosnippet>357</a>    <span class="doccomment">/// Indexed files in the pinned repository snapshot.
-<a href=#358 id=358 data-nosnippet>358</a>    ///
-<a href=#359 id=359 data-nosnippet>359</a>    /// Candidate plans report corpus scale without scanning these files. The
-<a href=#360 id=360 data-nosnippet>360</a>    /// full-scan fallback checks each file against its structural bounds.
-<a href=#361 id=361 data-nosnippet>361</a>    </span><span class="kw">pub </span>regex_files_considered: usize,
-<a href=#362 id=362 data-nosnippet>362</a>    <span class="doccomment">/// Chunks loaded by the full-scan fallback.
-<a href=#363 id=363 data-nosnippet>363</a>    </span><span class="kw">pub </span>regex_chunks_loaded: usize,
-<a href=#364 id=364 data-nosnippet>364</a>    <span class="doccomment">/// Rows returned by the trigram candidate query.
-<a href=#365 id=365 data-nosnippet>365</a>    </span><span class="kw">pub </span>regex_candidate_chunks: usize,
-<a href=#366 id=366 data-nosnippet>366</a>    <span class="doccomment">/// Candidate chunks verified with the compiled regex.
-<a href=#367 id=367 data-nosnippet>367</a>    </span><span class="kw">pub </span>regex_chunks_verified: usize,
-<a href=#368 id=368 data-nosnippet>368</a>    <span class="doccomment">/// Matching chunks retained for occurrence hydration.
-<a href=#369 id=369 data-nosnippet>369</a>    </span><span class="kw">pub </span>regex_retained_chunks: usize,
-<a href=#370 id=370 data-nosnippet>370</a>}
+<a href=#350 id=350 data-nosnippet>350</a><span class="attr">#[non_exhaustive]
+<a href=#351 id=351 data-nosnippet>351</a>#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+<a href=#352 id=352 data-nosnippet>352</a>#[serde(rename_all = <span class="string">"snake_case"</span>)]
+<a href=#353 id=353 data-nosnippet>353</a></span><span class="doccomment">/// HIR analysis that produced a sound trigram candidate plan.
+<a href=#354 id=354 data-nosnippet>354</a></span><span class="kw">pub enum </span>RegexPlanSource {
+<a href=#355 id=355 data-nosnippet>355</a>    <span class="doccomment">/// Existing recursive analysis found mandatory inner literal terms.
+<a href=#356 id=356 data-nosnippet>356</a>    </span>MandatoryLiterals,
+<a href=#357 id=357 data-nosnippet>357</a>    <span class="doccomment">/// Bounded extraction found a finite set of required match prefixes.
+<a href=#358 id=358 data-nosnippet>358</a>    </span>PrefixLiterals,
+<a href=#359 id=359 data-nosnippet>359</a>    <span class="doccomment">/// Bounded extraction found a finite set of required match suffixes.
+<a href=#360 id=360 data-nosnippet>360</a>    </span>SuffixLiterals,
+<a href=#361 id=361 data-nosnippet>361</a>}
+<a href=#362 id=362 data-nosnippet>362</a>
+<a href=#363 id=363 data-nosnippet>363</a><span class="attr">#[non_exhaustive]
+<a href=#364 id=364 data-nosnippet>364</a>#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+<a href=#365 id=365 data-nosnippet>365</a>#[serde(rename_all = <span class="string">"snake_case"</span>)]
+<a href=#366 id=366 data-nosnippet>366</a></span><span class="doccomment">/// Privacy-safe reason a regex request retained the bounded full-scan path.
+<a href=#367 id=367 data-nosnippet>367</a></span><span class="kw">pub enum </span>RegexPlanFallbackReason {
+<a href=#368 id=368 data-nosnippet>368</a>    <span class="doccomment">/// The evaluation explicitly forced the full-scan oracle.
+<a href=#369 id=369 data-nosnippet>369</a>    </span>PlanningDisabled,
+<a href=#370 id=370 data-nosnippet>370</a>    <span class="doccomment">/// Unicode case folding cannot be represented by SQLite's ASCII folding.
+<a href=#371 id=371 data-nosnippet>371</a>    </span>CaseInsensitiveUnicode,
+<a href=#372 id=372 data-nosnippet>372</a>    <span class="doccomment">/// The HIR parser unexpectedly rejected a regex accepted by the matcher.
+<a href=#373 id=373 data-nosnippet>373</a>    </span>HirParseFailed,
+<a href=#374 id=374 data-nosnippet>374</a>    <span class="doccomment">/// Recursive analysis crossed its bounded HIR-node limit.
+<a href=#375 id=375 data-nosnippet>375</a>    </span>PlanNodeLimit,
+<a href=#376 id=376 data-nosnippet>376</a>    <span class="doccomment">/// Candidate translation crossed its bounded term-count limit.
+<a href=#377 id=377 data-nosnippet>377</a>    </span>PlanTermLimit,
+<a href=#378 id=378 data-nosnippet>378</a>    <span class="doccomment">/// Candidate translation crossed its bounded aggregate term-byte limit.
+<a href=#379 id=379 data-nosnippet>379</a>    </span>PlanTermBytesLimit,
+<a href=#380 id=380 data-nosnippet>380</a>    <span class="doccomment">/// Prefix and suffix literal sequences were infinite or not indexable.
+<a href=#381 id=381 data-nosnippet>381</a>    </span>LiteralSequenceUnavailable,
+<a href=#382 id=382 data-nosnippet>382</a>}
+<a href=#383 id=383 data-nosnippet>383</a>
+<a href=#384 id=384 data-nosnippet>384</a><span class="attr">#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+<a href=#385 id=385 data-nosnippet>385</a></span><span class="doccomment">/// Deterministic phase and candidate counts for an evaluation-only search.
+<a href=#386 id=386 data-nosnippet>386</a></span><span class="kw">pub struct </span>SearchPhaseCounters {
+<a href=#387 id=387 data-nosnippet>387</a>    <span class="doccomment">/// Candidate source selected for a regex request.
+<a href=#388 id=388 data-nosnippet>388</a>    </span><span class="kw">pub </span>regex_candidate_strategy: RegexCandidateStrategy,
+<a href=#389 id=389 data-nosnippet>389</a>    <span class="doccomment">/// Planner analysis that produced the candidate expression.
+<a href=#390 id=390 data-nosnippet>390</a>    </span><span class="kw">pub </span>regex_plan_source: <span class="prelude-ty">Option</span>&lt;RegexPlanSource&gt;,
+<a href=#391 id=391 data-nosnippet>391</a>    <span class="doccomment">/// Stable reason the request used the full-scan fallback.
+<a href=#392 id=392 data-nosnippet>392</a>    </span><span class="kw">pub </span>regex_plan_fallback_reason: <span class="prelude-ty">Option</span>&lt;RegexPlanFallbackReason&gt;,
+<a href=#393 id=393 data-nosnippet>393</a>    <span class="doccomment">/// HIR nodes visited before selecting or rejecting a bounded plan.
+<a href=#394 id=394 data-nosnippet>394</a>    </span><span class="kw">pub </span>regex_plan_nodes: usize,
+<a href=#395 id=395 data-nosnippet>395</a>    <span class="doccomment">/// Trigram terms in the selected candidate plan.
+<a href=#396 id=396 data-nosnippet>396</a>    </span><span class="kw">pub </span>regex_plan_terms: usize,
+<a href=#397 id=397 data-nosnippet>397</a>    <span class="doccomment">/// Aggregate bytes in selected word-trigram terms.
+<a href=#398 id=398 data-nosnippet>398</a>    </span><span class="kw">pub </span>regex_plan_term_bytes: usize,
+<a href=#399 id=399 data-nosnippet>399</a>    <span class="doccomment">/// Indexed files in the pinned repository snapshot.
+<a href=#400 id=400 data-nosnippet>400</a>    ///
+<a href=#401 id=401 data-nosnippet>401</a>    /// Candidate plans report corpus scale without scanning these files. The
+<a href=#402 id=402 data-nosnippet>402</a>    /// full-scan fallback checks each file against its structural bounds.
+<a href=#403 id=403 data-nosnippet>403</a>    </span><span class="kw">pub </span>regex_files_considered: usize,
+<a href=#404 id=404 data-nosnippet>404</a>    <span class="doccomment">/// Chunks loaded by the full-scan fallback.
+<a href=#405 id=405 data-nosnippet>405</a>    </span><span class="kw">pub </span>regex_chunks_loaded: usize,
+<a href=#406 id=406 data-nosnippet>406</a>    <span class="doccomment">/// Rows returned by the trigram candidate query.
+<a href=#407 id=407 data-nosnippet>407</a>    </span><span class="kw">pub </span>regex_candidate_chunks: usize,
+<a href=#408 id=408 data-nosnippet>408</a>    <span class="doccomment">/// Candidate chunks verified with the compiled regex.
+<a href=#409 id=409 data-nosnippet>409</a>    </span><span class="kw">pub </span>regex_chunks_verified: usize,
+<a href=#410 id=410 data-nosnippet>410</a>    <span class="doccomment">/// Matching chunks retained for occurrence hydration.
+<a href=#411 id=411 data-nosnippet>411</a>    </span><span class="kw">pub </span>regex_retained_chunks: usize,
+<a href=#412 id=412 data-nosnippet>412</a>}
 </code></pre></div></section></main></body></html>
