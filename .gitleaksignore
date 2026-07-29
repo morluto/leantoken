@@ -2,3 +2,5 @@
 75b7e7e249db268ffdf73ccd14d571b25c2f7b60:benchmarks/reports/indexing-tokio-linux-x86_64-2026-07-16.json:generic-api-key:4
 # Generated cold-index follow-up records the clean harness Git revision.
 75d66fe88fa7b4e6a9558c82f180970bd8385f3b:benchmarks/reports/dependency-heavy-cold-index-two-worker-follow-up-linux-x86_64-2026-07-29.json:generic-api-key:5
+# Regex planner trial records the public LeanToken base Git revision.
+cac7e7c9087bde23f24e9b86b9947789b8cba41e:benchmarks/reports/regex-literal-extractor-trial-2026-07-29.md:generic-api-key:12
