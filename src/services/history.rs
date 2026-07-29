@@ -392,23 +392,23 @@ fn resolve_parsed_historical_symbol(
     let Some(file) = batch.files.get(path) else {
         return Ok(None);
     };
-    let symbol = file
-        .symbols
-        .iter()
-        .find(|symbol| symbol.name == symbol_name)
-        .or_else(|| {
-            file.symbols.iter().find(|symbol| {
-                symbol.parent.as_deref().is_some_and(|parent| {
-                    symbol_name
-                        .strip_prefix(parent)
-                        .and_then(|suffix| suffix.strip_prefix('.'))
-                        == Some(symbol.name.as_str())
-                })
-            })
-        });
-    let Some(symbol) = symbol else {
-        return Ok(None);
-    };
+    let symbol =
+        match crate::symbol_identity::resolve_symbol_matches(file.symbols.iter().filter(|symbol| {
+            crate::symbol_identity::symbol_identity_matches(
+                symbol_name,
+                &symbol.name,
+                symbol.parent.as_deref(),
+            )
+        })) {
+            crate::symbol_identity::SymbolResolution::NotFound => return Ok(None),
+            crate::symbol_identity::SymbolResolution::Unique(symbol) => symbol,
+            crate::symbol_identity::SymbolResolution::Ambiguous => {
+                return Err(Error::AmbiguousSymbol {
+                    path: format!("{path}@{}", batch.revision),
+                    symbol: symbol_name.to_owned(),
+                });
+            }
+        };
     let content = file
         .content
         .get(symbol.start_byte..symbol.end_byte)
@@ -689,8 +689,45 @@ impl Services {
                 });
                 continue;
             }
-            let before = resolve_parsed_historical_symbol(&base, &target.path, &target.symbol)?;
-            let after = resolve_parsed_historical_symbol(&head, head_path, head_symbol)?;
+            let before = match resolve_parsed_historical_symbol(&base, &target.path, &target.symbol)
+            {
+                Ok(symbol) => symbol,
+                Err(Error::AmbiguousSymbol { .. }) => {
+                    results.push(DiffSymbolsResult {
+                        request_index,
+                        target: target.clone(),
+                        status: DiffSymbolsStatus::Unavailable,
+                        before: None,
+                        after: None,
+                        diff: None,
+                        diff_truncated: false,
+                        semantic_change: None,
+                        reason: Some("ambiguous_base_symbol".into()),
+                        incomplete_reason: None,
+                    });
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            let after = match resolve_parsed_historical_symbol(&head, head_path, head_symbol) {
+                Ok(symbol) => symbol,
+                Err(Error::AmbiguousSymbol { .. }) => {
+                    results.push(DiffSymbolsResult {
+                        request_index,
+                        target: target.clone(),
+                        status: DiffSymbolsStatus::Unavailable,
+                        before: None,
+                        after: None,
+                        diff: None,
+                        diff_truncated: false,
+                        semantic_change: None,
+                        reason: Some("ambiguous_head_symbol".into()),
+                        incomplete_reason: None,
+                    });
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             let identity_changed = target.path != head_path || target.symbol != head_symbol;
             let (status, semantic_change) = match (&before, &after) {
                 (Some(before), Some(after)) if identity_changed => (
@@ -1313,21 +1350,27 @@ impl Services {
     ) -> Result<Option<ResolvedHistoricalSymbol>> {
         let parsed = parser::parse(path, &blob.content)?;
         let mut symbols = parsed.symbols;
-        let symbol_index = symbols
-            .iter()
-            .position(|symbol| symbol.name == symbol_name)
-            .or_else(|| {
-                symbols.iter().position(|symbol| {
-                    symbol.parent.as_deref().is_some_and(|parent| {
-                        symbol_name
-                            .strip_prefix(parent)
-                            .and_then(|suffix| suffix.strip_prefix('.'))
-                            == Some(symbol.name.as_str())
-                    })
+        let symbol_index = match crate::symbol_identity::resolve_symbol_matches(
+            symbols
+                .iter()
+                .enumerate()
+                .filter(|(_, symbol)| {
+                    crate::symbol_identity::symbol_identity_matches(
+                        symbol_name,
+                        &symbol.name,
+                        symbol.parent.as_deref(),
+                    )
                 })
-            });
-        let Some(symbol_index) = symbol_index else {
-            return Ok(None);
+                .map(|(index, _)| index),
+        ) {
+            crate::symbol_identity::SymbolResolution::NotFound => return Ok(None),
+            crate::symbol_identity::SymbolResolution::Unique(index) => index,
+            crate::symbol_identity::SymbolResolution::Ambiguous => {
+                return Err(Error::AmbiguousSymbol {
+                    path: format!("{path}@{}", blob.revision),
+                    symbol: symbol_name.to_owned(),
+                });
+            }
         };
         let symbol = symbols.remove(symbol_index);
         let content = blob

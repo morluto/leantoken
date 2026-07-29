@@ -160,30 +160,59 @@ impl ReadSession {
     ) -> Result<Vec<SymbolHit>> {
         let limit = bounded_limit(max_results);
         let offset = i64::try_from(offset).unwrap_or(i64::MAX);
-        let indexed = query.chars().count() >= 3;
+        let qualified = crate::symbol_identity::split_qualified_symbol(query);
+        let candidate_query = qualified.map_or(query, |(_, name)| name);
+        let indexed = candidate_query.chars().count() >= 3;
         let sql = if indexed {
             "SELECT f.path, f.content_hash, f.generation, s.id, s.file_id, s.name, s.kind, s.parent, s.signature, s.start_line, s.end_line, s.start_byte, s.end_byte
                  FROM symbols_fts_trigram
                  JOIN symbols s ON s.rowid = symbols_fts_trigram.rowid
                  JOIN files f ON f.id = s.file_id
                  WHERE symbols_fts_trigram MATCH ?5
-                   AND CASE WHEN ?2 THEN instr(s.name, ?1) > 0 ELSE instr(lower(s.name), lower(?1)) > 0 END
-                 ORDER BY CASE WHEN CASE WHEN ?2 THEN s.name = ?1 ELSE lower(s.name) = lower(?1) END THEN 0 ELSE 1 END,
+                   AND CASE WHEN ?2
+                       THEN instr(s.name, ?1) > 0
+                           OR (?6 AND s.parent IS NOT NULL AND instr(s.parent || '.' || s.name, ?1) > 0)
+                       ELSE instr(lower(s.name), lower(?1)) > 0
+                           OR (?6 AND s.parent IS NOT NULL AND instr(lower(s.parent || '.' || s.name), lower(?1)) > 0)
+                   END
+                 ORDER BY CASE WHEN CASE WHEN ?2
+                              THEN s.name = ?1
+                                  OR (?6 AND s.parent IS NOT NULL AND s.parent || '.' || s.name = ?1)
+                              ELSE lower(s.name) = lower(?1)
+                                  OR (?6 AND s.parent IS NOT NULL AND lower(s.parent || '.' || s.name) = lower(?1))
+                          END THEN 0 ELSE 1 END,
                           length(s.name), f.path, s.start_byte
                  LIMIT ?3 OFFSET ?4"
         } else {
             "SELECT f.path, f.content_hash, f.generation, s.id, s.file_id, s.name, s.kind, s.parent, s.signature, s.start_line, s.end_line, s.start_byte, s.end_byte
                  FROM symbols s JOIN files f ON f.id = s.file_id
                  WHERE ?5 IS NULL
-                   AND CASE WHEN ?2 THEN instr(s.name, ?1) > 0 ELSE instr(lower(s.name), lower(?1)) > 0 END
-                 ORDER BY CASE WHEN CASE WHEN ?2 THEN s.name = ?1 ELSE lower(s.name) = lower(?1) END THEN 0 ELSE 1 END,
+                   AND CASE WHEN ?2
+                       THEN instr(s.name, ?1) > 0
+                           OR (?6 AND s.parent IS NOT NULL AND instr(s.parent || '.' || s.name, ?1) > 0)
+                       ELSE instr(lower(s.name), lower(?1)) > 0
+                           OR (?6 AND s.parent IS NOT NULL AND instr(lower(s.parent || '.' || s.name), lower(?1)) > 0)
+                   END
+                 ORDER BY CASE WHEN CASE WHEN ?2
+                              THEN s.name = ?1
+                                  OR (?6 AND s.parent IS NOT NULL AND s.parent || '.' || s.name = ?1)
+                              ELSE lower(s.name) = lower(?1)
+                                  OR (?6 AND s.parent IS NOT NULL AND lower(s.parent || '.' || s.name) = lower(?1))
+                          END THEN 0 ELSE 1 END,
                           length(s.name), f.path, s.start_byte
                  LIMIT ?3 OFFSET ?4"
         };
-        let quoted = indexed.then(|| quoted_fts_phrase(query));
+        let quoted = indexed.then(|| quoted_fts_phrase(candidate_query));
         let mut stmt = self.conn.prepare_cached(sql)?;
         let rows = stmt.query_map(
-            params![query, case_sensitive, limit, offset, quoted],
+            params![
+                query,
+                case_sensitive,
+                limit,
+                offset,
+                quoted,
+                qualified.is_some()
+            ],
             Storage::map_symbol_hit,
         )?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)

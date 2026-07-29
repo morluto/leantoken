@@ -345,7 +345,11 @@ pub(super) fn fts_quote(value: &str) -> String {
 
 impl Services {
     fn symbol_search_hit(&self, hit: SymbolHit, query: &str, excerpt: StoredExcerpt) -> SearchHit {
-        let exact = hit.symbol.name == query || hit.symbol.name.eq_ignore_ascii_case(query);
+        let exact = crate::symbol_identity::symbol_identity_matches_ignore_ascii_case(
+            query,
+            &hit.symbol.name,
+            hit.symbol.parent.as_deref(),
+        );
         SearchHit {
             path: hit.path,
             start_line: excerpt.start_line,

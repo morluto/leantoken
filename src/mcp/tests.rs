@@ -654,6 +654,18 @@ fn mcp_error_mapping_separates_invalid_input_from_internal_failures() {
         Some(&serde_json::json!(64))
     );
 
+    let ambiguous = into_mcp_error(crate::Error::AmbiguousSymbol {
+        path: "service.rs".into(),
+        symbol: "run".into(),
+    });
+    assert_eq!(ambiguous.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        ambiguous.data,
+        Some(serde_json::json!({
+            "category": "symbol_ambiguous",
+        }))
+    );
+
     let request_limit = into_mcp_error(crate::Error::RequestLimitExceeded {
         field: "max_tokens",
         requested: 32_001,
@@ -781,6 +793,10 @@ fn mcp_error_mapping_never_serializes_internal_or_input_paths() {
         crate::Error::PathOutsideRoot(windows_marker.into()),
         crate::Error::NotIndexed(unix_marker.into()),
         crate::Error::SymbolNotFound {
+            path: unix_marker.into(),
+            symbol: "sensitive-marker".into(),
+        },
+        crate::Error::AmbiguousSymbol {
             path: unix_marker.into(),
             symbol: "sensitive-marker".into(),
         },
