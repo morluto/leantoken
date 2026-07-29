@@ -1397,6 +1397,14 @@ and RSS limits. The run used fresh processes and databases, but did not evict
 the corpus from the operating-system page cache, so it is not cold-disk
 evidence.
 
+The later
+[explicit index-scope mechanism profile](reports/index-scope-tilelang-linux-x86_64-2026-07-29.md)
+uses the same pinned TileLang revision to compare a fresh full cache with an
+opt-in cache excluding `3rdparty/**`. It records the avoided membership,
+source, CPU, RSS, and SQLite work plus exact first-party read parity. That
+single-host profile supports explicit scope as a user-selected boundary; it
+does not change or make a latency claim for default full-repository indexing.
+
 The repository includes one transparent [Tokio Linux x86-64 profile](reports/indexing-tokio-linux-x86_64-2026-07-16.json).
 It is a single-host measurement, not a cross-platform conclusion. On that run,
 full no-op reconciliation was 28.4 ms p50 / 30.1 ms p95, targeted modification
