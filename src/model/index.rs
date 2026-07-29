@@ -161,6 +161,18 @@ pub struct StatusResponse {
     /// Index-content compatibility version used by this binary.
     #[serde(default)]
     pub index_content_version: u32,
+    /// Whether the cache covers the full ignore-visible repository.
+    #[serde(default)]
+    pub index_scope: IndexScopeMode,
+    /// Compact opaque identity for a scoped cache.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_scope_digest: Option<String>,
+    /// Canonical bounded include patterns that define indexed membership.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub index_include_paths: Vec<String>,
+    /// Canonical bounded exclude patterns that define indexed membership.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub index_exclude_paths: Vec<String>,
     pub repository_generation: u64,
     /// Whether a committed generation is available for retrieval.
     pub index_state: IndexState,

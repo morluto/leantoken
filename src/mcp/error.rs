@@ -168,6 +168,7 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
         crate::Error::RootNotFound(_)
         | crate::Error::UnsafeRepositoryRoot(_)
         | crate::Error::RepositoryMismatch { .. }
+        | crate::Error::IndexScopeMismatch { .. }
         | crate::Error::InvalidConfiguration(_) => {
             tracing::error!(%cause, "repository configuration is invalid");
             ErrorData::internal_error(

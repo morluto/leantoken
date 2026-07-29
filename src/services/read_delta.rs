@@ -786,6 +786,8 @@ mod tests {
                 repository_id: "repository".into(),
                 repository_generation: 1,
                 freshness: Freshness::Current,
+                index_scope: crate::model::IndexScopeMode::Full,
+                index_scope_digest: None,
                 source_tokens: 0,
                 protocol_tokens: 0,
                 path_and_metadata_tokens: 0,

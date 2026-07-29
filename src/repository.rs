@@ -17,6 +17,7 @@ use crate::{Error, Result};
 
 // Git owners intentionally share the bounded command runner and concrete
 // result types; no VCS abstraction or extra subprocess path is introduced.
+include!("repository/scope.rs");
 include!("repository/discovery.rs");
 include!("repository/path.rs");
 include!("repository/git/models.rs");

@@ -62,7 +62,7 @@ impl Indexer {
 
     fn config_hash_for_content_marker(&self, index_content_marker: &str) -> String {
         let input = format!(
-            "{index_content_marker}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
+            "{index_content_marker}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
             env!("CARGO_PKG_VERSION"),
             self.config.max_walk_entries,
             self.config.max_files,
@@ -72,6 +72,7 @@ impl Indexer {
             self.config.max_prepare_batch_files,
             self.config.max_prepare_batch_bytes,
             self.config.include_generated,
+            self.config.index_scope().identity_material(),
             self.config.chunk_lines,
             self.config.chunk_bytes,
             self.config.tokenizer.name()

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use leantoken::{Config, DiscoveryLimits, Error, services::Services};
+use leantoken::{Config, DiscoveryLimits, Error, IndexScope, services::Services};
 use leantoken::tokens::Tokenizer;
 
 #[test]
@@ -23,6 +23,35 @@ fn default_cache_identity_is_independent_per_repository() {
     let second = Config::discover(second_root.path(), None).expect("second config");
 
     assert_ne!(first.database_path, second.database_path);
+}
+
+#[test]
+fn managed_cache_identity_isolated_by_normalized_index_scope() {
+    let root = tempfile::tempdir().expect("root");
+    let full = Config::discover(root.path(), None).expect("full config");
+    let scoped = Config::discover_scoped(
+        root.path(),
+        None,
+        IndexScope::new(vec!["src/**".into()], vec!["third_party/**".into()])
+            .expect("scope"),
+    )
+    .expect("scoped config");
+    let equivalent = Config::discover_scoped(
+        root.path(),
+        None,
+        IndexScope::new(
+            vec!["./src\\**".into(), "src/**".into()],
+            vec!["third_party//**".into()],
+        )
+        .expect("equivalent scope"),
+    )
+    .expect("equivalent config");
+
+    assert_ne!(full.database_path, scoped.database_path);
+    assert_eq!(scoped.database_path, equivalent.database_path);
+    assert!(full.index_scope().is_full());
+    assert!(!scoped.index_scope().is_full());
+    assert_eq!(scoped.index_scope().digest(), equivalent.index_scope().digest());
 }
 
 #[test]

@@ -133,13 +133,18 @@ pub enum AccessTimeSource {
 /// Auditable description of one managed cache.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CacheEntry {
-    /// Stable directory identifier derived from the content version and repository root.
+    /// Stable directory identifier derived from content version, repository root, and scope.
     pub id: String,
     /// Managed cache directory.
     pub path: PathBuf,
     /// Index-content compatibility version encoded by this cache identity.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index_content_version: Option<u32>,
+    /// Whether the cache identity represents full or explicitly scoped membership.
+    pub index_scope: IndexScopeMode,
+    /// Compact opaque scope identity encoded by the managed-cache directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index_scope_digest: Option<String>,
     /// Recorded canonical repository root, when readable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_root: Option<PathBuf>,

@@ -7,7 +7,7 @@ use clap::Parser;
 use leantoken::mcp::{McpResultMode, tool_catalog_json, tool_result};
 use leantoken::model::{
     ContextFragment, ContextRequest, ContextResponse, ContextResponseProfile, ContextWorkflow,
-    EvidenceReceipt, Freshness, ResponseMeta,
+    EvidenceReceipt, Freshness, IndexScopeMode, ResponseMeta,
 };
 use wire_trace::{Direction, Event, RangeIdentity, RepositoryIdentity, TRACE_SCHEMA_V2, Trace};
 
@@ -94,6 +94,8 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
             repository_id: "repository".into(),
             repository_generation: 7,
             freshness: Freshness::Current,
+            index_scope: IndexScopeMode::Full,
+            index_scope_digest: None,
             source_tokens: 21,
             protocol_tokens: 0,
             path_and_metadata_tokens: 0,

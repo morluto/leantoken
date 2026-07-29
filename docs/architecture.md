@@ -181,11 +181,14 @@ The connection is configured with:
   migrations so existing databases receive the same query plan as new databases.
 
 Repository-aware service startup binds each database to its canonical
-repository root. Default cache paths are already repository-specific; an
-explicit database path claimed by a different root is rejected before either
-repository can reconcile it. Different repositories therefore have independent
+repository root and complete normalized index-scope digest. Default cache paths
+are already repository-and-scope-specific; an explicit database path claimed
+by a different root or scope is rejected before either configuration can
+reconcile it. The full-scope repository identity remains byte-compatible with
+earlier caches. Different repositories or scopes therefore have independent
 database, lock, watcher, worker, and failure domains. Multiple agents on one
-repository intentionally share the same cache and committed generations.
+repository and scope intentionally share the same cache and committed
+generations.
 
 One repository-scoped operation lock serializes reconciliation across processes.
 Discovery, hashing, and membership planning happen before publication. An
@@ -329,6 +332,37 @@ Recursive-watcher admission examines at most 100,000 total filesystem entries
 while proving the 50,000-directory registration bound. The admission walk runs
 as cancellable blocking work; entry overflow, cancellation, or traversal error
 selects periodic polling instead of delaying the async runtime.
+
+An optional immutable index scope adds normalized repository-relative include
+and exclude patterns to that same policy. Excludes win, and literal paths
+select complete subtrees. Directory filtering uses conservative static glob
+prefixes so it may retain an ancestor that later produces no match, but never
+prunes a possible match. Exact excluded subtrees and literal `prefix/**`
+patterns are rejected before descent, so their entries, files, bytes,
+preparation, parsing, and publication rows do not consume indexing work or
+discovery limits. Targeted reconciliation rejects out-of-scope additions and
+removes stale members; cross-boundary renames and ignore-control changes
+degrade safely to a complete scoped reconciliation. Periodic fallback uses the
+same policy. Recursive watcher admission still counts the complete kernel-watch
+surface because callback filtering cannot reduce the recursive backend's
+registration footprint.
+
+Scope input is bounded to 64 combined patterns, 1,024 bytes per pattern, and
+16 KiB total. Normalization converts separators, removes redundant current
+components, rejects absolute and parent-traversing forms, sorts, and
+deduplicates before compiling matchers. It performs no filesystem scan,
+subprocess, network request, or concurrency fan-out. The normalized full digest
+participates in the index configuration hash and storage binding. Managed cache
+directories carry a compact 16-hex-character digest, while SQLite binding uses
+the complete digest; even a compact-ID collision fails closed instead of
+sharing membership. The legacy full cache ID remains unchanged.
+
+Status returns full/scoped mode, the compact digest, and the bounded normalized
+patterns. Every retrieval `ResponseMeta` returns full/scoped mode and the
+compact digest, so callers cannot promote an empty scoped result into
+whole-repository negative evidence. Scope does not alter ranking, token
+selection, or exact results for files admitted by both otherwise-identical
+indexes.
 
 Configured SQLite databases and their four coordination lock sidecars are always
 excluded from repository membership. Old unconfigured coordination sidecars are
@@ -922,7 +956,8 @@ invent empty successful results at generation zero.
   lock artifacts therefore share one identity even below symlink aliases and
   cannot enter repository discovery or watcher reconciliation.
 - A repository root is persisted in cache metadata. Canonical aliases of the
-  same root share it; a different root cannot reuse that database explicitly.
+  same root and normalized scope share it; a different root or scope cannot
+  reuse that database explicitly.
 - Connection capacity remains per process/repository. The bounded established
   pool reuses read-only connections and prepared statements; it is not a global
   multi-repository coordination mechanism. Each process establishes at most

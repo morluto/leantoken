@@ -12,7 +12,7 @@
         process_raw_event(
             Ok(event),
             root.path(),
-            DiscoveryPolicy::default(),
+            &DiscoveryPolicy::default(),
             &mut pending,
             &mut rename_from,
             &mut rename_to,
@@ -37,12 +37,12 @@
         assert!(!raw_event_is_relevant(
             &Ok(generated_event.clone()),
             root.path(),
-            DiscoveryPolicy::default(),
+            &DiscoveryPolicy::default(),
         ));
         assert!(raw_event_is_relevant(
             &Ok(generated_event),
             root.path(),
-            DiscoveryPolicy::new(true),
+            &DiscoveryPolicy::new(true),
         ));
 
         let visible = root.path().join(".github/workflows/ci.yml");
@@ -51,7 +51,7 @@
         assert!(raw_event_is_relevant(
             &Ok(Event::new(EventKind::Any).add_path(visible)),
             root.path(),
-            DiscoveryPolicy::default(),
+            &DiscoveryPolicy::default(),
         ));
 
         let git_config = root.path().join(".git/config");
@@ -60,7 +60,7 @@
         assert!(!raw_event_is_relevant(
             &Ok(Event::new(EventKind::Any).add_path(git_config)),
             root.path(),
-            DiscoveryPolicy::default(),
+            &DiscoveryPolicy::default(),
         ));
 
         let rescan = Event::new(EventKind::Other)
@@ -69,7 +69,7 @@
         assert!(raw_event_is_relevant(
             &Ok(rescan),
             root.path(),
-            DiscoveryPolicy::default(),
+            &DiscoveryPolicy::default(),
         ));
     }
 
@@ -82,8 +82,74 @@
         assert!(!raw_event_is_relevant(
             &Ok(event),
             root.path(),
-            DiscoveryPolicy::default(),
+            &DiscoveryPolicy::default(),
         ));
+    }
+
+    #[test]
+    fn scoped_watcher_keeps_relevant_paths_and_ancestor_ignore_controls() {
+        let root = tempfile::tempdir().unwrap();
+        let policy = DiscoveryPolicy::default().with_index_scope(
+            crate::IndexScope::new(
+                vec!["src/**".into()],
+                vec!["src/generated/**".into()],
+            )
+            .expect("scope"),
+        );
+        let event = |path: &str| {
+            Ok(Event::new(EventKind::Any).add_path(root.path().join(path)))
+        };
+
+        assert!(raw_event_is_relevant(
+            &event("src/lib.rs"),
+            root.path(),
+            &policy,
+        ));
+        assert!(!raw_event_is_relevant(
+            &event("third_party/lib.rs"),
+            root.path(),
+            &policy,
+        ));
+        assert!(!raw_event_is_relevant(
+            &event("src/generated/schema.rs"),
+            root.path(),
+            &policy,
+        ));
+        assert!(raw_event_is_relevant(
+            &event(".gitignore"),
+            root.path(),
+            &policy,
+        ));
+        assert!(raw_event_is_relevant(
+            &event("src/.leantokenignore"),
+            root.path(),
+            &policy,
+        ));
+        assert!(!raw_event_is_relevant(
+            &event("third_party/.gitignore"),
+            root.path(),
+            &policy,
+        ));
+
+        let mut pending = BTreeSet::new();
+        let mut rename_from = HashMap::new();
+        let mut rename_to = HashMap::new();
+        let mut reconcile = false;
+        process_raw_event(
+            Ok(
+                Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+                    .add_path(root.path().join("src/lib.rs"))
+                    .add_path(root.path().join("third_party/lib.rs")),
+            ),
+            root.path(),
+            &policy,
+            &mut pending,
+            &mut rename_from,
+            &mut rename_to,
+            &mut reconcile,
+        );
+        assert!(reconcile, "cross-scope rename requires a full scoped reconciliation");
+        assert!(pending.is_empty());
     }
 
     #[test]

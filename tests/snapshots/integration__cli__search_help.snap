@@ -59,14 +59,14 @@ Options:
       --all-occurrences
           Return every text or regex occurrence with exact coordinates and counts
 
-      --database <PATH>
-          SQLite database path
-
       --prefer-structural
           Prefer structural definitions when identifier channels find the same definition
 
       --cursor <CURSOR>
           Pagination cursor
+
+      --database <PATH>
+          SQLite database path
 
       --json
           Emit compact JSON; retrieval commands use pretty JSON by default

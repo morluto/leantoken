@@ -20,6 +20,7 @@ use crate::coordination::{
     COORDINATION_LOCK_SUFFIXES, DEFAULT_INDEX_DATABASE_NAME, IndexCoordination, LEASE_LOCK_SUFFIX,
     coordination_sidecar_path, is_coordination_sidecar_for_database,
 };
+use crate::model::IndexScopeMode;
 use crate::storage::{CURRENT_MIGRATION_VERSION, CURRENT_SCHEMA_VERSION};
 use crate::{Error, Result};
 

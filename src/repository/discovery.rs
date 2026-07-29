@@ -25,21 +25,32 @@ const GENERATED_DIRECTORY_PATHS: &[&[&str]] = &[
 ];
 
 /// Repository visibility policy shared by discovery, reconciliation, and watching.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DiscoveryPolicy {
     include_generated: bool,
+    index_scope: IndexScope,
 }
 
 impl DiscoveryPolicy {
     /// Build a policy, optionally admitting known generated and cache trees.
     #[must_use]
-    pub const fn new(include_generated: bool) -> Self {
-        Self { include_generated }
+    pub fn new(include_generated: bool) -> Self {
+        Self {
+            include_generated,
+            index_scope: IndexScope::default(),
+        }
+    }
+
+    /// Apply an immutable repository indexing boundary.
+    #[must_use]
+    pub fn with_index_scope(mut self, index_scope: IndexScope) -> Self {
+        self.index_scope = index_scope;
+        self
     }
 
     /// Return whether known generated and cache trees are admitted.
     #[must_use]
-    pub const fn includes_generated(self) -> bool {
+    pub const fn includes_generated(&self) -> bool {
         self.include_generated
     }
 
@@ -50,18 +61,36 @@ impl DiscoveryPolicy {
     /// returned by [`slash_path`]. Git metadata is never visible, including
     /// when generated trees are explicitly included.
     #[must_use]
-    pub fn includes_path(self, relative_path: &str, path_is_directory: bool) -> bool {
+    pub fn includes_path(&self, relative_path: &str, path_is_directory: bool) -> bool {
         !is_git_metadata_path(relative_path)
             && (self.include_generated || !is_generated_path(relative_path, path_is_directory))
+            && self
+                .index_scope
+                .includes_path(relative_path, path_is_directory)
     }
 
-    pub(crate) fn is_ignore_control_path(self, relative_path: &str) -> bool {
+    pub(crate) fn is_ignore_control_path(&self, relative_path: &str) -> bool {
         relative_path == ".gitignore"
             || relative_path == ".ignore"
             || relative_path == LEANTOKEN_IGNORE_FILE
             || relative_path.ends_with("/.gitignore")
             || relative_path.ends_with("/.ignore")
             || relative_path.ends_with("/.leantokenignore")
+    }
+
+    pub(crate) fn includes_watch_path(
+        &self,
+        relative_path: &str,
+        path_is_directory: bool,
+    ) -> bool {
+        if self.includes_path(relative_path, path_is_directory) {
+            return true;
+        }
+        if !self.is_ignore_control_path(relative_path) {
+            return false;
+        }
+        let parent = relative_path.rsplit_once('/').map_or("", |(parent, _)| parent);
+        self.index_scope.may_include_descendant(parent)
     }
 }
 

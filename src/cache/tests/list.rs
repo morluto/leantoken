@@ -21,6 +21,8 @@
         assert!(!report.summary_only);
         assert!(report.next_cursor.is_none());
         assert_eq!(report.entries[0].state, CacheState::Current);
+        assert_eq!(report.entries[0].index_scope, IndexScopeMode::Full);
+        assert_eq!(report.entries[0].index_scope_digest, None);
         assert_eq!(
             report.entries[0].index_content_version,
             Some(INDEX_CONTENT_VERSION)
@@ -38,6 +40,30 @@
         );
         assert!(report.total_bytes > 0);
         assert_eq!(report.matched_bytes, report.total_bytes);
+    }
+
+    #[test]
+    fn list_distinguishes_scoped_cache_identity_without_exposing_patterns() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let root = temp.path().join("managed");
+        let repository = temp.path().join("repository");
+        fs::create_dir(&repository).expect("repository");
+        let repository = fs::canonicalize(repository).expect("canonical repository");
+        let manager = CacheManager::new(root, 10_000);
+        let scope = IndexScope::new(
+            vec!["src/**".into()],
+            vec!["third_party/**".into()],
+        )
+        .expect("scope");
+        let (id, _) = create_scoped_cache(&manager, &repository, &scope);
+
+        let report = manager.list().expect("cache list");
+        let entry = report.entries.first().expect("scoped entry");
+        assert_eq!(entry.id, id);
+        assert_eq!(entry.index_scope, IndexScopeMode::Scoped);
+        assert_eq!(entry.index_scope_digest.as_deref(), scope.digest());
+        assert_eq!(entry.repository_root.as_deref(), Some(repository.as_path()));
+        assert_eq!(entry.state, CacheState::Current);
     }
 
     #[test]

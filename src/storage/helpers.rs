@@ -34,7 +34,7 @@ fn count_table_rows(conn: &Connection, table: &str) -> Result<usize> {
     Ok(i64_to_usize(conn.query_row(&sql, [], |row| row.get(0))?)?)
 }
 
-fn repository_identity(path: &Path) -> String {
+fn repository_identity(path: &Path, index_scope_digest: Option<&str>) -> String {
     let mut hasher = blake3::Hasher::new();
     #[cfg(unix)]
     {
@@ -50,6 +50,10 @@ fn repository_identity(path: &Path) -> String {
     }
     #[cfg(not(any(unix, windows)))]
     hasher.update(path.to_string_lossy().as_bytes());
+    if let Some(scope_digest) = index_scope_digest {
+        hasher.update(b"\0leantoken-index-scope-v1\0");
+        hasher.update(scope_digest.as_bytes());
+    }
     hasher.finalize().to_hex().to_string()
 }
 

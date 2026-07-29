@@ -542,6 +542,12 @@ impl Services {
             repository_id: self.repository_id(),
             repository_generation: generation,
             freshness: self.freshness(),
+            index_scope: if self.config.index_scope().is_full() {
+                IndexScopeMode::Full
+            } else {
+                IndexScopeMode::Scoped
+            },
+            index_scope_digest: self.config.index_scope().digest().map(str::to_owned),
             source_tokens: emitted_tokens,
             protocol_tokens: 0,
             path_and_metadata_tokens: 0,
