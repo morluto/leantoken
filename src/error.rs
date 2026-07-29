@@ -89,6 +89,21 @@ impl std::fmt::Display for InputViolations {
     }
 }
 
+/// Exact aggregate accounting for the smallest retryable service response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct ResponseBudgetBreakdown {
+    /// Tokens required by the mandatory response DTO before receipt reservation.
+    pub mandatory_response_tokens: usize,
+    /// Source-content tokens within the mandatory response.
+    pub source_tokens: usize,
+    /// Protocol-envelope tokens within the mandatory response.
+    pub protocol_tokens: usize,
+    /// Path, metadata, and repeated-structure tokens within the mandatory response.
+    pub path_and_metadata_tokens: usize,
+    /// Additional tokens reserved for worst-case receipt metadata.
+    pub receipt_reserve_tokens: usize,
+}
+
 /// Errors returned by LeanToken operations.
 ///
 /// Callers should match the variants they can recover from and retain a
@@ -161,6 +176,20 @@ pub enum Error {
         requested: usize,
         /// Configured inclusive maximum.
         limit: usize,
+    },
+    /// A caller-provided response ceiling cannot hold the smallest valid DTO.
+    #[error(
+        "max_response_tokens is too small: provided {provided_max_response_tokens}, minimum required {minimum_required_response_tokens}; retry with at least {retry_with_at_least}"
+    )]
+    ResponseBudgetExceeded {
+        /// Caller-provided response-token ceiling.
+        provided_max_response_tokens: usize,
+        /// Exact token count of the smallest valid response, including reserves.
+        minimum_required_response_tokens: usize,
+        /// Exact inclusive ceiling that the caller can retry with.
+        retry_with_at_least: usize,
+        /// Bounded aggregate accounting for the retryable minimum.
+        breakdown: ResponseBudgetBreakdown,
     },
     #[error("unsupported structured language for {0}")]
     UnsupportedLanguage(String),
@@ -326,7 +355,9 @@ impl Error {
             Self::InvalidJson { .. } => "invalid_json",
             Self::InvalidJsonSelector { .. } => "invalid_json_selector",
             Self::InputTooLong { .. } => "input_too_long",
-            Self::RequestLimitExceeded { .. } | Self::LimitExceeded => "request_limit_exceeded",
+            Self::RequestLimitExceeded { .. }
+            | Self::ResponseBudgetExceeded { .. }
+            | Self::LimitExceeded => "request_limit_exceeded",
             Self::NotIndexed(_) => "not_indexed",
             Self::SymbolNotFound { .. } => "symbol_not_found",
             Self::AmbiguousSymbol { .. } => "symbol_ambiguous",
@@ -383,6 +414,7 @@ impl Error {
             Self::HeadingNotFound { .. } => "heading_not_found",
             Self::LimitExceeded => "limit_exceeded",
             Self::RequestLimitExceeded { .. } => "request_limit_exceeded",
+            Self::ResponseBudgetExceeded { .. } => "request_limit_exceeded",
             Self::UnsupportedLanguage(_) => "unsupported_language",
             Self::InvalidInput { .. } | Self::InvalidInputConstraints(_) => "invalid_input",
             Self::InvalidJson { .. } => "invalid_json",

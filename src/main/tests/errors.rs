@@ -53,6 +53,37 @@
                 }),
             ),
             (
+                leantoken::Error::ResponseBudgetExceeded {
+                    provided_max_response_tokens: 40,
+                    minimum_required_response_tokens: 73,
+                    retry_with_at_least: 73,
+                    breakdown: leantoken::ResponseBudgetBreakdown {
+                        mandatory_response_tokens: 61,
+                        source_tokens: 17,
+                        protocol_tokens: 20,
+                        path_and_metadata_tokens: 24,
+                        receipt_reserve_tokens: 12,
+                    },
+                },
+                serde_json::json!({
+                    "error": "max_response_tokens is too small: provided 40, minimum required 73; retry with at least 73",
+                    "category": "request_limit_exceeded",
+                    "field": "max_response_tokens",
+                    "requested": 73,
+                    "limit": 40,
+                    "provided_max_response_tokens": 40,
+                    "minimum_required_response_tokens": 73,
+                    "retry_with_at_least": 73,
+                    "breakdown": {
+                        "mandatory_response_tokens": 61,
+                        "source_tokens": 17,
+                        "protocol_tokens": 20,
+                        "path_and_metadata_tokens": 24,
+                        "receipt_reserve_tokens": 12
+                    }
+                }),
+            ),
+            (
                 leantoken::Error::LimitExceeded,
                 serde_json::json!({
                     "error": "requested content exceeds the configured limit",

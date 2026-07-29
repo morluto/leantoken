@@ -121,6 +121,34 @@ fn assert_limit_exceeded(
     );
 }
 
+fn assert_response_budget_error(
+    error: Error,
+    provided_max_response_tokens: usize,
+) -> (usize, leantoken::ResponseBudgetBreakdown) {
+    let Error::ResponseBudgetExceeded {
+        provided_max_response_tokens: provided,
+        minimum_required_response_tokens,
+        retry_with_at_least,
+        breakdown,
+    } = error
+    else {
+        panic!("unexpected response-budget error: {error:?}");
+    };
+    assert_eq!(provided, provided_max_response_tokens);
+    assert_eq!(retry_with_at_least, minimum_required_response_tokens);
+    assert_eq!(
+        breakdown.mandatory_response_tokens + breakdown.receipt_reserve_tokens,
+        minimum_required_response_tokens
+    );
+    assert_eq!(
+        breakdown.source_tokens
+            + breakdown.protocol_tokens
+            + breakdown.path_and_metadata_tokens,
+        breakdown.mandatory_response_tokens
+    );
+    (minimum_required_response_tokens, breakdown)
+}
+
 fn files_limit_request(max_results: Option<usize>) -> FilesRequest {
     FilesRequest {
         operation: FileOperation::Tree,

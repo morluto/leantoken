@@ -274,11 +274,11 @@ impl Services {
                     self.finalized_response_tokens_with_receipt_reserve(&response, returned_items)?;
             }
             if reserved > limit {
-                return Err(Error::RequestLimitExceeded {
-                    field: "max_response_tokens",
-                    requested: reserved,
+                return Err(self.response_budget_error_with_receipt_reserve(
+                    &response,
+                    returned_items,
                     limit,
-                });
+                )?);
             }
         }
         let receipt_candidates = if response.not_modified {
@@ -376,15 +376,11 @@ impl Services {
         }
 
         let minimum = self.read_at_generation(session, request, generation, 1)?;
-        let requested = self.finalized_response_tokens_with_receipt_reserve(
+        Err(self.response_budget_error_with_receipt_reserve(
             &minimum.response,
             usize::from(!minimum.response.not_modified),
-        )?;
-        Err(Error::RequestLimitExceeded {
-            field: "max_response_tokens",
-            requested,
-            limit: max_response_tokens,
-        })
+            max_response_tokens,
+        )?)
     }
 
     fn read_at_generation(

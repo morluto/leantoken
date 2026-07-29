@@ -48,6 +48,24 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
             "request exceeds a configured limit",
             mcp_error_data(cause.public_category()),
         ),
+        crate::Error::ResponseBudgetExceeded {
+            provided_max_response_tokens,
+            minimum_required_response_tokens,
+            retry_with_at_least,
+            breakdown,
+        } => ErrorData::invalid_params(
+            format!("max_response_tokens is too small; retry with at least {retry_with_at_least}"),
+            Some(serde_json::json!({
+                "category": cause.public_category(),
+                "field": "max_response_tokens",
+                "requested": minimum_required_response_tokens,
+                "limit": provided_max_response_tokens,
+                "provided_max_response_tokens": provided_max_response_tokens,
+                "minimum_required_response_tokens": minimum_required_response_tokens,
+                "retry_with_at_least": retry_with_at_least,
+                "breakdown": breakdown,
+            })),
+        ),
         crate::Error::RequestLimitExceeded {
             field,
             requested,

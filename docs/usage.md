@@ -1117,7 +1117,12 @@ exact total. Source limits remain independent and do not by themselves impose a
 hard ceiling on the final serialization. All retrieval callers can opt into
 that second boundary with `ServiceCallOptions`, MCP `max_response_tokens`, or
 CLI `--max-response-tokens`; a mandatory correctness skeleton that cannot fit
-returns a typed limit error. `files`, `read`, history text/commit results,
+returns a typed `ResponseBudgetExceeded` error. CLI JSON and MCP error data
+include `provided_max_response_tokens`, `minimum_required_response_tokens`,
+`retry_with_at_least`, and a bounded aggregate `breakdown`; the legacy
+`requested` and `limit` fields remain available. Retrying with the reported
+minimum is exact, while one token less remains insufficient. `files`, `read`,
+history text/commit results,
 context, and JSON keys pages use deterministic operation-aware fitting. Other
 shapes fail loudly instead of dropping evidence without a valid continuation.
 These counts and limits describe the service

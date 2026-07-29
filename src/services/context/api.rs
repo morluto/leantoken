@@ -236,11 +236,11 @@ impl Services {
             {
                 return self.observe_service_result(
                     operation,
-                    Err(Error::RequestLimitExceeded {
-                        field: "max_response_tokens",
-                        requested: response.meta.total_response_tokens,
-                        limit: max_response_tokens,
-                    }),
+                    Err(Self::response_budget_exceeded(
+                        &response.meta,
+                        max_response_tokens,
+                        response.meta.total_response_tokens,
+                    )),
                 );
             }
         }
