@@ -1,4 +1,46 @@
 impl ReadSession {
+    pub(crate) fn receipt_structural_hash_matches(
+        &self,
+        file_id: i64,
+        start_line: usize,
+        end_line: usize,
+        content_hash: &str,
+    ) -> Result<Option<bool>> {
+        let limit = crate::receipt::MAX_REBASE_STRUCTURAL_CANDIDATES_PER_EVIDENCE;
+        let mut statement = self.conn.prepare_cached(
+            "SELECT content
+             FROM (
+                 SELECT COALESCE(signature, name) AS content, rowid AS stable_id, 0 AS kind
+                 FROM symbols
+                 WHERE file_id = ?1 AND start_line = ?2 AND end_line = ?3
+                 UNION ALL
+                 SELECT raw_target AS content, id AS stable_id, 1 AS kind
+                 FROM imports
+                 WHERE file_id = ?1 AND line = ?2 AND line = ?3
+             )
+             ORDER BY kind, stable_id
+             LIMIT ?4",
+        )?;
+        let mut rows = statement.query(params![
+            file_id,
+            usize_to_i64(start_line)?,
+            usize_to_i64(end_line)?,
+            usize_to_i64(limit.saturating_add(1))?,
+        ])?;
+        let mut count = 0usize;
+        while let Some(row) = rows.next()? {
+            count = count.saturating_add(1);
+            let content: String = row.get(0)?;
+            if crate::text::hash(&content) == content_hash {
+                return Ok(Some(true));
+            }
+        }
+        if count > limit {
+            return Ok(None);
+        }
+        Ok(Some(false))
+    }
+
     pub fn get_chunks_for_file(
         &self,
         file_id: i64,

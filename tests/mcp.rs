@@ -536,7 +536,15 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .map(|tool| tool.name.as_ref())
         .collect::<std::collections::BTreeSet<_>>();
     let expected_names = [
-        "context", "files", "history", "json", "outline", "read", "savings", "search",
+        "context",
+        "files",
+        "history",
+        "json",
+        "outline",
+        "read",
+        "receipt_rebase",
+        "savings",
+        "search",
     ]
     .into_iter()
     .collect::<std::collections::BTreeSet<_>>();

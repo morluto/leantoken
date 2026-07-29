@@ -286,7 +286,7 @@ mod tests {
                 .as_array()
                 .expect("tools array")
                 .len(),
-            8
+            9
         );
         let result: serde_json::Value =
             serde_json::from_str(trace.events[6].raw_json.as_deref().expect("result raw"))

@@ -14,7 +14,7 @@ pub(crate) enum ReconciliationPublicationPhase {
 // disk footprint after a large initial publication.
 const WAL_JOURNAL_SIZE_LIMIT_BYTES: i64 = 16 * 1024 * 1024;
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 8;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 9;
 
 /// Default row limit used by callers that do not provide a tighter bound.
 pub const DEFAULT_MAX_RESULTS: usize = 100;

@@ -363,6 +363,21 @@ END;
 UPDATE meta SET schema_version = 8 WHERE id = 1;
 "#;
 
+const RECEIPT_EXACT_ONLY_SQL: &str = r#"
+ALTER TABLE retrieval_receipt_evidence
+ADD COLUMN exact_only INTEGER NOT NULL DEFAULT 0 CHECK (exact_only IN (0, 1));
+
+UPDATE retrieval_receipt_evidence
+SET logical_bytes = logical_bytes + 8;
+UPDATE retrieval_receipts
+SET evidence_bytes = evidence_bytes + evidence_count * 8;
+UPDATE retrieval_receipt_usage
+SET evidence_bytes = evidence_bytes + evidence_count * 8
+WHERE id = 1;
+
+UPDATE meta SET schema_version = 9 WHERE id = 1;
+"#;
+
 const TOKEN_SAVINGS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS token_savings (
     tokenizer TEXT NOT NULL,
@@ -410,7 +425,8 @@ const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(STRUCTURAL_SEARCH_SQL),
     M::up(RETRIEVAL_RECEIPTS_SQL).foreign_key_check(),
     M::up(READ_DELTA_BASES_SQL),
+    M::up(RECEIPT_EXACT_ONLY_SQL),
 ];
-pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 9;
+pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 10;
 const _: () = assert!(MIGRATIONS_SLICE.len() == CURRENT_MIGRATION_VERSION as usize);
 const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);

@@ -11,6 +11,7 @@ mod index;
 mod json;
 mod outline;
 mod read;
+mod receipt;
 mod savings;
 mod search;
 
@@ -22,6 +23,7 @@ pub use index::*;
 pub use json::*;
 pub use outline::*;
 pub use read::*;
+pub use receipt::*;
 pub use savings::*;
 pub use search::*;
 

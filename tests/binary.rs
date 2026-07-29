@@ -565,7 +565,7 @@ fn doctor_verifies_identity_catalog_and_first_retrieval() {
         EXPECTED_INDEX_CONTENT_VERSION
     );
     assert_eq!(report["instructions_loaded"], true);
-    assert_eq!(report["tools"].as_array().map(Vec::len), Some(8));
+    assert_eq!(report["tools"].as_array().map(Vec::len), Some(9));
     assert_eq!(report["result_mode"]["requested_mode"], "auto");
     assert_eq!(report["result_mode"]["resolved_mode"], "dual");
     assert_eq!(report["result_mode"]["reason"], "client_name_miss");
@@ -661,7 +661,7 @@ fn doctor_human_output_uses_context_distillery_handoff() {
     assert!(stdout.contains(&format!(
         "Index compatibility: v{EXPECTED_INDEX_CONTENT_VERSION}"
     )));
-    assert!(stdout.contains("Tool catalog: 8 MCP tools"));
+    assert!(stdout.contains("Tool catalog: 9 MCP tools"));
     assert!(stdout.contains("leantoken.context first"));
 }
 
@@ -909,6 +909,119 @@ fn mcp_receipt_created_by_one_process_is_reused_by_another() {
 }
 
 #[test]
+fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "pub fn cross_process_rebase_answer() -> u8 { 42 }\n",
+    )
+    .expect("write fixture");
+    let database = root.path().join("index.sqlite");
+
+    let mut first = McpProcess::spawn(root.path(), &database);
+    first.initialize();
+    first.send_initialized();
+    first.wait_until_ready(Duration::from_secs(30));
+    first.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 903,
+        "method": "tools/call",
+        "params": {
+            "name": "search",
+            "arguments": {
+                "query": "cross_process_rebase_answer",
+                "mode": "identifier",
+                "max_results": 5,
+                "max_tokens": 1_000
+            }
+        }
+    }));
+    let first_response = first.response(Duration::from_secs(10));
+    let source_receipt = first_response["result"]["structuredContent"]["meta"]["receipt_id"]
+        .as_str()
+        .expect("source receipt")
+        .to_owned();
+    let source_generation =
+        first_response["result"]["structuredContent"]["meta"]["repository_generation"]
+            .as_u64()
+            .expect("source generation");
+    first.stop();
+
+    std::fs::write(root.path().join("unrelated.rs"), "fn unrelated() {}\n")
+        .expect("write unrelated source");
+    let mut second = McpProcess::spawn(root.path(), &database);
+    second.initialize();
+    second.send_initialized();
+    second.wait_until_ready(Duration::from_secs(30));
+    second.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 904,
+        "method": "tools/call",
+        "params": {
+            "name": "receipt_rebase",
+            "arguments": {
+                "receipt_id": source_receipt,
+                "consistency": "reconcile_working_tree",
+                "max_samples_per_outcome": 4
+            }
+        }
+    }));
+    let second_response = second.response(Duration::from_secs(10));
+    let rebased = &second_response["result"]["structuredContent"];
+    assert_eq!(rebased["counts"]["carried"], 1, "{second_response}");
+    assert_eq!(rebased["counts"]["changed"], 0, "{second_response}");
+    assert!(
+        rebased["meta"]["repository_generation"]
+            .as_u64()
+            .is_some_and(|generation| generation > source_generation),
+        "{second_response}"
+    );
+    let rebased_receipt = rebased["meta"]["receipt_id"]
+        .as_str()
+        .expect("rebased receipt")
+        .to_owned();
+    second.stop();
+
+    let mut third = McpProcess::spawn(root.path(), &database);
+    third.initialize();
+    third.send_initialized();
+    third.wait_until_ready(Duration::from_secs(30));
+    third.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 905,
+        "method": "tools/call",
+        "params": {
+            "name": "search",
+            "arguments": {
+                "query": "cross_process_rebase_answer",
+                "mode": "identifier",
+                "max_results": 5,
+                "max_tokens": 1_000,
+                "receipt_id": rebased_receipt
+            }
+        }
+    }));
+    let third_response = third.response(Duration::from_secs(10));
+    let third_result = &third_response["result"]["structuredContent"];
+    assert!(
+        third_result["hits"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "{third_response}"
+    );
+    assert!(
+        third_result["meta"]["receipt_suppressed_exact"]
+            .as_u64()
+            .unwrap_or_default()
+            + third_result["meta"]["receipt_suppressed_overlap"]
+                .as_u64()
+                .unwrap_or_default()
+            > 0,
+        "{third_response}"
+    );
+}
+
+#[test]
 fn mcp_initialize_precedes_storage_open() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn answer() {}\n").expect("write fixture");
@@ -996,6 +1109,7 @@ fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
             "json",
             "outline",
             "read",
+            "receipt_rebase",
             "savings",
             "search",
         ]
@@ -2002,6 +2116,7 @@ fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
             "json",
             "outline",
             "read",
+            "receipt_rebase",
             "savings",
             "search"
         ])

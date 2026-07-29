@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use super::{McpResultMode, mcp_schema_fingerprint};
 
-const CURRENT_VERIFIED_CATALOG_DIGEST: &str = "2a685897e677559e8ccb964b536afc89";
+const CURRENT_VERIFIED_CATALOG_DIGEST: &str = "e0119afc74f7294dc28751ea54516a7c";
 
 #[derive(Debug, Clone, Copy)]
 struct CompatibilityRow {
@@ -356,11 +356,8 @@ mod tests {
             receipt["catalog_review"]["tool_catalog_digest"],
             runtime.catalog_digest
         );
-        assert_eq!(
-            receipt["catalog_review"]["change_kind"],
-            "context_description_only"
-        );
-        assert_eq!(receipt["catalog_review"]["input_schema_changed"], false);
+        assert_eq!(receipt["catalog_review"]["change_kind"], "additive_tool");
+        assert_eq!(receipt["catalog_review"]["input_schema_changed"], true);
         assert_eq!(
             receipt["catalog_review"]["result_projection_changed"],
             false

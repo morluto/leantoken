@@ -341,6 +341,46 @@ impl LeanTokenMcp {
     }
 
     #[tool(
+        name = "receipt_rebase",
+        description = "Explicitly carry only exactly unchanged evidence from a stale server-managed receipt into the current committed generation. Requires the same repository/cache/scope identity and exact path, line coordinates, and content hash; never guesses line shifts, renames, symbol relocation, overlap, near-duplicates, or fuzzy matches. Returns complete carried/changed/missing/unmapped counts, bounded source-free samples, and a digest. Example: {\"receipt_id\":\"r...\",\"consistency\":\"reconcile_working_tree\"}."
+    )]
+    async fn leantoken_receipt_rebase(
+        &self,
+        Parameters(req): Parameters<ReceiptRebaseMcpRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let prepared = match self
+            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .await?
+        {
+            RetrievalPreparation::Ready(prepared) => prepared,
+            RetrievalPreparation::Unavailable(result) => return Ok(result),
+        };
+        let (request, consistency, options, expected_repository_id) = req.into_parts();
+        self.run_prepared(
+            "receipt_rebase",
+            prepared,
+            expected_repository_id,
+            move |services, cancellation, deadline| {
+                let request = request.clone();
+                let options = options.with_initial_reconciliation_deadline(deadline);
+                async move {
+                    services
+                        .rebase_receipt_with_options_consistency_cancellable(
+                            request,
+                            consistency,
+                            options,
+                            cancellation,
+                        )
+                        .await
+                        .and_then(serialized_response)
+                }
+            },
+        )
+        .await
+    }
+
+    #[tool(
         name = "savings",
         description = "Report repository-local response accounting, request classifications, expected-hash suppression, service failures, and unobserved task outcomes. Returns an opaque snapshot for a later bounded delta; savings are retrieval accounting, not task-success claims. Example: {}.",
         annotations(read_only_hint = true, open_world_hint = false)
