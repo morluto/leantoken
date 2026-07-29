@@ -754,10 +754,15 @@ the same keyset cursor. `search=grouped` groups at most the selected search page
 retains only one source excerpt per group, and summarizes reference hits without
 another index lookup. `outline=signatures` excludes imports during the existing
 bounded outline walk, drops byte offsets, and hashes each file's ordered compact
-signature array once. Its cursor query hash includes the projection so full and
-signature-only offsets cannot be mixed. All three projections are finalized and
-checked against `max_response_tokens` inside `Services`; a compact correctness
-skeleton that cannot fit returns typed `RequestLimitExceeded`.
+signature array once. Full and signature outline responses retain at most 256
+ordered per-input path outcomes from the same read snapshot; absent index rows
+are typed `not_indexed` without consulting the live filesystem. Their cursor
+hash includes the ordered normalized path list, filters, generation, and
+projection, while the global entry offset traverses only indexed files, so
+partial-success pages cannot be mixed or silently omit a path outcome. All three
+projections are finalized and checked against `max_response_tokens` inside
+`Services`; a compact correctness skeleton that cannot fit returns typed
+`RequestLimitExceeded`.
 
 MCP JSON keys use depth-then-pointer order and an optional maximum depth of 64;
 root depth is zero and array elements share one wildcard path. Version-two keys

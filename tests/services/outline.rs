@@ -1,6 +1,145 @@
 use super::*;
 
 #[tokio::test]
+async fn multi_path_outline_reports_each_path_without_aborting_indexed_results() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir_all(root.path().join("src")).expect("source directory");
+    std::fs::create_dir(root.path().join(".git")).expect("git marker");
+    std::fs::write(
+        root.path().join("src/indexed.rs"),
+        "fn first() {}\nfn second() {}\n",
+    )
+    .expect("indexed source");
+    std::fs::write(root.path().join("ignored.rs"), "fn ignored() {}\n")
+        .expect("ignored source");
+    std::fs::write(root.path().join(".gitignore"), "ignored.rs\n").expect("ignore rules");
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index");
+
+    let request = OutlineRequest {
+        paths: vec![
+            "src/./indexed.rs".into(),
+            "ignored.rs".into(),
+            "missing.rs".into(),
+        ],
+        symbol_name: None,
+        symbol_kind: None,
+        max_results: Some(1),
+        max_tokens: Some(32_000),
+        receipt_id: None,
+        cursor: None,
+    };
+    let first = services
+        .outline(request.clone())
+        .await
+        .expect("partial outline page");
+    assert_eq!(
+        first.path_results,
+        vec![
+            OutlinePathResult {
+                request_index: 0,
+                path: "src/indexed.rs".into(),
+                status: OutlinePathStatus::Indexed,
+            },
+            OutlinePathResult {
+                request_index: 1,
+                path: "ignored.rs".into(),
+                status: OutlinePathStatus::NotIndexed,
+            },
+            OutlinePathResult {
+                request_index: 2,
+                path: "missing.rs".into(),
+                status: OutlinePathStatus::NotIndexed,
+            },
+        ]
+    );
+    assert_eq!(first.files.len(), 1);
+    assert_eq!(first.files[0].path, "src/indexed.rs");
+    assert_eq!(first.total_symbols, 2);
+    assert_eq!(first.returned_symbols, 1);
+    assert!(!first.parse_complete);
+    assert!(!first.result_complete);
+    assert!(first.truncated_by_max_results);
+    let wire = serde_json::to_value(&first).expect("serialize partial outline");
+    assert_eq!(
+        wire["path_results"],
+        serde_json::json!([
+            {
+                "request_index": 0,
+                "path": "src/indexed.rs",
+                "status": "indexed"
+            },
+            {
+                "request_index": 1,
+                "path": "ignored.rs",
+                "status": "not_indexed"
+            },
+            {
+                "request_index": 2,
+                "path": "missing.rs",
+                "status": "not_indexed"
+            }
+        ])
+    );
+    let cursor = first.meta.next_cursor.clone().expect("continuation");
+
+    let mut continued_request = request.clone();
+    continued_request.cursor = Some(cursor.clone());
+    let second = services
+        .outline(continued_request.clone())
+        .await
+        .expect("continued partial outline");
+    assert_eq!(second.path_results, first.path_results);
+    assert_eq!(second.returned_symbols, 1);
+    assert!(!second.truncated_by_max_results);
+    assert!(second.meta.next_cursor.is_none());
+
+    continued_request.paths.swap(1, 2);
+    assert!(matches!(
+        services.outline(continued_request).await,
+        Err(Error::StaleCursor)
+    ));
+
+    let signatures = services
+        .outline_signatures(request)
+        .await
+        .expect("signature partial outline");
+    assert_eq!(signatures.path_results, first.path_results);
+    assert_eq!(signatures.files.len(), 1);
+    assert!(!signatures.parse_complete);
+    assert!(!signatures.result_complete);
+
+    let missing = services
+        .outline(OutlineRequest {
+            paths: vec!["missing.rs".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: Some(100),
+            max_tokens: Some(32_000),
+            receipt_id: None,
+            cursor: None,
+        })
+        .await
+        .expect("typed missing-path outcome");
+    assert_eq!(
+        missing.path_results,
+        vec![OutlinePathResult {
+            request_index: 0,
+            path: "missing.rs".into(),
+            status: OutlinePathStatus::NotIndexed,
+        }]
+    );
+    assert!(missing.files.is_empty());
+    assert!(!missing.parse_complete);
+    assert!(!missing.result_complete);
+    assert_eq!(missing.total_symbols, 0);
+    assert_eq!(missing.total_imports, 0);
+}
+
+#[tokio::test]
 async fn outline_distinguishes_parse_completeness_from_result_completeness() {
     let root = tempfile::tempdir().expect("temporary repository");
     let constants = (0..120)
