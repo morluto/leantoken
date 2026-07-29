@@ -396,6 +396,43 @@ fn all_clients_receive_global_entries_and_second_setup_is_idempotent() {
 }
 
 #[test]
+fn diagnostic_reports_configured_command_and_stale_release() {
+    let temp = tempfile::tempdir().unwrap();
+    let original = npx_environment(&temp, "1.2.3");
+    run_with(
+        SetupOperation::Setup,
+        SetupRequest {
+            clients: vec![SetupClient::Claude, SetupClient::Codex],
+            all: false,
+            refresh: false,
+            private_runtime: false,
+            yes: true,
+            dry_run: false,
+            allow_outdated: false,
+        },
+        &original,
+        &FixedPrompt {
+            selected: None,
+            confirmed: true,
+        },
+    )
+    .unwrap();
+
+    let current = npx_environment(&temp, "2.0.0");
+    let registrations = configured_registrations(&current.home, &current.launcher).unwrap();
+    assert_eq!(registrations.len(), 2);
+    assert!(registrations.iter().all(|registration| {
+        registration.version.as_deref() == Some("1.2.3")
+            && registration.expected_version == "2.0.0"
+            && !registration.matches_current
+            && registration
+                .args
+                .iter()
+                .any(|argument| argument == "--package=leantoken@1.2.3")
+    }));
+}
+
+#[test]
 fn malformed_client_blocks_the_entire_plan_before_writes() {
     let temp = tempfile::tempdir().unwrap();
     let environment = environment(&temp);

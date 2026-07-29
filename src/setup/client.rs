@@ -5,8 +5,20 @@ const DISCOVERY_SKILL_MARKER: &str = "<!-- managed by leantoken setup -->";
 pub(crate) struct SetupDiagnostic {
     pub(crate) registration_status: &'static str,
     pub(crate) configured_clients: Vec<SetupClient>,
+    pub(crate) registrations: Vec<ConfiguredRegistration>,
     pub(crate) discovery_status: &'static str,
     pub(crate) discovery_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConfiguredRegistration {
+    pub(crate) client: SetupClient,
+    pub(crate) path: PathBuf,
+    pub(crate) command: String,
+    pub(crate) args: Vec<String>,
+    pub(crate) version: Option<String>,
+    pub(crate) expected_version: String,
+    pub(crate) matches_current: bool,
 }
 
 /// Coding clients supported by the global setup wizard.

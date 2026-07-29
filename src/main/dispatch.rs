@@ -92,11 +92,11 @@ async fn run_repository_command(cli: Cli, json: bool) -> Result<()> {
     let config = cli.config()?;
     let request = cli.app_request();
 
-    if let AppRequest::Doctor = request {
+    if let AppRequest::Doctor { ready_timeout } = request {
         if !json {
             doctor::print_progress()?;
         }
-        let report = doctor::run(&config)?;
+        let report = doctor::run(&config, ready_timeout)?;
         doctor::print_report(&report, json)?;
         return Ok(());
     }
@@ -271,7 +271,7 @@ async fn dispatch_repository_request(
                 .await?;
             print(&response, json)
         }
-        AppRequest::Status | AppRequest::Doctor => {
+        AppRequest::Status | AppRequest::Doctor { .. } => {
             unreachable!("handled before repository service setup")
         }
         AppRequest::Mcp { .. }

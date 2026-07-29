@@ -20,7 +20,6 @@ const EXPECTED_TOOLS: [&str; 8] = [
     "context", "files", "history", "json", "outline", "read", "savings", "search",
 ];
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
-const READY_TIMEOUT: Duration = Duration::from_secs(60);
 const DIAGNOSTIC_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_DIAGNOSTIC_LINES: usize = 8;
 const MAX_DIAGNOSTIC_LINE_CHARS: usize = 512;
@@ -58,6 +57,10 @@ pub struct IntegrationReport {
     pub registration_status: &'static str,
     /// Clients with an existing LeanToken MCP registration.
     pub configured_clients: Vec<SetupClient>,
+    /// Configured executable and version details for each LeanToken entry.
+    pub registrations: Vec<RegistrationReport>,
+    /// `current`, `stale`, `not_registered`, or `unknown`.
+    pub registration_health: &'static str,
     /// `installed`, `partial`, `missing`, or `unknown`.
     pub discovery_status: &'static str,
     /// LeanToken-owned skill descriptors found on disk.
@@ -70,6 +73,26 @@ pub struct IntegrationReport {
     pub catalog_status: &'static str,
     /// Actionable exact-version verification command.
     pub repair_command: String,
+}
+
+/// One host registration as read from the supported client configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RegistrationReport {
+    /// Host client owning the registration.
+    pub client: SetupClient,
+    /// Configuration file containing the entry.
+    pub config_path: std::path::PathBuf,
+    /// Executable configured for the host.
+    pub command: String,
+    /// Arguments configured for the host.
+    pub args: Vec<String>,
+    /// Release inferred from the configured command or package argument.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configured_version: Option<String>,
+    /// Version of the executable used by this doctor invocation.
+    pub expected_version: String,
+    /// Whether command and arguments match the current launcher exactly.
+    pub matches_current: bool,
 }
 
 /// First retrieval outcome recorded by [`DoctorReport`].
@@ -100,7 +123,7 @@ pub fn print_progress() -> Result<()> {
 
 /// Launch the current executable as an MCP server and verify its public
 /// first-run contract against the configured repository.
-pub fn run(config: &Config) -> Result<DoctorReport> {
+pub fn run(config: &Config, ready_timeout: Duration) -> Result<DoctorReport> {
     let mut transport = DoctorTransport::spawn(config)?;
     transport.send(
         json!({
@@ -196,7 +219,7 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
         ));
     }
 
-    let deadline = Instant::now() + READY_TIMEOUT;
+    let deadline = Instant::now() + ready_timeout;
     let mut id = 3_u64;
     let mut attempts = 0_u64;
     let mut warmed_index = false;
@@ -217,11 +240,24 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
             }),
             "first_retrieval",
         )?;
-        let response = transport.response(
+        let response = match transport.response(
             id,
             deadline.saturating_duration_since(Instant::now()),
             "first_retrieval",
-        )?;
+        ) {
+            Ok(response) => response,
+            Err(_error) if Instant::now() >= deadline => {
+                return Err(doctor_error(
+                    "first_retrieval",
+                    format!(
+                        "first retrieval did not become ready within {} seconds; the repository may still be indexing. Rerun with `--ready-timeout-seconds` or retry after indexing completes{}",
+                        ready_timeout.as_secs(),
+                        transport.diagnostic_context()
+                    ),
+                ));
+            }
+            Err(error) => return Err(error),
+        };
         let call = result_object(&response, "context", "first_retrieval")?;
         if call.get("isError").and_then(Value::as_bool) == Some(true) {
             return Err(doctor_error(
@@ -245,8 +281,8 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
                 return Err(doctor_error(
                     "first_retrieval",
                     format!(
-                        "repository index did not become ready within {} seconds",
-                        READY_TIMEOUT.as_secs()
+                        "repository index is still building; it did not become ready within {} seconds. Rerun with `--ready-timeout-seconds` or retry after indexing completes",
+                        ready_timeout.as_secs()
                     ),
                 ));
             }
@@ -266,6 +302,29 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
 
     transport.close();
     let setup = setup::diagnostic_state();
+    let registrations = setup
+        .registrations
+        .iter()
+        .map(|registration| RegistrationReport {
+            client: registration.client,
+            config_path: registration.path.clone(),
+            command: registration.command.clone(),
+            args: registration.args.clone(),
+            configured_version: registration.version.clone(),
+            expected_version: registration.expected_version.clone(),
+            matches_current: registration.matches_current,
+        })
+        .collect::<Vec<_>>();
+    let registration_health = if registrations.is_empty() {
+        setup.registration_status
+    } else if registrations
+        .iter()
+        .all(|registration| registration.matches_current)
+    {
+        "current"
+    } else {
+        "stale"
+    };
     let result_mode = resolve_auto_result_mode(
         "leantoken-doctor",
         env!("CARGO_PKG_VERSION"),
@@ -284,6 +343,8 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
         integration: IntegrationReport {
             registration_status: setup.registration_status,
             configured_clients: setup.configured_clients,
+            registrations,
+            registration_health,
             discovery_status: setup.discovery_status,
             discovery_paths: setup.discovery_paths,
             launcher_status: "healthy",
@@ -291,6 +352,8 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
             catalog_status: "healthy",
             repair_command: if setup.registration_status == "not_registered" {
                 "leantoken setup --all --dry-run".into()
+            } else if registration_health == "stale" {
+                "leantoken setup --refresh --yes".into()
             } else {
                 "leantoken doctor --json".into()
             },
@@ -346,13 +409,31 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
     writeln!(
         output,
         "  {} Host registration: {}",
-        if report.integration.registration_status == "registered" {
+        if report.integration.registration_health == "current" {
             "✓"
         } else {
             "◇"
         },
-        report.integration.registration_status
+        report.integration.registration_health
     )?;
+    for registration in &report.integration.registrations {
+        let version = registration
+            .configured_version
+            .as_deref()
+            .unwrap_or("unknown version");
+        writeln!(
+            output,
+            "    {:?}: {} ({})",
+            registration.client, registration.command, version
+        )?;
+    }
+    if report.integration.registration_health == "stale" {
+        writeln!(
+            output,
+            "    Configured host entries do not match this executable; run {}.",
+            report.integration.repair_command
+        )?;
+    }
     writeln!(
         output,
         "  {} Agent discovery: {}",
