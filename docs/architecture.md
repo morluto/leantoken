@@ -1286,6 +1286,14 @@ The index contains local source text in SQLite. Users should place an explicit
 database path only where its filesystem permissions and retention policy are
 appropriate for that repository.
 
+The developer-only target-footprint reporter is read-only and does not follow
+symlinks. It scans at most 1,000,000 explicitly requested Cargo target entries
+and at most 64 directory levels, deduplicates regular-file hard links, and
+fails instead of returning a partial report if the bound is exceeded or an
+enumerated entry disappears or becomes unreadable during traversal. Its
+stale-generation count is diagnostic only; cleanup remains an explicit Cargo
+operation.
+
 The repository-free episode auditor is an application-layer, read-only
 normalizer in `episode`; CLI parsing and rendering remain thin. It imports only
 reports already redacted by the existing wire, host-receipt, trajectory,
