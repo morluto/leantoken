@@ -819,7 +819,7 @@ mod tests {
     fn lockfile_reports_exact_swift_grammar() {
         assert_eq!(
             locked_package_version("tree-sitter-swift").expect("locked version"),
-            "0.7.3"
+            "0.7.2"
         );
     }
 }
