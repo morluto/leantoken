@@ -246,7 +246,7 @@ mod tests {
         assert!(
             fallback
                 .database_path
-                .starts_with(root.path().join(".leantoken"))
+                .starts_with(config.root.join(".leantoken"))
         );
         assert_eq!(
             fs::read_to_string(root.path().join(".leantoken/.gitignore")).expect("fallback ignore"),
