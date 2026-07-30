@@ -1,28 +1,80 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-## [0.1.19] - 2026-07-29
+## [0.1.20] - 2026-07-30
 ### Benchmarks
 
-- **indexing:** Reject two-worker cold default (#361) ([#361](https://github.com/morluto/leantoken/pull/361))
+- **mcp:** Record receipt resource promotion gate
 ### Bug Fixes
 
-- **ci:** Clean stale coverage profiles
-- **mcp:** Streamline tool routing and error contracts
-- Clarify retryable response budget errors (#357) ([#357](https://github.com/morluto/leantoken/pull/357))
-- **symbols:** Unify qualified identity resolution (#355) ([#355](https://github.com/morluto/leantoken/pull/355))
-- **outline:** Report per-path indexing outcomes (#354) ([#354](https://github.com/morluto/leantoken/pull/354))
-- **index:** Honor publication cancellation boundaries (#353) ([#353](https://github.com/morluto/leantoken/pull/353))
-- **tests:** Widen MCP failover response deadline
+- **ci:** Align product workspace feature graph
+- **status:** Report active repository fallback
+- Address MCP readiness review findings
+- **mcp:** Survive read-only managed caches
+- **eval:** Bound Kotlin evidence collection
+- **eval:** Fail closed on Kotlin evidence gaps
+- **eval:** Tighten Kotlin evidence accounting
+- **ci:** Stabilize cross-platform benchmark fixtures
+- **ci:** Clean benchmark dependencies and portable contracts
+- **eval:** Preserve Kotlin manifest bytes on Windows
+- **eval:** Normalize receipt-derived accounting
+- **test:** Reject empty focused selections (#379) ([#379](https://github.com/morluto/leantoken/pull/379))
+- **mcp:** Constrain exhaustive search modes
+- Close post-merge review gaps
+- **test:** Reject ambiguous selectors and malformed fixtures
+- **ci:** Update test artifact uploads
+- **ci:** Make AGENTS validation compile-free (#375) ([#375](https://github.com/morluto/leantoken/pull/375))
+- **ci:** Complete portable test harness review fixes
+- **test:** Address review feedback for portable harnesses
+- **ci:** Make test sandboxes and alias checks portable
+- **mcp:** Preserve receipt resource invariants
+- **mcp:** Avoid cloning static result mode
+- **search:** Keep planner fallback lint-clean
+### Chores
+
+- **dev:** Report target footprint (#380) ([#380](https://github.com/morluto/leantoken/pull/380))
+### Continuous Integration
+
+- Reject lockfile drift (#378) ([#378](https://github.com/morluto/leantoken/pull/378))
+- Update Node 24 action majors (#376) ([#376](https://github.com/morluto/leantoken/pull/376))
+- Allow recorded regex trial revision
+### Documentation
+
+- **measurement:** Record enclosing lookup evidence
+- **eval:** Record Kotlin structural no-ship decision
+- **eval:** Record Swift structural no-ship decision (#383) ([#383](https://github.com/morluto/leantoken/pull/383))
+- Remove obsolete rmcp release warning (#377) ([#377](https://github.com/morluto/leantoken/pull/377))
 ### Features
 
-- **search:** Add exact query coverage receipts (#364) ([#364](https://github.com/morluto/leantoken/pull/364))
-- **receipts:** Add exact generation rebase (#363) ([#363](https://github.com/morluto/leantoken/pull/363))
-- **doctor:** Diagnose readiness and stale registrations
-- **cli:** Add bounded episode auditor (#359) ([#359](https://github.com/morluto/leantoken/pull/359))
-- **index:** Add cache-identified repository scopes (#358) ([#358](https://github.com/morluto/leantoken/pull/358))
-- **context:** Explain focus allocation boundaries (#356) ([#356](https://github.com/morluto/leantoken/pull/356))
+- **setup:** Verify configured MCP launchers
+- **eval:** Diagnose TypeScript parse recovery (#382) ([#382](https://github.com/morluto/leantoken/pull/382))
+- **mcp:** Expose retrieval receipt resources
+- **search:** Broaden bounded regex planning
+- **retrieval:** Report named limit failures
+- **index:** Report parser coverage
 ### Performance
 
-- **testing:** Parallelize local product test lanes
-- **index:** Prune git metadata before traversal (#350) ([#350](https://github.com/morluto/leantoken/pull/350))
+- **ci:** Overlap independent product test lanes
+- **ci:** Avoid rebuilding benchmark targets for fixtures
+- **eval:** Prototype Kotlin structural indexing
+- **ci:** Reuse test profile for fixtures (#381) ([#381](https://github.com/morluto/leantoken/pull/381))
+### Refactoring
+
+- Finish legacy module tree migration
+- **errors:** Replace stringly failures and bound shutdown
+- **benchmarks:** Move runners into opt-in package
+- Replace organizational include module trees
+### Testing
+
+- **eval:** Add Python resolved-reference oracle
+- **setup:** Cover launcher verification failures
+- **storage:** Compare canonical fallback path
+- **architecture:** Reject organizational includes outright
+- **architecture:** Add immutable fixtures and include guard
+- **eval:** Classify Kotlin parse gaps
+- **eval:** Freeze Kotlin structural gate
+- Remove no-op assertions
+- Route CI through workspace test lanes
+- Consolidate integration coverage by domain
+- Add workspace-owned suite infrastructure
+- **services:** Avoid queue timing in snapshot test
