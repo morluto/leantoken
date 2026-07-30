@@ -3385,6 +3385,11 @@ fn verify_token_accounting(response: &ContextResponse) -> Result<(), Box<dyn Err
 fn deterministic_context_json(response: &ContextResponse) -> Result<String, serde_json::Error> {
     let mut deterministic = response.clone();
     deterministic.meta.receipt_id = None;
+    // Receipt identifiers are generated per request. Their tokenizer cost is
+    // reflected in both of these complete-response accounting fields, so they
+    // must be normalized with the identifier itself.
+    deterministic.meta.path_and_metadata_tokens = 0;
+    deterministic.meta.total_response_tokens = 0;
     serde_json::to_string(&deterministic)
 }
 
@@ -4323,9 +4328,11 @@ mod tests {
     }
 
     #[test]
-    fn deterministic_context_comparison_ignores_only_receipt_identity() {
+    fn deterministic_context_comparison_ignores_receipt_identity_and_derived_accounting() {
         let first = context_response("first");
         let mut second = context_response("second");
+        second.meta.path_and_metadata_tokens = 1;
+        second.meta.total_response_tokens = 1;
         assert_eq!(
             deterministic_context_json(&first).expect("serialize first response"),
             deterministic_context_json(&second).expect("serialize second response")
