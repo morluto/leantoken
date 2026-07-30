@@ -1,0 +1,413 @@
+{
+  "schema_version": 4,
+  "dataset_kind": "prospective_validation",
+  "frozen_at": "2026-07-30",
+  "evaluation_protocol": "Run the unchanged manifest against the lexical control and tree-sitter-kotlin 0.4.0 at one exact OpenClaw revision. Every arm uses a fresh database and the same 1024 source-token budget per task. A Kotlin candidate is accuracy-eligible only if relevant-file recall improves by at least one of 20 labeled files or line-anchor recall improves by at least five percentage points, with no task-family relevant-file regression. It must not regress existing product tests, exceed 10% cold-index or peak-RSS growth, exceed 5% database growth, or add more than 5 MiB to the release binary. Timing and memory thresholds require paired same-host runs and are interpreted as diagnostics on this ten-task development set, not universal performance claims. Accuracy eligibility does not waive the separate publication and supply-chain requirement: an unpublished grammar revision remains research-only.",
+  "reclassification_rule": "The task labels and thresholds remain fixed for every arm. Any task, label, query, token budget, corpus revision, parser query, grammar revision, or threshold change creates a new schema/report version. This consumed development set must not later be described as blind or statistically powered evidence.",
+  "description": "Prospective Kotlin structural-indexing evaluation over OpenClaw Android application and Wear shared owners. Prompts and labels were frozen from issue #366 and source inspection at the pinned revision before the Kotlin grammar candidate was integrated.",
+  "rg_max_lines_per_query": 200,
+  "corpora": [
+    {
+      "name": "openclaw-kotlin",
+      "url": "https://github.com/openclaw/openclaw.git",
+      "directory": "repo",
+      "base_revision": "9feb6ad161877da86200693b039638dbf3411e66",
+      "issue_url": "https://github.com/morluto/leantoken/issues/366",
+      "prompt_provenance": "Maintenance prompts were written from issue #366's named Android owners and public declarations at the pinned OpenClaw revision before the Kotlin grammar arm ran; no future patch or fix commit was consulted.",
+      "label_provenance": "Relevant files and one-based line anchors were selected from declaration and regression-test ownership at the pinned OpenClaw revision before the Kotlin grammar arm ran.",
+      "dataset_url": "https://github.com/openclaw/openclaw.git",
+      "dataset_revision": "9feb6ad161877da86200693b039638dbf3411e66",
+      "dataset_license": "MIT",
+      "external_limitations": [
+        "The ten tasks are manually curated parser-development evidence, not a random or statistically powered sample.",
+        "Line anchors identify declaration and test neighborhoods; they do not prove that every returned line is sufficient to implement a correct patch.",
+        "Prompts name public or internal symbols to stress structural ownership and do not simulate an autonomous issue-triage trajectory.",
+        "The corpus contains both .kt and .kts files, while the retrieval tasks emphasize application maintenance; a separate bounded parse diagnostic covers both extensions."
+      ],
+      "tasks": [
+        {
+          "id": "kotlin-gateway-tailnet-port",
+          "prompt": "Change resolveDefaultManualGatewayPort and composeGatewayManualUrl so TLS Tailnet hosts, trailing dots, and lookalike suffixes select the intended default port, and update regression tests.",
+          "task_family": "endpoint_normalization",
+          "languages": [
+            "kotlin"
+          ],
+          "task_shapes": [
+            "cross_file_behavior",
+            "regression_test_discovery"
+          ],
+          "rg_queries": [
+            "resolveDefaultManualGatewayPort",
+            "composeGatewayManualUrl",
+            "composeGatewayManualUrlDefaultsPortTo443ForTailnetHostWithTrailingDotWhenPortBlank"
+          ],
+          "relevant_files": [
+            {
+              "path": "apps/android/app/src/main/java/ai/openclaw/app/ui/GatewayConfigResolver.kt",
+              "line_anchors": [
+                371,
+                381,
+                419,
+                440
+              ]
+            },
+            {
+              "path": "apps/android/app/src/test/java/ai/openclaw/app/ui/GatewayConfigResolverTest.kt",
+              "line_anchors": [
+                1052,
+                1059,
+                1066,
+                1073
+              ]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "kotlin-gateway-tls-pinning",
+          "prompt": "Change ConnectionManager.resolveTlsParamsForEndpoint while preserving stored-pin precedence and rejecting discovery-advertised fingerprints as authoritative, with regression coverage.",
+          "task_family": "transport_security",
+          "languages": [
+            "kotlin"
+          ],
+          "task_shapes": [
+            "security_behavior",
+            "regression_test_discovery"
+          ],
+          "rg_queries": [
+            "resolveTlsParamsForEndpoint",
+            "Never let discovery-provided TXT override a stored fingerprint",
+            "resolveTlsParamsForEndpoint_doesNotTrustAdvertisedFingerprintWhenNoStoredPin"
+          ],
+          "relevant_files": [
+            {
+              "path": "apps/android/app/src/main/java/ai/openclaw/app/node/ConnectionManager.kt",
+              "line_anchors": [
+                69,
+                103,
+                115
+              ]
+            },
+            {
+              "path": "apps/android/app/src/test/java/ai/openclaw/app/node/ConnectionManagerTest.kt",
+              "line_anchors": [
+                29,
+                47,
+                52,
+                70
+              ]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "kotlin-invoke-sms-advertisement",
+          "prompt": "Change InvokeCommandRegistry advertisedCommands SMS send and search availability independently while preserving capability advertisement semantics, and update registry tests.",
+          "task_family": "capability_advertisement",
+          "languages": [
+            "kotlin"
+          ],
+          "task_shapes": [
+            "definition_discovery",
+            "regression_test_discovery"
+          ],
+          "rg_queries": [
+            "advertisedCommands",
+            "RequestableSmsSearchAvailable",
+            "advertisedCommands_splitsSmsSendAndSearchAvailability"
+          ],
+          "relevant_files": [
+            {
+              "path": "apps/android/app/src/main/java/ai/openclaw/app/node/InvokeCommandRegistry.kt",
+              "line_anchors": [
+                294,
+                301,
+                303
+              ]
+            },
+            {
+              "path": "apps/android/app/src/test/java/ai/openclaw/app/node/InvokeCommandRegistryTest.kt",
+              "line_anchors": [
+                178,
+                192,
+                196,
+                200,
+                214
+              ]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "kotlin-invoke-location-gate",
+          "prompt": "Change InvokeDispatcher availabilityError and handleInvoke so location commands fail with the stable LOCATION_DISABLED contract when location is disabled, and update dispatcher tests.",
+          "task_family": "command_authorization",
+          "languages": [
+            "kotlin"
+          ],
+          "task_shapes": [
+            "cross_file_behavior",
+            "regression_test_discovery"
+          ],
+          "rg_queries": [
+            "availabilityError",
+            "LOCATION_DISABLED",
+            "handleInvoke_blocksLocationCommandWhenLocationDisabled"
+          ],
+          "relevant_files": [
+            {
+              "path": "apps/android/app/src/main/java/ai/openclaw/app/node/InvokeDispatcher.kt",
+              "line_anchors": [
+                103,
+                120,
+                296,
+                308
+              ]
+            },
+            {
+              "path": "apps/android/app/src/test/java/ai/openclaw/app/node/InvokeDispatcherTest.kt",
+              "line_anchors": [
+                168,
+                170,
+                172
+              ]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "kotlin-chat-optimistic-identity",
+          "prompt": "Change mergeOptimisticMessages identity reconciliation so persisted history consumes matching optimistic turns without dropping repeated or newer messages, and update message identity tests.",
+          "task_family": "message_reconciliation",
+          "languages": [
+            "kotlin"
+          ],
+          "task_shapes": [
+            "state_reconciliation",
+            "regression_test_discovery"
+          ],
+          "rg_queries": [
+            "mergeOptimisticMessages",
+            "incomingMessageConsumesOptimistic",
+            "mergeOptimisticMessagesKeepsRepeatedOptimisticTurnWhenHistoryOnlyHasOneMatch"
+          ],
+          "relevant_files": [
+            {
+              "path": "apps/android/app/src/main/java/ai/openclaw/app/chat/ChatController.kt",
+              "line_anchors": [
+                6622,
+                6628,
+                6631,
+                6673
+              ]
+            },
+            {
+              "path": "apps/android/app/src/test/java/ai/openclaw/app/chat/ChatControllerMessageIdentityTest.kt",
+              "line_anchors": [
+                334,
+                344,
+                350,
+                360,
+                366,
+                383
+              ]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "kotlin-push-to-talk-transcript",
+          "prompt": "Change PushToTalkTranscriptMerger overlap handling so final segments keep punctuation and duplicated trailing partials are omitted while distinct partials remain, and update merger tests.",
+          "task_family": "transcript_merging",
+          "languages": [
+            "kotlin"
+          ],
+          "task_shapes": [
+            "algorithm_behavior",
+            "regression_test_discovery"
+          ],
+          "rg_queries": [
+            "PushToTalkTranscriptMerger",
+            "omitsTrailingPartialThatDuplicatesLastFinal",
+            "appendsDistinctTrailingPartial"
+          ],
+          "relevant_files": [
+            {
+              "path": "apps/android/app/src/main/java/ai/openclaw/app/voice/PushToTalkTranscriptMerger.kt",
+              "line_anchors": [
+                5,
+                8,
+                20,
+                34
+              ]
+            },
+            {
+              "path": "apps/android/app/src/test/java/ai/openclaw/app/voice/PushToTalkTranscriptMergerTest.kt",
+              "line_anchors": [
+                8,
+                19,
+                48,
+                59
+              ]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "kotlin-talk-directive-aliases",
+          "prompt": "Change TalkDirectiveParser first-line JSON alias handling while keeping case-insensitive keys, unknown-key reporting, and stripped speech text, and update parser tests.",
+          "task_family": "directive_parsing",
+          "languages": [
+            "kotlin"
+          ],
+          "task_shapes": [
+            "protocol_validation",
+            "regression_test_discovery"
+          ],
+          "rg_queries": [
+            "TalkDirectiveParser",
+            "Keep alias matching case-insensitive",
+            "parsesAliasKeysCaseInsensitively"
+          ],
+          "relevant_files": [
+            {
+              "path": "apps/android/app/src/main/java/ai/openclaw/app/voice/TalkDirectiveParser.kt",
+              "line_anchors": [
+                39,
+                41,
+                63,
+                99
+              ]
+            },
+            {
+              "path": "apps/android/app/src/test/java/ai/openclaw/app/voice/TalkDirectiveParserTest.kt",
+              "line_anchors": [
+                10,
+                23,
+                35,
+                49
+              ]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "kotlin-workspace-file-payload",
+          "prompt": "Change parseWorkspaceListing and parseWorkspaceFile while preserving opaque entry paths, pagination metadata, text defaults, and base64 image payloads, with tests.",
+          "task_family": "workspace_protocol",
+          "languages": [
+            "kotlin"
+          ],
+          "task_shapes": [
+            "protocol_validation",
+            "regression_test_discovery"
+          ],
+          "rg_queries": [
+            "parseWorkspaceListing",
+            "parseWorkspaceFile",
+            "parsesTextAndImageFilePayloads"
+          ],
+          "relevant_files": [
+            {
+              "path": "apps/android/app/src/main/java/ai/openclaw/app/WorkspaceFiles.kt",
+              "line_anchors": [
+                39,
+                44,
+                65,
+                77
+              ]
+            },
+            {
+              "path": "apps/android/app/src/test/java/ai/openclaw/app/WorkspaceFilesTest.kt",
+              "line_anchors": [
+                22,
+                39,
+                55,
+                72,
+                77
+              ]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "kotlin-canvas-local-navigation",
+          "prompt": "Change CanvasNavigationPolicy URL normalization so malformed, localhost, loopback, and encoded local web targets remain blocked while remote and bundled URLs remain allowed, and update policy tests.",
+          "task_family": "navigation_security",
+          "languages": [
+            "kotlin"
+          ],
+          "task_shapes": [
+            "security_behavior",
+            "regression_test_discovery"
+          ],
+          "rg_queries": [
+            "CanvasNavigationPolicy",
+            "isDeviceLocalHost",
+            "blocksDeviceLocalWebUrls"
+          ],
+          "relevant_files": [
+            {
+              "path": "apps/android/app/src/main/java/ai/openclaw/app/node/CanvasNavigationPolicy.kt",
+              "line_anchors": [
+                7,
+                14,
+                19,
+                125,
+                135
+              ]
+            },
+            {
+              "path": "apps/android/app/src/test/java/ai/openclaw/app/node/CanvasNavigationPolicyTest.kt",
+              "line_anchors": [
+                9,
+                35,
+                41,
+                50
+              ]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "kotlin-wear-audio-framing",
+          "prompt": "Change WearRealtimeAudioFraming read and write validation so frame boundaries round-trip and oversized payloads are rejected before allocation, and update Wear shared tests.",
+          "task_family": "binary_framing",
+          "languages": [
+            "kotlin"
+          ],
+          "task_shapes": [
+            "bounded_io",
+            "regression_test_discovery"
+          ],
+          "rg_queries": [
+            "WearRealtimeAudioFraming",
+            "MAX_REALTIME_AUDIO_FRAME_BYTES",
+            "rejectsOversizedFrameBeforeAllocatingPayload"
+          ],
+          "relevant_files": [
+            {
+              "path": "apps/android/wear-shared/src/main/java/ai/openclaw/wear/shared/WearRealtimeTalk.kt",
+              "line_anchors": [
+                68,
+                83,
+                96,
+                99
+              ]
+            },
+            {
+              "path": "apps/android/wear-shared/src/test/java/ai/openclaw/wear/shared/WearRealtimeTalkTest.kt",
+              "line_anchors": [
+                13,
+                19,
+                27,
+                31
+              ]
+            }
+          ],
+          "token_budget": 1024
+        }
+      ]
+    }
+  ]
+}
