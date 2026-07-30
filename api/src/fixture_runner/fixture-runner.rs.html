@@ -17,4 +17,25 @@
 <a href=#17 id=17 data-nosnippet>17</a>        std::process::exit(<span class="number">1</span>);
 <a href=#18 id=18 data-nosnippet>18</a>    }
 <a href=#19 id=19 data-nosnippet>19</a>}
+<a href=#20 id=20 data-nosnippet>20</a>
+<a href=#21 id=21 data-nosnippet>21</a><span class="attr">#[cfg(test)]
+<a href=#22 id=22 data-nosnippet>22</a></span><span class="kw">mod </span>tests {
+<a href=#23 id=23 data-nosnippet>23</a>    <span class="kw">use </span>leantoken_test_support::FixtureCase;
+<a href=#24 id=24 data-nosnippet>24</a>    <span class="kw">use </span>std::path::Path;
+<a href=#25 id=25 data-nosnippet>25</a>
+<a href=#26 id=26 data-nosnippet>26</a>    <span class="attr">#[test]
+<a href=#27 id=27 data-nosnippet>27</a>    </span><span class="kw">fn </span>checked_in_fixture_cases_match() {
+<a href=#28 id=28 data-nosnippet>28</a>        <span class="kw">let </span>workspace_root = Path::new(<span class="macro">env!</span>(<span class="string">"CARGO_MANIFEST_DIR"</span>))
+<a href=#29 id=29 data-nosnippet>29</a>            .parent()
+<a href=#30 id=30 data-nosnippet>30</a>            .and_then(Path::parent)
+<a href=#31 id=31 data-nosnippet>31</a>            .expect(<span class="string">"test-suite manifest is below the workspace root"</span>);
+<a href=#32 id=32 data-nosnippet>32</a>        <span class="kw">let </span>cases = FixtureCase::list(workspace_root.join(<span class="string">"fixtures"</span>), <span class="prelude-val">None</span>)
+<a href=#33 id=33 data-nosnippet>33</a>            .expect(<span class="string">"checked-in fixture inventory is valid"</span>);
+<a href=#34 id=34 data-nosnippet>34</a>        <span class="macro">assert!</span>(!cases.is_empty(), <span class="string">"checked-in fixture inventory is empty"</span>);
+<a href=#35 id=35 data-nosnippet>35</a>        <span class="kw">for </span>case <span class="kw">in </span>cases {
+<a href=#36 id=36 data-nosnippet>36</a>            leantoken_test_suite::run_fixture(<span class="kw-2">&amp;</span>case.identity, <span class="bool-val">false</span>)
+<a href=#37 id=37 data-nosnippet>37</a>                .unwrap_or_else(|error| <span class="macro">panic!</span>(<span class="string">"fixture {} failed: {error}"</span>, case.identity));
+<a href=#38 id=38 data-nosnippet>38</a>        }
+<a href=#39 id=39 data-nosnippet>39</a>    }
+<a href=#40 id=40 data-nosnippet>40</a>}
 </code></pre></div></section></main></body></html>

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BENCHMARK_REPOSITORY_FIXTURE","MAX_FIXTURE_LIST_DEPTH","MAX_FIXTURE_LIST_ENTRIES"],"enum":["FixtureError"],"fn":["collect","invalid"],"struct":["FixtureCase"]};
