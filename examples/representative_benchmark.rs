@@ -4376,6 +4376,10 @@ mod tests {
             "inconclusive_legacy_accounting_normalization"
         );
         assert_eq!(
+            evaluation["product_test_gate"]["result"],
+            "inconclusive_no_candidate_revision_receipt"
+        );
+        assert_eq!(
             evaluation["arms"][1]["retrieval"]["regressed_task_families"][0],
             "directive_parsing"
         );

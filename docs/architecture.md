@@ -1407,8 +1407,10 @@ accounting fields without first validating them; because the source-free
 reports do not retain complete responses, the stricter fixed-point comparison
 cannot be replayed and the determinism gate is inconclusive. The hardened
 harness validates original accounting and recomputes receipt-free accounting.
-Its two-control-then-two-candidate cold-index samples are explicitly
-inconclusive.
+No retained receipt binds a product-test command and outcome to the temporary
+candidate revision, so final-tree PR checks cannot establish that frozen
+subgate and it is inconclusive. Its two-control-then-two-candidate cold-index
+samples are explicitly inconclusive.
 The retained peak-process-RSS samples show a descriptive 42.31% candidate
 increase, but the attempt receipt lacks a stable anonymized host fingerprint,
 so they cannot establish same-host pairing and that gate is also inconclusive.
@@ -1421,8 +1423,9 @@ raw reports; the final tree removes Kotlin production detection, extraction,
 and dependencies. Reconsideration requires a published grammar, a new
 immutable report, paired alternating cold-index runs, retained anonymized
 host-pairing identity for RSS runs, a fresh exact-accounting determinism run,
-and the unchanged correctness, task-family, and resource gates unless a new
-schema explicitly freezes different inputs or thresholds.
+a candidate-revision product-test receipt, and the unchanged correctness,
+task-family, and resource gates unless a new schema explicitly freezes
+different inputs or thresholds.
 
 The developer-only target-footprint reporter is read-only and does not follow
 symlinks. It scans at most 1,000,000 explicitly requested Cargo target entries

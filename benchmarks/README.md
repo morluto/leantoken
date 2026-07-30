@@ -1747,6 +1747,8 @@ eligible:
 - determinism remained inconclusive because the historical harness erased
   receipt-derived accounting fields without validating them first, and the
   source-free reports cannot replay complete responses;
+- the product-test subgate remained inconclusive because no retained receipt
+  binds an exact command and outcome to the temporary candidate revision;
 - cold indexing remained inconclusive because the two control samples preceded
   the two candidate samples instead of using paired alternating order;
 - peak RSS remained inconclusive because the attempt receipt retained no
@@ -1758,18 +1760,20 @@ eligible:
 All four reports passed the historical receipt-normalized comparison, but that
 is not promoted to a deterministic-gate pass. The hardened harness now
 validates original accounting and recomputes receipt-free accounting to a
-fixed point. The extension-only diagnostic stratum shows that both extensions
-were evaluated and all six `.kts` files parsed completely. Nine of 419 files
-were structurally incomplete, with 11 explicit `ERROR` nodes; this is retained
-diagnostic evidence, not a threshold in the frozen gate. The RSS samples show
-a descriptive 42.31% candidate increase, but without retained host-pairing
-identity they cannot pass or fail the same-host gate. Isolated release builds
-of the shipped CLI at the exact control and candidate revisions grew by
-4,871,232 bytes, below the frozen five-MiB cap. The diagnostic's definition,
-import, and call totals are explicitly syntax-node counts; they are not claims
-about the prototype's production extraction queries. Those passing subgates
-do not offset the task-family, database, inconclusive correctness/resource,
-and publication failures. Kotlin therefore remains lexical-only in production:
+fixed point. Final-tree PR checks do not substitute for the missing
+candidate-revision product-test receipt. The extension-only diagnostic stratum
+shows that both extensions were evaluated and all six `.kts` files parsed
+completely. Nine of 419 files were structurally incomplete, with 11 explicit
+`ERROR` nodes; this is retained diagnostic evidence, not a threshold in the
+frozen gate. The RSS samples show a descriptive 42.31% candidate increase, but
+without retained host-pairing identity they cannot pass or fail the same-host
+gate. Isolated release builds of the shipped CLI at the exact control and
+candidate revisions grew by 4,871,232 bytes, below the frozen five-MiB cap.
+The diagnostic's definition, import, and call totals are explicitly
+syntax-node counts; they are not claims about the prototype's production
+extraction queries. Those passing subgates do not offset the task-family,
+database, inconclusive correctness/resource, and publication failures. Kotlin
+therefore remains lexical-only in production:
 there is no `.kt`/`.kts` language detection, production extraction,
 parser-cache entry, index-content-version bump, or normal dependency.
 

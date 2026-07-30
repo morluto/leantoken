@@ -1,11 +1,15 @@
 {
   "schema_version": 1,
   "decision": "do_not_ship_kotlin_parser",
-  "decision_summary": "The Kotlin 0.4.0 prototype improved aggregate labeled retrieval, but regressed relevant-file recall in the directive_parsing task family, exceeded the frozen database-growth limit, and left determinism, cold-indexing, and peak-RSS subgates inconclusive. The exact 0.4.0 grammar also remains unpublished on crates.io, so the evaluated Git revision is research-only.",
+  "decision_summary": "The Kotlin 0.4.0 prototype improved aggregate labeled retrieval, but regressed relevant-file recall in the directive_parsing task family, exceeded the frozen database-growth limit, and left determinism, production-test, cold-indexing, and peak-RSS subgates inconclusive. The exact 0.4.0 grammar also remains unpublished on crates.io, so the evaluated Git revision is research-only.",
   "attempt_receipt": "benchmarks/reports/kotlin-retrieval-attempts-openclaw-v1.json",
   "determinism_gate": {
     "result": "inconclusive_legacy_accounting_normalization",
     "reason": "The recorded harness normalized receipt_id by zeroing derived accounting fields without first validating the original fields. The source-free raw reports do not retain complete responses, so the stricter fixed-point check cannot be replayed retroactively."
+  },
+  "product_test_gate": {
+    "result": "inconclusive_no_candidate_revision_receipt",
+    "reason": "No retained artifact binds an exact product-test command and outcome to candidate harness revision a4640f64ce266130819141a9279d7676884faea7. Final-tree PR checks do not establish the temporary prototype result."
   },
   "corpus": {
     "repository": "https://github.com/openclaw/openclaw.git",
@@ -169,6 +173,7 @@
   "gate_failures": [
     "The directive_parsing task family regressed from two relevant files to one, violating the frozen no-family-regression accuracy requirement.",
     "The determinism subgate is inconclusive because the historical harness zeroed receipt-derived accounting fields without first validating them, and the retained reports cannot replay complete responses.",
+    "The production-test subgate is inconclusive because no retained receipt binds an exact product-test command and outcome to the temporary candidate revision.",
     "The cold-indexing subgate is inconclusive because two control samples ran before two candidate samples instead of using paired alternating A/B and B/A order.",
     "The peak-RSS subgate is inconclusive because the attempt receipt did not retain a stable anonymized host fingerprint needed to establish same-host pairing.",
     "The candidate database increased by 15.45%, exceeding the 5% limit by 10.45 percentage points.",
@@ -192,6 +197,7 @@
     "Retain a stable anonymized host fingerprint for each attempt, establish paired same-host runs, and meet the unchanged peak-RSS gate.",
     "Meet the unchanged database-growth gate.",
     "Re-run initial-plus-three-warm response comparisons with exact fixed-point accounting validation before and after receipt normalization.",
+    "Retain the exact product-test command, candidate revision, exit status, and artifact binding for the temporary prototype.",
     "Recover directive_parsing relevant-file recall without regressing another task family.",
     "Create a new report schema if the corpus, labels, queries, extraction policy, grammar revision, or thresholds change."
   ],
@@ -202,6 +208,7 @@
     "Nine of 419 Kotlin source files were structurally incomplete, with 11 explicit ERROR nodes. This is diagnostic evidence, not a threshold in the frozen gate.",
     "The retained peak-RSS samples show a descriptive 42.31% candidate increase, but the missing host-pairing identity prevents a frozen-gate pass or failure.",
     "The four successful reports passed the historical receipt-normalized comparison, but that harness erased two accounting fields before comparison and the reports do not retain complete responses for stricter replay.",
+    "The final-tree PR checks passed after Kotlin production code was removed; they do not establish the frozen no-product-regression requirement for the temporary candidate revision.",
     "No model executed an edit, so the experiment measures retrieval evidence rather than end-to-end task success."
   ]
 }

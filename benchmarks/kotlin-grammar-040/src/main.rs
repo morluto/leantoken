@@ -597,9 +597,21 @@ fn decode_kotlin_paths(output: &[u8], max_files: usize) -> AnyResult<Vec<PathBuf
 }
 
 fn read_pinned_blob(repository: &Path, revision: &str, relative_path: &str) -> AnyResult<Vec<u8>> {
+    read_pinned_blob_with_limit(repository, revision, relative_path, MAX_FILE_BYTES)
+}
+
+fn read_pinned_blob_with_limit(
+    repository: &Path,
+    revision: &str,
+    relative_path: &str,
+    max_file_bytes: u64,
+) -> AnyResult<Vec<u8>> {
     let object = format!("{revision}:{relative_path}");
-    let bytes = git_bytes(repository, &["cat-file", "blob", &object])?;
-    if usize_to_u64(bytes.len())? > MAX_FILE_BYTES {
+    let stdout_limit = usize::try_from(max_file_bytes)
+        .map_err(|_| invalid_data("per-file byte bound exceeds the platform limit"))?;
+    let bytes =
+        git_bytes_with_stdout_limit(repository, &["cat-file", "blob", &object], stdout_limit)?;
+    if usize_to_u64(bytes.len())? > max_file_bytes {
         return Err(invalid_data("diagnostic input exceeded its per-file byte bound").into());
     }
     Ok(bytes)
@@ -643,6 +655,14 @@ fn git_text(repository: &Path, args: &[&str]) -> AnyResult<String> {
 }
 
 fn git_bytes(repository: &Path, args: &[&str]) -> AnyResult<Vec<u8>> {
+    git_bytes_with_stdout_limit(repository, args, MAX_GIT_STDOUT_BYTES)
+}
+
+fn git_bytes_with_stdout_limit(
+    repository: &Path,
+    args: &[&str],
+    stdout_limit: usize,
+) -> AnyResult<Vec<u8>> {
     let mut command = Command::new("git");
     command
         .arg("--no-pager")
@@ -654,7 +674,7 @@ fn git_bytes(repository: &Path, args: &[&str]) -> AnyResult<Vec<u8>> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let output = bounded_command_output(&mut command)?;
+    let output = bounded_command_output(&mut command, stdout_limit)?;
     if !output.status.success() {
         return Err(io::Error::other(format!(
             "Git command failed with {}: {}",
@@ -672,7 +692,7 @@ struct BoundedOutput {
     stderr: Vec<u8>,
 }
 
-fn bounded_command_output(command: &mut Command) -> AnyResult<BoundedOutput> {
+fn bounded_command_output(command: &mut Command, stdout_limit: usize) -> AnyResult<BoundedOutput> {
     let mut child = command.spawn()?;
     let stdout = child
         .stdout
@@ -686,7 +706,7 @@ fn bounded_command_output(command: &mut Command) -> AnyResult<BoundedOutput> {
     let stdout_overflow = Arc::clone(&overflow);
     let stderr_overflow = Arc::clone(&overflow);
     let stdout_reader =
-        thread::spawn(move || read_stream_bounded(stdout, MAX_GIT_STDOUT_BYTES, stdout_overflow));
+        thread::spawn(move || read_stream_bounded(stdout, stdout_limit, stdout_overflow));
     let stderr_reader =
         thread::spawn(move || read_stream_bounded(stderr, MAX_GIT_STDERR_BYTES, stderr_overflow));
     let started = Instant::now();
@@ -969,6 +989,12 @@ mod tests {
             read_pinned_blob(&nested, &revision, "nested/App.kt").expect("pinned blob"),
             b"class Frozen\n"
         );
+        assert_eq!(
+            read_pinned_blob_with_limit(&nested, &revision, "nested/App.kt", 4)
+                .expect_err("reject blob while collecting bounded stdout")
+                .to_string(),
+            "Git output exceeded its byte bound"
+        );
     }
 
     #[test]
@@ -1079,6 +1105,10 @@ mod tests {
         assert_eq!(
             evaluation["determinism_gate"]["result"],
             "inconclusive_legacy_accounting_normalization"
+        );
+        assert_eq!(
+            evaluation["product_test_gate"]["result"],
+            "inconclusive_no_candidate_revision_receipt"
         );
         assert!(
             evaluation["gate_failures"]
