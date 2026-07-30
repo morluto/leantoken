@@ -38,7 +38,7 @@ jobs:
       - name: Classify changed paths
         id: filter
         if: github.event_name != 'schedule'
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           filters: |
             manifests:
@@ -91,7 +91,7 @@ jobs:
 
       - name: Install Node.js
         if: needs.changes.outputs.npm == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -111,6 +111,10 @@ jobs:
 
       - name: Check duplicate files
         run: bash scripts/check-duplicates.sh
+
+      - name: Test development support scripts
+        run: |
+          python3 -m unittest scripts/test_validate_agents_md.py
 
       - name: Validate AGENTS.md
         run: bash scripts/validate-agents-md.sh
@@ -139,7 +143,7 @@ jobs:
 
       - name: Upload documentation for deployment
         if: needs.changes.outputs.rust == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rustdoc
           path: target/doc/
@@ -255,7 +259,7 @@ jobs:
 
       - name: Install Node.js
         if: needs.changes.outputs.npm == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -539,7 +543,7 @@ jobs:
 
       - name: Upload coverage artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-lcov
           path: lcov.info
