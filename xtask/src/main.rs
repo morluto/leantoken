@@ -315,6 +315,8 @@ fn fixture_test_command() -> Vec<String> {
         "test",
         "--locked",
         "--workspace",
+        "--exclude",
+        BENCHMARKS,
         "--all-features",
         "--lib",
         "--bins",
@@ -912,7 +914,9 @@ impl From<FixtureError> for XtaskError {
 
 #[cfg(test)]
 mod tests {
-    use super::{TestPlan, XtaskError, listed_test_count, valid_fixture_identity, workspace_root};
+    use super::{
+        BENCHMARKS, TestPlan, XtaskError, listed_test_count, valid_fixture_identity, workspace_root,
+    };
     use std::fs;
 
     #[test]
@@ -929,11 +933,38 @@ mod tests {
                 .windows(2)
                 .any(|args| args == ["--skip", "tests::checked_in_fixture_cases_match"])
         );
+        assert!(
+            plan.commands
+                .iter()
+                .filter(|command| command.contains(&"--workspace".to_owned()))
+                .all(|command| command
+                    .windows(2)
+                    .any(|args| args == ["--exclude", BENCHMARKS]))
+        );
         assert!(plan.commands.iter().any(|command| {
             command.contains(&"--workspace".to_owned())
+                && command
+                    .windows(2)
+                    .any(|args| args == ["--exclude", BENCHMARKS])
                 && command.contains(&"tests::checked_in_fixture_cases_match".to_owned())
                 && command.contains(&"--exact".to_owned())
         }));
+    }
+
+    #[test]
+    fn ci_fixture_phase_excludes_benchmark_targets() {
+        let workflow = include_str!("../../.github/workflows/ci.yml");
+        let after_fixture = workflow
+            .split_once("- name: Test checked-in fixture cases")
+            .expect("fixture phase")
+            .1;
+        let fixture_phase = after_fixture
+            .split_once("- name:")
+            .map_or(after_fixture, |(phase, _)| phase);
+        assert!(
+            fixture_phase.contains("--exclude leantoken-benchmarks"),
+            "fixture phase rebuilt benchmark targets"
+        );
     }
 
     #[test]
