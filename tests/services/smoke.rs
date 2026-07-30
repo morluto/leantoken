@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn five_services_return_bounded_grounded_responses() {
-    let (_root, services) = fixture().await;
+    let services = immutable_indexed_fixture().await.services.clone();
 
     let files = services
         .files(FilesRequest {
@@ -231,6 +231,15 @@ async fn five_services_return_bounded_grounded_responses() {
         files_accounting.estimated_net_tokens_saved,
         -(files.meta.total_response_tokens as i64)
     );
+}
+
+#[tokio::test]
+async fn immutable_indexed_fixture_is_shared_at_one_generation() {
+    let first = immutable_indexed_fixture().await;
+    let second = immutable_indexed_fixture().await;
+    assert!(std::ptr::eq(first, second));
+    assert_eq!(first.generation, 1);
+    assert_eq!(second.generation, 1);
 }
 
 #[tokio::test]

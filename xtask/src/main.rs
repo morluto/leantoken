@@ -2,6 +2,7 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fmt;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
@@ -9,6 +10,7 @@ const PRODUCT: &str = "leantoken";
 const SUPPORT: &str = "leantoken-test-support";
 const SUITE: &str = "leantoken-test-suite";
 const XTASK: &str = "leantoken-xtask";
+const BENCHMARKS: &str = "leantoken-benchmarks";
 const BENCHMARK_REPOSITORY_FIXTURE: &str = "sample_repo";
 
 fn main() -> ExitCode {
@@ -363,6 +365,8 @@ impl TestPlan {
                 "test",
                 "--locked",
                 "--workspace",
+                "--exclude",
+                BENCHMARKS,
                 "--all-features",
                 "--lib",
                 "--bins",
@@ -503,7 +507,7 @@ fn check_architecture(root: &Path) -> Result<(), XtaskError> {
         .iter()
         .map(|package| (package.name.as_str(), package))
         .collect::<BTreeMap<_, _>>();
-    let expected = BTreeSet::from([PRODUCT, SUPPORT, SUITE, XTASK]);
+    let expected = BTreeSet::from([PRODUCT, SUPPORT, SUITE, XTASK, BENCHMARKS]);
     let actual = packages.keys().copied().collect::<BTreeSet<_>>();
     if actual != expected {
         return Err(XtaskError::Architecture(format!(
@@ -537,7 +541,8 @@ fn check_architecture(root: &Path) -> Result<(), XtaskError> {
                 .map(|package| package.name.as_str())
         })
         .collect::<BTreeSet<_>>();
-    if default_names != expected {
+    let expected_default = BTreeSet::from([PRODUCT, SUPPORT, SUITE, XTASK]);
+    if default_names != expected_default {
         return Err(XtaskError::Architecture(format!(
             "default workspace members drifted: {default_names:?}"
         )));
@@ -606,6 +611,17 @@ fn check_architecture(root: &Path) -> Result<(), XtaskError> {
                     "xtask depends on workspace test or product packages".to_owned(),
                 ));
             }
+            BENCHMARKS
+                if !names.contains(PRODUCT)
+                    || names
+                        .intersection(&BTreeSet::from([SUPPORT, SUITE, XTASK]))
+                        .next()
+                        .is_some() =>
+            {
+                return Err(XtaskError::Architecture(
+                    "benchmarks must depend only on the product package".to_owned(),
+                ));
+            }
             _ => {}
         }
     }
@@ -621,9 +637,80 @@ fn check_architecture(root: &Path) -> Result<(), XtaskError> {
     }
     check_test_inventory(root)?;
     check_ignored_test_policy(root)?;
+    check_organizational_includes(root)?;
     println!(
         "test architecture: ok (workspace resolver 3, one root process target, directed private packages)"
     );
+    Ok(())
+}
+
+fn check_organizational_includes(root: &Path) -> Result<(), XtaskError> {
+    let allowlist_path = root.join("scripts/organizational-includes.allowlist");
+    let allowlist = fs::read_to_string(&allowlist_path).map_err(XtaskError::Io)?;
+    let allowed = allowlist
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(source, included)| (source.to_owned(), included.to_owned()))
+        .collect::<BTreeSet<_>>();
+    let mut rust_files = Vec::new();
+    collect_rust_files(root, &mut rust_files).map_err(XtaskError::Io)?;
+    let mut found = BTreeSet::new();
+    let include_macro = "include!".to_owned() + "(";
+    let include_prefix = include_macro.clone() + "\"";
+    for path in rust_files {
+        let source = path
+            .strip_prefix(root)
+            .expect("walked below repository root")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let contents = fs::read_to_string(&path).map_err(XtaskError::Io)?;
+        for line in contents.lines() {
+            let Some((_, suffix)) = line.split_once(&include_prefix) else {
+                if line.contains(&include_macro) {
+                    return Err(XtaskError::Architecture(format!(
+                        "unsupported include! form in {source}; organizational includes must be migrated or allowlisted explicitly"
+                    )));
+                }
+                continue;
+            };
+            let Some(included) = suffix.split_once("\")").map(|(value, _)| value) else {
+                return Err(XtaskError::Architecture(format!(
+                    "malformed include! in {source}"
+                )));
+            };
+            found.insert((source.clone(), included.to_owned()));
+        }
+    }
+    let unexpected = found.difference(&allowed).cloned().collect::<Vec<_>>();
+    if !unexpected.is_empty() {
+        return Err(XtaskError::Architecture(format!(
+            "new organizational include! usage: {unexpected:?}; migrate it to a normal module or add a reviewed allowlist entry"
+        )));
+    }
+    println!(
+        "organizational includes: ok ({} reviewed existing directives)",
+        found.len()
+    );
+    Ok(())
+}
+
+fn collect_rust_files(root: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            if matches!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some(".git" | "target")
+            ) {
+                continue;
+            }
+            collect_rust_files(&path, files)?;
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs") {
+            files.push(path);
+        }
+    }
     Ok(())
 }
 

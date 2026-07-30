@@ -21,6 +21,7 @@ use leantoken::{
     DiffConfigurationChangeKind, DiffOwnerTestStatus, DiffSymbolChangeKind, DiffSymbolModification,
 };
 use tokio_util::sync::CancellationToken;
+use tokio::sync::OnceCell;
 
 macro_rules! assert_response_token_accounting {
     ($response:expr, $tokenizer:expr) => {{
@@ -60,6 +61,29 @@ async fn fixture() -> (tempfile::TempDir, Services) {
     let services = Services::open(config).expect("services");
     services.index(false).await.expect("index fixture");
     (root, services)
+}
+
+struct ImmutableIndexedFixture {
+    _root: tempfile::TempDir,
+    services: Services,
+    generation: u64,
+}
+
+static IMMUTABLE_INDEXED_FIXTURE: OnceCell<ImmutableIndexedFixture> = OnceCell::const_new();
+
+/// Return the shared, read-only sample repository for tests that do not mutate
+/// files, generations, cancellation state, or storage schemas.
+async fn immutable_indexed_fixture() -> &'static ImmutableIndexedFixture {
+    IMMUTABLE_INDEXED_FIXTURE
+        .get_or_init(|| async {
+            let (root, services) = fixture().await;
+            ImmutableIndexedFixture {
+                _root: root,
+                services,
+                generation: 1,
+            }
+        })
+        .await
 }
 
 mod budgets;
