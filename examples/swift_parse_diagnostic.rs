@@ -866,6 +866,24 @@ mod tests {
                 report["corpus"]["content_blake3"],
                 "20a7422e4e204416ad7a477ba4ede1c51b014d2a7b90ea8e9981a658a492c851"
             );
+            let reported_recovery = report["recovery_categories"]
+                .as_array()
+                .expect("recovery categories")
+                .iter()
+                .map(|category| category["count"].as_u64().expect("category count"))
+                .sum::<u64>()
+                + report["other_recovery_nodes"]
+                    .as_u64()
+                    .expect("other recovery count");
+            assert_eq!(
+                reported_recovery,
+                report["summary"]["error_nodes"]
+                    .as_u64()
+                    .expect("ERROR count")
+                    + report["summary"]["missing_nodes"]
+                        .as_u64()
+                        .expect("MISSING count")
+            );
         }
         assert_eq!(version_072["summary"]["incomplete_files"], 359);
         assert_eq!(version_073["summary"]["incomplete_files"], 349);
