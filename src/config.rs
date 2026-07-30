@@ -389,10 +389,7 @@ impl Config {
             return None;
         }
         let mut fallback = self.clone();
-        fallback.database_path = canonicalize_database_path(repository_fallback_database_path(
-            &self.root,
-            &self.index_scope,
-        ));
+        fallback.database_path = repository_fallback_database_path(&self.root, &self.index_scope);
         fallback.database_uses_repository_fallback = true;
         Some(fallback)
     }

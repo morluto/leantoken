@@ -146,7 +146,7 @@ impl Services {
 
 fn should_use_repository_cache_fallback(config: &Config, error: &Error) -> bool {
     config.repository_cache_fallback().is_some()
-        && matches!(
+        && (matches!(
             error,
             Error::Io(error)
                 if matches!(
@@ -154,30 +154,33 @@ fn should_use_repository_cache_fallback(config: &Config, error: &Error) -> bool 
                     std::io::ErrorKind::PermissionDenied
                         | std::io::ErrorKind::ReadOnlyFilesystem
                 )
-        )
+        ) || sqlite_error_code(error) == Some(rusqlite::ErrorCode::ReadOnly))
 }
 
 fn prepare_repository_cache_fallback(config: &Config) -> Result<Config> {
-    let fallback = config
+    let mut fallback = config
         .repository_cache_fallback()
         .expect("fallback eligibility checked by caller");
+    let database_parent = fallback
+        .database_path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| {
+            Error::InvalidConfiguration("repository cache fallback has no parent directory".into())
+        })?;
+    let relative_parent = database_parent
+        .strip_prefix(&config.root)
+        .map_err(|_| Error::PathOutsideRoot(database_parent.clone()))?;
+    let repository = Dir::open_ambient_dir(&config.root, cap_std::ambient_authority())?;
+    ensure_real_directories(&repository, relative_parent)?;
+    let database_name = fallback
+        .database_path
+        .file_name()
+        .expect("fallback database path has a parent")
+        .to_owned();
+    fallback.database_path = database_parent.canonicalize()?.join(database_name);
+
     let cache_root = config.root.join(".leantoken");
-    match fs::symlink_metadata(&cache_root) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-            return Err(Error::InvalidConfiguration(
-                "repository cache fallback must be a real directory".into(),
-            ));
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            match fs::create_dir(&cache_root) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-        Err(error) => return Err(error.into()),
-    }
     let canonical_cache = cache_root.canonicalize()?;
     if !canonical_cache.starts_with(&config.root) {
         return Err(Error::PathOutsideRoot(canonical_cache));
@@ -196,6 +199,43 @@ fn prepare_repository_cache_fallback(config: &Config) -> Result<Config> {
         Err(error) => return Err(error.into()),
     }
     Ok(fallback)
+}
+
+fn ensure_real_directories(repository: &Dir, relative: &std::path::Path) -> Result<()> {
+    let mut current = std::path::PathBuf::new();
+    for component in relative.components() {
+        let std::path::Component::Normal(component) = component else {
+            return Err(Error::InvalidConfiguration(
+                "repository cache fallback must use normal relative path components".into(),
+            ));
+        };
+        current.push(component);
+        match repository.symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(Error::InvalidConfiguration(
+                    "repository cache fallback must contain only real directories".into(),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match repository.create_dir(&current) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        let metadata = repository.symlink_metadata(&current)?;
+                        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                            return Err(Error::InvalidConfiguration(
+                                "repository cache fallback must contain only real directories"
+                                    .into(),
+                            ));
+                        }
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }
 
 fn is_database_corruption(error: &Error) -> bool {
@@ -268,6 +308,18 @@ mod tests {
         assert!(config.repository_cache_fallback().is_none());
     }
 
+    #[test]
+    fn managed_sqlite_read_only_failure_selects_repository_cache() {
+        let root = tempfile::tempdir().expect("repository");
+        let config = Config::discover(root.path(), None).expect("managed config");
+        let read_only = Error::Sqlite(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_READONLY),
+            None,
+        ));
+
+        assert!(should_use_repository_cache_fallback(&config, &read_only));
+    }
+
     #[cfg(unix)]
     #[test]
     fn repository_cache_fallback_rejects_symlinked_directory() {
@@ -279,6 +331,45 @@ mod tests {
         let config = Config::discover(root.path(), None).expect("managed config");
 
         let error = prepare_repository_cache_fallback(&config).expect_err("reject symlink");
-        assert!(matches!(error, Error::InvalidConfiguration(_)));
+        assert!(
+            matches!(
+                error,
+                Error::InvalidConfiguration(_) | Error::PathOutsideRoot(_)
+            ),
+            "{error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_cache_fallback_rejects_symlinked_version_directory() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("repository");
+        let outside = tempfile::tempdir().expect("outside");
+        fs::create_dir(root.path().join(".leantoken")).expect("cache root");
+        let config = Config::discover(root.path(), None).expect("managed config");
+        let version_directory = config
+            .repository_cache_fallback()
+            .expect("fallback")
+            .database_path
+            .parent()
+            .and_then(std::path::Path::file_name)
+            .expect("version directory")
+            .to_owned();
+        symlink(
+            outside.path(),
+            root.path().join(".leantoken").join(version_directory),
+        )
+        .expect("version symlink");
+
+        let error = prepare_repository_cache_fallback(&config).expect_err("reject symlink");
+        assert!(
+            matches!(
+                error,
+                Error::InvalidConfiguration(_) | Error::PathOutsideRoot(_)
+            ),
+            "{error}"
+        );
     }
 }

@@ -2,6 +2,7 @@
 
 use std::{
     collections::{BTreeSet, VecDeque},
+    ffi::{OsStr, OsString},
     io::{BufRead, BufReader, Write},
     process::{Child, ChildStdin, Stdio},
     sync::{Arc, Condvar, Mutex, mpsc},
@@ -583,6 +584,29 @@ fn diagnostic_context(lines: &VecDeque<String>) -> String {
     }
 }
 
+fn launcher_arguments(config: &Config, args: &[String]) -> Result<Vec<OsString>> {
+    let Some(mcp_index) = args.iter().rposition(|argument| argument == "mcp") else {
+        return Err(doctor_error(
+            "launch",
+            "configured launcher does not contain the `mcp` subcommand",
+        ));
+    };
+    let mut launch_args = args.iter().map(OsString::from).collect::<Vec<_>>();
+    launch_args.splice(
+        mcp_index..mcp_index,
+        [
+            "--root".into(),
+            config.root.as_os_str().to_owned(),
+            "--database".into(),
+            config.database_path.as_os_str().to_owned(),
+            "--tokenizer".into(),
+            config.tokenizer.name().into(),
+        ],
+    );
+    launch_args.extend(["--result-mode".into(), "structured".into()]);
+    Ok(launch_args)
+}
+
 impl DoctorTransport {
     fn spawn(config: &Config) -> Result<Self> {
         let executable = std::env::current_exe()
@@ -592,29 +616,11 @@ impl DoctorTransport {
     }
 
     fn spawn_launcher(config: &Config, command: &str, args: &[String]) -> Result<Self> {
-        Self::spawn_command(config, std::ffi::OsStr::new(command), args)
+        Self::spawn_command(config, OsStr::new(command), args)
     }
 
-    fn spawn_command(config: &Config, command: &std::ffi::OsStr, args: &[String]) -> Result<Self> {
-        let Some(mcp_index) = args.iter().rposition(|argument| argument == "mcp") else {
-            return Err(doctor_error(
-                "launch",
-                "configured launcher does not contain the `mcp` subcommand",
-            ));
-        };
-        let mut launch_args = args.to_vec();
-        launch_args.splice(
-            mcp_index..mcp_index,
-            [
-                "--root".into(),
-                config.root.to_string_lossy().into_owned(),
-                "--database".into(),
-                config.database_path.to_string_lossy().into_owned(),
-                "--tokenizer".into(),
-                config.tokenizer.name().into(),
-            ],
-        );
-        launch_args.extend(["--result-mode".into(), "structured".into()]);
+    fn spawn_command(config: &Config, command: &OsStr, args: &[String]) -> Result<Self> {
+        let launch_args = launcher_arguments(config, args)?;
         let mut child = std::process::Command::new(command)
             .args(&launch_args)
             .stdin(Stdio::piped())
@@ -799,6 +805,36 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn launcher_arguments_preserve_non_utf8_repository_paths() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let root = tempfile::tempdir().expect("repository");
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.root = root
+            .path()
+            .join(OsString::from_vec(b"source-\xff".to_vec()));
+        config.database_path = root
+            .path()
+            .join(OsString::from_vec(b"index-\xfe.sqlite".to_vec()));
+
+        let arguments = launcher_arguments(&config, &["mcp".into()]).expect("launcher arguments");
+
+        assert!(
+            arguments
+                .iter()
+                .any(|argument| { argument.as_os_str().as_bytes().ends_with(b"source-\xff") })
+        );
+        assert!(arguments.iter().any(|argument| {
+            argument
+                .as_os_str()
+                .as_bytes()
+                .ends_with(b"index-\xfe.sqlite")
+        }));
+    }
 
     #[test]
     fn child_diagnostics_are_bounded_and_redact_configured_paths() {

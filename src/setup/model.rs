@@ -207,5 +207,9 @@ impl SetupReport {
     #[must_use]
     pub fn has_failures(&self) -> bool {
         self.results.iter().any(|result| result.error.is_some())
+            || self
+                .verification
+                .as_ref()
+                .is_some_and(|verification| verification.status == SetupVerificationStatus::Failed)
     }
 }

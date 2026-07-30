@@ -8,6 +8,20 @@ fn runtime_root_falls_back_below_the_resolved_home() {
     );
 }
 
+#[test]
+fn failed_launcher_verification_marks_setup_report_failed() {
+    let mut report = empty_report(SetupOperation::Setup, true);
+    report.cancelled = false;
+    report.verification = Some(SetupVerification {
+        status: SetupVerificationStatus::Failed,
+        stage: Some("handshake".into()),
+        message: Some("launcher closed".into()),
+        repair_command: Some("leantoken doctor --json".into()),
+    });
+
+    assert!(report.has_failures());
+}
+
 struct FixedPrompt {
     selected: Option<Vec<SetupClient>>,
     confirmed: bool,
@@ -321,7 +335,11 @@ fn all_clients_receive_global_entries_and_second_setup_is_idempotent() {
     )
     .unwrap();
     assert_eq!(first.results.len(), SetupClient::ALL.len());
-    assert!(!first.has_failures());
+    assert!(first.results.iter().all(|result| result.error.is_none()));
+    assert_eq!(
+        first.verification.as_ref().map(|result| result.status),
+        Some(SetupVerificationStatus::Failed)
+    );
 
     let home = &environment.home;
     for path in [
@@ -776,7 +794,11 @@ fn private_runtime_dry_run_install_and_remove_are_pinned_and_idempotent() {
     let mut apply = request;
     apply.dry_run = false;
     let first = run_with(SetupOperation::Setup, apply.clone(), &environment, &prompt).unwrap();
-    assert!(!first.has_failures());
+    assert!(first.results.iter().all(|result| result.error.is_none()));
+    assert_eq!(
+        first.verification.as_ref().map(|result| result.status),
+        Some(SetupVerificationStatus::Failed)
+    );
     assert_eq!(
         fs::read(&runtime_path).unwrap(),
         b"verified native executable"
@@ -786,7 +808,11 @@ fn private_runtime_dry_run_install_and_remove_are_pinned_and_idempotent() {
     assert!(!codex.contains("npm"));
 
     let second = run_with(SetupOperation::Setup, apply, &environment, &prompt).unwrap();
-    assert!(!second.has_failures());
+    assert!(second.results.iter().all(|result| result.error.is_none()));
+    assert_eq!(
+        second.verification.as_ref().map(|result| result.status),
+        Some(SetupVerificationStatus::Failed)
+    );
     assert_eq!(second.plan[0].action, ClientPlanAction::AlreadyCurrent);
 
     let removal = run_with(
