@@ -51,7 +51,12 @@ cross-package ambiguity are errors. `plan --dry-run` performs no test work. The
 contract benchmark is an explicit `test = false` example and is run only by
 `cargo test-contract`; it is not an ignored default test. Domain fixture
 execution and blessing are owned by the domain module selected by the case
-operation. A generic runner never rewrites expected output.
+operation. Required fixture evidence runs as one test-profile aggregate, while
+exact `run` and `bless` operations retain the standalone runner. This avoids a
+second development-profile product build after unit tests. The unit phase
+builds the fixture-runner test harness but skips its aggregate; a separate
+exact phase uses the same workspace feature graph and runs it after the
+parallel suite-lib harness. A generic runner never rewrites expected output.
 
 `cargo xtask test stress` runs its explicit process-lifecycle command once by
 default. Scheduled jobs set `LEANTOKEN_STRESS_REPETITIONS` to their
@@ -108,8 +113,15 @@ fixtures/<domain>/<case>/
 `case.toml` contains only `schema = 1` and the domain-owned `operation`.
 Requests and expectations are typed by that domain; there is no universal
 field bag. `list` rejects malformed manifests, missing files, unknown contract
-files, and duplicate identities. Blessing is exact-case only, never runs in
-CI, and must leave a reviewable semantic diff.
+files, duplicate identities, more than 10,000 scanned directory entries, and
+trees deeper than 64 levels. Listing accepts only `<domain>/<case>` directories,
+rejects case directories without a manifest, excludes the `sample_repo`
+benchmark corpus before bounded traversal, and does not follow directory
+symlinks. The xtask preflight and fixture test harness use this same inventory
+source module; xtask includes its std-only source without adding a dependency
+on a workspace product or test package.
+Blessing is exact-case only, never runs in CI, and must leave a reviewable
+semantic diff.
 
 Snapshots are limited to stable external contracts such as CLI help, MCP
 catalogs, migrations, and intentionally versioned JSON. When output ordering

@@ -17,3 +17,24 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use leantoken_test_support::FixtureCase;
+    use std::path::Path;
+
+    #[test]
+    fn checked_in_fixture_cases_match() {
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("test-suite manifest is below the workspace root");
+        let cases = FixtureCase::list(workspace_root.join("fixtures"), None)
+            .expect("checked-in fixture inventory is valid");
+        assert!(!cases.is_empty(), "checked-in fixture inventory is empty");
+        for case in cases {
+            leantoken_test_suite::run_fixture(&case.identity, false)
+                .unwrap_or_else(|error| panic!("fixture {} failed: {error}", case.identity));
+        }
+    }
+}
