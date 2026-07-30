@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "decision": "do_not_ship_kotlin_parser",
+  "decision_summary": "The Kotlin 0.4.0 prototype improved aggregate labeled retrieval, but regressed relevant-file recall in the directive_parsing task family, exceeded the frozen database-growth limit, and left determinism, production-test, cold-indexing, and peak-RSS subgates inconclusive. The exact 0.4.0 grammar also remains unpublished on crates.io, so the evaluated Git revision is research-only.",
+  "attempt_receipt": "benchmarks/reports/kotlin-retrieval-attempts-openclaw-v1.json",
+  "determinism_gate": {
+    "result": "inconclusive_legacy_accounting_normalization",
+    "reason": "The recorded harness normalized receipt_id by zeroing derived accounting fields without first validating the original fields. The source-free raw reports do not retain complete responses, so the stricter fixed-point check cannot be replayed retroactively."
+  },
+  "product_test_gate": {
+    "result": "inconclusive_no_candidate_revision_receipt",
+    "reason": "No retained artifact binds an exact product-test command and outcome to candidate harness revision a4640f64ce266130819141a9279d7676884faea7. Final-tree PR checks do not establish the temporary prototype result."
+  },
+  "corpus": {
+    "repository": "https://github.com/openclaw/openclaw.git",
+    "revision": "9feb6ad161877da86200693b039638dbf3411e66",
+    "license": "MIT",
+    "kotlin_files": 413,
+    "kotlin_script_files": 6,
+    "source_files": 419,
+    "source_bytes": 5620380,
+    "content_blake3": "4c2c2df96d451c582aae2fc25ec43b36a3f2debe9eceb316d2275ca8d0f12d7b"
+  },
+  "retrieval_gate": {
+    "manifest": "benchmarks/kotlin_structural_validation.json",
+    "manifest_blake3": "39738183652e4d82af6e3dd73e3426ede8bab517e0f2ed8fd758ad10da207a59",
+    "task_count": 10,
+    "relevant_files": 20,
+    "line_anchors": 82,
+    "source_token_budget_per_task": 1024,
+    "minimum_accuracy_gain": "At least one additional relevant file or five percentage points of line-anchor recall, with no task-family relevant-file regression.",
+    "resource_limits": {
+      "cold_index_growth_fraction": 0.1,
+      "peak_rss_growth_fraction": 0.1,
+      "database_growth_fraction": 0.05,
+      "release_binary_growth_bytes": 5242880
+    },
+    "correctness_requirements": [
+      "Deterministic context across the initial response and three identical warm requests.",
+      "No production-test regression.",
+      "Both .kt and .kts must be recognized and evaluated by the parse diagnostic.",
+      "An unpublished grammar revision cannot enter the production dependency graph."
+    ],
+    "resource_methodology": {
+      "cold_index_ms": "The harness reports cold index duration, but the two control runs preceded the two candidate runs. The non-alternating order and two samples per arm are insufficient for a promotion claim.",
+      "peak_process_rss_bytes": "Maximum resident set size from /usr/bin/time -v around each complete successful harness process, retained in the attempt receipt. The receipt did not retain a stable anonymized host fingerprint, so the observed arm difference is descriptive and the frozen same-host gate is inconclusive. End-of-run VmRSS fields inside raw reports are not used.",
+      "database_bytes": "SQLite database file size after each successful run; both runs within an arm produced the same size.",
+      "shipped_cli_binary_bytes": "Byte size of target/product-size/release/leantoken after cargo build --quiet --locked --release --bin leantoken in isolated target directories at each exact harness revision."
+    }
+  },
+  "arms": [
+    {
+      "name": "lexical_control",
+      "harness_revision": "a2625a699ec66318e225fa8a9836692e847f3e20",
+      "grammar_version": null,
+      "successful_runs": 2,
+      "retrieval": {
+        "relevant_files_found": 16,
+        "relevant_file_recall": 0.8,
+        "line_anchors_found": 8,
+        "line_anchor_recall": 0.0975609756097561,
+        "task_family_relevant_file_regressions": 0
+      },
+      "resource_samples": {
+        "cold_index_ms": [
+          14119.447437,
+          9795.361496
+        ],
+        "peak_process_rss_bytes": [
+          87564288,
+          82657280
+        ],
+        "database_bytes": 114978816,
+        "shipped_cli_binary_bytes": 43379472
+      },
+      "raw_reports": [
+        {
+          "path": "benchmarks/reports/kotlin-retrieval-control-run1.json",
+          "sha256": "05572b88a5904336668102073f1f1784822b67952b0cb86a77b5898d1a684e9a"
+        },
+        {
+          "path": "benchmarks/reports/kotlin-retrieval-control-run2.json",
+          "sha256": "5a12dfe8af827e633cb4d31b27c025e627ec2c20d59c66292135834c849e7d11"
+        }
+      ]
+    },
+    {
+      "name": "tree_sitter_kotlin_0_4_0",
+      "harness_revision": "a4640f64ce266130819141a9279d7676884faea7",
+      "grammar_version": "0.4.0",
+      "grammar_revision": "c10ad83a66c76855e006496db3bdb002afc49203",
+      "successful_runs": 2,
+      "retrieval": {
+        "relevant_files_found": 18,
+        "relevant_file_recall": 0.9,
+        "line_anchors_found": 26,
+        "line_anchor_recall": 0.3170731707317073,
+        "aggregate_relevant_file_gain": 2,
+        "line_anchor_percentage_point_gain": 21.951219512195124,
+        "task_family_relevant_file_regressions": 1,
+        "regressed_task_families": [
+          "directive_parsing"
+        ]
+      },
+      "resource_samples": {
+        "cold_index_ms": [
+          10574.368603,
+          10304.580855999999
+        ],
+        "peak_process_rss_bytes": [
+          121884672,
+          120356864
+        ],
+        "database_bytes": 132739072,
+        "shipped_cli_binary_bytes": 48250704
+      },
+      "growth_against_control_run_means": {
+        "descriptive_cold_index_fraction": -0.1269447513674602,
+        "cold_index_gate": "inconclusive_non_alternating_two_samples_per_arm",
+        "descriptive_peak_process_rss_fraction": 0.42309543288897444,
+        "peak_rss_gate": "inconclusive_same_host_identity_not_retained",
+        "database_fraction": 0.15446546257703675,
+        "shipped_cli_binary_bytes": 4871232
+      },
+      "parse_diagnostic": {
+        "report": "benchmarks/reports/kotlin-parse-diagnostic-openclaw-0.4.0-v1.json",
+        "report_sha256": "2ea2b813b088c91e7ee426137e6ec8566746594f738dd5da251dc3b31dcf0b12",
+        "source_files": 419,
+        "incomplete_files": 9,
+        "error_nodes": 11,
+        "missing_nodes": 0,
+        "syntax_node_counts": {
+          "definitions": 23908,
+          "imports": 6768,
+          "calls": 65830
+        },
+        "syntax_nodes_retained_in_incomplete_files": {
+          "definitions": 1891,
+          "imports": 276,
+          "calls": 4557
+        },
+        "extension_strata": {
+          "kt": {
+            "files": 413,
+            "incomplete_files": 9
+          },
+          "kts": {
+            "files": 6,
+            "incomplete_files": 0
+          }
+        }
+      },
+      "publication_status": {
+        "crates_io_version": "0.3.8",
+        "evaluated_version": "0.4.0",
+        "release_request": "https://github.com/fwcd/tree-sitter-kotlin/issues/242",
+        "release_request_state": "OPEN",
+        "checked_at": "2026-07-30"
+      },
+      "raw_reports": [
+        {
+          "path": "benchmarks/reports/kotlin-retrieval-0.4.0-run1.json",
+          "sha256": "cdb573316bf28f77c1da5d8eddc7873c5f206500efb5380700934ed1c0784672"
+        },
+        {
+          "path": "benchmarks/reports/kotlin-retrieval-0.4.0-run2.json",
+          "sha256": "33e975aa3151e4a1a261574d05c7fb1aff2caca6532a146cd0f9337dc954c94b"
+        }
+      ],
+      "gate_result": "fail"
+    }
+  ],
+  "gate_failures": [
+    "The directive_parsing task family regressed from two relevant files to one, violating the frozen no-family-regression accuracy requirement.",
+    "The determinism subgate is inconclusive because the historical harness zeroed receipt-derived accounting fields without first validating them, and the retained reports cannot replay complete responses.",
+    "The production-test subgate is inconclusive because no retained receipt binds an exact product-test command and outcome to the temporary candidate revision.",
+    "The cold-indexing subgate is inconclusive because two control samples ran before two candidate samples instead of using paired alternating A/B and B/A order.",
+    "The peak-RSS subgate is inconclusive because the attempt receipt did not retain a stable anonymized host fingerprint needed to establish same-host pairing.",
+    "The candidate database increased by 15.45%, exceeding the 5% limit by 10.45 percentage points.",
+    "tree-sitter-kotlin 0.4.0 is not published on crates.io; upstream release issue 242 remains open."
+  ],
+  "passed_subgates": [
+    "Aggregate relevant-file recall improved from 80% to 90%.",
+    "Line-anchor recall improved from 9.76% to 31.71%.",
+    "The shipped LeanToken CLI grew by 4,871,232 bytes, below the five-MiB cap.",
+    "Both .kt and .kts were recognized and evaluated by the parse diagnostic; all six Kotlin script files parsed structurally completely."
+  ],
+  "retained_work": [
+    "Keep the frozen retrieval manifest, source-free parse diagnostic, attempt receipt, and all four successful raw retrieval reports.",
+    "Keep an excluded, independently locked tree-sitter-kotlin 0.4.0 diagnostic manifest.",
+    "Keep the exact prototype commits in branch history for raw-report reproduction.",
+    "Do not add .kt/.kts production language detection, extraction, parser-cache entries, index rows, an index-content-version bump, or a normal release dependency."
+  ],
+  "reconsideration_requirements": [
+    "Use a published upstream grammar release and bind its exact crates.io version.",
+    "Resolve the cold-indexing result with paired alternating A/B and B/A same-host runs.",
+    "Retain a stable anonymized host fingerprint for each attempt, establish paired same-host runs, and meet the unchanged peak-RSS gate.",
+    "Meet the unchanged database-growth gate.",
+    "Re-run initial-plus-three-warm response comparisons with exact fixed-point accounting validation before and after receipt normalization.",
+    "Retain the exact product-test command, candidate revision, exit status, and artifact binding for the temporary prototype.",
+    "Recover directive_parsing relevant-file recall without regressing another task family.",
+    "Create a new report schema if the corpus, labels, queries, extraction policy, grammar revision, or thresholds change."
+  ],
+  "limitations": [
+    "The ten tasks are manually curated parser-development evidence, not a blind or statistically powered sample.",
+    "Cold-index and RSS values are host-local diagnostics. This receipt retained no stable anonymized host fingerprint, so neither resource series establishes same-host pairing; correctness, deterministic behavior, and database size are not waived by host variance.",
+    "Cold-index timing is inconclusive: the first control run was unusually cold, the arms were not alternated, and two samples per arm cannot support a promotion claim.",
+    "Nine of 419 Kotlin source files were structurally incomplete, with 11 explicit ERROR nodes. This is diagnostic evidence, not a threshold in the frozen gate.",
+    "The retained peak-RSS samples show a descriptive 42.31% candidate increase, but the missing host-pairing identity prevents a frozen-gate pass or failure.",
+    "The four successful reports passed the historical receipt-normalized comparison, but that harness erased two accounting fields before comparison and the reports do not retain complete responses for stricter replay.",
+    "The final-tree PR checks passed after Kotlin production code was removed; they do not establish the frozen no-product-regression requirement for the temporary candidate revision.",
+    "No model executed an edit, so the experiment measures retrieval evidence rather than end-to-end task success."
+  ]
+}

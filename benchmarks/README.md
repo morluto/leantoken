@@ -1718,3 +1718,84 @@ largest recovery categories, and an exact remainder. It never writes source or
 individual paths. Each manifest embeds its own lockfile version in the report.
 The checked 0.7.2 and 0.7.3 reports remain separate because an aggregate
 improvement cannot erase a known valid-syntax regression.
+
+## Kotlin structural-indexing evaluation
+
+[`kotlin_structural_validation.json`](kotlin_structural_validation.json)
+freezes ten Android and Wear maintenance tasks, 20 relevant files, 82 line
+anchors, the same exact OpenClaw revision, and a 1,024-source-token budget
+before the Kotlin parser prototype runs. The candidate uses
+`tree-sitter-kotlin` 0.4.0 at exact merge commit
+`c10ad83a66c76855e006496db3bdb002afc49203`. Accuracy eligibility requires one
+additional relevant file or five percentage points of line-anchor recall with
+no task-family relevant-file regression. Initial context plus three identical
+warm requests must also be deterministic, and the candidate must stay within
+10% cold-index and RSS growth, 5% database growth, and five MiB release-binary
+growth.
+
+The source-free
+[decision report](reports/kotlin-structural-evaluation-openclaw-v1.json), its
+[attempt receipt](reports/kotlin-retrieval-attempts-openclaw-v1.json), the
+[parse diagnostic](reports/kotlin-parse-diagnostic-openclaw-0.4.0-v1.json),
+and all four successful
+[raw retrieval reports](reports/kotlin-retrieval-control-run1.json) record the
+no-ship result. The 0.4.0 prototype improved aggregate relevant-file recall
+from 80% to 90% and line-anchor recall from 9.76% to 31.71%, but it was not
+eligible:
+
+- `directive_parsing` regressed from two relevant files to one;
+- determinism remained inconclusive because the historical harness erased
+  receipt-derived accounting fields without validating them first, and the
+  source-free reports cannot replay complete responses;
+- the product-test subgate remained inconclusive because no retained receipt
+  binds an exact command and outcome to the temporary candidate revision;
+- cold indexing remained inconclusive because the two control samples preceded
+  the two candidate samples instead of using paired alternating order;
+- peak RSS remained inconclusive because the attempt receipt retained no
+  stable anonymized host fingerprint needed to establish same-host pairing;
+- the database grew by 15.45%;
+- crates.io still publishes 0.3.8 while upstream 0.4.0 release issue 242
+  remains open.
+
+All four reports passed the historical receipt-normalized comparison, but that
+is not promoted to a deterministic-gate pass. The hardened harness now
+validates original accounting and recomputes receipt-free accounting to a
+fixed point. Final-tree PR checks do not substitute for the missing
+candidate-revision product-test receipt. The extension-only diagnostic stratum
+shows that both extensions were evaluated and all six `.kts` files parsed
+completely. Nine of 419 files were structurally incomplete, with 11 explicit
+`ERROR` nodes; this is retained diagnostic evidence, not a threshold in the
+frozen gate. The RSS samples show a descriptive 42.31% candidate increase, but
+without retained host-pairing identity they cannot pass or fail the same-host
+gate. Isolated release builds of the shipped CLI at the exact control and
+candidate revisions grew by 4,871,232 bytes, below the frozen five-MiB cap.
+The diagnostic's definition, import, and call totals are explicitly
+syntax-node counts; they are not claims about the prototype's production
+extraction queries. Those passing subgates do not offset the task-family,
+database, inconclusive correctness/resource, and publication failures. Kotlin
+therefore remains lexical-only in production:
+there is no `.kt`/`.kts` language detection, production extraction,
+parser-cache entry, index-content-version bump, or normal dependency.
+
+The excluded [`kotlin-grammar-040`](kotlin-grammar-040) package independently
+locks the exact Git revision and keeps the parse result executable without
+placing an unpublished dependency in the workspace graph. Run it against a
+local OpenClaw object database containing the pinned revision:
+
+```bash
+CARGO_TARGET_DIR=target cargo test --locked \
+  --manifest-path benchmarks/kotlin-grammar-040/Cargo.toml
+
+CARGO_TARGET_DIR=target cargo run --locked --release \
+  --manifest-path benchmarks/kotlin-grammar-040/Cargo.toml -- \
+  --repository /path/to/openclaw \
+  --revision 9feb6ad161877da86200693b039638dbf3411e66 \
+  --output /new/path/kotlin-parse-diagnostic-0.4.0.json
+```
+
+The output path must not exist. The evaluator enumerates and reads blobs
+directly from the requested commit, so concurrent worktree edits cannot mix
+with the pinned corpus identity. It writes only locked parser versions, corpus
+identity and hash, bounds, path-only and extension-only strata, aggregate
+syntax-node counts, and bounded recovery categories. It stores neither source
+nor individual paths.

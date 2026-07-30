@@ -2,7 +2,7 @@
 resolver = "3"
 members = [".", "crates/benchmarks", "crates/test-support", "crates/test-suite", "xtask"]
 default-members = [".", "crates/test-support", "crates/test-suite", "xtask"]
-exclude = ["benchmarks/swift-grammar-073"]
+exclude = ["benchmarks/kotlin-grammar-040", "benchmarks/swift-grammar-073"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

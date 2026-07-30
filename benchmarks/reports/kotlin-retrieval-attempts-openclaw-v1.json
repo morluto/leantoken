@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "corpus_revision": "9feb6ad161877da86200693b039638dbf3411e66",
+  "manifest": "benchmarks/kotlin_structural_validation.json",
+  "manifest_blake3": "39738183652e4d82af6e3dd73e3426ede8bab517e0f2ed8fd758ad10da207a59",
+  "failure_contract": "The recorded harness exits before writing a report when an initial response and its three identical warm requests differ after setting generated receipt_id, path_and_metadata_tokens, and total_response_tokens to common neutral values. It did not independently validate the original complete-response accounting.",
+  "current_harness_contract": "The hardened harness exits when any response has inconsistent complete-response token accounting or when responses differ after removing receipt_id and recomputing exact receipt-free accounting to a fixed point.",
+  "determinism_gate": "inconclusive_legacy_accounting_normalization",
+  "candidate_product_test_evidence": null,
+  "resource_measurement": {
+    "peak_process_rss_bytes": "Maximum resident set size from /usr/bin/time -v around the complete harness process; this is independent of the end-of-run VmRSS recorded inside each raw report.",
+    "elapsed_wall_seconds": "Elapsed wall-clock time from /usr/bin/time -v around the complete harness process.",
+    "host_pairing_evidence": null,
+    "host_pairing_limitation": "No stable anonymized host fingerprint was retained for these attempts, so the recorded resource samples cannot establish same-host pairing."
+  },
+  "attempts": [
+    {
+      "arm": "lexical_control",
+      "harness_revision": "e0d8c739462cdd1cb0365db2e2350d89620596aa",
+      "attempt": 1,
+      "outcome": "invalid_dirty_report",
+      "reason": "The report was written inside the harness worktree, so its own output made harness_worktree_dirty true.",
+      "elapsed_wall_seconds": 36.99,
+      "peak_process_rss_bytes": 91402240
+    },
+    {
+      "arm": "lexical_control",
+      "harness_revision": "e0d8c739462cdd1cb0365db2e2350d89620596aa",
+      "attempt": 2,
+      "outcome": "harness_false_positive",
+      "reason": "Fragments, ordering, generation, source tokens, and omissions were identical; generated receipt identifiers changed path_and_metadata_tokens and total_response_tokens by one token. Commit a2625a699ec66318e225fa8a9836692e847f3e20 normalizes those two receipt-derived fields with receipt_id.",
+      "task": "kotlin-talk-directive-aliases",
+      "elapsed_wall_seconds": 28.75,
+      "peak_process_rss_bytes": 86003712
+    },
+    {
+      "arm": "lexical_control",
+      "harness_revision": "a2625a699ec66318e225fa8a9836692e847f3e20",
+      "attempt": 3,
+      "outcome": "invalid_dirty_report",
+      "reason": "Three unrelated user-owned untracked files made the primary worktree dirty; they were preserved and subsequent evaluation moved to a clean detached worktree.",
+      "elapsed_wall_seconds": 35.87,
+      "peak_process_rss_bytes": 85323776
+    },
+    {
+      "arm": "lexical_control",
+      "harness_revision": "a2625a699ec66318e225fa8a9836692e847f3e20",
+      "attempt": 4,
+      "outcome": "success",
+      "report": "benchmarks/reports/kotlin-retrieval-control-run1.json",
+      "sha256": "05572b88a5904336668102073f1f1784822b67952b0cb86a77b5898d1a684e9a",
+      "elapsed_wall_seconds": 55.24,
+      "peak_process_rss_bytes": 87564288
+    },
+    {
+      "arm": "lexical_control",
+      "harness_revision": "a2625a699ec66318e225fa8a9836692e847f3e20",
+      "attempt": 5,
+      "outcome": "success",
+      "report": "benchmarks/reports/kotlin-retrieval-control-run2.json",
+      "sha256": "5a12dfe8af827e633cb4d31b27c025e627ec2c20d59c66292135834c849e7d11",
+      "elapsed_wall_seconds": 38.11,
+      "peak_process_rss_bytes": 82657280
+    },
+    {
+      "arm": "tree_sitter_kotlin_0_4_0",
+      "harness_revision": "a4640f64ce266130819141a9279d7676884faea7",
+      "attempt": 1,
+      "outcome": "success",
+      "report": "benchmarks/reports/kotlin-retrieval-0.4.0-run1.json",
+      "sha256": "cdb573316bf28f77c1da5d8eddc7873c5f206500efb5380700934ed1c0784672",
+      "elapsed_wall_seconds": 40.96,
+      "peak_process_rss_bytes": 121884672
+    },
+    {
+      "arm": "tree_sitter_kotlin_0_4_0",
+      "harness_revision": "a4640f64ce266130819141a9279d7676884faea7",
+      "attempt": 2,
+      "outcome": "success",
+      "report": "benchmarks/reports/kotlin-retrieval-0.4.0-run2.json",
+      "sha256": "33e975aa3151e4a1a261574d05c7fb1aff2caca6532a146cd0f9337dc954c94b",
+      "elapsed_wall_seconds": 40.88,
+      "peak_process_rss_bytes": 120356864
+    }
+  ]
+}
