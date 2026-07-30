@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "corpus_id": "typescript-recovery-synthetic-v1",
+  "files": [
+    "generated/client.generated.ts",
+    "invalid/broken-function.invalid.ts",
+    "mocks/import-original.mock.ts",
+    "ordinary/complete.ts",
+    "ordinary/export-type-star.ts",
+    "ordinary/generic-import.ts",
+    "test/import-original.test.ts",
+    "tsx/broken-component.invalid.tsx",
+    "tsx/component.test.tsx"
+  ]
+}
