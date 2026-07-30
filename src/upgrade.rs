@@ -399,15 +399,14 @@ fn write_report(output: &mut impl Write, report: UpgradeReport, json: bool) -> R
             )?;
             writeln!(
                 output,
-                "You are running LeanToken through npx; nothing is installed globally."
+                "You are running LeanToken through npx; there is no persistent CLI to replace."
             )?;
             if let Some(command) = report.command {
-                writeln!(output, "Refresh existing MCP entries with: {command}")?;
+                writeln!(
+                    output,
+                    "Refresh existing pinned MCP entries with: {command}"
+                )?;
             }
-            writeln!(
-                output,
-                "Or install the shell command with: npm install --global leantoken@latest"
-            )?;
         }
         UpgradeStatus::UpdateAvailable => {
             writeln!(
@@ -499,6 +498,28 @@ mod tests {
             "npx --yes leantoken@1.2.3 setup --refresh --yes"
         );
         assert!(!npx_refresh_command("1.2.3").contains("@latest"));
+    }
+
+    #[test]
+    fn npx_upgrade_reports_only_the_existing_installation_refresh() {
+        let report = UpgradeReport {
+            status: UpgradeStatus::Ephemeral,
+            context: InstallContext::Npx,
+            current_version: "1.2.2",
+            latest_version: Some("1.2.3".into()),
+            command: Some(npx_refresh_command("1.2.3")),
+            mcp_refresh_command: None,
+        };
+
+        let mut text = Vec::new();
+        write_report(&mut text, report, false).unwrap();
+        let text = String::from_utf8(text).unwrap();
+        assert!(text.contains("there is no persistent CLI to replace"));
+        assert!(text.contains(
+            "Refresh existing pinned MCP entries with: \
+             npx --yes leantoken@1.2.3 setup --refresh --yes"
+        ));
+        assert!(!text.contains("npm install --global"));
     }
 
     #[test]
