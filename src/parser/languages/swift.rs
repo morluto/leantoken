@@ -42,7 +42,7 @@ fn append_swift_structure(
             "protocol_function_declaration" => {
                 push_swift_named_symbol(source, node, "method", symbols);
             }
-            "property_declaration" | "protocol_property_declaration" => {
+            "protocol_property_declaration" => {
                 if let Some(pattern) = node.child_by_field_name("name")
                     && let Some(name) = swift_first_identifier(pattern)
                 {
@@ -85,9 +85,6 @@ fn append_swift_structure(
                     signature_from_node(source, node),
                     symbols,
                 );
-            }
-            "enum_entry" => {
-                append_swift_enum_entries(source, node, symbols);
             }
             "call_expression" => {
                 if let Some(name) = swift_call_name(node) {
@@ -170,23 +167,6 @@ fn swift_first_identifier(node: Node<'_>) -> Option<Node<'_>> {
     None
 }
 
-fn append_swift_enum_entries(source: &str, node: Node<'_>, symbols: &mut Vec<Symbol>) {
-    let mut cursor = node.walk();
-    for name in node
-        .named_children(&mut cursor)
-        .filter(|child| child.kind() == "simple_identifier")
-    {
-        push_structural_symbol(
-            source,
-            node,
-            node_text(source, name),
-            "enum_member",
-            signature_from_node(source, node),
-            symbols,
-        );
-    }
-}
-
 fn swift_call_name(node: Node<'_>) -> Option<Node<'_>> {
     let mut cursor = node.walk();
     let callee = node
@@ -206,4 +186,39 @@ fn swift_terminal_call_name(node: Node<'_>) -> Option<Node<'_>> {
             .and_then(swift_terminal_call_name);
     }
     None
+}
+
+fn retain_bounded_swift_calls(symbols: &[Symbol], references: &mut Vec<Reference>) {
+    const MAX_CALL_REFERENCES_PER_FILE: usize = 8;
+
+    if references.len() <= MAX_CALL_REFERENCES_PER_FILE {
+        return;
+    }
+
+    let local_names = symbols
+        .iter()
+        .map(|symbol| symbol.name.as_str())
+        .collect::<HashSet<_>>();
+    let mut selected = HashSet::with_capacity(MAX_CALL_REFERENCES_PER_FILE);
+    let mut identities = HashSet::with_capacity(MAX_CALL_REFERENCES_PER_FILE);
+
+    for local_only in [true, false] {
+        for reference in references.iter() {
+            if selected.len() == MAX_CALL_REFERENCES_PER_FILE {
+                break;
+            }
+            if local_only != local_names.contains(reference.name.as_str()) {
+                continue;
+            }
+            let identity = (
+                reference.name.as_str(),
+                reference.enclosing_symbol.as_deref(),
+            );
+            if identities.insert(identity) {
+                selected.insert((reference.start_byte, reference.end_byte));
+            }
+        }
+    }
+
+    references.retain(|reference| selected.contains(&(reference.start_byte, reference.end_byte)));
 }

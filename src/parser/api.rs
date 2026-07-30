@@ -216,6 +216,9 @@ fn parse_language_with_cancellation(
         deduplicate_symbols(&mut symbols);
         compute_symbol_parents(&mut symbols);
         compute_reference_enclosing(&symbols, &mut references);
+        if language == "swift" {
+            retain_bounded_swift_calls(&symbols, &mut references);
+        }
 
         Ok(ParseOutput {
             language: Some(language.to_string()),
