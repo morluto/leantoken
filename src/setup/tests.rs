@@ -61,7 +61,7 @@ fn npx_environment(temp: &tempfile::TempDir, version: &str) -> SetupEnvironment 
         native_executable: temp.path().join("native/leantoken"),
         launcher: McpLauncher::from_npx_paths_with_version(
             &runtime.join(if cfg!(windows) { "node.exe" } else { "node" }),
-            &runtime.join("npm cli.js"),
+            &runtime.join("npx cli.js"),
             version,
         )
         .unwrap(),

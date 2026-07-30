@@ -1990,14 +1990,14 @@ fn npx_setup_registers_exact_release_instead_of_its_cache_path() {
     let temp = tempfile::tempdir().expect("temporary home");
     let runtime = temp.path().join("node runtime");
     let node = runtime.join(if cfg!(windows) { "node.exe" } else { "node" });
-    let npm = runtime.join("npm cli.js");
+    let npx = runtime.join("npx cli.js");
     let setup = Command::cargo_bin("leantoken")
         .expect("binary")
         .env("HOME", temp.path())
         .env("USERPROFILE", temp.path())
         .env("npm_lifecycle_event", "npx")
         .env("npm_node_execpath", &node)
-        .env("npm_execpath", &npm)
+        .env("npm_execpath", &npx)
         .args(["--json", "setup", "--claude", "--yes"])
         .output()
         .expect("run npx setup");
@@ -2023,8 +2023,7 @@ fn npx_setup_registers_exact_release_instead_of_its_cache_path() {
     assert_eq!(
         config["mcpServers"]["leantoken"]["args"],
         serde_json::json!([
-            npm.to_str().unwrap(),
-            "exec",
+            npx.to_str().unwrap(),
             "--yes",
             "--prefer-offline",
             format!("--package=leantoken@{}", env!("CARGO_PKG_VERSION")),

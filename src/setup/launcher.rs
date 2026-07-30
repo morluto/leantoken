@@ -19,9 +19,9 @@ impl McpLauncher {
             let node = std::env::var_os("npm_node_execpath").ok_or_else(|| {
                 Error::SetupFailure("npx did not report its Node executable path".into())
             })?;
-            let npm = std::env::var_os("npm_execpath")
-                .ok_or_else(|| Error::SetupFailure("npx did not report its npm CLI path".into()))?;
-            return Self::from_npx_paths(Path::new(&node), Path::new(&npm));
+            let npx = std::env::var_os("npm_execpath")
+                .ok_or_else(|| Error::SetupFailure("npx did not report its CLI path".into()))?;
+            return Self::from_npx_paths(Path::new(&node), Path::new(&npx));
         }
         Ok(Self::from_executable(
             &std::env::current_exe()?.canonicalize()?,
@@ -59,29 +59,31 @@ impl McpLauncher {
             .ok_or_else(|| Error::SetupFailure("LeanToken executable path is not UTF-8".into()))
     }
 
-    fn from_npx_paths(node: &Path, npm: &Path) -> Result<Self> {
-        Self::from_npx_paths_with_version(node, npm, env!("CARGO_PKG_VERSION"))
+    fn from_npx_paths(node: &Path, npx: &Path) -> Result<Self> {
+        Self::from_npx_paths_with_version(node, npx, env!("CARGO_PKG_VERSION"))
     }
 
     pub(super) fn from_npx_paths_with_version(
         node: &Path,
-        npm: &Path,
+        npx: &Path,
         version: &str,
     ) -> Result<Self> {
-        if !node.is_absolute() || !npm.is_absolute() {
+        if !node.is_absolute() || !npx.is_absolute() {
             return Err(Error::SetupFailure(
-                "npx reported a relative Node or npm CLI path".into(),
+                "npx reported a relative Node or CLI path".into(),
             ));
         }
-        let npm = npm
+        let npx = npx
             .to_str()
-            .ok_or_else(|| Error::SetupFailure("npm CLI path is not UTF-8".into()))?;
+            .ok_or_else(|| Error::SetupFailure("npx CLI path is not UTF-8".into()))?;
         let package = format!("leantoken@{version}");
         Ok(Self {
             command: node.into(),
+            // `npm_execpath` points to npx-cli.js when setup itself is run by
+            // npx, so invoke the npx CLI directly instead of adding npm's
+            // `exec` subcommand.
             args: vec![
-                npm.into(),
-                "exec".into(),
+                npx.into(),
                 "--yes".into(),
                 "--prefer-offline".into(),
                 format!("--package={package}"),
@@ -100,13 +102,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn npx_launcher_pins_exact_release_without_using_cache_path() {
+    fn npx_launcher_invokes_npx_directly_and_pins_exact_release() {
         let root = if cfg!(windows) { r"C:\npm" } else { "/npm" };
         let version = "1.2.3";
         assert_eq!(
             McpLauncher::from_npx_paths_with_version(
                 &Path::new(root).join("node"),
-                &Path::new(root).join("npm-cli.js"),
+                &Path::new(root).join("npx-cli.js"),
                 version,
             )
             .unwrap(),
@@ -114,10 +116,9 @@ mod tests {
                 command: Path::new(root).join("node"),
                 args: vec![
                     Path::new(root)
-                        .join("npm-cli.js")
+                        .join("npx-cli.js")
                         .to_string_lossy()
                         .into_owned(),
-                    "exec".into(),
                     "--yes".into(),
                     "--prefer-offline".into(),
                     "--package=leantoken@1.2.3".into(),
@@ -140,13 +141,13 @@ mod tests {
         };
         let launcher = McpLauncher::from_npx_paths_with_version(
             &root.join("node"),
-            &root.join("npm cli.js"),
+            &root.join("npx cli.js"),
             "1.2.3",
         )
         .unwrap();
 
         assert_eq!(launcher.command, root.join("node"));
-        assert_eq!(launcher.args[0], root.join("npm cli.js").to_string_lossy());
-        assert_eq!(launcher.args[4], "--package=leantoken@1.2.3");
+        assert_eq!(launcher.args[0], root.join("npx cli.js").to_string_lossy());
+        assert_eq!(launcher.args[3], "--package=leantoken@1.2.3");
     }
 }
