@@ -53,9 +53,10 @@ contract benchmark is an explicit `test = false` example and is run only by
 execution and blessing are owned by the domain module selected by the case
 operation. Required fixture evidence runs as one test-profile aggregate, while
 exact `run` and `bless` operations retain the standalone runner. This avoids a
-second development-profile product build after unit tests; the complete plan
-reuses the workspace harness, while standalone fixture testing builds only the
-owning suite. A generic runner never rewrites expected output.
+second development-profile product build after unit tests. The dedicated
+fixture target runs separately from the parallel suite-lib harness, while
+standalone fixture testing builds only the owning suite. A generic runner
+never rewrites expected output.
 
 `cargo xtask test stress` runs its explicit process-lifecycle command once by
 default. Scheduled jobs set `LEANTOKEN_STRESS_REPETITIONS` to their

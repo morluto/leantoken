@@ -1289,9 +1289,9 @@ appropriate for that repository.
 Checked-in fixture inventory is a test-only scan bounded to 10,000 directory
 entries and 64 directory levels. It does not follow directory symlinks and
 fails instead of accepting a partial inventory when either bound is exceeded.
-Merge tests execute the validated cases through one test-profile aggregate;
-the exact fixture binary remains available only for targeted run and bless
-operations.
+Merge tests execute the validated cases through one dedicated test-profile
+aggregate, separate from the parallel suite-lib harness; the exact fixture
+binary remains available only for targeted run and bless operations.
 
 The developer-only target-footprint reporter is read-only and does not follow
 symlinks. It scans at most 1,000,000 explicitly requested Cargo target entries

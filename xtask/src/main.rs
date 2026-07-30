@@ -301,29 +301,16 @@ fn has_checked_in_fixtures(root: &Path) -> Result<bool, XtaskError> {
     Ok(!cases.is_empty())
 }
 
-fn focused_fixture_command() -> Vec<String> {
+fn fixture_test_command() -> Vec<String> {
     cargo_command([
         "test",
         "--locked",
         "--package",
         SUITE,
         "--all-features",
-        "--lib",
-        "tests::checked_in_fixture_cases_match",
-        "--",
-        "--exact",
-    ])
-}
-
-fn workspace_fixture_command() -> Vec<String> {
-    cargo_command([
-        "test",
-        "--locked",
-        "--workspace",
-        "--all-features",
-        "--lib",
-        "--bins",
-        "tests::checked_in_fixture_cases_match",
+        "--test",
+        "fixtures",
+        "checked_in_fixture_cases_match",
         "--",
         "--exact",
     ])
@@ -334,7 +321,7 @@ fn run_fixtures(root: &Path) -> Result<(), XtaskError> {
         println!("No checked-in fixture cases found.");
         return Ok(());
     }
-    let command = focused_fixture_command();
+    let command = fixture_test_command();
     let status = print_and_run(root, &command)?;
     if status.success() {
         Ok(())
@@ -419,7 +406,7 @@ impl TestPlan {
             ]),
         ];
         if has_checked_in_fixtures(root)? {
-            commands.push(workspace_fixture_command());
+            commands.push(fixture_test_command());
         }
         Ok(Self {
             commands,
@@ -1030,8 +1017,10 @@ mod tests {
                 .all(|command| command.contains(&"--locked".to_owned()))
         );
         assert!(plan.commands.iter().any(|command| {
-            command.contains(&"--workspace".to_owned())
-                && command.contains(&"tests::checked_in_fixture_cases_match".to_owned())
+            command
+                .windows(2)
+                .any(|args| args == ["--test", "fixtures"])
+                && command.contains(&"checked_in_fixture_cases_match".to_owned())
         }));
         assert!(!plan.commands.iter().any(|command| {
             command

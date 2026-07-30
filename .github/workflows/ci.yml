@@ -307,8 +307,8 @@ jobs:
         if: needs.changes.outputs.rust == 'true'
         timeout-minutes: 10
         run: >
-          cargo test --locked --workspace --all-features --lib --bins
-          tests::checked_in_fixture_cases_match -- --exact
+          cargo test --locked --package leantoken-test-suite --all-features
+          --test fixtures checked_in_fixture_cases_match -- --exact
 
       - name: Test token-economy contract
         if: needs.changes.outputs.rust == 'true'
