@@ -1309,7 +1309,7 @@ fn benchmark_limitations(
             "Validation prompts and labels were frozen from open issue reports and pinned source inspection, then used during retrieval tuning; this is not blind holdout evidence.",
         );
         limitations.push(
-            "Four validation tasks are retrieval development evidence, not a statistically powered product claim.",
+            "The validation tasks are retrieval development evidence, not a statistically powered product claim.",
         );
     } else if dataset_kind == "external_retrieval_corpus" {
         limitations.push(

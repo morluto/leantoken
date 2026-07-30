@@ -1,0 +1,220 @@
+{
+  "schema_version": 4,
+  "dataset_kind": "prospective_validation",
+  "frozen_at": "2026-07-30",
+  "evaluation_protocol": "Run the unchanged manifest against the lexical control, tree-sitter-swift 0.7.2, and tree-sitter-swift 0.7.3 at one exact OpenClaw revision. Every arm uses a fresh database and the same 1024 source-token budget per task. A Swift candidate is eligible only if relevant-file recall improves by at least one of 20 labeled files or line-anchor recall improves by at least five percentage points, with no task-family relevant-file regression. It must not increase incomplete files relative to the other Swift candidate, regress existing product tests, exceed 10% cold-index or peak-RSS growth, exceed 5% database growth, or add more than 5 MiB to the release binary. Timing and memory thresholds require paired same-host runs and are interpreted as diagnostics on this ten-task development set, not universal performance claims.",
+  "reclassification_rule": "The task labels and thresholds remain fixed for every arm. Any task, label, query, token budget, corpus revision, parser query, or threshold change creates a new schema/report version. This consumed development set must not later be described as blind or statistically powered evidence.",
+  "description": "Prospective Swift structural-indexing evaluation over OpenClaw iOS, macOS, and shared application owners. Prompts and labels were frozen from issue #366 and source inspection at the pinned revision before either grammar candidate was integrated.",
+  "rg_max_lines_per_query": 200,
+  "corpora": [
+    {
+      "name": "openclaw-swift",
+      "url": "https://github.com/openclaw/openclaw.git",
+      "directory": "repo",
+      "base_revision": "9feb6ad161877da86200693b039638dbf3411e66",
+      "issue_url": "https://github.com/morluto/leantoken/issues/366",
+      "prompt_provenance": "Maintenance prompts were written from issue #366's named application owners and public declarations at the pinned OpenClaw revision before either Swift grammar arm ran; no future patch or fix commit was consulted.",
+      "label_provenance": "Relevant files and one-based line anchors were selected from declaration, caller, and regression-test ownership at the pinned OpenClaw revision before either Swift grammar arm ran.",
+      "dataset_url": "https://github.com/openclaw/openclaw.git",
+      "dataset_revision": "9feb6ad161877da86200693b039638dbf3411e66",
+      "dataset_license": "MIT",
+      "external_limitations": [
+        "The ten tasks are manually curated parser-development evidence, not a random or statistically powered sample.",
+        "Line anchors identify declaration and test neighborhoods; they do not prove that every returned line is sufficient to implement a correct patch.",
+        "Prompts name public symbols to stress structural ownership and do not simulate an autonomous issue-triage trajectory."
+      ],
+      "tasks": [
+        {
+          "id": "swift-gateway-endpoint-id",
+          "prompt": "Change GatewayEndpointID service-name canonicalization in stableID while preserving the non-service fallback, and update its regression tests.",
+          "task_family": "identifier_normalization",
+          "languages": ["swift"],
+          "task_shapes": ["cross_file_behavior", "regression_test_discovery"],
+          "rg_queries": ["GatewayEndpointID", "normalizeServiceNameForID", "stableIDForServiceDecodesAndNormalizesName"],
+          "relevant_files": [
+            {
+              "path": "apps/shared/OpenClawKit/Sources/OpenClawKit/GatewayEndpointID.swift",
+              "line_anchors": [4, 5, 20]
+            },
+            {
+              "path": "apps/ios/Tests/GatewayEndpointIDTests.swift",
+              "line_anchors": [6, 7, 14]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "swift-exec-approvals-sqlite",
+          "prompt": "Change ExecApprovalsSQLiteStore immediate-transaction fencing and TypeScript-compatible projection normalization, with store regression coverage.",
+          "task_family": "storage_behavior",
+          "languages": ["swift"],
+          "task_shapes": ["cross_file_behavior", "regression_test_discovery"],
+          "rg_queries": ["ExecApprovalsSQLiteStore", "withImmediateTransaction", "projections use TypeScript normalization rules"],
+          "relevant_files": [
+            {
+              "path": "apps/shared/OpenClawKit/Sources/OpenClawKit/ExecApprovalsSQLiteStore.swift",
+              "line_anchors": [193, 228, 344]
+            },
+            {
+              "path": "apps/shared/OpenClawKit/Tests/OpenClawKitTests/ExecApprovalsSQLiteStoreTests.swift",
+              "line_anchors": [75, 76, 140, 141]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "swift-live-activity-arbiter",
+          "prompt": "Update LiveActivityPresentationArbiter tool precedence so ending the newest tool resumes the previous tool within the same session, and update the arbiter tests.",
+          "task_family": "state_arbitration",
+          "languages": ["swift"],
+          "task_shapes": ["framework_behavior", "regression_test_discovery"],
+          "rg_queries": ["LiveActivityPresentationArbiter", "startTool", "parallel tools resume the newest remaining tool"],
+          "relevant_files": [
+            {
+              "path": "apps/ios/Sources/LiveActivity/LiveActivityPresentationArbiter.swift",
+              "line_anchors": [43, 113, 123]
+            },
+            {
+              "path": "apps/ios/Tests/LiveActivityPresentationArbiterTests.swift",
+              "line_anchors": [38, 39, 53]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "swift-gateway-manual-auth",
+          "prompt": "Change GatewayConnectionController ManualAuthOverride persisted and current-input behavior together with legacy device-auth migration, and update controller tests.",
+          "task_family": "authentication_migration",
+          "languages": ["swift"],
+          "task_shapes": ["cross_file_behavior", "regression_test_discovery"],
+          "rg_queries": ["ManualAuthOverride", "migrateLegacyDeviceAuth", "currentManualInput"],
+          "relevant_files": [
+            {
+              "path": "apps/ios/Sources/Gateway/GatewayConnectionController+ManualAuth.swift",
+              "line_anchors": [5, 139, 157, 196]
+            },
+            {
+              "path": "apps/ios/Tests/GatewayConnectionControllerTests.swift",
+              "line_anchors": [753, 761, 811, 896]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "swift-voice-wake-sync",
+          "prompt": "Update VoiceWakeGlobalSettingsSync to apply valid voice-wake change events and ignore invalid payloads, with synchronized tests.",
+          "task_family": "event_sync",
+          "languages": ["swift"],
+          "task_shapes": ["framework_behavior", "regression_test_discovery"],
+          "rg_queries": ["VoiceWakeGlobalSettingsSync", "handle(push", "ignores voice wake changed event with invalid payload"],
+          "relevant_files": [
+            {
+              "path": "apps/macos/Sources/OpenClaw/VoiceWakeGlobalSettingsSync.swift",
+              "line_anchors": [6, 44, 53]
+            },
+            {
+              "path": "apps/macos/Tests/OpenClawIPCTests/VoiceWakeGlobalSettingsSyncTests.swift",
+              "line_anchors": [24, 31, 41, 45]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "swift-gateway-transport-selection",
+          "prompt": "Change GatewayDiscoverySelectionSupport transport selection for directly reachable Tailscale and LAN gateways without reusing a stale SSH tunnel port, and update tests.",
+          "task_family": "transport_selection",
+          "languages": ["swift"],
+          "task_shapes": ["configuration", "regression_test_discovery"],
+          "rg_queries": ["GatewayDiscoverySelectionSupport", "preferredTransport", "direct reachable lan gateway ignores stale local tunnel port"],
+          "relevant_files": [
+            {
+              "path": "apps/macos/Sources/OpenClaw/GatewayDiscoverySelectionSupport.swift",
+              "line_anchors": [6, 9, 54, 64]
+            },
+            {
+              "path": "apps/macos/Tests/OpenClawIPCTests/GatewayDiscoverySelectionSupportTests.swift",
+              "line_anchors": [34, 57, 98, 124]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "swift-canvas-jsonl",
+          "prompt": "Change OpenClawCanvasA2UIJSONL validation to reject unsupported surface shapes while preserving valid v0.8 message decoding, and update tests.",
+          "task_family": "protocol_validation",
+          "languages": ["swift"],
+          "task_shapes": ["definition_discovery", "regression_test_discovery"],
+          "rg_queries": ["OpenClawCanvasA2UIJSONL", "validateV0_8", "jsonlRejectsUnknownShape"],
+          "relevant_files": [
+            {
+              "path": "apps/shared/OpenClawKit/Sources/OpenClawKit/CanvasA2UIJSONL.swift",
+              "line_anchors": [3, 29, 66]
+            },
+            {
+              "path": "apps/shared/OpenClawKit/Tests/OpenClawKitTests/CanvasA2UITests.swift",
+              "line_anchors": [11, 23, 33]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "swift-share-deep-link",
+          "prompt": "Change ShareToAgentDeepLink message and URL construction so shared fields and optional instructions are cleaned and encoded consistently, with tests.",
+          "task_family": "deep_link_encoding",
+          "languages": ["swift"],
+          "task_shapes": ["cross_file_behavior", "regression_test_discovery"],
+          "rg_queries": ["ShareToAgentDeepLink", "buildMessageIncludesSharedFields", "buildURLEncodesAgentRoute"],
+          "relevant_files": [
+            {
+              "path": "apps/shared/OpenClawKit/Sources/OpenClawKit/ShareToAgentDeepLink.swift",
+              "line_anchors": [15, 16, 30]
+            },
+            {
+              "path": "apps/ios/Tests/ShareToAgentDeepLinkTests.swift",
+              "line_anchors": [10, 16, 26, 32]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "swift-talk-config",
+          "prompt": "Change TalkConfigParsing provider selection and speech-recognition locale fallback while preserving normalized payload rules, and update contract tests.",
+          "task_family": "configuration_parsing",
+          "languages": ["swift"],
+          "task_shapes": ["configuration", "regression_test_discovery"],
+          "rg_queries": ["TalkConfigParsing", "selectProviderConfig", "resolvedSpeechRecognitionLocaleFromSupportedFallbacks"],
+          "relevant_files": [
+            {
+              "path": "apps/shared/OpenClawKit/Sources/OpenClawKit/TalkConfigParsing.swift",
+              "line_anchors": [15, 20, 80]
+            },
+            {
+              "path": "apps/shared/OpenClawKit/Tests/OpenClawKitTests/TalkConfigParsingTests.swift",
+              "line_anchors": [5, 55, 125, 126]
+            }
+          ],
+          "token_budget": 1024
+        },
+        {
+          "id": "swift-chat-payload-codec",
+          "prompt": "Change OpenClawChatGatewayPayloadCodec session-routing identity decoding and event-frame mapping while preserving shared transport contracts, and update tests.",
+          "task_family": "payload_mapping",
+          "languages": ["swift"],
+          "task_shapes": ["definition_discovery", "regression_test_discovery"],
+          "rg_queries": ["OpenClawChatGatewayPayloadCodec", "decodeSessionRoutingIdentity", "event frames map to shared chat transport events"],
+          "relevant_files": [
+            {
+              "path": "apps/shared/OpenClawKit/Sources/OpenClawChatUI/ChatGatewayPayloadCodec.swift",
+              "line_anchors": [17, 51, 102]
+            },
+            {
+              "path": "apps/shared/OpenClawKit/Tests/OpenClawKitTests/ChatGatewayRequestTests.swift",
+              "line_anchors": [353, 372, 408]
+            }
+          ],
+          "token_budget": 1024
+        }
+      ]
+    }
+  ]
+}
