@@ -124,7 +124,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "outline",
-        description = "Inspect known files without reading whole source files. Returns definitions, imports, ranges, and parse coverage; set projection=signatures to keep only compact signatures. Next: pass a returned symbol or range to read. Example: {\"paths\":[\"src/mcp.rs\"]}."
+        description = "Inspect known files without reading whole source files. Returns definitions, imports, ranges, and parse coverage; set projection=signatures to keep only compact signatures. Next: pass a returned symbol or range to read. Example: {\"paths\":[\"src/mcp/mod.rs\"]}."
     )]
     async fn leantoken_outline(
         &self,

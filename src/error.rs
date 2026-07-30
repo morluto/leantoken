@@ -495,12 +495,12 @@ impl Error {
             Self::CachePruneFailure(_) => "cache_prune_failure",
             Self::SetupFailure(_) => "setup_failure",
             Self::OperationFailure(_) => "operation_failure",
+            Self::ShutdownTimeout { .. } => "shutdown_timeout",
             Self::RepositoryIdentityMismatch { .. }
             | Self::RetrievalOverloaded
             | Self::RetrievalQueueTimeout
             | Self::ReconciliationFailed(_)
             | Self::McpRuntimeStopped
-            | Self::ShutdownTimeout { .. }
             | Self::Io(_)
             | Self::Sqlite(_)
             | Self::Migration(_)
@@ -592,3 +592,19 @@ impl Error {
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+#[cfg(test)]
+mod tests {
+    use super::Error;
+
+    #[test]
+    fn shutdown_timeout_has_a_public_shutdown_category() {
+        assert_eq!(
+            Error::ShutdownTimeout {
+                component: "repository watcher"
+            }
+            .public_category(),
+            "shutdown_timeout"
+        );
+    }
+}

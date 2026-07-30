@@ -463,6 +463,8 @@ impl TestPlan {
                 "run",
                 "--locked",
                 "--workspace",
+                "--exclude",
+                BENCHMARKS,
                 "--all-features",
                 "--status-level",
                 "slow",

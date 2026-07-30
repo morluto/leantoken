@@ -1,1 +1,3 @@
 *.md text eol=lf
+benchmarks/mcp_response_ablation.json text eol=lf
+benchmarks/reports/mcp-response-ablation-v1-2026-07-21.json text eol=lf

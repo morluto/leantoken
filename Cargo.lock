@@ -1016,9 +1016,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "shell-words",
  "similar",
- "statrs",
  "tempfile",
  "thiserror",
  "tiktoken-rs",
@@ -1041,7 +1039,6 @@ dependencies = [
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-typescript",
- "unidiff",
  "wait-timeout",
 ]
 
