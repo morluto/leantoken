@@ -800,6 +800,14 @@ mod tests {
     }
 
     #[test]
+    fn optional_cast_before_nil_coalescing_remains_complete() {
+        let diagnostic = inspect("let x = y as? String ?? \"z\"\n");
+        assert_eq!(diagnostic.counts.incomplete_files, 0);
+        assert_eq!(diagnostic.counts.error_nodes, 0);
+        assert_eq!(diagnostic.counts.missing_nodes, 0);
+    }
+
+    #[test]
     fn source_shape_classification_is_path_only() {
         assert_eq!(
             classify_source_shape(Path::new("Sources/Store.swift")),
