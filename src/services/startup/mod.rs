@@ -160,7 +160,9 @@ fn should_use_repository_cache_fallback(config: &Config, error: &Error) -> bool 
 fn prepare_repository_cache_fallback(config: &Config) -> Result<Config> {
     let mut fallback = config
         .repository_cache_fallback()
-        .expect("fallback eligibility checked by caller");
+        .ok_or_else(|| Error::InvalidConfiguration(
+            "repository cache fallback requested but not configured".into()
+        ))?;
     let database_parent = fallback
         .database_path
         .parent()
@@ -176,7 +178,9 @@ fn prepare_repository_cache_fallback(config: &Config) -> Result<Config> {
     let database_name = fallback
         .database_path
         .file_name()
-        .expect("fallback database path has a parent")
+        .ok_or_else(|| Error::InvalidConfiguration(
+            "repository cache fallback database path has no file name".into()
+        ))?
         .to_owned();
     fallback.database_path = database_parent.canonicalize()?.join(database_name);
 

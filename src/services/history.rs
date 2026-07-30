@@ -1160,7 +1160,9 @@ impl Services {
         let original = response.clone();
         let max_response_tokens = options
             .max_response_tokens()
-            .expect("fitting only runs with a response limit");
+            .ok_or_else(|| Error::InvalidConfiguration(
+                "fitting requires a response token limit".into()
+            ))?;
         let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
         let mut skeleton = original.clone();
         for result in &mut skeleton.results {
@@ -1274,7 +1276,9 @@ impl Services {
     ) -> Result<Option<HistoryResponse>> {
         let max_response_tokens = options
             .max_response_tokens()
-            .expect("fitting only runs with a response limit");
+            .ok_or_else(|| Error::InvalidConfiguration(
+                "fitting requires a response token limit".into()
+            ))?;
         let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
         let keep = budget.largest_fitting_prefix(boundaries.len().saturating_sub(1), |keep| {
             let candidate =

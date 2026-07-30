@@ -8,10 +8,14 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{Error, Result};
 
-pub(super) const DEFAULT_BLOCKING_EXECUTION_CAPACITY: usize = 8;
+/// Default execution capacity: number of physical CPUs, clamped to [4, 16].
+pub(super) fn default_blocking_execution_capacity() -> usize {
+    num_cpus::get().clamp(4, 16)
+}
 const DEFAULT_BLOCKING_QUEUE_CAPACITY: usize = 8;
-pub(super) const DEFAULT_BLOCKING_ACTIVE_CAPACITY: usize =
-    DEFAULT_BLOCKING_EXECUTION_CAPACITY + DEFAULT_BLOCKING_QUEUE_CAPACITY;
+pub(super) fn default_blocking_active_capacity() -> usize {
+    default_blocking_execution_capacity() + DEFAULT_BLOCKING_QUEUE_CAPACITY
+}
 pub(super) const DEFAULT_BLOCKING_QUEUE_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
@@ -108,8 +112,8 @@ impl Drop for StartedWork {
 impl Default for BlockingExecutor {
     fn default() -> Self {
         Self::new(
-            DEFAULT_BLOCKING_ACTIVE_CAPACITY,
-            DEFAULT_BLOCKING_EXECUTION_CAPACITY,
+            default_blocking_active_capacity(),
+            default_blocking_execution_capacity(),
             DEFAULT_BLOCKING_QUEUE_TIMEOUT,
         )
     }

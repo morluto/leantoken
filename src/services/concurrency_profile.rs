@@ -16,7 +16,7 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use super::executor::{
-    DEFAULT_BLOCKING_ACTIVE_CAPACITY, DEFAULT_BLOCKING_EXECUTION_CAPACITY,
+    default_blocking_active_capacity, default_blocking_execution_capacity,
     DEFAULT_BLOCKING_QUEUE_TIMEOUT,
 };
 use super::*;
@@ -214,8 +214,8 @@ async fn release_concurrency_matrix() {
             .as_secs(),
         leantoken_revision: git_revision(Path::new(env!("CARGO_MANIFEST_DIR"))),
         rustc: command_output("rustc", &["--version"]),
-        execution_capacity: DEFAULT_BLOCKING_EXECUTION_CAPACITY,
-        active_capacity: DEFAULT_BLOCKING_ACTIVE_CAPACITY,
+        execution_capacity: default_blocking_execution_capacity(),
+        active_capacity: default_blocking_active_capacity(),
         queue_timeout_ms: DEFAULT_BLOCKING_QUEUE_TIMEOUT.as_millis(),
         concurrency_levels: CONCURRENCY_LEVELS.to_vec(),
         repositories: vec![small_report, large_report],
@@ -275,7 +275,7 @@ async fn profile_repository(
     }
     let reconciliation_wave = profile_reconciliation_wave(
         Arc::clone(&services),
-        super::reconciliation::DEFAULT_RECONCILIATION_ACTIVE_CAPACITY,
+        super::reconciliation::default_reconciliation_active_capacity(),
     )
     .await;
 
