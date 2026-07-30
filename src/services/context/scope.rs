@@ -1,5 +1,5 @@
 impl Services {
-    fn resolve_diff_scope(
+    pub(super) fn resolve_diff_scope(
         &self,
         request: &ContextRequest,
     ) -> Result<(Option<DiffScopeReceipt>, HashSet<String>, bool)> {
@@ -96,3 +96,4 @@ impl Services {
         ))
     }
 }
+use super::*;

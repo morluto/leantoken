@@ -1,5 +1,5 @@
 impl Services {
-    fn append_focus_candidates(
+    pub(in crate::services::context) fn append_focus_candidates(
         &self,
         expansion: FocusExpansion<'_>,
         candidates: &mut Vec<Candidate>,
@@ -216,7 +216,7 @@ impl Services {
         Ok(warnings)
     }
 
-    fn finalize_strict_scope_coverage(
+    pub(in crate::services::context) fn finalize_strict_scope_coverage(
         &self,
         session: &ReadSession,
         request: &ContextRequest,
@@ -292,3 +292,4 @@ impl Services {
         Ok(())
     }
 }
+use super::*;

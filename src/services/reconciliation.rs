@@ -8,7 +8,7 @@ use crate::coordination::IndexCoordination;
 use crate::indexer::Indexer;
 use crate::{Error, Result};
 
-use super::ActiveReconciliation;
+use super::indexing::ActiveReconciliation;
 
 pub(super) const DEFAULT_RECONCILIATION_ACTIVE_CAPACITY: usize =
     super::executor::DEFAULT_BLOCKING_ACTIVE_CAPACITY;
@@ -218,7 +218,7 @@ impl ReconciliationCoordinator {
         match outcome {
             Ok(WaveOutcome::Complete) => Ok(()),
             Ok(WaveOutcome::Failed(error)) => Err(Error::ReconciliationFailed(error)),
-            Err(_) => Err(Error::InternalFailure(
+            Err(_) => Err(Error::OperationFailure(
                 "reconciliation coordinator stopped unexpectedly".into(),
             )),
         }
@@ -526,7 +526,7 @@ fn update_waiter_high_water(state: &mut CoordinatorState) {
 }
 
 fn reconciliation_state_poisoned() -> Error {
-    Error::InternalFailure("reconciliation coordinator state poisoned".into())
+    Error::OperationFailure("reconciliation coordinator state poisoned".into())
 }
 
 fn remove_waiter(waiters: &mut Vec<Waiter>, waiter_id: u64) -> bool {

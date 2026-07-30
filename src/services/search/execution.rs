@@ -1,29 +1,29 @@
-struct PreparedSearch {
-    regex: Option<regex::Regex>,
-    literal_regex: Option<regex::Regex>,
-    occurrence_literal_regex: Option<regex::Regex>,
-    query_predicate: Option<ExactQueryPredicate>,
-    limit: usize,
-    token_limit: usize,
-    context_lines: usize,
+pub(super) struct PreparedSearch {
+    pub(super) regex: Option<regex::Regex>,
+    pub(super) literal_regex: Option<regex::Regex>,
+    pub(super) occurrence_literal_regex: Option<regex::Regex>,
+    pub(super) query_predicate: Option<ExactQueryPredicate>,
+    pub(super) limit: usize,
+    pub(super) token_limit: usize,
+    pub(super) context_lines: usize,
 }
 
-struct LexicalSearchBatch {
-    hits: Vec<CandidateSearchHit>,
-    phases: SearchPhaseCounters,
-    primitive_keys: Vec<RetrievalPrimitiveKey>,
+pub(super) struct LexicalSearchBatch {
+    pub(super) hits: Vec<CandidateSearchHit>,
+    pub(super) phases: SearchPhaseCounters,
+    pub(super) primitive_keys: Vec<RetrievalPrimitiveKey>,
 }
 
-struct SearchSnapshotResult {
-    response: SearchResponse,
-    baseline_source_tokens: Option<usize>,
-    phases: SearchPhaseCounters,
-    primitive_keys: Vec<RetrievalPrimitiveKey>,
-    query_receipt: QueryReceiptExecution,
+pub(super) struct SearchSnapshotResult {
+    pub(super) response: SearchResponse,
+    pub(super) baseline_source_tokens: Option<usize>,
+    pub(super) phases: SearchPhaseCounters,
+    pub(super) primitive_keys: Vec<RetrievalPrimitiveKey>,
+    pub(super) query_receipt: QueryReceiptExecution,
 }
 
 impl Services {
-    fn prepare_search(&self, request: &SearchRequest) -> Result<PreparedSearch> {
+    pub(super) fn prepare_search(&self, request: &SearchRequest) -> Result<PreparedSearch> {
         validate_search_input(request)?;
         let regex = matches!(request.mode, SearchMode::Regex)
             .then(|| compile_regex(request))
@@ -33,10 +33,10 @@ impl Services {
         } else {
             compile_literal_regex(&request.query, request.case_sensitive)?
         };
-        let occurrence_literal_regex =
-            (request.all_occurrences && matches!(request.mode, SearchMode::Text))
-                .then(|| compile_occurrence_literal_regex(request))
-                .transpose()?;
+        let occurrence_literal_regex = (request.all_occurrences
+            && matches!(request.mode, SearchMode::Text))
+        .then(|| compile_occurrence_literal_regex(request))
+        .transpose()?;
         let query_predicate = request
             .query_receipt
             .as_ref()
@@ -48,14 +48,13 @@ impl Services {
             occurrence_literal_regex,
             query_predicate,
             limit: self.result_limit(request.max_results)?,
-            token_limit: self
-                .token_limit(request.max_tokens, self.config.default_read_tokens)?,
+            token_limit: self.token_limit(request.max_tokens, self.config.default_read_tokens)?,
             context_lines: self.context_line_limit(request.context_lines)?,
         })
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn search_snapshot(
+    pub(super) fn search_snapshot(
         &self,
         session: &ReadSession,
         generation: u64,
@@ -127,7 +126,7 @@ impl Services {
         })
     }
 
-    fn reuse_query_receipt(
+    pub(super) fn reuse_query_receipt(
         &self,
         session: &ReadSession,
         generation: u64,
@@ -202,7 +201,7 @@ impl Services {
         })
     }
 
-    fn collect_structural_search_hits(
+    pub(super) fn collect_structural_search_hits(
         &self,
         session: &ReadSession,
         request: &SearchRequest,
@@ -233,11 +232,7 @@ impl Services {
                 .iter()
                 .map(|hit| StoredExcerptRequest {
                     file_id: hit.symbol.file_id,
-                    desired_start_line: hit
-                        .symbol
-                        .start_line
-                        .saturating_sub(context_lines)
-                        .max(1),
+                    desired_start_line: hit.symbol.start_line.saturating_sub(context_lines).max(1),
                     desired_end_line: hit.symbol.end_line.saturating_add(context_lines),
                     required_start_line: hit.symbol.start_line,
                     required_end_line: hit.symbol.start_line,
@@ -310,7 +305,7 @@ impl Services {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn collect_lexical_search_hits(
+    pub(super) fn collect_lexical_search_hits(
         &self,
         session: &ReadSession,
         generation: u64,
@@ -406,13 +401,8 @@ impl Services {
             }
             SearchMode::Symbol | SearchMode::Reference => Vec::new(),
         };
-        let hits = self.hydrate_lexical_search_hits(
-            session,
-            request,
-            prepared,
-            cancellation,
-            lexical,
-        )?;
+        let hits =
+            self.hydrate_lexical_search_hits(session, request, prepared, cancellation, lexical)?;
         Ok(LexicalSearchBatch {
             hits,
             phases,
@@ -420,7 +410,7 @@ impl Services {
         })
     }
 
-    fn hydrate_lexical_search_hits(
+    pub(super) fn hydrate_lexical_search_hits(
         &self,
         session: &ReadSession,
         request: &SearchRequest,
@@ -511,7 +501,7 @@ impl Services {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn build_search_page(
+    pub(super) fn build_search_page(
         &self,
         session: &ReadSession,
         generation: u64,
@@ -521,11 +511,7 @@ impl Services {
         cancellation: &CancellationToken,
         hits: Vec<CandidateSearchHit>,
         offset: usize,
-    ) -> Result<(
-        SearchResponse,
-        Option<usize>,
-        QueryReceiptExecution,
-    )> {
+    ) -> Result<(SearchResponse, Option<usize>, QueryReceiptExecution)> {
         let total_candidates = hits.len();
         let (mut selected, consumed, _) = select_search_page(
             &hits,
@@ -636,7 +622,7 @@ impl Services {
                             .as_ref()
                             .map(|occurrence| (candidate.hit.path.as_str(), occurrence))
                             .ok_or_else(|| {
-                                Error::InternalFailure(
+                                Error::OperationFailure(
                                     "exhaustive query result omitted exact coordinates".into(),
                                 )
                             })
@@ -672,7 +658,7 @@ impl Services {
     }
 }
 
-fn order_search_hits(
+pub(super) fn order_search_hits(
     mut hits: Vec<CandidateSearchHit>,
     request: &SearchRequest,
 ) -> Result<Vec<CandidateSearchHit>> {
@@ -705,3 +691,4 @@ fn order_search_hits(
     normalize_search_scores(&mut hits);
     Ok(hits)
 }
+use super::*;

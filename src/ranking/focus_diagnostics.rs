@@ -1,10 +1,11 @@
+use super::*;
 #[derive(Debug, Clone, Copy, Default)]
-struct GeneratedFocusFacts {
-    fragments: usize,
-    symbol_fragments: usize,
+pub(in crate::ranking) struct GeneratedFocusFacts {
+    pub(in crate::ranking) fragments: usize,
+    pub(in crate::ranking) symbol_fragments: usize,
 }
 
-fn unique_focus_candidates(
+pub(in crate::ranking) fn unique_focus_candidates(
     candidates: &[ScoredCandidate],
     matcher: &PathMatcher,
 ) -> HashSet<(String, usize, usize)> {
@@ -21,7 +22,7 @@ fn unique_focus_candidates(
         .collect()
 }
 
-fn generated_focus_facts(
+pub(in crate::ranking) fn generated_focus_facts(
     candidates: &[Candidate],
     request: &ContextRequest,
 ) -> Vec<GeneratedFocusFacts> {
@@ -54,7 +55,7 @@ fn generated_focus_facts(
         .collect()
 }
 
-fn push_focus_suppression(
+pub(in crate::ranking) fn push_focus_suppression(
     suppressions: &mut Vec<ContextFocusSuppression>,
     boundary: ContextFocusSuppressionBoundary,
     fragments: usize,
@@ -67,7 +68,7 @@ fn push_focus_suppression(
     }
 }
 
-fn focus_limit_suppressions(
+pub(in crate::ranking) fn focus_limit_suppressions(
     omitted: &[ScoredCandidate],
     selected: &[ScoredCandidate],
     matcher: &PathMatcher,
@@ -78,16 +79,16 @@ fn focus_limit_suppressions(
         .map(|candidate| candidate.token_count)
         .sum::<usize>();
     let remaining_tokens = request.token_budget.saturating_sub(selected_tokens);
-    let selected_per_file = selected.iter().fold(HashMap::new(), |mut counts, candidate| {
-        *counts
-            .entry(candidate.candidate.path.as_str())
-            .or_insert(0usize) += 1;
-        counts
-    });
+    let selected_per_file = selected
+        .iter()
+        .fold(HashMap::new(), |mut counts, candidate| {
+            *counts
+                .entry(candidate.candidate.path.as_str())
+                .or_insert(0usize) += 1;
+            counts
+        });
     let max_per_file = (request.token_budget / DIVERSITY_DIVISOR).clamp(1, 3);
-    let max_fragments = request
-        .max_fragments
-        .unwrap_or(DEFAULT_CONTEXT_FRAGMENTS);
+    let max_fragments = request.max_fragments.unwrap_or(DEFAULT_CONTEXT_FRAGMENTS);
     let enforced_focus_minimum =
         request.strict_focus_paths || request.minimum_fragments_per_focus_path.is_some();
     let mut counts = [0usize; 4];
@@ -114,7 +115,7 @@ fn focus_limit_suppressions(
     counts
 }
 
-fn focus_capacity_blocker(
+pub(in crate::ranking) fn focus_capacity_blocker(
     selected_fragments: usize,
     minimum_fragments: usize,
     generated_fragments: usize,
@@ -167,7 +168,7 @@ fn focus_capacity_blocker(
     Some(ContextFocusCapacityBlocker::CandidateGeneration)
 }
 
-fn build_focus_path_coverage(
+pub(in crate::ranking) fn build_focus_path_coverage(
     request: &ContextRequest,
     generated: &[GeneratedFocusFacts],
     path_omitted: &[ScoredCandidate],

@@ -17,31 +17,36 @@ use crate::coordination::{CacheLease, IndexCoordination, IndexLeadership};
 use crate::error::RetryableOperation;
 use crate::indexer::{Indexer, index_progress_cache_namespace};
 use crate::model::*;
-use crate::receipt::RECEIPT_ID_RESPONSE_RESERVE;
 use crate::storage::{
     ParserCoverageRows, ReadSession, ServiceFailureRecord, Storage, StorageCounts,
     TokenSavingsObservation, TokenSavingsRecord,
 };
-use crate::tokens::response_token_accounting;
 use crate::{Config, Error, Result};
 
+mod accounting;
 mod change_receipt;
 #[cfg(test)]
 mod concurrency_profile;
 mod context;
+mod coverage;
 mod execution_options;
 mod executor;
 mod files;
 mod handoff;
 mod history;
+mod indexing;
 mod json;
+mod observer;
 mod outline;
 mod read;
 mod read_delta;
 mod receipt_rebase;
 mod receipts;
 mod reconciliation;
+mod savings;
 mod search;
+mod startup;
+mod status;
 pub(crate) mod validation;
 
 pub(crate) use context::MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN;
@@ -114,6 +119,8 @@ pub struct Services {
     reconciliation_changed: Arc<tokio::sync::Notify>,
     read_deltas: Arc<read_delta::ReadDeltaRegistry>,
     blocking_executor: executor::BlockingExecutor,
+    response_accountant: accounting::ResponseAccountant,
+    observer: observer::ServiceObserver,
     reconciliation: reconciliation::ReconciliationCoordinator,
 }
 
@@ -181,7 +188,7 @@ impl ServiceCallOptions {
     }
 }
 
-trait RetrievalResponse: Serialize {
+pub(super) trait RetrievalResponse: Serialize {
     fn meta_mut(&mut self) -> &mut ResponseMeta;
 }
 
@@ -219,31 +226,97 @@ impl Services {
     }
 
     fn finalize_response<T: RetrievalResponse>(&self, response: &mut T) -> Result<()> {
-        let source_tokens = {
-            let meta = response.meta_mut();
-            meta.protocol_tokens = 0;
-            meta.path_and_metadata_tokens = 0;
-            meta.total_response_tokens = 0;
-            meta.source_tokens
-        };
-        const MAX_ACCOUNTING_PASSES: usize = 32;
-        for _ in 0..MAX_ACCOUNTING_PASSES {
-            let accounting =
-                response_token_accounting(&*response, source_tokens, &self.config.tokenizer)?;
-            let meta = response.meta_mut();
-            if meta.protocol_tokens == accounting.protocol_tokens
-                && meta.path_and_metadata_tokens == accounting.path_and_metadata_tokens
-                && meta.total_response_tokens == accounting.total_response_tokens
-            {
-                return Ok(());
-            }
-            meta.protocol_tokens = accounting.protocol_tokens;
-            meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
-            meta.total_response_tokens = accounting.total_response_tokens;
-        }
-        Err(Error::InternalFailure(
-            "serialized response accounting did not reach a fixed point".into(),
-        ))
+        self.response_accountant.finalize(response)
+    }
+
+    fn finalized_response_tokens<T>(&self, response: &T) -> Result<usize>
+    where
+        T: RetrievalResponse + Clone,
+    {
+        self.response_accountant.finalized_tokens(response)
+    }
+
+    fn response_fits<T>(&self, response: &T, options: ServiceCallOptions) -> Result<bool>
+    where
+        T: RetrievalResponse + Clone,
+    {
+        self.response_accountant.fits(response, options)
+    }
+
+    fn response_fits_with_receipt_reserve<T>(
+        &self,
+        response: &T,
+        returned_items: usize,
+        options: ServiceCallOptions,
+    ) -> Result<bool>
+    where
+        T: RetrievalResponse + Clone,
+    {
+        self.response_accountant
+            .fits_with_receipt_reserve(response, returned_items, options)
+    }
+
+    fn finalized_response_tokens_with_receipt_reserve<T>(
+        &self,
+        response: &T,
+        returned_items: usize,
+    ) -> Result<usize>
+    where
+        T: RetrievalResponse + Clone,
+    {
+        self.response_accountant
+            .finalized_tokens_with_receipt_reserve(response, returned_items)
+    }
+
+    fn response_budget_exceeded(
+        meta: &ResponseMeta,
+        provided_max_response_tokens: usize,
+        minimum_required_response_tokens: usize,
+    ) -> Error {
+        accounting::ResponseAccountant::budget_exceeded(
+            meta,
+            provided_max_response_tokens,
+            minimum_required_response_tokens,
+        )
+    }
+
+    fn response_budget_error<T>(
+        &self,
+        response: &T,
+        provided_max_response_tokens: usize,
+    ) -> Result<Error>
+    where
+        T: RetrievalResponse + Clone,
+    {
+        self.response_accountant
+            .budget_error(response, provided_max_response_tokens)
+    }
+
+    fn response_budget_error_with_receipt_reserve<T>(
+        &self,
+        response: &T,
+        returned_items: usize,
+        provided_max_response_tokens: usize,
+    ) -> Result<Error>
+    where
+        T: RetrievalResponse + Clone,
+    {
+        self.response_accountant.budget_error_with_receipt_reserve(
+            response,
+            returned_items,
+            provided_max_response_tokens,
+        )
+    }
+
+    fn finalize_bounded_response<T>(
+        &self,
+        response: &mut T,
+        options: ServiceCallOptions,
+    ) -> Result<()>
+    where
+        T: RetrievalResponse,
+    {
+        self.response_accountant.finalize_bounded(response, options)
     }
 
     fn validate_call_options(&self, options: ServiceCallOptions) -> Result<()> {
@@ -259,151 +332,6 @@ impl Services {
             }),
             _ => Ok(()),
         }
-    }
-
-    fn finalized_response_tokens<T>(&self, response: &T) -> Result<usize>
-    where
-        T: RetrievalResponse + Clone,
-    {
-        let mut sized = response.clone();
-        self.finalize_response(&mut sized)?;
-        Ok(sized.meta_mut().total_response_tokens)
-    }
-
-    fn response_fits<T>(&self, response: &T, options: ServiceCallOptions) -> Result<bool>
-    where
-        T: RetrievalResponse + Clone,
-    {
-        options.max_response_tokens().map_or(Ok(true), |limit| {
-            Ok(self.finalized_response_tokens(response)? <= limit)
-        })
-    }
-
-    fn response_fits_with_receipt_reserve<T>(
-        &self,
-        response: &T,
-        returned_items: usize,
-        options: ServiceCallOptions,
-    ) -> Result<bool>
-    where
-        T: RetrievalResponse + Clone,
-    {
-        options.max_response_tokens().map_or(Ok(true), |limit| {
-            Ok(
-                self.finalized_response_tokens_with_receipt_reserve(response, returned_items)?
-                    <= limit,
-            )
-        })
-    }
-
-    fn finalized_response_tokens_with_receipt_reserve<T>(
-        &self,
-        response: &T,
-        returned_items: usize,
-    ) -> Result<usize>
-    where
-        T: RetrievalResponse + Clone,
-    {
-        let mut sized = response.clone();
-        {
-            let meta = sized.meta_mut();
-            meta.receipt_id = Some(
-                meta.receipt_id
-                    .clone()
-                    .unwrap_or_else(|| RECEIPT_ID_RESPONSE_RESERVE.into()),
-            );
-            meta.receipt_suppressed_exact = returned_items;
-            meta.receipt_suppressed_overlap = returned_items;
-            meta.receipt_near_duplicates = returned_items;
-        }
-        self.finalized_response_tokens(&sized)
-    }
-
-    fn response_budget_exceeded(
-        meta: &ResponseMeta,
-        provided_max_response_tokens: usize,
-        minimum_required_response_tokens: usize,
-    ) -> Error {
-        debug_assert_eq!(
-            meta.total_response_tokens,
-            meta.source_tokens
-                .saturating_add(meta.protocol_tokens)
-                .saturating_add(meta.path_and_metadata_tokens)
-        );
-        debug_assert!(minimum_required_response_tokens >= meta.total_response_tokens);
-        Error::ResponseBudgetExceeded {
-            provided_max_response_tokens,
-            minimum_required_response_tokens,
-            retry_with_at_least: minimum_required_response_tokens,
-            breakdown: crate::ResponseBudgetBreakdown {
-                mandatory_response_tokens: meta.total_response_tokens,
-                source_tokens: meta.source_tokens,
-                protocol_tokens: meta.protocol_tokens,
-                path_and_metadata_tokens: meta.path_and_metadata_tokens,
-                receipt_reserve_tokens: minimum_required_response_tokens
-                    .saturating_sub(meta.total_response_tokens),
-            },
-        }
-    }
-
-    fn response_budget_error<T>(
-        &self,
-        response: &T,
-        provided_max_response_tokens: usize,
-    ) -> Result<Error>
-    where
-        T: RetrievalResponse + Clone,
-    {
-        let mut mandatory = response.clone();
-        self.finalize_response(&mut mandatory)?;
-        let meta = mandatory.meta_mut();
-        Ok(Self::response_budget_exceeded(
-            meta,
-            provided_max_response_tokens,
-            meta.total_response_tokens,
-        ))
-    }
-
-    fn response_budget_error_with_receipt_reserve<T>(
-        &self,
-        response: &T,
-        returned_items: usize,
-        provided_max_response_tokens: usize,
-    ) -> Result<Error>
-    where
-        T: RetrievalResponse + Clone,
-    {
-        let minimum_required_response_tokens =
-            self.finalized_response_tokens_with_receipt_reserve(response, returned_items)?;
-        let mut mandatory = response.clone();
-        self.finalize_response(&mut mandatory)?;
-        Ok(Self::response_budget_exceeded(
-            mandatory.meta_mut(),
-            provided_max_response_tokens,
-            minimum_required_response_tokens,
-        ))
-    }
-
-    fn finalize_bounded_response<T>(
-        &self,
-        response: &mut T,
-        options: ServiceCallOptions,
-    ) -> Result<()>
-    where
-        T: RetrievalResponse,
-    {
-        self.finalize_response(response)?;
-        if let Some(limit) = options.max_response_tokens()
-            && response.meta_mut().total_response_tokens > limit
-        {
-            let minimum_required_response_tokens = response.meta_mut().total_response_tokens;
-            return Err(Self::response_budget_exceeded(
-                response.meta_mut(),
-                limit,
-                minimum_required_response_tokens,
-            ));
-        }
-        Ok(())
     }
 
     pub(super) fn consistent<T>(
@@ -438,7 +366,7 @@ impl Services {
                 Ok(snapshot) => snapshot,
                 Err(error) if is_database_contention(&error) => {
                     if attempt + 1 < 3 {
-                        thread::sleep(CANCELLATION_POLL_INTERVAL);
+                        thread::sleep(startup::CANCELLATION_POLL_INTERVAL);
                     }
                     continue;
                 }
@@ -600,10 +528,7 @@ impl Services {
         operation: TokenAccountingOperation,
         result: Result<T>,
     ) -> Result<T> {
-        if let Err(error) = &result {
-            self.record_service_failure(operation, error);
-        }
-        result
+        self.observer.observe(operation, result)
     }
 }
 
@@ -625,12 +550,6 @@ fn sqlite_error_code(error: &Error) -> Option<rusqlite::ErrorCode> {
         _ => None,
     }
 }
-
-include!("services/startup.rs");
-include!("services/indexing.rs");
-include!("services/coverage.rs");
-include!("services/status.rs");
-include!("services/savings.rs");
 
 #[cfg(test)]
 mod tests;

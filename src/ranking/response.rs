@@ -1,4 +1,5 @@
-fn build_context_plan(
+use super::*;
+pub(in crate::ranking) fn build_context_plan(
     request: &ContextRequest,
     selected: &[ScoredCandidate],
     candidate_paths_total: usize,
@@ -56,7 +57,7 @@ fn build_context_plan(
     })
 }
 
-fn materialize_context_fragments(
+pub(in crate::ranking) fn materialize_context_fragments(
     request: &ContextRequest,
     selected: &[ScoredCandidate],
     estimated_source_tokens: usize,
@@ -89,7 +90,7 @@ fn materialize_context_fragments(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn finalize_context_response(
+pub(in crate::ranking) fn finalize_context_response(
     request: &ContextRequest,
     repository_generation: u64,
     tokenizer: tokens::Tokenizer,

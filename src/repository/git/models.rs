@@ -65,3 +65,4 @@ pub(crate) struct GitCommitMetadata {
     pub authored_at: String,
     pub subject: String,
 }
+use super::*;

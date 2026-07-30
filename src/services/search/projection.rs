@@ -1,4 +1,4 @@
-fn coverage_count(
+pub(super) fn coverage_count(
     all: &[CandidateSearchHit],
     returned: &[CandidateSearchHit],
     matches: impl Fn(&SearchHit) -> bool,
@@ -18,7 +18,10 @@ fn coverage_count(
     }
 }
 
-fn search_coverage(all: &[CandidateSearchHit], returned: &[CandidateSearchHit]) -> SearchCoverage {
+pub(super) fn search_coverage(
+    all: &[CandidateSearchHit],
+    returned: &[CandidateSearchHit],
+) -> SearchCoverage {
     SearchCoverage {
         definitions: coverage_count(all, returned, |hit| hit_has_kind(hit, "symbol")),
         references: coverage_count(all, returned, |hit| hit_has_kind(hit, "reference")),
@@ -28,7 +31,7 @@ fn search_coverage(all: &[CandidateSearchHit], returned: &[CandidateSearchHit]) 
     }
 }
 
-fn grouped_search_key(hit: &SearchHit) -> String {
+pub(super) fn grouped_search_key(hit: &SearchHit) -> String {
     if let Some(symbol) = hit.symbol.as_deref() {
         return format!("symbol:{symbol}");
     }
@@ -38,7 +41,7 @@ fn grouped_search_key(hit: &SearchHit) -> String {
     format!("range:{}:{}:{}", hit.path, hit.start_line, hit.end_line)
 }
 
-fn grouped_search_evidence(hit: &SearchHit) -> SearchGroupEvidence {
+pub(super) fn grouped_search_evidence(hit: &SearchHit) -> SearchGroupEvidence {
     SearchGroupEvidence {
         path: hit.path.clone(),
         start_line: hit.start_line,
@@ -50,7 +53,7 @@ fn grouped_search_evidence(hit: &SearchHit) -> SearchGroupEvidence {
     }
 }
 
-fn group_search_hits(hits: &[SearchHit]) -> Vec<SearchGroup> {
+pub(super) fn group_search_hits(hits: &[SearchHit]) -> Vec<SearchGroup> {
     let mut groups = Vec::<SearchGroup>::new();
     let mut positions = HashMap::<String, usize>::new();
     for hit in hits {
@@ -111,7 +114,7 @@ fn group_search_hits(hits: &[SearchHit]) -> Vec<SearchGroup> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum OccurrenceGroupKey {
+pub(super) enum OccurrenceGroupKey {
     Path(String),
     Excerpt {
         path: String,
@@ -121,7 +124,7 @@ enum OccurrenceGroupKey {
     },
 }
 
-fn occurrence_group_key(hit: &SearchHit, coordinates_only: bool) -> OccurrenceGroupKey {
+pub(super) fn occurrence_group_key(hit: &SearchHit, coordinates_only: bool) -> OccurrenceGroupKey {
     if coordinates_only {
         OccurrenceGroupKey::Path(hit.path.clone())
     } else {
@@ -134,7 +137,7 @@ fn occurrence_group_key(hit: &SearchHit, coordinates_only: bool) -> OccurrenceGr
     }
 }
 
-fn group_occurrence_hits(
+pub(super) fn group_occurrence_hits(
     hits: &[SearchHit],
     coordinates_only: bool,
 ) -> Result<Vec<SearchOccurrenceGroup>> {
@@ -142,7 +145,7 @@ fn group_occurrence_hits(
     let mut positions = HashMap::<OccurrenceGroupKey, usize>::new();
     for hit in hits {
         let occurrence = hit.occurrence.as_ref().ok_or_else(|| {
-            Error::InternalFailure(
+            Error::OperationFailure(
                 "exhaustive occurrence response omitted exact coordinates".into(),
             )
         })?;
@@ -182,7 +185,7 @@ fn group_occurrence_hits(
     Ok(groups)
 }
 
-fn select_search_page(
+pub(super) fn select_search_page(
     hits: &[CandidateSearchHit],
     offset: usize,
     limit: usize,
@@ -236,7 +239,7 @@ fn select_search_page(
     Ok((selected, consumed, emitted_tokens))
 }
 
-fn selected_search_source_tokens(
+pub(super) fn selected_search_source_tokens(
     selected: &[CandidateSearchHit],
     output_shape: SearchOutputShape,
     tokenizer: &crate::tokens::Tokenizer,
@@ -261,3 +264,4 @@ fn selected_search_source_tokens(
         }
     }
 }
+use super::*;

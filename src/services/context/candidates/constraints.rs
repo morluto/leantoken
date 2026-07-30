@@ -1,5 +1,5 @@
 impl Services {
-    fn append_constraint_candidates(
+    pub(in crate::services::context) fn append_constraint_candidates(
         &self,
         expansion: ConstraintCandidateExpansion<'_>,
         candidates: &mut Vec<Candidate>,
@@ -305,7 +305,7 @@ impl Services {
         })
     }
 
-    fn append_required_path_candidates(
+    pub(in crate::services::context) fn append_required_path_candidates(
         &self,
         expansion: ConstraintCandidateExpansion<'_>,
         required_path_files: Vec<Option<FileRecord>>,
@@ -394,7 +394,7 @@ impl Services {
         Ok(())
     }
 
-    fn append_required_evidence_candidates(
+    pub(in crate::services::context) fn append_required_evidence_candidates(
         &self,
         expansion: ConstraintCandidateExpansion<'_>,
         evidence_path_files: &[Vec<FileRecord>],
@@ -503,3 +503,4 @@ impl Services {
         Ok(())
     }
 }
+use super::*;

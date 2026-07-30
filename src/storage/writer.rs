@@ -13,7 +13,7 @@ impl ReconciliationWriter<'_, '_> {
         self.replace_inner(file, Some((tokenizer, source_token_count)))
     }
 
-    fn replace_inner(
+    pub(crate) fn replace_inner(
         &mut self,
         file: IndexedFile,
         source_tokens: Option<(&str, usize)>,
@@ -63,7 +63,7 @@ impl ReconciliationWriter<'_, '_> {
             ],
         )?;
         if updated != 1 {
-            return Err(Error::InternalFailure(
+            return Err(Error::OperationFailure(
                 "relocation source changed before publication".into(),
             ));
         }
@@ -103,7 +103,7 @@ impl ReconciliationWriter<'_, '_> {
             if update_import.execute(params![projection.resolved_path.as_deref(), projection.id])?
                 != 1
             {
-                return Err(Error::InternalFailure(
+                return Err(Error::OperationFailure(
                     "import changed before projection refresh".into(),
                 ));
             }
@@ -130,3 +130,4 @@ impl ReconciliationWriter<'_, '_> {
         Ok(())
     }
 }
+use super::*;

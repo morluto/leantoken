@@ -286,7 +286,7 @@ impl ReadDeltaRegistry {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InternalFailure("read delta registry poisoned".into()))?;
+            .map_err(|_| Error::OperationFailure("read delta registry poisoned".into()))?;
         prune_expired(&mut state, Instant::now());
         Ok(state
             .entries
@@ -301,7 +301,7 @@ impl ReadDeltaRegistry {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InternalFailure("read delta registry poisoned".into()))?;
+            .map_err(|_| Error::OperationFailure("read delta registry poisoned".into()))?;
         prune_expired(&mut state, Instant::now());
         Ok(state.insertion_order.iter().rev().find_map(|key| {
             if key.target_key != target_key {
@@ -324,7 +324,7 @@ impl ReadDeltaRegistry {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InternalFailure("read delta registry poisoned".into()))?;
+            .map_err(|_| Error::OperationFailure("read delta registry poisoned".into()))?;
         prune_expired(&mut state, Instant::now());
         Ok(state
             .deltas
@@ -343,7 +343,7 @@ impl ReadDeltaRegistry {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InternalFailure("read delta registry poisoned".into()))?;
+            .map_err(|_| Error::OperationFailure("read delta registry poisoned".into()))?;
         prune_expired(&mut state, Instant::now());
         if let Some(previous) = state.entries.remove(&key) {
             state.total_bytes = state.total_bytes.saturating_sub(previous.content.len());
@@ -373,7 +373,7 @@ impl ReadDeltaRegistry {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InternalFailure("read delta registry poisoned".into()))?;
+            .map_err(|_| Error::OperationFailure("read delta registry poisoned".into()))?;
         prune_expired(&mut state, Instant::now());
         if let Some(previous) = state.deltas.remove(&key) {
             state.delta_bytes = state.delta_bytes.saturating_sub(previous.delta.len());

@@ -412,7 +412,7 @@ fn resolve_parsed_historical_symbol(
     let content = file
         .content
         .get(symbol.start_byte..symbol.end_byte)
-        .ok_or_else(|| Error::InternalFailure("invalid historical symbol range".into()))?
+        .ok_or_else(|| Error::OperationFailure("invalid historical symbol range".into()))?
         .to_owned();
     Ok(Some(ResolvedHistoricalSymbol {
         symbol: HistoricalSymbol {
@@ -630,13 +630,13 @@ impl Services {
         )?;
         let base_metadata = commit_metadata
             .remove(&revisions.base_revision)
-            .ok_or_else(|| Error::InternalFailure("missing base commit metadata".into()))?;
+            .ok_or_else(|| Error::OperationFailure("missing base commit metadata".into()))?;
         let head_metadata = commit_metadata
             .remove(&revisions.head_revision)
             .or_else(|| {
                 (revisions.base_revision == revisions.head_revision).then(|| base_metadata.clone())
             })
-            .ok_or_else(|| Error::InternalFailure("missing head commit metadata".into()))?;
+            .ok_or_else(|| Error::OperationFailure("missing head commit metadata".into()))?;
         check_cancelled(cancellation)?;
         let base_blobs = git_blobs_at_resolved_revision(
             &self.config.root,
@@ -1389,7 +1389,7 @@ impl Services {
         let content = blob
             .content
             .get(symbol.start_byte..symbol.end_byte)
-            .ok_or_else(|| Error::InternalFailure("invalid historical symbol range".into()))?
+            .ok_or_else(|| Error::OperationFailure("invalid historical symbol range".into()))?
             .to_owned();
         let content_hash = crate::text::hash(&content);
         Ok(Some(ResolvedHistoricalSymbol {

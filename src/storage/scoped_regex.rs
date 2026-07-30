@@ -1,20 +1,22 @@
-enum ScopedRegexPathAtom {
+use super::*;
+
+pub(crate) enum ScopedRegexPathAtom {
     /// Matches `path` or any descendant (`src` → `src`, `src/...`).
     Prefix(String),
     /// Matches descendants only (`src/**` → `src/...`).
     Children(String),
 }
 
-struct ScopedRegexPathSql {
-    clause: String,
-    params: Vec<String>,
+pub(crate) struct ScopedRegexPathSql {
+    pub(crate) clause: String,
+    pub(crate) params: Vec<String>,
 }
 
-fn scoped_regex_path_has_glob_meta(pattern: &str) -> bool {
+pub(crate) fn scoped_regex_path_has_glob_meta(pattern: &str) -> bool {
     pattern.contains(['*', '?', '[', ']', '{', '}'])
 }
 
-fn expressible_scoped_regex_path(pattern: &str) -> Option<ScopedRegexPathAtom> {
+pub(crate) fn expressible_scoped_regex_path(pattern: &str) -> Option<ScopedRegexPathAtom> {
     let pattern = pattern.replace('\\', "/");
     let pattern = pattern.trim_matches('/');
     if pattern.is_empty() {
@@ -31,7 +33,7 @@ fn expressible_scoped_regex_path(pattern: &str) -> Option<ScopedRegexPathAtom> {
     Some(ScopedRegexPathAtom::Children(prefix.to_owned()))
 }
 
-fn scoped_regex_path_atom_sql(
+pub(crate) fn scoped_regex_path_atom_sql(
     column: &str,
     param_index: usize,
     atom: &ScopedRegexPathAtom,
@@ -46,7 +48,7 @@ fn scoped_regex_path_atom_sql(
     }
 }
 
-fn scoped_regex_path_atom_param(atom: ScopedRegexPathAtom) -> String {
+pub(crate) fn scoped_regex_path_atom_param(atom: ScopedRegexPathAtom) -> String {
     match atom {
         ScopedRegexPathAtom::Prefix(value) | ScopedRegexPathAtom::Children(value) => value,
     }
@@ -57,7 +59,10 @@ fn scoped_regex_path_atom_param(atom: ScopedRegexPathAtom) -> String {
 /// Include predicates are emitted only when every include pattern is expressible,
 /// so SQL never under-selects. Expressible excludes are always pushed; patterns
 /// SQL cannot express remain filtered by the Rust `PathFilter` callback.
-fn scoped_regex_path_sql(include_paths: &[String], exclude_paths: &[String]) -> ScopedRegexPathSql {
+pub(crate) fn scoped_regex_path_sql(
+    include_paths: &[String],
+    exclude_paths: &[String],
+) -> ScopedRegexPathSql {
     let mut clause = String::new();
     let mut params = Vec::new();
     let mut next_index = 3usize;
@@ -95,12 +100,12 @@ fn scoped_regex_path_sql(include_paths: &[String], exclude_paths: &[String]) -> 
     ScopedRegexPathSql { clause, params }
 }
 
-fn bounded_limit(limit: usize) -> i64 {
+pub(crate) fn bounded_limit(limit: usize) -> i64 {
     let capped = limit.clamp(1, HARD_MAX_RESULTS);
     i64::try_from(capped).unwrap_or(i64::MAX)
 }
 
-fn quoted_fts_phrase(query: &str) -> String {
+pub(crate) fn quoted_fts_phrase(query: &str) -> String {
     format!("\"{}\"", query.replace('"', "\"\""))
 }
 

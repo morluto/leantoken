@@ -1,4 +1,4 @@
-fn validate_search_input(request: &SearchRequest) -> Result<()> {
+pub(super) fn validate_search_input(request: &SearchRequest) -> Result<()> {
     if request.query.trim().is_empty() {
         return Err(Error::InvalidInput {
             field: "search query",
@@ -25,8 +25,7 @@ fn validate_search_input(request: &SearchRequest) -> Result<()> {
         });
     }
     if request.query_receipt.is_some() {
-        if !request.all_occurrences
-            || !matches!(request.mode, SearchMode::Text | SearchMode::Regex)
+        if !request.all_occurrences || !matches!(request.mode, SearchMode::Text | SearchMode::Regex)
         {
             return Err(Error::InvalidInput {
                 field: "query_receipt",
@@ -67,7 +66,7 @@ fn validate_search_input(request: &SearchRequest) -> Result<()> {
     Ok(())
 }
 
-fn validate_occurrence_group_input(request: &SearchRequest) -> Result<()> {
+pub(super) fn validate_occurrence_group_input(request: &SearchRequest) -> Result<()> {
     validate_search_input(request)?;
     if !request.all_occurrences {
         return Err(Error::InvalidInput {
@@ -77,3 +76,4 @@ fn validate_occurrence_group_input(request: &SearchRequest) -> Result<()> {
     }
     Ok(())
 }
+use super::*;

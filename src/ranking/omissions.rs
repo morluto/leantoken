@@ -1,19 +1,25 @@
-const OVERLAP_THRESHOLD: f64 = 0.5;
+use super::*;
+pub(in crate::ranking) const OVERLAP_THRESHOLD: f64 = 0.5;
 
 /// Divisor for the per-file diversity cap. A 1,200-token context may include
 /// two non-overlapping regions from one file, while tiny budgets still prefer
 /// breadth.
-const DIVERSITY_DIVISOR: usize = 600;
-const MAX_OMITTED_DETAILS: usize = 1;
-const MAX_OMISSION_FACETS: usize = 12;
-const MIN_RELATIVE_CONTEXT_SCORE: f64 = 0.25;
+pub(in crate::ranking) const DIVERSITY_DIVISOR: usize = 600;
+pub(in crate::ranking) const MAX_OMITTED_DETAILS: usize = 1;
+pub(in crate::ranking) const MAX_OMISSION_FACETS: usize = 12;
+pub(in crate::ranking) const MIN_RELATIVE_CONTEXT_SCORE: f64 = 0.25;
 
-fn increment_facet(counts: &mut HashMap<String, usize>, value: impl Into<String>) {
+pub(in crate::ranking) fn increment_facet(
+    counts: &mut HashMap<String, usize>,
+    value: impl Into<String>,
+) {
     let count = counts.entry(value.into()).or_default();
     *count = count.saturating_add(1);
 }
 
-fn bounded_facets(counts: HashMap<String, usize>) -> Vec<ContextOmissionFacet> {
+pub(in crate::ranking) fn bounded_facets(
+    counts: HashMap<String, usize>,
+) -> Vec<ContextOmissionFacet> {
     let mut facets = counts
         .into_iter()
         .map(|(value, count)| ContextOmissionFacet { value, count })
@@ -37,7 +43,7 @@ fn bounded_facets(counts: HashMap<String, usize>) -> Vec<ContextOmissionFacet> {
     facets
 }
 
-fn candidate_file_type(path: &str) -> String {
+pub(in crate::ranking) fn candidate_file_type(path: &str) -> String {
     Path::new(path)
         .extension()
         .and_then(|extension| extension.to_str())
@@ -48,7 +54,7 @@ fn candidate_file_type(path: &str) -> String {
         )
 }
 
-fn score_band(score: f64) -> &'static str {
+pub(in crate::ranking) fn score_band(score: f64) -> &'static str {
     if score >= 1.0 {
         "score >= 1.0"
     } else if score >= 0.5 {
@@ -60,7 +66,7 @@ fn score_band(score: f64) -> &'static str {
     }
 }
 
-fn summarize_omissions(
+pub(in crate::ranking) fn summarize_omissions(
     path_omitted: &[ScoredCandidate],
     known_omitted: &[ScoredCandidate],
     limit_omitted: &[ScoredCandidate],
@@ -137,7 +143,7 @@ fn summarize_omissions(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_context_omissions(
+pub(in crate::ranking) fn build_context_omissions(
     request: &ContextRequest,
     path_omitted: Vec<ScoredCandidate>,
     known_omitted: Vec<ScoredCandidate>,
@@ -146,11 +152,7 @@ fn build_context_omissions(
     focus_paths: &PathMatcher,
     changed_paths: &HashSet<&str>,
     generated_artifact_warning: bool,
-) -> (
-    ContextOmissionSummary,
-    Vec<OmittedCandidate>,
-    Vec<String>,
-) {
+) -> (ContextOmissionSummary, Vec<OmittedCandidate>, Vec<String>) {
     let omission_summary = summarize_omissions(
         &path_omitted,
         &known_omitted,

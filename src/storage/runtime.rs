@@ -21,9 +21,9 @@ impl fmt::Debug for Storage {
 /// One read-only connection held under a DEFERRED transaction so all queries
 /// on this session observe a single SQLite WAL snapshot.
 pub struct ReadSession {
-    conn: r2d2::PooledConnection<SqliteConnectionManager>,
+    pub(crate) conn: r2d2::PooledConnection<SqliteConnectionManager>,
     #[cfg(test)]
-    diagnostics: Arc<StorageDiagnostics>,
+    pub(crate) diagnostics: Arc<StorageDiagnostics>,
 }
 
 impl Drop for ReadSession {
@@ -37,13 +37,13 @@ impl Drop for ReadSession {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum FtsTable {
+pub(crate) enum FtsTable {
     Word,
     Trigram,
 }
 
 impl FtsTable {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             FtsTable::Word => "chunks_fts_word",
             FtsTable::Trigram => "chunks_fts_trigram",
@@ -51,9 +51,10 @@ impl FtsTable {
     }
 }
 
-fn unix_seconds(time: SystemTime) -> i64 {
+pub(crate) fn unix_seconds(time: SystemTime) -> i64 {
     time.duration_since(UNIX_EPOCH)
         .ok()
         .and_then(|duration| i64::try_from(duration.as_secs()).ok())
         .unwrap_or(0)
 }
+use super::*;

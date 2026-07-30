@@ -353,7 +353,7 @@ impl Services {
                         })
                         .collect::<Vec<_>>();
                     let serialized = serde_json::to_string(&signatures)
-                        .map_err(|error| Error::InternalFailure(error.to_string()))?;
+                        .map_err(|error| Error::SerializationFailure(error.to_string()))?;
                     files.push(OutlineSignaturesFile {
                         path: file.path,
                         content_hash: hash(&serialized),

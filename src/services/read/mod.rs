@@ -21,15 +21,21 @@ use crate::text::{anchored_line_window, hash};
 use crate::tokens::ResponseBudget;
 use crate::{Error, Result};
 
-const MIN_CONTEXT_RANGE_LINES: usize = 12;
-const MAX_CONTEXT_RANGE_LINES: usize = 128;
+pub(super) const MIN_CONTEXT_RANGE_LINES: usize = 12;
+pub(super) const MAX_CONTEXT_RANGE_LINES: usize = 128;
 
-include!("read/types.rs");
-include!("read/cursor.rs");
-include!("read/live.rs");
-include!("read/excerpts.rs");
+mod cursor;
+mod excerpts;
+mod live;
+mod types;
 
-fn validate_read_input(request: &ReadRequest) -> Result<()> {
+use cursor::*;
+pub(super) use live::open_live_file;
+use live::*;
+use types::*;
+pub(super) use types::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
+
+pub(super) fn validate_read_input(request: &ReadRequest) -> Result<()> {
     validate_input(&request.path, "path", MAX_PATH_BYTES)?;
     if request.symbol.as_deref().is_some_and(str::is_empty) {
         return Err(Error::InvalidInput {
@@ -211,7 +217,7 @@ impl Services {
         self.observe_service_result(operation, result)
     }
 
-    fn read_sync(
+    pub(super) fn read_sync(
         &self,
         mut request: ReadRequest,
         options: ServiceCallOptions,
@@ -504,7 +510,7 @@ impl Services {
     }
 }
 
-fn prefer_full_if_delta_payload_not_smaller(
+pub(super) fn prefer_full_if_delta_payload_not_smaller(
     response: &mut ReadResponse,
     current_content: &str,
     current_tokens: usize,
@@ -532,7 +538,7 @@ fn prefer_full_if_delta_payload_not_smaller(
     Ok(())
 }
 
-fn finalized_serialized_read_tokens(
+pub(super) fn finalized_serialized_read_tokens(
     response: &ReadResponse,
     tokenizer: crate::tokens::Tokenizer,
 ) -> Result<usize> {

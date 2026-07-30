@@ -1,4 +1,5 @@
-fn greedy_select(
+use super::*;
+pub(in crate::ranking) fn greedy_select(
     candidates: Vec<ScoredCandidate>,
     budget: usize,
     max_per_file: usize,
@@ -160,7 +161,7 @@ fn greedy_select(
     (selected, omitted)
 }
 
-fn candidate_fits(
+pub(in crate::ranking) fn candidate_fits(
     candidate: &ScoredCandidate,
     remaining_tokens: usize,
     file_count: usize,
@@ -173,7 +174,7 @@ fn candidate_fits(
         && selected_count < max_fragments
 }
 
-fn push_selected(
+pub(in crate::ranking) fn push_selected(
     candidate: ScoredCandidate,
     selected: &mut Vec<ScoredCandidate>,
     used_tokens: &mut usize,
@@ -186,7 +187,7 @@ fn push_selected(
     selected.push(candidate);
 }
 
-fn compare_utility(a: &ScoredCandidate, b: &ScoredCandidate) -> Ordering {
+pub(in crate::ranking) fn compare_utility(a: &ScoredCandidate, b: &ScoredCandidate) -> Ordering {
     let ord = b.score.total_cmp(&a.score);
     if ord != Ordering::Equal {
         return ord;

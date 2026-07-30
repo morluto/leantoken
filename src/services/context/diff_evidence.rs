@@ -1,5 +1,5 @@
 impl Services {
-    fn build_diff_evidence(
+    pub(super) fn build_diff_evidence(
         &self,
         session: &ReadSession,
         request: &ContextRequest,
@@ -18,7 +18,7 @@ impl Services {
         let changed_hunks = if let Some(base_revision) = &scope.base_revision {
             let head_revision = if immutable_range {
                 Some(scope.head_revision.as_deref().ok_or_else(|| {
-                    Error::InternalFailure("immutable diff scope has no head revision".into())
+                    Error::OperationFailure("immutable diff scope has no head revision".into())
                 })?)
             } else {
                 None
@@ -159,10 +159,10 @@ impl Services {
                 .collect::<Vec<_>>();
             let mut semantic = if immutable_range {
                 let base_revision = scope.base_revision.as_deref().ok_or_else(|| {
-                    Error::InternalFailure("immutable diff scope has no base revision".into())
+                    Error::OperationFailure("immutable diff scope has no base revision".into())
                 })?;
                 let head_revision = scope.head_revision.as_deref().ok_or_else(|| {
-                    Error::InternalFailure("immutable diff scope has no head revision".into())
+                    Error::OperationFailure("immutable diff scope has no head revision".into())
                 })?;
                 classify_revision_changes(
                     &self.config.root,
@@ -225,3 +225,4 @@ impl Services {
         })
     }
 }
+use super::*;

@@ -1,4 +1,6 @@
-const MAX_PARSER_COVERAGE_GROUPS: usize = 20;
+use super::*;
+
+pub(super) const MAX_PARSER_COVERAGE_GROUPS: usize = 20;
 const MAX_SAFE_EXTENSION_BYTES: usize = 16;
 
 impl Services {
@@ -20,7 +22,7 @@ impl Services {
     }
 }
 
-fn parser_coverage_summary(rows: ParserCoverageRows) -> ParserCoverageSummary {
+pub(super) fn parser_coverage_summary(rows: ParserCoverageRows) -> ParserCoverageSummary {
     let mut by_language = BTreeMap::<String, ParserLanguageCoverage>::new();
     let mut recognized = ParserCoverageCount::default();
     let mut complete = ParserCoverageCount::default();
@@ -31,12 +33,13 @@ fn parser_coverage_summary(rows: ParserCoverageRows) -> ParserCoverageSummary {
             source_bytes: row.source_bytes,
         };
         add_coverage_count(&mut recognized, count);
-        let language = by_language
-            .entry(row.language.clone())
-            .or_insert_with(|| ParserLanguageCoverage {
-                language: row.language,
-                ..ParserLanguageCoverage::default()
-            });
+        let language =
+            by_language
+                .entry(row.language.clone())
+                .or_insert_with(|| ParserLanguageCoverage {
+                    language: row.language,
+                    ..ParserLanguageCoverage::default()
+                });
         add_coverage_count(&mut language.total, count);
         if row.structurally_complete {
             add_coverage_count(&mut complete, count);
@@ -66,10 +69,7 @@ fn parser_coverage_summary(rows: ParserCoverageRows) -> ParserCoverageSummary {
             source_bytes: extension.source_bytes,
         };
         add_coverage_count(&mut unrecognized, count);
-        add_coverage_count(
-            by_extension.entry(extension.extension).or_default(),
-            count,
-        );
+        add_coverage_count(by_extension.entry(extension.extension).or_default(), count);
     }
     let mut unrecognized_extensions = by_extension
         .into_iter()
@@ -124,7 +124,7 @@ fn sum_language_remainder(
         })
 }
 
-fn safe_extension_family(path: &str) -> String {
+pub(super) fn safe_extension_family(path: &str) -> String {
     let Some(extension) = std::path::Path::new(path)
         .extension()
         .and_then(std::ffi::OsStr::to_str)

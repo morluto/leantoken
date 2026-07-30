@@ -1,4 +1,4 @@
-fn parse_revision_range(revision: &str) -> Result<Option<(&str, &str)>> {
+pub(super) fn parse_revision_range(revision: &str) -> Result<Option<(&str, &str)>> {
     let Some((base, head)) = revision.split_once("..") else {
         return Ok(None);
     };
@@ -17,7 +17,7 @@ fn parse_revision_range(revision: &str) -> Result<Option<(&str, &str)>> {
 }
 
 #[derive(Clone, Copy)]
-enum ContextExcerptKind {
+pub(super) enum ContextExcerptKind {
     Symbol,
     Reference,
     Text,
@@ -25,7 +25,7 @@ enum ContextExcerptKind {
 }
 
 impl ContextExcerptKind {
-    const fn token_cap(self) -> usize {
+    pub(super) const fn token_cap(self) -> usize {
         match self {
             Self::Symbol => SYMBOL_CONTEXT_TOKEN_CAP,
             Self::Reference => REFERENCE_CONTEXT_TOKEN_CAP,
@@ -35,23 +35,23 @@ impl ContextExcerptKind {
     }
 }
 
-fn excerpt_budget(request_budget: usize, kind: ContextExcerptKind) -> usize {
+pub(super) fn excerpt_budget(request_budget: usize, kind: ContextExcerptKind) -> usize {
     request_budget.min(kind.token_cap())
 }
 
-fn context_path_score(path: &str, terms: &[String], task: &str) -> f64 {
+pub(super) fn context_path_score(path: &str, terms: &[String], task: &str) -> f64 {
     ContextPathScorer::new(terms, task).score(path)
 }
 
-struct ContextPathScorer {
-    terms: Vec<String>,
-    code_token_parts: Vec<Vec<String>>,
-    languages: [bool; 5],
-    mcp_repository_intent: bool,
+pub(super) struct ContextPathScorer {
+    pub(super) terms: Vec<String>,
+    pub(super) code_token_parts: Vec<Vec<String>>,
+    pub(super) languages: [bool; 5],
+    pub(super) mcp_repository_intent: bool,
 }
 
 impl ContextPathScorer {
-    fn new(terms: &[String], task: &str) -> Self {
+    pub(super) fn new(terms: &[String], task: &str) -> Self {
         let code_token_parts = facets::legacy_code_tokens(task)
             .into_iter()
             .filter(|token| {
@@ -84,7 +84,7 @@ impl ContextPathScorer {
         }
     }
 
-    fn score(&self, path: &str) -> f64 {
+    pub(super) fn score(&self, path: &str) -> f64 {
         let path = path.to_lowercase();
         let mut score = self
             .terms
@@ -139,7 +139,7 @@ impl ContextPathScorer {
     }
 }
 
-fn mcp_repository_intent(terms: &[String], task: &str) -> bool {
+pub(super) fn mcp_repository_intent(terms: &[String], task: &str) -> bool {
     let terms = terms
         .iter()
         .map(|term| term.to_ascii_lowercase())
@@ -158,7 +158,7 @@ fn mcp_repository_intent(terms: &[String], task: &str) -> bool {
         && registration_terms.iter().any(|term| terms.contains(*term))
 }
 
-fn context_path_group(path: &str) -> String {
+pub(super) fn context_path_group(path: &str) -> String {
     let mut components = path.split('/').filter(|component| !component.is_empty());
     let first = components.next().unwrap_or("<root>");
     let second = components.next();
@@ -176,7 +176,7 @@ fn context_path_group(path: &str) -> String {
     }
 }
 
-fn build_context_routing(
+pub(super) fn build_context_routing(
     request: &ContextRequest,
     scope: &DiffScopeReceipt,
     candidate_paths: usize,
@@ -260,7 +260,7 @@ fn build_context_routing(
     })
 }
 
-fn resolve_context_workflow(requested: ContextWorkflow, task: &str) -> ContextWorkflow {
+pub(super) fn resolve_context_workflow(requested: ContextWorkflow, task: &str) -> ContextWorkflow {
     if requested != ContextWorkflow::Auto {
         return requested;
     }
@@ -285,7 +285,10 @@ fn resolve_context_workflow(requested: ContextWorkflow, task: &str) -> ContextWo
     }
 }
 
-fn workflow_path_role(path: &str, request: &ContextRequest) -> Option<(f64, &'static str)> {
+pub(super) fn workflow_path_role(
+    path: &str,
+    request: &ContextRequest,
+) -> Option<(f64, &'static str)> {
     let normalized = path.replace('\\', "/");
     let lower = normalized.to_ascii_lowercase();
     let mut best = WORKFLOW_PATHS
@@ -300,8 +303,8 @@ fn workflow_path_role(path: &str, request: &ContextRequest) -> Option<(f64, &'st
     best
 }
 
-const OWNER_TEST_SCORE: f64 = 3.75;
-const WORKFLOW_PATH_RULES: [(&str, f64, &str); 15] = [
+pub(super) const OWNER_TEST_SCORE: f64 = 3.75;
+pub(super) const WORKFLOW_PATH_RULES: [(&str, f64, &str); 15] = [
     ("AGENTS.md", 5.0, "guidance"),
     ("**/AGENTS.md", 5.0, "guidance"),
     ("CONTRIBUTING*", 5.0, "guidance"),
@@ -318,9 +321,10 @@ const WORKFLOW_PATH_RULES: [(&str, f64, &str); 15] = [
     ("justfile", 3.0, "validation"),
     ("{package.json,pyproject.toml,go.mod}", 3.0, "validation"),
 ];
-const WORKFLOW_PATH_ROLES: [(f64, &str); WORKFLOW_PATH_RULES.len()] = workflow_path_roles();
+pub(super) const WORKFLOW_PATH_ROLES: [(f64, &str); WORKFLOW_PATH_RULES.len()] =
+    workflow_path_roles();
 
-const fn workflow_path_roles() -> [(f64, &'static str); WORKFLOW_PATH_RULES.len()] {
+pub(super) const fn workflow_path_roles() -> [(f64, &'static str); WORKFLOW_PATH_RULES.len()] {
     let mut roles = [(0.0, ""); WORKFLOW_PATH_RULES.len()];
     let mut index = 0;
     while index < WORKFLOW_PATH_RULES.len() {
@@ -344,11 +348,11 @@ static WORKFLOW_PATHS: LazyLock<GlobSet> = LazyLock::new(|| {
     builder.build().expect("static workflow glob set")
 });
 
-fn likely_owner_test(path: &str, request: &ContextRequest) -> bool {
+pub(super) fn likely_owner_test(path: &str, request: &ContextRequest) -> bool {
     owner_test_changed_path(path, request).is_some()
 }
 
-fn owner_test_changed_path(path: &str, request: &ContextRequest) -> Option<String> {
+pub(super) fn owner_test_changed_path(path: &str, request: &ContextRequest) -> Option<String> {
     let path = path.replace('\\', "/").to_ascii_lowercase();
     let is_test = path.contains("/test")
         || path.starts_with("test")
@@ -374,7 +378,7 @@ fn owner_test_changed_path(path: &str, request: &ContextRequest) -> Option<Strin
         })
 }
 
-fn contains_filename_token(path: &str, token: &str) -> bool {
+pub(super) fn contains_filename_token(path: &str, token: &str) -> bool {
     path.match_indices(token).any(|(start, matched)| {
         let end = start + matched.len();
         let boundary =
@@ -382,3 +386,4 @@ fn contains_filename_token(path: &str, token: &str) -> bool {
         boundary(path[..start].chars().next_back()) && boundary(path[end..].chars().next())
     })
 }
+use super::*;

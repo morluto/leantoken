@@ -33,19 +33,35 @@ use crate::model::{
 use crate::services::validation::{PathMatcher, path_matches};
 use crate::tokens;
 
-// Ranking stages share private signal and ordering helpers, but each
-// stage has a distinct physical owner to keep the pipeline navigable.
-include!("ranking/metadata.rs");
-include!("ranking/omissions.rs");
-include!("ranking/candidate.rs");
-include!("ranking/scored.rs");
-include!("ranking/dedup.rs");
-include!("ranking/focus_diagnostics.rs");
-include!("ranking/selection.rs");
-include!("ranking/requirements.rs");
-include!("ranking/greedy.rs");
-include!("ranking/coverage.rs");
-include!("ranking/response.rs");
+mod candidate;
+mod coverage;
+mod dedup;
+mod focus_diagnostics;
+mod greedy;
+mod metadata;
+mod omissions;
+mod requirements;
+mod response;
+mod scored;
+mod selection;
+
+pub use candidate::{Candidate, Weights};
+use coverage::*;
+pub use dedup::deduplicate;
+pub(crate) use dedup::deduplicate_with_options;
+use focus_diagnostics::*;
+use greedy::*;
+pub(crate) use metadata::required_evidence_marker;
+use metadata::*;
+use omissions::*;
+use requirements::*;
+use response::*;
+use scored::rank_with_tokenizer;
+pub use scored::{ScoredCandidate, rank};
+pub(crate) use selection::select_with_tokenizer_and_context_exclusions;
+pub use selection::{
+    select, select_with_tokenizer, select_with_weights, select_with_weights_and_tokenizer,
+};
 
 #[cfg(test)]
 mod tests;
