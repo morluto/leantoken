@@ -1,3 +1,5 @@
+use super::*;
+
 /// Run global MCP setup or removal using the current user environment.
 pub fn run(
     operation: SetupOperation,
@@ -32,7 +34,7 @@ pub fn run(
     run_with(operation, request, &environment, &InteractivePrompt)
 }
 
-fn run_with(
+pub(super) fn run_with(
     operation: SetupOperation,
     request: SetupRequest,
     environment: &SetupEnvironment,
@@ -155,7 +157,7 @@ fn run_with(
     Ok(report_from_plan(&plan, false, false, results))
 }
 
-fn report_from_plan(
+pub(super) fn report_from_plan(
     plan: &ResolvedSetupPlan,
     cancelled: bool,
     dry_run: bool,
@@ -184,7 +186,7 @@ fn report_from_plan(
     }
 }
 
-fn empty_report(operation: SetupOperation, persistent_cli: bool) -> SetupReport {
+pub(super) fn empty_report(operation: SetupOperation, persistent_cli: bool) -> SetupReport {
     SetupReport {
         operation,
         cancelled: true,
@@ -198,7 +200,7 @@ fn empty_report(operation: SetupOperation, persistent_cli: bool) -> SetupReport 
     }
 }
 
-fn deduplicate(clients: Vec<SetupClient>) -> Vec<SetupClient> {
+pub(super) fn deduplicate(clients: Vec<SetupClient>) -> Vec<SetupClient> {
     SetupClient::ALL
         .into_iter()
         .filter(|client| clients.contains(client))

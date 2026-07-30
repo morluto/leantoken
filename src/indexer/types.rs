@@ -1,5 +1,7 @@
+use super::*;
+
 #[cfg(test)]
-const PREVIOUS_INDEX_CONTENT_MARKER: &str = "leantoken-index-content-v10";
+pub(super) const PREVIOUS_INDEX_CONTENT_MARKER: &str = "leantoken-index-content-v10";
 
 /// Owns discovery/parse publication for one repository cache.
 ///
@@ -8,11 +10,11 @@ const PREVIOUS_INDEX_CONTENT_MARKER: &str = "leantoken-index-content-v10";
 /// threads merely by opening repository services.
 #[derive(Clone)]
 pub struct Indexer {
-    config: Arc<Config>,
-    storage: Storage,
-    pool: Arc<LazyWorkerPool>,
-    repository_root: Arc<Dir>,
-    progress: IndexProgressRegistry,
+    pub(super) config: Arc<Config>,
+    pub(super) storage: Storage,
+    pub(super) pool: Arc<LazyWorkerPool>,
+    pub(super) repository_root: Arc<Dir>,
+    pub(super) progress: IndexProgressRegistry,
 }
 
 /// Phase and batch high-water diagnostics for one full reconciliation.
@@ -97,32 +99,32 @@ pub struct ProfiledIndexReport {
 }
 
 #[derive(Debug, Default)]
-struct PreparationMetrics {
-    preparation: Duration,
-    detail: FilePreparationDiagnostics,
-    detail_by_language: BTreeMap<String, FilePreparationDiagnostics>,
-    insertion: Duration,
-    insertion_write_bytes: Option<u64>,
-    batches: usize,
-    max_batch_files: usize,
-    max_batch_source_bytes: u64,
+pub(super) struct PreparationMetrics {
+    pub(super) preparation: Duration,
+    pub(super) detail: FilePreparationDiagnostics,
+    pub(super) detail_by_language: BTreeMap<String, FilePreparationDiagnostics>,
+    pub(super) insertion: Duration,
+    pub(super) insertion_write_bytes: Option<u64>,
+    pub(super) batches: usize,
+    pub(super) max_batch_files: usize,
+    pub(super) max_batch_source_bytes: u64,
 }
 
 #[derive(Debug, Default)]
-struct FilePreparationDiagnostics {
-    files_profiled: usize,
-    total: Duration,
-    read: Duration,
-    text_prepare: Duration,
-    hash: Duration,
-    parse: Duration,
-    source_token_count: Duration,
-    chunk_token_count: Duration,
-    projection: Duration,
+pub(super) struct FilePreparationDiagnostics {
+    pub(super) files_profiled: usize,
+    pub(super) total: Duration,
+    pub(super) read: Duration,
+    pub(super) text_prepare: Duration,
+    pub(super) hash: Duration,
+    pub(super) parse: Duration,
+    pub(super) source_token_count: Duration,
+    pub(super) chunk_token_count: Duration,
+    pub(super) projection: Duration,
 }
 
 impl FilePreparationDiagnostics {
-    fn add(&mut self, other: &Self) {
+    pub(super) fn add(&mut self, other: &Self) {
         self.files_profiled = self.files_profiled.saturating_add(other.files_profiled);
         self.total += other.total;
         self.read += other.read;
@@ -134,7 +136,7 @@ impl FilePreparationDiagnostics {
         self.projection += other.projection;
     }
 
-    fn report(&self) -> PreparationDiagnostics {
+    pub(super) fn report(&self) -> PreparationDiagnostics {
         PreparationDiagnostics {
             files_profiled: self.files_profiled,
             total_worker_ms: duration_ms(self.total),
@@ -150,14 +152,14 @@ impl FilePreparationDiagnostics {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum StorageProfiling {
+pub(super) enum StorageProfiling {
     Omit,
     Collect,
 }
 
-struct LazyWorkerPool {
-    pool: OnceLock<ThreadPool>,
-    init: Mutex<()>,
+pub(super) struct LazyWorkerPool {
+    pub(super) pool: OnceLock<ThreadPool>,
+    pub(super) init: Mutex<()>,
 }
 
 #[derive(Debug, Default)]
@@ -165,29 +167,29 @@ struct LazyWorkerPool {
 ///
 /// Only creations and deletions can change which bounded import candidate paths
 /// resolve. Content-only modifications do not trigger reverse-import expansion.
-struct ChangeSet {
-    created: Vec<String>,
-    modified: Vec<String>,
-    deleted: Vec<String>,
-    visibility_recomputed: bool,
+pub(super) struct ChangeSet {
+    pub(super) created: Vec<String>,
+    pub(super) modified: Vec<String>,
+    pub(super) deleted: Vec<String>,
+    pub(super) visibility_recomputed: bool,
 }
 
 #[derive(Debug)]
-struct RelocationPlan {
-    old_path: String,
-    new_file: DiscoveredFile,
-    expected_hash: String,
+pub(super) struct RelocationPlan {
+    pub(super) old_path: String,
+    pub(super) new_file: DiscoveredFile,
+    pub(super) expected_hash: String,
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]
-struct RelocationKey {
-    content_hash: String,
-    size_bytes: u64,
-    language: Option<String>,
+pub(super) struct RelocationKey {
+    pub(super) content_hash: String,
+    pub(super) size_bytes: u64,
+    pub(super) language: Option<String>,
 }
 
 impl ChangeSet {
-    fn classify(
+    pub(super) fn classify(
         existing: &HashMap<String, crate::storage::FileRecord>,
         candidates: &HashMap<String, DiscoveredFile>,
         deletions: &HashSet<String>,
@@ -214,7 +216,7 @@ impl ChangeSet {
         }
     }
 
-    fn membership_changes(&self) -> Vec<String> {
+    pub(super) fn membership_changes(&self) -> Vec<String> {
         let mut paths = Vec::with_capacity(self.created.len() + self.deleted.len());
         paths.extend(self.created.iter().cloned());
         paths.extend(self.deleted.iter().cloned());
@@ -223,14 +225,14 @@ impl ChangeSet {
 }
 
 impl LazyWorkerPool {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             pool: OnceLock::new(),
             init: Mutex::new(()),
         }
     }
 
-    fn get_or_build(&self, workers: usize) -> Result<&ThreadPool> {
+    pub(super) fn get_or_build(&self, workers: usize) -> Result<&ThreadPool> {
         if let Some(pool) = self.pool.get() {
             return Ok(pool);
         }

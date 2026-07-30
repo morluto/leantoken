@@ -1,4 +1,6 @@
-fn process_raw_event(
+use super::*;
+
+pub(super) fn process_raw_event(
     raw: notify::Result<Event>,
     root: &Path,
     policy: &DiscoveryPolicy,
@@ -63,7 +65,7 @@ fn process_raw_event(
     }
 }
 
-fn bound_pending_state(
+pub(super) fn bound_pending_state(
     pending: &mut BTreeSet<String>,
     rename_from: &mut HashMap<usize, String>,
     rename_to: &mut HashMap<usize, String>,
@@ -82,7 +84,7 @@ fn bound_pending_state(
     }
 }
 
-fn raw_event_is_relevant(
+pub(super) fn raw_event_is_relevant(
     event: &notify::Result<Event>,
     root: &Path,
     policy: &DiscoveryPolicy,
@@ -99,7 +101,7 @@ fn raw_event_is_relevant(
     }
 }
 
-fn handle_rename(
+pub(super) fn handle_rename(
     event: &Event,
     inside: Vec<String>,
     outside: bool,

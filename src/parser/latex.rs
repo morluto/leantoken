@@ -1,5 +1,7 @@
+use super::*;
+
 #[derive(Debug)]
-struct LatexSection {
+pub(super) struct LatexSection {
     level: usize,
     command: String,
     title: String,
@@ -7,7 +9,7 @@ struct LatexSection {
 }
 
 #[derive(Debug)]
-struct LatexCommand {
+pub(super) struct LatexCommand {
     name: String,
     argument_start: usize,
     argument_end: usize,
@@ -18,14 +20,14 @@ struct LatexCommand {
 }
 
 #[derive(Debug)]
-struct LatexEnvironment {
+pub(super) struct LatexEnvironment {
     name: String,
     start_byte: usize,
     end_byte: usize,
 }
 
 #[derive(Debug)]
-struct OpenLatexEnvironment {
+pub(super) struct OpenLatexEnvironment {
     name: String,
     start_byte: usize,
 }
@@ -33,7 +35,10 @@ struct OpenLatexEnvironment {
 // The command dispatcher stays flat so every recognized LaTeX construct shares
 // one source pass and one structural-completeness state.
 #[allow(clippy::cognitive_complexity)]
-fn parse_latex(source: &str, is_cancelled: &mut impl FnMut() -> bool) -> Result<ParseOutput> {
+pub(super) fn parse_latex(
+    source: &str,
+    is_cancelled: &mut impl FnMut() -> bool,
+) -> Result<ParseOutput> {
     let bytes = source.as_bytes();
     let starts = line_starts(source);
     let mut sections = Vec::<LatexSection>::new();

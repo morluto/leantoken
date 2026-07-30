@@ -1,11 +1,13 @@
+use super::*;
+
 #[derive(Clone)]
-struct HtmlAttribute<'tree> {
+pub(super) struct HtmlAttribute<'tree> {
     name: String,
     value: String,
     value_node: Node<'tree>,
 }
 
-fn append_html_structure(
+pub(super) fn append_html_structure(
     source: &str,
     root: Node<'_>,
     symbols: &mut Vec<Symbol>,
@@ -42,7 +44,7 @@ fn append_html_structure(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn append_html_element(
+pub(super) fn append_html_element(
     source: &str,
     owner: Node<'_>,
     tag_node: Node<'_>,
@@ -158,7 +160,7 @@ fn append_html_element(
     }
 }
 
-fn html_tag<'tree>(source: &str, owner: Node<'tree>) -> Option<(Node<'tree>, String)> {
+pub(super) fn html_tag<'tree>(source: &str, owner: Node<'tree>) -> Option<(Node<'tree>, String)> {
     let mut cursor = owner.walk();
     let tag = owner
         .named_children(&mut cursor)
@@ -171,7 +173,7 @@ fn html_tag<'tree>(source: &str, owner: Node<'tree>) -> Option<(Node<'tree>, Str
     Some((tag, name))
 }
 
-fn html_attributes<'tree>(source: &str, tag: Node<'tree>) -> Vec<HtmlAttribute<'tree>> {
+pub(super) fn html_attributes<'tree>(source: &str, tag: Node<'tree>) -> Vec<HtmlAttribute<'tree>> {
     let mut cursor = tag.walk();
     tag.named_children(&mut cursor)
         .filter(|child| child.kind() == "attribute")
@@ -200,7 +202,7 @@ fn html_attributes<'tree>(source: &str, tag: Node<'tree>) -> Vec<HtmlAttribute<'
         .collect()
 }
 
-fn html_attribute<'attributes, 'tree>(
+pub(super) fn html_attribute<'attributes, 'tree>(
     attributes: &'attributes [HtmlAttribute<'tree>],
     name: &str,
 ) -> Option<&'attributes HtmlAttribute<'tree>> {
@@ -209,14 +211,14 @@ fn html_attribute<'attributes, 'tree>(
         .find(|attribute| attribute.name == name && !attribute.value.is_empty())
 }
 
-fn html_section_tag(tag: &str) -> bool {
+pub(super) fn html_section_tag(tag: &str) -> bool {
     matches!(
         tag,
         "main" | "nav" | "section" | "article" | "aside" | "header" | "footer"
     )
 }
 
-fn html_outline_tag(tag: &str) -> bool {
+pub(super) fn html_outline_tag(tag: &str) -> bool {
     html_section_tag(tag)
         || matches!(
             tag,

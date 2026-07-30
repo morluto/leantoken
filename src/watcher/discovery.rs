@@ -1,6 +1,8 @@
+use super::*;
+
 /// Count every directory that a recursive backend may register before
 /// enabling the watcher. Callback filtering does not reduce kernel watches.
-fn inspect_watch_admission(
+pub(super) fn inspect_watch_admission(
     root: &Path,
     directory_cap: usize,
     entry_cap: usize,
@@ -71,7 +73,7 @@ fn inspect_watch_admission(
     }
 }
 
-fn relative_path(
+pub(super) fn relative_path(
     root: &Path,
     path: &Path,
     policy: &DiscoveryPolicy,
@@ -89,7 +91,7 @@ fn relative_path(
     }
 }
 
-fn event_path_is_directory(event: &Event) -> bool {
+pub(super) fn event_path_is_directory(event: &Event) -> bool {
     matches!(
         event.kind,
         EventKind::Create(CreateKind::Folder) | EventKind::Remove(RemoveKind::Folder)

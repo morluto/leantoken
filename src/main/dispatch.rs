@@ -1,4 +1,6 @@
-async fn run(cli: Cli) -> Result<()> {
+use super::*;
+
+pub(super) async fn run(cli: Cli) -> Result<()> {
     let json = cli.json;
     match &cli.command {
         leantoken::cli::Commands::Update(_) | leantoken::cli::Commands::Upgrade(_) => {
@@ -17,7 +19,7 @@ async fn run(cli: Cli) -> Result<()> {
     }
 }
 
-fn run_episode_command(cli: Cli, json: bool) -> Result<()> {
+pub(super) fn run_episode_command(cli: Cli, json: bool) -> Result<()> {
     let AppRequest::EpisodeAudit(request) = cli.app_request() else {
         unreachable!("episode command checked by dispatch")
     };
@@ -31,14 +33,14 @@ fn run_episode_command(cli: Cli, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn run_upgrade_command(cli: Cli, json: bool) -> Result<()> {
+pub(super) fn run_upgrade_command(cli: Cli, json: bool) -> Result<()> {
     let AppRequest::Upgrade { check, yes } = cli.app_request() else {
         unreachable!("upgrade command checked by dispatch")
     };
     upgrade::run(upgrade::UpgradeOptions { check, yes, json })
 }
 
-fn run_cache_command(cli: Cli, json: bool) -> Result<()> {
+pub(super) fn run_cache_command(cli: Cli, json: bool) -> Result<()> {
     match cli.app_request() {
         AppRequest::CacheList(request) => {
             let report = cache::list_with(&request)?;
@@ -62,7 +64,7 @@ fn run_cache_command(cli: Cli, json: bool) -> Result<()> {
     }
 }
 
-fn ensure_cache_prune_succeeded(report: &cache::CachePruneReport) -> Result<()> {
+pub(super) fn ensure_cache_prune_succeeded(report: &cache::CachePruneReport) -> Result<()> {
     if report.has_failures() {
         return Err(leantoken::Error::CachePruneFailure(
             "one or more managed caches could not be pruned".into(),
@@ -71,7 +73,7 @@ fn ensure_cache_prune_succeeded(report: &cache::CachePruneReport) -> Result<()> 
     Ok(())
 }
 
-fn run_integration_command(cli: Cli, json: bool) -> Result<()> {
+pub(super) fn run_integration_command(cli: Cli, json: bool) -> Result<()> {
     let (operation, request) = match cli.app_request() {
         AppRequest::Setup(request) => (SetupOperation::Setup, request),
         AppRequest::Remove(request) => (SetupOperation::Remove, request),
@@ -87,7 +89,7 @@ fn run_integration_command(cli: Cli, json: bool) -> Result<()> {
     Ok(())
 }
 
-async fn run_repository_command(cli: Cli, json: bool) -> Result<()> {
+pub(super) async fn run_repository_command(cli: Cli, json: bool) -> Result<()> {
     let requested_consistency = cli.retrieval_consistency();
     let config = cli.config()?;
     let request = cli.app_request();
@@ -110,7 +112,7 @@ async fn run_repository_command(cli: Cli, json: bool) -> Result<()> {
     dispatch_repository_request(services, request, consistency, json).await
 }
 
-async fn resolve_retrieval_consistency(
+pub(super) async fn resolve_retrieval_consistency(
     services: &Services,
     requested: Option<IndexConsistency>,
 ) -> Result<IndexConsistency> {
@@ -125,7 +127,7 @@ async fn resolve_retrieval_consistency(
     }
 }
 
-async fn dispatch_repository_request(
+pub(super) async fn dispatch_repository_request(
     services: Arc<Services>,
     request: AppRequest,
     consistency: IndexConsistency,

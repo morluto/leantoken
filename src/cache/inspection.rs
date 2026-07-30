@@ -1,5 +1,7 @@
+use super::*;
+
 impl CacheManager {
-    fn inspect_all(&self) -> Result<(Vec<InspectedCache>, usize)> {
+    pub(super) fn inspect_all(&self) -> Result<(Vec<InspectedCache>, usize)> {
         let read_dir = match fs::read_dir(&self.root) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -30,7 +32,7 @@ impl CacheManager {
         Ok((entries, ignored))
     }
 
-    fn inspect_cache(&self, id: &str, probe_active: bool) -> Result<InspectedCache> {
+    pub(super) fn inspect_cache(&self, id: &str, probe_active: bool) -> Result<InspectedCache> {
         let path = self.root.join(id);
         let database = path.join(DATABASE_NAME);
         let identity = parse_managed_cache_id(id).expect("validated managed cache identity");

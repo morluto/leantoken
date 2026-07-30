@@ -1,3 +1,5 @@
+use super::*;
+
 /// Clap value for the `files` operation.
 #[derive(Debug, Clone, ValueEnum)]
 #[value(rename_all = "snake_case")]

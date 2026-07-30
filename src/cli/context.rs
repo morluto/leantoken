@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Clone, Parser)]
 pub struct ContextArgs {
     /// Task description.
@@ -125,14 +127,14 @@ pub struct ContextArgs {
 }
 
 impl ContextArgs {
-    fn handoff_request(&self) -> Option<HandoffManifestRequest> {
+    pub(super) fn handoff_request(&self) -> Option<HandoffManifestRequest> {
         self.handoff.then(|| HandoffManifestRequest {
             summary: self.handoff_summary.clone(),
             ..HandoffManifestRequest::default()
         })
     }
 
-    fn workflow_evidence(&self) -> WorkflowEvidence {
+    pub(super) fn workflow_evidence(&self) -> WorkflowEvidence {
         WorkflowEvidence::new()
             .with_failure_traces(self.failure_traces.clone())
             .with_symbols(self.evidence_symbols.clone())

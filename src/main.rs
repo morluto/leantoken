@@ -96,13 +96,20 @@ fn exit_cli_error(error: clap::Error, json_requested: bool) -> ! {
     error.exit()
 }
 
-// Binary orchestration is split by lifecycle while sharing this private
-// module scope; application policy remains owned by Services.
-include!("main/dispatch.rs");
-include!("main/mcp_runtime.rs");
-include!("main/index_runtime.rs");
-include!("main/output.rs");
+#[path = "main/dispatch.rs"]
+mod dispatch;
+#[path = "main/index_runtime.rs"]
+mod index_runtime;
+#[path = "main/mcp_runtime.rs"]
+mod mcp_runtime;
+#[path = "main/output.rs"]
+mod output;
+
+use dispatch::*;
+use index_runtime::*;
+use mcp_runtime::*;
+use output::*;
 
 #[cfg(test)]
-#[path = "main/tests.rs"]
+#[path = "main/tests/mod.rs"]
 mod tests;

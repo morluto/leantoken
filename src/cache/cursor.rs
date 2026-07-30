@@ -1,4 +1,6 @@
-fn validate_list_request(request: &CacheListRequest) -> Result<()> {
+use super::*;
+
+pub(super) fn validate_list_request(request: &CacheListRequest) -> Result<()> {
     if request.limit == 0 {
         return Err(Error::InvalidInput {
             field: "cache list limit",
@@ -21,12 +23,15 @@ fn validate_list_request(request: &CacheListRequest) -> Result<()> {
     Ok(())
 }
 
-fn normalize_repository_root_filter(path: &Path) -> PathBuf {
+pub(super) fn normalize_repository_root_filter(path: &Path) -> PathBuf {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     absolute.canonicalize().unwrap_or(absolute)
 }
 
-fn cache_list_filter_hash(request: &CacheListRequest, repository_root: Option<&Path>) -> String {
+pub(super) fn cache_list_filter_hash(
+    request: &CacheListRequest,
+    repository_root: Option<&Path>,
+) -> String {
     let mut hasher = blake3::Hasher::new();
     if request.states.is_empty() {
         hasher.update(b"all-states");
@@ -45,7 +50,7 @@ fn cache_list_filter_hash(request: &CacheListRequest, repository_root: Option<&P
     hasher.finalize().to_hex()[..CACHE_LIST_CURSOR_HASH_CHARS].to_owned()
 }
 
-fn cache_list_v2_filter_hash(
+pub(super) fn cache_list_v2_filter_hash(
     request: &CacheListV2Request,
     repository_root: Option<&Path>,
 ) -> String {
@@ -78,19 +83,23 @@ fn cache_list_v2_filter_hash(
     hasher.finalize().to_hex()[..CACHE_LIST_CURSOR_HASH_CHARS].to_owned()
 }
 
-fn encode_cache_list_cursor(filter_hash: &str, after_id: &str) -> String {
+pub(super) fn encode_cache_list_cursor(filter_hash: &str, after_id: &str) -> String {
     encode_cache_list_cursor_with_prefix(CACHE_LIST_CURSOR_PREFIX, filter_hash, after_id)
 }
 
-fn encode_cache_list_cursor_with_prefix(prefix: &str, filter_hash: &str, after_id: &str) -> String {
+pub(super) fn encode_cache_list_cursor_with_prefix(
+    prefix: &str,
+    filter_hash: &str,
+    after_id: &str,
+) -> String {
     format!("{prefix}:{filter_hash}:{after_id}")
 }
 
-fn decode_cache_list_cursor(cursor: &str, expected_filter_hash: &str) -> Result<String> {
+pub(super) fn decode_cache_list_cursor(cursor: &str, expected_filter_hash: &str) -> Result<String> {
     decode_cache_list_cursor_with_prefix(cursor, CACHE_LIST_CURSOR_PREFIX, expected_filter_hash)
 }
 
-fn decode_cache_list_cursor_with_prefix(
+pub(super) fn decode_cache_list_cursor_with_prefix(
     cursor: &str,
     expected_prefix: &str,
     expected_filter_hash: &str,

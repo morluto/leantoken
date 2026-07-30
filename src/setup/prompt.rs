@@ -1,4 +1,6 @@
-trait SetupPrompt {
+use super::*;
+
+pub(super) trait SetupPrompt {
     fn select(
         &self,
         operation: SetupOperation,
@@ -8,10 +10,10 @@ trait SetupPrompt {
     fn confirm(&self, operation: SetupOperation, plan: &ResolvedSetupPlan) -> Result<bool>;
 }
 
-struct InteractivePrompt;
+pub(super) struct InteractivePrompt;
 
 #[derive(Clone)]
-struct AgentOption {
+pub(super) struct AgentOption {
     client: SetupClient,
     detected: bool,
 }
@@ -76,6 +78,6 @@ impl SetupPrompt for InteractivePrompt {
     }
 }
 
-fn prompt_error(error: InquireError) -> Error {
+pub(super) fn prompt_error(error: InquireError) -> Error {
     Error::SetupFailure(format!("interactive setup failed: {error}"))
 }

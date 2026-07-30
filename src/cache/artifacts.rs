@@ -1,4 +1,6 @@
-fn scan_artifacts(path: &Path) -> Result<ArtifactScan> {
+use super::*;
+
+pub(super) fn scan_artifacts(path: &Path) -> Result<ArtifactScan> {
     let mut scan = ArtifactScan {
         size_bytes: 0,
         latest_access_mtime: None,
@@ -41,15 +43,15 @@ fn scan_artifacts(path: &Path) -> Result<ArtifactScan> {
 }
 
 #[derive(Debug)]
-struct DatabaseMetadata {
-    schema_version: Option<i64>,
-    repository_root: Option<PathBuf>,
-    last_access_unix_seconds: Option<u64>,
-    current: bool,
-    future_schema: bool,
+pub(super) struct DatabaseMetadata {
+    pub(super) schema_version: Option<i64>,
+    pub(super) repository_root: Option<PathBuf>,
+    pub(super) last_access_unix_seconds: Option<u64>,
+    pub(super) current: bool,
+    pub(super) future_schema: bool,
 }
 
-fn inspect_database(path: &Path) -> Result<DatabaseMetadata> {
+pub(super) fn inspect_database(path: &Path) -> Result<DatabaseMetadata> {
     let connection = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,

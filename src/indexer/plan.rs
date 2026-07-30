@@ -1,5 +1,7 @@
+use super::*;
+
 impl Indexer {
-    fn validate_membership_limits(
+    pub(super) fn validate_membership_limits(
         &self,
         existing: &HashMap<String, crate::storage::FileRecord>,
         candidates: &HashMap<String, DiscoveredFile>,
@@ -33,7 +35,7 @@ impl Indexer {
         Ok(())
     }
 
-    fn existing_files(
+    pub(super) fn existing_files(
         &self,
         cancellation: &CancellationToken,
     ) -> Result<HashMap<String, crate::storage::FileRecord>> {
@@ -54,13 +56,13 @@ impl Indexer {
         Ok(result)
     }
 
-    fn config_hash(&self) -> String {
+    pub(super) fn config_hash(&self) -> String {
         self.config_hash_for_content_marker(&format!(
             "leantoken-index-content-v{INDEX_CONTENT_VERSION}"
         ))
     }
 
-    fn config_hash_for_content_marker(&self, index_content_marker: &str) -> String {
+    pub(super) fn config_hash_for_content_marker(&self, index_content_marker: &str) -> String {
         let input = format!(
             "{index_content_marker}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
             env!("CARGO_PKG_VERSION"),

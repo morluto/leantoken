@@ -1,3 +1,5 @@
+use super::*;
+
 impl Indexer {
     /// Construct an indexer whose dedicated worker pool is created on demand.
     pub fn new(config: Arc<Config>, storage: Storage) -> Result<Self> {
@@ -87,7 +89,7 @@ impl Indexer {
             })
     }
 
-    fn reconcile_cancellable_profiled_report(
+    pub(super) fn reconcile_cancellable_profiled_report(
         &self,
         rebuild: bool,
         cancellation: &CancellationToken,
@@ -95,7 +97,7 @@ impl Indexer {
         self.reconcile_cancellable_report_inner(rebuild, cancellation, StorageProfiling::Collect)
     }
 
-    fn reconcile_cancellable_report_inner(
+    pub(super) fn reconcile_cancellable_report_inner(
         &self,
         rebuild: bool,
         cancellation: &CancellationToken,
@@ -110,23 +112,17 @@ impl Indexer {
         Err(Error::RetryableConflict(RetryableOperation::Reconciliation))
     }
 
-    fn reconcile_once(
+    pub(super) fn reconcile_once(
         &self,
         rebuild: bool,
         cancellation: &CancellationToken,
         profiling: StorageProfiling,
     ) -> Result<ProfiledIndexReport> {
-        self.reconcile_once_with_profiling_hooks(
-            rebuild,
-            cancellation,
-            profiling,
-            || {},
-            || {},
-        )
+        self.reconcile_once_with_profiling_hooks(rebuild, cancellation, profiling, || {}, || {})
     }
 
     #[cfg(test)]
-    fn reconcile_once_with_preparation_hook(
+    pub(super) fn reconcile_once_with_preparation_hook(
         &self,
         rebuild: bool,
         cancellation: &CancellationToken,
@@ -142,7 +138,7 @@ impl Indexer {
     }
 
     #[cfg(test)]
-    fn reconcile_once_with_post_publication_hook(
+    pub(super) fn reconcile_once_with_post_publication_hook(
         &self,
         rebuild: bool,
         cancellation: &CancellationToken,
@@ -157,7 +153,7 @@ impl Indexer {
         )
     }
 
-    fn reconcile_once_with_profiling_hooks(
+    pub(super) fn reconcile_once_with_profiling_hooks(
         &self,
         rebuild: bool,
         cancellation: &CancellationToken,
@@ -168,8 +164,8 @@ impl Indexer {
         let total_started = Instant::now();
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
-        let mut progress = (baseline.repository_generation == 0)
-            .then(|| self.progress.start(0, cancellation));
+        let mut progress =
+            (baseline.repository_generation == 0).then(|| self.progress.start(0, cancellation));
 
         let discovery_started = Instant::now();
         let discovery = discover_files_with_limits_policy_filter_and_progress(
@@ -180,11 +176,7 @@ impl Indexer {
             |path| !self.config.is_database_artifact_path(path),
             |stats| {
                 if let Some(progress) = &progress {
-                    progress.discovered(
-                        stats.walk_entries,
-                        stats.files,
-                        stats.total_source_bytes,
-                    );
+                    progress.discovered(stats.walk_entries, stats.files, stats.total_source_bytes);
                 }
             },
         )?;
@@ -343,30 +335,29 @@ impl Indexer {
             source_bytes.enforce()?;
             Ok(preparation)
         };
-        let observe_publication = |phase| {
-            observe_publication_phase(progress.as_ref(), cancellation, phase)
-        };
-        let (generation, preparation, mut publication_detail) =
-            if profiling == StorageProfiling::Collect {
-                self.storage
-                    .publish_reconciliation_profiled_at_with_progress(
+        let observe_publication =
+            |phase| observe_publication_phase(progress.as_ref(), cancellation, phase);
+        let (generation, preparation, mut publication_detail) = if profiling
+            == StorageProfiling::Collect
+        {
+            self.storage
+                .publish_reconciliation_profiled_at_with_progress(
                     &baseline,
                     &config_hash,
                     rebuild,
                     observe_publication,
                     publish,
                 )?
-            } else {
-                let (generation, preparation) =
-                    self.storage.publish_reconciliation_at_with_progress(
-                        &baseline,
-                        &config_hash,
-                        rebuild,
-                        observe_publication,
-                        publish,
-                    )?;
-                (generation, preparation, PublicationDiagnostics::default())
-            };
+        } else {
+            let (generation, preparation) = self.storage.publish_reconciliation_at_with_progress(
+                &baseline,
+                &config_hash,
+                rebuild,
+                observe_publication,
+                publish,
+            )?;
+            (generation, preparation, PublicationDiagnostics::default())
+        };
         after_publication();
         if let Some(progress) = &mut progress {
             progress.complete(generation);
@@ -432,7 +423,7 @@ impl Indexer {
     }
 }
 
-fn observe_publication_phase(
+pub(super) fn observe_publication_phase(
     progress: Option<&IndexProgressAttempt>,
     cancellation: &CancellationToken,
     phase: ReconciliationPublicationPhase,

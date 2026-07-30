@@ -112,7 +112,7 @@ pub use state::McpServices;
 use state::StartupFailure;
 use state::{McpLimitPolicy, McpServiceState};
 
-include!("mcp/tools.rs");
+mod tools;
 
 /// Return the complete JSON-serialized tool catalog for telemetry and snapshots.
 ///

@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Clone)]
 pub struct ParseOutput {
     pub language: Option<String>,
@@ -69,18 +71,18 @@ thread_local! {
     static PARSER_CACHE: RefCell<Option<ParserCache>> = const { RefCell::new(None) };
 }
 
-struct ParserCache {
+pub(super) struct ParserCache {
     parser: Parser,
     language: Option<String>,
     queries: HashMap<String, CompiledQueries>,
 }
 
-struct CompiledQueries {
+pub(super) struct CompiledQueries {
     tags_query: Option<Query>,
     import_query: Option<Query>,
 }
 
-fn parse_language_with_cancellation(
+pub(super) fn parse_language_with_cancellation(
     language: &str,
     source: &str,
     mut is_cancelled: impl FnMut() -> bool,

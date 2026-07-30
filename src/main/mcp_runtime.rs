@@ -1,4 +1,6 @@
-async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result<()> {
+use super::*;
+
+pub(super) async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result<()> {
     const PRODUCTION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
     let (server, service_state) = mcp::LeanTokenMcp::pending();
     let server = server.with_result_mode(result_mode);
@@ -59,7 +61,7 @@ async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result<()> {
     }
 }
 
-async fn run_mcp_runtime(
+pub(super) async fn run_mcp_runtime(
     cli: Cli,
     service_state: mcp::McpServices,
     cancellation: CancellationToken,

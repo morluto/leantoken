@@ -1,4 +1,6 @@
-fn append_javascript_bindings(
+use super::*;
+
+pub(super) fn append_javascript_bindings(
     source: &str,
     root: Node<'_>,
     symbols: &mut Vec<Symbol>,
@@ -59,7 +61,11 @@ fn append_javascript_bindings(
     Ok(())
 }
 
-fn append_javascript_declaration(source: &str, declaration: Node<'_>, symbols: &mut Vec<Symbol>) {
+pub(super) fn append_javascript_declaration(
+    source: &str,
+    declaration: Node<'_>,
+    symbols: &mut Vec<Symbol>,
+) {
     let is_const = {
         let mut cursor = declaration.walk();
         declaration
@@ -97,13 +103,13 @@ fn append_javascript_declaration(source: &str, declaration: Node<'_>, symbols: &
     }
 }
 
-fn javascript_export_is_default(node: Node<'_>) -> bool {
+pub(super) fn javascript_export_is_default(node: Node<'_>) -> bool {
     let mut cursor = node.walk();
     node.children(&mut cursor)
         .any(|child| child.kind() == "default")
 }
 
-fn javascript_is_data_expression(node: Node<'_>) -> bool {
+pub(super) fn javascript_is_data_expression(node: Node<'_>) -> bool {
     match node.kind() {
         "object" | "array" => true,
         "parenthesized_expression"
@@ -119,7 +125,7 @@ fn javascript_is_data_expression(node: Node<'_>) -> bool {
     }
 }
 
-fn push_javascript_symbol(
+pub(super) fn push_javascript_symbol(
     source: &str,
     node: Node<'_>,
     name: String,

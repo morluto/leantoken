@@ -1,20 +1,22 @@
-static NEXT_INDEX_PROGRESS_REGISTRY_ID: std::sync::atomic::AtomicU64 =
+use super::*;
+
+pub(super) static NEXT_INDEX_PROGRESS_REGISTRY_ID: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
 #[derive(Clone)]
-struct IndexProgressRegistry {
+pub(super) struct IndexProgressRegistry {
     shared: Arc<Mutex<IndexProgressRegistryState>>,
     cache_namespace: Arc<str>,
     registry_id: u64,
 }
 
 #[derive(Default)]
-struct IndexProgressRegistryState {
+pub(super) struct IndexProgressRegistryState {
     next_attempt: u64,
     current: Option<IndexProgressAttemptState>,
 }
 
-struct IndexProgressAttemptState {
+pub(super) struct IndexProgressAttemptState {
     internal_id: u64,
     attempt_id: String,
     active: bool,
@@ -32,7 +34,7 @@ struct IndexProgressAttemptState {
     preparation_batches: u64,
 }
 
-struct IndexProgressAttempt {
+pub(super) struct IndexProgressAttempt {
     registry: IndexProgressRegistry,
     cancellation: CancellationToken,
     internal_id: u64,
@@ -40,7 +42,7 @@ struct IndexProgressAttempt {
 }
 
 impl IndexProgressRegistry {
-    fn new(cache_namespace: String) -> Self {
+    pub(super) fn new(cache_namespace: String) -> Self {
         Self {
             shared: Arc::new(Mutex::new(IndexProgressRegistryState::default())),
             cache_namespace: Arc::from(cache_namespace),
@@ -49,7 +51,7 @@ impl IndexProgressRegistry {
         }
     }
 
-    fn start(
+    pub(super) fn start(
         &self,
         current_generation: u64,
         cancellation: &CancellationToken,
@@ -99,7 +101,7 @@ impl IndexProgressRegistry {
         }
     }
 
-    fn snapshot(&self) -> Option<IndexProgressSnapshot> {
+    pub(super) fn snapshot(&self) -> Option<IndexProgressSnapshot> {
         let state = self
             .shared
             .lock()
@@ -125,7 +127,7 @@ impl IndexProgressRegistry {
         })
     }
 
-    fn update(
+    pub(super) fn update(
         &self,
         internal_id: u64,
         update: impl FnOnce(&mut IndexProgressAttemptState),
@@ -149,12 +151,12 @@ impl IndexProgressRegistry {
 }
 
 impl IndexProgressAttempt {
-    fn phase(&self, phase: IndexProgressPhase) {
+    pub(super) fn phase(&self, phase: IndexProgressPhase) {
         self.registry
             .update(self.internal_id, |current| current.phase = phase);
     }
 
-    fn discovered(&self, walk_entries: u64, files: u64, source_bytes: u64) {
+    pub(super) fn discovered(&self, walk_entries: u64, files: u64, source_bytes: u64) {
         self.registry.update(self.internal_id, |current| {
             current.walk_entries = walk_entries;
             current.files_discovered = files;
@@ -162,7 +164,7 @@ impl IndexProgressAttempt {
         });
     }
 
-    fn prepared_batch(&self, files: usize) {
+    pub(super) fn prepared_batch(&self, files: usize) {
         let files = u64::try_from(files).unwrap_or(u64::MAX);
         self.registry.update(self.internal_id, |current| {
             current.files_prepared = current.files_prepared.saturating_add(files);
@@ -170,14 +172,14 @@ impl IndexProgressAttempt {
         });
     }
 
-    fn staged(&self, files: usize) {
+    pub(super) fn staged(&self, files: usize) {
         let files = u64::try_from(files).unwrap_or(u64::MAX);
         self.registry.update(self.internal_id, |current| {
             current.files_staged = current.files_staged.saturating_add(files);
         });
     }
 
-    fn complete(&mut self, generation: u64) {
+    pub(super) fn complete(&mut self, generation: u64) {
         self.registry.update(self.internal_id, |current| {
             current.current_generation = generation;
             current.phase = IndexProgressPhase::Completed;
@@ -204,7 +206,7 @@ impl Drop for IndexProgressAttempt {
     }
 }
 
-fn saturating_duration_millis(duration: Duration) -> u64 {
+pub(super) fn saturating_duration_millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 

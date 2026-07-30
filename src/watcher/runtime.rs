@@ -1,3 +1,5 @@
+use super::*;
+
 /// Joined filesystem watcher for one repository root.
 pub struct RepositoryWatcher {
     root: PathBuf,
@@ -7,9 +9,9 @@ pub struct RepositoryWatcher {
     counters: Arc<WatcherCounters>,
 }
 
-const PRODUCTION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+pub(super) const PRODUCTION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-async fn join_watcher(handle: JoinHandle<()>) -> Result<()> {
+pub(crate) async fn join_watcher(handle: JoinHandle<()>) -> Result<()> {
     timeout(PRODUCTION_SHUTDOWN_TIMEOUT, handle)
         .await
         .map_err(|_| Error::ShutdownTimeout {
@@ -54,7 +56,7 @@ impl RepositoryWatcher {
         .await
     }
 
-    async fn start_with_factory(
+    pub(crate) async fn start_with_factory(
         root: impl AsRef<Path>,
         capacity: usize,
         debounce: Duration,
@@ -329,7 +331,7 @@ impl RepositoryWatcher {
     }
 }
 
-fn diagnostics_snapshot(
+pub(super) fn diagnostics_snapshot(
     ready: &WatcherReady,
     counters: &WatcherCounters,
 ) -> WatcherDiagnostics {

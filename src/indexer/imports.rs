@@ -1,5 +1,7 @@
+use super::*;
+
 impl Indexer {
-    fn import_projections(
+    pub(super) fn import_projections(
         &self,
         paths: &HashSet<String>,
         source_path_overrides: &HashMap<String, String>,
@@ -27,7 +29,7 @@ impl Indexer {
         Ok(projections)
     }
 
-    fn affected_importers(
+    pub(super) fn affected_importers(
         &self,
         deletions: &HashSet<String>,
         change_set: &ChangeSet,
