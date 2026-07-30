@@ -952,19 +952,24 @@ mod tests {
     }
 
     #[test]
-    fn ci_fixture_phase_excludes_benchmark_targets() {
+    fn ci_product_workspace_phases_exclude_benchmark_targets() {
         let workflow = include_str!("../../.github/workflows/ci.yml");
-        let after_fixture = workflow
-            .split_once("- name: Test checked-in fixture cases")
-            .expect("fixture phase")
-            .1;
-        let fixture_phase = after_fixture
-            .split_once("- name:")
-            .map_or(after_fixture, |(phase, _)| phase);
-        assert!(
-            fixture_phase.contains("--exclude leantoken-benchmarks"),
-            "fixture phase rebuilt benchmark targets"
-        );
+        for name in [
+            "Test library and binary units",
+            "Test checked-in fixture cases",
+        ] {
+            let after_phase = workflow
+                .split_once(&format!("- name: {name}"))
+                .unwrap_or_else(|| panic!("{name} phase"))
+                .1;
+            let phase = after_phase
+                .split_once("- name:")
+                .map_or(after_phase, |(phase, _)| phase);
+            assert!(
+                phase.contains("--exclude leantoken-benchmarks"),
+                "{name} rebuilt benchmark targets"
+            );
+        }
     }
 
     #[test]
