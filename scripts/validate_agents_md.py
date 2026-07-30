@@ -21,8 +21,8 @@ EXPECTED_GATE_COMMANDS = {
 EXPECTED_ALIASES = {
     "test-focused": "run --locked --package leantoken-xtask -- test-focused",
     "test-product": "run --locked --package leantoken-xtask -- test product",
-    "test-contract": "run --locked --package leantoken --example benchmark-contract",
-    "test-extras": "test --locked --package leantoken --all-features --examples",
+    "test-contract": "run --locked --package leantoken-benchmarks --bin benchmark-contract",
+    "test-extras": "test --locked --package leantoken-benchmarks --bins",
 }
 REQUIRED_PATHS = (
     "src",

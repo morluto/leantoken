@@ -3,7 +3,7 @@ use crate::read_delta::{
     READ_DELTA_BASE_TTL_MILLIS, ReadDeltaBase,
 };
 
-const READ_DELTA_TOUCH_INTERVAL_MILLIS: i64 = 60 * 1_000;
+pub(crate) const READ_DELTA_TOUCH_INTERVAL_MILLIS: i64 = 60 * 1_000;
 
 impl Storage {
     pub(crate) fn read_delta_base(
@@ -11,7 +11,11 @@ impl Storage {
         target_key: &str,
         content_hash: &str,
     ) -> Result<Option<ReadDeltaBase>> {
-        self.read_delta_base_at(target_key, Some(content_hash), unix_millis(SystemTime::now()))
+        self.read_delta_base_at(
+            target_key,
+            Some(content_hash),
+            unix_millis(SystemTime::now()),
+        )
     }
 
     pub(crate) fn latest_read_delta_base(
@@ -40,7 +44,7 @@ impl Storage {
         )
     }
 
-    fn read_delta_base_at(
+    pub(crate) fn read_delta_base_at(
         &self,
         target_key: &str,
         content_hash: Option<&str>,
@@ -51,7 +55,7 @@ impl Storage {
             .map(|(_, base)| base))
     }
 
-    fn read_delta_base_row_at(
+    pub(crate) fn read_delta_base_row_at(
         &self,
         target_key: &str,
         content_hash: Option<&str>,
@@ -61,8 +65,7 @@ impl Storage {
             .writer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let transaction =
-            connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         prune_read_delta_bases(&transaction, now_unix_millis)?;
         let row = load_read_delta_base(&transaction, target_key, content_hash)?;
         let Some((content_hash, base, created, last_access)) = row else {
@@ -79,7 +82,7 @@ impl Storage {
             return Ok(None);
         }
         if crate::text::hash(&base.content) != content_hash {
-            return Err(Error::InternalFailure(
+            return Err(Error::OperationFailure(
                 "persistent read delta base hash mismatch".into(),
             ));
         }
@@ -104,7 +107,7 @@ impl Storage {
         Ok(Some((content_hash, base)))
     }
 
-    fn persist_read_delta_base_at(
+    pub(crate) fn persist_read_delta_base_at(
         &self,
         target_key: &str,
         content_hash: &str,
@@ -112,7 +115,7 @@ impl Storage {
         now_unix_millis: i64,
     ) -> Result<bool> {
         if now_unix_millis < 0 {
-            return Err(Error::InternalFailure(
+            return Err(Error::OperationFailure(
                 "read delta base timestamp must be non-negative".into(),
             ));
         }
@@ -120,7 +123,7 @@ impl Storage {
             return Ok(false);
         }
         if crate::text::hash(&base.content) != content_hash {
-            return Err(Error::InternalFailure(
+            return Err(Error::OperationFailure(
                 "read delta base content hash mismatch".into(),
             ));
         }
@@ -130,13 +133,12 @@ impl Storage {
         }
         let expires = now_unix_millis
             .checked_add(READ_DELTA_BASE_TTL_MILLIS)
-            .ok_or_else(|| Error::InternalFailure("read delta base expiry overflow".into()))?;
+            .ok_or_else(|| Error::OperationFailure("read delta base expiry overflow".into()))?;
         let mut connection = self
             .writer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let transaction =
-            connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         prune_read_delta_bases(&transaction, now_unix_millis)?;
         let existing = transaction
             .query_row(
@@ -173,7 +175,7 @@ impl Storage {
         )) = existing
         {
             if crate::text::hash(&stored_content) != content_hash {
-                return Err(Error::InternalFailure(
+                return Err(Error::OperationFailure(
                     "persistent read delta base hash mismatch".into(),
                 ));
             }
@@ -188,8 +190,7 @@ impl Storage {
                 && target_end_line == base.target_end_line
                 && returned_start_line == base.returned_start_line
                 && returned_end_line == base.returned_end_line
-                && now_unix_millis.saturating_sub(last_access)
-                    < READ_DELTA_TOUCH_INTERVAL_MILLIS
+                && now_unix_millis.saturating_sub(last_access) < READ_DELTA_TOUCH_INTERVAL_MILLIS
             {
                 transaction.commit()?;
                 return Ok(true);
@@ -220,7 +221,7 @@ impl Storage {
                     ],
                 )?;
                 if updated != 1 {
-                    return Err(Error::InternalFailure(
+                    return Err(Error::OperationFailure(
                         "persistent read delta base update lost its row".into(),
                     ));
                 }
@@ -271,9 +272,9 @@ impl Storage {
     }
 }
 
-type StoredReadDeltaBase = (String, ReadDeltaBase, i64, i64);
+pub(crate) type StoredReadDeltaBase = (String, ReadDeltaBase, i64, i64);
 
-fn load_read_delta_base(
+pub(crate) fn load_read_delta_base(
     transaction: &Transaction<'_>,
     target_key: &str,
     content_hash: Option<&str>,
@@ -325,7 +326,7 @@ fn load_read_delta_base(
     }
 }
 
-fn read_delta_usage(transaction: &Transaction<'_>) -> Result<(usize, usize)> {
+pub(crate) fn read_delta_usage(transaction: &Transaction<'_>) -> Result<(usize, usize)> {
     transaction
         .query_row(
             "SELECT base_count, base_bytes FROM read_delta_base_usage WHERE id = 1",
@@ -335,7 +336,7 @@ fn read_delta_usage(transaction: &Transaction<'_>) -> Result<(usize, usize)> {
         .map_err(Into::into)
 }
 
-fn next_read_delta_access_sequence(transaction: &Transaction<'_>) -> Result<i64> {
+pub(crate) fn next_read_delta_access_sequence(transaction: &Transaction<'_>) -> Result<i64> {
     let current: i64 = transaction.query_row(
         "SELECT next_access_sequence FROM read_delta_base_usage WHERE id = 1",
         [],
@@ -343,20 +344,23 @@ fn next_read_delta_access_sequence(transaction: &Transaction<'_>) -> Result<i64>
     )?;
     let next = current
         .checked_add(1)
-        .ok_or_else(|| Error::InternalFailure("read delta access sequence overflow".into()))?;
+        .ok_or_else(|| Error::OperationFailure("read delta access sequence overflow".into()))?;
     let updated = transaction.execute(
         "UPDATE read_delta_base_usage SET next_access_sequence = ?1 WHERE id = 1",
         [next],
     )?;
     if updated != 1 {
-        return Err(Error::InternalFailure(
+        return Err(Error::OperationFailure(
             "persistent read delta usage row is missing".into(),
         ));
     }
     Ok(next)
 }
 
-fn prune_read_delta_bases(transaction: &Transaction<'_>, now_unix_millis: i64) -> Result<()> {
+pub(crate) fn prune_read_delta_bases(
+    transaction: &Transaction<'_>,
+    now_unix_millis: i64,
+) -> Result<()> {
     transaction.execute(
         "DELETE FROM read_delta_bases WHERE expires_unix_millis <= ?1",
         [now_unix_millis],
@@ -364,7 +368,7 @@ fn prune_read_delta_bases(transaction: &Transaction<'_>, now_unix_millis: i64) -
     Ok(())
 }
 
-fn evict_oldest_read_delta_base(transaction: &Transaction<'_>) -> Result<bool> {
+pub(crate) fn evict_oldest_read_delta_base(transaction: &Transaction<'_>) -> Result<bool> {
     let candidate = transaction
         .query_row(
             "SELECT target_key, content_hash
@@ -384,3 +388,4 @@ fn evict_oldest_read_delta_base(transaction: &Transaction<'_>) -> Result<bool> {
         params![target_key, content_hash],
     )? == 1)
 }
+use super::*;

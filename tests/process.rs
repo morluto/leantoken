@@ -1958,7 +1958,7 @@ fn malformed_selected_config_blocks_all_setup_writes() {
     assert!(!temp.path().join(".cursor/mcp.json").exists());
     let error: serde_json::Value =
         serde_json::from_slice(&output.stderr).expect("structured setup error");
-    assert_eq!(error["category"], "internal_error");
+    assert_eq!(error["category"], "setup_failure");
     assert!(
         error["error"]
             .as_str()

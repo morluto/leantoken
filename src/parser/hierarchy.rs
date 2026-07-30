@@ -1,4 +1,6 @@
-fn push_structural_symbol(
+use super::*;
+
+pub(super) fn push_structural_symbol(
     source: &str,
     node: Node<'_>,
     name: String,
@@ -22,7 +24,7 @@ fn push_structural_symbol(
     });
 }
 
-fn push_structural_reference(
+pub(super) fn push_structural_reference(
     name: String,
     kind: &str,
     role: ReferenceRole,
@@ -45,7 +47,7 @@ fn push_structural_reference(
     });
 }
 
-fn canonical_definition(
+pub(super) fn canonical_definition(
     language: &str,
     source: &str,
     kind: &str,
@@ -58,7 +60,7 @@ fn canonical_definition(
     }
 }
 
-fn rust_function_identity(source: &str, node: Node<'_>) -> (String, Option<String>) {
+pub(super) fn rust_function_identity(source: &str, node: Node<'_>) -> (String, Option<String>) {
     let Some(declarations) = node
         .parent()
         .filter(|parent| parent.kind() == "declaration_list")
@@ -82,7 +84,7 @@ fn rust_function_identity(source: &str, node: Node<'_>) -> (String, Option<Strin
     }
 }
 
-fn go_method_owner(source: &str, node: Node<'_>) -> Option<String> {
+pub(super) fn go_method_owner(source: &str, node: Node<'_>) -> Option<String> {
     let receiver = node.child_by_field_name("receiver")?;
     let mut cursor = receiver.walk();
     receiver.named_children(&mut cursor).find_map(|parameter| {
@@ -92,7 +94,7 @@ fn go_method_owner(source: &str, node: Node<'_>) -> Option<String> {
     })
 }
 
-fn base_type_name(source: &str, node: Node<'_>) -> Option<String> {
+pub(super) fn base_type_name(source: &str, node: Node<'_>) -> Option<String> {
     match node.kind() {
         "type_identifier" | "identifier" | "field_identifier" | "primitive_type" => {
             let name = node_text(source, node);
@@ -116,7 +118,7 @@ fn base_type_name(source: &str, node: Node<'_>) -> Option<String> {
     }
 }
 
-fn definition_extent(node: Node<'_>) -> Node<'_> {
+pub(super) fn definition_extent(node: Node<'_>) -> Node<'_> {
     if node.kind() != "function_declarator" {
         return node;
     }
@@ -133,7 +135,7 @@ fn definition_extent(node: Node<'_>) -> Node<'_> {
     node
 }
 
-fn signature_from_node(source: &str, node: Node) -> Option<String> {
+pub(super) fn signature_from_node(source: &str, node: Node) -> Option<String> {
     const MAX_SIGNATURE_CHARS: usize = 512;
 
     let end = first_body_start(node).unwrap_or_else(|| node.end_byte());
@@ -156,7 +158,7 @@ fn signature_from_node(source: &str, node: Node) -> Option<String> {
     (!compact.is_empty()).then_some(compact)
 }
 
-fn first_body_start(node: Node<'_>) -> Option<usize> {
+pub(super) fn first_body_start(node: Node<'_>) -> Option<usize> {
     let mut pending = vec![node];
     let mut earliest = None;
     while let Some(current) = pending.pop() {
@@ -172,7 +174,7 @@ fn first_body_start(node: Node<'_>) -> Option<usize> {
     earliest
 }
 
-fn compute_symbol_parents(symbols: &mut [Symbol]) {
+pub(super) fn compute_symbol_parents(symbols: &mut [Symbol]) {
     if symbols.is_empty() {
         return;
     }
@@ -206,7 +208,7 @@ fn compute_symbol_parents(symbols: &mut [Symbol]) {
     });
 }
 
-fn deduplicate_symbols(symbols: &mut Vec<Symbol>) {
+pub(super) fn deduplicate_symbols(symbols: &mut Vec<Symbol>) {
     let mut seen = HashSet::with_capacity(symbols.len());
     symbols.retain(|symbol| {
         seen.insert((
@@ -218,13 +220,13 @@ fn deduplicate_symbols(symbols: &mut Vec<Symbol>) {
     });
 }
 
-fn strictly_contains(parent: &Symbol, child: &Symbol) -> bool {
+pub(super) fn strictly_contains(parent: &Symbol, child: &Symbol) -> bool {
     parent.start_byte <= child.start_byte
         && parent.end_byte >= child.end_byte
         && (parent.start_byte < child.start_byte || parent.end_byte > child.end_byte)
 }
 
-fn compute_reference_enclosing(symbols: &[Symbol], references: &mut [Reference]) {
+pub(super) fn compute_reference_enclosing(symbols: &[Symbol], references: &mut [Reference]) {
     if symbols.is_empty() || references.is_empty() {
         references.sort_by(|a, b| {
             a.start_byte
@@ -301,7 +303,7 @@ fn compute_reference_enclosing(symbols: &[Symbol], references: &mut [Reference])
     });
 }
 
-fn range_from_node(node: Node) -> (usize, usize, usize, usize) {
+pub(super) fn range_from_node(node: Node) -> (usize, usize, usize, usize) {
     let start = node.start_position();
     let end = node.end_position();
     (
@@ -312,7 +314,7 @@ fn range_from_node(node: Node) -> (usize, usize, usize, usize) {
     )
 }
 
-fn node_text(source: &str, node: Node) -> String {
+pub(super) fn node_text(source: &str, node: Node) -> String {
     let bytes = source.as_bytes();
     let start = node.start_byte();
     let end = node.end_byte();
@@ -323,7 +325,7 @@ fn node_text(source: &str, node: Node) -> String {
     }
 }
 
-fn unquote(s: &str) -> &str {
+pub(super) fn unquote(s: &str) -> &str {
     let mut chars = s.chars();
     if let (Some(first), Some(last)) = (chars.next(), chars.next_back())
         && first == last

@@ -19,7 +19,7 @@ pub(crate) fn git_working_tree_status(root: &Path, max: usize) -> GitWorkingTree
     git_working_tree_status_with(root, max, Path::new("git"), Duration::from_millis(500))
 }
 
-fn git_changed_paths_with(
+pub(crate) fn git_changed_paths_with(
     root: &Path,
     max: usize,
     program: &Path,
@@ -28,7 +28,7 @@ fn git_changed_paths_with(
     Ok(git_working_tree_status_with(root, max, program, timeout).changed_paths)
 }
 
-fn git_working_tree_status_with(
+pub(crate) fn git_working_tree_status_with(
     root: &Path,
     max: usize,
     program: &Path,
@@ -77,14 +77,14 @@ fn git_working_tree_status_with(
     }
 }
 
-fn bounded_git_output(max_results: usize, bytes_per_result: usize) -> usize {
+pub(crate) fn bounded_git_output(max_results: usize, bytes_per_result: usize) -> usize {
     max_results
         .saturating_mul(bytes_per_result)
         .max(bytes_per_result)
         .min(MAX_GIT_DISCOVERY_OUTPUT_BYTES)
 }
 
-fn git_worktree_prefix(root: &Path) -> String {
+pub(crate) fn git_worktree_prefix(root: &Path) -> String {
     root.ancestors()
         .find(|ancestor| ancestor.join(".git").exists())
         .and_then(|worktree| root.strip_prefix(worktree).ok())
@@ -95,11 +95,15 @@ fn git_worktree_prefix(root: &Path) -> String {
 }
 
 #[cfg(test)]
-fn parse_git_status<R: BufRead>(mut reader: R, max: usize, prefix: &str) -> HashSet<String> {
+pub(crate) fn parse_git_status<R: BufRead>(
+    mut reader: R,
+    max: usize,
+    prefix: &str,
+) -> HashSet<String> {
     parse_git_status_observation(&mut reader, max, prefix).0
 }
 
-fn parse_git_status_observation<R: BufRead>(
+pub(crate) fn parse_git_status_observation<R: BufRead>(
     mut reader: R,
     max: usize,
     prefix: &str,
@@ -143,3 +147,4 @@ fn parse_git_status_observation<R: BufRead>(
     }
     (changed, true)
 }
+use super::*;

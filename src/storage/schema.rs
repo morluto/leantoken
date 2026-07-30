@@ -1,4 +1,4 @@
-const SCHEMA_SQL: &str = r#"
+pub(crate) const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
     id INTEGER PRIMARY KEY,
     schema_version INTEGER NOT NULL,
@@ -128,7 +128,7 @@ BEGIN
 END;
 "#;
 
-const LOOKUP_INDEXES_SQL: &str = r#"
+pub(crate) const LOOKUP_INDEXES_SQL: &str = r#"
 CREATE INDEX IF NOT EXISTS chunks_file_line_idx
 ON chunks(file_id, start_line, end_line);
 
@@ -142,13 +142,13 @@ CREATE INDEX IF NOT EXISTS imports_file_line_idx
 ON imports(file_id, line);
 "#;
 
-const REPOSITORY_OWNERSHIP_SQL: &str = r#"
+pub(crate) const REPOSITORY_OWNERSHIP_SQL: &str = r#"
 ALTER TABLE meta ADD COLUMN repository_root TEXT NOT NULL DEFAULT '';
 ALTER TABLE meta ADD COLUMN repository_identity TEXT NOT NULL DEFAULT '';
 UPDATE meta SET schema_version = 2 WHERE id = 1;
 "#;
 
-const IMPORT_CANDIDATES_SQL: &str = r#"
+pub(crate) const IMPORT_CANDIDATES_SQL: &str = r#"
 CREATE TABLE import_candidates (
     import_id INTEGER NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
     candidate_path TEXT NOT NULL,
@@ -160,7 +160,7 @@ ON import_candidates(candidate_path, import_id);
 UPDATE meta SET schema_version = 3 WHERE id = 1;
 "#;
 
-const PATH_PROJECTION_SQL: &str = r#"
+pub(crate) const PATH_PROJECTION_SQL: &str = r#"
 CREATE TABLE path_entries (
     path TEXT PRIMARY KEY,
     depth INTEGER NOT NULL,
@@ -171,7 +171,7 @@ CREATE INDEX path_entries_depth_path_idx ON path_entries(depth, path);
 UPDATE meta SET schema_version = 4 WHERE id = 1;
 "#;
 
-const CACHE_ACCESS_SQL: &str = r#"
+pub(crate) const CACHE_ACCESS_SQL: &str = r#"
 ALTER TABLE meta ADD COLUMN last_access_unix_seconds INTEGER NOT NULL DEFAULT 0;
 UPDATE meta
 SET last_access_unix_seconds = CAST(strftime('%s', 'now') AS INTEGER),
@@ -179,7 +179,7 @@ SET last_access_unix_seconds = CAST(strftime('%s', 'now') AS INTEGER),
 WHERE id = 1;
 "#;
 
-const STRUCTURAL_SEARCH_SQL: &str = r#"
+pub(crate) const STRUCTURAL_SEARCH_SQL: &str = r#"
 CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts_trigram USING fts5(
     name,
     content='symbols',
@@ -241,7 +241,7 @@ INSERT INTO symbol_refs_fts_trigram(symbol_refs_fts_trigram) VALUES('rebuild');
 UPDATE meta SET schema_version = 6 WHERE id = 1;
 "#;
 
-const RETRIEVAL_RECEIPTS_SQL: &str = r#"
+pub(crate) const RETRIEVAL_RECEIPTS_SQL: &str = r#"
 CREATE TABLE retrieval_receipt_usage (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     namespace TEXT NOT NULL CHECK (length(namespace) = 32),
@@ -309,7 +309,7 @@ END;
 UPDATE meta SET schema_version = 7 WHERE id = 1;
 "#;
 
-const READ_DELTA_BASES_SQL: &str = r#"
+pub(crate) const READ_DELTA_BASES_SQL: &str = r#"
 CREATE TABLE read_delta_base_usage (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     next_access_sequence INTEGER NOT NULL DEFAULT 0 CHECK (next_access_sequence >= 0),
@@ -363,7 +363,7 @@ END;
 UPDATE meta SET schema_version = 8 WHERE id = 1;
 "#;
 
-const RECEIPT_EXACT_ONLY_SQL: &str = r#"
+pub(crate) const RECEIPT_EXACT_ONLY_SQL: &str = r#"
 ALTER TABLE retrieval_receipt_evidence
 ADD COLUMN exact_only INTEGER NOT NULL DEFAULT 0 CHECK (exact_only IN (0, 1));
 
@@ -378,7 +378,7 @@ WHERE id = 1;
 UPDATE meta SET schema_version = 9 WHERE id = 1;
 "#;
 
-const QUERY_COVERAGE_RECEIPTS_SQL: &str = r#"
+pub(crate) const QUERY_COVERAGE_RECEIPTS_SQL: &str = r#"
 CREATE TABLE query_coverage_receipt_usage (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     namespace TEXT NOT NULL CHECK (length(namespace) = 32),
@@ -442,7 +442,7 @@ END;
 UPDATE meta SET schema_version = 10 WHERE id = 1;
 "#;
 
-const TOKEN_SAVINGS_TABLE_SQL: &str = r#"
+pub(crate) const TOKEN_SAVINGS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS token_savings (
     tokenizer TEXT NOT NULL,
     operation TEXT NOT NULL,
@@ -469,7 +469,7 @@ CREATE TABLE IF NOT EXISTS token_savings (
 );
 "#;
 
-const SERVICE_FAILURES_TABLE_SQL: &str = r#"
+pub(crate) const SERVICE_FAILURES_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS service_failures (
     tokenizer TEXT NOT NULL,
     operation TEXT NOT NULL,
@@ -479,7 +479,7 @@ CREATE TABLE IF NOT EXISTS service_failures (
 );
 "#;
 
-const MIGRATIONS_SLICE: &[M<'_>] = &[
+pub(crate) const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(SCHEMA_SQL).foreign_key_check(),
     M::up(LOOKUP_INDEXES_SQL),
     M::up(REPOSITORY_OWNERSHIP_SQL),
@@ -494,4 +494,5 @@ const MIGRATIONS_SLICE: &[M<'_>] = &[
 ];
 pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 11;
 const _: () = assert!(MIGRATIONS_SLICE.len() == CURRENT_MIGRATION_VERSION as usize);
-const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
+pub(crate) const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
+use super::*;

@@ -419,7 +419,7 @@ jobs:
 
       - name: Test benchmark, example, and documentation targets
         run: |
-          cargo test --locked --package leantoken --all-features --examples
+          cargo test --locked --package leantoken-benchmarks --bins
           cargo test --locked --workspace --all-features --doc
 
       - name: Test performance support scripts

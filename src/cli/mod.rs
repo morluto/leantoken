@@ -667,19 +667,29 @@ pub struct DoctorArgs {
     pub ready_timeout_seconds: u64,
 }
 
-// Command DTOs remain transport-specific, but each command family has a
-// distinct physical owner while Cli, Commands, and AppRequest stay here.
-include!("cli/integration.rs");
-include!("cli/cache.rs");
-include!("cli/episode.rs");
-include!("cli/retrieval.rs");
-include!("cli/files.rs");
-include!("cli/search.rs");
-include!("cli/outline.rs");
-include!("cli/read.rs");
-include!("cli/history.rs");
-include!("cli/json.rs");
-include!("cli/context.rs");
+mod cache;
+mod context;
+
+use cache::*;
+use context::*;
+use episode::*;
+use files::*;
+use history::*;
+use integration::*;
+use json::*;
+use outline::*;
+use read::*;
+use retrieval::*;
+use search::*;
+mod episode;
+mod files;
+mod history;
+mod integration;
+mod json;
+mod outline;
+mod read;
+mod retrieval;
+mod search;
 
 #[cfg(test)]
 mod tests;

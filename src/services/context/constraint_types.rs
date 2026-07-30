@@ -1,40 +1,40 @@
-struct FocusPathResolution {
-    files: Vec<FileRecord>,
-    indexed_paths: usize,
-    eligible_paths: usize,
+pub(super) struct FocusPathResolution {
+    pub(super) files: Vec<FileRecord>,
+    pub(super) indexed_paths: usize,
+    pub(super) eligible_paths: usize,
 }
 
-struct ContextConstraintExpansion {
-    coverage: ContextCoverageReceipt,
-    focus_paths: Vec<FocusPathResolution>,
+pub(super) struct ContextConstraintExpansion {
+    pub(super) coverage: ContextCoverageReceipt,
+    pub(super) focus_paths: Vec<FocusPathResolution>,
 }
 
 #[derive(Clone, Copy)]
-struct ConstraintCandidateExpansion<'a> {
-    session: &'a ReadSession,
-    request: &'a ContextRequest,
-    queries: &'a [ContextQuery],
-    path_scorer: &'a ContextPathScorer,
-    cancellation: &'a CancellationToken,
+pub(super) struct ConstraintCandidateExpansion<'a> {
+    pub(super) session: &'a ReadSession,
+    pub(super) request: &'a ContextRequest,
+    pub(super) queries: &'a [ContextQuery],
+    pub(super) path_scorer: &'a ContextPathScorer,
+    pub(super) cancellation: &'a CancellationToken,
 }
 
-struct FocusCandidate {
-    relevance: f64,
-    path: String,
-    start_line: usize,
-    end_line: usize,
-    candidate: Candidate,
+pub(super) struct FocusCandidate {
+    pub(super) relevance: f64,
+    pub(super) path: String,
+    pub(super) start_line: usize,
+    pub(super) end_line: usize,
+    pub(super) candidate: Candidate,
 }
 
-struct RequiredEvidenceExcerptPlan {
-    relevance: f64,
-    path: String,
-    file_id: i64,
-    matched_line: usize,
-    requirement_index: usize,
+pub(super) struct RequiredEvidenceExcerptPlan {
+    pub(super) relevance: f64,
+    pub(super) path: String,
+    pub(super) file_id: i64,
+    pub(super) matched_line: usize,
+    pub(super) requirement_index: usize,
 }
 
-fn retain_required_evidence_plan(
+pub(super) fn retain_required_evidence_plan(
     plans: &mut Vec<RequiredEvidenceExcerptPlan>,
     plan: RequiredEvidenceExcerptPlan,
 ) {
@@ -58,16 +58,16 @@ fn retain_required_evidence_plan(
     }
 }
 
-struct FocusExpansion<'a> {
-    session: &'a ReadSession,
-    request: &'a ContextRequest,
-    queries: &'a [ContextQuery],
-    path_scorer: &'a ContextPathScorer,
-    resolutions: &'a [FocusPathResolution],
-    cancellation: &'a CancellationToken,
+pub(super) struct FocusExpansion<'a> {
+    pub(super) session: &'a ReadSession,
+    pub(super) request: &'a ContextRequest,
+    pub(super) queries: &'a [ContextQuery],
+    pub(super) path_scorer: &'a ContextPathScorer,
+    pub(super) resolutions: &'a [FocusPathResolution],
+    pub(super) cancellation: &'a CancellationToken,
 }
 
-fn retain_focus_file(files: &mut Vec<FileRecord>, file: &FileRecord) {
+pub(super) fn retain_focus_file(files: &mut Vec<FileRecord>, file: &FileRecord) {
     let insertion = files
         .binary_search_by(|candidate| candidate.path.cmp(&file.path))
         .unwrap_or_else(|index| index);
@@ -77,7 +77,7 @@ fn retain_focus_file(files: &mut Vec<FileRecord>, file: &FileRecord) {
     }
 }
 
-fn retain_required_evidence_files(
+pub(super) fn retain_required_evidence_files(
     file: &FileRecord,
     matchers: &[PathMatcher],
     path_filter: &PathFilter,
@@ -102,7 +102,7 @@ fn retain_required_evidence_files(
     }
 }
 
-fn focus_text_relevance(text: &str, queries: &[ContextQuery]) -> f64 {
+pub(super) fn focus_text_relevance(text: &str, queries: &[ContextQuery]) -> f64 {
     let normalized = text.to_lowercase();
     queries
         .iter()
@@ -115,7 +115,7 @@ fn focus_text_relevance(text: &str, queries: &[ContextQuery]) -> f64 {
         .sum()
 }
 
-fn required_evidence_query_matches(text: &str, queries: &[String]) -> Vec<usize> {
+pub(super) fn required_evidence_query_matches(text: &str, queries: &[String]) -> Vec<usize> {
     let normalized = text.to_lowercase();
     queries
         .iter()
@@ -124,7 +124,10 @@ fn required_evidence_query_matches(text: &str, queries: &[String]) -> Vec<usize>
         .collect()
 }
 
-fn retain_ranked_focus_candidate(candidates: &mut Vec<FocusCandidate>, candidate: FocusCandidate) {
+pub(super) fn retain_ranked_focus_candidate(
+    candidates: &mut Vec<FocusCandidate>,
+    candidate: FocusCandidate,
+) {
     if let Some(existing) = candidates.iter_mut().find(|existing| {
         existing.path == candidate.path
             && existing.start_line == candidate.start_line
@@ -146,3 +149,4 @@ fn retain_ranked_focus_candidate(candidates: &mut Vec<FocusCandidate>, candidate
     });
     candidates.truncate(MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN);
 }
+use super::*;

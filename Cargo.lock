@@ -1016,9 +1016,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "shell-words",
  "similar",
- "statrs",
  "tempfile",
  "thiserror",
  "tiktoken-rs",
@@ -1042,6 +1040,26 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-swift",
  "tree-sitter-typescript",
+ "wait-timeout",
+]
+
+[[package]]
+name = "leantoken-benchmarks"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "clap",
+ "leantoken",
+ "regex",
+ "rmcp",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "shell-words",
+ "statrs",
+ "tempfile",
+ "tokio",
+ "tokio-util",
  "unidiff",
  "wait-timeout",
 ]

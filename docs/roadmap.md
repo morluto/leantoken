@@ -232,7 +232,7 @@ regressions.
 
 - Persisted non-negative counters now fail decoding on negative SQLite values
   instead of silently becoming zero. A poisoned reconciliation coordinator
-  returns a typed internal failure instead of panicking.
+  returns a typed operation failure instead of panicking.
 - Keep exercising concurrent reads during reconciliation, queue overflow,
   rename ambiguity, large bounded requests, cancellation, EOF, corrupt-cache
   recovery, generation consistency, and Windows startup/shutdown in CI.

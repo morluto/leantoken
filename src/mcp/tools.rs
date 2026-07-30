@@ -1,4 +1,6 @@
-#[tool_router]
+use super::*;
+
+#[tool_router(vis = "pub(super)")]
 impl LeanTokenMcp {
     #[tool(
         name = "files",
@@ -122,7 +124,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "outline",
-        description = "Inspect known files without reading whole source files. Returns definitions, imports, ranges, and parse coverage; set projection=signatures to keep only compact signatures. Next: pass a returned symbol or range to read. Example: {\"paths\":[\"src/mcp.rs\"]}."
+        description = "Inspect known files without reading whole source files. Returns definitions, imports, ranges, and parse coverage; set projection=signatures to keep only compact signatures. Next: pass a returned symbol or range to read. Example: {\"paths\":[\"src/mcp/mod.rs\"]}."
     )]
     async fn leantoken_outline(
         &self,
@@ -401,7 +403,7 @@ impl LeanTokenMcp {
         description = "Report repository-local response accounting, request classifications, expected-hash suppression, service failures, and unobserved task outcomes. Returns an opaque snapshot for a later bounded delta; savings are retrieval accounting, not task-success claims. Example: {}.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
-    async fn leantoken_savings(
+    pub(super) async fn leantoken_savings(
         &self,
         Parameters(req): Parameters<SavingsMcpRequest>,
     ) -> Result<CallToolResult, ErrorData> {
@@ -433,7 +435,7 @@ impl ServerHandler for LeanTokenMcp {
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListResourceTemplatesResult, ErrorData>> + Send + '_ {
         std::future::ready(Ok(
-            self.list_receipt_resource_templates(context.protocol_version()),
+            self.list_receipt_resource_templates(context.protocol_version())
         ))
     }
 

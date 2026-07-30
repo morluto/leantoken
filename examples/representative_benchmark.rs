@@ -581,7 +581,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if args.consumed_diagnostic && manifest.dataset_kind != "blind_holdout" {
         return Err("--consumed-diagnostic requires a blind_holdout manifest".into());
     }
-    let source_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source_root = Path::new(env!("LEANTOKEN_REPOSITORY_ROOT"));
     let harness_revision = git_output(source_root, &["rev-parse", "HEAD"])?
         .trim()
         .to_owned();
@@ -4355,7 +4355,7 @@ mod tests {
                 .expect("validation manifest");
 
         assert_eq!(
-            verify_candidate_runtime_tree(&manifest, Path::new(env!("CARGO_MANIFEST_DIR")))
+            verify_candidate_runtime_tree(&manifest, Path::new(env!("LEANTOKEN_REPOSITORY_ROOT")))
                 .expect("verification decision"),
             None
         );
@@ -4437,14 +4437,16 @@ mod tests {
 
     #[test]
     fn context_concept_labels_bind_and_partition_the_validation_manifest() {
-        let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("benchmarks/validation.json");
+        let source_path =
+            Path::new(env!("LEANTOKEN_REPOSITORY_ROOT")).join("benchmarks/validation.json");
         let source_json = fs::read_to_string(&source_path).expect("read source manifest");
         let source: Manifest = serde_json::from_str(&source_json).expect("parse source manifest");
         let labels = load_concept_labels(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("benchmarks/context_concept_coverage.json"),
+            &Path::new(env!("LEANTOKEN_REPOSITORY_ROOT"))
+                .join("benchmarks/context_concept_coverage.json"),
             &source_path,
             &source,
-            &blake3::hash(source_json.as_bytes()).to_hex().to_string(),
+            blake3::hash(source_json.as_bytes()).to_hex().as_ref(),
         )
         .expect("load concept labels");
 
@@ -4461,7 +4463,7 @@ mod tests {
 
     #[test]
     fn context_feedback_regressions_freeze_paired_tasks_and_role_facets() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let path = Path::new(env!("LEANTOKEN_REPOSITORY_ROOT"))
             .join("benchmarks/context_feedback_regressions.json");
         let fixture: serde_json::Value = serde_json::from_str(
             &fs::read_to_string(&path).expect("read feedback regression fixture"),
@@ -4496,7 +4498,9 @@ mod tests {
                 let path = path.as_str().expect("focus path");
                 validate_benchmark_path(path).expect("valid focus path");
                 assert!(
-                    Path::new(env!("CARGO_MANIFEST_DIR")).join(path).exists(),
+                    Path::new(env!("LEANTOKEN_REPOSITORY_ROOT"))
+                        .join(path)
+                        .exists(),
                     "focus path must exist: {path}"
                 );
             }
@@ -4537,7 +4541,9 @@ mod tests {
                 let path = evidence["path"].as_str().expect("evidence path");
                 validate_benchmark_path(path).expect("valid evidence path");
                 assert!(
-                    Path::new(env!("CARGO_MANIFEST_DIR")).join(path).exists(),
+                    Path::new(env!("LEANTOKEN_REPOSITORY_ROOT"))
+                        .join(path)
+                        .exists(),
                     "evidence path must exist: {path}"
                 );
                 assert!(
@@ -4559,12 +4565,13 @@ mod tests {
 
     #[test]
     fn context_concept_labels_reject_an_incomplete_anchor_partition() {
-        let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("benchmarks/validation.json");
+        let source_path =
+            Path::new(env!("LEANTOKEN_REPOSITORY_ROOT")).join("benchmarks/validation.json");
         let source_json = fs::read_to_string(&source_path).expect("read source manifest");
         let source: Manifest = serde_json::from_str(&source_json).expect("parse source manifest");
         let mut labels: serde_json::Value = serde_json::from_str(
             &fs::read_to_string(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
+                Path::new(env!("LEANTOKEN_REPOSITORY_ROOT"))
                     .join("benchmarks/context_concept_coverage.json"),
             )
             .expect("read labels"),
@@ -4586,7 +4593,7 @@ mod tests {
                 temporary.path(),
                 &source_path,
                 &source,
-                &blake3::hash(source_json.as_bytes()).to_hex().to_string(),
+                blake3::hash(source_json.as_bytes()).to_hex().as_ref(),
             )
             .expect_err("reject incomplete partition")
             .to_string()

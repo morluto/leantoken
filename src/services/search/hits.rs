@@ -1,31 +1,31 @@
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct DefinitionIdentity {
-    path: String,
-    start_line: usize,
-    end_line: usize,
+pub(super) struct DefinitionIdentity {
+    pub(super) path: String,
+    pub(super) start_line: usize,
+    pub(super) end_line: usize,
 }
 
 #[derive(Clone)]
-struct CandidateSearchHit {
-    hit: SearchHit,
-    definition: Option<DefinitionIdentity>,
+pub(super) struct CandidateSearchHit {
+    pub(super) hit: SearchHit,
+    pub(super) definition: Option<DefinitionIdentity>,
 }
 
-struct SearchResponseShape<'a> {
-    all: &'a [CandidateSearchHit],
-    request: &'a SearchRequest,
-    generation: u64,
-    total_candidates: usize,
-    offset: usize,
-    consumed: usize,
-    has_more: bool,
+pub(super) struct SearchResponseShape<'a> {
+    pub(super) all: &'a [CandidateSearchHit],
+    pub(super) request: &'a SearchRequest,
+    pub(super) generation: u64,
+    pub(super) total_candidates: usize,
+    pub(super) offset: usize,
+    pub(super) consumed: usize,
+    pub(super) has_more: bool,
 }
 
-fn hit_has_kind(hit: &SearchHit, kind: &str) -> bool {
+pub(super) fn hit_has_kind(hit: &SearchHit, kind: &str) -> bool {
     hit.match_kind == kind || hit.match_kinds.iter().any(|candidate| candidate == kind)
 }
 
-fn merge_search_hits(primary: &mut SearchHit, secondary: SearchHit) {
+pub(super) fn merge_search_hits(primary: &mut SearchHit, secondary: SearchHit) {
     primary.score = primary.score.max(secondary.score);
     for kind in secondary.match_kinds {
         if !primary.match_kinds.contains(&kind) {
@@ -48,7 +48,7 @@ fn merge_search_hits(primary: &mut SearchHit, secondary: SearchHit) {
     }
 }
 
-fn deduplicate_definition_channels(
+pub(super) fn deduplicate_definition_channels(
     hits: Vec<CandidateSearchHit>,
     prefer_structural: bool,
 ) -> Vec<CandidateSearchHit> {
@@ -81,7 +81,7 @@ fn deduplicate_definition_channels(
     deduplicated
 }
 
-fn deduplicate_exact_hits(
+pub(super) fn deduplicate_exact_hits(
     hits: Vec<CandidateSearchHit>,
     prefer_structural: bool,
 ) -> Vec<CandidateSearchHit> {
@@ -118,7 +118,7 @@ fn deduplicate_exact_hits(
     deduplicated
 }
 
-fn normalize_search_scores(hits: &mut [CandidateSearchHit]) {
+pub(super) fn normalize_search_scores(hits: &mut [CandidateSearchHit]) {
     let max_score = hits
         .iter()
         .map(|candidate| candidate.hit.score)
@@ -133,7 +133,7 @@ fn normalize_search_scores(hits: &mut [CandidateSearchHit]) {
     }
 }
 
-fn collect_filtered_hits<T>(
+pub(super) fn collect_filtered_hits<T>(
     request: &SearchRequest,
     max_candidates: usize,
     cancellation: &CancellationToken,
@@ -204,12 +204,12 @@ pub(super) fn chunk_search_hit(
 }
 
 #[derive(Clone, Copy)]
-struct OccurrenceMaterializationLimit {
-    existing_hits: usize,
-    max_hits: usize,
+pub(super) struct OccurrenceMaterializationLimit {
+    pub(super) existing_hits: usize,
+    pub(super) max_hits: usize,
 }
 
-fn chunk_search_hits(
+pub(super) fn chunk_search_hits(
     hit: &ChunkHit,
     query: &str,
     case_sensitive: bool,
@@ -237,9 +237,7 @@ fn chunk_search_hits(
     let starts = line_starts(&hit.content);
     let mut hits = Vec::new();
     for (start, end) in ranges {
-        if occurrence_limit.existing_hits.saturating_add(hits.len())
-            == occurrence_limit.max_hits
-        {
+        if occurrence_limit.existing_hits.saturating_add(hits.len()) == occurrence_limit.max_hits {
             return Err(Error::RetrievalLimitExceeded {
                 kind: RetrievalLimitKind::ExhaustiveOccurrences,
                 observed: occurrence_limit
@@ -262,7 +260,7 @@ fn chunk_search_hits(
     Ok(hits)
 }
 
-pub(super) fn chunk_search_hit_for_range(
+pub(in crate::services) fn chunk_search_hit_for_range(
     hit: &ChunkHit,
     start: usize,
     end: usize,
@@ -343,7 +341,7 @@ pub(super) fn matching_line(
         .map(|offset| hit.start_line + offset)
 }
 
-fn apply_focus(hits: &mut [CandidateSearchHit], focus_paths: &[String]) -> Result<()> {
+pub(super) fn apply_focus(hits: &mut [CandidateSearchHit], focus_paths: &[String]) -> Result<()> {
     let focus_paths = PathMatcher::new(focus_paths)?;
     for candidate in hits {
         if focus_paths.is_match(&candidate.hit.path) {
@@ -354,12 +352,17 @@ fn apply_focus(hits: &mut [CandidateSearchHit], focus_paths: &[String]) -> Resul
     Ok(())
 }
 
-pub(super) fn fts_quote(value: &str) -> String {
+pub(in crate::services) fn fts_quote(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
 
 impl Services {
-    fn symbol_search_hit(&self, hit: SymbolHit, query: &str, excerpt: StoredExcerpt) -> SearchHit {
+    pub(super) fn symbol_search_hit(
+        &self,
+        hit: SymbolHit,
+        query: &str,
+        excerpt: StoredExcerpt,
+    ) -> SearchHit {
         let exact = crate::symbol_identity::symbol_identity_matches_ignore_ascii_case(
             query,
             &hit.symbol.name,
@@ -387,7 +390,7 @@ impl Services {
         }
     }
 
-    fn reference_search_hit(
+    pub(super) fn reference_search_hit(
         &self,
         hit: ReferenceHit,
         query: &str,
@@ -416,3 +419,4 @@ impl Services {
         }
     }
 }
+use super::*;

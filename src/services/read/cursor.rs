@@ -1,5 +1,5 @@
 impl ReadCursor {
-    fn encode(&self) -> String {
+    pub(super) fn encode(&self) -> String {
         format!(
             "{}:read:{}:{}:{}:{}:{}:{}",
             self.generation,
@@ -13,7 +13,7 @@ impl ReadCursor {
     }
 }
 
-fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
+pub(super) fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
     let fields = cursor.split(':').collect::<Vec<_>>();
     let [
         generation,
@@ -56,7 +56,7 @@ fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
     Ok(cursor)
 }
 
-fn parse_read_cursor(cursor: &str, generation: u64, path: &str) -> Result<ReadCursor> {
+pub(super) fn parse_read_cursor(cursor: &str, generation: u64, path: &str) -> Result<ReadCursor> {
     let cursor = decode_read_cursor(cursor)?;
     if cursor.generation != generation || cursor.path_hash != read_path_hash(path) {
         return Err(Error::StaleCursor);
@@ -64,13 +64,14 @@ fn parse_read_cursor(cursor: &str, generation: u64, path: &str) -> Result<ReadCu
     Ok(cursor)
 }
 
-fn read_path_hash(path: &str) -> String {
+pub(super) fn read_path_hash(path: &str) -> String {
     blake3::hash(path.as_bytes()).to_hex()[..16].to_string()
 }
 
-fn returned_end_line(start_line: usize, content: &str) -> usize {
+pub(super) fn returned_end_line(start_line: usize, content: &str) -> usize {
     let newline_count = content.bytes().filter(|byte| *byte == b'\n').count();
     start_line
         .saturating_add(newline_count)
         .saturating_sub(usize::from(content.ends_with('\n') && newline_count > 0))
 }
+use super::*;

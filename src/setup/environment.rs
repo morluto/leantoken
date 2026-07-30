@@ -1,20 +1,22 @@
+use super::*;
+
 #[derive(Debug)]
-struct SetupEnvironment {
-    home: PathBuf,
-    runtime_root: PathBuf,
-    native_executable: PathBuf,
-    launcher: McpLauncher,
-    interactive: bool,
-    persistent_cli: bool,
+pub(super) struct SetupEnvironment {
+    pub(super) home: PathBuf,
+    pub(super) runtime_root: PathBuf,
+    pub(super) native_executable: PathBuf,
+    pub(super) launcher: McpLauncher,
+    pub(super) interactive: bool,
+    pub(super) persistent_cli: bool,
 }
 
-fn npx_resolved_from_local_project(executable: &Path, current_directory: &Path) -> bool {
+pub(super) fn npx_resolved_from_local_project(executable: &Path, current_directory: &Path) -> bool {
     current_directory
         .ancestors()
         .any(|ancestor| executable.starts_with(ancestor.join("node_modules").join("leantoken")))
 }
 
-fn require_current_npx_setup(current: &str, latest: Option<&str>) -> Result<()> {
+pub(super) fn require_current_npx_setup(current: &str, latest: Option<&str>) -> Result<()> {
     let Some(latest) = latest else {
         return Err(Error::InvalidRequest(
             "could not verify the locally resolved npx release; retry online or pass \
@@ -36,13 +38,13 @@ fn require_current_npx_setup(current: &str, latest: Option<&str>) -> Result<()> 
     }
 }
 
-fn setup_runtime_root(home: &Path) -> PathBuf {
+pub(super) fn setup_runtime_root(home: &Path) -> PathBuf {
     let data_local = ProjectDirs::from("dev", "LeanToken", "leantoken")
         .map(|directories| directories.data_local_dir().to_path_buf());
     setup_runtime_root_from(home, data_local.as_deref())
 }
 
-fn setup_runtime_root_from(home: &Path, data_local: Option<&Path>) -> PathBuf {
+pub(super) fn setup_runtime_root_from(home: &Path, data_local: Option<&Path>) -> PathBuf {
     data_local
         .map_or_else(
             || home.join(".local").join("share").join("leantoken"),
@@ -51,7 +53,7 @@ fn setup_runtime_root_from(home: &Path, data_local: Option<&Path>) -> PathBuf {
         .join("runtimes")
 }
 
-fn home_directory() -> Option<PathBuf> {
+pub(super) fn home_directory() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
@@ -80,9 +82,8 @@ pub(crate) fn diagnostic_state() -> SetupDiagnostic {
             discovery_paths: Vec::new(),
         };
     };
-    let configured = McpLauncher::current().and_then(|launcher| {
-        configured_registrations(&home, &launcher)
-    });
+    let configured =
+        McpLauncher::current().and_then(|launcher| configured_registrations(&home, &launcher));
     let (registration_status, registrations) = match configured {
         Ok(registrations) if registrations.is_empty() => ("not_registered", registrations),
         Ok(registrations) => ("registered", registrations),
@@ -117,20 +118,17 @@ pub(crate) fn diagnostic_state() -> SetupDiagnostic {
     }
 }
 
-fn configured_registrations(
+pub(super) fn configured_registrations(
     home: &Path,
     launcher: &McpLauncher,
 ) -> Result<Vec<ConfiguredRegistration>> {
     SetupClient::ALL
         .into_iter()
-        .filter_map(|client| {
-            read_configured_registration(client, home, launcher)
-                .transpose()
-        })
+        .filter_map(|client| read_configured_registration(client, home, launcher).transpose())
         .collect()
 }
 
-fn read_configured_registration(
+pub(super) fn read_configured_registration(
     client: SetupClient,
     home: &Path,
     launcher: &McpLauncher,
@@ -141,11 +139,8 @@ fn read_configured_registration(
     };
     let (command, args) = match definition.format {
         ConfigFormat::Json { section, shape } => {
-            let root: Value = jsonc_parser::parse_to_serde_value(
-                &source,
-                &ParseOptions::default(),
-            )
-            .map_err(|error| invalid_config(&definition.path, error))?;
+            let root: Value = jsonc_parser::parse_to_serde_value(&source, &ParseOptions::default())
+                .map_err(|error| invalid_config(&definition.path, error))?;
             let Some(entry) = root
                 .get(section)
                 .and_then(Value::as_object)
@@ -182,7 +177,7 @@ fn read_configured_registration(
     }))
 }
 
-fn json_registration_command(
+pub(super) fn json_registration_command(
     entry: &Value,
     shape: JsonEntryShape,
     path: &Path,
@@ -221,7 +216,11 @@ fn json_registration_command(
     }
 }
 
-fn json_string_array(value: Option<&Value>, path: &Path, field: &str) -> Result<Vec<String>> {
+pub(super) fn json_string_array(
+    value: Option<&Value>,
+    path: &Path,
+    field: &str,
+) -> Result<Vec<String>> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
@@ -237,7 +236,10 @@ fn json_string_array(value: Option<&Value>, path: &Path, field: &str) -> Result<
         .collect()
 }
 
-fn toml_registration_command(entry: &Item, path: &Path) -> Result<(String, Vec<String>)> {
+pub(super) fn toml_registration_command(
+    entry: &Item,
+    path: &Path,
+) -> Result<(String, Vec<String>)> {
     let table = entry
         .as_table()
         .ok_or_else(|| invalid_config(path, "LeanToken MCP entry must be a table"))?;
@@ -262,7 +264,7 @@ fn toml_registration_command(entry: &Item, path: &Path) -> Result<(String, Vec<S
     Ok((command.to_owned(), args))
 }
 
-fn registered_version(command: &str, args: &[String]) -> Option<String> {
+pub(super) fn registered_version(command: &str, args: &[String]) -> Option<String> {
     args.iter()
         .find_map(|argument| argument.strip_prefix("--package=leantoken@"))
         .map(str::to_owned)
@@ -277,7 +279,7 @@ fn registered_version(command: &str, args: &[String]) -> Option<String> {
         })
 }
 
-fn configured_clients(home: &Path, launcher: &McpLauncher) -> Result<Vec<SetupClient>> {
+pub(super) fn configured_clients(home: &Path, launcher: &McpLauncher) -> Result<Vec<SetupClient>> {
     SetupClient::ALL
         .into_iter()
         .filter_map(|client| {

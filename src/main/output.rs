@@ -1,4 +1,6 @@
-fn print<T: Serialize>(value: &T, compact: bool) -> Result<()> {
+use super::*;
+
+pub(super) fn print<T: Serialize>(value: &T, compact: bool) -> Result<()> {
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
     if compact {
@@ -10,7 +12,7 @@ fn print<T: Serialize>(value: &T, compact: bool) -> Result<()> {
     Ok(())
 }
 
-fn cli_error_message(error: &leantoken::Error) -> String {
+pub(super) fn cli_error_message(error: &leantoken::Error) -> String {
     let error = error.reconciliation_cause();
     match error {
         leantoken::Error::IndexNotReady => "repository index is not ready; run `leantoken index` \
@@ -23,7 +25,7 @@ fn cli_error_message(error: &leantoken::Error) -> String {
     }
 }
 
-fn cli_json_requested(arguments: &[OsString]) -> bool {
+pub(super) fn cli_json_requested(arguments: &[OsString]) -> bool {
     arguments
         .iter()
         .skip(1)
@@ -32,7 +34,7 @@ fn cli_json_requested(arguments: &[OsString]) -> bool {
 }
 
 #[derive(Debug, Serialize)]
-struct CliErrorResponse {
+pub(super) struct CliErrorResponse {
     error: String,
     category: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -67,7 +69,7 @@ struct CliErrorResponse {
     column: Option<usize>,
 }
 
-fn cli_parse_error_response(error: &clap::Error) -> CliErrorResponse {
+pub(super) fn cli_parse_error_response(error: &clap::Error) -> CliErrorResponse {
     use clap::error::ErrorKind;
 
     let category = match error.kind() {
@@ -108,21 +110,16 @@ fn cli_parse_error_response(error: &clap::Error) -> CliErrorResponse {
     }
 }
 
-fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
+pub(super) fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
     let error = error.reconciliation_cause();
     let category = error.public_category();
     let (stage, field, requested, limit) = match error {
-        leantoken::Error::DoctorFailure { stage, .. } => {
-            (Some(*stage), None, None, None)
-        }
+        leantoken::Error::DoctorFailure { stage, .. } => (Some(*stage), None, None, None),
         leantoken::Error::InvalidInput { field, .. } => (None, Some(*field), None, None),
         leantoken::Error::InvalidJson { .. } => (None, Some("path"), None, None),
-        leantoken::Error::InvalidJsonSelector { stage, .. } => (
-            Some(*stage),
-            Some("JMESPath expression"),
-            None,
-            None,
-        ),
+        leantoken::Error::InvalidJsonSelector { stage, .. } => {
+            (Some(*stage), Some("JMESPath expression"), None, None)
+        }
         leantoken::Error::InputTooLong { field, max_bytes } => {
             (None, Some(*field), None, Some(*max_bytes))
         }
@@ -176,14 +173,9 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
             Some(*line),
             Some(*column),
         ),
-        leantoken::Error::RetrievalLimitExceeded { kind, .. } => (
-            Some(kind.as_str().to_owned()),
-            None,
-            None,
-            None,
-            None,
-            None,
-        ),
+        leantoken::Error::RetrievalLimitExceeded { kind, .. } => {
+            (Some(kind.as_str().to_owned()), None, None, None, None, None)
+        }
         _ => (None, None, None, None, None, None),
     };
     let violations = match error {
@@ -233,7 +225,7 @@ fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
     }
 }
 
-fn init_tracing(json: bool) {
+pub(super) fn init_tracing(json: bool) {
     if json {
         return;
     }

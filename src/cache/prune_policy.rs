@@ -1,4 +1,6 @@
-fn validate_prune_request(
+use super::*;
+
+pub(super) fn validate_prune_request(
     request: &CachePruneRequest,
     incompatible_with_current: bool,
 ) -> Result<()> {
@@ -26,7 +28,7 @@ fn validate_prune_request(
     Ok(())
 }
 
-fn select_prune_candidates(
+pub(super) fn select_prune_candidates(
     entries: &[InspectedCache],
     request: &CachePruneRequest,
     total_bytes: u64,
@@ -96,7 +98,7 @@ fn select_prune_candidates(
     selected
 }
 
-fn prune_result(
+pub(super) fn prune_result(
     cache: &InspectedCache,
     action: CachePruneAction,
     reasons: Vec<String>,
@@ -122,12 +124,12 @@ fn prune_result(
     }
 }
 
-struct RemovalOutcome {
-    reclaimed_bytes: u64,
-    error: Option<String>,
+pub(super) struct RemovalOutcome {
+    pub(super) reclaimed_bytes: u64,
+    pub(super) error: Option<String>,
 }
 
-fn remove_managed_artifacts(directory: &Path) -> RemovalOutcome {
+pub(super) fn remove_managed_artifacts(directory: &Path) -> RemovalOutcome {
     let mut reclaimed_bytes = 0u64;
     let database = directory.join(DATABASE_NAME);
     let paths = PRUNABLE_ARTIFACTS
@@ -160,11 +162,11 @@ fn remove_managed_artifacts(directory: &Path) -> RemovalOutcome {
     }
 }
 
-fn is_cache_id(value: &str) -> bool {
+pub(super) fn is_cache_id(value: &str) -> bool {
     parse_managed_cache_id(value).is_some()
 }
 
-fn root_available(path: &Path) -> Option<bool> {
+pub(super) fn root_available(path: &Path) -> Option<bool> {
     match fs::metadata(path) {
         Ok(_) => Some(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(false),
@@ -172,7 +174,7 @@ fn root_available(path: &Path) -> Option<bool> {
     }
 }
 
-fn unix_seconds(time: SystemTime) -> u64 {
+pub(super) fn unix_seconds(time: SystemTime) -> u64 {
     time.duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())
 }

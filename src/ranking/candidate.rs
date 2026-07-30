@@ -1,3 +1,4 @@
+use super::*;
 /// Linear scoring weights for ranking signals.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Weights {
@@ -106,7 +107,7 @@ impl Candidate {
         self
     }
 
-    fn push_metadata(&mut self, value: String) {
+    pub(in crate::ranking) fn push_metadata(&mut self, value: String) {
         if !self.match_kinds.contains(&value) {
             self.match_kinds.push(value);
         }
@@ -138,7 +139,7 @@ impl Candidate {
         self
     }
 
-    fn target_truncated(&self) -> bool {
+    pub(in crate::ranking) fn target_truncated(&self) -> bool {
         self.target_start_line
             .zip(self.target_end_line)
             .is_some_and(|(start, end)| self.start_line > start || self.end_line < end)
@@ -283,6 +284,6 @@ impl Candidate {
     }
 }
 
-fn is_internal_metadata(kind: &str) -> bool {
+pub(in crate::ranking) fn is_internal_metadata(kind: &str) -> bool {
     kind.starts_with(FACET_PREFIX) || kind.starts_with(CHANNEL_PREFIX)
 }

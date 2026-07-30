@@ -1,24 +1,24 @@
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum CandidateDiagnostics {
+pub(super) enum CandidateDiagnostics {
     Omit,
     Collect,
 }
 
 #[derive(Default)]
-struct ContextPhaseTracker {
-    enabled: bool,
-    generation: u64,
-    counters: ContextPhaseCounters,
-    timings: ContextPhaseTimings,
-    started: Option<Instant>,
-    enclosing_locations: BTreeSet<(i64, usize)>,
-    adaptive_excerpts: BTreeSet<(i64, usize, usize, usize, usize)>,
-    stored_excerpts: BTreeSet<(i64, usize, usize, usize, usize, usize)>,
-    primitive_keys: Vec<RetrievalPrimitiveKey>,
+pub(super) struct ContextPhaseTracker {
+    pub(super) enabled: bool,
+    pub(super) generation: u64,
+    pub(super) counters: ContextPhaseCounters,
+    pub(super) timings: ContextPhaseTimings,
+    pub(super) started: Option<Instant>,
+    pub(super) enclosing_locations: BTreeSet<(i64, usize)>,
+    pub(super) adaptive_excerpts: BTreeSet<(i64, usize, usize, usize, usize)>,
+    pub(super) stored_excerpts: BTreeSet<(i64, usize, usize, usize, usize, usize)>,
+    pub(super) primitive_keys: Vec<RetrievalPrimitiveKey>,
 }
 
 #[derive(Clone, Copy)]
-enum ContextTimedPhase {
+pub(super) enum ContextTimedPhase {
     ExactSymbolLookup,
     SymbolSearch,
     ReferenceSearch,
@@ -30,7 +30,7 @@ enum ContextTimedPhase {
 }
 
 impl ContextPhaseTracker {
-    fn new(diagnostics: CandidateDiagnostics, generation: u64) -> Self {
+    pub(super) fn new(diagnostics: CandidateDiagnostics, generation: u64) -> Self {
         Self {
             enabled: diagnostics == CandidateDiagnostics::Collect,
             generation,
@@ -39,7 +39,7 @@ impl ContextPhaseTracker {
         }
     }
 
-    fn measure<T>(
+    pub(super) fn measure<T>(
         &mut self,
         phase: ContextTimedPhase,
         operation: impl FnOnce() -> Result<T>,
@@ -53,7 +53,7 @@ impl ContextPhaseTracker {
         Ok(output)
     }
 
-    fn record_elapsed(&mut self, phase: ContextTimedPhase, started: Option<Instant>) {
+    pub(super) fn record_elapsed(&mut self, phase: ContextTimedPhase, started: Option<Instant>) {
         let Some(started) = started else { return };
         let elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0;
         let target = match phase {
@@ -69,11 +69,15 @@ impl ContextPhaseTracker {
         *target += elapsed_ms;
     }
 
-    fn timer(&self) -> Option<Instant> {
+    pub(super) fn timer(&self) -> Option<Instant> {
         self.enabled.then(Instant::now)
     }
 
-    fn record_primitive(&mut self, kind: &str, normalized_inputs: impl FnOnce() -> String) {
+    pub(super) fn record_primitive(
+        &mut self,
+        kind: &str,
+        normalized_inputs: impl FnOnce() -> String,
+    ) {
         if self.enabled {
             self.primitive_keys.push(retrieval_primitive_key(
                 self.generation,
@@ -83,7 +87,7 @@ impl ContextPhaseTracker {
         }
     }
 
-    fn record_enclosing_locations(&mut self, locations: &[(i64, usize)]) {
+    pub(super) fn record_enclosing_locations(&mut self, locations: &[(i64, usize)]) {
         if !self.enabled {
             return;
         }
@@ -101,7 +105,7 @@ impl ContextPhaseTracker {
         }
     }
 
-    fn record_adaptive_excerpts(&mut self, requests: &[AdaptiveExcerptRequest]) {
+    pub(super) fn record_adaptive_excerpts(&mut self, requests: &[AdaptiveExcerptRequest]) {
         if !self.enabled {
             return;
         }
@@ -137,7 +141,7 @@ impl ContextPhaseTracker {
         }
     }
 
-    fn record_stored_excerpts(&mut self, requests: &[StoredExcerptRequest]) {
+    pub(super) fn record_stored_excerpts(&mut self, requests: &[StoredExcerptRequest]) {
         if !self.enabled {
             return;
         }
@@ -174,7 +178,7 @@ impl ContextPhaseTracker {
         }
     }
 
-    fn finish(
+    pub(super) fn finish(
         mut self,
         generated_candidates: usize,
     ) -> (
@@ -201,13 +205,13 @@ impl ContextPhaseTracker {
     }
 }
 
-struct LexicalMatchFacts {
-    search_hit: SearchHit,
-    matched_line: usize,
-    occurrences: usize,
+pub(super) struct LexicalMatchFacts {
+    pub(super) search_hit: SearchHit,
+    pub(super) matched_line: usize,
+    pub(super) occurrences: usize,
 }
 
-fn analyze_lexical_match(
+pub(super) fn analyze_lexical_match(
     hit: &ChunkHit,
     matcher: &regex::Regex,
     context_lines: usize,
@@ -236,3 +240,4 @@ fn analyze_lexical_match(
         occurrences,
     })
 }
+use super::*;

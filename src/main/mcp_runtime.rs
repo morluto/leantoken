@@ -1,4 +1,7 @@
-async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result<()> {
+use super::*;
+
+pub(super) async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result<()> {
+    const PRODUCTION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
     let (server, service_state) = mcp::LeanTokenMcp::pending();
     let server = server.with_result_mode(result_mode);
     let mut server_task = tokio::spawn(mcp::serve_stdio_server(server));
@@ -21,7 +24,11 @@ async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result<()> {
         server = &mut server_task => {
             cancellation.cancel();
             let server = server?;
-            let runtime = runtime_task.await?;
+            let runtime = tokio::time::timeout(PRODUCTION_SHUTDOWN_TIMEOUT, runtime_task)
+                .await
+                .map_err(|_| leantoken::Error::ShutdownTimeout {
+                    component: "MCP indexing runtime",
+                })??;
             server?;
             match runtime {
                 Ok(()) | Err(leantoken::Error::Cancelled) => Ok(()),
@@ -37,12 +44,15 @@ async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result<()> {
             failure_state.set_failed(&error);
             tracing::error!(%error, "MCP indexing runtime failed");
 
-            match server_task.await {
-                Ok(Ok(())) => {}
-                Ok(Err(server_error)) => {
+            match tokio::time::timeout(PRODUCTION_SHUTDOWN_TIMEOUT, server_task).await {
+                Err(_) => {
+                    tracing::error!("MCP transport did not stop before the shutdown deadline");
+                }
+                Ok(Ok(Ok(()))) => {}
+                Ok(Ok(Err(server_error))) => {
                     tracing::warn!(%server_error, "MCP transport failed after indexing runtime stopped");
                 }
-                Err(join_error) => {
+                Ok(Err(join_error)) => {
                     tracing::warn!(%join_error, "MCP transport task failed after indexing runtime stopped");
                 }
             }
@@ -51,7 +61,7 @@ async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result<()> {
     }
 }
 
-async fn run_mcp_runtime(
+pub(super) async fn run_mcp_runtime(
     cli: Cli,
     service_state: mcp::McpServices,
     cancellation: CancellationToken,

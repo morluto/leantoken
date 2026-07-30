@@ -42,7 +42,7 @@ impl ReadSession {
         parser_coverage_rows(&self.conn, classify_extension)
     }
 
-    fn search_fts(
+    pub(crate) fn search_fts(
         &self,
         table: FtsTable,
         query: &str,
@@ -67,15 +67,15 @@ impl ReadSession {
     }
 }
 
-fn parser_coverage_rows(
+pub(crate) fn parser_coverage_rows(
     conn: &Connection,
     mut classify_extension: impl FnMut(&str) -> String,
 ) -> Result<ParserCoverageRows> {
-    if !table_exists(conn, "files")?
-        || !column_exists(conn, "files", "language")?
-        || !column_exists(conn, "files", "structurally_complete")?
-        || !column_exists(conn, "files", "size_bytes")?
-        || !column_exists(conn, "files", "path")?
+    if !table_exists(conn, StorageTable::Files)?
+        || !column_exists(conn, StorageColumn::FilesLanguage)?
+        || !column_exists(conn, StorageColumn::FilesStructurallyComplete)?
+        || !column_exists(conn, StorageColumn::FilesSizeBytes)?
+        || !column_exists(conn, StorageColumn::FilesPath)?
     {
         return Ok(ParserCoverageRows::default());
     }
@@ -131,3 +131,4 @@ fn parser_coverage_rows(
         unrecognized_extensions,
     })
 }
+use super::*;

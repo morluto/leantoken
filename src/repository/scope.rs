@@ -1,18 +1,20 @@
-const MAX_INDEX_SCOPE_PATTERNS: usize = 64;
-const MAX_INDEX_SCOPE_PATTERN_BYTES: usize = 1024;
-const MAX_INDEX_SCOPE_TOTAL_BYTES: usize = 16 * 1024;
-const INDEX_SCOPE_DIGEST_HEX_CHARS: usize = 16;
+use super::*;
+
+pub(crate) const MAX_INDEX_SCOPE_PATTERNS: usize = 64;
+pub(crate) const MAX_INDEX_SCOPE_PATTERN_BYTES: usize = 1024;
+pub(crate) const MAX_INDEX_SCOPE_TOTAL_BYTES: usize = 16 * 1024;
+pub(crate) const INDEX_SCOPE_DIGEST_HEX_CHARS: usize = 16;
 
 #[derive(Debug)]
-struct ScopeMatcher {
-    literals: Vec<String>,
-    globs: globset::GlobSet,
-    static_prefixes: Vec<String>,
-    excluded_subtree_roots: Vec<String>,
+pub(crate) struct ScopeMatcher {
+    pub(crate) literals: Vec<String>,
+    pub(crate) globs: globset::GlobSet,
+    pub(crate) static_prefixes: Vec<String>,
+    pub(crate) excluded_subtree_roots: Vec<String>,
 }
 
 impl ScopeMatcher {
-    fn compile(patterns: &[String], exclusions: bool) -> Result<Self> {
+    pub(crate) fn compile(patterns: &[String], exclusions: bool) -> Result<Self> {
         let mut literals = Vec::new();
         let mut globs = globset::GlobSetBuilder::new();
         let mut static_prefixes = Vec::with_capacity(patterns.len());
@@ -26,9 +28,7 @@ impl ScopeMatcher {
             }
             let prefix = pattern
                 .split('/')
-                .take_while(|component| {
-                    !component.contains(['*', '?', '[', ']', '{', '}'])
-                })
+                .take_while(|component| !component.contains(['*', '?', '[', ']', '{', '}']))
                 .collect::<Vec<_>>()
                 .join("/");
             static_prefixes.push(prefix);
@@ -52,21 +52,21 @@ impl ScopeMatcher {
         })
     }
 
-    fn matches(&self, path: &str) -> bool {
+    pub(crate) fn matches(&self, path: &str) -> bool {
         self.literals
             .iter()
             .any(|literal| path_is_within(path, literal))
             || self.globs.is_match(path)
     }
 
-    fn excludes_directory(&self, path: &str) -> bool {
+    pub(crate) fn excludes_directory(&self, path: &str) -> bool {
         self.excluded_subtree_roots
             .iter()
             .any(|root| path_is_within(path, root))
             || self.matches(path)
     }
 
-    fn may_match_descendant(&self, directory: &str) -> bool {
+    pub(crate) fn may_match_descendant(&self, directory: &str) -> bool {
         self.static_prefixes.iter().any(|prefix| {
             prefix.is_empty()
                 || path_is_within(directory, prefix)
@@ -75,12 +75,12 @@ impl ScopeMatcher {
     }
 }
 
-fn path_is_within(path: &str, root: &str) -> bool {
+pub(crate) fn path_is_within(path: &str, root: &str) -> bool {
     path.strip_prefix(root)
         .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('/'))
 }
 
-fn normalize_scope_pattern(pattern: String) -> Result<String> {
+pub(crate) fn normalize_scope_pattern(pattern: String) -> Result<String> {
     if pattern.len() > MAX_INDEX_SCOPE_PATTERN_BYTES {
         return Err(Error::InvalidConfiguration(format!(
             "index scope pattern exceeds {MAX_INDEX_SCOPE_PATTERN_BYTES} bytes"
@@ -92,12 +92,7 @@ fn normalize_scope_pattern(pattern: String) -> Result<String> {
         ));
     }
     let pattern = pattern.replace('\\', "/");
-    if pattern.starts_with('/')
-        || pattern
-            .as_bytes()
-            .get(1)
-            .is_some_and(|byte| *byte == b':')
-    {
+    if pattern.starts_with('/') || pattern.as_bytes().get(1).is_some_and(|byte| *byte == b':') {
         return Err(Error::InvalidConfiguration(
             "index scope patterns must be repository-relative".into(),
         ));
@@ -245,14 +240,13 @@ impl IndexScope {
             return true;
         }
         if is_directory {
-            self.include_matcher.matches(path)
-                || self.include_matcher.may_match_descendant(path)
+            self.include_matcher.matches(path) || self.include_matcher.may_match_descendant(path)
         } else {
             self.include_matcher.matches(path)
         }
     }
 
-    fn may_include_descendant(&self, directory: &str) -> bool {
+    pub(crate) fn may_include_descendant(&self, directory: &str) -> bool {
         if !directory.is_empty() && self.exclude_matcher.excludes_directory(directory) {
             return false;
         }

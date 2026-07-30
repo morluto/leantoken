@@ -1,4 +1,11 @@
-fn process_imports_match(source: &str, query: &Query, qm: &QueryMatch, imports: &mut Vec<Import>) {
+use super::*;
+
+pub(super) fn process_imports_match(
+    source: &str,
+    query: &Query,
+    qm: &QueryMatch,
+    imports: &mut Vec<Import>,
+) {
     let capture_names = query.capture_names();
     let mut python_module = None;
     let mut python_members = Vec::new();
@@ -37,7 +44,7 @@ fn process_imports_match(source: &str, query: &Query, qm: &QueryMatch, imports: 
     }
 }
 
-fn push_import(imports: &mut Vec<Import>, raw_target: &str, line: usize) {
+pub(super) fn push_import(imports: &mut Vec<Import>, raw_target: &str, line: usize) {
     if imports
         .iter()
         .any(|import| import.line == line && import.raw_target == raw_target)

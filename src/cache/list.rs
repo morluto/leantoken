@@ -1,5 +1,7 @@
+use super::*;
+
 impl CacheManager {
-    fn for_current_user() -> Result<Self> {
+    pub(super) fn for_current_user() -> Result<Self> {
         let root = managed_cache_root().ok_or_else(|| {
             Error::InvalidConfiguration(
                 "this platform does not provide a central managed cache directory".into(),
@@ -8,16 +10,16 @@ impl CacheManager {
         Ok(Self::new(root, unix_seconds(SystemTime::now())))
     }
 
-    fn new(root: PathBuf, now: u64) -> Self {
+    pub(super) fn new(root: PathBuf, now: u64) -> Self {
         Self { root, now }
     }
 
     #[cfg(test)]
-    fn list(&self) -> Result<CacheListReport> {
+    pub(super) fn list(&self) -> Result<CacheListReport> {
         self.list_with(&CacheListRequest::default())
     }
 
-    fn list_with(&self, request: &CacheListRequest) -> Result<CacheListReport> {
+    pub(super) fn list_with(&self, request: &CacheListRequest) -> Result<CacheListReport> {
         validate_list_request(request)?;
         let repository_root = request
             .repository_root
@@ -96,7 +98,7 @@ impl CacheManager {
         })
     }
 
-    fn list_v2_with(&self, request: &CacheListV2Request) -> Result<CacheListV2Report> {
+    pub(super) fn list_v2_with(&self, request: &CacheListV2Request) -> Result<CacheListV2Report> {
         validate_list_request(&request.request)?;
         if request.compatibilities.len() > MAX_CACHE_COMPATIBILITY_FILTERS {
             return Err(Error::RequestLimitExceeded {

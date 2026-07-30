@@ -1794,7 +1794,7 @@ mod tests {
         assert!(!is_hidden_edit_failure_line(b"ordinary diagnostic\n"));
 
         let event = hidden_edit_failure_event(1, String::from_utf8_lossy(line).trim());
-        let analysis = analyze(&[event.clone()]);
+        let analysis = analyze(std::slice::from_ref(&event));
         assert_eq!(analysis.calls.len(), 1);
         assert_eq!(analysis.calls[0].tool_name, "edit");
         assert_eq!(analysis.calls[0].outcome, ToolOutcome::Error);
@@ -1855,7 +1855,7 @@ mod tests {
                 }
             })
         };
-        let events = vec![
+        let events = [
             serde_json::json!({"type":"thread.started","thread_id":"secret-id"}),
             context_item("call-1"),
             context_item("call-2"),

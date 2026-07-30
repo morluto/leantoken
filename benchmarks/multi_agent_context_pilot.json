@@ -10,11 +10,11 @@
       "symbol": "ContextRequest::known_hashes"
     },
     {
-      "path": "src/services/context.rs",
+      "path": "src/services/context/mod.rs",
       "symbol": "Services::context_sync"
     },
     {
-      "path": "src/ranking.rs",
+      "path": "src/ranking/mod.rs",
       "symbol": "select_with_options"
     },
     {

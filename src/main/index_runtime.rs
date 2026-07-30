@@ -1,4 +1,9 @@
-async fn run_index_leader(services: Arc<Services>, cancellation: CancellationToken) -> Result<()> {
+use super::*;
+
+pub(super) async fn run_index_leader(
+    services: Arc<Services>,
+    cancellation: CancellationToken,
+) -> Result<()> {
     let (watcher, changes) = RepositoryWatcher::start_with_policy(
         &services.config().root,
         WATCHER_QUEUE_CAPACITY,
@@ -36,7 +41,7 @@ async fn run_index_leader(services: Arc<Services>, cancellation: CancellationTok
     }
 }
 
-async fn run_index_leader_until_shutdown(
+pub(super) async fn run_index_leader_until_shutdown(
     services: Arc<Services>,
     changes: tokio::sync::mpsc::Receiver<WatcherMessage>,
     cancellation: CancellationToken,
@@ -58,7 +63,7 @@ async fn run_index_leader_until_shutdown(
     run_watcher_reconciliations(services, changes, cancellation).await
 }
 
-async fn run_watcher_reconciliations(
+pub(super) async fn run_watcher_reconciliations(
     services: Arc<Services>,
     mut changes: tokio::sync::mpsc::Receiver<WatcherMessage>,
     cancellation: CancellationToken,
@@ -107,7 +112,7 @@ async fn run_watcher_reconciliations(
     Ok(())
 }
 
-fn drain_watcher_messages(
+pub(super) fn drain_watcher_messages(
     scheduler: &mut WatcherReconciliationScheduler,
     services: &Services,
     changes: &mut tokio::sync::mpsc::Receiver<WatcherMessage>,
@@ -121,7 +126,7 @@ fn drain_watcher_messages(
     }
 }
 
-async fn execute_watcher_action(
+pub(super) async fn execute_watcher_action(
     scheduler: &mut WatcherReconciliationScheduler,
     services: Arc<Services>,
     action: WatcherAction,
@@ -150,7 +155,7 @@ async fn execute_watcher_action(
     }
 }
 
-fn is_terminal_index_error(error: &leantoken::Error) -> bool {
+pub(super) fn is_terminal_index_error(error: &leantoken::Error) -> bool {
     matches!(
         error,
         leantoken::Error::RootNotFound(_)
@@ -162,7 +167,7 @@ fn is_terminal_index_error(error: &leantoken::Error) -> bool {
     )
 }
 
-fn schedule_watcher_message(
+pub(super) fn schedule_watcher_message(
     scheduler: &mut WatcherReconciliationScheduler,
     services: &Services,
     message: WatcherMessage,
@@ -183,7 +188,7 @@ fn schedule_watcher_message(
     scheduler.enqueue(message, Instant::now());
 }
 
-async fn reconcile_watcher_action(
+pub(super) async fn reconcile_watcher_action(
     services: Arc<Services>,
     action: &WatcherAction,
     cancellation: CancellationToken,

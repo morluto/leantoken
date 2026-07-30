@@ -17,11 +17,10 @@ impl McpLauncher {
     pub(super) fn current() -> Result<Self> {
         if std::env::var_os("npm_lifecycle_event").as_deref() == Some(OsStr::new("npx")) {
             let node = std::env::var_os("npm_node_execpath").ok_or_else(|| {
-                Error::InternalFailure("npx did not report its Node executable path".into())
+                Error::SetupFailure("npx did not report its Node executable path".into())
             })?;
-            let npm = std::env::var_os("npm_execpath").ok_or_else(|| {
-                Error::InternalFailure("npx did not report its npm CLI path".into())
-            })?;
+            let npm = std::env::var_os("npm_execpath")
+                .ok_or_else(|| Error::SetupFailure("npx did not report its npm CLI path".into()))?;
             return Self::from_npx_paths(Path::new(&node), Path::new(&npm));
         }
         Ok(Self::from_executable(
@@ -57,7 +56,7 @@ impl McpLauncher {
     pub(super) fn command(&self) -> Result<&str> {
         self.command
             .to_str()
-            .ok_or_else(|| Error::InternalFailure("LeanToken executable path is not UTF-8".into()))
+            .ok_or_else(|| Error::SetupFailure("LeanToken executable path is not UTF-8".into()))
     }
 
     fn from_npx_paths(node: &Path, npm: &Path) -> Result<Self> {
@@ -70,13 +69,13 @@ impl McpLauncher {
         version: &str,
     ) -> Result<Self> {
         if !node.is_absolute() || !npm.is_absolute() {
-            return Err(Error::InternalFailure(
+            return Err(Error::SetupFailure(
                 "npx reported a relative Node or npm CLI path".into(),
             ));
         }
         let npm = npm
             .to_str()
-            .ok_or_else(|| Error::InternalFailure("npm CLI path is not UTF-8".into()))?;
+            .ok_or_else(|| Error::SetupFailure("npm CLI path is not UTF-8".into()))?;
         let package = format!("leantoken@{version}");
         Ok(Self {
             command: node.into(),

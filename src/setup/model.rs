@@ -1,3 +1,5 @@
+use super::*;
+
 /// Setup or removal operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -9,28 +11,28 @@ pub enum SetupOperation {
 }
 
 impl SetupOperation {
-    fn action(self) -> &'static str {
+    pub(super) fn action(self) -> &'static str {
         match self {
             Self::Setup => "set up",
             Self::Remove => "remove",
         }
     }
 
-    fn action_label(self) -> &'static str {
+    pub(super) fn action_label(self) -> &'static str {
         match self {
             Self::Setup => "Set up",
             Self::Remove => "Remove",
         }
     }
 
-    fn selection_prompt(self) -> &'static str {
+    pub(super) fn selection_prompt(self) -> &'static str {
         match self {
             Self::Setup => "Which coding agents should use LeanToken?",
             Self::Remove => "Remove LeanToken from which coding agents?",
         }
     }
 
-    fn plan_label(self) -> &'static str {
+    pub(super) fn plan_label(self) -> &'static str {
         match self {
             Self::Setup => "setup",
             Self::Remove => "removal",

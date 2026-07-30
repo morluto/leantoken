@@ -1,4 +1,6 @@
-fn apply_plan(plan: &ResolvedSetupPlan) -> Vec<ClientSetupResult> {
+use super::*;
+
+pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> Vec<ClientSetupResult> {
     let runtime_installed = match plan.runtime.as_ref().map(install_runtime).transpose() {
         Ok(installed) => installed.unwrap_or(false),
         Err(error) => return failed_results(&plan.edits, error.to_string()),
@@ -65,7 +67,7 @@ fn apply_plan(plan: &ResolvedSetupPlan) -> Vec<ClientSetupResult> {
         .collect()
 }
 
-fn rollback_setup(
+pub(super) fn rollback_setup(
     plan: &ResolvedSetupPlan,
     runtime_installed: bool,
     applied: &[&PlannedClientEdit],
@@ -87,7 +89,7 @@ fn rollback_setup(
     Ok(())
 }
 
-fn rollback_message(error: Error, rollback: Result<()>) -> String {
+pub(super) fn rollback_message(error: Error, rollback: Result<()>) -> String {
     match rollback {
         Ok(()) => format!("setup transaction rolled back: {error}"),
         Err(rollback_error) => format!(
@@ -96,10 +98,10 @@ fn rollback_message(error: Error, rollback: Result<()>) -> String {
     }
 }
 
-fn preflight_edits(edits: &[PlannedClientEdit]) -> Result<()> {
+pub(super) fn preflight_edits(edits: &[PlannedClientEdit]) -> Result<()> {
     for edit in edits {
         if read_optional(&edit.public.path)? != edit.original {
-            return Err(Error::InternalFailure(format!(
+            return Err(Error::SetupFailure(format!(
                 "configuration changed after preflight: {}",
                 edit.public.path.display()
             )));
@@ -108,10 +110,10 @@ fn preflight_edits(edits: &[PlannedClientEdit]) -> Result<()> {
     Ok(())
 }
 
-fn preflight_discovery(edits: &[PlannedDiscoveryEdit]) -> Result<()> {
+pub(super) fn preflight_discovery(edits: &[PlannedDiscoveryEdit]) -> Result<()> {
     for edit in edits {
         if read_optional(&edit.public.path)? != edit.original {
-            return Err(Error::InternalFailure(format!(
+            return Err(Error::SetupFailure(format!(
                 "discovery skill changed after preflight: {}",
                 edit.public.path.display()
             )));
@@ -120,7 +122,7 @@ fn preflight_discovery(edits: &[PlannedDiscoveryEdit]) -> Result<()> {
     Ok(())
 }
 
-fn failed_results(edits: &[PlannedClientEdit], error: String) -> Vec<ClientSetupResult> {
+pub(super) fn failed_results(edits: &[PlannedClientEdit], error: String) -> Vec<ClientSetupResult> {
     edits
         .iter()
         .map(|edit| ClientSetupResult {
@@ -132,11 +134,11 @@ fn failed_results(edits: &[PlannedClientEdit], error: String) -> Vec<ClientSetup
         .collect()
 }
 
-fn restore_edit(edit: &PlannedClientEdit) -> Result<()> {
+pub(super) fn restore_edit(edit: &PlannedClientEdit) -> Result<()> {
     restore_path(&edit.public.path, edit.original.as_deref())
 }
 
-fn apply_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> {
+pub(super) fn apply_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> {
     match edit.public.action {
         ClientPlanAction::Create | ClientPlanAction::Update => write_if_changed(
             &edit.public.path,
@@ -154,14 +156,14 @@ fn apply_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> {
     }
 }
 
-fn restore_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> {
+pub(super) fn restore_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> {
     restore_path(&edit.public.path, edit.original.as_deref())
 }
 
-fn apply_edit(edit: &PlannedClientEdit) -> Result<()> {
+pub(super) fn apply_edit(edit: &PlannedClientEdit) -> Result<()> {
     let current = read_optional(&edit.public.path)?;
     if current != edit.original {
-        return Err(Error::InternalFailure(format!(
+        return Err(Error::SetupFailure(format!(
             "configuration changed after preflight: {}",
             edit.public.path.display()
         )));

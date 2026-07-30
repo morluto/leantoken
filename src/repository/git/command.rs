@@ -1,12 +1,12 @@
-struct GitCaptureOptions {
-    timeout: Duration,
-    field: &'static str,
-    timeout_reason: &'static str,
-    failure_reason: &'static str,
-    max_output_bytes: usize,
+pub(crate) struct GitCaptureOptions {
+    pub(crate) timeout: Duration,
+    pub(crate) field: &'static str,
+    pub(crate) timeout_reason: &'static str,
+    pub(crate) failure_reason: &'static str,
+    pub(crate) max_output_bytes: usize,
 }
 
-fn run_git_capture(
+pub(crate) fn run_git_capture(
     root: &Path,
     program: &Path,
     args: &[String],
@@ -15,7 +15,7 @@ fn run_git_capture(
     run_git_capture_bounded(root, program, args, None, options)
 }
 
-fn run_git_capture_with_input(
+pub(crate) fn run_git_capture_with_input(
     root: &Path,
     program: &Path,
     args: &[String],
@@ -25,7 +25,7 @@ fn run_git_capture_with_input(
     run_git_capture_bounded(root, program, args, Some(input), options)
 }
 
-fn run_git_capture_bounded(
+pub(crate) fn run_git_capture_bounded(
     root: &Path,
     program: &Path,
     args: &[String],
@@ -64,7 +64,7 @@ fn run_git_capture_bounded(
         .inner()
         .stdout
         .take()
-        .ok_or_else(|| Error::InternalFailure("git stdout unavailable".into()))?;
+        .ok_or_else(|| Error::OperationFailure("git stdout unavailable".into()))?;
     let reader = thread::spawn(move || -> std::io::Result<Vec<u8>> {
         let mut output = Vec::with_capacity(max_output_bytes.min(64 * 1024));
         let mut chunk = [0u8; 8 * 1024];
@@ -162,11 +162,11 @@ fn run_git_capture_bounded(
     if let Some(writer) = writer {
         writer
             .join()
-            .map_err(|_| Error::InternalFailure("git stdin task panicked".into()))??;
+            .map_err(|_| Error::OperationFailure("git stdin task panicked".into()))??;
     }
     let output = reader
         .join()
-        .map_err(|_| Error::InternalFailure("git stdout task panicked".into()))??;
+        .map_err(|_| Error::OperationFailure("git stdout task panicked".into()))??;
     if output_limit_exceeded.load(Ordering::Acquire) {
         return Err(Error::RequestLimitExceeded {
             field: "git output bytes",
@@ -182,3 +182,4 @@ fn run_git_capture_bounded(
     }
     Ok(output)
 }
+use super::*;

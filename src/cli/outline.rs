@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Clone, Parser)]
 pub struct OutlineArgs {
     /// Paths to outline.

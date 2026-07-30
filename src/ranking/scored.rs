@@ -1,3 +1,4 @@
+use super::*;
 /// A candidate with a fully resolved score, token count, content hash, and
 /// score-per-token diagnostic.
 #[derive(Debug, Clone)]
@@ -17,7 +18,7 @@ impl ScoredCandidate {
     }
 
     #[allow(clippy::cast_precision_loss)]
-    fn new_with_tokenizer(
+    pub(in crate::ranking) fn new_with_tokenizer(
         candidate: Candidate,
         weights: &Weights,
         tokenizer: tokens::Tokenizer,
@@ -43,7 +44,7 @@ pub fn rank(candidates: Vec<Candidate>, weights: &Weights) -> Vec<ScoredCandidat
     rank_with_tokenizer(candidates, weights, tokens::Tokenizer::default())
 }
 
-fn rank_with_tokenizer(
+pub(in crate::ranking) fn rank_with_tokenizer(
     candidates: Vec<Candidate>,
     weights: &Weights,
     tokenizer: tokens::Tokenizer,

@@ -1,4 +1,4 @@
-fn assemble_stored_excerpt(
+pub(super) fn assemble_stored_excerpt(
     request: ResolvedStoredExcerptRequest,
     selected: &[crate::storage::ChunkRecord],
 ) -> Option<StoredExcerpt> {
@@ -45,7 +45,7 @@ impl Services {
 }
 
 impl Services {
-    pub(super) fn stored_excerpts(
+    pub(in crate::services) fn stored_excerpts(
         &self,
         session: &ReadSession,
         requests: &[StoredExcerptRequest],
@@ -87,7 +87,7 @@ impl Services {
     }
 
     #[cfg(test)]
-    pub(super) fn adaptive_context_excerpt(
+    pub(in crate::services) fn adaptive_context_excerpt(
         &self,
         session: &ReadSession,
         file_id: i64,
@@ -131,7 +131,7 @@ impl Services {
         self.stored_excerpt(session, file_id, start, end, 0, 0)
     }
 
-    pub(super) fn adaptive_context_excerpts(
+    pub(in crate::services) fn adaptive_context_excerpts(
         &self,
         session: &ReadSession,
         requests: &[AdaptiveExcerptRequest],
@@ -201,3 +201,4 @@ impl Services {
         Ok(excerpts)
     }
 }
+use super::*;

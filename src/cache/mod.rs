@@ -24,17 +24,22 @@ use crate::model::IndexScopeMode;
 use crate::storage::{CURRENT_MIGRATION_VERSION, CURRENT_SCHEMA_VERSION};
 use crate::{Error, Result};
 
-// Cache policy, inspection, mutation, and adapter rendering retain the
-// existing public facade while living under distinct physical owners.
-include!("cache/models.rs");
-include!("cache/api.rs");
-include!("cache/list.rs");
-include!("cache/prune.rs");
-include!("cache/inspection.rs");
-include!("cache/artifacts.rs");
-include!("cache/cursor.rs");
-include!("cache/prune_policy.rs");
-include!("cache/output.rs");
+mod api;
+mod artifacts;
+mod cursor;
+mod inspection;
+mod list;
+mod models;
+mod output;
+
+pub use api::*;
+use artifacts::*;
+use cursor::*;
+pub use models::*;
+pub use output::*;
+use prune_policy::*;
+mod prune;
+mod prune_policy;
 
 #[cfg(test)]
 mod tests;

@@ -105,7 +105,7 @@ pub(crate) fn git_diff_hunks_scoped(
     git_diff_hunks_with_head(root, base_revision, head_revision, paths, max)
 }
 
-fn git_diff_hunks_with_head(
+pub(crate) fn git_diff_hunks_with_head(
     root: &Path,
     base_revision: &str,
     head_revision: Option<&str>,
@@ -155,7 +155,7 @@ fn git_diff_hunks_with_head(
     parse_git_diff_hunks(output.as_slice(), max, &prefix)
 }
 
-fn parse_git_diff_hunks<R: BufRead>(
+pub(crate) fn parse_git_diff_hunks<R: BufRead>(
     mut reader: R,
     max: usize,
     prefix: &str,
@@ -191,22 +191,22 @@ fn parse_git_diff_hunks<R: BufRead>(
             .map_or((target, "1"), |(start, length)| (start, length));
         let raw_start = start
             .parse::<usize>()
-            .map_err(|error| Error::InternalFailure(error.to_string()))?;
+            .map_err(|error| Error::OperationFailure(error.to_string()))?;
         let length = length
             .parse::<usize>()
-            .map_err(|error| Error::InternalFailure(error.to_string()))?;
+            .map_err(|error| Error::OperationFailure(error.to_string()))?;
         let (start_line, end_line) = if length == 0 {
             (
-                raw_start
-                    .checked_add(1)
-                    .ok_or_else(|| Error::InternalFailure("git diff hunk range overflow".into()))?,
+                raw_start.checked_add(1).ok_or_else(|| {
+                    Error::OperationFailure("git diff hunk range overflow".into())
+                })?,
                 raw_start,
             )
         } else {
             let start_line = raw_start.max(1);
             let end_line = start_line
                 .checked_add(length - 1)
-                .ok_or_else(|| Error::InternalFailure("git diff hunk range overflow".into()))?;
+                .ok_or_else(|| Error::OperationFailure("git diff hunk range overflow".into()))?;
             (start_line, end_line)
         };
         ranges.push(GitHunkRange {
@@ -218,7 +218,7 @@ fn parse_git_diff_hunks<R: BufRead>(
     Ok(ranges)
 }
 
-fn git_diff_paths_with(
+pub(crate) fn git_diff_paths_with(
     root: &Path,
     base_revision: &str,
     max: usize,
@@ -249,7 +249,7 @@ fn git_diff_paths_with(
     })
 }
 
-fn resolve_revision_sha(
+pub(crate) fn resolve_revision_sha(
     root: &Path,
     program: &Path,
     revision: &str,
@@ -258,7 +258,7 @@ fn resolve_revision_sha(
     resolve_revision_sha_for_field(root, program, revision, timeout, "base revision")
 }
 
-fn resolve_revision_sha_for_field(
+pub(crate) fn resolve_revision_sha_for_field(
     root: &Path,
     program: &Path,
     revision: &str,
@@ -326,7 +326,7 @@ fn resolve_revision_sha_for_field(
     Ok(sha)
 }
 
-fn diff_name_only(
+pub(crate) fn diff_name_only(
     root: &Path,
     program: &Path,
     base_sha: &str,
@@ -363,7 +363,7 @@ fn diff_name_only(
     Ok(parse_diff_names(output.as_slice(), max, prefix))
 }
 
-fn parse_diff_names<R: BufRead>(mut reader: R, max: usize, prefix: &str) -> Vec<String> {
+pub(crate) fn parse_diff_names<R: BufRead>(mut reader: R, max: usize, prefix: &str) -> Vec<String> {
     if max == 0 {
         return Vec::new();
     }
@@ -393,3 +393,4 @@ fn parse_diff_names<R: BufRead>(mut reader: R, max: usize, prefix: &str) -> Vec<
     }
     changed
 }
+use super::*;

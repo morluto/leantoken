@@ -1,10 +1,15 @@
-struct MarkdownHeading {
+use super::*;
+
+pub(super) struct MarkdownHeading {
     level: usize,
     name: String,
     start_byte: usize,
 }
 
-fn parse_markdown(source: &str, is_cancelled: &mut impl FnMut() -> bool) -> Result<ParseOutput> {
+pub(super) fn parse_markdown(
+    source: &str,
+    is_cancelled: &mut impl FnMut() -> bool,
+) -> Result<ParseOutput> {
     let mut headings = Vec::new();
     let mut pending = None::<MarkdownHeading>;
     for (event, range) in MarkdownParser::new(source).into_offset_iter() {
@@ -75,7 +80,7 @@ fn parse_markdown(source: &str, is_cancelled: &mut impl FnMut() -> bool) -> Resu
     })
 }
 
-fn markdown_heading_level(level: HeadingLevel) -> usize {
+pub(super) fn markdown_heading_level(level: HeadingLevel) -> usize {
     match level {
         HeadingLevel::H1 => 1,
         HeadingLevel::H2 => 2,

@@ -87,3 +87,4 @@ impl Storage {
         self.begin_read()?.counts()
     }
 }
+use super::*;

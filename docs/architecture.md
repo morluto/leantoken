@@ -30,7 +30,13 @@ ignore-aware discovery -> chunking -> tree-sitter extraction
   `services.rs` (startup, indexing, status, snapshot consistency, meta).
   Retrieval entrypoints and their implementations live together under
   `services/`: `files`, `search`, `context`, and `read`, with shared request
-  validation in `validation`.
+  validation in `validation`. `ResponseAccountant` is the single owner of
+  serialized response fixed-point sizing and caller token ceilings;
+  `ServiceObserver` owns best-effort failure classification and bounded
+  storage observation. Operation modules retain their own scan, fan-out,
+  cancellation, deadline, and response-profile policies, while the `Services`
+  façade composes those policies without duplicating accounting or telemetry
+  writes.
 - The MCP adapter owns SDK types, protocol error translation, cancellation, and
   stdio lifecycle. It omits optional output schemas from the catalog and offers
   explicit dual, text-only, and structured-only result modes. Structured is the
@@ -325,10 +331,23 @@ every workload. Change it only with release-mode contention measurements that
 include SQLite wait time, end-to-end latency, and memory across the expected
 number of simultaneous agents.
 
+Reader pool checkout waits are sampled in tests and logged when they exceed
+10 ms in production. Storage startup logs elapsed time for each configured
+SQLite PRAGMA; these diagnostics make contention or initialization regressions
+visible without adding a second pool or caching schema checks. The production
+watcher and MCP indexing runtime each have a five-second shutdown deadline;
+deadline expiry is reported as the typed `shutdown_timeout` category.
+
 Structural search and context assembly pass bounded range/location sets through
 SQLite JSON table-valued inputs. SQLite joins hydrate excerpts and enclosing
 symbols in batches inside the same request snapshot; LeanToken keeps only the
 domain-specific candidate fusion, overlap, and token-selection policy in Rust.
+
+The Rust module tree mirrors these ownership boundaries: storage, repository,
+ranking, and service retrieval stages are child modules with explicit imports,
+not textual namespace concatenation. The former organizational `include!()`
+trees have been migrated to ordinary modules, and
+`cargo xtask check-test-architecture` rejects any recurrence.
 
 ### Storage and policy ownership
 
@@ -937,7 +956,7 @@ source. Delta mode falls back to that fitted direct page if delta metadata
 would cross the total-response ceiling.
 
 Run the reproducible hot-path profile with, for example,
-`cargo run --example hot_path_bounds --release -- --files 10000 --iterations 20`.
+`cargo run --release -p leantoken-benchmarks --bin hot_path_bounds -- --files 10000 --iterations 20`.
 It reports warm p50/p95 wall time plus deterministic regex and context phase
 counters. Evaluation-only context output also includes diagnostic wall-time
 phases; candidate generation includes its nested lookup phases, so those fields
@@ -952,7 +971,7 @@ disposable index, or provide it and use `--skip-index` for subsequent
 steady-state samples:
 
 ```bash
-cargo run --release --example real_repository_profile -- \
+cargo run --release -p leantoken-benchmarks --bin real_repository_profile -- \
   --repository /path/to/repository --iterations 5
 ```
 

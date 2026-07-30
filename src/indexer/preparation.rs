@@ -1,9 +1,11 @@
+use super::*;
+
 impl Indexer {
-    fn validate_config(config: &Config) -> Result<()> {
+    pub(super) fn validate_config(config: &Config) -> Result<()> {
         config.validate()
     }
 
-    fn prepare_candidate_batches(
+    pub(super) fn prepare_candidate_batches(
         &self,
         candidates: &[DiscoveredFile],
         cancellation: &CancellationToken,
@@ -19,7 +21,7 @@ impl Indexer {
         )
     }
 
-    fn prepare_candidate_batches_with_progress(
+    pub(super) fn prepare_candidate_batches_with_progress(
         &self,
         candidates: &[DiscoveredFile],
         cancellation: &CancellationToken,
@@ -48,7 +50,7 @@ impl Indexer {
             before_batch();
             let end = prepare_batch_end(candidates, start, limits);
             if end <= start {
-                return Err(Error::InternalFailure(
+                return Err(Error::OperationFailure(
                     "candidate batch preparation made no progress".into(),
                 ));
             }
@@ -140,7 +142,7 @@ impl Indexer {
         Ok(metrics)
     }
 
-    fn plan_relocations(
+    pub(super) fn plan_relocations(
         &self,
         existing: &HashMap<String, crate::storage::FileRecord>,
         candidates: &HashMap<String, DiscoveredFile>,

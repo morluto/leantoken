@@ -112,7 +112,10 @@ fn graph_signal_report_preserves_evaluation_only_boundary_and_redaction() {
     let context_source = include_str!("../src/services/context/api.rs");
     assert!(context_source.contains("ContextSignals::PRODUCTION"));
     assert!(context_source.contains("pub async fn context_signal_evaluation"));
-    for adapter in [include_str!("../src/mcp.rs"), include_str!("../src/cli.rs")] {
+    for adapter in [
+        include_str!("../src/mcp/mod.rs"),
+        include_str!("../src/cli/mod.rs"),
+    ] {
         assert!(!adapter.contains("ContextSignalPolicy"));
         assert!(!adapter.contains("context_signal_evaluation"));
     }

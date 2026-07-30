@@ -1,17 +1,17 @@
+use crate::error::RetryableOperation;
 use crate::query_receipt::{
     ExactQueryPredicate, MAX_QUERY_RECEIPT_ID_BYTES, MAX_QUERY_RECEIPTS,
     MAX_TOTAL_QUERY_RECEIPT_BYTES, QUERY_RECEIPT_SEMANTICS_VERSION,
     QUERY_RECEIPT_TOUCH_INTERVAL_MILLIS, QUERY_RECEIPT_TTL_MILLIS, QueryPartition,
     QueryReceiptRecord, StoredQueryReceipt, format_query_receipt_id, parse_query_receipt_id,
 };
-use crate::error::RetryableOperation;
 
 #[derive(Debug)]
-struct QueryReceiptUsage {
-    namespace: String,
-    next_access_sequence: i64,
-    receipt_count: usize,
-    logical_bytes: usize,
+pub(crate) struct QueryReceiptUsage {
+    pub(crate) namespace: String,
+    pub(crate) next_access_sequence: i64,
+    pub(crate) receipt_count: usize,
+    pub(crate) logical_bytes: usize,
 }
 
 impl Storage {
@@ -19,19 +19,19 @@ impl Storage {
         self.persist_query_receipt_at(record, unix_millis(SystemTime::now()))
     }
 
-    fn persist_query_receipt_at(
+    pub(crate) fn persist_query_receipt_at(
         &self,
         record: &QueryReceiptRecord,
         now_unix_millis: i64,
     ) -> Result<String> {
         if now_unix_millis < 0 {
-            return Err(Error::InternalFailure(
+            return Err(Error::OperationFailure(
                 "system clock precedes the Unix epoch".into(),
             ));
         }
         let expires_unix_millis = now_unix_millis
             .checked_add(QUERY_RECEIPT_TTL_MILLIS)
-            .ok_or_else(|| Error::InternalFailure("query receipt expiry overflow".into()))?;
+            .ok_or_else(|| Error::OperationFailure("query receipt expiry overflow".into()))?;
         let predicate_json = record.predicate.serialized()?;
         let mut conn = self
             .writer
@@ -41,18 +41,12 @@ impl Storage {
         prune_expired_query_receipts(&tx, now_unix_millis)?;
         let (repository_identity, repository_generation, config_hash): (String, u64, String) = tx
             .query_row(
-                "SELECT repository_identity, repository_generation, config_hash
+            "SELECT repository_identity, repository_generation, config_hash
                  FROM meta
                  WHERE id = 1",
-                [],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        i64_to_u64(row.get(1)?)?,
-                        row.get(2)?,
-                    ))
-                },
-            )?;
+            [],
+            |row| Ok((row.get(0)?, i64_to_u64(row.get(1)?)?, row.get(2)?)),
+        )?;
         if repository_generation != record.repository_generation
             || config_hash != record.config_hash
         {
@@ -120,18 +114,16 @@ impl Storage {
         }
 
         while usage.receipt_count >= MAX_QUERY_RECEIPTS
-            || usage.logical_bytes.saturating_add(logical_bytes)
-                > MAX_TOTAL_QUERY_RECEIPT_BYTES
+            || usage.logical_bytes.saturating_add(logical_bytes) > MAX_TOTAL_QUERY_RECEIPT_BYTES
         {
             if !evict_oldest_query_receipt(&tx)? {
-                return Err(Error::InternalFailure(
+                return Err(Error::OperationFailure(
                     "query receipt quota could not evict a receipt".into(),
                 ));
             }
             usage = query_receipt_usage(&tx)?;
         }
-        let access_sequence =
-            next_query_receipt_access_sequence(&tx, usage.next_access_sequence)?;
+        let access_sequence = next_query_receipt_access_sequence(&tx, usage.next_access_sequence)?;
         tx.execute(
             "INSERT INTO query_coverage_receipts(
                 repository_identity,
@@ -179,7 +171,7 @@ impl ReadSession {
         self.load_query_receipt_at(requested_id, unix_millis(SystemTime::now()))
     }
 
-    fn load_query_receipt_at(
+    pub(crate) fn load_query_receipt_at(
         &self,
         requested_id: &str,
         now_unix_millis: i64,
@@ -328,7 +320,7 @@ impl ReadSession {
             hash_query_partition_bytes(&mut hasher, content_hash.as_bytes());
             file_count = file_count
                 .checked_add(1)
-                .ok_or_else(|| Error::InternalFailure("query partition count overflow".into()))?;
+                .ok_or_else(|| Error::OperationFailure("query partition count overflow".into()))?;
         }
         hasher.update(&(file_count as u64).to_le_bytes());
         Ok(QueryPartition {
@@ -338,7 +330,7 @@ impl ReadSession {
     }
 }
 
-fn query_receipt_usage(tx: &Transaction<'_>) -> Result<QueryReceiptUsage> {
+pub(crate) fn query_receipt_usage(tx: &Transaction<'_>) -> Result<QueryReceiptUsage> {
     tx.query_row(
         "SELECT namespace, next_access_sequence, receipt_count, logical_bytes
          FROM query_coverage_receipt_usage
@@ -356,10 +348,13 @@ fn query_receipt_usage(tx: &Transaction<'_>) -> Result<QueryReceiptUsage> {
     .map_err(Into::into)
 }
 
-fn next_query_receipt_access_sequence(tx: &Transaction<'_>, current: i64) -> Result<i64> {
-    let next = current.checked_add(1).ok_or_else(|| {
-        Error::InternalFailure("query receipt access sequence overflow".into())
-    })?;
+pub(crate) fn next_query_receipt_access_sequence(
+    tx: &Transaction<'_>,
+    current: i64,
+) -> Result<i64> {
+    let next = current
+        .checked_add(1)
+        .ok_or_else(|| Error::OperationFailure("query receipt access sequence overflow".into()))?;
     let updated = tx.execute(
         "UPDATE query_coverage_receipt_usage
          SET next_access_sequence = ?1
@@ -367,14 +362,17 @@ fn next_query_receipt_access_sequence(tx: &Transaction<'_>, current: i64) -> Res
         params![next, current],
     )?;
     if updated != 1 {
-        return Err(Error::InternalFailure(
+        return Err(Error::OperationFailure(
             "query receipt access sequence changed unexpectedly".into(),
         ));
     }
     Ok(next)
 }
 
-fn prune_expired_query_receipts(tx: &Transaction<'_>, now_unix_millis: i64) -> Result<()> {
+pub(crate) fn prune_expired_query_receipts(
+    tx: &Transaction<'_>,
+    now_unix_millis: i64,
+) -> Result<()> {
     tx.execute(
         "DELETE FROM query_coverage_receipts
          WHERE expires_unix_millis <= ?1
@@ -385,7 +383,7 @@ fn prune_expired_query_receipts(tx: &Transaction<'_>, now_unix_millis: i64) -> R
     Ok(())
 }
 
-fn evict_oldest_query_receipt(tx: &Transaction<'_>) -> Result<bool> {
+pub(crate) fn evict_oldest_query_receipt(tx: &Transaction<'_>) -> Result<bool> {
     let oldest = tx
         .query_row(
             "SELECT id
@@ -405,7 +403,8 @@ fn evict_oldest_query_receipt(tx: &Transaction<'_>) -> Result<bool> {
     )? == 1)
 }
 
-fn hash_query_partition_bytes(hasher: &mut blake3::Hasher, bytes: &[u8]) {
+pub(crate) fn hash_query_partition_bytes(hasher: &mut blake3::Hasher, bytes: &[u8]) {
     hasher.update(&(bytes.len() as u64).to_le_bytes());
     hasher.update(bytes);
 }
+use super::*;

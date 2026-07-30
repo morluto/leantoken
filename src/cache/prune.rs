@@ -1,13 +1,15 @@
+use super::*;
+
 impl CacheManager {
-    fn prune(&self, request: &CachePruneRequest) -> Result<CachePruneReport> {
+    pub(super) fn prune(&self, request: &CachePruneRequest) -> Result<CachePruneReport> {
         self.prune_with_compatibility(request, false)
     }
 
-    fn prune_v2(&self, request: &CachePruneV2Request) -> Result<CachePruneReport> {
+    pub(super) fn prune_v2(&self, request: &CachePruneV2Request) -> Result<CachePruneReport> {
         self.prune_with_compatibility(&request.request, request.incompatible_with_current)
     }
 
-    fn prune_with_compatibility(
+    pub(super) fn prune_with_compatibility(
         &self,
         request: &CachePruneRequest,
         incompatible_with_current: bool,

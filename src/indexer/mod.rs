@@ -30,18 +30,26 @@ use crate::storage::{
 use crate::text::{PreparedText, TextKind, hash_bytes};
 use crate::{Config, Error, Result};
 
-// Full and incremental reconciliation retain their existing publication
-// semantics; these physical owners share one concrete Indexer implementation.
-include!("indexer/progress.rs");
-include!("indexer/types.rs");
-include!("indexer/orchestrator.rs");
-include!("indexer/incremental.rs");
-include!("indexer/preparation.rs");
-include!("indexer/imports.rs");
-include!("indexer/plan.rs");
-include!("indexer/publish.rs");
-include!("indexer/prepare.rs");
-include!("indexer/import_resolution.rs");
+mod import_resolution;
+
+use import_resolution::*;
+#[cfg(test)]
+#[allow(unused_imports)]
+use orchestrator::observe_publication_phase;
+use prepare::*;
+pub(crate) use progress::index_progress_cache_namespace;
+use progress::*;
+use publish::*;
+pub use types::*;
+mod imports;
+mod incremental;
+mod orchestrator;
+mod plan;
+mod preparation;
+mod prepare;
+mod progress;
+mod publish;
+mod types;
 
 #[cfg(test)]
 mod tests;

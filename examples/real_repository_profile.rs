@@ -4,7 +4,7 @@
 //! in an anonymous temporary directory and removed when the process exits.
 //!
 //! ```bash
-//! cargo run --example real_repository_profile --release -- \
+//! cargo run --release --package leantoken-benchmarks --bin real_repository_profile -- \
 //!   --repository /root/openclaw --iterations 3
 //! ```
 

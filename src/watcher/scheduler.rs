@@ -1,3 +1,5 @@
+use super::*;
+
 /// Sticky, bounded scheduler for filesystem-driven repository reconciliation.
 ///
 /// Path events coalesce until the configured quiet period. Ambiguity or path
@@ -23,7 +25,7 @@ impl WatcherReconciliationScheduler {
         Self::with_policy(ReconciliationSchedulePolicy::runtime(quiet_period))
     }
 
-    fn with_policy(policy: ReconciliationSchedulePolicy) -> Self {
+    pub(super) fn with_policy(policy: ReconciliationSchedulePolicy) -> Self {
         Self {
             retry_delay: policy.retry_initial_delay,
             full_delay: policy.full_initial_delay,
@@ -109,7 +111,7 @@ impl WatcherReconciliationScheduler {
             .min(self.policy.retry_max_delay);
     }
 
-    fn merge_paths(&mut self, paths: impl IntoIterator<Item = String>) {
+    pub(super) fn merge_paths(&mut self, paths: impl IntoIterator<Item = String>) {
         if matches!(self.pending, Some(PendingReconciliation::Full)) {
             return;
         }
@@ -126,7 +128,7 @@ impl WatcherReconciliationScheduler {
         };
     }
 
-    fn reset_full_backoff_after_stability(&mut self, now: Instant) {
+    pub(super) fn reset_full_backoff_after_stability(&mut self, now: Instant) {
         let stable = self.last_full_completed.is_some_and(|completed| {
             now.checked_duration_since(completed)
                 .is_some_and(|elapsed| elapsed >= self.policy.full_reset_after)

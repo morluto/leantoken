@@ -276,7 +276,7 @@ impl Services {
         if let Some(max_response_tokens) = options.max_response_tokens()
             && response.meta.total_response_tokens > max_response_tokens
         {
-            return Err(Error::InternalFailure(
+            return Err(Error::ResponseAccountingInvariant(
                 "context response exceeded its fitted serialized-response budget".into(),
             ));
         }

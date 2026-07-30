@@ -27,11 +27,24 @@ use crate::text::{
 };
 use crate::{Error, Result, RetrievalLimitKind};
 
-include!("search/types.rs");
-include!("search/regex_plan.rs");
-include!("search/hits.rs");
-include!("search/projection.rs");
-include!("search/validation.rs");
+mod hits;
+mod projection;
+mod regex_plan;
+mod types;
+mod validation;
+
+use execution::*;
+use hits::*;
+pub(super) use hits::{chunk_search_hit_for_range, fts_quote};
+use projection::*;
+pub(super) use regex_plan::compile_literal_regex;
+use regex_plan::*;
+use types::*;
+pub(super) use types::{
+    MAX_REGEX_CANDIDATE_CHUNKS, MAX_REGEX_CANDIDATES, MAX_REGEX_CHUNKS_PER_FILE,
+    MAX_REGEX_FILES_SCANNED, MAX_SCOPED_REGEX_ROWS_SCANNED,
+};
+use validation::*;
 
 impl Services {
     fn ensure_search_page_fits(
@@ -392,7 +405,7 @@ impl Services {
                 )?;
                 let response = snapshot.response;
                 let occurrences_total = response.occurrences_total.ok_or_else(|| {
-                    Error::InternalFailure(
+                    Error::OperationFailure(
                         "grouped occurrence search omitted its exact total".into(),
                     )
                 })?;
@@ -523,7 +536,7 @@ impl Services {
     }
 }
 
-fn recorded_query_receipt_outcome(
+pub(super) fn recorded_query_receipt_outcome(
     record: &QueryReceiptRecord,
     receipt_id: String,
 ) -> QueryReceiptOutcome {
@@ -543,7 +556,7 @@ fn recorded_query_receipt_outcome(
 
 // Keep the public search owner focused on request routing while the synchronous
 // retrieval stages remain private to this module.
-include!("search/execution.rs");
+mod execution;
 
 #[cfg(test)]
 mod tests {

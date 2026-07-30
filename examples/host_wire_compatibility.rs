@@ -835,7 +835,7 @@ mod tests {
     use super::*;
 
     fn checked_matrix() -> (PathBuf, Matrix) {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(env!("LEANTOKEN_REPOSITORY_ROOT"));
         let matrix = read_json(&root.join("benchmarks/reports/host-wire-compatibility-v1.json"))
             .expect("checked matrix");
         (root, matrix)
@@ -882,7 +882,7 @@ mod tests {
 
     #[test]
     fn artifact_identity_normalizes_windows_checkout_line_endings() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(env!("LEANTOKEN_REPOSITORY_ROOT"));
         let bytes = fs::read(root.join("benchmarks/reports/wire-trace-codex-cli-0.144.1.json"))
             .expect("wire evidence");
         let canonical = canonical_json_artifact(bytes).expect("canonical evidence");

@@ -1,3 +1,6 @@
+use super::startup::{INITIAL_INDEX_IDLE_GRACE, INITIAL_INDEX_PROBE_INTERVAL};
+use super::*;
+
 impl Services {
     pub async fn index(&self, rebuild: bool) -> Result<IndexResponse> {
         self.index_report(rebuild)
@@ -167,13 +170,13 @@ impl Services {
     }
 }
 
-struct ActiveReconciliation {
+pub(super) struct ActiveReconciliation {
     count: Arc<AtomicUsize>,
     changed: Arc<tokio::sync::Notify>,
 }
 
 impl ActiveReconciliation {
-    fn new(counter: Arc<AtomicUsize>, changed: Arc<tokio::sync::Notify>) -> Self {
+    pub(super) fn new(counter: Arc<AtomicUsize>, changed: Arc<tokio::sync::Notify>) -> Self {
         counter.fetch_add(1, Ordering::AcqRel);
         Self {
             count: counter,

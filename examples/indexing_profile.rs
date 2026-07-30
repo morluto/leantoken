@@ -857,7 +857,7 @@ fn git_output<const N: usize>(repository: &Path, args: [&str; N]) -> AnyResult<S
 }
 
 fn leantoken_source_identity() -> (Option<String>, Option<bool>) {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = Path::new(env!("LEANTOKEN_REPOSITORY_ROOT"));
     let revision = git_output(root, ["rev-parse", "HEAD"]).ok();
     let dirty = revision.as_ref().and_then(|_| {
         git_output(root, ["status", "--porcelain", "--untracked-files=all"])
