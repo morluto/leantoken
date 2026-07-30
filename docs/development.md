@@ -123,6 +123,20 @@ cargo test-extras
 cargo test --locked --package leantoken --all-features --doc
 ```
 
+When changing TypeScript grammar integration, extraction on incomplete trees,
+or the manual recovery evaluator, run its focused synthetic contract:
+
+```bash
+cargo test --locked --example typescript_parse_diagnostic
+cargo run --locked --release --example typescript_parse_diagnostic -- \
+  verify-fixture
+```
+
+The pinned external-corpus command, immutable output contract, and
+interpretation limits are documented in
+[`../benchmarks/README.md`](../benchmarks/README.md#typescript-parse-recovery-diagnostic).
+The external run is evidence for parser work, not a normal local or CI gate.
+
 These repository-local Cargo aliases keep the fast and extended target groups
 consistent with CI. The development profile retains line tables for useful
 backtraces in LeanToken while omitting dependency debug information, which

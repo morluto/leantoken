@@ -1,0 +1,401 @@
+{
+  "schema_version": 1,
+  "parser_dependencies": {
+    "tree_sitter": "0.26.11",
+    "tree_sitter_typescript": "0.23.2"
+  },
+  "corpus": {
+    "kind": "synthetic_fixture",
+    "identity": "typescript-recovery-synthetic-v1",
+    "content_blake3": "cbf7f07980f802b55549de88b5a9ff728b79b950b36aeecc50014ac1c9f25ec1",
+    "files": 9,
+    "source_bytes": 1218
+  },
+  "limits": {
+    "max_manifest_bytes": 1048576,
+    "max_files": 100000,
+    "max_path_bytes": 4096,
+    "max_file_bytes": 8388608,
+    "max_total_source_bytes": 8589934592,
+    "max_nodes_per_file": 1000000,
+    "max_total_nodes": 100000000,
+    "max_recovery_nodes": 1000000,
+    "max_recovery_categories": 512,
+    "max_reported_recovery_categories": 32,
+    "diagnostic_tree_parse_timeout_seconds": 30
+  },
+  "summary": {
+    "files": 9,
+    "incomplete_files": 6,
+    "source_bytes": 1218,
+    "nodes_visited": 391,
+    "error_nodes": 6,
+    "missing_nodes": 2,
+    "extracted": {
+      "definitions": 13,
+      "nested_definitions": 2,
+      "imports": 1,
+      "references": 6,
+      "references_with_owner": 4,
+      "owner_ranges": 4
+    },
+    "retained_in_incomplete_files": {
+      "definitions": 4,
+      "nested_definitions": 0,
+      "imports": 1,
+      "references": 3,
+      "references_with_owner": 1,
+      "owner_ranges": 1
+    }
+  },
+  "strata": [
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "counts": {
+        "files": 3,
+        "incomplete_files": 2,
+        "source_bytes": 308,
+        "nodes_visited": 96,
+        "error_nodes": 2,
+        "missing_nodes": 1,
+        "extracted": {
+          "definitions": 3,
+          "nested_definitions": 0,
+          "imports": 1,
+          "references": 1,
+          "references_with_owner": 1,
+          "owner_ranges": 1
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 1,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    },
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "counts": {
+        "files": 1,
+        "incomplete_files": 1,
+        "source_bytes": 243,
+        "nodes_visited": 72,
+        "error_nodes": 1,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 2,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 1,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 2,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 1,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    },
+    {
+      "language": "typescript",
+      "source_shape": "mock_fixture_or_harness",
+      "counts": {
+        "files": 1,
+        "incomplete_files": 1,
+        "source_bytes": 173,
+        "nodes_visited": 55,
+        "error_nodes": 1,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 1,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 1,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 1,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 1,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    },
+    {
+      "language": "typescript",
+      "source_shape": "generated",
+      "counts": {
+        "files": 1,
+        "incomplete_files": 0,
+        "source_bytes": 182,
+        "nodes_visited": 60,
+        "error_nodes": 0,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 4,
+          "nested_definitions": 2,
+          "imports": 0,
+          "references": 1,
+          "references_with_owner": 1,
+          "owner_ranges": 1
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    },
+    {
+      "language": "typescript",
+      "source_shape": "intentional_invalid_syntax",
+      "counts": {
+        "files": 1,
+        "incomplete_files": 1,
+        "source_bytes": 83,
+        "nodes_visited": 29,
+        "error_nodes": 0,
+        "missing_nodes": 1,
+        "extracted": {
+          "definitions": 1,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 1,
+          "references_with_owner": 1,
+          "owner_ranges": 1
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 1,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 1,
+          "references_with_owner": 1,
+          "owner_ranges": 1
+        }
+      }
+    },
+    {
+      "language": "tsx",
+      "source_shape": "ordinary_or_declaration",
+      "counts": {
+        "files": 0,
+        "incomplete_files": 0,
+        "source_bytes": 0,
+        "nodes_visited": 0,
+        "error_nodes": 0,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    },
+    {
+      "language": "tsx",
+      "source_shape": "test",
+      "counts": {
+        "files": 1,
+        "incomplete_files": 0,
+        "source_bytes": 160,
+        "nodes_visited": 56,
+        "error_nodes": 0,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 2,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 1,
+          "references_with_owner": 1,
+          "owner_ranges": 1
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    },
+    {
+      "language": "tsx",
+      "source_shape": "mock_fixture_or_harness",
+      "counts": {
+        "files": 0,
+        "incomplete_files": 0,
+        "source_bytes": 0,
+        "nodes_visited": 0,
+        "error_nodes": 0,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    },
+    {
+      "language": "tsx",
+      "source_shape": "generated",
+      "counts": {
+        "files": 0,
+        "incomplete_files": 0,
+        "source_bytes": 0,
+        "nodes_visited": 0,
+        "error_nodes": 0,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    },
+    {
+      "language": "tsx",
+      "source_shape": "intentional_invalid_syntax",
+      "counts": {
+        "files": 1,
+        "incomplete_files": 1,
+        "source_bytes": 69,
+        "nodes_visited": 23,
+        "error_nodes": 2,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    }
+  ],
+  "recovery_category_count": 8,
+  "recovery_categories": [
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "export_statement",
+      "syntax_kind": "<none>",
+      "count": 1
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "program",
+      "syntax_kind": "type_arguments",
+      "count": 1
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "missing",
+      "parent_kind": "type_alias_declaration",
+      "syntax_kind": ";",
+      "count": 1
+    },
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "lexical_declaration",
+      "syntax_kind": "formal_parameters",
+      "count": 1
+    },
+    {
+      "language": "typescript",
+      "source_shape": "mock_fixture_or_harness",
+      "recovery_kind": "error",
+      "parent_kind": "lexical_declaration",
+      "syntax_kind": "formal_parameters",
+      "count": 1
+    },
+    {
+      "language": "typescript",
+      "source_shape": "intentional_invalid_syntax",
+      "recovery_kind": "missing",
+      "parent_kind": "formal_parameters",
+      "syntax_kind": ")",
+      "count": 1
+    },
+    {
+      "language": "tsx",
+      "source_shape": "intentional_invalid_syntax",
+      "recovery_kind": "error",
+      "parent_kind": "jsx_opening_element",
+      "syntax_kind": "<none>",
+      "count": 1
+    },
+    {
+      "language": "tsx",
+      "source_shape": "intentional_invalid_syntax",
+      "recovery_kind": "error",
+      "parent_kind": "program",
+      "syntax_kind": "identifier",
+      "count": 1
+    }
+  ],
+  "other_recovery_nodes": 0
+}

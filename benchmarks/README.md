@@ -1611,3 +1611,44 @@ evicted the same page-cache entries. No model runs in this profiler; direct-read
 share is compared only with local service and serialization time, making it an
 upper bound for an agent request. Remote, encrypted, antivirus-heavy, and
 contended filesystems need an in-situ frozen run before a scoped cache decision.
+
+## TypeScript parse recovery diagnostic
+
+`typescript_parse_diagnostic` is a manual, evaluation-only example for parser
+coverage investigations. It parses a clean checkout at an exact full Git
+revision, checks that its diagnostic tree agrees with production
+`structurally_complete`, and reports source-free aggregate extraction and
+recovery counts. Fixed path-only strata separate TypeScript/TSX and ordinary,
+test, mock/fixture/harness, generated, and intentionally invalid inputs;
+strata never suppress or reclassify parser failures.
+
+Verify the repository-owned synthetic fixture:
+
+```bash
+cargo test --locked --example typescript_parse_diagnostic
+cargo run --locked --release --example typescript_parse_diagnostic -- \
+  verify-fixture
+```
+
+Run a pinned external corpus:
+
+```bash
+cargo run --locked --release --example typescript_parse_diagnostic -- \
+  analyze \
+  --repository /path/to/clean/checkout \
+  --revision FULL_LOWERCASE_GIT_COMMIT \
+  --output /new/path/typescript-parse-diagnostic.json
+```
+
+The report is written atomically without replacing an existing path. It
+contains the corpus revision, a hash over ordered paths and contents, locked
+parser versions, active bounds, aggregate extraction counts, all fixed strata,
+the 32 largest recovery categories, and an exact remainder. It contains no
+source text or individual path.
+
+The pinned OpenClaw result and interpretation are recorded in the
+[2026-07-30 decision report](reports/typescript-parse-diagnostic-openclaw-v1-2026-07-30.md).
+It reproduces issue #367's 810 incomplete files, 1,380 `ERROR` nodes, and 40
+`MISSING` nodes. This diagnostic does not provide a semantic extraction oracle
+and therefore cannot by itself justify a grammar fork or production parser
+change.
