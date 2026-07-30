@@ -5,14 +5,18 @@ use std::fs;
 #[test]
 fn rejects_parent_traversal_at_the_repository_boundary() {
     assert!(validate_relative("../secret").is_err());
+    assert!(validate_relative("foo/../bar").is_err());
     assert!(validate_relative("foo/../../secret").is_err());
 }
 
 #[test]
 fn rejects_absolute_paths_at_the_repository_boundary() {
     assert!(validate_relative("/tmp/secret").is_err());
+    assert!(validate_relative(r"\windows\secret").is_err());
     assert!(validate_relative("C:/windows/secret").is_err());
+    assert!(validate_relative("C:windows/secret").is_err());
     assert!(validate_relative(r"C:\windows\secret").is_err());
+    assert!(validate_relative("d:temp").is_err());
 }
 
 #[test]
@@ -605,8 +609,8 @@ fn init_git_repo(root: &std::path::Path) {
 
 #[test]
 fn git_changed_paths_is_empty_outside_git_repo() {
-    let root = Sandbox::new(module_path!(), "repository_case").expect("sandbox");
-    let changed = git_changed_paths(root.repo(), 64).expect("changed paths");
+    let root = tempfile::tempdir().expect("temporary directory outside checkout");
+    let changed = git_changed_paths(root.path(), 64).expect("changed paths");
     assert!(changed.is_empty());
 }
 

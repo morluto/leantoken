@@ -11,11 +11,7 @@ mod fixture_cases;
 
 /// Run one exact, domain-owned fixture operation.
 pub fn run_fixture(identity: &str, bless: bool) -> Result<(), String> {
-    if identity.split('/').count() != 2
-        || identity
-            .split('/')
-            .any(|part| part.is_empty() || part == "." || part == "..")
-    {
+    if !valid_fixture_identity(identity) {
         return Err("fixture identity must be exactly <domain>/<case>".to_owned());
     }
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -33,5 +29,40 @@ pub fn run_fixture(identity: &str, bless: bool) -> Result<(), String> {
     }
 }
 
+fn valid_fixture_identity(identity: &str) -> bool {
+    let path = Path::new(identity);
+    !identity.starts_with('/')
+        && !identity.starts_with('\\')
+        && path.is_relative()
+        && identity.split('/').count() == 2
+        && identity.split('/').all(|part| {
+            !part.is_empty() && part != "." && part != ".." && !part.contains(['\\', ':'])
+        })
+}
+
 #[cfg(test)]
 mod domains;
+
+#[cfg(test)]
+mod tests {
+    use super::valid_fixture_identity;
+
+    #[test]
+    fn fixture_identity_rejects_absolute_and_drive_qualified_paths() {
+        for identity in [
+            "/tmp/case",
+            r"\tmp\case",
+            "C:/case",
+            "C:case",
+            "d:temp/case",
+            "domain/../case",
+        ] {
+            assert!(!valid_fixture_identity(identity), "accepted {identity}");
+        }
+    }
+
+    #[test]
+    fn fixture_identity_accepts_two_relative_components() {
+        assert!(valid_fixture_identity("protocol/catalog"));
+    }
+}

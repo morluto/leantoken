@@ -35,6 +35,7 @@ cargo test-contract
 cargo test-extras
 cargo xtask check-test-architecture
 cargo xtask test plan --dry-run
+cargo xtask test fixtures
 cargo xtask test list [domain]
 cargo xtask test run <domain>/<case>
 cargo xtask test bless <domain>/<case>

@@ -91,14 +91,14 @@ impl<'a> ProcessHarness<'a> {
         let input = input.to_owned();
         let stdin_thread = thread::spawn(move || stdin.write_all(&input));
         let deadline = Deadline::new(self.timeout);
-        let status = loop {
+        let (status, timed_out) = loop {
             if let Some(status) = child.try_wait()? {
-                break status.code();
+                break (status.code(), false);
             }
             if deadline.expired() {
                 child.kill()?;
                 let _ = child.wait();
-                break None;
+                break (None, true);
             }
             thread::sleep(Duration::from_millis(10));
         };
@@ -112,7 +112,7 @@ impl<'a> ProcessHarness<'a> {
             status,
             stdout: String::from_utf8_lossy(&stdout_thread.join().unwrap_or_default()).into_owned(),
             stderr: String::from_utf8_lossy(&stderr_thread.join().unwrap_or_default()).into_owned(),
-            timed_out: status.is_none(),
+            timed_out,
             environment_names: environment.keys().cloned().collect(),
         };
         std::fs::write(self.sandbox.logs().join("stdout.log"), &output.stdout)?;

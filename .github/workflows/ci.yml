@@ -292,6 +292,11 @@ jobs:
         timeout-minutes: 10
         run: "cargo test --locked --package leantoken --all-features --test integration process:: -- --test-threads=2"
 
+      - name: Test checked-in fixture cases
+        if: needs.changes.outputs.rust == 'true'
+        timeout-minutes: 10
+        run: cargo xtask test fixtures
+
       - name: Test token-economy contract
         if: needs.changes.outputs.rust == 'true'
         timeout-minutes: 10

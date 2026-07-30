@@ -111,22 +111,22 @@ impl GitRepository {
 #[cfg(test)]
 mod tests {
     use super::GitRepository;
+    use crate::Sandbox;
     use std::fs;
 
     #[test]
     fn local_repository_has_a_deterministic_commit_identity() {
-        let root = std::env::temp_dir().join(format!(
-            "leantoken-git-test-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
-        ));
-        let repository = GitRepository::init(&root).expect("init git repository");
-        fs::write(root.join("README.md"), "fixture\n").unwrap();
+        let sandbox = Sandbox::new(
+            module_path!(),
+            "local_repository_has_a_deterministic_commit_identity",
+        )
+        .expect("sandbox");
+        let repository = GitRepository::init(sandbox.repo()).expect("init git repository");
+        fs::write(sandbox.repo().join("README.md"), "fixture\n").unwrap();
         let commit = repository
             .commit_all("initial fixture")
             .expect("commit fixture");
         assert_eq!(commit.len(), 40);
         assert!(repository.root().join(".git").is_dir());
-        let _ = fs::remove_dir_all(root);
     }
 }

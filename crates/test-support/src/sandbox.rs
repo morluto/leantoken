@@ -76,7 +76,7 @@ impl Sandbox {
             logs: root.join("logs"),
             artifacts: root.join("artifacts"),
             root,
-            rerun: format!("cargo test --locked -- {module}::{callsite}"),
+            rerun: rerun_command(module, callsite, std::thread::current().name()),
             preservation_id,
         };
         for path in [
@@ -214,9 +214,21 @@ fn stable_id(module: &str, callsite: &str) -> String {
     format!("{safe_module}-{hash:016x}")
 }
 
+fn rerun_command(module: &str, callsite: &str, test_name: Option<&str>) -> String {
+    let package = match module.split("::").next() {
+        Some("leantoken_test_support") => "leantoken-test-support",
+        Some("leantoken_test_suite") => "leantoken-test-suite",
+        _ => "leantoken",
+    };
+    let selector = test_name
+        .filter(|name| !name.is_empty())
+        .unwrap_or(callsite);
+    format!("cargo test --locked --package {package} --all-features --lib {selector}")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Sandbox, stable_id};
+    use super::{Sandbox, rerun_command, stable_id};
 
     #[test]
     fn creates_isolated_capability_directories() {
@@ -244,5 +256,18 @@ mod tests {
         let second = Sandbox::new(module_path!(), "storage_case").unwrap();
         assert_eq!(first.id(), second.id());
         assert_ne!(first.preservation_id, second.preservation_id);
+    }
+
+    #[test]
+    fn rerun_command_uses_the_libtest_name_and_owning_package() {
+        let command = rerun_command(
+            "leantoken_test_suite::domains::storage",
+            "storage_case",
+            Some("domains::storage::reopens_existing_index"),
+        );
+        assert_eq!(
+            command,
+            "cargo test --locked --package leantoken-test-suite --all-features --lib domains::storage::reopens_existing_index"
+        );
     }
 }

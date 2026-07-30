@@ -15,7 +15,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("error: {error}");
-            ExitCode::from(1)
+            ExitCode::from(error.exit_code())
         }
     }
 }
@@ -156,8 +156,12 @@ fn run_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError> {
                     "`test product` does not accept additional arguments".to_owned(),
                 ));
             }
-            run_plan(root, TestPlan::default())
+            run_plan(root, TestPlan::for_workspace(root)?)
         }
+        "fixtures" if args.len() == 1 => run_fixtures(root),
+        "fixtures" => Err(XtaskError::Usage(
+            "`test fixtures` does not accept additional arguments".to_owned(),
+        )),
         "list" if args.len() <= 2 => list_fixtures(root, args.get(1).map(String::as_str)),
         "list" => Err(XtaskError::Usage(
             "`test list` accepts at most one domain".to_owned(),
@@ -178,7 +182,7 @@ fn run_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError> {
                     "`test plan` accepts only --dry-run".to_owned(),
                 ));
             }
-            TestPlan::default().print();
+            TestPlan::for_workspace(root)?.print();
             Ok(())
         }
         _ => Err(XtaskError::Usage(test_usage())),
@@ -221,6 +225,19 @@ fn exact_fixture_command(root: &Path, args: &[String], action: &str) -> Result<(
         "Exact fixture selected: {} ({})",
         case.identity, case.operation
     );
+    let command = fixture_command(identity, action == "bless");
+    let status = print_and_run(root, &command)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(XtaskError::CommandFailed {
+            command: command.join(" "),
+            code: status.code(),
+        })
+    }
+}
+
+fn fixture_command(identity: &str, bless: bool) -> Vec<String> {
     let mut command = cargo_command([
         "run",
         "--locked",
@@ -231,18 +248,34 @@ fn exact_fixture_command(root: &Path, args: &[String], action: &str) -> Result<(
         "--",
         identity,
     ]);
-    if action == "bless" {
+    if bless {
         command.push("--bless".to_owned());
     }
-    let status = print_and_run(root, &command)?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(XtaskError::CommandFailed {
-            command: command.join(" "),
-            code: status.code(),
-        })
+    command
+}
+
+fn fixture_commands(root: &Path) -> Result<Vec<Vec<String>>, XtaskError> {
+    Ok(FixtureManifest::list(&root.join("fixtures"), None)?
+        .into_iter()
+        .map(|case| fixture_command(&case.identity, false))
+        .collect())
+}
+
+fn run_fixtures(root: &Path) -> Result<(), XtaskError> {
+    let commands = fixture_commands(root)?;
+    if commands.is_empty() {
+        println!("No checked-in fixture cases found.");
     }
+    for command in commands {
+        let status = print_and_run(root, &command)?;
+        if !status.success() {
+            return Err(XtaskError::CommandFailed {
+                command: command.join(" "),
+                code: status.code(),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn run_plan(root: &Path, plan: TestPlan) -> Result<(), XtaskError> {
@@ -281,49 +314,48 @@ struct TestPlan {
     repetitions: usize,
 }
 
-impl Default for TestPlan {
-    fn default() -> Self {
-        Self {
-            commands: vec![
-                cargo_command([
-                    "test",
-                    "--locked",
-                    "--workspace",
-                    "--all-features",
-                    "--lib",
-                    "--bins",
-                ]),
-                cargo_command([
-                    "test",
-                    "--locked",
-                    "--package",
-                    PRODUCT,
-                    "--all-features",
-                    "--test",
-                    "integration",
-                    "--",
-                    "--skip",
-                    "process::",
-                ]),
-                cargo_command([
-                    "test",
-                    "--locked",
-                    "--package",
-                    PRODUCT,
-                    "--all-features",
-                    "--test",
-                    "integration",
-                    "process::",
-                    "--",
-                    "--test-threads=2",
-                ]),
-            ],
-            repetitions: 1,
-        }
-    }
-}
-
 impl TestPlan {
+    fn for_workspace(root: &Path) -> Result<Self, XtaskError> {
+        let mut commands = vec![
+            cargo_command([
+                "test",
+                "--locked",
+                "--workspace",
+                "--all-features",
+                "--lib",
+                "--bins",
+            ]),
+            cargo_command([
+                "test",
+                "--locked",
+                "--package",
+                PRODUCT,
+                "--all-features",
+                "--test",
+                "integration",
+                "--",
+                "--skip",
+                "process::",
+            ]),
+            cargo_command([
+                "test",
+                "--locked",
+                "--package",
+                PRODUCT,
+                "--all-features",
+                "--test",
+                "integration",
+                "process::",
+                "--",
+                "--test-threads=2",
+            ]),
+        ];
+        commands.extend(fixture_commands(root)?);
+        Ok(Self {
+            commands,
+            repetitions: 1,
+        })
+    }
     fn stress() -> Result<Self, XtaskError> {
         let repetitions = env::var("LEANTOKEN_STRESS_REPETITIONS")
             .unwrap_or_else(|_| "1".to_owned())
@@ -661,10 +693,18 @@ fn validate_domain(domain: &str) -> Result<(), XtaskError> {
 }
 
 fn valid_fixture_identity(identity: &str) -> bool {
-    identity.split('/').count() == 2
-        && identity
-            .split('/')
-            .all(|part| !part.is_empty() && part != "." && part != ".." && !part.contains('\\'))
+    let path = Path::new(identity);
+    !identity.starts_with('/')
+        && !identity.starts_with('\\')
+        && path.is_relative()
+        && identity.split('/').count() == 2
+        && identity.split('/').all(|part| {
+            !part.is_empty()
+                && part != "."
+                && part != ".."
+                && !part.contains('\\')
+                && !part.contains(':')
+        })
 }
 
 fn workspace_root() -> PathBuf {
@@ -674,10 +714,10 @@ fn workspace_root() -> PathBuf {
         .expect("xtask lives below workspace root")
 }
 fn usage() -> String {
-    "cargo xtask check-test-architecture | test-focused <selector> | test {product|list|run|bless|stress|profile|plan}".to_owned()
+    "cargo xtask check-test-architecture | test-focused <selector> | test {product|fixtures|list|run|bless|stress|profile|plan}".to_owned()
 }
 fn test_usage() -> String {
-    "cargo xtask test product | list [domain] | run <domain>/<case> | bless <domain>/<case> | stress | profile | plan --dry-run".to_owned()
+    "cargo xtask test product | fixtures | list [domain] | run <domain>/<case> | bless <domain>/<case> | stress | profile | plan --dry-run".to_owned()
 }
 
 #[derive(Debug, Clone)]
@@ -835,6 +875,18 @@ enum XtaskError {
     Architecture(String),
     CommandFailed { command: String, code: Option<i32> },
 }
+
+impl XtaskError {
+    fn exit_code(&self) -> u8 {
+        match self {
+            Self::CommandFailed {
+                code: Some(code), ..
+            } => u8::try_from(*code).unwrap_or(1),
+            _ => 1,
+        }
+    }
+}
+
 impl fmt::Display for XtaskError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -853,16 +905,38 @@ impl std::error::Error for XtaskError {}
 
 #[cfg(test)]
 mod tests {
-    use super::TestPlan;
+    use super::{TestPlan, XtaskError, valid_fixture_identity, workspace_root};
+
     #[test]
     fn plan_contains_visible_locked_phases() {
-        let plan = TestPlan::default();
-        assert_eq!(plan.commands.len(), 3);
+        let plan = TestPlan::for_workspace(&workspace_root()).expect("workspace plan");
+        assert!(plan.commands.len() >= 3);
         assert!(
             plan.commands
                 .iter()
                 .all(|command| command.contains(&"--locked".to_owned()))
         );
+        assert!(plan.commands.iter().any(|command| {
+            command
+                .windows(2)
+                .any(|args| args == ["--bin", "fixture-runner"])
+        }));
+    }
+
+    #[test]
+    fn command_failures_preserve_the_child_exit_code() {
+        let error = XtaskError::CommandFailed {
+            command: "cargo test".to_owned(),
+            code: Some(101),
+        };
+        assert_eq!(error.exit_code(), 101);
+    }
+
+    #[test]
+    fn fixture_identity_rejects_windows_absolute_and_drive_relative_paths() {
+        for identity in ["C:/case", "C:case", r"\case", "d:temp/case"] {
+            assert!(!valid_fixture_identity(identity), "accepted {identity}");
+        }
     }
 
     #[test]
