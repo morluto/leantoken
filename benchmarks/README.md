@@ -71,9 +71,9 @@ into the receipt. The output is immutable and a changed/missing task, label,
 family, binding, provenance field, or policy fails closed:
 
 ```bash
-cargo build --release --example frozen_holdout_vnext
+cargo build --release --package leantoken-benchmarks --bin frozen_holdout_vnext
 
-target/release/examples/frozen_holdout_vnext seal \
+target/release/frozen_holdout_vnext seal \
   --policy benchmarks/frozen_holdout_vnext_policy.json \
   --tasks target/frozen-holdout-vnext/tasks.public.jsonl \
   --labels target/frozen-holdout-vnext/labels.private.jsonl \
@@ -84,7 +84,7 @@ target/release/examples/frozen_holdout_vnext seal \
   --toolchain "$(rustc --version)" \
   --output target/frozen-holdout-vnext/seal-receipt.json
 
-target/release/examples/frozen_holdout_vnext verify-public \
+target/release/frozen_holdout_vnext verify-public \
   --policy benchmarks/frozen_holdout_vnext_policy.json \
   --tasks target/frozen-holdout-vnext/tasks.public.jsonl \
   --host target/frozen-holdout-vnext/host.json \
@@ -152,7 +152,7 @@ at least four samples in mirrored order, and an occurrence-total mismatch aborts
 the run:
 
 ```bash
-cargo run --release --example exact_query_receipt_profile -- \
+cargo run --release --package leantoken-benchmarks --bin exact_query_receipt_profile -- \
   --repository CLEAN_DETACHED_WORKTREE \
   --iterations 12
 ```
@@ -221,7 +221,7 @@ If a directory already exists, remove it only if it is a disposable benchmark ch
 Install `rg` and use a release build so debug-mode timing does not enter the report:
 
 ```bash
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest benchmarks/representative.json \
   --repos-root target/representative-repos \
   --output target/representative_benchmark_report.json
@@ -232,7 +232,7 @@ The JSON report is the result of record. Keep the manifest, LeanToken revision, 
 Compare two reports from the same frozen manifest with:
 
 ```bash
-cargo run --release --example benchmark_ablation -- \
+cargo run --release --package leantoken-benchmarks --bin benchmark_ablation -- \
   --baseline target/baseline.json \
   --candidate target/candidate.json
 ```
@@ -253,7 +253,7 @@ process RSS are reported globally because they are corpus/process measurements.
 Use the quality track when paired agent evaluation shows a task-success gain:
 
 ```bash
-cargo run --release --example benchmark_ablation -- \
+cargo run --release --package leantoken-benchmarks --bin benchmark_ablation -- \
   --baseline target/baseline.json \
   --candidate target/candidate.json \
   --promotion-track quality \
@@ -304,7 +304,7 @@ assignment, omitted anchor, manifest hash mismatch, or changed dataset kind.
 Run the normal validation benchmark with the overlay:
 
 ```bash
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest benchmarks/validation.json \
   --concept-labels benchmarks/context_concept_coverage.json \
   --require-concept-thresholds \
@@ -355,7 +355,7 @@ one-reread cases are adoption gates; the synthetic fixture makes no task-success
 or scalability claim.
 
 ```bash
-cargo run --release --example handoff_manifest_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin handoff_manifest_benchmark -- \
   benchmarks/reports/handoff-manifest-v1.json
 ```
 
@@ -370,7 +370,7 @@ interval unions rather than being charged or credited more than once.
 Run the repository-owned deterministic fixture with:
 
 ```bash
-cargo run --release --example ranked_region_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin ranked_region_benchmark -- \
   convert-swe-explore \
   --dataset benchmarks/fixtures/ranked_regions/swe_explore.synthetic.jsonl \
   --issue-map benchmarks/fixtures/ranked_regions/swe_explore.issue_map.json \
@@ -378,7 +378,7 @@ cargo run --release --example ranked_region_benchmark -- \
   --output target/swe-explore.manifest.jsonl \
   --line-budget 8
 
-cargo run --release --example ranked_region_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin ranked_region_benchmark -- \
   evaluate \
   --manifest benchmarks/fixtures/ranked_regions/swe_explore.manifest.jsonl \
   --predictions benchmarks/fixtures/ranked_regions/swe_explore.predictions.jsonl \
@@ -415,9 +415,9 @@ license map under ignored `target/`. The checked receipt is the only publishable
 artifact. Build the harness from a clean revision and run:
 
 ```bash
-cargo build --release --example swe_bench_multilingual_prepare
+cargo build --release --package leantoken-benchmarks --bin swe_bench_multilingual_prepare
 
-target/release/examples/swe_bench_multilingual_prepare \
+target/release/swe_bench_multilingual_prepare \
   --dataset target/external/swe-bench-multilingual/test.jsonl \
   --source-artifact target/external/swe-bench-multilingual/data/test-00000-of-00001.parquet \
   --source-revision DATASET_GIT_REVISION \
@@ -455,7 +455,7 @@ Validate every sealed region against its exact GitHub base revision without
 printing individual paths or labels:
 
 ```bash
-cargo build --example artifact_blake3
+cargo build --package leantoken-benchmarks --bin artifact_blake3
 
 benchmarks/validate_swe_bench_regions.sh \
   target/swe-bench-multilingual/tasks.jsonl \
@@ -517,7 +517,7 @@ primitive keys. The result therefore defers a cross-request LRU and treats the
 overlap signal as a reason to inspect request-local batching instead.
 
 ```bash
-cargo run --release --example retrieval_reuse_report
+cargo run --release --package leantoken-benchmarks --bin retrieval_reuse_report
 ```
 
 ### Dependency and caller signal ablation
@@ -553,7 +553,7 @@ Reproduce it from a clean checkout and the pinned repositories with a release
 binary:
 
 ```bash
-cargo run --release --example graph_signal_ablation -- \
+cargo run --release --package leantoken-benchmarks --bin graph_signal_ablation -- \
   --manifest benchmarks/graph_signal_ablation_v1.json \
   --repos-root target/representative-repos \
   --output target/graph-signal-ablation-v1.json
@@ -576,7 +576,7 @@ Build the evaluator in a clean detached evaluator worktree, record the binary
 BLAKE3, and materialize the private evaluator manifest without printing it:
 
 ```bash
-EVALUATOR=target/release/examples/swe_bench_multilingual_gate
+EVALUATOR=target/release/swe_bench_multilingual_gate
 
 "$EVALUATOR" materialize \
   --tasks target/sbml-dev-v1-final-c/tasks.jsonl \
@@ -623,7 +623,7 @@ scoring binary itself; precomputed, unbound reports are not accepted:
   --manifest target/gate-a/manifest.private.jsonl \
   --baseline-predictions target/gate-a/baseline.predictions.jsonl \
   --candidate-predictions target/gate-a/candidate.predictions.jsonl \
-  --ranked-evaluator-binary target/release/examples/ranked_region_benchmark \
+  --ranked-evaluator-binary target/release/ranked_region_benchmark \
   --ranked-evaluator-binary-blake3 RANKED_EVALUATOR_BINARY_BLAKE3 \
   --baseline-report-output target/gate-a/baseline.report.json \
   --candidate-report-output target/gate-a/candidate.report.json \
@@ -695,35 +695,35 @@ Convert only the supported labels, preflight the generated manifests, then run
 the release benchmark:
 
 ```bash
-cargo run --release --example external_corpus_adapter -- \
+cargo run --release --package leantoken-benchmarks --bin external_corpus_adapter -- \
   --lock benchmarks/external_corpora.json \
   semble \
   --source target/external-corpus-datasets/semble \
   --repository requests \
   --output target/external-corpora/semble-requests.json
 
-cargo run --release --example external_corpus_adapter -- \
+cargo run --release --package leantoken-benchmarks --bin external_corpus_adapter -- \
   --lock benchmarks/external_corpora.json \
   sverklo \
   --source target/external-corpus-datasets/sverklo-bench \
   --output target/external-corpora/sverklo.json
 
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest target/external-corpora/semble-requests.json \
   --repos-root target/external-corpus-repos \
   --output target/external-corpora/semble-requests-report.json \
   --preflight-only
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest target/external-corpora/sverklo.json \
   --repos-root target/external-corpus-repos \
   --output target/external-corpora/sverklo-report.json \
   --preflight-only
 
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest target/external-corpora/semble-requests.json \
   --repos-root target/external-corpus-repos \
   --output target/external-corpora/semble-requests-report.json
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest target/external-corpora/sverklo.json \
   --repos-root target/external-corpus-repos \
   --output target/external-corpora/sverklo-report.json
@@ -759,7 +759,7 @@ tar --zstd -xf \
   target/arb/releases/v2_trace2code/agent_retrieval_bench_v2_trace2code.tar.zst \
   -C target/arb
 
-cargo run --release --example external_corpus_adapter -- \
+cargo run --release --package leantoken-benchmarks --bin external_corpus_adapter -- \
   --lock benchmarks/external_corpora.json \
   arb-trace2code \
   --source target/arb \
@@ -776,7 +776,7 @@ git clone --filter=blob:none https://github.com/pallets/click.git \
 git -C target/arb-repos/arb-pallets__click-011b9f9d190c checkout \
   011b9f9d190c71310264e6c54bae6259f5e38a9f
 
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest target/external-corpora/arb-trace2code-smoke.json \
   --repos-root target/arb-repos \
   --output target/external-corpora/arb-trace2code-smoke-report.json
@@ -788,16 +788,16 @@ only from the public ARB query/trace; it never reads `root_cause_files`, spans,
 or other labels:
 
 ```bash
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest target/external-corpora/arb-trace2code-smoke.json \
   --repos-root target/arb-repos \
   --output target/arb-workflow-evidence-baseline.json
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest target/external-corpora/arb-trace2code-smoke.json \
   --repos-root target/arb-repos \
   --output target/arb-workflow-evidence-candidate.json \
   --workflow-evidence
-cargo run --release --example benchmark_ablation -- \
+cargo run --release --package leantoken-benchmarks --bin benchmark_ablation -- \
   --baseline target/arb-workflow-evidence-baseline.json \
   --candidate target/arb-workflow-evidence-candidate.json
 ```
@@ -807,12 +807,12 @@ baseline. It examines at most 256 already-local ancestor commits with one
 merged pickaxe query and feeds at most four current paths into context:
 
 ```bash
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest target/external-corpora/arb-trace2code-smoke.json \
   --repos-root target/arb-repos \
   --output target/arb-history-lane-baseline.json \
   --workflow-evidence
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest target/external-corpora/arb-trace2code-smoke.json \
   --repos-root target/arb-repos \
   --output target/arb-history-lane-candidate.json \
@@ -830,17 +830,17 @@ eight call terms, queries only indexed structural definitions, and supplies at
 most two soft focus paths:
 
 ```bash
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest target/external-corpora/arb-trace2code-smoke.json \
   --repos-root target/arb-repos \
   --output target/arb-ast-structural-baseline.json \
   --workflow-evidence
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest target/external-corpora/arb-trace2code-smoke.json \
   --repos-root target/arb-repos \
   --output target/arb-ast-structural-candidate.json \
   --workflow-evidence --ast-structural-lane
-cargo run --release --example benchmark_ablation -- \
+cargo run --release --package leantoken-benchmarks --bin benchmark_ablation -- \
   --baseline target/arb-ast-structural-baseline.json \
   --candidate target/arb-ast-structural-candidate.json
 ```
@@ -856,12 +856,12 @@ adds one routing artifact of at most 128 exact tokens per task without changing
 context selection:
 
 ```bash
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest target/external-corpora/arb-trace2code-smoke.json \
   --repos-root target/arb-repos \
   --output target/arb-orientation-capsule-baseline.json \
   --workflow-evidence --ast-structural-lane
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest target/external-corpora/arb-trace2code-smoke.json \
   --repos-root target/arb-repos \
   --output target/arb-orientation-capsule-candidate.json \
@@ -891,17 +891,17 @@ owner among the two diagnostic paths is capped at 128 source tokens, and that
 reservation is charged inside the task budget:
 
 ```bash
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest target/external-corpora/arb-trace2code-smoke.json \
   --repos-root target/arb-repos \
   --output target/arb-ast-structural-v2-control.json \
   --workflow-evidence --ast-structural-lane
-cargo run --release --example representative_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
   --manifest target/external-corpora/arb-trace2code-smoke.json \
   --repos-root target/arb-repos \
   --output target/arb-ast-structural-v2-candidate.json \
   --workflow-evidence --ast-structural-lane-v2
-cargo run --release --example benchmark_ablation -- \
+cargo run --release --package leantoken-benchmarks --bin benchmark_ablation -- \
   --baseline target/arb-ast-structural-v2-control.json \
   --candidate target/arb-ast-structural-v2-candidate.json
 ```
@@ -935,7 +935,7 @@ exact/overlap rereads, and ranges with no downstream signal. It does not turn
 those signals into a guessed utilization percentage:
 
 ```bash
-cargo run --release --example context_utilization -- \
+cargo run --release --package leantoken-benchmarks --bin context_utilization -- \
   --tool-trace target/model-ab/run/tool-trace.json \
   --trajectory target/model-ab/run/trajectory.json \
   --relevant-path src/parser.rs \
@@ -967,7 +967,7 @@ The separate deep-read diagnostic exercises explicit ranges at both ends of a
 near-default-limit synthetic file:
 
 ```bash
-cargo run --release --example deep_live_read -- --iterations 100
+cargo run --release --package leantoken-benchmarks --bin deep_live_read -- --iterations 100
 ```
 
 The local 30-sample run used a 2,093,034-byte, 35,069-line file. Complete reads
@@ -1053,7 +1053,7 @@ speedup. See the full
 Reproduce the matrix with:
 
 ```bash
-cargo run --release --example real_repository_profile -- \
+cargo run --release --package leantoken-benchmarks --bin real_repository_profile -- \
   --repository /path/to/openclaw --iterations 5
 ```
 
@@ -1154,7 +1154,7 @@ negative complete-response token delta for every projection. Run it in release
 mode with:
 
 ```bash
-cargo run --release --example compact_projection_benchmark -- \
+cargo run --release --package leantoken-benchmarks --bin compact_projection_benchmark -- \
   --manifest benchmarks/compact_projection_tasks.json \
   --repository-root . \
   --source-revision "$(git rev-parse HEAD)" \
@@ -1303,7 +1303,7 @@ Run it in release mode and keep the generated JSON when using the measurements
 to make an indexing or cache decision:
 
 ```bash
-cargo run --release --example indexing_profile -- \
+cargo run --release --package leantoken-benchmarks --bin indexing_profile -- \
   --files 5000 \
   --file-bytes 8192 \
   --iterations 20 \
@@ -1333,7 +1333,7 @@ git clone https://github.com/tokio-rs/tokio target/profile-repos/tokio
 git -C target/profile-repos/tokio checkout --detach \
   9cae638de6dc8dd9779c450201df8c102247a242
 
-cargo run --release --example indexing_profile -- \
+cargo run --release --package leantoken-benchmarks --bin indexing_profile -- \
   --repository target/profile-repos/tokio \
   --repository-label https://github.com/tokio-rs/tokio \
   --iterations 20 \
@@ -1385,8 +1385,8 @@ Commit the profiler first, leave the LeanToken and corpus worktrees clean, and
 run the already-built release binary:
 
 ```bash
-cargo build --release --example indexing_profile
-target/release/examples/indexing_profile cold-matrix \
+cargo build --release --package leantoken-benchmarks --bin indexing_profile
+target/release/indexing_profile cold-matrix \
   --repository target/profile-repos/TileLang \
   --repository-label https://github.com/tile-ai/TileLang.git \
   --expected-revision eb31994ad782108d8754b19603b428eca9c1e19d \
@@ -1401,7 +1401,7 @@ Run the narrower 1-vs-2 follow-up only after the screening report selects two
 workers:
 
 ```bash
-target/release/examples/indexing_profile cold-matrix \
+target/release/indexing_profile cold-matrix \
   --matrix-kind two-worker-follow-up \
   --repository target/profile-repos/TileLang \
   --repository-label https://github.com/tile-ai/TileLang.git \
@@ -1512,8 +1512,8 @@ publishing that result.
 Run one frozen pair locally with the already-built release binary:
 
 ```bash
-cargo build --release --example indexing_profile
-target/release/examples/indexing_profile \
+cargo build --release --package leantoken-benchmarks --bin indexing_profile
+target/release/indexing_profile \
   --repository target/profile-repos/tokio \
   --repository-label https://github.com/tokio-rs/tokio.git \
   --iterations 10 \
@@ -1529,7 +1529,7 @@ uploads one raw artifact per pair. After downloading those artifacts without
 merging their directories, reproduce the decision with:
 
 ```bash
-cargo run --release --example monorepo_reconciliation_report -- \
+cargo run --release --package leantoken-benchmarks --bin monorepo_reconciliation_report -- \
   --manifest benchmarks/monorepo_reconciliation.json \
   --artifacts target/monorepo-profile-artifacts \
   --output target/monorepo-reconciliation-report.json
@@ -1581,8 +1581,8 @@ the decision conservative in favor of a cache.
 Run one pair from a clean pinned checkout with a release binary:
 
 ```bash
-cargo build --release --example live_read_profile
-target/release/examples/live_read_profile \
+cargo build --release --package leantoken-benchmarks --bin live_read_profile
+target/release/live_read_profile \
   --repository target/live-read-repos/flask \
   --repository-label https://github.com/pallets/flask.git \
   --iterations 200 \
@@ -1598,7 +1598,7 @@ per pair. Reproduce its strict aggregate decision after downloading the six
 artifact directories without merging them:
 
 ```bash
-cargo run --release --example live_read_decision_report -- \
+cargo run --release --package leantoken-benchmarks --bin live_read_decision_report -- \
   --manifest benchmarks/live_read_decision.json \
   --artifacts target/live-read-profile-artifacts \
   --output target/live-read-decision-report.json

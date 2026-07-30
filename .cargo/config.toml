@@ -4,8 +4,8 @@ test-focused = "run --locked --package leantoken-xtask -- test-focused"
 # Complete product-behavior suite with stable nested-process concurrency.
 test-product = "run --locked --package leantoken-xtask -- test product"
 # Opt-in token-economy contract; this is an explicit non-default executable.
-test-contract = "run --locked --package leantoken --example benchmark-contract"
+test-contract = "run --locked --package leantoken-benchmarks --bin benchmark-contract"
 # Less-frequent benchmark and example target group.
-test-extras = "test --locked --package leantoken --all-features --examples"
+test-extras = "test --locked --package leantoken-benchmarks --bins"
 # Rust orchestration for test selection, fixture cases, and workspace checks.
 xtask = "run --locked --package leantoken-xtask --"

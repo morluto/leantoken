@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = [".", "crates/test-support", "crates/test-suite", "xtask"]
+members = [".", "crates/benchmarks", "crates/test-support", "crates/test-suite", "xtask"]
 default-members = [".", "crates/test-support", "crates/test-suite", "xtask"]
 
 [workspace.lints.rust]
@@ -17,6 +17,7 @@ version = "0.1.19"
 edition = "2024"
 rust-version = "1.95"
 autotests = false
+autoexamples = false
 description = "Token-budgeted repository context for coding agents"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/morluto/leantoken"
@@ -29,11 +30,6 @@ workspace = true
 [[test]]
 name = "integration"
 path = "tests/integration.rs"
-
-[[example]]
-name = "benchmark-contract"
-path = "tests/benchmark_contract.rs"
-test = false
 
 [dependencies]
 base64 = "0.22.1"

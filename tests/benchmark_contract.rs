@@ -76,7 +76,7 @@ struct Report {
 
 #[tokio::main]
 async fn main() {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/sample_repo");
+    let source = Path::new(env!("LEANTOKEN_REPOSITORY_ROOT")).join("fixtures/sample_repo");
     let temp = tempfile::tempdir().expect("temporary benchmark repository");
     let root = temp.path().join("repo");
     copy_tree(&source, &root);
@@ -249,7 +249,7 @@ async fn main() {
     };
     let pretty = serde_json::to_string_pretty(&report).expect("serialize report");
     let report_path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/benchmark_contract_report.json");
+        Path::new(env!("LEANTOKEN_REPOSITORY_ROOT")).join("target/benchmark_contract_report.json");
     fs::write(&report_path, &pretty).expect("write report");
     println!("{pretty}");
 

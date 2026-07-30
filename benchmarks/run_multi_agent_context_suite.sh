@@ -42,8 +42,8 @@ manifest=${CODEX_SUITE_MANIFEST:-"$script_directory/multi_agent_context_suite.js
 manifest=$(canonical_file "$manifest")
 codex_binary=${CODEX_SUITE_CODEX_BINARY:-codex}
 leantoken_binary=${CODEX_SUITE_LEANTOKEN_BINARY:-"$repository_root/target/release/leantoken"}
-receipt_binary=${CODEX_SUITE_RECEIPT_BINARY:-"$repository_root/target/release/examples/codex_multi_agent_receipt"}
-suite_binary=${CODEX_SUITE_AGGREGATE_BINARY:-"$repository_root/target/release/examples/codex_multi_agent_suite"}
+receipt_binary=${CODEX_SUITE_RECEIPT_BINARY:-"$repository_root/target/release/codex_multi_agent_receipt"}
+suite_binary=${CODEX_SUITE_AGGREGATE_BINARY:-"$repository_root/target/release/codex_multi_agent_suite"}
 codex_state_directory=${CODEX_SUITE_STATE_DIRECTORY:-"${CODEX_HOME:-$HOME/.codex}"}
 sessions_root="$codex_state_directory/sessions"
 

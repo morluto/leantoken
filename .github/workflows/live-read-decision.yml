@@ -69,14 +69,14 @@ jobs:
           test "$(git -C "$repository" rev-parse HEAD)" = "${{ matrix.revision }}"
 
       - name: Build release profiler
-        run: cargo build --release --example live_read_profile
+        run: cargo build --release --package leantoken-benchmarks --bin live_read_profile
 
       - name: Profile on Linux
         if: runner.os == 'Linux'
         run: |
           mkdir -p target/live-read-profile
           /usr/bin/time -v -o target/live-read-profile/process.txt \
-            target/release/examples/live_read_profile \
+            target/release/live_read_profile \
               --repository "$RUNNER_TEMP/live-read-profile/${{ matrix.corpus }}" \
               --repository-label "${{ matrix.repository }}" \
               --iterations "${{ matrix.iterations }}" \
@@ -95,7 +95,7 @@ jobs:
         run: |
           mkdir -p target/live-read-profile
           /usr/bin/time -l \
-            target/release/examples/live_read_profile \
+            target/release/live_read_profile \
               --repository "$RUNNER_TEMP/live-read-profile/${{ matrix.corpus }}" \
               --repository-label "${{ matrix.repository }}" \
               --iterations "${{ matrix.iterations }}" \
@@ -125,7 +125,7 @@ jobs:
             '--output', 'target/live-read-profile/profile.json'
           )
           $start = @{
-            FilePath = 'target/release/examples/live_read_profile.exe'
+            FilePath = 'target/release/live_read_profile.exe'
             ArgumentList = $arguments
             NoNewWindow = $true
             PassThru = $true
@@ -199,7 +199,7 @@ jobs:
 
       - name: Aggregate frozen matrix
         run: |
-          cargo run --release --example live_read_decision_report -- \
+          cargo run --release --package leantoken-benchmarks --bin live_read_decision_report -- \
             --manifest benchmarks/live_read_decision.json \
             --artifacts target/live-read-profile-artifacts \
             --output target/live-read-decision-report.json \

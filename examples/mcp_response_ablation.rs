@@ -1502,7 +1502,7 @@ mod tests {
 
     #[tokio::test]
     async fn current_runtime_preserves_frozen_acceptance_invariants() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(env!("LEANTOKEN_REPOSITORY_ROOT"));
         let manifest: Manifest = read_json(&root.join("benchmarks/mcp_response_ablation.json"))
             .expect("frozen manifest");
         let report = generate(&manifest, &root).await.expect("valid report");
@@ -1516,7 +1516,7 @@ mod tests {
 
     #[test]
     fn checked_report_matches_its_manifest_commitment() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(env!("LEANTOKEN_REPOSITORY_ROOT"));
         let manifest: Manifest = read_json(&root.join("benchmarks/mcp_response_ablation.json"))
             .expect("frozen manifest");
         validate_manifest(&manifest).expect("valid manifest");

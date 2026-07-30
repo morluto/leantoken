@@ -1046,6 +1046,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "leantoken-benchmarks"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "clap",
+ "leantoken",
+ "regex",
+ "rmcp",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "shell-words",
+ "statrs",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "unidiff",
+ "wait-timeout",
+]
+
+[[package]]
 name = "leantoken-test-suite"
 version = "0.1.0"
 dependencies = [

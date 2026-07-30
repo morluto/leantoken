@@ -1195,7 +1195,6 @@ mod tests {
                 .contains("usage regressed")
         );
 
-        let mut lines = lines;
         lines.retain(|line| {
             line.pointer("/payload/type").and_then(Value::as_str) != Some("task_complete")
         });

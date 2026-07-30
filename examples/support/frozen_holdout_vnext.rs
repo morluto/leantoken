@@ -1006,17 +1006,27 @@ mod tests {
             task_family: family.into(),
             repository: RepositoryIdentity {
                 url: format!("https://example.com/repository-{}.git", variant % 2),
-                revision: if variant % 2 == 0 {
+                revision: if variant.is_multiple_of(2) {
                     REVISION.into()
                 } else {
                     "2222222222222222222222222222222222222222".into()
                 },
             },
             languages: vec![
-                if variant % 2 == 0 { "rust" } else { "python" }.into(),
-                if variant % 2 == 0 { "python" } else { "rust" }.into(),
+                if variant.is_multiple_of(2) {
+                    "rust"
+                } else {
+                    "python"
+                }
+                .into(),
+                if variant.is_multiple_of(2) {
+                    "python"
+                } else {
+                    "rust"
+                }
+                .into(),
             ],
-            task_shape: if variant % 2 == 0 {
+            task_shape: if variant.is_multiple_of(2) {
                 "behavioral"
             } else {
                 "structural"

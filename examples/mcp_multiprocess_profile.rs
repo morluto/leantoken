@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! cargo build --release
-//! cargo run --release --example mcp_multiprocess_profile -- \
+//! cargo run --release --package leantoken-benchmarks --bin mcp_multiprocess_profile -- \
 //!   --binary target/release/leantoken --output report.json
 //! ```
 

@@ -99,7 +99,7 @@ for side in base head; do
   (
     cd "${worktree}"
     CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="${build_target}" \
-      cargo build --release --example hot_path_bounds --example indexing_profile
+      cargo build --release --package leantoken-benchmarks --bin hot_path_bounds --bin indexing_profile
   )
   mkdir "${bin_dir}"
   cp "${build_target}/release/examples/hot_path_bounds" "${bin_dir}/"

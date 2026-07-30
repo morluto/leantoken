@@ -9,7 +9,7 @@ fi
 tasks=$1
 labels=$2
 receipt=$3
-artifact_blake3=${ARTIFACT_BLAKE3:-target/debug/examples/artifact_blake3}
+artifact_blake3=${ARTIFACT_BLAKE3:-target/debug/artifact_blake3}
 if [[ -e $receipt ]]; then
   printf 'refusing to overwrite %s\n' "$receipt" >&2
   exit 1
