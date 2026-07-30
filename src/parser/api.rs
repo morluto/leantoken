@@ -17,6 +17,7 @@ pub fn language_by_path(path: impl AsRef<Path>) -> Option<String> {
             "cpp".to_string()
         }
         "java" => "java".to_string(),
+        "kt" | "kts" => "kotlin".to_string(),
         "rs" => "rust".to_string(),
         "py" | "pyi" => "python".to_string(),
         "php" => "php".to_string(),

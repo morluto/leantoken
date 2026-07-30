@@ -153,6 +153,12 @@ class Formatter {
 }
 "#;
 
+const KOTLIN_SRC: &str = r#"
+class Formatter {
+    fun format(): String = helper()
+}
+"#;
+
 const PHP_SRC: &str = r#"<?php
 class Formatter {
     public function format() {
@@ -225,6 +231,8 @@ fn development_languages_are_detected_by_path() {
         ("src/value.cpp", "cpp"),
         ("include/value.hpp", "cpp"),
         ("src/Value.java", "java"),
+        ("src/Value.kt", "kotlin"),
+        ("build.gradle.kts", "kotlin"),
         ("src/value.php", "php"),
         ("lib/value.rb", "ruby"),
         ("src/index.html", "html"),
@@ -757,6 +765,25 @@ fn java_php_and_ruby_parse_definitions_and_calls() -> Result<()> {
             "{language} references: {references:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn kotlin_parses_source_and_script_definitions_and_calls() -> Result<()> {
+    let source = parse_language("kotlin", KOTLIN_SRC)?;
+    assert!(source.structurally_complete);
+    let names = symbol_names(&source);
+    assert!(names.contains(&"Formatter"), "symbols: {names:?}");
+    assert!(names.contains(&"format"), "symbols: {names:?}");
+    assert!(
+        reference_names(&source).contains(&"helper"),
+        "references: {:?}",
+        source.references
+    );
+
+    let script = parse("build.gradle.kts", "plugins { kotlin(\"jvm\") }\n")?;
+    assert_eq!(script.language.as_deref(), Some("kotlin"));
+    assert!(script.structurally_complete);
     Ok(())
 }
 
