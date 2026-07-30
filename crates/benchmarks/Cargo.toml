@@ -154,6 +154,10 @@ name = "representative_benchmark"
 path = "../../examples/representative_benchmark.rs"
 
 [[bin]]
+name = "resolved_reference_oracle"
+path = "../../examples/resolved_reference_oracle.rs"
+
+[[bin]]
 name = "retrieval_reuse_report"
 path = "../../examples/retrieval_reuse_report.rs"
 
@@ -191,5 +195,7 @@ statrs = "0.18.0"
 tempfile = "3.23.0"
 tokio = { version = "1.49.0", features = ["fs", "macros", "rt-multi-thread", "signal", "sync", "time", "test-util"] }
 tokio-util = { version = "0.7.17", features = ["rt"] }
+tree-sitter = "0.26.11"
+tree-sitter-python = "0.25.0"
 unidiff = { version = "0.4.0", default-features = false }
 wait-timeout = "0.2.1"

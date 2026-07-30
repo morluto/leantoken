@@ -177,6 +177,22 @@ separately from production extraction. Kotlin remains unsupported by
 production structural parsing; this target is an evaluation contract, not an
 index-readiness check.
 
+When changing the Python resolved-reference oracle, its frozen labels, or its
+checked reports, run:
+
+```bash
+cargo test --locked --package leantoken-benchmarks \
+  --bin resolved_reference_oracle
+cargo run --locked --release --package leantoken-benchmarks \
+  --bin resolved_reference_oracle -- verify-fixture
+```
+
+The fixture, exact comparison, resource receipt, coverage gaps, and no-public-tool
+decision are documented in
+[`../benchmarks/README.md`](../benchmarks/README.md#python-resolved-reference-oracle).
+This is an evaluation contract; it does not establish production binding
+semantics or authorize a CLI or MCP surface.
+
 These repository-local Cargo aliases keep the fast and extended target groups
 consistent with CI. The development profile retains line tables for useful
 backtraces in LeanToken while omitting dependency debug information, which

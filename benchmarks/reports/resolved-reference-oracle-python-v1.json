@@ -1,0 +1,331 @@
+{
+  "schema_version": 1,
+  "experiment_id": "resolved-reference-oracle-python-v1",
+  "manifest_blake3": "505f1c6c79001168bc0c100e611bd90a0ffbccdd865ba36e5e1d0bdd322b9760",
+  "source": {
+    "path": "benchmarks/fixtures/resolved_reference_oracle/python_api_migration.py",
+    "blake3": "85d6127bf78e4c765073f20c4455ac623cd992b9bb03a491e3cf423d2b5e0fea",
+    "bytes": 910
+  },
+  "engine": {
+    "language": "python",
+    "tree_sitter": "0.26.11",
+    "tree_sitter_python": "0.25.0",
+    "tokenizer": "cl100k_base",
+    "token_count_exact": true,
+    "evaluation_only": true,
+    "production_index_rows_loaded": 0
+  },
+  "target": {
+    "owner": "Runtime",
+    "symbol": "close"
+  },
+  "limits": {
+    "max_manifest_bytes": 262144,
+    "max_source_bytes": 65536,
+    "max_ast_nodes": 10000,
+    "max_candidates": 256,
+    "max_type_bindings": 256,
+    "max_identifier_bytes": 128,
+    "max_candidate_payload_tokens": 2048
+  },
+  "coverage": {
+    "syntax_complete": true,
+    "lexical_target_occurrences": 17,
+    "classified_occurrences": 17,
+    "unclassified_occurrences": 0,
+    "exact_membership": true,
+    "exact_coordinates": true,
+    "exact_classification": true,
+    "exact_roles": true,
+    "exact_confidence": true,
+    "supported_resolution_shapes": [
+      "target, ancestor-protocol, subclass, and mock method definitions",
+      "typed function parameters, straight-line local rebindings, and direct constructors",
+      "wrapper fields assigned from typed constructor parameters",
+      "module export aliases and one-hop re-export aliases",
+      "same-name methods on known unrelated receiver types",
+      "unknown receivers retained as ambiguous",
+      "string and comment matches retained as non-executable"
+    ],
+    "explicit_coverage_gaps": [
+      "dynamic dispatch, monkey-patching, descriptors, and getattr/setattr",
+      "import aliases, star imports, and cross-module re-export chains",
+      "generic, union, stringized, and inferred return types",
+      "control-flow-sensitive local bindings, closures, comprehensions, and lambda scopes",
+      "decorator-generated methods and runtime protocol registration",
+      "languages other than Python and non-synthetic repositories"
+    ]
+  },
+  "measurements": {
+    "source_bytes": 910,
+    "unique_ast_nodes_collected": 277,
+    "modeled_post_parse_ast_node_inspection_upper_bound": 103200000000,
+    "modeled_post_parse_lookup_iteration_upper_bound": 2056000000000000,
+    "candidate_volume": 17,
+    "ast_candidates": 15,
+    "string_or_comment_candidates": 2,
+    "type_bindings_loaded": 5,
+    "retained_candidate_bytes": 680,
+    "modeled_partial_allocation_estimate_bytes": 879616,
+    "candidate_payload_tokens_cl100k": 580
+  },
+  "comparison": {
+    "expected_occurrences": 17,
+    "observed_occurrences": 17,
+    "false_positives": 0,
+    "false_negatives": 0,
+    "coordinate_mismatches": 0,
+    "classification_mismatches": 0,
+    "role_mismatches": 0,
+    "confidence_mismatches": 0,
+    "resolved": {
+      "expected": 11,
+      "observed": 11
+    },
+    "ambiguous": {
+      "expected": 1,
+      "observed": 1
+    },
+    "unrelated": {
+      "expected": 5,
+      "observed": 5
+    },
+    "passed": true
+  },
+  "observations": [
+    {
+      "start": {
+        "line": 5,
+        "column": 9
+      },
+      "end": {
+        "line": 5,
+        "column": 14
+      },
+      "classification": "resolved",
+      "role": "protocol_definition",
+      "confidence": "high"
+    },
+    {
+      "start": {
+        "line": 10,
+        "column": 9
+      },
+      "end": {
+        "line": 10,
+        "column": 14
+      },
+      "classification": "resolved",
+      "role": "target_definition",
+      "confidence": "high"
+    },
+    {
+      "start": {
+        "line": 19,
+        "column": 9
+      },
+      "end": {
+        "line": 19,
+        "column": 14
+      },
+      "classification": "unrelated",
+      "role": "unrelated_definition",
+      "confidence": "high"
+    },
+    {
+      "start": {
+        "line": 24,
+        "column": 9
+      },
+      "end": {
+        "line": 24,
+        "column": 14
+      },
+      "classification": "resolved",
+      "role": "fixture_mock_definition",
+      "confidence": "high"
+    },
+    {
+      "start": {
+        "line": 32,
+        "column": 9
+      },
+      "end": {
+        "line": 32,
+        "column": 14
+      },
+      "classification": "resolved",
+      "role": "wrapper_definition",
+      "confidence": "high"
+    },
+    {
+      "start": {
+        "line": 33,
+        "column": 22
+      },
+      "end": {
+        "line": 33,
+        "column": 27
+      },
+      "classification": "resolved",
+      "role": "wrapper_forwarder",
+      "confidence": "high"
+    },
+    {
+      "start": {
+        "line": 36,
+        "column": 1
+      },
+      "end": {
+        "line": 36,
+        "column": 6
+      },
+      "classification": "resolved",
+      "role": "export_alias_definition",
+      "confidence": "high"
+    },
+    {
+      "start": {
+        "line": 36,
+        "column": 17
+      },
+      "end": {
+        "line": 36,
+        "column": 22
+      },
+      "classification": "resolved",
+      "role": "export_source_reference",
+      "confidence": "high"
+    },
+    {
+      "start": {
+        "line": 37,
+        "column": 16
+      },
+      "end": {
+        "line": 37,
+        "column": 21
+      },
+      "classification": "resolved",
+      "role": "reexport_alias_reference",
+      "confidence": "high"
+    },
+    {
+      "start": {
+        "line": 46,
+        "column": 13
+      },
+      "end": {
+        "line": 46,
+        "column": 18
+      },
+      "classification": "resolved",
+      "role": "resolved_call",
+      "confidence": "high"
+    },
+    {
+      "start": {
+        "line": 47,
+        "column": 11
+      },
+      "end": {
+        "line": 47,
+        "column": 16
+      },
+      "classification": "resolved",
+      "role": "resolved_call",
+      "confidence": "high"
+    },
+    {
+      "start": {
+        "line": 48,
+        "column": 11
+      },
+      "end": {
+        "line": 48,
+        "column": 16
+      },
+      "classification": "unrelated",
+      "role": "unrelated_call",
+      "confidence": "high"
+    },
+    {
+      "start": {
+        "line": 49,
+        "column": 13
+      },
+      "end": {
+        "line": 49,
+        "column": 18
+      },
+      "classification": "ambiguous",
+      "role": "ambiguous_call",
+      "confidence": "low"
+    },
+    {
+      "start": {
+        "line": 50,
+        "column": 15
+      },
+      "end": {
+        "line": 50,
+        "column": 20
+      },
+      "classification": "resolved",
+      "role": "resolved_call",
+      "confidence": "high"
+    },
+    {
+      "start": {
+        "line": 51,
+        "column": 20
+      },
+      "end": {
+        "line": 51,
+        "column": 25
+      },
+      "classification": "unrelated",
+      "role": "unrelated_call",
+      "confidence": "high"
+    },
+    {
+      "start": {
+        "line": 52,
+        "column": 23
+      },
+      "end": {
+        "line": 52,
+        "column": 28
+      },
+      "classification": "unrelated",
+      "role": "non_code_string",
+      "confidence": "high"
+    },
+    {
+      "start": {
+        "line": 53,
+        "column": 15
+      },
+      "end": {
+        "line": 53,
+        "column": 20
+      },
+      "classification": "unrelated",
+      "role": "non_code_comment",
+      "confidence": "high"
+    }
+  ],
+  "decision": {
+    "oracle_result": "pass",
+    "issue_outcome": "evaluation_complete_no_public_tool",
+    "add_public_impact_analysis_tool": false,
+    "rationale": "The frozen Python oracle separates resolved, ambiguous, and unrelated occurrences exactly, but one synthetic single-language fixture cannot establish production binding semantics or justify another public tool."
+  },
+  "limitations": [
+    "This is a deterministic mechanism check, not a representative repository benchmark.",
+    "The partial allocation estimate models source copies, candidate slots, type-binding strings, and 64 bytes per configured AST node; it excludes manifest/deserialization/report buffers and parser/tree allocator overhead, so it is not a memory bound. Peak RSS is recorded separately because it is host- and build-dependent.",
+    "Gold labels are used only after candidate discovery and classification, for exact comparison.",
+    "No production service, index schema, CLI command, MCP schema, or ranking behavior changes."
+  ]
+}

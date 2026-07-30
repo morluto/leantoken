@@ -794,6 +794,24 @@ become soft context focus paths. Gold labels never enter discovery. The lane
 adds no parser pass during indexing, performs no file scan, does not force a
 fragment quota, and does not change default production ranking.
 
+The evaluation-only Python resolved-reference oracle parses one frozen source
+file of at most 64 KiB and materializes at most 10,000 unique AST nodes. For a
+completed report, its collection, method-subtree, and source-ordered local
+binding work has the deliberately loose upper bound
+`(4 * max_candidates + 8) * max_ast_nodes^2` post-parse node inspections.
+Scope, ancestry, and type resolution use bounded linear metadata tables;
+repeated candidate-local resolution has the separate upper bound
+`(8 * max_candidates + 8) * max_ast_nodes^3` lookup-loop iterations. The
+traversal checks its remaining node allowance before queuing children. It
+retains at most 256 candidates and 256 type bindings, caps identifiers at 128
+bytes, and rejects a serialized candidate payload above 2,048 exact
+`cl100k_base` tokens. Candidate discovery precedes comparison with the gold
+labels. Its explicitly partial allocation estimate covers selected structures
+only and is not a memory bound; the separate single-process peak-RSS receipt is
+descriptive evaluation evidence, not a production resource claim. The oracle
+loads zero index rows and adds no service, CLI, MCP, storage, indexing, or
+ranking behavior.
+
 The optional benchmark orientation capsule reuses the AST lane's already-ranked
 definition hits, so it issues no additional search or parser work. It serializes
 at most one owner path, four matched trace terms, and four indexed definition
