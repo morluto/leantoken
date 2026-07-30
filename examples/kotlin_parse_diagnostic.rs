@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::fs;
@@ -7,10 +8,13 @@ use std::process::Command;
 use blake3::Hasher;
 use leantoken::parser;
 use serde::Serialize;
+use tree_sitter::{Node, Parser as SyntaxParser};
 
 const EXPECTED_CORPUS_REVISION: &str = "9feb6ad161877da86200693b039638dbf3411e66";
 const GRAMMAR_REVISION: &str = "c10ad83a66c76855e006496db3bdb002afc49203";
 const MAX_INCOMPLETE_PATH_SAMPLES: usize = 64;
+const MAX_DIAGNOSTIC_SHAPES: usize = 64;
+const MAX_VISITED_NODES_PER_FILE: usize = 2_000_000;
 
 #[derive(Serialize)]
 struct ExtensionReport {
@@ -18,6 +22,22 @@ struct ExtensionReport {
     files: usize,
     structurally_complete: usize,
     structurally_incomplete: usize,
+}
+
+#[derive(Serialize)]
+struct DiagnosticShape {
+    shape: String,
+    count: usize,
+}
+
+#[derive(Default, Serialize)]
+struct ParseDiagnostics {
+    error_nodes: usize,
+    missing_nodes: usize,
+    visited_nodes: usize,
+    files_with_truncated_traversal: usize,
+    unclassified_shapes: usize,
+    shapes: Vec<DiagnosticShape>,
 }
 
 #[derive(Serialize)]
@@ -37,6 +57,7 @@ struct DiagnosticReport {
     references: usize,
     imports: usize,
     extensions: Vec<ExtensionReport>,
+    parse_diagnostics: ParseDiagnostics,
     incomplete_path_samples: Vec<String>,
     incomplete_path_samples_truncated: bool,
 }
@@ -73,6 +94,67 @@ fn tracked_kotlin_paths(root: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
         .collect::<Result<Vec<_>, _>>()?;
     paths.sort();
     Ok(paths)
+}
+
+fn record_diagnostic_shape(
+    shapes: &mut BTreeMap<String, usize>,
+    unclassified_shapes: &mut usize,
+    shape: String,
+) {
+    if let Some(count) = shapes.get_mut(&shape) {
+        *count += 1;
+    } else if shapes.len() < MAX_DIAGNOSTIC_SHAPES {
+        shapes.insert(shape, 1);
+    } else {
+        *unclassified_shapes += 1;
+    }
+}
+
+fn diagnostic_shape(node: Node<'_>, category: &str) -> String {
+    let parent = node.parent().map_or("<root>", |value| value.kind());
+    format!("{category}:{} under {parent}", node.kind())
+}
+
+fn collect_parse_diagnostics(
+    root: Node<'_>,
+    diagnostics: &mut ParseDiagnostics,
+    shapes: &mut BTreeMap<String, usize>,
+) {
+    let mut cursor = root.walk();
+    let mut visited = 0usize;
+    loop {
+        let node = cursor.node();
+        visited += 1;
+        diagnostics.visited_nodes += 1;
+        if node.is_error() {
+            diagnostics.error_nodes += 1;
+            record_diagnostic_shape(
+                shapes,
+                &mut diagnostics.unclassified_shapes,
+                diagnostic_shape(node, "ERROR"),
+            );
+        }
+        if node.is_missing() {
+            diagnostics.missing_nodes += 1;
+            record_diagnostic_shape(
+                shapes,
+                &mut diagnostics.unclassified_shapes,
+                diagnostic_shape(node, "MISSING"),
+            );
+        }
+        if visited == MAX_VISITED_NODES_PER_FILE {
+            diagnostics.files_with_truncated_traversal += 1;
+            return;
+        }
+        if cursor.goto_first_child() {
+            continue;
+        }
+        while !cursor.goto_next_sibling() {
+            if !cursor.goto_parent() {
+                return;
+            }
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -121,7 +203,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut symbols = 0usize;
     let mut references = 0usize;
     let mut imports = 0usize;
+    let mut diagnostics = ParseDiagnostics::default();
+    let mut diagnostic_shapes = BTreeMap::new();
     let mut incomplete_path_samples = Vec::new();
+    let mut syntax_parser = SyntaxParser::new();
+    syntax_parser.set_language(&tree_sitter_kotlin::LANGUAGE.into())?;
     let mut kt = ExtensionReport {
         extension: "kt",
         files: 0,
@@ -157,6 +243,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         symbols = symbols.saturating_add(parsed.symbols.len());
         references = references.saturating_add(parsed.references.len());
         imports = imports.saturating_add(parsed.imports.len());
+        let tree = syntax_parser
+            .parse(&source, None)
+            .ok_or_else(|| format!("tree-sitter returned no tree for {}", path.display()))?;
+        collect_parse_diagnostics(tree.root_node(), &mut diagnostics, &mut diagnostic_shapes);
+        if tree.root_node().has_error() != !parsed.structurally_complete {
+            return Err(format!("parser completeness disagreement for {}", path.display()).into());
+        }
         if parsed.structurally_complete {
             structurally_complete += 1;
             extension_report.structurally_complete += 1;
@@ -169,6 +262,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let structurally_incomplete = paths.len().saturating_sub(structurally_complete);
+    diagnostics.shapes = diagnostic_shapes
+        .into_iter()
+        .map(|(shape, count)| DiagnosticShape { shape, count })
+        .collect();
     let report = DiagnosticReport {
         schema_version: 1,
         corpus_revision,
@@ -185,6 +282,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         references,
         imports,
         extensions: vec![kt, kts],
+        parse_diagnostics: diagnostics,
         incomplete_path_samples,
         incomplete_path_samples_truncated: structurally_incomplete > MAX_INCOMPLETE_PATH_SAMPLES,
     };
