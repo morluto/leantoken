@@ -119,7 +119,9 @@ jobs:
 
       - name: Test development support scripts
         run: |
-          python3 -m unittest scripts/test_validate_agents_md.py
+          python3 -m unittest \
+            scripts/test_report_target_footprint.py \
+            scripts/test_validate_agents_md.py
 
       - name: Validate AGENTS.md
         run: bash scripts/validate-agents-md.sh
