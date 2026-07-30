@@ -1,4 +1,7 @@
 use super::*;
+use std::time::Duration;
+
+const SETUP_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Run global MCP setup or removal using the current user environment.
 pub fn run(
@@ -108,7 +111,12 @@ pub(super) fn run_with(
                     .into(),
             ));
         }
-        let Some(selected) = prompt.select(operation, &detected)? else {
+        let preferred = if operation == SetupOperation::Setup {
+            detected.clone()
+        } else {
+            configured_clients(&environment.home, launcher)?
+        };
+        let Some(selected) = prompt.select(operation, &detected, &preferred)? else {
             return Ok(empty_report(operation, environment.persistent_cli));
         };
         if selected.is_empty() {
@@ -146,15 +154,74 @@ pub(super) fn run_with(
     )?;
 
     if request.dry_run {
-        return Ok(report_from_plan(&plan, false, true, Vec::new()));
+        return Ok(report_from_plan(&plan, false, true, Vec::new(), None));
     }
 
     if !request.yes && !prompt.confirm(operation, &plan)? {
-        return Ok(report_from_plan(&plan, true, false, Vec::new()));
+        return Ok(report_from_plan(&plan, true, false, Vec::new(), None));
     }
 
     let results = apply_plan(&plan);
-    Ok(report_from_plan(&plan, false, false, results))
+    let verification = verify_applied_setup(&plan, &results);
+    Ok(report_from_plan(&plan, false, false, results, verification))
+}
+
+fn verify_applied_setup(
+    plan: &ResolvedSetupPlan,
+    results: &[ClientSetupResult],
+) -> Option<SetupVerification> {
+    let launcher = plan.launcher.as_ref()?;
+    let repair_command = launcher.package.as_ref().map_or_else(
+        || "leantoken doctor --json".to_owned(),
+        |package| format!("npx --yes {package} doctor --json"),
+    );
+    if results.iter().any(|result| result.error.is_some()) {
+        return Some(SetupVerification {
+            status: SetupVerificationStatus::Skipped,
+            stage: None,
+            message: Some("one or more selected client configurations failed".into()),
+            repair_command: Some(repair_command),
+        });
+    }
+
+    let result = (|| {
+        let repository = tempfile::tempdir()?;
+        fs::write(
+            repository.path().join("lib.rs"),
+            "pub fn ready() -> bool { true }\n",
+        )?;
+        let config = crate::Config::discover(
+            repository.path(),
+            Some(repository.path().join("index.sqlite")),
+        )?;
+        crate::doctor::run_launcher(
+            &config,
+            &launcher.command,
+            &launcher.args,
+            SETUP_VERIFICATION_TIMEOUT,
+        )
+    })();
+
+    Some(match result {
+        Ok(_) => SetupVerification {
+            status: SetupVerificationStatus::Passed,
+            stage: None,
+            message: None,
+            repair_command: Some(repair_command),
+        },
+        Err(Error::DoctorFailure { stage, message }) => SetupVerification {
+            status: SetupVerificationStatus::Failed,
+            stage: Some(stage.into()),
+            message: Some(message),
+            repair_command: Some(repair_command),
+        },
+        Err(error) => SetupVerification {
+            status: SetupVerificationStatus::Failed,
+            stage: Some("launch".into()),
+            message: Some(error.to_string()),
+            repair_command: Some(repair_command),
+        },
+    })
 }
 
 pub(super) fn report_from_plan(
@@ -162,6 +229,7 @@ pub(super) fn report_from_plan(
     cancelled: bool,
     dry_run: bool,
     results: Vec<ClientSetupResult>,
+    verification: Option<SetupVerification>,
 ) -> SetupReport {
     let discovery_skill_tokens = plan.discovery_edits.first().and_then(|edit| {
         edit.updated
@@ -183,6 +251,7 @@ pub(super) fn report_from_plan(
             .collect(),
         discovery_skill_tokens,
         results,
+        verification,
     }
 }
 
@@ -197,6 +266,7 @@ pub(super) fn empty_report(operation: SetupOperation, persistent_cli: bool) -> S
         discovery_plan: Vec::new(),
         discovery_skill_tokens: None,
         results: Vec::new(),
+        verification: None,
     }
 }
 

@@ -146,6 +146,34 @@ pub struct ClientSetupResult {
     pub error: Option<String>,
 }
 
+/// Outcome of post-configuration MCP launcher verification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SetupVerificationStatus {
+    /// The registered launcher satisfied the doctor contract.
+    Passed,
+    /// The launcher failed at a named doctor boundary.
+    Failed,
+    /// Configuration failures made launcher verification misleading.
+    Skipped,
+}
+
+/// Post-configuration verification of the exact registered MCP launcher.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SetupVerification {
+    /// Typed verification outcome.
+    pub status: SetupVerificationStatus,
+    /// Stable MCP boundary where verification failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
+    /// Bounded diagnostic detail.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// Exact command the user can run to repeat the diagnostic.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repair_command: Option<String>,
+}
+
 /// Aggregate setup or removal report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SetupReport {
@@ -169,6 +197,9 @@ pub struct SetupReport {
     pub discovery_skill_tokens: Option<usize>,
     /// Per-client outcomes.
     pub results: Vec<ClientSetupResult>,
+    /// Exact-launcher MCP verification after a setup mutation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification: Option<SetupVerification>,
 }
 
 impl SetupReport {

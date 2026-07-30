@@ -83,6 +83,7 @@ impl McpLauncher {
                 npm.into(),
                 "exec".into(),
                 "--yes".into(),
+                "--prefer-offline".into(),
                 format!("--package={package}"),
                 "--".into(),
                 "leantoken".into(),
@@ -118,6 +119,7 @@ mod tests {
                         .into_owned(),
                     "exec".into(),
                     "--yes".into(),
+                    "--prefer-offline".into(),
                     "--package=leantoken@1.2.3".into(),
                     "--".into(),
                     "leantoken".into(),
@@ -145,6 +147,6 @@ mod tests {
 
         assert_eq!(launcher.command, root.join("node"));
         assert_eq!(launcher.args[0], root.join("npm cli.js").to_string_lossy());
-        assert_eq!(launcher.args[3], "--package=leantoken@1.2.3");
+        assert_eq!(launcher.args[4], "--package=leantoken@1.2.3");
     }
 }

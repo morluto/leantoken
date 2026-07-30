@@ -18,6 +18,7 @@ impl SetupPrompt for FixedPrompt {
         &self,
         _operation: SetupOperation,
         _detected: &[SetupClient],
+        _preferred: &[SetupClient],
     ) -> Result<Option<Vec<SetupClient>>> {
         Ok(self.selected.clone())
     }

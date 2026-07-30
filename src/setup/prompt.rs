@@ -5,6 +5,7 @@ pub(super) trait SetupPrompt {
         &self,
         operation: SetupOperation,
         detected: &[SetupClient],
+        preferred: &[SetupClient],
     ) -> Result<Option<Vec<SetupClient>>>;
 
     fn confirm(&self, operation: SetupOperation, plan: &ResolvedSetupPlan) -> Result<bool>;
@@ -33,17 +34,28 @@ impl SetupPrompt for InteractivePrompt {
         &self,
         operation: SetupOperation,
         detected: &[SetupClient],
+        preferred: &[SetupClient],
     ) -> Result<Option<Vec<SetupClient>>> {
         let stderr = std::io::stderr();
         let mut output = stderr.lock();
         writeln!(output, "◆ LeanToken // Context Distillery")?;
         writeln!(
             output,
-            "  Detected agents are labeled for context; none are selected automatically."
+            "  Detected or configured agents are shown first and selected by default."
         )?;
         writeln!(output)?;
         drop(output);
-        let options = SetupClient::ALL
+        let ordered = SetupClient::ALL
+            .into_iter()
+            .filter(|client| preferred.contains(client))
+            .chain(
+                SetupClient::ALL
+                    .into_iter()
+                    .filter(|client| !preferred.contains(client)),
+            )
+            .collect::<Vec<_>>();
+        let defaults = (0..preferred.len()).collect::<Vec<_>>();
+        let options = ordered
             .iter()
             .copied()
             .map(|client| AgentOption {
@@ -52,6 +64,7 @@ impl SetupPrompt for InteractivePrompt {
             })
             .collect::<Vec<_>>();
         match MultiSelect::new(operation.selection_prompt(), options)
+            .with_default(&defaults)
             .without_filtering()
             .with_help_message("↑/↓ move • Space select • Enter continue • Esc cancel")
             .prompt_skippable()

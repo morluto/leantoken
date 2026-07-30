@@ -2026,6 +2026,7 @@ fn npx_setup_registers_exact_release_instead_of_its_cache_path() {
             npm.to_str().unwrap(),
             "exec",
             "--yes",
+            "--prefer-offline",
             format!("--package=leantoken@{}", env!("CARGO_PKG_VERSION")),
             "--",
             "leantoken",
