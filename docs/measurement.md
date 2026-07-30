@@ -112,12 +112,12 @@ identity.
 Prepare each repository at the manifest's exact `base_revision`, then run:
 
 ```bash
-cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
+cargo run --release -p leantoken-benchmarks --bin representative_benchmark -- \
   --manifest benchmarks/validation.json \
   --repos-root target/validation-repos \
   --output target/validation.json
 
-cargo run --release --package leantoken-benchmarks --bin benchmark_ablation -- \
+cargo run --release -p leantoken-benchmarks --bin benchmark_ablation -- \
   --baseline target/validation-baseline.json \
   --candidate target/validation.json
 ```
@@ -274,12 +274,12 @@ while IFS=$'\t' read -r directory url revision; do
   git -C "target/holdout-repos/$directory" checkout --detach "$revision"
 done
 
-cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
+cargo run --release -p leantoken-benchmarks --bin representative_benchmark -- \
   --manifest benchmarks/holdout.json \
   --repos-root target/holdout-repos \
   --preflight-only
 
-cargo run --release --package leantoken-benchmarks --bin representative_benchmark -- \
+cargo run --release -p leantoken-benchmarks --bin representative_benchmark -- \
   --manifest benchmarks/holdout.json \
   --repos-root target/holdout-repos \
   --output target/holdout-report.json
@@ -338,12 +338,12 @@ report records the actual permutation and each run's zero-based order index.
 Start from `benchmarks/model_ab.example.json`:
 
 ```bash
-cargo run --release --package leantoken-benchmarks --bin model_ab -- \
+cargo run --release -p leantoken-benchmarks --bin model_ab -- \
   --manifest target/model_ab.json \
   --adapter /path/to/provider-adapter \
   --preflight-only
 
-cargo run --release --package leantoken-benchmarks --bin model_ab -- \
+cargo run --release -p leantoken-benchmarks --bin model_ab -- \
   --manifest target/model_ab.json \
   --adapter /path/to/provider-adapter \
   --repetitions 5 \
@@ -442,7 +442,7 @@ for example:
 
 ```bash
 git worktree add --detach target/model-ab-runtime RUNTIME_REVISION
-cargo run --release --package leantoken-benchmarks --bin artifact_blake3 -- \
+cargo run --release -p leantoken-benchmarks --bin artifact_blake3 -- \
   /path/to/leantoken /path/to/provider-adapter /path/to/validator
 ```
 
@@ -537,7 +537,7 @@ using provider credentials, build and pass the included dry-run adapter:
 
 ```bash
 cargo build --release --package leantoken-benchmarks --bin model_ab_dry_run_adapter
-cargo run --release --package leantoken-benchmarks --bin model_ab -- \
+cargo run --release -p leantoken-benchmarks --bin model_ab -- \
   --manifest target/model_ab.json \
   --adapter target/release/model_ab_dry_run_adapter \
   --artifacts-dir target/model_ab-dry-run-artifacts \
@@ -1011,20 +1011,20 @@ Convert an existing LeanToken representative or validation report into the
 same boundary, then score and compare it:
 
 ```bash
-cargo run --release --package leantoken-benchmarks --bin ranked_region_benchmark -- \
+cargo run --release -p leantoken-benchmarks --bin ranked_region_benchmark -- \
   import-representative \
   --manifest benchmarks/validation.json \
   --report target/validation.json \
   --manifest-output target/validation-ranked.manifest.jsonl \
   --predictions-output target/validation-ranked.predictions.jsonl
 
-cargo run --release --package leantoken-benchmarks --bin ranked_region_benchmark -- \
+cargo run --release -p leantoken-benchmarks --bin ranked_region_benchmark -- \
   evaluate \
   --manifest target/validation-ranked.manifest.jsonl \
   --predictions target/validation-ranked.predictions.jsonl \
   --output target/validation-ranked.report.json
 
-cargo run --release --package leantoken-benchmarks --bin ranked_region_benchmark -- \
+cargo run --release -p leantoken-benchmarks --bin ranked_region_benchmark -- \
   compare \
   --baseline target/baseline-ranked.report.json \
   --candidate target/candidate-ranked.report.json \
@@ -1089,10 +1089,10 @@ exchange to verify that the current catalog, dual result shape, and analyzer
 still cover every required wire category:
 
 ```bash
-cargo run --release --package leantoken-benchmarks --bin mcp_wire_fixture -- \
+cargo run --release -p leantoken-benchmarks --bin mcp_wire_fixture -- \
   --output target/wire_trace.synthetic.json
 
-cargo run --release --package leantoken-benchmarks --bin mcp_wire_analyze -- \
+cargo run --release -p leantoken-benchmarks --bin mcp_wire_analyze -- \
   --trace target/wire_trace.synthetic.json \
   --output target/wire_trace.synthetic.report.json
 ```
@@ -1151,7 +1151,7 @@ compact mode or a provider-saving claim.
 Place the stdio proxy where the host would normally launch LeanToken:
 
 ```bash
-cargo run --release --package leantoken-benchmarks --bin mcp_wire_capture -- \
+cargo run --release -p leantoken-benchmarks --bin mcp_wire_capture -- \
   --output target/codex-wire.json \
   --host codex \
   --host-version VERSION \
@@ -1178,7 +1178,7 @@ Build a deterministic publishable receipt from a private Codex rollout and its
 matching private MCP trace with frozen source and binary identities:
 
 ```bash
-cargo run --release --package leantoken-benchmarks --bin codex_host_receipt -- \
+cargo run --release -p leantoken-benchmarks --bin codex_host_receipt -- \
   --rollout PRIVATE_ROLLOUT.jsonl \
   --mcp-trace PRIVATE_MCP_TRACE.json \
   --harness-revision HARNESS_GIT_REVISION \
@@ -1198,7 +1198,7 @@ credentials, or absolute paths into the receipt. Keep both private inputs out
 of version control; only the reviewed receipt is publishable.
 
 ```bash
-cargo run --release --package leantoken-benchmarks --bin mcp_wire_analyze -- \
+cargo run --release -p leantoken-benchmarks --bin mcp_wire_analyze -- \
   --trace target/codex-wire.json \
   --output target/codex-wire-cost.json
 ```
@@ -1223,7 +1223,7 @@ separate complete JSON-RPC transport, later model activity, provider-native
 usage, and provider request framing. Regenerate its validation summary with:
 
 ```bash
-cargo run --release --package leantoken-benchmarks --bin host_wire_compatibility -- \
+cargo run --release -p leantoken-benchmarks --bin host_wire_compatibility -- \
   --matrix benchmarks/reports/host-wire-compatibility-v1.json \
   --repository-root .
 ```
@@ -1287,7 +1287,7 @@ by BLAKE3. Run the same experiment against the current runtime without
 overwriting that evidence with:
 
 ```bash
-cargo run --release --package leantoken-benchmarks --bin mcp_response_ablation -- \
+cargo run --release -p leantoken-benchmarks --bin mcp_response_ablation -- \
   --manifest benchmarks/mcp_response_ablation.json \
   --repository-root . \
   --output target/mcp-response-ablation.json
@@ -1320,7 +1320,7 @@ symbol whose coordinates move across an index generation, and a follow-up whose
 base was never captured:
 
 ```bash
-cargo run --release --package leantoken-benchmarks --bin read_delta_benchmark -- \
+cargo run --release -p leantoken-benchmarks --bin read_delta_benchmark -- \
   --output target/read_delta_benchmark_report.json
 ```
 
@@ -1343,7 +1343,7 @@ Cross-restart persistence has a separate release profile so its storage cost is
 not confused with the in-process protocol gate:
 
 ```bash
-cargo run --release --package leantoken-benchmarks --bin read_delta_persistence_profile -- \
+cargo run --release -p leantoken-benchmarks --bin read_delta_persistence_profile -- \
   --iterations 100 --lines 1200
 ```
 
@@ -1368,7 +1368,7 @@ on one existing repository. It builds the index before either timed phase, then
 runs 100 independent creates and 100 reuses of one seeded receipt:
 
 ```bash
-cargo run --release --package leantoken-benchmarks --bin receipt_persistence_profile -- \
+cargo run --release -p leantoken-benchmarks --bin receipt_persistence_profile -- \
   --repository . \
   --database /tmp/leantoken-receipt-profile.sqlite \
   --iterations 100

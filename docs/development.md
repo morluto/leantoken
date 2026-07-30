@@ -83,8 +83,9 @@ cargo xtask test plan --dry-run
 cargo xtask check-test-architecture
 ```
 
-The architecture check also rejects new `include!()` directives unless they
-are added to the reviewed organizational-include allowlist.
+The source tree uses ordinary Rust modules for organization. The architecture
+check rejects any organizational `include!()` directive so the old namespace
+concatenation pattern cannot return.
 
 The runner sequences units, ordinary domain integration, and process-heavy
 tests without launching competing Cargo processes. It also owns exact fixture
@@ -424,7 +425,7 @@ the product binary in release mode:
 
 ```bash
 cargo build --release
-cargo run --release --package leantoken-benchmarks --bin mcp_multiprocess_profile -- \
+cargo run --release -p leantoken-benchmarks --bin mcp_multiprocess_profile -- \
   --binary target/release/leantoken \
   --max-index-workers 1 \
   --process-counts 1,4,8 \
@@ -451,7 +452,7 @@ versioned benchmark report.
 Run the deterministic semantic change receipt gate in release mode:
 
 ```bash
-cargo run --release --package leantoken-benchmarks --bin semantic_change_receipt_benchmark -- \
+cargo run --release -p leantoken-benchmarks --bin semantic_change_receipt_benchmark -- \
   --iterations 21 \
   --output benchmarks/reports/semantic-change-receipt-v1.json
 ```

@@ -645,14 +645,6 @@ fn check_architecture(root: &Path) -> Result<(), XtaskError> {
 }
 
 fn check_organizational_includes(root: &Path) -> Result<(), XtaskError> {
-    let allowlist_path = root.join("scripts/organizational-includes.allowlist");
-    let allowlist = fs::read_to_string(&allowlist_path).map_err(XtaskError::Io)?;
-    let allowed = allowlist
-        .lines()
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .filter_map(|line| line.split_once('\t'))
-        .map(|(source, included)| (source.to_owned(), included.to_owned()))
-        .collect::<BTreeSet<_>>();
     let mut rust_files = Vec::new();
     collect_rust_files(root, &mut rust_files).map_err(XtaskError::Io)?;
     let mut found = BTreeSet::new();
@@ -669,7 +661,7 @@ fn check_organizational_includes(root: &Path) -> Result<(), XtaskError> {
             let Some((_, suffix)) = line.split_once(&include_prefix) else {
                 if line.contains(&include_macro) {
                     return Err(XtaskError::Architecture(format!(
-                        "unsupported include! form in {source}; organizational includes must be migrated or allowlisted explicitly"
+                        "unsupported include! form in {source}; organizational includes must be migrated to normal modules"
                     )));
                 }
                 continue;
@@ -682,16 +674,12 @@ fn check_organizational_includes(root: &Path) -> Result<(), XtaskError> {
             found.insert((source.clone(), included.to_owned()));
         }
     }
-    let unexpected = found.difference(&allowed).cloned().collect::<Vec<_>>();
-    if !unexpected.is_empty() {
+    if !found.is_empty() {
         return Err(XtaskError::Architecture(format!(
-            "new organizational include! usage: {unexpected:?}; migrate it to a normal module or add a reviewed allowlist entry"
+            "organizational include! usage remains: {found:?}; migrate it to a normal module"
         )));
     }
-    println!(
-        "organizational includes: ok ({} reviewed existing directives)",
-        found.len()
-    );
+    println!("organizational includes: ok (none)");
     Ok(())
 }
 

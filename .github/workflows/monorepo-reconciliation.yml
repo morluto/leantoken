@@ -191,7 +191,7 @@ jobs:
 
       - name: Aggregate frozen matrix
         run: |
-          cargo run --release --package leantoken-benchmarks --bin monorepo_reconciliation_report -- \
+          cargo run --release -p leantoken-benchmarks --bin monorepo_reconciliation_report -- \
             --manifest benchmarks/monorepo_reconciliation.json \
             --artifacts target/monorepo-profile-artifacts \
             --output target/monorepo-reconciliation-report.json \

@@ -345,9 +345,9 @@ domain-specific candidate fusion, overlap, and token-selection policy in Rust.
 
 The Rust module tree mirrors these ownership boundaries: storage, repository,
 ranking, and service retrieval stages are child modules with explicit imports,
-not textual namespace concatenation. Legacy organizational `include!()` trees
-are recorded in a reviewed allowlist and checked by
-`cargo xtask check-test-architecture`; new directives fail that check.
+not textual namespace concatenation. The former organizational `include!()`
+trees have been migrated to ordinary modules, and
+`cargo xtask check-test-architecture` rejects any recurrence.
 
 ### Storage and policy ownership
 
@@ -956,7 +956,7 @@ source. Delta mode falls back to that fitted direct page if delta metadata
 would cross the total-response ceiling.
 
 Run the reproducible hot-path profile with, for example,
-`cargo run --release --package leantoken-benchmarks --bin hot_path_bounds -- --files 10000 --iterations 20`.
+`cargo run --release -p leantoken-benchmarks --bin hot_path_bounds -- --files 10000 --iterations 20`.
 It reports warm p50/p95 wall time plus deterministic regex and context phase
 counters. Evaluation-only context output also includes diagnostic wall-time
 phases; candidate generation includes its nested lookup phases, so those fields
@@ -971,7 +971,7 @@ disposable index, or provide it and use `--skip-index` for subsequent
 steady-state samples:
 
 ```bash
-cargo run --release --package leantoken-benchmarks --bin real_repository_profile -- \
+cargo run --release -p leantoken-benchmarks --bin real_repository_profile -- \
   --repository /path/to/repository --iterations 5
 ```
 
