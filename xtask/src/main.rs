@@ -305,11 +305,10 @@ fn fixture_test_command() -> Vec<String> {
     cargo_command([
         "test",
         "--locked",
-        "--package",
-        SUITE,
+        "--workspace",
         "--all-features",
-        "--bin",
-        "fixture-runner",
+        "--lib",
+        "--bins",
         "tests::checked_in_fixture_cases_match",
         "--",
         "--exact",
@@ -1025,10 +1024,9 @@ mod tests {
                 .any(|args| args == ["--skip", "tests::checked_in_fixture_cases_match"])
         );
         assert!(plan.commands.iter().any(|command| {
-            command
-                .windows(2)
-                .any(|args| args == ["--bin", "fixture-runner"])
+            command.contains(&"--workspace".to_owned())
                 && command.contains(&"tests::checked_in_fixture_cases_match".to_owned())
+                && command.contains(&"--exact".to_owned())
         }));
     }
 

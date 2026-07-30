@@ -55,9 +55,8 @@ operation. Required fixture evidence runs as one test-profile aggregate, while
 exact `run` and `bless` operations retain the standalone runner. This avoids a
 second development-profile product build after unit tests. The unit phase
 builds the fixture-runner test harness but skips its aggregate; a separate
-exact phase then runs it after the parallel suite-lib harness, while standalone
-fixture testing builds only the owning suite. A generic runner never rewrites
-expected output.
+exact phase uses the same workspace feature graph and runs it after the
+parallel suite-lib harness. A generic runner never rewrites expected output.
 
 `cargo xtask test stress` runs its explicit process-lifecycle command once by
 default. Scheduled jobs set `LEANTOKEN_STRESS_REPETITIONS` to their
