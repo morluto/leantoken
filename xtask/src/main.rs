@@ -74,31 +74,39 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
             "--lib",
             &filter,
         ])
-    } else if suite_has_test(root, selector)? {
-        cargo_command([
-            "test",
-            "--locked",
-            "--package",
-            SUITE,
-            "--all-features",
-            "--lib",
-            selector,
-        ])
     } else {
-        cargo_command([
-            "test",
-            "--locked",
-            "--package",
-            PRODUCT,
-            "--all-features",
-            "--lib",
-            "--bins",
-            "--test",
-            "integration",
-            selector,
-            "--",
-            "--test-threads=2",
-        ])
+        let suite_match = suite_has_test(root, selector)?;
+        let product_match = product_has_test(root, selector)?;
+        match (suite_match, product_match) {
+            (true, true) => {
+                return Err(XtaskError::Usage(format!(
+                    "ambiguous test selector `{selector}` matches both {SUITE} and {PRODUCT}; use a domain-qualified selector or run the owning package directly"
+                )));
+            }
+            (true, false) => cargo_command([
+                "test",
+                "--locked",
+                "--package",
+                SUITE,
+                "--all-features",
+                "--lib",
+                selector,
+            ]),
+            (false, true) | (false, false) => cargo_command([
+                "test",
+                "--locked",
+                "--package",
+                PRODUCT,
+                "--all-features",
+                "--lib",
+                "--bins",
+                "--test",
+                "integration",
+                selector,
+                "--",
+                "--test-threads=2",
+            ]),
+        }
     };
     let status = print_and_run(root, &command)?;
     if status.success() {
@@ -123,6 +131,28 @@ fn suite_has_test(root: &Path, selector: &str) -> Result<bool, XtaskError> {
         "--",
         "--list",
     ]);
+    command_has_test(root, &command, selector)
+}
+
+fn product_has_test(root: &Path, selector: &str) -> Result<bool, XtaskError> {
+    let command = cargo_command([
+        "test",
+        "--locked",
+        "--package",
+        PRODUCT,
+        "--all-features",
+        "--lib",
+        "--bins",
+        "--test",
+        "integration",
+        selector,
+        "--",
+        "--list",
+    ]);
+    command_has_test(root, &command, selector)
+}
+
+fn command_has_test(root: &Path, command: &[String], selector: &str) -> Result<bool, XtaskError> {
     println!("==> {}", command.join(" "));
     let (program, args) = command
         .split_first()
@@ -737,7 +767,9 @@ impl FixtureManifest {
         let manifest = root.join("case.toml");
         let contents = std::fs::read_to_string(&manifest).map_err(XtaskError::Io)?;
         let mut schema = None;
+        let mut schema_seen = false;
         let mut operation = None;
+        let mut operation_seen = false;
         for line in contents
             .lines()
             .map(str::trim)
@@ -751,8 +783,14 @@ impl FixtureManifest {
             };
             let value = value.trim().trim_matches('"');
             match key.trim() {
-                "schema" if schema.is_none() => schema = value.parse::<u32>().ok(),
-                "operation" if operation.is_none() => operation = Some(value.to_owned()),
+                "schema" if !schema_seen => {
+                    schema_seen = true;
+                    schema = value.parse::<u32>().ok();
+                }
+                "operation" if !operation_seen => {
+                    operation_seen = true;
+                    operation = Some(value.to_owned());
+                }
                 "schema" | "operation" => {
                     return Err(XtaskError::Fixture(format!(
                         "{}: duplicate manifest key `{key}`",
@@ -906,6 +944,7 @@ impl std::error::Error for XtaskError {}
 #[cfg(test)]
 mod tests {
     use super::{TestPlan, XtaskError, valid_fixture_identity, workspace_root};
+    use std::fs;
 
     #[test]
     fn plan_contains_visible_locked_phases() {
@@ -958,5 +997,25 @@ mod tests {
                 .windows(2)
                 .any(|args| args == ["--failure-output", "final"])
         );
+    }
+
+    #[test]
+    fn fixture_manifest_rejects_invalid_duplicate_schema() {
+        let root = std::env::temp_dir().join(format!(
+            "leantoken-xtask-invalid-duplicate-schema-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("case.toml"),
+            "schema = invalid\nschema = 1\noperation = \"test\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("request.json"), "{}\n").unwrap();
+        fs::write(root.join("expected.json"), "{}\n").unwrap();
+        let error = super::FixtureManifest::load(&root).expect_err("duplicate schema accepted");
+        assert!(error.to_string().contains("duplicate"));
+        let _ = fs::remove_dir_all(root);
     }
 }

@@ -44,7 +44,9 @@ impl FixtureCase {
         let manifest_path = root.join("case.toml");
         let contents = fs::read_to_string(&manifest_path)?;
         let mut schema = None;
+        let mut schema_seen = false;
         let mut operation = None;
+        let mut operation_seen = false;
         for line in contents
             .lines()
             .map(str::trim)
@@ -55,8 +57,14 @@ impl FixtureCase {
             };
             let value = value.trim().trim_matches('"');
             match key.trim() {
-                "schema" if schema.is_none() => schema = value.parse::<u32>().ok(),
-                "operation" if operation.is_none() => operation = Some(value.to_owned()),
+                "schema" if !schema_seen => {
+                    schema_seen = true;
+                    schema = value.parse::<u32>().ok();
+                }
+                "operation" if !operation_seen => {
+                    operation_seen = true;
+                    operation = Some(value.to_owned());
+                }
                 "schema" | "operation" => {
                     return Err(invalid(&manifest_path, "duplicate manifest key"));
                 }
@@ -214,6 +222,25 @@ mod tests {
         fs::write(
             root.join("case.toml"),
             "schema = 1\nschema = 1\noperation = \"test\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("request.json"), "{}\n").unwrap();
+        fs::write(root.join("expected.json"), "{}\n").unwrap();
+        assert!(FixtureCase::load(&root).is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_invalid_duplicate_schema_keys() {
+        let root = std::env::temp_dir().join(format!(
+            "leantoken-fixture-invalid-duplicate-schema-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("case.toml"),
+            "schema = invalid\nschema = 1\noperation = \"test\"\n",
         )
         .unwrap();
         fs::write(root.join("request.json"), "{}\n").unwrap();

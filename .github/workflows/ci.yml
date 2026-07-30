@@ -5,7 +5,8 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    - cron: "0 3 * * 1"
+    - cron: "0 3 * * *"
+    - cron: "0 4 * * 1"
   workflow_dispatch:
 
 env:
@@ -317,7 +318,7 @@ jobs:
 
   scheduled-stress:
     name: Nightly stress (${{ matrix.os }})
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' && github.event.schedule == '0 3 * * *'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -363,7 +364,7 @@ jobs:
 
   scheduled-profile:
     name: Weekly test profile
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 1')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
