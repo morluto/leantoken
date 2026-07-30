@@ -49,6 +49,26 @@ packages fails as ambiguous and asks for a domain-qualified selector. Use the
 ownership map under [Test responsibilities](#test-responsibilities), and run
 each affected filter when a change crosses boundaries.
 
+When the exact owner is already known, use its target directly to avoid
+building unrelated harnesses:
+
+```bash
+# Private product invariant
+cargo test --locked --package leantoken --all-features --lib FILTER
+
+# Cross-component domain contract
+cargo test --locked --package leantoken-test-suite --all-features \
+  --lib domains::DOMAIN::FILTER
+
+# Real executable or MCP process behavior
+cargo test --locked --package leantoken --all-features \
+  --test integration process::FILTER -- --test-threads=2
+
+# CLI binary unit or one example harness
+cargo test --locked --package leantoken --all-features --bin leantoken FILTER
+cargo test --locked --package leantoken --all-features --example NAME FILTER
+```
+
 Run the complete product-behavior suite without compiling or executing the
 benchmark contract or examples:
 
@@ -101,6 +121,21 @@ keeps links and the local `target` directory smaller. Override it temporarily
 with `CARGO_PROFILE_DEV_DEBUG=2` when a debugger needs full local-variable data
 for LeanToken code. When debugging a dependency too, pass
 `--config 'profile.dev.package."*".debug=2'` to Cargo.
+
+Inspect accumulated build artifacts without deleting them:
+
+```bash
+python3 scripts/report_target_footprint.py
+python3 scripts/report_target_footprint.py --json
+```
+
+The report separates incremental, dependency, example, build-script, release,
+and other artifacts; it also counts incremental generations inactive beyond
+the selected `--stale-days` threshold. The scan does not follow symlinks, fails
+closed after one million entries by default, and never removes files. If a
+reviewed report justifies paying the rebuild cost, `cargo clean --profile dev`
+is the explicit Cargo-owned cleanup for the development profile. Hooks and CI
+must not clean a developer's target directory automatically.
 
 ## Pull request readiness
 
