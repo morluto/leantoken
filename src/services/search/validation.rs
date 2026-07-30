@@ -10,7 +10,7 @@ fn validate_search_input(request: &SearchRequest) -> Result<()> {
     validate_glob_patterns(&request.exclude_paths)?;
     validate_glob_patterns(&request.focus_paths)?;
     validate_cursor(request.cursor.as_deref())?;
-    if request.all_occurrences && !matches!(request.mode, SearchMode::Text | SearchMode::Regex) {
+    if request.all_occurrences && !request.mode.supports_all_occurrences() {
         return Err(Error::InvalidInput {
             field: "all occurrences",
             reason: "requires text or regex mode",

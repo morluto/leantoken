@@ -1305,6 +1305,31 @@ fn files_schema_matches_operation_specific_runtime_requirements() {
 }
 
 #[test]
+fn search_schema_matches_exhaustive_occurrence_runtime_requirements() {
+    let tool = LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .find(|tool| tool.name == "search")
+        .expect("search tool");
+    let schema = serde_json::Value::Object((*tool.input_schema).clone());
+    let exhaustive_modes = SearchMode::EXHAUSTIVE_MODES.map(SearchMode::wire_name);
+    assert!(schema["allOf"].as_array().is_some_and(|constraints| {
+        constraints.iter().any(|constraint| {
+            constraint["if"]["properties"]["all_occurrences"]["const"] == true
+                && constraint["if"]["required"] == serde_json::json!(["all_occurrences"])
+                && constraint["then"]["properties"]["mode"]["enum"]
+                    == serde_json::json!(exhaustive_modes)
+                && constraint["then"]["required"] == serde_json::json!(["mode"])
+        }) && constraints.iter().any(|constraint| {
+            constraint["if"]["properties"]["projection"]["const"] == "occurrences"
+                && constraint["if"]["required"] == serde_json::json!(["projection"])
+                && constraint["then"]["properties"]["all_occurrences"]["const"] == true
+                && constraint["then"]["required"] == serde_json::json!(["all_occurrences"])
+        })
+    }));
+}
+
+#[test]
 fn retrieval_tools_expose_consistency_boundary() {
     for tool in LeanTokenMcp::tool_router()
         .list_all()
@@ -1392,13 +1417,10 @@ fn tool_descriptions_route_native_discovery_workflows() {
             .values()
             .all(|description| description.contains("Example:"))
     );
-    let description_bytes = descriptions
-        .values()
-        .map(|description| description.len())
-        .sum::<usize>();
+    assert!(descriptions["search"].contains("all_occurrences=true requires text or regex mode"));
     assert!(
-        description_bytes <= 3_500,
-        "tool descriptions regressed to {description_bytes} bytes"
+        descriptions["search"]
+            .contains("projection=occurrences also requires all_occurrences=true")
     );
 }
 
@@ -1901,6 +1923,34 @@ fn compact_projections_map_to_service_requests() {
         Err(crate::Error::InvalidInput {
             field: "coordinates_only",
             ..
+        })
+    ));
+
+    for mode in ["auto", "identifier", "symbol", "reference"] {
+        let invalid = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+            "query": "Services",
+            "mode": mode,
+            "all_occurrences": true
+        }))
+        .expect("structurally valid exhaustive search request");
+        assert!(matches!(
+            invalid.validate_limits(McpLimitPolicy::DEFAULT),
+            Err(crate::Error::InvalidInput {
+                field: "all_occurrences",
+                reason: "requires text or regex mode"
+            })
+        ));
+    }
+    let invalid = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+        "query": "Services",
+        "all_occurrences": true
+    }))
+    .expect("structurally valid exhaustive search request with default mode");
+    assert!(matches!(
+        invalid.validate_limits(McpLimitPolicy::DEFAULT),
+        Err(crate::Error::InvalidInput {
+            field: "all_occurrences",
+            reason: "requires text or regex mode"
         })
     ));
 

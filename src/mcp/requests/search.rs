@@ -18,6 +18,7 @@ pub(in crate::mcp) enum SearchMcpProjection {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = add_search_option_constraints)]
 pub(in crate::mcp) struct SearchMcpRequest {
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
@@ -63,7 +64,8 @@ pub(in crate::mcp) struct SearchMcpRequest {
     /// Preserve query case when matching.
     #[serde(default)]
     pub(in crate::mcp) case_sensitive: bool,
-    /// Return every text or regex occurrence with exact coordinates and counts.
+    /// Return every text or regex occurrence with exact coordinates and counts;
+    /// requires `mode=text` or `mode=regex`.
     #[serde(default)]
     pub(in crate::mcp) all_occurrences: bool,
     /// Omit excerpts and hashes from an exhaustive occurrence response.
@@ -106,6 +108,12 @@ impl SearchMcpRequest {
             self.context_lines,
             limits.max_context_lines,
         )?;
+        if self.all_occurrences && !self.mode.supports_all_occurrences() {
+            return Err(crate::Error::InvalidInput {
+                field: "all_occurrences",
+                reason: "requires text or regex mode",
+            });
+        }
         if self.coordinates_only && !self.all_occurrences {
             return Err(crate::Error::InvalidInput {
                 field: "coordinates_only",
@@ -182,4 +190,35 @@ impl SearchMcpRequest {
             self.expected_repository_id,
         )
     }
+}
+
+pub(in crate::mcp) fn add_search_option_constraints(schema: &mut Schema) {
+    let exhaustive_modes = SearchMode::EXHAUSTIVE_MODES.map(SearchMode::wire_name);
+    schema.insert(
+        "allOf".into(),
+        serde_json::json!([
+            {
+                "if": {
+                    "properties": {"all_occurrences": {"const": true}},
+                    "required": ["all_occurrences"]
+                },
+                "then": {
+                    "properties": {
+                        "mode": {"enum": exhaustive_modes}
+                    },
+                    "required": ["mode"]
+                }
+            },
+            {
+                "if": {
+                    "properties": {"projection": {"const": "occurrences"}},
+                    "required": ["projection"]
+                },
+                "then": {
+                    "properties": {"all_occurrences": {"const": true}},
+                    "required": ["all_occurrences"]
+                }
+            }
+        ]),
+    );
 }

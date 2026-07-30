@@ -1700,7 +1700,7 @@ expression: tools
   },
   {
     "name": "search",
-    "description": "Search indexed source for symbols, references, identifiers, text, or regex. projection=occurrences makes text/regex exhaustive; coordinates_only omits excerpts. query_receipt record/reuse persists only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: {\"query\":\"RetryableConflict\",\"mode\":\"symbol\"}.",
+    "description": "Search indexed source for symbols, references, identifiers, text, or regex. all_occurrences=true requires text or regex mode; projection=occurrences also requires all_occurrences=true. coordinates_only omits excerpts. query_receipt record/reuse persists only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: {\"query\":\"InternalFailure\",\"mode\":\"text\",\"all_occurrences\":true}.",
     "inputSchema": {
       "$defs": {
         "QueryReceiptAction": {
@@ -1805,10 +1805,59 @@ expression: tools
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "all_occurrences": {
+                "const": true
+              }
+            },
+            "required": [
+              "all_occurrences"
+            ]
+          },
+          "then": {
+            "properties": {
+              "mode": {
+                "enum": [
+                  "text",
+                  "regex"
+                ]
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "projection": {
+                "const": "occurrences"
+              }
+            },
+            "required": [
+              "projection"
+            ]
+          },
+          "then": {
+            "properties": {
+              "all_occurrences": {
+                "const": true
+              }
+            },
+            "required": [
+              "all_occurrences"
+            ]
+          }
+        }
+      ],
       "properties": {
         "all_occurrences": {
           "default": false,
-          "description": "Return every text or regex occurrence with exact coordinates and counts.",
+          "description": "Return every text or regex occurrence with exact coordinates and counts;\nrequires `mode=text` or `mode=regex`.",
           "type": "boolean"
         },
         "case_sensitive": {

@@ -19,6 +19,26 @@ pub enum SearchMode {
     Reference,
 }
 
+impl SearchMode {
+    /// Modes that can produce an exhaustive occurrence result.
+    pub(crate) const EXHAUSTIVE_MODES: [Self; 2] = [Self::Text, Self::Regex];
+
+    pub(crate) fn supports_all_occurrences(self) -> bool {
+        Self::EXHAUSTIVE_MODES.contains(&self)
+    }
+
+    pub(crate) const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Text => "text",
+            Self::Regex => "regex",
+            Self::Identifier => "identifier",
+            Self::Symbol => "symbol",
+            Self::Reference => "reference",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 /// Explicit lifecycle action for one exhaustive-query coverage receipt.
