@@ -315,6 +315,8 @@ fn fixture_test_command() -> Vec<String> {
         "test",
         "--locked",
         "--workspace",
+        "--exclude",
+        BENCHMARKS,
         "--all-features",
         "--lib",
         "--bins",
@@ -912,7 +914,9 @@ impl From<FixtureError> for XtaskError {
 
 #[cfg(test)]
 mod tests {
-    use super::{TestPlan, XtaskError, listed_test_count, valid_fixture_identity, workspace_root};
+    use super::{
+        BENCHMARKS, TestPlan, XtaskError, listed_test_count, valid_fixture_identity, workspace_root,
+    };
     use std::fs;
 
     #[test]
@@ -929,11 +933,43 @@ mod tests {
                 .windows(2)
                 .any(|args| args == ["--skip", "tests::checked_in_fixture_cases_match"])
         );
+        assert!(
+            plan.commands
+                .iter()
+                .filter(|command| command.contains(&"--workspace".to_owned()))
+                .all(|command| command
+                    .windows(2)
+                    .any(|args| args == ["--exclude", BENCHMARKS]))
+        );
         assert!(plan.commands.iter().any(|command| {
             command.contains(&"--workspace".to_owned())
+                && command
+                    .windows(2)
+                    .any(|args| args == ["--exclude", BENCHMARKS])
                 && command.contains(&"tests::checked_in_fixture_cases_match".to_owned())
                 && command.contains(&"--exact".to_owned())
         }));
+    }
+
+    #[test]
+    fn ci_product_workspace_phases_exclude_benchmark_targets() {
+        let workflow = include_str!("../../.github/workflows/ci.yml");
+        for name in [
+            "Test library and binary units",
+            "Test checked-in fixture cases",
+        ] {
+            let after_phase = workflow
+                .split_once(&format!("- name: {name}"))
+                .unwrap_or_else(|| panic!("{name} phase"))
+                .1;
+            let phase = after_phase
+                .split_once("- name:")
+                .map_or(after_phase, |(phase, _)| phase);
+            assert!(
+                phase.contains("--exclude leantoken-benchmarks"),
+                "{name} rebuilt benchmark targets"
+            );
+        }
     }
 
     #[test]

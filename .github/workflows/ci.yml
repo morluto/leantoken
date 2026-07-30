@@ -292,7 +292,8 @@ jobs:
         if: needs.changes.outputs.rust == 'true'
         timeout-minutes: 10
         run: >
-          cargo test --locked --workspace --all-features --lib --bins --
+          cargo test --locked --workspace --exclude leantoken-benchmarks
+          --all-features --lib --bins --
           --skip tests::checked_in_fixture_cases_match
 
       - name: Test integration behavior
@@ -309,7 +310,8 @@ jobs:
         if: needs.changes.outputs.rust == 'true'
         timeout-minutes: 10
         run: >
-          cargo test --locked --workspace --all-features --lib --bins
+          cargo test --locked --workspace --exclude leantoken-benchmarks
+          --all-features --lib --bins
           tests::checked_in_fixture_cases_match -- --exact
 
       - name: Test token-economy contract
