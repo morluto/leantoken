@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "experiment_id": "resolved-reference-oracle-python-v1",
+  "measured_at_utc": "2026-07-30T13:17:11Z",
+  "measurement_scope": "single_isolated_release_process",
+  "platform": "Linux 6.1.0-50-cloud-amd64 x86_64",
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "command": [
+    "target/release/resolved_reference_oracle",
+    "evaluate",
+    "--output",
+    "<temporary-directory>/report.json"
+  ],
+  "build_profile": "release",
+  "build_excluded_from_measurement": true,
+  "executable_blake3": "64c02dd3ddfe2529dfe19880628e619a36dc06114ce0bd0f9134b72c6e09f02e",
+  "manifest_blake3": "505f1c6c79001168bc0c100e611bd90a0ffbccdd865ba36e5e1d0bdd322b9760",
+  "source_blake3": "85d6127bf78e4c765073f20c4455ac623cd992b9bb03a491e3cf423d2b5e0fea",
+  "report_blake3": "35abfc39e3acbc473854544eb2215cc1a395cf20b17eba9563b3820d63946498",
+  "measurement": {
+    "tool": "GNU time maximum resident set size",
+    "peak_process_rss_kib": 29772,
+    "wall_seconds": 0.13,
+    "exit_status": 0
+  },
+  "interpretation": {
+    "oracle_passed": true,
+    "promotion_gate": false,
+    "resource_regression_claim": false,
+    "reason": "One host-specific absolute sample records evaluation cost but has no paired baseline, repetition distribution, or cross-platform coverage."
+  }
+}

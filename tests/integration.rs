@@ -33,6 +33,7 @@ integration_modules!(
     cli,
     graph_signal_ablation_report,
     model_ab_trajectory_report,
+    resolved_reference_oracle_report,
     representation_comparison,
     services,
 );

@@ -1799,3 +1799,61 @@ with the pinned corpus identity. It writes only locked parser versions, corpus
 identity and hash, bounds, path-only and extension-only strata, aggregate
 syntax-node counts, and bounded recovery categories. It stores neither source
 nor individual paths.
+
+## Python resolved-reference oracle
+
+[`resolved_reference_oracle_v1.json`](resolved_reference_oracle_v1.json)
+freezes a synthetic Python API-migration task and exact coordinates for all 17
+lexical occurrences of `Runtime.close`. The fixture deliberately contains a
+protocol, target definition, subclass, same-name method on an unrelated type,
+mock, wrapper, export and one-hop re-export, typed and unknown receivers, direct
+constructors, a string, and a comment. Gold labels do not participate in
+candidate discovery or classification.
+
+The checked
+[oracle report](reports/resolved-reference-oracle-python-v1.json) records an
+exact pass: 11 resolved, one ambiguous, and five unrelated occurrences, with
+zero false positives, false negatives, coordinate mismatches, classification
+mismatches, role mismatches, or confidence mismatches. It also records 277
+unique AST nodes, the deliberately loose 103,200,000,000 configured upper bound
+on post-parse AST node inspections, the 2,056,000,000,000,000 upper bound on
+scope/type lookup-loop iterations, 17 candidates, five loaded type bindings,
+zero production index rows, a 580-token exact `cl100k_base` candidate payload,
+and the configured partial allocation estimate for selected structures. That
+estimate is not a memory bound; the separate
+[resource receipt](reports/resolved-reference-oracle-python-v1-resource.json)
+records peak RSS for one isolated release-process run; it is descriptive
+single-host evidence, not a cross-platform or comparative gate.
+
+Run the deterministic contract:
+
+```bash
+cargo test --locked --package leantoken-benchmarks \
+  --bin resolved_reference_oracle
+cargo run --locked --release --package leantoken-benchmarks \
+  --bin resolved_reference_oracle -- verify-fixture
+```
+
+To materialize a new report for inspection, choose an output path that does not
+exist:
+
+```bash
+cargo run --locked --release --package leantoken-benchmarks \
+  --bin resolved_reference_oracle -- evaluate \
+  --manifest benchmarks/resolved_reference_oracle_v1.json \
+  --repository-root . \
+  --output /new/path/resolved-reference-oracle.json
+```
+
+The evaluator rejects inputs above 256 KiB for the manifest, 64 KiB for source,
+10,000 AST nodes, 256 candidates, 256 type bindings, 128 bytes per identifier,
+or 2,048 exact candidate-payload tokens. It fails closed on syntax recovery,
+source-identity drift, unclassified lexical occurrences, or gold comparison
+drift.
+
+This mechanism check does not cover dynamic dispatch, monkey-patching,
+descriptors, `getattr`/`setattr`, cross-module alias chains, complex Python type
+forms, decorator-generated methods, other languages, or representative
+repositories. The decision is therefore `evaluation_complete_no_public_tool`:
+no service API, CLI command, MCP tool/schema, storage/index change, or ranking
+change is authorized by this result.

@@ -733,6 +733,7 @@ const ROOT_TEST_MODULES: &[&str] = &[
     "graph_signal_ablation_report",
     "model_ab_trajectory_report",
     "process",
+    "resolved_reference_oracle_report",
     "representation_comparison",
     "services",
 ];

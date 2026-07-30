@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "experiment_id": "resolved-reference-oracle-python-v1",
+  "language": "python",
+  "source": {
+    "path": "benchmarks/fixtures/resolved_reference_oracle/python_api_migration.py",
+    "blake3": "85d6127bf78e4c765073f20c4455ac623cd992b9bb03a491e3cf423d2b5e0fea"
+  },
+  "target": {
+    "owner": "Runtime",
+    "symbol": "close"
+  },
+  "limits": {
+    "max_manifest_bytes": 262144,
+    "max_source_bytes": 65536,
+    "max_ast_nodes": 10000,
+    "max_candidates": 256,
+    "max_type_bindings": 256,
+    "max_identifier_bytes": 128,
+    "max_candidate_payload_tokens": 2048
+  },
+  "expected": [
+    {
+      "start": { "line": 5, "column": 9 },
+      "end": { "line": 5, "column": 14 },
+      "classification": "resolved",
+      "role": "protocol_definition",
+      "confidence": "high"
+    },
+    {
+      "start": { "line": 10, "column": 9 },
+      "end": { "line": 10, "column": 14 },
+      "classification": "resolved",
+      "role": "target_definition",
+      "confidence": "high"
+    },
+    {
+      "start": { "line": 19, "column": 9 },
+      "end": { "line": 19, "column": 14 },
+      "classification": "unrelated",
+      "role": "unrelated_definition",
+      "confidence": "high"
+    },
+    {
+      "start": { "line": 24, "column": 9 },
+      "end": { "line": 24, "column": 14 },
+      "classification": "resolved",
+      "role": "fixture_mock_definition",
+      "confidence": "high"
+    },
+    {
+      "start": { "line": 32, "column": 9 },
+      "end": { "line": 32, "column": 14 },
+      "classification": "resolved",
+      "role": "wrapper_definition",
+      "confidence": "high"
+    },
+    {
+      "start": { "line": 33, "column": 22 },
+      "end": { "line": 33, "column": 27 },
+      "classification": "resolved",
+      "role": "wrapper_forwarder",
+      "confidence": "high"
+    },
+    {
+      "start": { "line": 36, "column": 1 },
+      "end": { "line": 36, "column": 6 },
+      "classification": "resolved",
+      "role": "export_alias_definition",
+      "confidence": "high"
+    },
+    {
+      "start": { "line": 36, "column": 17 },
+      "end": { "line": 36, "column": 22 },
+      "classification": "resolved",
+      "role": "export_source_reference",
+      "confidence": "high"
+    },
+    {
+      "start": { "line": 37, "column": 16 },
+      "end": { "line": 37, "column": 21 },
+      "classification": "resolved",
+      "role": "reexport_alias_reference",
+      "confidence": "high"
+    },
+    {
+      "start": { "line": 46, "column": 13 },
+      "end": { "line": 46, "column": 18 },
+      "classification": "resolved",
+      "role": "resolved_call",
+      "confidence": "high"
+    },
+    {
+      "start": { "line": 47, "column": 11 },
+      "end": { "line": 47, "column": 16 },
+      "classification": "resolved",
+      "role": "resolved_call",
+      "confidence": "high"
+    },
+    {
+      "start": { "line": 48, "column": 11 },
+      "end": { "line": 48, "column": 16 },
+      "classification": "unrelated",
+      "role": "unrelated_call",
+      "confidence": "high"
+    },
+    {
+      "start": { "line": 49, "column": 13 },
+      "end": { "line": 49, "column": 18 },
+      "classification": "ambiguous",
+      "role": "ambiguous_call",
+      "confidence": "low"
+    },
+    {
+      "start": { "line": 50, "column": 15 },
+      "end": { "line": 50, "column": 20 },
+      "classification": "resolved",
+      "role": "resolved_call",
+      "confidence": "high"
+    },
+    {
+      "start": { "line": 51, "column": 20 },
+      "end": { "line": 51, "column": 25 },
+      "classification": "unrelated",
+      "role": "unrelated_call",
+      "confidence": "high"
+    },
+    {
+      "start": { "line": 52, "column": 23 },
+      "end": { "line": 52, "column": 28 },
+      "classification": "unrelated",
+      "role": "non_code_string",
+      "confidence": "high"
+    },
+    {
+      "start": { "line": 53, "column": 15 },
+      "end": { "line": 53, "column": 20 },
+      "classification": "unrelated",
+      "role": "non_code_comment",
+      "confidence": "high"
+    }
+  ]
+}
