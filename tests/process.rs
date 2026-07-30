@@ -1628,6 +1628,7 @@ fn setup_and_remove_do_not_require_a_repository() {
         .expect("binary")
         .env("HOME", temp.path())
         .env("USERPROFILE", temp.path())
+        .env_remove("npm_lifecycle_event")
         .current_dir(temp.path())
         .args([
             "--json",
@@ -1654,6 +1655,7 @@ fn setup_and_remove_do_not_require_a_repository() {
         .expect("binary")
         .env("HOME", temp.path())
         .env("USERPROFILE", temp.path())
+        .env_remove("npm_lifecycle_event")
         .current_dir(temp.path())
         .args(["--json", "remove", "--claude", "--yes"])
         .output()
@@ -1785,6 +1787,7 @@ fn setup_requires_yes_before_non_interactive_mutation() {
         .expect("binary")
         .env("HOME", temp.path())
         .env("USERPROFILE", temp.path())
+        .env_remove("npm_lifecycle_event")
         .args(["--json", "setup", "--codex"])
         .output()
         .expect("run setup");
@@ -1812,6 +1815,7 @@ fn cache_list_and_prune_do_not_require_a_repository() {
         command
             .env("HOME", temp.path())
             .env("USERPROFILE", temp.path())
+            .env_remove("npm_lifecycle_event")
             .env("XDG_CACHE_HOME", temp.path().join("xdg-cache"))
             .env("LOCALAPPDATA", temp.path().join("local-app-data"));
         command
@@ -1941,6 +1945,7 @@ fn setup_dry_run_reports_exact_plan_without_mutation() {
         .expect("binary")
         .env("HOME", temp.path())
         .env("USERPROFILE", temp.path())
+        .env_remove("npm_lifecycle_event")
         .args(["--json", "setup", "--codex", "--dry-run"])
         .output()
         .expect("run setup dry-run");
@@ -1969,6 +1974,7 @@ fn malformed_selected_config_blocks_all_setup_writes() {
         .expect("binary")
         .env("HOME", temp.path())
         .env("USERPROFILE", temp.path())
+        .env_remove("npm_lifecycle_event")
         .args(["--json", "setup", "--claude", "--cursor", "--yes"])
         .output()
         .expect("run setup");
