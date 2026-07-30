@@ -9,6 +9,7 @@ const PRODUCT: &str = "leantoken";
 const SUPPORT: &str = "leantoken-test-support";
 const SUITE: &str = "leantoken-test-suite";
 const XTASK: &str = "leantoken-xtask";
+const BENCHMARK_REPOSITORY_FIXTURE: &str = "sample_repo";
 
 fn main() -> ExitCode {
     match run() {
@@ -55,6 +56,7 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
     .find(|domain| {
         *domain == selector
             || selector.starts_with(&format!("{domain}::"))
+            || selector.strip_prefix("domains::") == Some(*domain)
             || selector.starts_with(&format!("domains::{domain}::"))
     });
     let command = if let Some(domain) = suite_domain {
@@ -863,8 +865,19 @@ impl FixtureManifest {
             return Ok(Vec::new());
         }
         let identity_root = fixtures.to_path_buf();
+        if !root.is_dir() {
+            return Err(XtaskError::Fixture(format!(
+                "{}: fixture domain directory is missing",
+                root.display()
+            )));
+        }
         let mut cases = Vec::new();
-        collect_fixture_manifests(&root, &identity_root, &mut cases)?;
+        collect_fixture_manifests(
+            &root,
+            &identity_root,
+            &mut cases,
+            u8::from(domain.is_some()),
+        )?;
         cases.sort_by(|left, right| left.identity.cmp(&right.identity));
         for pair in cases.windows(2) {
             if pair[0].identity == pair[1].identity {
@@ -882,23 +895,41 @@ fn collect_fixture_manifests(
     root: &Path,
     identity_root: &Path,
     cases: &mut Vec<FixtureManifest>,
+    depth: u8,
 ) -> Result<(), XtaskError> {
-    if root.join("case.toml").is_file() {
-        let mut case = FixtureManifest::load(root)?;
-        case.identity = root
-            .strip_prefix(identity_root)
-            .unwrap_or(root)
-            .components()
-            .map(|component| component.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
-        cases.push(case);
-        return Ok(());
-    }
     for entry in std::fs::read_dir(root).map_err(XtaskError::Io)? {
         let path = entry.map_err(XtaskError::Io)?.path();
-        if path.is_dir() {
-            collect_fixture_manifests(&path, identity_root, cases)?;
+        if !path.is_dir() {
+            return Err(XtaskError::Fixture(format!(
+                "{}: expected a fixture {} directory",
+                path.display(),
+                if depth == 0 { "domain" } else { "case" }
+            )));
+        }
+        if depth == 0 {
+            // This is the canonical repository corpus used by benchmark tests,
+            // not a checked-in contract case under fixtures/<domain>/<case>.
+            if path.file_name().and_then(|name| name.to_str()) == Some(BENCHMARK_REPOSITORY_FIXTURE)
+            {
+                continue;
+            }
+            collect_fixture_manifests(&path, identity_root, cases, 1)?;
+        } else {
+            if !path.join("case.toml").is_file() {
+                return Err(XtaskError::Fixture(format!(
+                    "{}: fixture case directory is missing case.toml",
+                    path.display()
+                )));
+            }
+            let mut case = FixtureManifest::load(&path)?;
+            case.identity = path
+                .strip_prefix(identity_root)
+                .unwrap_or(&path)
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            cases.push(case);
         }
     }
     Ok(())
@@ -1016,6 +1047,23 @@ mod tests {
         fs::write(root.join("expected.json"), "{}\n").unwrap();
         let error = super::FixtureManifest::load(&root).expect_err("duplicate schema accepted");
         assert!(error.to_string().contains("duplicate"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fixture_list_rejects_case_directory_without_manifest() {
+        let root = std::env::temp_dir().join(format!(
+            "leantoken-xtask-missing-fixture-manifest-test-{}",
+            std::process::id()
+        ));
+        let case = root.join("storage/missing-manifest");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&case).unwrap();
+        fs::write(case.join("request.json"), "{}\n").unwrap();
+        fs::write(case.join("expected.json"), "{}\n").unwrap();
+        let error = super::FixtureManifest::list(&root, None)
+            .expect_err("case without a manifest was silently ignored");
+        assert!(error.to_string().contains("case.toml"));
         let _ = fs::remove_dir_all(root);
     }
 }

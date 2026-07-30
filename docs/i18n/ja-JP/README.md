@@ -171,7 +171,7 @@ musl Linux を含むその他のターゲットではソースからのビルド
 以降とネイティブ C/C++ ツールチェーンをインストールして、次を実行します。
 
 ```bash
-cargo install --git https://github.com/morluto/leantoken
+cargo install --git https://github.com/morluto/leantoken leantoken
 ```
 
 既存のクライアント統合を明示的に更新します。
