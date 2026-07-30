@@ -113,10 +113,6 @@ async fn response_accounting_reaches_an_inclusive_fixed_point_across_digit_bound
             services.config.tokenizer.count(&serialized),
             response.meta.total_response_tokens
         );
-        assert_eq!(
-            response.meta.total_response_tokens,
-            response.meta.total_response_tokens
-        );
         digit_widths.push(response.meta.total_response_tokens.to_string().len());
     }
 

@@ -36,7 +36,7 @@ struct Report {
 
 #[tokio::test]
 async fn mcp_handoff_token_costs() {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/sample_repo");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/sample_repo");
     let temp = tempfile::tempdir().expect("temporary repository");
     let root = temp.path().join("repo");
     copy_tree(&source, &root);
@@ -93,10 +93,10 @@ async fn mcp_handoff_token_costs() {
         known_hashes: Vec::new(),
         receipt_id: None,
         prior_repository_generation: None,
-    base_revision: None,
-    changed_paths: vec!["src/rust/math.rs".into()],
-    strict_changed_paths: false,
-    verbose_diagnostics: false,
+        base_revision: None,
+        changed_paths: vec!["src/rust/math.rs".into()],
+        strict_changed_paths: false,
+        verbose_diagnostics: false,
     };
     let compact_context = services
         .context_with_options(
@@ -119,12 +119,10 @@ async fn mcp_handoff_token_costs() {
         .await
         .expect("explain context");
     let context_value = serde_json::to_value(&context).expect("context JSON");
-    let compact_response_json_tokens = tokenizer.count(
-        &serde_json::to_string(&compact_context).expect("compact context JSON"),
-    );
-    let explain_response_json_tokens = tokenizer.count(
-        &serde_json::to_string(&explain_context).expect("explain context JSON"),
-    );
+    let compact_response_json_tokens =
+        tokenizer.count(&serde_json::to_string(&compact_context).expect("compact context JSON"));
+    let explain_response_json_tokens =
+        tokenizer.count(&serde_json::to_string(&explain_context).expect("explain context JSON"));
     let mut baseline_context_value = context_value.clone();
     baseline_context_value["receipt"]
         .as_object_mut()
@@ -154,14 +152,12 @@ async fn mcp_handoff_token_costs() {
             }
         }
     });
-    let dual_result = tool_result(context_value.clone(), McpResultMode::Dual)
-        .expect("dual result");
-    let baseline_dual_result = tool_result(baseline_context_value, McpResultMode::Dual)
-        .expect("baseline dual result");
-    let text_result = tool_result(context_value.clone(), McpResultMode::Text)
-        .expect("text result");
-    let structured_result = tool_result(context_value, McpResultMode::Structured)
-        .expect("structured result");
+    let dual_result = tool_result(context_value.clone(), McpResultMode::Dual).expect("dual result");
+    let baseline_dual_result =
+        tool_result(baseline_context_value, McpResultMode::Dual).expect("baseline dual result");
+    let text_result = tool_result(context_value.clone(), McpResultMode::Text).expect("text result");
+    let structured_result =
+        tool_result(context_value, McpResultMode::Structured).expect("structured result");
     assert!(dual_result.structured_content.is_some());
     let call_result = serde_json::json!({
         "jsonrpc": "2.0",
@@ -235,7 +231,8 @@ async fn mcp_handoff_token_costs() {
     };
 
     let pretty = serde_json::to_string_pretty(&report).expect("serialize report");
-    let report_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/mcp_token_costs.json");
+    let report_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/mcp_token_costs.json");
     fs::write(&report_path, &pretty).expect("write report");
     println!("{pretty}");
 

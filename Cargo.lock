@@ -1046,6 +1046,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "leantoken-test-suite"
+version = "0.1.0"
+dependencies = [
+ "directories",
+ "leantoken",
+ "leantoken-test-support",
+ "rmcp",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "leantoken-test-support"
+version = "0.1.0"
+
+[[package]]
+name = "leantoken-xtask"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"

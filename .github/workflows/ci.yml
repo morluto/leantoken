@@ -5,7 +5,9 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    - cron: "0 3 * * 1"
+    - cron: "0 3 * * *"
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -45,6 +47,8 @@ jobs:
               - 'Cargo.lock'
             rust:
               - 'src/**'
+              - 'crates/**'
+              - 'xtask/**'
               - 'tests/**'
               - 'examples/**'
               - 'fixtures/**'
@@ -128,15 +132,19 @@ jobs:
         if: needs.changes.outputs.rust == 'true'
         run: cargo fmt --all -- --check
 
+      - name: Check test architecture
+        if: needs.changes.outputs.rust == 'true'
+        run: cargo xtask check-test-architecture
+
       - name: Lint all targets
         if: needs.changes.outputs.rust == 'true'
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
       - name: Validate public API documentation
         if: needs.changes.outputs.rust == 'true'
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --no-deps
+        run: cargo doc --locked --workspace --no-deps
 
       - name: Upload documentation for deployment
         if: needs.changes.outputs.rust == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -281,22 +289,107 @@ jobs:
       - name: Test library and binary units
         if: needs.changes.outputs.rust == 'true'
         timeout-minutes: 10
-        run: cargo test --all-features --lib --bins
+        run: cargo test --locked --workspace --all-features --lib --bins
 
       - name: Test integration behavior
         if: needs.changes.outputs.rust == 'true'
         timeout-minutes: 10
-        run: "cargo test --all-features --test integration -- --skip binary::"
+        run: "cargo test --locked --package leantoken --all-features --test integration -- --skip process::"
 
       - name: Test executable and MCP process behavior
         if: needs.changes.outputs.rust == 'true'
         timeout-minutes: 10
-        run: "cargo test --all-features --test integration binary:: -- --test-threads=2"
+        run: "cargo test --locked --package leantoken --all-features --test integration process:: -- --test-threads=2"
+
+      - name: Test checked-in fixture cases
+        if: needs.changes.outputs.rust == 'true'
+        timeout-minutes: 10
+        run: cargo xtask test fixtures
 
       - name: Test token-economy contract
         if: needs.changes.outputs.rust == 'true'
         timeout-minutes: 10
         run: cargo test-contract
+
+      - name: Upload preserved test failures
+        if: always() && needs.changes.outputs.rust == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-failures-${{ matrix.os }}-${{ github.sha }}
+          path: target/test-failures/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  scheduled-stress:
+    name: Nightly stress (${{ matrix.os }})
+    if: github.event_name == 'schedule' && github.event.schedule == '0 3 * * *'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            repetitions: 100
+          - os: macos-latest
+            repetitions: 25
+          - os: windows-latest
+            repetitions: 25
+    defaults:
+      run:
+        shell: bash
+    env:
+      LEANTOKEN_STRESS_REPETITIONS: ${{ matrix.repetitions }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: stress-${{ matrix.os }}
+          cache-workspace-crates: true
+
+      - name: Run repeated process lifecycle evidence
+        run: cargo xtask test stress
+
+      - name: Upload preserved test failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-test-failures-${{ matrix.os }}-${{ github.sha }}
+          path: target/test-failures/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  scheduled-profile:
+    name: Weekly test profile
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 1')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: profile
+          cache-workspace-crates: true
+
+      - name: Profile merge tests without retries
+        run: cargo xtask test profile
 
   example-tests:
     name: Benchmark and example tests
@@ -320,8 +413,8 @@ jobs:
 
       - name: Test benchmark, example, and documentation targets
         run: |
-          cargo test --all-features --examples
-          cargo test --all-features --doc
+          cargo test --locked --package leantoken --all-features --examples
+          cargo test --locked --workspace --all-features --doc
 
       - name: Test performance support scripts
         run: |
@@ -437,7 +530,7 @@ jobs:
 
       - name: Run instrumented tests
         run: >
-          cargo llvm-cov --all-features --workspace --no-report
+          cargo llvm-cov --locked --all-features --workspace --no-report
           -- --test-threads=2
 
       - name: Enforce line coverage and write LCOV

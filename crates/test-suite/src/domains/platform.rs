@@ -1,43 +1,105 @@
+use leantoken::repository::{normalize_relative, slash_path};
+use leantoken::watcher::RepositoryWatcher;
+use leantoken_test_support::Sandbox;
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
-use leantoken::{Config, DiscoveryLimits, Error, IndexScope, services::Services};
+#[test]
+fn platform_paths_have_stable_repository_keys() {
+    assert_eq!(normalize_relative(r".\src\lib.rs").unwrap(), "src/lib.rs");
+    assert_eq!(slash_path(std::path::Path::new("src/lib.rs")), "src/lib.rs");
+}
+
+#[tokio::test]
+async fn watcher_reports_file_change() {
+    let sandbox = Sandbox::new(module_path!(), "watcher_reports_file_change").expect("sandbox");
+    let token = CancellationToken::new();
+    let (watcher, mut rx) = RepositoryWatcher::start(
+        sandbox.repo(),
+        64,
+        Duration::from_millis(50),
+        token.child_token(),
+    )
+    .await
+    .expect("start watcher");
+
+    std::fs::write(sandbox.repo().join("changed.rs"), "fn changed() {}\n").expect("write");
+
+    let msg = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("watcher should emit within 5s")
+        .expect("channel open");
+
+    match msg {
+        leantoken::watcher::WatcherMessage::Changed { paths } => {
+            assert!(
+                paths.iter().any(|path| path.contains("changed.rs")),
+                "expected changed.rs in {paths:?}"
+            );
+        }
+        leantoken::watcher::WatcherMessage::ReconcileRequired => {}
+    }
+
+    watcher.shutdown().await.expect("shutdown");
+}
+
+#[tokio::test]
+async fn watcher_shutdown_cancels_task() {
+    let sandbox = Sandbox::new(module_path!(), "watcher_shutdown_cancels_task").expect("sandbox");
+    let token = CancellationToken::new();
+    let (watcher, mut rx) = RepositoryWatcher::start(
+        sandbox.repo(),
+        64,
+        Duration::from_millis(50),
+        token.child_token(),
+    )
+    .await
+    .expect("start watcher");
+
+    watcher.shutdown().await.expect("shutdown");
+
+    let result = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await;
+    assert!(result.is_ok());
+    assert!(result.unwrap().is_none());
+}
+
 use leantoken::tokens::Tokenizer;
+use leantoken::{Config, DiscoveryLimits, Error, IndexScope, services::Services};
 
 #[test]
 fn config_discovers_existing_root() {
-    let root = tempfile::tempdir().expect("tempdir");
-    let config = Config::discover(root.path(), None).expect("discover");
+    let root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
+    let config = Config::discover(root.repo(), None).expect("discover");
     assert!(config.root.exists());
     assert_eq!(
         config.root,
-        root.path().canonicalize().expect("canonicalize")
+        root.repo().canonicalize().expect("canonicalize")
     );
 }
 
 #[test]
 fn default_cache_identity_is_independent_per_repository() {
-    let first_root = tempfile::tempdir().expect("first root");
-    let second_root = tempfile::tempdir().expect("second root");
+    let first_root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
+    let second_root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
 
-    let first = Config::discover(first_root.path(), None).expect("first config");
-    let second = Config::discover(second_root.path(), None).expect("second config");
+    let first = Config::discover(first_root.repo(), None).expect("first config");
+    let second = Config::discover(second_root.repo(), None).expect("second config");
 
     assert_ne!(first.database_path, second.database_path);
 }
 
 #[test]
 fn managed_cache_identity_isolated_by_normalized_index_scope() {
-    let root = tempfile::tempdir().expect("root");
-    let full = Config::discover(root.path(), None).expect("full config");
+    let root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
+    let full = Config::discover(root.repo(), None).expect("full config");
     let scoped = Config::discover_scoped(
-        root.path(),
+        root.repo(),
         None,
-        IndexScope::new(vec!["src/**".into()], vec!["third_party/**".into()])
-            .expect("scope"),
+        IndexScope::new(vec!["src/**".into()], vec!["third_party/**".into()]).expect("scope"),
     )
     .expect("scoped config");
     let equivalent = Config::discover_scoped(
-        root.path(),
+        root.repo(),
         None,
         IndexScope::new(
             vec!["./src\\**".into(), "src/**".into()],
@@ -51,17 +113,20 @@ fn managed_cache_identity_isolated_by_normalized_index_scope() {
     assert_eq!(scoped.database_path, equivalent.database_path);
     assert!(full.index_scope().is_full());
     assert!(!scoped.index_scope().is_full());
-    assert_eq!(scoped.index_scope().digest(), equivalent.index_scope().digest());
+    assert_eq!(
+        scoped.index_scope().digest(),
+        equivalent.index_scope().digest()
+    );
 }
 
 #[test]
 fn config_canonicalizes_explicit_database_parent() {
-    let root = tempfile::tempdir().expect("tempdir");
-    let db = root.path().join("custom.sqlite");
-    let config = Config::discover(root.path(), Some(db)).expect("discover");
+    let root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
+    let db = root.repo().join("custom.sqlite");
+    let config = Config::discover(root.repo(), Some(db)).expect("discover");
     assert_eq!(
         config.database_path,
-        root.path()
+        root.repo()
             .canonicalize()
             .expect("canonical root")
             .join("custom.sqlite")
@@ -71,16 +136,16 @@ fn config_canonicalizes_explicit_database_parent() {
 #[cfg(unix)]
 #[test]
 fn config_canonicalizes_database_parent_reached_through_symlink() {
-    let root = tempfile::tempdir().expect("root");
-    let aliases = tempfile::tempdir().expect("aliases");
-    let alias = aliases.path().join("repository");
-    std::os::unix::fs::symlink(root.path(), &alias).expect("symlink root");
+    let root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
+    let aliases = Sandbox::new(module_path!(), "config_case").expect("sandbox");
+    let alias = aliases.repo().join("repository");
+    std::os::unix::fs::symlink(root.repo(), &alias).expect("symlink root");
 
     let config = Config::discover(&alias, Some(alias.join("index.sqlite"))).expect("discover");
 
     assert_eq!(
         config.database_path,
-        root.path()
+        root.repo()
             .canonicalize()
             .expect("canonical root")
             .join("index.sqlite")
@@ -90,20 +155,17 @@ fn config_canonicalizes_database_parent_reached_through_symlink() {
 #[cfg(unix)]
 #[test]
 fn config_canonicalizes_missing_database_descendants_below_symlink() {
-    let root = tempfile::tempdir().expect("root");
-    let aliases = tempfile::tempdir().expect("aliases");
-    let alias = aliases.path().join("repository");
-    std::os::unix::fs::symlink(root.path(), &alias).expect("symlink root");
+    let root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
+    let aliases = Sandbox::new(module_path!(), "config_case").expect("sandbox");
+    let alias = aliases.repo().join("repository");
+    std::os::unix::fs::symlink(root.repo(), &alias).expect("symlink root");
 
-    let config = Config::discover(
-        root.path(),
-        Some(alias.join("missing/cache/index.sqlite")),
-    )
-    .expect("discover");
+    let config = Config::discover(root.repo(), Some(alias.join("missing/cache/index.sqlite")))
+        .expect("discover");
 
     assert_eq!(
         config.database_path,
-        root.path()
+        root.repo()
             .canonicalize()
             .expect("canonical root")
             .join("missing/cache/index.sqlite")
@@ -120,14 +182,14 @@ fn config_canonicalizes_missing_database_descendants_below_symlink() {
 #[cfg(unix)]
 #[test]
 fn config_canonicalizes_existing_database_symlink_for_shared_lock_identity() {
-    let root = tempfile::tempdir().expect("root");
-    let cache = tempfile::tempdir().expect("cache");
-    let database = cache.path().join("index.sqlite");
+    let root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
+    let cache = Sandbox::new(module_path!(), "config_case").expect("sandbox");
+    let database = cache.repo().join("index.sqlite");
     std::fs::write(&database, "placeholder").expect("database placeholder");
-    let alias = root.path().join("alias.sqlite");
+    let alias = root.repo().join("alias.sqlite");
     std::os::unix::fs::symlink(&database, &alias).expect("database symlink");
 
-    let config = Config::discover(root.path(), Some(alias)).expect("discover");
+    let config = Config::discover(root.repo(), Some(alias)).expect("discover");
 
     assert_eq!(
         config.database_path,
@@ -137,22 +199,19 @@ fn config_canonicalizes_existing_database_symlink_for_shared_lock_identity() {
 
 #[test]
 fn config_rejects_missing_root() {
-    let root = tempfile::tempdir().expect("tempdir");
-    let missing = root.path().join("nowhere");
+    let root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
+    let missing = root.repo().join("nowhere");
     let err = Config::discover(&missing, None).expect_err("missing root");
     assert!(matches!(err, leantoken::Error::RootNotFound(_)));
 }
 
 #[test]
 fn config_rejects_file_as_root() {
-    let directory = tempfile::tempdir().expect("tempdir");
-    let file = directory.path().join("not-a-repository");
+    let directory = Sandbox::new(module_path!(), "config_case").expect("sandbox");
+    let file = directory.repo().join("not-a-repository");
     std::fs::write(&file, "content").expect("write file");
     let error = Config::discover(&file, None).expect_err("file root must fail");
-    assert!(matches!(
-        error,
-        leantoken::Error::InvalidConfiguration(_)
-    ));
+    assert!(matches!(error, leantoken::Error::InvalidConfiguration(_)));
 }
 
 #[test]
@@ -173,8 +232,8 @@ fn config_rejects_the_current_home_directory_by_default() {
 
 #[test]
 fn config_defaults_bound_output_and_timing() {
-    let root = tempfile::tempdir().expect("tempdir");
-    let config = Config::discover(root.path(), None).expect("discover");
+    let root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
+    let config = Config::discover(root.repo(), None).expect("discover");
     assert_eq!(config.discovery_limits(), DiscoveryLimits::default());
     assert!(config.max_results > 0);
     assert!(config.max_output_tokens > 0);
@@ -191,9 +250,9 @@ fn config_defaults_bound_output_and_timing() {
 
 #[test]
 fn services_reject_invalid_retrieval_limit_configuration() {
-    let root = tempfile::tempdir().expect("tempdir");
-    let base = Config::discover(root.path(), Some(root.path().join("index.sqlite")))
-        .expect("discover");
+    let root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
+    let base =
+        Config::discover(root.repo(), Some(root.repo().join("index.sqlite"))).expect("discover");
     let mut invalid = Vec::new();
 
     let mut config = base.clone();
@@ -235,16 +294,19 @@ fn services_reject_invalid_retrieval_limit_configuration() {
 
     for config in invalid {
         let error = Services::open(config).expect_err("invalid retrieval limits");
-        assert!(matches!(error, Error::InvalidConfiguration(_)), "got {error:?}");
+        assert!(
+            matches!(error, Error::InvalidConfiguration(_)),
+            "got {error:?}"
+        );
     }
 }
 
 #[test]
 fn config_identifies_database_and_wal_artifacts_inside_the_root() {
-    let root = tempfile::tempdir().expect("root");
-    let database = root.path().join(".cache/index.sqlite");
+    let root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
+    let database = root.repo().join(".cache/index.sqlite");
     std::fs::create_dir_all(database.parent().expect("database parent")).expect("parent");
-    let config = Config::discover(root.path(), Some(database)).expect("config");
+    let config = Config::discover(root.repo(), Some(database)).expect("config");
 
     assert!(config.is_database_artifact(".cache/index.sqlite"));
     assert!(config.is_database_artifact(".cache/index.sqlite-wal"));

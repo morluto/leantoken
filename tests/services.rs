@@ -26,7 +26,6 @@ macro_rules! assert_response_token_accounting {
     ($response:expr, $tokenizer:expr) => {{
         let response = &$response;
         let tokenizer = $tokenizer;
-        assert_eq!(response.meta.source_tokens, response.meta.source_tokens);
         assert_eq!(response.meta.tokenizer, tokenizer.name());
         assert_eq!(response.meta.token_count_exact, tokenizer.is_exact());
         assert!(response.meta.protocol_tokens > 0);
@@ -35,10 +34,6 @@ macro_rules! assert_response_token_accounting {
             response.meta.source_tokens
                 + response.meta.protocol_tokens
                 + response.meta.path_and_metadata_tokens
-        );
-        assert_eq!(
-            response.meta.total_response_tokens,
-            response.meta.total_response_tokens
         );
         assert!(response.meta.total_response_tokens > 0);
 

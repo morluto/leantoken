@@ -1,0 +1,11 @@
+[package]
+name = "leantoken-test-support"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+description = "Hermetic support primitives for LeanToken's private test suite"
+[lints]
+workspace = true
+
+[dependencies]

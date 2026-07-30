@@ -305,7 +305,6 @@ mod tests {
         assert_eq!(legacy.meta.protocol_tokens, 0);
         assert_eq!(legacy.meta.path_and_metadata_tokens, 0);
         assert_eq!(legacy.meta.total_response_tokens, 0);
-        assert_eq!(legacy.meta.total_response_tokens, 0);
         assert!(legacy.meta.tokenizer.is_empty());
     }
 

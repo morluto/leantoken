@@ -53,17 +53,23 @@ benchmark contract or examples:
 cargo test-product
 ```
 
-For faster local feedback, run independent unit and ordinary integration
-lanes concurrently, then run process-heavy executable and MCP tests with two
-workers:
+For a visible, resource-safe phase plan use the Rust workspace task runner:
 
 ```bash
-python3 scripts/test_product_parallel.py
+cargo xtask test plan --dry-run
+cargo xtask check-test-architecture
 ```
 
-This runs the same product tests as `cargo test-product`; process-heavy tests
-stay isolated so higher parallelism does not make their startup deadlines
-flaky.
+The runner sequences units, ordinary domain integration, and process-heavy
+tests without launching competing Cargo processes. It also owns exact fixture
+selection and the opt-in profile/stress commands.
+
+The stress lane accepts `LEANTOKEN_STRESS_REPETITIONS` for scheduled
+repetition. Required checks never retry failures.
+
+The weekly `cargo xtask test profile` lane uses the checked-in nextest policy:
+tests slower than ten seconds are reported, a deadlocked test is terminated
+after a bounded interval, and retries are disabled.
 
 Run the token-economy contract explicitly when changing retrieval accounting or
 its fixture. CI runs it on every supported OS for every Rust change:
@@ -82,7 +88,7 @@ or their shared behavior:
 
 ```bash
 cargo test-extras
-cargo test --all-features --doc
+cargo test --locked --package leantoken --all-features --doc
 ```
 
 These repository-local Cargo aliases keep the fast and extended target groups
@@ -103,7 +109,7 @@ GitHub Actions is the merge gate for:
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo test-product
 cargo test-contract
 ```
@@ -129,7 +135,7 @@ or changing the gate itself. Otherwise, do not routinely duplicate the full CI
 suite before and after the first push. Run rustdoc locally when changing public
 APIs or documentation:
 ```bash
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps
 ```
 
 Build and verify the distributable crate when changing packaging or features:
@@ -224,26 +230,29 @@ Tests are organized around observable behavior:
 Integration test files are modules of one `integration` target so Cargo can
 run them in parallel rather than starting one executable per file.
 
-- `tests/storage.rs`: migrations, WAL/foreign keys, FTS5, atomic replacement,
-  rollback, stale-plan rejection, reopen, and generation behavior;
-- `tests/indexer.rs`: initial, unchanged, changed, deleted, rebuilt, bounded
-  chunking, targeted reconciliation, and dependency invalidation;
+- `crates/test-suite/src/domains/storage.rs`: migrations, WAL/foreign keys,
+  FTS5, atomic replacement, rollback, stale-plan rejection, reopen, query-plan
+  evidence, and generation behavior;
+- `crates/test-suite/src/domains/indexing_repository.rs`: discovery and path
+  safety, Git diffs, initial/unchanged/changed/deleted/rebuilt indexing,
+  bounded chunking, targeted reconciliation, and dependency invalidation;
+- `crates/test-suite/src/domains/retrieval.rs`: tokenizer budgets, ranking,
+  deduplication, path/symbol focus, known-hash omission, and receipts;
+- `crates/test-suite/src/domains/platform.rs`: normalized repository keys and
+  native watcher delivery and shutdown;
+- `crates/test-suite/src/domains/protocol.rs`: SDK initialization, readiness
+  states, retryable startup errors, tool calls, cancellation, and liveness;
+- `crates/test-suite/src/domains/contracts.rs`: real tool-catalog and JSON-RPC
+  handoff accounting;
 - `tests/services.rs` registers owner-focused modules under `tests/services/`:
   lifecycle/repository/consistency/path safety, per-tool behavior, limits and
   response budgets, context planning/signals/workflows/diffs, evidence/query
   receipts and savings, language coverage, and smoke behavior;
-- `tests/mcp.rs`: SDK initialization, readiness states, retryable startup tool
-  errors, exact tool catalog, structured calls, cancellation, and
-  post-cancellation liveness;
-- `tests/binary.rs`: CLI JSON flow, concurrent and contended cold-cache MCP
+- `tests/process.rs`: CLI JSON flow, concurrent and contended cold-cache MCP
   initialization, runtime-failure visibility, single-leader generation
   publication, leader failover, MCP EOF shutdown, and repository-free episode
   audit behavior through the executable;
-- `tests/repository.rs`: ignore behavior, path validation, size limits, symlink
-  containment, bounded Git probes, and nested-worktree path normalization;
-- `tests/watcher.rs`: event delivery and joined shutdown;
-- `tests/benchmark_contract.rs`: token-economy and known-hash regression fixture;
-- `tests/mcp_token_costs.rs`: real tool catalog and JSON-RPC handoff accounting;
+- `tests/benchmark_contract.rs`: explicit token-economy and known-hash regression executable;
 - `tests/representation_comparison.rs`: tree, outline, search, read, and context
   representation costs.
 

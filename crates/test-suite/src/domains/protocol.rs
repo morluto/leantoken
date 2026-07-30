@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use leantoken::{
-    Config, ContextRequest, mcp::LeanTokenMcp, services::Services,
-};
+use leantoken::{Config, ContextRequest, mcp::LeanTokenMcp, services::Services};
 use rmcp::{
     RoleClient,
     model::{
@@ -256,7 +254,11 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
     .await
     .expect("files with configured default");
     assert_eq!(
-        files.structured_content.as_ref().and_then(|value| value["entries"].as_array()).map(Vec::len),
+        files
+            .structured_content
+            .as_ref()
+            .and_then(|value| value["entries"].as_array())
+            .map(Vec::len),
         Some(1)
     );
     let repository_id = files
@@ -450,21 +452,16 @@ async fn customized_mcp_limits_apply_while_starting_and_after_failure() {
     .await
     .expect("valid starting request");
     assert_eq!(
-        starting.structured_content.as_ref().and_then(|value| value["reason"].as_str()),
+        starting
+            .structured_content
+            .as_ref()
+            .and_then(|value| value["reason"].as_str()),
         Some("index_starting")
     );
 
     state.set_failed(&leantoken::Error::McpRuntimeStopped);
     for (tool, arguments, field, requested, limit) in cases {
-        assert_mcp_limit_exceeded(
-            client.peer(),
-            tool,
-            arguments,
-            field,
-            requested,
-            limit,
-        )
-        .await;
+        assert_mcp_limit_exceeded(client.peer(), tool, arguments, field, requested, limit).await;
     }
 
     let failed = call_tool(
@@ -512,11 +509,12 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let server_info = client.peer().peer_info().expect("server initialize result");
     assert_eq!(server_info.server_info.name, "leantoken");
     assert!(server_info.capabilities.resources.is_some());
-    let contract_fingerprint = server_info
+    let (runtime_version, contract_fingerprint) = server_info
         .server_info
         .version
-        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+contract."))
+        .split_once("+contract.")
         .expect("runtime version carries the MCP contract fingerprint");
+    assert!(!runtime_version.is_empty());
     assert_eq!(contract_fingerprint.len(), 32);
     assert!(
         contract_fingerprint
@@ -568,7 +566,10 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
             tool.name,
             description.len()
         );
-        assert_eq!(tool.input_schema.get("type"), Some(&serde_json::json!("object")));
+        assert_eq!(
+            tool.input_schema.get("type"),
+            Some(&serde_json::json!("object"))
+        );
     }
     assert!(
         client
@@ -598,14 +599,12 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         "depth": 2,
         "max_results": 10
     })
-        .as_object()
-        .expect("request object")
-        .clone();
+    .as_object()
+    .expect("request object")
+    .clone();
     let response = client
         .peer()
-        .call_tool(
-            CallToolRequestParams::new("files").with_arguments(files_arguments.clone()),
-        )
+        .call_tool(CallToolRequestParams::new("files").with_arguments(files_arguments.clone()))
         .await
         .expect("call files tool");
     assert_ne!(response.is_error, Some(true));
@@ -636,10 +635,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     assert_eq!(structured["occurrences_returned"], 1);
     assert_eq!(structured["occurrences_total"], 1);
     assert_eq!(structured["groups"][0]["occurrences"][0]["line"], 1);
-    assert_eq!(
-        structured["groups"][0]["occurrences"][0]["start_column"],
-        7
-    );
+    assert_eq!(structured["groups"][0]["occurrences"][0]["start_column"], 7);
     let receipt_uri = structured["receipt_resource"]["uri"]
         .as_str()
         .expect("receipt resource URI")
@@ -688,7 +684,9 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     assert_eq!(receipt_json["source_free"], true);
     assert_eq!(
         receipt_json["evidence_count"].as_u64(),
-        receipt_json["evidence"].as_array().map(|items| items.len() as u64)
+        receipt_json["evidence"]
+            .as_array()
+            .map(|items| items.len() as u64)
     );
     let ServiceError::McpError(not_found) = client
         .peer()
@@ -816,14 +814,12 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
 
     let nested_files_arguments =
         serde_json::json!({"operation": {"kind": "find", "query": "many"}})
-        .as_object()
-        .expect("legacy files arguments")
-        .clone();
+            .as_object()
+            .expect("legacy files arguments")
+            .clone();
     let legacy_result = client
         .peer()
-        .call_tool(
-            CallToolRequestParams::new("files").with_arguments(nested_files_arguments),
-        )
+        .call_tool(CallToolRequestParams::new("files").with_arguments(nested_files_arguments))
         .await
         .expect("nested arguments receive an MCP tool result");
     assert_ne!(legacy_result.is_error, Some(true));
@@ -852,8 +848,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let response = client
         .peer()
         .call_tool(
-            CallToolRequestParams::new("search")
-                .with_arguments(reconcile_working_tree_arguments),
+            CallToolRequestParams::new("search").with_arguments(reconcile_working_tree_arguments),
         )
         .await
         .expect("working-tree search");
@@ -865,9 +860,9 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         "path": "../secret",
         "target": {"kind": "lines", "start": 1, "end": 1}
     })
-        .as_object()
-        .expect("invalid read arguments")
-        .clone();
+    .as_object()
+    .expect("invalid read arguments")
+    .clone();
     let error = client
         .peer()
         .call_tool(CallToolRequestParams::new("read").with_arguments(invalid_arguments))
@@ -902,16 +897,15 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         Some("invalid_input")
     );
     assert_eq!(
-        data.data
-            .as_ref()
-            .and_then(|value| value["field"].as_str()),
+        data.data.as_ref().and_then(|value| value["field"].as_str()),
         Some("parameters")
     );
-    assert!(data
-        .data
-        .as_ref()
-        .and_then(|value| value["reason"].as_str())
-        .is_some_and(|reason| reason.contains("unknown field") && reason.contains("bogus")));
+    assert!(
+        data.data
+            .as_ref()
+            .and_then(|value| value["reason"].as_str())
+            .is_some_and(|reason| reason.contains("unknown field") && reason.contains("bogus"))
+    );
 
     let missing_json = call_tool(
         client.peer(),
@@ -947,9 +941,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     .clone();
     let error = client
         .peer()
-        .call_tool(
-            CallToolRequestParams::new("search").with_arguments(oversized_arguments),
-        )
+        .call_tool(CallToolRequestParams::new("search").with_arguments(oversized_arguments))
         .await
         .expect_err("oversized request should be rejected");
     assert!(matches!(
@@ -999,9 +991,11 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
             .and_then(|value| value["category"].as_str()),
         Some("input_too_long")
     );
-    assert!(!serde_json::to_string(&data)
-        .expect("serialize bounded MCP error")
-        .contains(&oversized_id));
+    assert!(
+        !serde_json::to_string(&data)
+            .expect("serialize bounded MCP error")
+            .contains(&oversized_id)
+    );
 
     let multibyte_boundary_error = call_tool(
         client.peer(),
@@ -1047,9 +1041,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     .clone();
     let bounded = client
         .peer()
-        .call_tool(
-            CallToolRequestParams::new("search").with_arguments(bounded_arguments),
-        )
+        .call_tool(CallToolRequestParams::new("search").with_arguments(bounded_arguments))
         .await
         .expect("large bounded search");
     assert!(
@@ -1069,10 +1061,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     .clone();
     let default_context = client
         .peer()
-        .call_tool(
-            CallToolRequestParams::new("context")
-                .with_arguments(default_context_arguments),
-        )
+        .call_tool(CallToolRequestParams::new("context").with_arguments(default_context_arguments))
         .await
         .expect("context with default token budget");
     assert_ne!(default_context.is_error, Some(true));
@@ -1122,10 +1111,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
 
     let savings = client
         .peer()
-        .call_tool(
-            CallToolRequestParams::new("savings")
-                .with_arguments(Default::default()),
-        )
+        .call_tool(CallToolRequestParams::new("savings").with_arguments(Default::default()))
         .await
         .expect("call savings tool");
     assert_ne!(savings.is_error, Some(true));
@@ -1143,10 +1129,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
 
     let repeated_savings = client
         .peer()
-        .call_tool(
-            CallToolRequestParams::new("savings")
-                .with_arguments(Default::default()),
-        )
+        .call_tool(CallToolRequestParams::new("savings").with_arguments(Default::default()))
         .await
         .expect("repeat savings tool");
     assert_eq!(
@@ -1172,10 +1155,10 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         known_hashes: Vec::new(),
         receipt_id: None,
         prior_repository_generation: None,
-    base_revision: None,
-    changed_paths: Vec::new(),
-    strict_changed_paths: false,
-    verbose_diagnostics: false,
+        base_revision: None,
+        changed_paths: Vec::new(),
+        strict_changed_paths: false,
+        verbose_diagnostics: false,
     };
     let context_arguments = serde_json::to_value(context)
         .expect("serialize context request")
@@ -1361,15 +1344,8 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
             false,
         ),
     ] {
-        assert_mcp_limit_contract(
-            client.peer(),
-            tool,
-            arguments,
-            field,
-            limit,
-            zero_is_valid,
-        )
-        .await;
+        assert_mcp_limit_contract(client.peer(), tool, arguments, field, limit, zero_is_valid)
+            .await;
     }
 
     let request = || {
@@ -1387,7 +1363,10 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
         .expect("starting result");
     assert_eq!(starting.is_error, Some(false));
     assert_eq!(
-        starting.structured_content.as_ref().and_then(|value| value["reason"].as_str()),
+        starting
+            .structured_content
+            .as_ref()
+            .and_then(|value| value["reason"].as_str()),
         Some("index_starting")
     );
 
@@ -1400,11 +1379,16 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
         .expect("building result");
     assert_eq!(building.is_error, Some(false));
     assert_eq!(
-        building.structured_content.as_ref().and_then(|value| value["reason"].as_str()),
+        building
+            .structured_content
+            .as_ref()
+            .and_then(|value| value["reason"].as_str()),
         Some("index_building")
     );
-    let progress = &building.structured_content.as_ref().expect("structured building result")
-        ["index_progress"];
+    let progress = &building
+        .structured_content
+        .as_ref()
+        .expect("structured building result")["index_progress"];
     assert_eq!(progress["detail_available"], false);
     assert_eq!(progress["active"], false);
     assert_eq!(

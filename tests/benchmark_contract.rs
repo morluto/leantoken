@@ -74,9 +74,8 @@ struct Report {
     limitations: Vec<&'static str>,
 }
 
-#[tokio::test]
-#[ignore = "CI contract suite; run cargo test-contract explicitly"]
-async fn benchmark_token_economy() {
+#[tokio::main]
+async fn main() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/sample_repo");
     let temp = tempfile::tempdir().expect("temporary benchmark repository");
     let root = temp.path().join("repo");
@@ -114,10 +113,10 @@ async fn benchmark_token_economy() {
             known_hashes: Vec::new(),
             receipt_id: None,
             prior_repository_generation: None,
-        base_revision: None,
-        changed_paths: Vec::new(),
-        strict_changed_paths: false,
-        verbose_diagnostics: false,
+            base_revision: None,
+            changed_paths: Vec::new(),
+            strict_changed_paths: false,
+            verbose_diagnostics: false,
         };
         let warm_start = Instant::now();
         let response = services.context(request.clone()).await.expect("context");

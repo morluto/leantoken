@@ -19,16 +19,10 @@ EXPECTED_GATE_COMMANDS = {
     "cargo test-product",
 }
 EXPECTED_ALIASES = {
-    "test-focused": "test --all-features --lib --bins --test integration",
-    "test-product": (
-        "test --all-features --lib --bins --test integration -- "
-        "--test-threads=2"
-    ),
-    "test-contract": (
-        "test --all-features --test integration benchmark_contract:: -- "
-        "--ignored --nocapture"
-    ),
-    "test-extras": "test --all-features --examples",
+    "test-focused": "run --locked --package leantoken-xtask -- test-focused",
+    "test-product": "run --locked --package leantoken-xtask -- test product",
+    "test-contract": "run --locked --package leantoken --example benchmark-contract",
+    "test-extras": "test --locked --package leantoken --all-features --examples",
 }
 REQUIRED_PATHS = (
     "src",

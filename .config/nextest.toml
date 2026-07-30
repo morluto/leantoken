@@ -1,0 +1,6 @@
+# Weekly profiling policy. Merge checks use Cargo/libtest; this profile is
+# deliberately explicit and never retries a failed test.
+[profile.default]
+retries = 0
+flaky-result = "fail"
+slow-timeout = { period = "10s", terminate-after = 6, grace-period = "10s" }

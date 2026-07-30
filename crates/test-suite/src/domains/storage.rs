@@ -2,6 +2,7 @@ use leantoken::model::ReferenceRole;
 use leantoken::storage::{
     ChunkInput, ImportInput, IndexedFile, ReferenceInput, Storage, SymbolInput,
 };
+use leantoken_test_support::Sandbox;
 
 fn sample_chunk(content: &str) -> ChunkInput {
     let lines = content.lines().count().max(1);
@@ -53,7 +54,11 @@ fn sample_file(path: &str, content: &str) -> IndexedFile {
     }
 }
 
-fn query_plan(connection: &rusqlite::Connection, sql: &str, parameters: &[&dyn rusqlite::ToSql]) -> String {
+fn query_plan(
+    connection: &rusqlite::Connection,
+    sql: &str,
+    parameters: &[&dyn rusqlite::ToSql],
+) -> String {
     let mut statement = connection.prepare(sql).expect("prepare query plan");
     statement
         .query_map(parameters, |row| row.get::<_, String>(3))
@@ -65,8 +70,8 @@ fn query_plan(connection: &rusqlite::Connection, sql: &str, parameters: &[&dyn r
 
 #[test]
 fn storage_opens_and_validates_fts5_support() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let db = dir.path().join("index.sqlite");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let db = dir.root().join("index.sqlite");
     let storage = Storage::open(&db).expect("open");
     let meta = storage.meta().expect("meta");
     assert_eq!(meta.schema_version, 10);
@@ -76,8 +81,8 @@ fn storage_opens_and_validates_fts5_support() {
 
 #[test]
 fn storage_reopen_uses_existing_index() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let db = dir.path().join("index.sqlite");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let db = dir.root().join("index.sqlite");
 
     let storage = Storage::open(&db).expect("open first");
     storage
@@ -93,8 +98,8 @@ fn storage_reopen_uses_existing_index() {
 
 #[test]
 fn negative_persisted_unsigned_values_fail_decoding() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let db = dir.path().join("index.sqlite");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let db = dir.root().join("index.sqlite");
     let storage = Storage::open(&db).expect("open");
     storage
         .full_reconcile(
@@ -123,8 +128,8 @@ fn negative_persisted_unsigned_values_fail_decoding() {
 
 #[test]
 fn pooled_read_sessions_serve_concurrent_snapshot_queries() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let storage = Storage::open(dir.root().join("index.sqlite")).expect("open");
     storage
         .full_reconcile("hash", vec![sample_file("lib.rs", "fn pooled() {}\n")])
         .expect("reconcile");
@@ -145,8 +150,8 @@ fn pooled_read_sessions_serve_concurrent_snapshot_queries() {
 
 #[test]
 fn storage_applies_lookup_index_migration_to_existing_databases() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let db = dir.path().join("index.sqlite");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let db = dir.root().join("index.sqlite");
     drop(Storage::open(&db).expect("open first"));
     let connection = rusqlite::Connection::open(&db).expect("raw connection");
     connection
@@ -188,8 +193,8 @@ fn storage_applies_lookup_index_migration_to_existing_databases() {
 
 #[test]
 fn storage_migrates_schema_four_with_cache_access_metadata() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let db = dir.path().join("index.sqlite");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let db = dir.root().join("index.sqlite");
     drop(Storage::open(&db).expect("open first"));
     let connection = rusqlite::Connection::open(&db).expect("raw connection");
     connection
@@ -254,8 +259,8 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
 
 #[test]
 fn storage_adds_full_response_accounting_to_existing_savings_table() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let db = dir.path().join("index.sqlite");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let db = dir.root().join("index.sqlite");
     drop(Storage::open(&db).expect("initial storage"));
     let connection = rusqlite::Connection::open(&db).expect("legacy connection");
     connection
@@ -333,8 +338,7 @@ fn storage_adds_full_response_accounting_to_existing_savings_table() {
         .expect("collect savings plan");
     assert!(
         savings_plan.iter().any(|detail| {
-            detail.contains("SEARCH token_savings USING INDEX")
-                && detail.contains("tokenizer=?")
+            detail.contains("SEARCH token_savings USING INDEX") && detail.contains("tokenizer=?")
         }),
         "unexpected savings query plan: {savings_plan:?}"
     );
@@ -373,8 +377,8 @@ fn storage_adds_full_response_accounting_to_existing_savings_table() {
 
 #[test]
 fn service_failure_report_uses_the_bounded_primary_key_range() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let db = dir.path().join("index.sqlite");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let db = dir.root().join("index.sqlite");
     drop(Storage::open(&db).expect("storage"));
     let connection = rusqlite::Connection::open(&db).expect("inspect storage");
 
@@ -397,8 +401,8 @@ fn service_failure_report_uses_the_bounded_primary_key_range() {
 
 #[test]
 fn structural_search_preserves_substring_case_and_short_query_behavior() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let storage = Storage::open(dir.root().join("index.sqlite")).expect("open");
     let mut file = sample_file("src/lib.rs", "fn MainHandler() { PrintLine(); }\n");
     file.symbols[0].name = "MainHandler".into();
     file.references[0].name = "PrintLine".into();
@@ -461,8 +465,8 @@ fn structural_search_preserves_substring_case_and_short_query_behavior() {
 
 #[test]
 fn structural_search_migration_rebuilds_existing_rows() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let db = dir.path().join("index.sqlite");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let db = dir.root().join("index.sqlite");
     let storage = Storage::open(&db).expect("open");
     storage
         .full_reconcile("hash", vec![sample_file("src/lib.rs", "fn main() {}\n")])
@@ -514,8 +518,8 @@ fn structural_search_migration_rebuilds_existing_rows() {
 
 #[test]
 fn hot_relational_projections_use_their_indexes() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let db = dir.path().join("index.sqlite");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let db = dir.root().join("index.sqlite");
     let storage = Storage::open(&db).expect("open");
     let mut importer = sample_file("src/app.rs", "fn app() {}\n");
     importer.imports[0].candidate_paths = vec!["src/lib.rs".into()];
@@ -617,10 +621,7 @@ fn hot_relational_projections_use_their_indexes() {
         &[&1_i64, &"Services.main", &"Services", &"main"],
     );
     assert!(
-        qualified_symbol_plan
-            .matches("symbols_name_idx")
-            .count()
-            >= 2,
+        qualified_symbol_plan.matches("symbols_name_idx").count() >= 2,
         "unexpected qualified-symbol plan: {qualified_symbol_plan}"
     );
 
@@ -664,7 +665,12 @@ fn hot_relational_projections_use_their_indexes() {
            AND (?3 IS NULL OR path_entries.path > ?3)
          ORDER BY path_entries.path
          LIMIT ?4",
-        &[&"*.rs", &Option::<&str>::None, &Option::<&str>::None, &10_i64],
+        &[
+            &"*.rs",
+            &Option::<&str>::None,
+            &Option::<&str>::None,
+            &10_i64,
+        ],
     );
     assert!(
         glob_plan.contains("path_entries"),
@@ -674,8 +680,8 @@ fn hot_relational_projections_use_their_indexes() {
 
 #[test]
 fn initial_reconcile_advances_generation_and_indexes() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let storage = Storage::open(dir.root().join("index.sqlite")).expect("open");
 
     let files = vec![
         sample_file("src/lib.rs", "fn hello() {}\nfn world() {}\n"),
@@ -710,8 +716,8 @@ fn initial_reconcile_advances_generation_and_indexes() {
 
 #[test]
 fn fts5_word_search_finds_indexed_content() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let storage = Storage::open(dir.root().join("index.sqlite")).expect("open");
 
     storage
         .full_reconcile("hash1", vec![sample_file("src/lib.rs", "fn hello() {}\n")])
@@ -725,8 +731,8 @@ fn fts5_word_search_finds_indexed_content() {
 
 #[test]
 fn fts5_trigram_search_finds_substrings() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let storage = Storage::open(dir.root().join("index.sqlite")).expect("open");
 
     storage
         .full_reconcile(
@@ -742,8 +748,8 @@ fn fts5_trigram_search_finds_substrings() {
 
 #[test]
 fn generation_consistency_across_reopen_and_modify() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let db = dir.path().join("index.sqlite");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let db = dir.root().join("index.sqlite");
     let storage = Storage::open(&db).expect("open");
 
     let generation1 = storage
@@ -770,8 +776,8 @@ fn generation_consistency_across_reopen_and_modify() {
 
 #[test]
 fn failed_reconcile_rolls_back_file_and_generation() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let storage = Storage::open(dir.root().join("index.sqlite")).expect("open");
     storage
         .full_reconcile("hash1", vec![sample_file("src/lib.rs", "fn old() {}\n")])
         .expect("initial reconcile");
@@ -797,8 +803,8 @@ fn failed_reconcile_rolls_back_file_and_generation() {
 
 #[test]
 fn reconcile_files_commits_replacements_and_deletions_as_one_generation() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let storage = Storage::open(dir.root().join("index.sqlite")).expect("open");
     storage
         .full_reconcile(
             "hash1",
@@ -821,14 +827,19 @@ fn reconcile_files_commits_replacements_and_deletions_as_one_generation() {
     assert!(storage.find_file("remove.rs").expect("find").is_none());
     assert_eq!(storage.search_word("changed", 10).expect("search").len(), 1);
     assert!(storage.search_word("keep", 10).expect("search").is_empty());
-    assert!(storage.search_word("remove", 10).expect("search").is_empty());
+    assert!(
+        storage
+            .search_word("remove", 10)
+            .expect("search")
+            .is_empty()
+    );
     assert_eq!(storage.meta().expect("meta").repository_generation, 2);
 }
 
 #[test]
 fn stale_reconciliation_plan_cannot_overwrite_a_newer_generation() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let storage = Storage::open(dir.root().join("index.sqlite")).expect("open");
     let stale_baseline = storage.meta().expect("baseline");
 
     storage
@@ -851,14 +862,17 @@ fn stale_reconciliation_plan_cannot_overwrite_a_newer_generation() {
         }
     ));
     assert_eq!(storage.repository_generation().expect("generation"), 1);
-    assert_eq!(storage.search_word("current", 10).expect("current").len(), 1);
+    assert_eq!(
+        storage.search_word("current", 10).expect("current").len(),
+        1
+    );
     assert!(storage.search_word("stale", 10).expect("stale").is_empty());
 }
 
 #[test]
 fn list_files_respects_hard_result_bound() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let storage = Storage::open(dir.path().join("index.sqlite")).expect("open");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let storage = Storage::open(dir.root().join("index.sqlite")).expect("open");
 
     let files: Vec<_> = (0..150)
         .map(|i| sample_file(&format!("src/file{i}.rs"), &format!("fn func{i}() {{}}\n")))
@@ -885,8 +899,8 @@ fn list_files_respects_hard_result_bound() {
 
 #[test]
 fn wal_and_foreign_keys_enabled() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let db = dir.path().join("index.sqlite");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let db = dir.root().join("index.sqlite");
     let _storage = Storage::open(&db).expect("open");
 
     use rusqlite::Connection;
@@ -904,8 +918,8 @@ fn wal_and_foreign_keys_enabled() {
 
 #[test]
 fn read_session_pins_generation_across_queries() {
-    let dir = tempfile::tempdir().expect("dir");
-    let path = dir.path().join("index.sqlite");
+    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
+    let path = dir.root().join("index.sqlite");
     let storage = Storage::open(&path).expect("open");
     let gen1 = storage
         .full_reconcile("cfg-a", vec![sample_file("a.rs", "fn a() {}\n")])
