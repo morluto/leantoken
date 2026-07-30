@@ -308,7 +308,7 @@ jobs:
 
       - name: Upload preserved test failures
         if: always() && needs.changes.outputs.rust == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-failures-${{ matrix.os }}-${{ github.sha }}
           path: target/test-failures/
@@ -354,7 +354,7 @@ jobs:
 
       - name: Upload preserved test failures
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-test-failures-${{ matrix.os }}-${{ github.sha }}
           path: target/test-failures/
